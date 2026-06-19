@@ -7,6 +7,10 @@
 #include "../Contexts/ATRequestContext.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
+#include "../../Hardware/OHCIDescriptors.hpp"
+#include "../../Debug/AsyncTraceCapture.hpp"
+#include "../../Shared/ASFWDiagnosticsABI.h"
+#include <DriverKit/IOLib.h>
 
 namespace ASFW::Async::Tx {
 
@@ -16,6 +20,77 @@ Submitter::Submitter(Engine::ContextManager& ctxMgr, DescriptorBuilder& builder)
     : ctxMgr_(ctxMgr), descriptorBuilder_(builder) {
     // No lock allocation needed - ATManager has its own lock with fine-grained locking
 }
+
+// ============================================================================
+// Trace Outgoing Event Helper
+// ============================================================================
+namespace {
+void TraceOutgoingEvent(Debug::AsyncTraceCapture* traceCapture, uint32_t contextType, const DescriptorBuilder::DescriptorChain& chain) noexcept {
+    if (!traceCapture || chain.Empty()) {
+        return;
+    }
+    
+    auto* immDesc = reinterpret_cast<const HW::OHCIDescriptorImmediate*>(chain.first);
+    if (!immDesc) {
+        return;
+    }
+    
+    ASFWDiagAsyncEvent event{};
+    
+    static mach_timebase_info_data_t timebase{};
+    if (timebase.denom == 0) {
+        mach_timebase_info(&timebase);
+    }
+    event.timestampNs = (mach_absolute_time() * timebase.numer) / timebase.denom;
+    event.generation = 0; // Outgoing context doesn't track gen easily, can default to 0
+    event.direction = 1;  // 1 for TX (outgoing)
+    event.context = contextType;
+    
+    const uint32_t q0 = OSSwapLittleToHostInt32(immDesc->immediateData[0]);
+    const uint32_t q1 = OSSwapLittleToHostInt32(immDesc->immediateData[1]);
+    const uint32_t q2 = OSSwapLittleToHostInt32(immDesc->immediateData[2]);
+    
+    // OHCI/Linux AT request layout (see PacketBuilder.cpp:151,188):
+    //   Q0 = [srcBusID:1][unused:5][spd:3 @18:16][tLabel:6 @15:10][rt:2][tCode:4 @7:4][pri:4]
+    //   Q1 = [destinationID:16 @31:16][destOffsetHigh:16]
+    // destID lives in Q1, NOT Q0; the source ID is filled by hardware on the wire (not in the
+    // descriptor), so leave it 0 — the formatter shows the local node for TX rows.
+    event.tLabel = static_cast<uint8_t>((q0 >> 10) & 0x3F);
+    event.tCode = static_cast<uint8_t>((q0 >> 4) & 0x0F);
+    event.destinationId = static_cast<uint16_t>(q1 >> 16);
+    event.sourceId = 0;
+
+    const uint64_t offset_high = q1 & 0xFFFF;
+    const uint64_t offset_low = q2;
+    
+    if (event.tCode == 0x0 || event.tCode == 0x1 || event.tCode == 0x4 || event.tCode == 0x5 || event.tCode == 0x9) {
+        event.address = (offset_high << 32) | offset_low;
+    }
+    
+    if (event.tCode == 0x0) {
+        event.quadletData = OSSwapLittleToHostInt32(immDesc->immediateData[3]);
+    }
+    
+    if (chain.last && chain.last != chain.first) {
+        event.payloadBytes = chain.last->control & 0xFFFF;
+    } else {
+        event.payloadBytes = 0;
+    }
+    
+    event.ackCode = 0; // Fill when completion is received if possible, else 0
+    event.rCode = 0;
+    // spd is at Q0 bits [18:16] (PacketBuilder.cpp:181). Map the OHCI speed code to the ABI enum.
+    switch ((q0 >> 16) & 0x07) {
+        case 0:  event.speed = ASFWDiagSpeedS100; break;
+        case 1:  event.speed = ASFWDiagSpeedS200; break;
+        case 2:  event.speed = ASFWDiagSpeedS400; break;
+        case 3:  event.speed = ASFWDiagSpeedS800; break;
+        default: event.speed = ASFWDiagSpeedUnknown; break;
+    }
+    
+    traceCapture->CaptureEvent(event);
+}
+} // namespace
 
 // ============================================================================
 // FSM-based submission via ATManager
@@ -48,6 +123,9 @@ SubmitResult Submitter::submit_tx_chain(ATRequestContext* ctx, DescriptorBuilder
 
     const uint32_t txid = chain.txid;
     const uint8_t totalBlocks = chain.TotalBlocks();
+
+    // Trace outgoing request before moving chain
+    TraceOutgoingEvent(traceCapture_, 0, chain);
 
     // Submit via ATManager (handles PATH 1/PATH 2 decision, WAKE guardrails, fallback)
     const kern_return_t kr = atMgr->Submit(std::move(chain), opts);
@@ -90,6 +168,9 @@ SubmitResult Submitter::submit_tx_chain(ATResponseContext* ctx, DescriptorBuilde
 
     const uint32_t txid = chain.txid;
     const uint8_t totalBlocks = chain.TotalBlocks();
+
+    // Trace outgoing response before moving chain
+    TraceOutgoingEvent(traceCapture_, 1, chain);
 
     const kern_return_t kr = atMgr->Submit(std::move(chain), opts);
     if (kr != kIOReturnSuccess) {

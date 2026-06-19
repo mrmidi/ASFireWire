@@ -1,382 +1,93 @@
 #include "TopologyManager.hpp"
 
 #include <algorithm>
-#include <array>
-#include <map>
 #include <numeric>
-#include <string>
-#include <utility>
-#include <vector>
 
 #include "../Logging/Logging.hpp"
-#include "TopologyTypes.hpp"
+#include "SelfIDStreamParser.hpp"
+#include "SelfIDTopologyNormalizer.hpp"
 
 namespace {
 
 using namespace ASFW::Driver;
 
-constexpr size_t kMaxPorts = 128;
-
-// keep small internal aggregators local to the compilation unit
-struct NodeAccumulator {
-    uint8_t phyId{0};
-    bool haveBase{false};
-    bool linkActive{false};
-    bool contender{false};
-    bool initiatedReset{false};
-    uint8_t gapCount{0};
-    uint8_t powerClass{0};
-    uint32_t speedCode{0};
-    std::vector<PortState> ports;
+struct NodeIDRegisterInfo {
+    std::optional<uint8_t> localNodeId;
+    std::optional<uint16_t> busNumber;
+    uint16_t busBase16{0};
 };
 
-void StorePort(NodeAccumulator& node, size_t index, PortState state) {
-    if (index >= kMaxPorts) {
-        return; // Silently ignore ports beyond cap
+[[nodiscard]] NodeIDRegisterInfo DecodeNodeIDRegister(uint32_t nodeIDReg) {
+    NodeIDRegisterInfo info{};
+    if ((nodeIDReg & 0x80000000u) == 0) {
+        return info;
     }
-    if (node.ports.size() <= index) {
-        node.ports.resize(index + 1, PortState::NotPresent);
+
+    const uint16_t nodeID = static_cast<uint16_t>(nodeIDReg & 0xFFFFu);
+    const uint8_t nodeNum = static_cast<uint8_t>(nodeID & 0x3Fu);
+    info.busBase16 = static_cast<uint16_t>(nodeID & 0xFFC0u);
+    info.busNumber = static_cast<uint16_t>((nodeID >> 6) & 0x3FFu);
+    if (nodeNum != 63) {
+        info.localNodeId = nodeNum;
     }
-    node.ports[index] = state;
+    return info;
 }
 
-// Per IEEE 1394-1995 §8.4.3.2: Root node identification
-std::optional<uint8_t> FindRootNode(const std::vector<TopologyNode>& nodes) {
-    std::optional<uint8_t> rootId;
-
-    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-        if (it->linkActive && it->portCount > 0) {
-            bool hasParentPort = false;
-            for (const auto& state : it->portStates) {
-                if (state == PortState::Parent) {
-                    hasParentPort = true;
-                    break;
-                }
-            }
-            if (!hasParentPort) {
-                rootId = it->nodeId;
-                break;
-            }
-        }
-    }
-
-    if (!rootId.has_value()) {
-        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-            if (it->linkActive && it->portCount > 0 && it->isIRMCandidate) {
-                rootId = it->nodeId;
-                break;
-            }
-        }
-    }
-
-    if (!rootId.has_value()) {
-        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-            if (it->linkActive && it->portCount > 0) {
-                rootId = it->nodeId;
-                break;
-            }
-        }
-    }
-
-    if (!rootId.has_value()) {
-        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-            if (it->linkActive) {
-                rootId = it->nodeId;
-                break;
-            }
-        }
-    }
-
-    return rootId;
-}
-
-std::optional<uint8_t> FindIRMNode(const std::vector<TopologyNode>& nodes) {
-    std::optional<uint8_t> irmId;
-    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-        if (it->isIRMCandidate) {
-            irmId = it->nodeId;
-            break;
-        }
-    }
-    return irmId;
-}
-
-uint8_t CalculateOptimumGapCount(const std::map<uint8_t, NodeAccumulator>& accumulators) {
+// Returns the gap_count currently OBSERVED on the bus (the max gap_count field
+// across the Self-ID packets), not an optimized value. This feeds snapshot.gapCount,
+// which is used for diagnostics, the wire snapshot, and the topology fingerprint.
+// The gap_count that ASFW *applies* when acting as bus manager is computed
+// separately from the bus diameter via GapCountOptimizer (see BusManager).
+uint8_t ObservedGapCount(const std::vector<SelfIDNodeRecord>& records) {
     uint8_t maxGap = 0;
-    for (const auto& entry : accumulators) {
-        if (entry.second.haveBase && entry.second.gapCount > maxGap) {
-            maxGap = entry.second.gapCount;
+    for (const auto& record : records) {
+        if (record.gapCount > maxGap) {
+            maxGap = record.gapCount;
         }
     }
-    return maxGap > 63 ? 63 : maxGap;
+    return std::min<uint8_t>(maxGap, 63);
 }
 
-uint8_t CalculateMaxHops(const std::vector<TopologyNode>& nodes, uint8_t rootNodeId) {
-    if (nodes.empty()) {
-        return 0;
-    }
-
-    std::map<uint8_t, uint8_t> hopCount;
-    std::vector<uint8_t> queue;
-
-    hopCount[rootNodeId] = 0;
-    queue.push_back(rootNodeId);
-
-    uint8_t maxHops = 0;
-    size_t queueHead = 0;
-
-    while (queueHead < queue.size()) {
-        const uint8_t currentNodeId = queue[queueHead++];
-        const uint8_t currentHops = hopCount[currentNodeId];
-
-        const TopologyNode* currentNode = nullptr;
-        for (const auto& node : nodes) {
-            if (node.nodeId == currentNodeId) {
-                currentNode = &node;
-                break;
-            }
-        }
-
-        if (!currentNode) {
-            continue;
-        }
-
-        for (const uint8_t childId : currentNode->childNodeIds) {
-            if (hopCount.find(childId) == hopCount.end()) {
-                const uint8_t childHops = currentHops + 1;
-                hopCount[childId] = childHops;
-                queue.push_back(childId);
-
-                if (childHops > maxHops) {
-                    maxHops = childHops;
-                }
-            }
-        }
-    }
-
-    return maxHops;
+bool CalculateGapConsistency(const std::vector<uint32_t>& quads) {
+    const auto gaps = TopologyManager::ExtractGapCounts(quads);
+    if (gaps.empty()) return true;
+    
+    const uint8_t first = gaps[0];
+    return std::all_of(gaps.begin(), gaps.end(), [first](uint8_t g) { return g == first; });
 }
 
-[[nodiscard]] bool HasExplicitTreePorts(const std::vector<TopologyNode>& nodes) {
-    for (const auto& node : nodes) {
-        for (const auto state : node.portStates) {
-            if (state == PortState::Parent || state == PortState::Child) {
-                return true;
-            }
-        }
-    }
-    return false;
+void LogTopologySummary(const TopologySnapshot& snapshot) {
+    const std::string rootStr = (snapshot.rootNodeId != kInvalidPhysicalId) 
+                                ? std::to_string(snapshot.rootNodeId) : "none";
+    const std::string irmStr = (snapshot.irmNodeId != kInvalidPhysicalId) 
+                                ? std::to_string(snapshot.irmNodeId) : "none";
+    const std::string localStr = (snapshot.localNodeId != kInvalidPhysicalId) 
+                                 ? std::to_string(snapshot.localNodeId) : "none";
+    const std::string busStr = snapshot.busNumber.has_value() 
+                                ? std::to_string(*snapshot.busNumber) : "none";
+
+    ASFW_LOG(Topology, "=== 🗺️ Topology Snapshot v2 ===");
+    ASFW_LOG(Topology,
+             "🧮 gen=%u nodes=%u root=%{public}s IRM=%{public}s local=%{public}s bus=%{public}s gap=%u hops=%u status=%u error=%u",
+             snapshot.generation,
+             snapshot.nodeCount,
+             rootStr.c_str(),
+             irmStr.c_str(),
+             localStr.c_str(),
+             busStr.c_str(),
+             snapshot.gapCount,
+             snapshot.physical.busDiameterHops,
+             static_cast<uint8_t>(snapshot.graphStatus),
+             static_cast<uint8_t>(snapshot.errorCode));
 }
-
-void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::string>& warnings) {
-    if (nodes.empty()) {
-        return;
-    }
-
-    if (!HasExplicitTreePorts(nodes)) {
-        return;
-    }
-
-    uint32_t rootCount = 0;
-    for (const auto& node : nodes) {
-        if (node.parentNodeIds.empty()) {
-            rootCount++;
-        }
-    }
-
-    if (rootCount == 0) {
-        warnings.push_back("No root node found (all nodes have parents - cycle detected)");
-    } else if (rootCount > 1) {
-        warnings.push_back("Multiple root nodes found (" + std::to_string(rootCount) +
-                         ") - forest instead of tree");
-    }
-
-    for (const auto& parent : nodes) {
-        for (const uint8_t childId : parent.childNodeIds) {
-            const TopologyNode* child = nullptr;
-            for (const auto& node : nodes) {
-                if (node.nodeId == childId) {
-                    child = &node;
-                    break;
-                }
-            }
-
-            if (!child) {
-                warnings.push_back("Node " + std::to_string(parent.nodeId) +
-                                 " has child " + std::to_string(childId) +
-                                 " which doesn't exist");
-                continue;
-            }
-
-            bool hasReciprocalLink = std::find(
-                child->parentNodeIds.begin(),
-                child->parentNodeIds.end(),
-                parent.nodeId
-            ) != child->parentNodeIds.end();
-
-            if (!hasReciprocalLink) {
-                warnings.push_back("Node " + std::to_string(parent.nodeId) +
-                                 " → " + std::to_string(childId) +
-                                 " missing reciprocal parent link");
-            }
-        }
-    }
-
-    uint32_t totalEdges = 0;
-    for (const auto& node : nodes) {
-        totalEdges += static_cast<uint32_t>(node.childNodeIds.size());
-    }
-
-    const uint32_t expectedEdges = static_cast<uint32_t>(nodes.size()) - 1;
-    if (totalEdges != expectedEdges) {
-        warnings.push_back("Edge count mismatch: " + std::to_string(totalEdges) +
-                         " edges for " + std::to_string(nodes.size()) +
-                         " nodes (expected " + std::to_string(expectedEdges) + ")");
-    }
-}
-
-[[nodiscard]] bool HasContiguousNodeCoverage(const std::vector<TopologyNode>& nodes) {
-    if (nodes.empty()) {
-        return false;
-    }
-
-    uint8_t expectedNodeId = 0;
-    for (const auto& node : nodes) {
-        if (node.nodeId != expectedNodeId) {
-            return false;
-        }
-        ++expectedNodeId;
-    }
-    return true;
-}
-
-[[nodiscard]] std::string JoinWarnings(const std::vector<std::string>& warnings) {
-    return std::accumulate(
-        warnings.begin(), warnings.end(), std::string{},
-        [](std::string acc, const std::string& warning) {
-            if (!acc.empty()) {
-                acc.append("; ");
-            }
-            acc.append(warning);
-            return acc;
-        });
-}
-
-void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& warnings) {
-    for (auto& node : nodes) {
-        node.parentNodeIds.clear();
-        node.childNodeIds.clear();
-    }
-
-    if (!HasExplicitTreePorts(nodes)) {
-        return;
-    }
-
-    uint32_t edgesConstructed = 0;
-    uint32_t orphanedPorts = 0;
-
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        TopologyNode& nodeA = nodes[i];
-
-        for (size_t portA = 0; portA < nodeA.portStates.size(); ++portA) {
-            if (nodeA.portStates[portA] == PortState::Parent) {
-                bool foundMatch = false;
-
-                for (size_t j = 0; j < nodes.size(); ++j) {
-                    if (i == j) continue;
-                    TopologyNode& nodeB = nodes[j];
-
-                    for (size_t portB = 0; portB < nodeB.portStates.size(); ++portB) {
-                        if (nodeB.portStates[portB] == PortState::Child) {
-                            bool alreadyConnected = std::find(
-                                nodeB.parentNodeIds.begin(),
-                                nodeB.parentNodeIds.end(),
-                                nodeA.nodeId
-                            ) != nodeB.parentNodeIds.end();
-
-                            if (!alreadyConnected) {
-                                nodeA.childNodeIds.push_back(nodeB.nodeId);
-                                nodeB.parentNodeIds.push_back(nodeA.nodeId);
-                                edgesConstructed++;
-                                foundMatch = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (foundMatch) break;
-                }
-
-                if (!foundMatch) {
-                    orphanedPorts++;
-                    warnings.push_back("Orphaned Parent port on node " +
-                                     std::to_string(nodeA.nodeId) + " port " +
-                                     std::to_string(portA));
-                }
-            }
-        }
-    }
-
-    if (nodes.size() > 0 && edgesConstructed != (nodes.size() - 1)) {
-        warnings.push_back("Edge count " + std::to_string(edgesConstructed) +
-                         " != expected " + std::to_string(nodes.size() - 1) +
-                         " for tree structure");
-    }
-
-    if (orphanedPorts > 0) {
-        warnings.push_back("Found " + std::to_string(orphanedPorts) +
-                         " orphaned Parent ports");
-    }
-}
-
-#if ASFW_DEBUG_TOPOLOGY
-const char* PortStateEmoji(PortState state) {
-    switch (state) {
-        case PortState::Parent: return "⬆️";
-        case PortState::Child: return "⬇️";
-        case PortState::NotActive: return "⚪️";
-        case PortState::NotPresent:
-        default: return "▫️";
-    }
-}
-
-const char* PortStateToString(PortState state) {
-    switch (state) {
-        case PortState::Parent: return "parent";
-        case PortState::Child: return "child";
-        case PortState::NotActive: return "inactive";
-        case PortState::NotPresent:
-        default: return "absent";
-    }
-}
-
-std::string SummarizePorts(const std::vector<PortState>& ports) {
-    std::string summary;
-    for (size_t idx = 0; idx < ports.size(); ++idx) {
-        const PortState state = ports[idx];
-        if (state == PortState::NotPresent) {
-            continue;
-        }
-        if (!summary.empty()) {
-            summary.push_back(' ');
-        }
-        summary.append("p");
-        summary.append(std::to_string(idx));
-        summary.append("=");
-        summary.append(PortStateToString(state));
-        summary.append(PortStateEmoji(state));
-    }
-    if (summary.empty()) {
-        summary = "none";
-    }
-    return summary;
-}
-#endif
 
 } // namespace
 
 namespace ASFW::Driver {
 
-TopologyManager::TopologyManager() = default;
+TopologyManager::TopologyManager() {
+    badIRMFlags_.assign(63, false);
+}
 
 void TopologyManager::Reset() {
     latest_.reset();
@@ -389,304 +100,100 @@ void TopologyManager::InvalidateForBusReset() {
 
 const char* TopologyManager::TopologyBuildErrorCodeString(TopologyBuildErrorCode code) noexcept {
     switch (code) {
-    case TopologyBuildErrorCode::InvalidSelfID:
-        return "InvalidSelfID";
-    case TopologyBuildErrorCode::EmptySequenceSet:
-        return "EmptySequenceSet";
-    case TopologyBuildErrorCode::MissingNodeCoverage:
-        return "MissingNodeCoverage";
-    case TopologyBuildErrorCode::NoRootNode:
-        return "NoRootNode";
-    case TopologyBuildErrorCode::TreeValidationFailed:
-        return "TreeValidationFailed";
+    case TopologyBuildErrorCode::None: return "None";
+    case TopologyBuildErrorCode::InvalidSelfID: return "InvalidSelfID";
+    case TopologyBuildErrorCode::EmptySequenceSet: return "EmptySequenceSet";
+    case TopologyBuildErrorCode::NonContiguousPhysicalIds: return "NonContiguousPhysicalIds";
+    case TopologyBuildErrorCode::DuplicatePhysicalId: return "DuplicatePhysicalId";
+    case TopologyBuildErrorCode::MissingBasePacket: return "MissingBasePacket";
+    case TopologyBuildErrorCode::InvalidExtendedPacketOrder: return "InvalidExtendedPacketOrder";
+    case TopologyBuildErrorCode::NonRootWithoutParentPort: return "NonRootWithoutParentPort";
+    case TopologyBuildErrorCode::RootHasParentPort: return "RootHasParentPort";
+    case TopologyBuildErrorCode::ChildPortWithEmptyStack: return "ChildPortWithEmptyStack";
+    case TopologyBuildErrorCode::PoppedNodeHasNoUnresolvedParent: return "PoppedNodeHasNoUnresolvedParent";
+    case TopologyBuildErrorCode::UnresolvedStackAfterRoot: return "UnresolvedStackAfterRoot";
+    case TopologyBuildErrorCode::ReciprocalLinkMissing: return "ReciprocalLinkMissing";
+    case TopologyBuildErrorCode::EdgeCountMismatch: return "EdgeCountMismatch";
+    case TopologyBuildErrorCode::LocalNodeUnavailable: return "LocalNodeUnavailable";
     }
     return "Unknown";
 }
 
-std::expected<TopologySnapshot, TopologyManager::TopologyBuildError>
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result, uint64_t timestamp,
+std::expected<TopologySnapshot, TopologyBuildError>
+TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result,
+                                  uint64_t timestamp,
                                   uint32_t nodeIDReg) {
-    if (!result.valid || result.quads.empty()) {
-        ASFW_LOG(Topology, "Self-ID result invalid (crc=%d timeout=%d)",
-               result.crcError, result.timedOut);
-        return std::unexpected(TopologyBuildError{TopologyBuildErrorCode::InvalidSelfID,
-                                                  "Self-ID result invalid"});
-    }
-
-    if (result.sequences.empty()) {
-        ASFW_LOG(Topology, "Self-ID has quadlets but no valid sequences - invalid data");
-        return std::unexpected(TopologyBuildError{TopologyBuildErrorCode::EmptySequenceSet,
-                                                  "Self-ID sequence set is empty"});
-    }
-
-    // Extract bus/node from NodeID register if valid
-    // OHCI NodeID[31] = IDValid; low 16 bits are IEEE 1394 Node_ID: [15:6]=bus, [5:0]=node.
-    std::optional<uint8_t> localNodeId;
-    std::optional<uint16_t> busNumber;
-    uint16_t busBase16 = 0;
-    if (nodeIDReg & 0x80000000u) {  // IDValid
-        const uint16_t node_id_16 = static_cast<uint16_t>(nodeIDReg & 0xFFFFu);
-        const uint8_t nodeNum = static_cast<uint8_t>(node_id_16 & 0x3Fu);
-        const uint16_t busNum = static_cast<uint16_t>((node_id_16 >> 6) & 0x3FFu);
-        busBase16 = static_cast<uint16_t>(node_id_16 & 0xFFC0u); // (bus<<6)
-        if (nodeNum != 63) {
-            localNodeId = nodeNum;
-        }
-        busNumber = busNum;
-    }
-
-    std::vector<std::string> warnings;
-    std::map<uint8_t, NodeAccumulator> accumulators;
-
-    // Iterate pre-parsed and validated Self-ID sequences (start index + quadlet count)
-    for (const auto& seq : result.sequences) {
-        const size_t start = seq.first;
-        const unsigned int quadlet_count = seq.second;
-        for (unsigned int i = 0; i < quadlet_count; ++i) {
-            const uint32_t raw = result.quads[start + i];
-
-            // base quadlet (i == 0) contains primary fields
-            const uint8_t phyId = ExtractPhyID(raw);
-            auto& node = accumulators[phyId];
-            node.phyId = phyId;
-
-            if (i == 0) {
-                node.haveBase = true;
-                node.linkActive = IsLinkActive(raw);
-                node.contender = IsContender(raw);
-                node.initiatedReset = IsInitiatedReset(raw);
-                node.gapCount = ExtractGapCount(raw);
-                node.powerClass = static_cast<uint8_t>(ExtractPowerClass(raw));
-                node.speedCode = ExtractSpeedCode(raw);
-                node.ports.clear();
-                node.ports.reserve(3);
-                StorePort(node, 0, ExtractPortState(raw, 0));
-                StorePort(node, 1, ExtractPortState(raw, 1));
-                StorePort(node, 2, ExtractPortState(raw, 2));
-
-                if (!HasMorePackets(raw)) {
-                    node.ports.resize(3);
-                }
-            } else {
-                // extended quadlet: sequence number is encoded in the quad, but
-                // enumerator already validated sequence ordering.
-                const uint32_t sequence = ExtractSeq(raw);
-                const size_t baseIndex = 3u + static_cast<size_t>(sequence) * 4u;
-                for (size_t slot = 0; slot < 4; ++slot) {
-                    const size_t portIndex = baseIndex + slot;
-                    const uint32_t code = (raw >> (slot * 2)) & 0x3u;
-                    StorePort(node, portIndex, DecodePort(code));
-                }
-            }
-        }
-    }
-
-    TopologySnapshot snapshot;
+    TopologySnapshot snapshot{};
     snapshot.generation = result.generation;
     snapshot.capturedAt = timestamp;
-    
-    // Store Self-ID raw data for GUI export
-    snapshot.selfIDData.rawQuadlets = result.quads;
-    snapshot.selfIDData.sequences = result.sequences;
-    snapshot.selfIDData.generation = result.generation;
-    snapshot.selfIDData.captureTimestamp = timestamp;
-    snapshot.selfIDData.valid = result.valid;
-    snapshot.selfIDData.timedOut = result.timedOut;
-    snapshot.selfIDData.crcError = result.crcError;
+    snapshot.rawSelfIdQuadlets = result.quads;
+    snapshot.selfIdSequenceCount = static_cast<uint32_t>(result.sequences.size());
 
-    snapshot.nodes.reserve(accumulators.size());
-    for (auto& entry : accumulators) {
-        const auto& node = entry.second;
-        if (!node.haveBase) {
-            continue;
-        }
-
-        TopologyNode topo{};
-        topo.nodeId = node.phyId;
-        topo.isIRMCandidate = node.contender;
-        topo.linkActive = node.linkActive;
-        topo.initiatedReset = node.initiatedReset;
-        topo.gapCount = node.gapCount;
-        topo.powerClass = node.powerClass;
-        topo.maxSpeedMbps = DecodeSpeed(node.speedCode);
-        topo.portCount = static_cast<uint8_t>(std::count_if(node.ports.begin(), node.ports.end(), [](PortState state) {
-            return state != PortState::NotPresent;
-        }));
-        topo.portStates = node.ports;  // Copy port states for GUI export
-        
-        // Determine parent port for tree structure
-        for (size_t i = 0; i < node.ports.size(); ++i) {
-            if (node.ports[i] == PortState::Parent) {
-                topo.parentPort = static_cast<uint8_t>(i);
-                break;
-            }
-        }
-        
-        snapshot.nodes.push_back(std::move(topo));
+    if (!result.valid || result.quads.empty()) {
+        snapshot.selfIdStatus = result.timedOut ? SelfIDStreamStatus::Timeout
+                                                : SelfIDStreamStatus::Invalid;
+        snapshot.graphStatus = TopologyGraphStatus::Invalid;
+        snapshot.errorCode = TopologyBuildErrorCode::InvalidSelfID;
+        snapshot.errorDetail = "Self-ID stream is invalid or empty";
+        return std::unexpected(TopologyBuildError{snapshot.errorCode, snapshot.errorDetail});
     }
 
-    std::sort(snapshot.nodes.begin(), snapshot.nodes.end(), [](const TopologyNode& lhs, const TopologyNode& rhs) {
-        return lhs.nodeId < rhs.nodeId;
-    });
+    snapshot.selfIdStatus = SelfIDStreamStatus::Valid;
 
-    // Build tree structure by matching parent/child ports (IEEE 1394-2008 Annex P)
-    BuildTreeLinks(snapshot.nodes, warnings);
+    const NodeIDRegisterInfo nodeInfo = DecodeNodeIDRegister(nodeIDReg);
+    snapshot.localNodeId = nodeInfo.localNodeId.value_or(kInvalidPhysicalId);
+    snapshot.busBase16 = nodeInfo.busBase16;
+    snapshot.busNumber = nodeInfo.busNumber;
 
-    // Validate topology consistency (tree structure requirements)
-    ValidateTopology(snapshot.nodes, warnings);
-
-    // Perform topology analysis per IEEE 1394-1995 §8.4
-    snapshot.nodeCount = static_cast<uint8_t>(snapshot.nodes.size());
-    snapshot.rootNodeId = FindRootNode(snapshot.nodes);
-    snapshot.irmNodeId = FindIRMNode(snapshot.nodes);
-    snapshot.localNodeId = localNodeId;
-    snapshot.busBase16 = busBase16;
-    snapshot.busNumber = busNumber;
-    snapshot.gapCount = CalculateOptimumGapCount(accumulators);
-    {
-        const auto gaps = ExtractGapCounts(result.quads);
-        snapshot.gapCountConsistent =
-            gaps.empty() ||
-            std::adjacent_find(gaps.begin(), gaps.end(),
-                               [](uint8_t lhs, uint8_t rhs) { return lhs != rhs; }) == gaps.end();
+    auto records = SelfIDStreamParser::Parse(result);
+    if (!records.has_value()) {
+        snapshot.graphStatus = TopologyGraphStatus::Invalid;
+        snapshot.errorCode = records.error().code;
+        snapshot.errorDetail = records.error().detail;
+        return std::unexpected(records.error());
     }
 
-    // Mark root node in topology
-    if (snapshot.rootNodeId.has_value()) {
-        for (auto& node : snapshot.nodes) {
-            if (node.nodeId == *snapshot.rootNodeId) {
-                node.isRoot = true;
-                break;
-            }
-        }
-        // Calculate maximum hop count from root (BFS traversal)
-        snapshot.maxHopsFromRoot = CalculateMaxHops(snapshot.nodes, *snapshot.rootNodeId);
-    } else {
-        snapshot.maxHopsFromRoot = 0;
+    auto physical = SelfIDTopologyNormalizer::BuildPhysicalGraph(*records, snapshot.localNodeId);
+    if (!physical.has_value()) {
+        snapshot.graphStatus = TopologyGraphStatus::Invalid;
+        snapshot.errorCode = physical.error().code;
+        snapshot.errorDetail = physical.error().detail;
+        return std::unexpected(physical.error());
     }
 
-    if (!HasContiguousNodeCoverage(snapshot.nodes)) {
-        return std::unexpected(TopologyBuildError{
-            TopologyBuildErrorCode::MissingNodeCoverage,
-            "Self-ID node coverage is not contiguous from the lowest observed node ID"});
+    auto normalized =
+        SelfIDTopologyNormalizer::NormalizeFromLocal(*physical, snapshot.localNodeId);
+    if (!normalized.has_value()) {
+        // Normalization failure is treated as a graph failure in this implementation.
+        snapshot.graphStatus = TopologyGraphStatus::Invalid;
+        snapshot.errorCode = normalized.error().code;
+        snapshot.errorDetail = normalized.error().detail;
+        return std::unexpected(normalized.error());
     }
 
-    if (!warnings.empty()) {
-        return std::unexpected(
-            TopologyBuildError{TopologyBuildErrorCode::TreeValidationFailed,
-                               JoinWarnings(warnings)});
-    }
+    snapshot.graphStatus = TopologyGraphStatus::Valid;
+    snapshot.physical = *physical;
+    snapshot.normalizedFromLocal = *normalized;
 
-    if (!snapshot.rootNodeId.has_value()) {
-        return std::unexpected(
-            TopologyBuildError{TopologyBuildErrorCode::NoRootNode,
-                               "No root node could be derived from the validated Self-ID tree"});
-    }
+    snapshot.nodeCount = snapshot.physical.nodeCount;
+    snapshot.rootNodeId = snapshot.physical.rootId;
+    snapshot.irmNodeId = snapshot.physical.irmId;
+    snapshot.betaRepeatersPresent = snapshot.physical.betaRepeatersPresent;
+    snapshot.gapCount = ObservedGapCount(*records);
+    snapshot.gapCountConsistent = CalculateGapConsistency(result.quads);
 
-    // Log topology analysis results with rich context
-    const std::string rootStr = snapshot.rootNodeId.has_value() ? std::to_string(*snapshot.rootNodeId) : std::string("none");
-    const std::string irmStr = snapshot.irmNodeId.has_value() ? std::to_string(*snapshot.irmNodeId) : std::string("none");
-    const std::string localStr = snapshot.localNodeId.has_value() ? std::to_string(*snapshot.localNodeId) : std::string("none");
-    const std::string busStr = snapshot.busNumber.has_value() ? std::to_string(*snapshot.busNumber) : std::string("none");
-
-    ASFW_LOG(Topology, "=== 🗺️ Topology Snapshot ===");
-    ASFW_LOG(Topology, "🧮 gen=%u nodes=%u root=%{public}s IRM=%{public}s local=%{public}s bus=%{public}s gap=%u maxHops=%u",
-             snapshot.generation,
-             snapshot.nodeCount,
-             rootStr.c_str(),
-             irmStr.c_str(),
-             localStr.c_str(),
-             busStr.c_str(),
-             snapshot.gapCount,
-             snapshot.maxHopsFromRoot);
-
-#if ASFW_DEBUG_TOPOLOGY
-    for (const auto& topoNode : snapshot.nodes) {
-        const auto accIt = accumulators.find(topoNode.nodeId);
-        const std::string portSummary = (accIt != accumulators.end()) ? SummarizePorts(accIt->second.ports)
-                                                                       : std::string("unknown");
-
-        std::string badges;
-        if (topoNode.isRoot) {
-            badges += "👑";
-        }
-        if (snapshot.irmNodeId && topoNode.nodeId == *snapshot.irmNodeId) {
-            badges += "🏛️";
-        }
-        if (snapshot.localNodeId && topoNode.nodeId == *snapshot.localNodeId) {
-            badges += "📍";
-        }
-        if (badges.empty()) {
-            badges = "•";
-        }
-
-        const char* linkEmoji = topoNode.linkActive ? "✅" : "⬜️";
-        const char* resetEmoji = topoNode.initiatedReset ? "🌀" : "";
-        const char* contenderEmoji = topoNode.isIRMCandidate ? "🗳️" : "";
-
-        ASFW_LOG_TOPOLOGY_DETAIL(
-            "%{public}s Node %u: link=%{public}s speed=%uMb ports=%u (%{public}s) power=%{public}s gap=%u %{public}s%{public}s",
-            badges.c_str(),
-            topoNode.nodeId,
-            linkEmoji,
-            topoNode.maxSpeedMbps,
-            topoNode.portCount,
-            portSummary.c_str(),
-            PowerClassToString(static_cast<PowerClass>(topoNode.powerClass)),
-            topoNode.gapCount,
-            contenderEmoji,
-            resetEmoji);
-    }
-#endif
-    ASFW_LOG(Topology, "=== End Topology Snapshot ===");
-
-    if (!snapshot.irmNodeId.has_value()) {
-        ASFW_LOG(Topology, "⚠️  WARNING: No IRM candidate found (no contender nodes)");
-    }
-    if (!snapshot.busNumber.has_value()) {
-        ASFW_LOG(Topology, "⚠️  WARNING: Bus number is unknown (NodeID.IDValid=0) — defer async reads until valid");
-    }
-    
-    unsigned int resetInitiators = 0;
-    for (const auto& node : snapshot.nodes) {
-        if (node.initiatedReset) {
-            resetInitiators++;
-            ASFW_LOG(Topology, "🌀 Node %u initiated bus reset", node.nodeId);
-        }
-    }
-
-    if (resetInitiators > 1) {
-        ASFW_LOG(Topology, "⚠️  WARNING: Multiple nodes (%u) initiated bus reset - check cabling/power", resetInitiators);
-    }
-
-    unsigned int totalActivePorts = 0;
-    for (const auto& node : snapshot.nodes) {
-        if (node.linkActive) {
-            totalActivePorts += node.portCount;
-        }
-    }
-    if (totalActivePorts == 0 && snapshot.nodeCount > 0) {
-        ASFW_LOG(Topology, "⚠️  WARNING: Zero active ports detected - nodes may be isolated");
-    }
-
-    snapshot.warnings = warnings;
+    LogTopologySummary(snapshot);
 
     latest_ = snapshot;
     return snapshot;
 }
 
 std::optional<TopologySnapshot> TopologyManager::LatestSnapshot() const {
-    if (latest_.has_value()) {
-        // ASFW_LOG(Topology, "LatestSnapshot() called: returning gen=%u nodes=%u",
-        //          latest_->generation, latest_->nodeCount);
-    } else {
-        // ASFW_LOG(Topology, "LatestSnapshot() called: no snapshot available (latest_ is nullopt)");
-    }
     return latest_;
 }
 
-std::optional<TopologySnapshot> TopologyManager::CompareAndSwap(std::optional<TopologySnapshot> previous) {
+std::optional<TopologySnapshot>
+TopologyManager::CompareAndSwap(std::optional<TopologySnapshot> previous) {
     if (!latest_.has_value()) {
         return std::nullopt;
     }
@@ -696,21 +203,11 @@ std::optional<TopologySnapshot> TopologyManager::CompareAndSwap(std::optional<To
     return latest_;
 }
 
-// ============================================================================
-// Bad IRM Tracking
-// ============================================================================
-
 void TopologyManager::MarkNodeAsBadIRM(uint8_t nodeID) {
-    if (nodeID >= 63) {
-        ASFW_LOG(Topology, "MarkNodeAsBadIRM: Invalid node ID %u (must be 0-62)", nodeID);
-        return;
-    }
-
-    // Resize vector if needed (max 63 nodes on bus)
+    if (nodeID >= 63) return;
     if (badIRMFlags_.size() < 63) {
         badIRMFlags_.resize(63, false);
     }
-
     if (!badIRMFlags_[nodeID]) {
         ASFW_LOG(Topology, "⚠️  Node %u marked as bad IRM (failed verification)", nodeID);
         badIRMFlags_[nodeID] = true;
@@ -718,46 +215,20 @@ void TopologyManager::MarkNodeAsBadIRM(uint8_t nodeID) {
 }
 
 bool TopologyManager::IsNodeBadIRM(uint8_t nodeID) const {
-    if (nodeID >= badIRMFlags_.size()) {
-        return false;
-    }
+    if (nodeID >= badIRMFlags_.size()) return false;
     return badIRMFlags_[nodeID];
 }
 
 void TopologyManager::ClearBadIRMFlags() {
-    if (!badIRMFlags_.empty()) {
-        ASFW_LOG(Topology, "Clearing bad IRM flags (bus reset)");
-        badIRMFlags_.clear();
-        badIRMFlags_.resize(63, false);
-    }
+    badIRMFlags_.assign(63, false);
 }
-
-// ============================================================================
-// Gap Count Extraction
-// ============================================================================
 
 std::vector<uint8_t> TopologyManager::ExtractGapCounts(const std::vector<uint32_t>& selfIDs) {
     std::vector<uint8_t> gaps;
-
-    if (selfIDs.empty()) {
-        return gaps;
-    }
-
-    // The base Self-ID quadlet carries the gap count in bits[21:16]. Extended
-    // quadlets reuse high bits for sequence metadata, so we only extract from
-    // the non-extended packet-0 form described by the wire-format helpers.
-    constexpr uint32_t kGapCountMask = 0x003F0000;    // bits[21:16]
-    constexpr uint32_t kGapCountShift = 16;
-
     for (uint32_t packet : selfIDs) {
-        if (!IsSelfIDTag(packet) || IsExtended(packet)) {
-            continue;
-        }
-
-        uint8_t gapCount = static_cast<uint8_t>((packet & kGapCountMask) >> kGapCountShift);
-        gaps.push_back(gapCount);
+        if (!IsSelfIDTag(packet) || IsExtended(packet)) continue;
+        gaps.push_back(ExtractGapCount(packet));
     }
-
     return gaps;
 }
 

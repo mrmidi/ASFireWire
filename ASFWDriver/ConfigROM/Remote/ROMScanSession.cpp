@@ -15,28 +15,8 @@ namespace ASFW::Discovery {
 
 namespace {
 
-constexpr uint32_t kNikonOui = 0x0090B5;
-constexpr uint8_t kNikonSlowPublishRetryBudget = 4;
-constexpr uint64_t kNikonSlowPublishDelayNs = 500ULL * 1'000'000ULL;
-
 uint32_t SpeedMbps(FwSpeed speed) {
     return 100u << static_cast<uint8_t>(speed);
-}
-
-[[nodiscard]] constexpr uint32_t ExtractOui(uint64_t guid) noexcept {
-    return static_cast<uint32_t>((guid >> 40U) & 0xFFFFFFULL);
-}
-
-[[nodiscard]] constexpr bool IsNikonGuid(uint64_t guid) noexcept {
-    return ExtractOui(guid) == kNikonOui;
-}
-
-[[nodiscard]] constexpr bool IsMinimalROM(const BusInfoBlock& bib) noexcept {
-    return bib.crcLength <= bib.busInfoLength;
-}
-
-[[nodiscard]] constexpr bool IsNikonMinimalROM(const BusInfoBlock& bib) noexcept {
-    return IsMinimalROM(bib) && IsNikonGuid(bib.guid);
 }
 
 void LogBIBReadFailed(uint8_t nodeId) {
@@ -45,11 +25,6 @@ void LogBIBReadFailed(uint8_t nodeId) {
 
 void LogBIBBootingRetry(uint8_t nodeId) {
     ASFW_LOG(ConfigROM, "ROMScanSession: Node %u BIB quadlet[0]=0 (booting), retry", nodeId);
-}
-
-void LogBIBShortRead(uint8_t nodeId, size_t quadletCount) {
-    ASFW_LOG(ConfigROM, "ROMScanSession: Node %u BIB read returned %zu quadlets (expected %u)",
-             nodeId, quadletCount, ASFW::ConfigROM::kBIBQuadletCount);
 }
 
 void LogBIBParseFailed(uint8_t nodeId, ConfigROMParser::Error error) {
@@ -63,29 +38,17 @@ void LogBIBCRCMismatch(uint8_t nodeId, uint16_t computed, uint16_t expected) {
                 nodeId, computed, expected);
 }
 
-void LogNikonSlowPublishRetry(uint8_t nodeId, uint8_t retriesLeft) {
-    ASFW_LOG(
-        ConfigROM,
-        "ROMScanSession: Node %u Nikon minimal-ROM compatibility retry scheduled (remaining=%u)",
-        nodeId, retriesLeft);
+void LogConfigROMReadyRetry(uint8_t nodeId, const char* reason, uint8_t retriesLeft) {
+    ASFW_LOG(ConfigROM,
+             "ROMScanSession: Node %u Config ROM not ready (%s), delayed retry scheduled "
+             "(remaining=%u)",
+             nodeId, reason != nullptr ? reason : "unspecified", retriesLeft);
 }
 
-void LogNikonRootDirProbe(uint8_t nodeId, uint32_t offsetBytes) {
+void LogMinimalROMSkipped(uint8_t nodeId) {
     ASFW_LOG(ConfigROM,
-             "ROMScanSession: Node %u Nikon minimal-ROM compatibility probing root dir "
-             "(offset=0x%x)",
-             nodeId, offsetBytes);
-}
-
-void LogNikonRootDirProbeFailed(uint8_t nodeId, Async::AsyncStatus status, uint8_t retriesLeft) {
-    ASFW_LOG(ConfigROM,
-             "ROMScanSession: Node %u Nikon root dir probe failed (status=%u, remaining=%u)",
-             nodeId, static_cast<uint32_t>(status), retriesLeft);
-}
-
-void LogNikonRootDirProbeExhausted(uint8_t nodeId) {
-    ASFW_LOG(ConfigROM,
-             "ROMScanSession: Node %u Nikon root dir probe exhausted, completing as minimal ROM",
+             "ROMScanSession: Node %u IEEE 1212 minimal Config ROM has no GUID/root directory; "
+             "skipping normal device discovery",
              nodeId);
 }
 
@@ -129,25 +92,28 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         session->topology_ = std::move(request.topology);
         session->localNodeId_ = request.localNodeId;
         session->completion_ = std::move(completion);
+        session->rootCapabilityCallback_ = std::move(request.rootCapabilityCallback);
         session->completionNotified_ = false;
         session->hadBusyNodes_ = false;
         session->inflight_ = 0;
         session->completedROMs_.clear();
         session->nodeScans_.clear();
+        session->rootProbeStarted_ = false;
+        session->rootProbeTerminal_ = false;
 
         if (request.targetNodes.empty()) {
-            for (const auto& node : session->topology_.nodes) {
-                if (node.nodeId == session->localNodeId_) {
+            for (const auto& node : session->topology_.physical.nodes) {
+                if (node.physicalId == session->localNodeId_) {
                     continue;
                 }
                 if (!node.linkActive) {
                     continue;
                 }
-                session->nodeScans_.emplace_back(node.nodeId, session->gen_,
+                session->nodeScans_.emplace_back(node.physicalId, session->gen_,
                                                  session->params_.startSpeed,
                                                  session->params_.perStepRetries);
-                session->nodeScans_.back().SetSlowPublishRetriesLeft(
-                    kNikonSlowPublishRetryBudget);
+                session->nodeScans_.back().SetConfigROMReadyRetriesLeft(
+                    session->params_.configROMReadyRetries);
             }
         } else {
             auto targets = std::move(request.targetNodes);
@@ -161,8 +127,8 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
                 }
                 session->nodeScans_.emplace_back(nodeId, session->gen_, session->params_.startSpeed,
                                                  session->params_.perStepRetries);
-                session->nodeScans_.back().SetSlowPublishRetriesLeft(
-                    kNikonSlowPublishRetryBudget);
+                session->nodeScans_.back().SetConfigROMReadyRetriesLeft(
+                    session->params_.configROMReadyRetries);
             }
         }
 
@@ -182,7 +148,13 @@ void ROMScanSession::Abort() {
         if (!session) {
             return;
         }
+        if (session->rootProbeStarted_ && !session->rootProbeTerminal_ &&
+            session->topology_.rootNodeId != Driver::kInvalidPhysicalId) {
+            session->NotifyRootBIBFailure(session->topology_.rootNodeId,
+                                          Driver::Role::RootBibReadStatus::AbortedByReset);
+        }
         session->completion_ = nullptr;
+        session->rootCapabilityCallback_ = nullptr;
         session->completionNotified_ = true;
         session->nodeScans_.clear();
         session->completedROMs_.clear();
@@ -355,6 +327,7 @@ void ROMScanSession::StartBIBRead(ROMScanNodeStateMachine& node) {
     const uint8_t nodeId = node.NodeId();
     const Generation gen = gen_;
     const auto speed = node.CurrentSpeed();
+    NotifyRootBIBPending(nodeId);
 
     auto weakSelf = weak_from_this();
     reader_->ReadBIB(nodeId, gen, speed, [weakSelf, nodeId](ROMReader::ReadResult result) mutable {
@@ -396,6 +369,79 @@ void ROMScanSession::RetryWithFallback(ROMScanNodeStateMachine& node) {
     }
 }
 
+bool ROMScanSession::IsRootNode(uint8_t nodeId) const noexcept {
+    return topology_.rootNodeId != Driver::kInvalidPhysicalId && topology_.rootNodeId == nodeId;
+}
+
+void ROMScanSession::NotifyRootBIBPending(uint8_t nodeId) {
+    if (!IsRootNode(nodeId) || !rootCapabilityCallback_ || rootProbeStarted_) {
+        return;
+    }
+
+    rootProbeStarted_ = true;
+    Driver::Role::RootCapabilityEvidence evidence{};
+    evidence.generation = gen_.value;
+    evidence.rootNodeId = nodeId;
+    evidence.bibReadStatus = Driver::Role::RootBibReadStatus::Pending;
+    evidence.verdict = Driver::Role::RootCapability::Unknown;
+    rootCapabilityCallback_(evidence);
+}
+
+void ROMScanSession::NotifyRootBIBSuccess(uint8_t nodeId, const BusInfoBlock& bib) {
+    if (!IsRootNode(nodeId) || !rootCapabilityCallback_ || rootProbeTerminal_) {
+        return;
+    }
+
+    rootProbeStarted_ = true;
+    rootProbeTerminal_ = true;
+    Driver::Role::RootCapabilityEvidence evidence{};
+    evidence.generation = gen_.value;
+    evidence.rootNodeId = nodeId;
+    evidence.bibReadStatus = Driver::Role::RootBibReadStatus::Success;
+    evidence.cmcKnown = true;
+    evidence.cmc = bib.cmc;
+    evidence.configRomHeaderValid = true;
+    evidence.verdict = Driver::Role::DeriveRootCapabilityVerdict(
+        evidence.bibReadStatus, evidence.cmcKnown, evidence.cmc,
+        evidence.cycleObservationComplete, evidence.cycles);
+    rootCapabilityCallback_(evidence);
+}
+
+void ROMScanSession::NotifyRootBIBFailure(uint8_t nodeId,
+                                          Driver::Role::RootBibReadStatus status) {
+    if (!IsRootNode(nodeId) || !rootCapabilityCallback_ || rootProbeTerminal_) {
+        return;
+    }
+
+    rootProbeStarted_ = true;
+    rootProbeTerminal_ = true;
+    Driver::Role::RootCapabilityEvidence evidence{};
+    evidence.generation = gen_.value;
+    evidence.rootNodeId = nodeId;
+    evidence.bibReadStatus = status;
+    evidence.verdict = Driver::Role::RootCapability::Unknown;
+    rootCapabilityCallback_(evidence);
+}
+
+Driver::Role::RootBibReadStatus ROMScanSession::MapBIBFailureStatus(
+    Async::AsyncStatus status) noexcept {
+    using Driver::Role::RootBibReadStatus;
+    switch (status) {
+    case Async::AsyncStatus::kTimeout:
+    case Async::AsyncStatus::kBusyRetryExhausted:
+        return RootBibReadStatus::Timeout;
+    case Async::AsyncStatus::kAborted:
+    case Async::AsyncStatus::kStaleGeneration:
+        return RootBibReadStatus::AbortedByReset;
+    case Async::AsyncStatus::kSuccess:
+    case Async::AsyncStatus::kShortRead:
+    case Async::AsyncStatus::kHardwareError:
+    case Async::AsyncStatus::kLockCompareFail:
+        return RootBibReadStatus::Failed;
+    }
+    return RootBibReadStatus::Failed;
+}
+
 void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result) {
     if (aborted_.load(std::memory_order_relaxed) || result.generation != gen_) {
         return;
@@ -417,7 +463,14 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
     if (!result.success) {
         LogBIBReadFailed(nodeId);
         hadBusyNodes_ = true;
+        if (ShouldDelayConfigROMReadyRetry(node)) {
+            ScheduleConfigROMReadyRetry(node, "BIB read failed");
+            return;
+        }
         RetryWithFallback(node);
+        if (node.CurrentState() == ROMScanNodeStateMachine::State::Failed) {
+            NotifyRootBIBFailure(nodeId, MapBIBFailureStatus(result.status));
+        }
         Pump();
         return;
     }
@@ -426,14 +479,14 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
     if (!result.quadletsBE.empty() && result.quadletsBE[0] == 0) {
         LogBIBBootingRetry(nodeId);
         hadBusyNodes_ = true;
+        if (ShouldDelayConfigROMReadyRetry(node)) {
+            ScheduleConfigROMReadyRetry(node, "BIB q0 booting");
+            return;
+        }
         RetryWithFallback(node);
-        Pump();
-        return;
-    }
-
-    if (result.quadletsBE.size() < ASFW::ConfigROM::kBIBQuadletCount) {
-        LogBIBShortRead(nodeId, result.quadletsBE.size());
-        (void)TransitionNodeState(node, ROMScanNodeStateMachine::State::Failed, "BIB short read");
+        if (node.CurrentState() == ROMScanNodeStateMachine::State::Failed) {
+            NotifyRootBIBFailure(nodeId, Driver::Role::RootBibReadStatus::Timeout);
+        }
         Pump();
         return;
     }
@@ -442,6 +495,7 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
     if (!bibRes) {
         LogBIBParseFailed(nodeId, bibRes.error());
         (void)TransitionNodeState(node, ROMScanNodeStateMachine::State::Failed, "BIB parse failed");
+        NotifyRootBIBFailure(nodeId, Driver::Role::RootBibReadStatus::Failed);
         Pump();
         return;
     }
@@ -450,63 +504,63 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
         LogBIBCRCMismatch(nodeId, bibRes->computed.value_or(0), bibRes->bib.crc);
     }
 
-    node.MutableROM().bib = bibRes->bib;
-
     node.MutableROM().rawQuadlets.clear();
     node.MutableROM().rawQuadlets.reserve(std::max<size_t>(256U, result.quadletsBE.size()));
     node.MutableROM().rawQuadlets.insert(node.MutableROM().rawQuadlets.end(),
                                          result.quadletsBE.begin(), result.quadletsBE.end());
 
+    node.MutableROM().bib = bibRes->bib;
+
     speedPolicy_.RecordSuccess(nodeId, node.CurrentSpeed());
+
+    if (bibRes->bib.format == ConfigROMFormat::Minimal1212) {
+        NotifyRootBIBFailure(nodeId, Driver::Role::RootBibReadStatus::Failed);
+        CompleteUnsupportedMinimalROM(node);
+        return;
+    }
+
+    NotifyRootBIBSuccess(nodeId, bibRes->bib);
 
     ContinueAfterBIBSuccess(node, nodeId);
 }
 
 void ROMScanSession::ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint8_t nodeId) {
-    if (params_.doIRMCheck && topology_.irmNodeId.has_value() && *topology_.irmNodeId == nodeId &&
+    if (params_.doIRMCheck && topology_.irmNodeId != Driver::kInvalidPhysicalId && topology_.irmNodeId == nodeId &&
         node.ROM().bib.irmc) {
         StartIRMRead(node);
         return;
     }
 
-    if (IsMinimalROM(node.ROM().bib)) {
-        if (ShouldDelayMinimalROMCompletion(node)) {
-            ScheduleMinimalROMRetry(node);
-            return;
-        }
-
-        CompleteMinimalROM(node, "BIB minimal ROM complete");
-        return;
-    }
-
+    // Cross-validated with Linux: firewire/core-device.c:650-652 and
+    // Apple: IOFireWireFamily.kmodproj/IOFireWireDevice.cpp:917.
+    // General IEEE 1394 ROMs always continue to the root directory; crc_length
+    // is CRC coverage and must not be used as a total-ROM/minimal-ROM test.
     StartRootDirRead(node);
 }
 
-bool ROMScanSession::ShouldDelayMinimalROMCompletion(const ROMScanNodeStateMachine& node) const {
-    if (!IsMinimalROM(node.ROM().bib)) {
-        return false;
-    }
-
-    if (node.SlowPublishRetriesLeft() == 0) {
-        return false;
-    }
-
-    return IsNikonMinimalROM(node.ROM().bib);
+bool ROMScanSession::ShouldDelayConfigROMReadyRetry(
+    const ROMScanNodeStateMachine& node) const {
+    return params_.configROMReadyRetryDelayNs > 0 && node.ConfigROMReadyRetriesLeft() > 0;
 }
 
-void ROMScanSession::ScheduleMinimalROMRetry(ROMScanNodeStateMachine& node) {
-    if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::WaitingRepublish,
-                             "Nikon minimal ROM compatibility wait")) {
+void ROMScanSession::ScheduleConfigROMReadyRetry(ROMScanNodeStateMachine& node,
+                                                 const char* reason) {
+    if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::WaitingConfigROMReady,
+                             "Config ROM readiness wait")) {
         Pump();
         return;
     }
 
     hadBusyNodes_ = true;
-    node.DecrementSlowPublishRetries();
-    LogNikonSlowPublishRetry(node.NodeId(), node.SlowPublishRetriesLeft());
+    node.DecrementConfigROMReadyRetries();
+    LogConfigROMReadyRetry(node.NodeId(), reason, node.ConfigROMReadyRetriesLeft());
 
     const uint8_t nodeId = node.NodeId();
     auto weakSelf = weak_from_this();
+    // Cross-validated with Linux: firewire/core-device.c:849-852,1018-1024 and
+    // Apple: IOFireWireFamily.kmodproj/IOFireWireController.cpp:2703-2716.
+    // Linux reschedules failed Config ROM scans; Apple treats an initial BIB
+    // timeout after ACK-pending as a device-not-ready condition.
     DispatchDelayed(
         [weakSelf, nodeId]() {
             if (auto self = weakSelf.lock(); self) {
@@ -522,24 +576,30 @@ void ROMScanSession::ScheduleMinimalROMRetry(ROMScanNodeStateMachine& node) {
 
                     auto& delayedNode = *nodePtr;
                     if (delayedNode.CurrentState() !=
-                        ROMScanNodeStateMachine::State::WaitingRepublish) {
+                        ROMScanNodeStateMachine::State::WaitingConfigROMReady) {
                         return;
                     }
 
-                    self->StartRootDirRead(delayedNode);
+                    if (!TransitionNodeState(delayedNode, ROMScanNodeStateMachine::State::Idle,
+                                             "Config ROM readiness retry")) {
+                        self->Pump();
+                        return;
+                    }
+                    self->Pump();
                 });
             }
         },
-        kNikonSlowPublishDelayNs);
+        params_.configROMReadyRetryDelayNs);
 }
 
-void ROMScanSession::CompleteMinimalROM(ROMScanNodeStateMachine& node, const char* reason) {
-    if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::Complete, reason)) {
+void ROMScanSession::CompleteUnsupportedMinimalROM(ROMScanNodeStateMachine& node) {
+    LogMinimalROMSkipped(node.NodeId());
+    if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::Complete,
+                             "IEEE 1212 minimal ROM skipped")) {
         Pump();
         return;
     }
 
-    completedROMs_.push_back(std::move(node.MutableROM()));
     Pump();
 }
 
@@ -551,10 +611,6 @@ void ROMScanSession::StartRootDirRead(ROMScanNodeStateMachine& node) {
                              "BIB complete enter root dir read")) {
         Pump();
         return;
-    }
-
-    if (IsNikonMinimalROM(node.ROM().bib)) {
-        LogNikonRootDirProbe(nodeId, offsetBytes);
     }
 
     node.SetRetriesLeft(params_.perStepRetries);
@@ -594,30 +650,37 @@ void ROMScanSession::HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult
     auto& node = *nodePtr;
 
     if (!result.success || result.quadletsBE.empty()) {
-        if (ShouldDelayMinimalROMCompletion(node)) {
-            LogNikonRootDirProbeFailed(nodeId, result.status, node.SlowPublishRetriesLeft());
-            ScheduleMinimalROMRetry(node);
+        hadBusyNodes_ = true;
+        if (ShouldDelayConfigROMReadyRetry(node)) {
+            ScheduleConfigROMReadyRetry(node, "root directory read failed");
             return;
         }
 
-        if (IsNikonMinimalROM(node.ROM().bib)) {
-            LogNikonRootDirProbeExhausted(nodeId);
-            CompleteMinimalROM(node, "Nikon root dir probe exhausted");
-            return;
-        }
-
-        ASFW_LOG(ConfigROM, "ROMScanSession: Node %u RootDir read failed - marking failed", nodeId);
-        (void)TransitionNodeState(node, ROMScanNodeStateMachine::State::Failed,
-                                  "RootDir read failed");
+        ASFW_LOG(ConfigROM, "ROMScanSession: Node %u RootDir read failed, retrying scan step",
+                 nodeId);
+        RetryWithFallback(node);
         Pump();
         return;
     }
 
     const uint32_t quadletCount = static_cast<uint32_t>(result.quadletsBE.size());
+    ASFW_LOG_V2(ConfigROM, "ROMScanSession: Node %u root directory read returned %u quadlets",
+                nodeId, quadletCount);
     auto rootDir = ConfigROMParser::ParseRootDirectory(result.QuadletsBE(), quadletCount);
     if (rootDir) {
         node.MutableROM().rootDirMinimal = std::move(*rootDir);
+        if (node.MutableROM().rootDirMinimal.empty() && quadletCount > 1) {
+            ASFW_LOG_V1(ConfigROM,
+                        "ROMScanSession: Node %u root directory contained no recognized entries",
+                        nodeId);
+        }
     } else {
+        const auto error = rootDir.error();
+        ASFW_LOG(ConfigROM,
+                 "ROMScanSession: Node %u root directory parse failed code=%u offset=q%u "
+                 "quadlets=%u status=%{public}s",
+                 nodeId, static_cast<uint8_t>(error.code), error.offsetQuadlets, quadletCount,
+                 Async::ToString(result.status));
         node.MutableROM().rootDirMinimal.clear();
     }
 

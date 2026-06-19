@@ -30,7 +30,10 @@ os_log_t CMP()        { static os_log_t log = MakeCategory("cmp");        return
 os_log_t AVC()        { static os_log_t log = MakeCategory("avc");        return log; }
 os_log_t Isoch()      { static os_log_t log = MakeCategory("isoch");      return log; }
 os_log_t Audio()      { static os_log_t log = MakeCategory("audio");      return log; }
+os_log_t DirectAudio() { static os_log_t log = MakeCategory("directaudio"); return log; }
 os_log_t DICE()       { static os_log_t log = MakeCategory("dice");       return log; }
-os_log_t SBP2()       { static os_log_t log = MakeCategory("sbp2");       return log; }
+os_log_t Zts()        { static os_log_t log = MakeCategory("zts");        return log; }
+os_log_t TxSyt()      { static os_log_t log = MakeCategory("txsyt");      return log; }
+os_log_t PayloadWriter() { static os_log_t log = MakeCategory("payloadwriter"); return log; }
 
 } // namespace ASFW::Driver::Logging

@@ -7,7 +7,7 @@
 
 #include "IsochHandler.hpp"
 #include "../../Controller/ControllerCore.hpp"
-#include "../../IRM/IRMClient.hpp"
+#include "../../Bus/IRM/IRMClient.hpp"
 #include "../../Isoch/IsochReceiveContext.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
@@ -177,7 +177,7 @@ kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args
             // AUTO-START ISOCH RECEIVE
             // Hardcode Channel 0 for now as per test requirement
             ASFW_LOG(UserClient, "[Auto-Start] Triggering Isoch Receive on Channel 0...");
-            driver->StartIsochReceive(0);
+            driver->StartIsochReceive(0, 0, 2);
 
         } else {
             ASFW_LOG(UserClient, "❌ CMP oPCR connect failed: %d", static_cast<int>(status));
@@ -278,18 +278,44 @@ kern_return_t IsochHandler::TestCMPDisconnectIPCR(IOUserClientMethodArguments* a
 // ============================================================================
 
 kern_return_t IsochHandler::StartIsochReceive(IOUserClientMethodArguments* args) {
-    // Arguments: [0] = channel
+    // Arguments: [0] = channel, [1] = wireFormatRaw (optional), [2] = am824Slots (optional)
     if (args->scalarInputCount < 1)
         return kIOReturnBadArgument;
     uint64_t channel = args->scalarInput[0];
+    uint64_t wireFormatRaw = args->scalarInputCount >= 2 ? args->scalarInput[1] : 0; // default 0 (kAM824)
+    uint64_t am824Slots = args->scalarInputCount >= 3 ? args->scalarInput[2] : 2; // default 2 channels
 
-    ASFW_LOG(UserClient, "StartIsochReceive called for channel %llu", channel);
-    return driver_->StartIsochReceive(static_cast<uint8_t>(channel));
+    ASFW_LOG(UserClient, "StartIsochReceive called for channel %llu wireFormat=%llu slots=%llu",
+             channel, wireFormatRaw, am824Slots);
+    return driver_->StartIsochReceive(static_cast<uint8_t>(channel),
+                                      static_cast<uint32_t>(wireFormatRaw),
+                                      static_cast<uint32_t>(am824Slots));
 }
 
 kern_return_t IsochHandler::StopIsochReceive(IOUserClientMethodArguments* args) {
     ASFW_LOG(UserClient, "StopIsochReceive called");
     return driver_->StopIsochReceive();
+}
+
+// ============================================================================
+// DV Capture Control
+// ============================================================================
+
+kern_return_t IsochHandler::StartDVCapture(IOUserClientMethodArguments* args) {
+    // Arguments: [0] = channel (DV camcorders broadcast on 63 by default)
+    if (args->scalarInputCount < 1)
+        return kIOReturnBadArgument;
+    const uint64_t channel = args->scalarInput[0];
+    if (channel > 63)
+        return kIOReturnBadArgument;
+
+    ASFW_LOG(UserClient, "StartDVCapture called for channel %llu", channel);
+    return driver_->StartDVCapture(static_cast<uint8_t>(channel));
+}
+
+kern_return_t IsochHandler::StopDVCapture(IOUserClientMethodArguments* args) {
+    ASFW_LOG(UserClient, "StopDVCapture called");
+    return driver_->StopDVCapture();
 }
 
 // ============================================================================
@@ -300,8 +326,8 @@ kern_return_t IsochHandler::GetIsochRxMetrics(IOUserClientMethodArguments* args)
     ASFW_LOG_V3(UserClient, "GetIsochRxMetrics called");
 
     // Get the isoch receive context to fetch metrics
-    auto* context =
-        static_cast<ASFW::Isoch::IsochReceiveContext*>(driver_->GetIsochReceiveContext());
+    auto* context = static_cast<ASFW::Isoch::IsochReceiveContext*>(
+        driver_->GetIsochReceiveContext());
     if (!context) {
         ASFW_LOG_V3(UserClient, "GetIsochRxMetrics: No active context");
         // Return zeroed snapshot
@@ -313,32 +339,29 @@ kern_return_t IsochHandler::GetIsochRxMetrics(IOUserClientMethodArguments* args)
         return kIOReturnSuccess;
     }
 
-    // Get StreamProcessor stats
-    auto& processor = context->GetStreamProcessor();
-
-    // Build snapshot
+    // Build snapshot (currently zeroes out due to direct-only architecture)
     ASFW::Metrics::IsochRxSnapshot snapshot{};
-    snapshot.totalPackets = processor.PacketCount();
-    snapshot.dataPackets = processor.SamplePacketCount();
-    snapshot.emptyPackets = processor.EmptyPacketCount();
-    snapshot.drops = processor.DiscontinuityCount();
-    snapshot.errors = processor.ErrorCount();
+    snapshot.totalPackets = 0;
+    snapshot.dataPackets = 0;
+    snapshot.emptyPackets = 0;
+    snapshot.drops = 0;
+    snapshot.errors = 0;
 
     // Latency histogram
-    snapshot.latencyHist[0] = processor.LatencyBucket0();
-    snapshot.latencyHist[1] = processor.LatencyBucket1();
-    snapshot.latencyHist[2] = processor.LatencyBucket2();
-    snapshot.latencyHist[3] = processor.LatencyBucket3();
+    snapshot.latencyHist[0] = 0;
+    snapshot.latencyHist[1] = 0;
+    snapshot.latencyHist[2] = 0;
+    snapshot.latencyHist[3] = 0;
 
-    snapshot.lastPollLatencyUs = processor.LastPollLatencyUs();
-    snapshot.lastPollPackets = processor.LastPollPackets();
+    snapshot.lastPollLatencyUs = 0;
+    snapshot.lastPollPackets = 0;
 
-    // CIP info from processor
-    snapshot.cipSID = processor.LastCipSID();
-    snapshot.cipDBS = processor.LastCipDBS();
-    snapshot.cipFDF = processor.LastCipFDF();
-    snapshot.cipSYT = processor.LastSYT();
-    snapshot.cipDBC = processor.LastDBC();
+    // CIP info
+    snapshot.cipSID = 0;
+    snapshot.cipDBS = 0;
+    snapshot.cipFDF = 0;
+    snapshot.cipSYT = 0;
+    snapshot.cipDBC = 0;
 
     OSData* data = OSData::withBytes(&snapshot, sizeof(snapshot));
     if (!data)
@@ -353,16 +376,13 @@ kern_return_t IsochHandler::ResetIsochRxMetrics(IOUserClientMethodArguments* arg
         return kIOReturnNotReady;
 
     // Get context
-    auto* context =
-        static_cast<ASFW::Isoch::IsochReceiveContext*>(driver_->GetIsochReceiveContext());
+    auto* context = static_cast<ASFW::Isoch::IsochReceiveContext*>(
+        driver_->GetIsochReceiveContext());
     if (!context) {
         return kIOReturnNotReady;
     }
 
-    ASFW_LOG(UserClient, "ResetIsochRxMetrics: resetting metrics");
-
-    // Get StreamProcessor and reset
-    context->GetStreamProcessor().Reset();
+    ASFW_LOG(UserClient, "ResetIsochRxMetrics: resetting metrics (no-op in direct architecture)");
 
     return kIOReturnSuccess;
 }

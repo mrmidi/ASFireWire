@@ -2,8 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <unordered_map>
+#include <atomic>
 
 #include "../ResponseCode.hpp"
 #include "../Rx/PacketRouter.hpp"
@@ -13,11 +12,9 @@ namespace ASFW::Async {
 class DescriptorBuilder;
 class ATResponseContext;
 class IFireWireBusInfo;
-struct TxCompletion;
 namespace Bus { class GenerationTracker; }
 namespace Engine { class ContextManager; }
 namespace Tx { class Submitter; }
-namespace HW { struct OHCIDescriptor; }
 
 /// Utility to build and send Write Response (WrResp) packets for incoming AR requests.
 class ResponseSender {
@@ -40,30 +37,34 @@ public:
     void SendReadBlockResponse(const ARPacketView& request,
                                ResponseCode rcode,
                                uint64_t payloadDeviceAddress,
-                               uint32_t payloadLength,
-                               std::shared_ptr<void> payloadLease = {}) noexcept;
+                               uint32_t payloadLength) noexcept;
 
-    /// Release response payload leases after AT response descriptor completion.
-    void OnTxCompletion(const TxCompletion& completion) noexcept;
-
-    /// Drop any retained response payload leases during response subsystem teardown.
-    void ClearOutstandingResponses() noexcept;
+    /// Build and transmit a Lock Response (tCode 0xB) for compare-swap requests.
+    void SendLockResponse(const ARPacketView& request,
+                          ResponseCode rcode,
+                          uint32_t oldValue) noexcept;
 
 private:
+    struct ScratchRegion {
+        std::byte* base{nullptr};
+        uint64_t deviceBase{0};
+        uint32_t slotCount{0};
+        std::atomic<uint32_t> nextSlot{0};
+    };
+
     void SendResponse(const ARPacketView& request,
                       ResponseCode rcode,
                       uint8_t responseTCode,
                       const uint32_t* header,
                       std::size_t headerBytes,
                       uint64_t payloadDeviceAddress,
-                      std::size_t payloadLength,
-                      std::shared_ptr<void> payloadLease = {}) noexcept;
+                      std::size_t payloadLength) noexcept;
 
     DescriptorBuilder& builder_;
     Tx::Submitter& submitter_;
     Engine::ContextManager& ctxMgr_;
     Bus::GenerationTracker& generationTracker_;
-    std::unordered_map<const HW::OHCIDescriptor*, std::shared_ptr<void>> responsePayloadLeases_;
+    ScratchRegion lockResponseScratch_;
 };
 
 } // namespace ASFW::Async

@@ -1,0 +1,1525 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (c) 2024 ASFireWire Project
+//
+// DICEDuplexBringupController.cpp - Raw-reference duplex startup for generic DICE devices
+
+#include "DICEDuplexBringupController.hpp"
+
+#include "DICENotificationMailbox.hpp"
+#include "../../../../Common/WireFormat.hpp"
+#include "../../../../Logging/Logging.hpp"
+
+#include <DriverKit/IOLib.h>
+
+#include <atomic>
+#include <limits>
+#include <memory>
+#include <utility>
+
+namespace ASFW::Audio::DICE {
+
+namespace {
+
+constexpr uint32_t kAsyncTimeoutMs = 2000;
+constexpr uint32_t kPollIntervalMs = 10;
+constexpr uint32_t kActiveStatusPollIntervalMs = 200;
+constexpr uint32_t kReadyTimeoutMs = 200;
+constexpr uint32_t kStopSyncTimeoutMs = 5000;
+constexpr uint32_t kStopSyncPollMs = 10;
+
+constexpr uint32_t kDisabledIsoChannel = std::numeric_limits<uint32_t>::max();
+constexpr uint32_t kRxSeqStartDefault = 0;
+constexpr uint32_t kTxSpeedS400 = 2;
+
+[[nodiscard]] IOReturn MapTransportStatus(Async::AsyncStatus status) noexcept {
+    return Protocols::Ports::MapAsyncStatusToIOReturn(status);
+}
+
+void RecordFirstError(IOReturn& slot, IOReturn status) noexcept {
+    if (slot == kIOReturnSuccess && status != kIOReturnSuccess) {
+        slot = status;
+    }
+}
+
+uint64_t DecodeOwnerOctlet(const uint8_t* data, size_t size) noexcept {
+    if (data == nullptr || size < 8) {
+        return 0;
+    }
+    return ASFW::FW::ReadBE64(data);
+}
+
+void ResetRestartSession(DiceRestartSession& session) noexcept {
+    session = DiceRestartSession{};
+}
+
+void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
+                      const GlobalState& global,
+                      const StreamConfig& tx,
+                      const StreamConfig& rx) noexcept {
+    caps.hostInputPcmChannels = tx.TotalPcmChannels();
+    caps.deviceToHostAm824Slots = tx.TotalAm824Slots();
+    caps.hostOutputPcmChannels = rx.TotalPcmChannels();
+    caps.hostToDeviceAm824Slots = rx.TotalAm824Slots();
+    caps.sampleRateHz = global.sampleRate;
+    caps.deviceToHostIsoChannel =
+        tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
+    caps.hostToDeviceIsoChannel =
+        rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
+}
+
+} // namespace
+
+DICEDuplexBringupController::DICEDuplexBringupController(
+    DICETransaction& diceReader,
+    Protocols::Ports::ProtocolRegisterIO& io,
+    Protocols::Ports::FireWireBusInfo& busInfo,
+    IODispatchQueue* workQueue,
+    GeneralSections sections)
+    : diceReader_(diceReader)
+    , io_(io)
+    , busInfo_(busInfo)
+    , workQueue_(workQueue)
+    , sections_(sections) {
+}
+
+void DICEDuplexBringupController::ProgramRx(StageCallback callback) {
+    ProgramRxForDuplex48k(
+        [this, callback = std::move(callback)](IOReturn status) mutable {
+            DiceDuplexStageResult result{};
+            if (status == kIOReturnSuccess) {
+                result.generation = restartSession_.generation;
+                result.channels = restartSession_.channels;
+                result.phase = restartSession_.phase;
+                result.runtimeCaps = runtimeCaps_;
+            }
+            callback(status, result);
+        });
+}
+
+void DICEDuplexBringupController::ProgramTxAndEnableDuplex(StageCallback callback) {
+    ProgramTxAndEnableDuplex48k(
+        [this, callback = std::move(callback)](IOReturn status) mutable {
+            DiceDuplexStageResult result{};
+            if (status == kIOReturnSuccess) {
+                result.generation = restartSession_.generation;
+                result.channels = restartSession_.channels;
+                result.phase = restartSession_.phase;
+                result.runtimeCaps = runtimeCaps_;
+            }
+            callback(status, result);
+        });
+}
+
+void DICEDuplexBringupController::ConfirmDuplexStart(ConfirmCallback callback) {
+    ConfirmDuplex48kStart(
+        [this, callback = std::move(callback)](IOReturn status) mutable {
+            DiceDuplexConfirmResult result{};
+            if (status == kIOReturnSuccess) {
+                result.generation = restartSession_.generation;
+                result.channels = restartSession_.channels;
+                result.appliedClock = restartSession_.appliedClock;
+                result.runtimeCaps = runtimeCaps_;
+                result.notification = confirmNotification_;
+                result.status = confirmStatus_;
+                result.extStatus = confirmExtStatus_;
+            }
+            callback(status, result);
+        });
+}
+
+void DICEDuplexBringupController::ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
+                                                   ClockApplyCallback callback) {
+    if (!IsSupportedClockConfig(desiredClock)) {
+        callback(kIOReturnUnsupported, {});
+        return;
+    }
+
+    if (!busInfo_.GetLocalNodeID().IsValid()) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+
+    if (HasAnyRestartState(restartSession_)) {
+        callback(kIOReturnBusy, {});
+        return;
+    }
+
+    flowMode_ = FlowMode::kClockApply;
+    NotificationMailbox::Reset();
+    stopSequenceError_ = kIOReturnSuccess;
+    restartSession_ = DiceRestartSession{
+        .generation = busInfo_.GetGeneration(),
+        .reason = DiceRestartReason::kManualReconfigure,
+        .desiredClock = desiredClock,
+        .phase = DiceRestartPhase::kPreparingDevice,
+    };
+    runtimeCaps_ = {};
+    confirmNotification_ = 0;
+    confirmStatus_ = 0;
+    confirmExtStatus_ = 0;
+
+    const AudioDuplexChannels channels{};
+    DoReadGlobalStatus(channels,
+                       [this, callback = std::move(callback)](IOReturn status) mutable {
+                           DiceClockApplyResult result{};
+                           if (status == kIOReturnSuccess) {
+                               result.generation = restartSession_.generation;
+                               result.appliedClock = restartSession_.appliedClock;
+                               result.runtimeCaps = runtimeCaps_;
+                           }
+                           callback(status, result);
+                       });
+}
+
+void DICEDuplexBringupController::ScheduleRetry(uint64_t delayMs, std::function<void()> work) {
+    if (!work) {
+        return;
+    }
+
+    if (!workQueue_) {
+        if (delayMs > 0) {
+            IOSleep(static_cast<unsigned int>(delayMs));
+        }
+        work();
+        return;
+    }
+
+#ifdef ASFW_HOST_TEST
+    if (workQueue_->UsesManualDispatchForTesting()) {
+        workQueue_->DispatchAsyncAfter(delayMs * 1'000'000ULL, std::move(work));
+        return;
+    }
+
+    workQueue_->DispatchAsync([delayMs, work = std::move(work)]() mutable {
+        if (delayMs > 0) {
+            IOSleep(static_cast<unsigned int>(delayMs));
+        }
+        work();
+    });
+#else
+    auto sharedWork = std::make_shared<std::function<void()>>(std::move(work));
+    workQueue_->DispatchAsync(^{
+        if (delayMs > 0) {
+            IOSleep(static_cast<unsigned int>(delayMs));
+        }
+        (*sharedWork)();
+    });
+#endif
+}
+
+bool DICEDuplexBringupController::EnsureGenerationCurrent() const noexcept {
+    if (restartSession_.phase == DiceRestartPhase::kIdle) {
+        return true;
+    }
+    return busInfo_.GetGeneration() == restartSession_.generation;
+}
+
+bool DICEDuplexBringupController::TeardownRequested() const noexcept {
+    return teardownCancel_ != nullptr && teardownCancel_->load(std::memory_order_acquire);
+}
+
+void DICEDuplexBringupController::RecordStopTeardownAbort(const char* stage) const noexcept {
+    ASFW_LOG(DICE,
+             "DICEDuplexBringupController: StopDuplex aborted by teardown stage=%{public}s kr=0x%x",
+             stage ? stage : "unknown",
+             kIOReturnAborted);
+}
+
+bool DICEDuplexBringupController::AbortStopIfTeardown(const char* stage, VoidCallback& cb) {
+    if (!TeardownRequested()) {
+        return false;
+    }
+
+    stopSequenceError_ = kIOReturnAborted;
+    ResetRestartSession(restartSession_);
+    flowMode_ = FlowMode::kNone;
+    RecordStopTeardownAbort(stage);
+    cb(stopSequenceError_);
+    return true;
+}
+
+uint64_t DICEDuplexBringupController::OwnerValue() const noexcept {
+    const uint64_t localNodeId =
+        0xFFC0ULL | static_cast<uint64_t>(busInfo_.GetLocalNodeID().value & 0x3FU);
+    return (localNodeId << kOwnerNodeShift) | NotificationMailbox::kHandlerOffset;
+}
+
+void DICEDuplexBringupController::PrepareDuplex48k(
+    const AudioDuplexChannels& channels,
+    VoidCallback callback) {
+    if (channels.deviceToHostIsoChannel > 63 || channels.hostToDeviceIsoChannel > 63) {
+        callback(kIOReturnBadArgument);
+        return;
+    }
+    if (!busInfo_.GetLocalNodeID().IsValid()) {
+        callback(kIOReturnNotReady);
+        return;
+    }
+    if (HasAnyRestartState(restartSession_)) {
+        const IOReturn stopStatus = StopDuplex();
+        if (stopStatus != kIOReturnSuccess) {
+            callback(stopStatus);
+            return;
+        }
+    }
+
+    refreshRuntimeCapsOnPrepare_ = false;
+    flowMode_ = FlowMode::kPrepareDuplex;
+    NotificationMailbox::Reset();
+    stopSequenceError_ = kIOReturnSuccess;
+    restartSession_ = DiceRestartSession{
+        .generation = busInfo_.GetGeneration(),
+        .channels = channels,
+        .reason = DiceRestartReason::kInitialStart,
+        .desiredClock = DiceDesiredClockConfig{
+            .sampleRateHz = 48000U,
+            .clockSelect = kDiceClockSelect48kInternal,
+        },
+        .phase = DiceRestartPhase::kPreparingDevice,
+    };
+    runtimeCaps_ = {};
+    confirmNotification_ = 0;
+    confirmStatus_ = 0;
+    confirmExtStatus_ = 0;
+
+    ASFW_LOG(DICE,
+             "PrepareDuplex48k: raw parity start gen=%u localNode=0x%02x rxIso=%u txIso=%u",
+             restartSession_.generation.value,
+             busInfo_.GetLocalNodeID().value,
+             channels.hostToDeviceIsoChannel,
+             channels.deviceToHostIsoChannel);
+
+    DoReadGlobalStatus(channels, std::move(callback));
+}
+
+void DICEDuplexBringupController::PrepareDuplex(
+    const AudioDuplexChannels& channels,
+    const DiceDesiredClockConfig& desiredClock,
+    PrepareCallback callback) {
+    if (channels.deviceToHostIsoChannel > 63 || channels.hostToDeviceIsoChannel > 63) {
+        callback(kIOReturnBadArgument, {});
+        return;
+    }
+    if (!busInfo_.GetLocalNodeID().IsValid()) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+    if (!IsSupportedClockConfig(desiredClock)) {
+        callback(kIOReturnUnsupported, {});
+        return;
+    }
+    if (HasAnyRestartState(restartSession_)) {
+        const IOReturn stopStatus = StopDuplex();
+        if (stopStatus != kIOReturnSuccess) {
+            callback(stopStatus, {});
+            return;
+        }
+    }
+
+    flowMode_ = FlowMode::kPrepareDuplex;
+    refreshRuntimeCapsOnPrepare_ = true;
+    NotificationMailbox::Reset();
+    stopSequenceError_ = kIOReturnSuccess;
+    restartSession_ = DiceRestartSession{
+        .generation = busInfo_.GetGeneration(),
+        .channels = channels,
+        .reason = DiceRestartReason::kInitialStart,
+        .desiredClock = desiredClock,
+        .phase = DiceRestartPhase::kPreparingDevice,
+    };
+    runtimeCaps_ = {};
+    confirmNotification_ = 0;
+    confirmStatus_ = 0;
+    confirmExtStatus_ = 0;
+
+    ASFW_LOG(DICE,
+             "PrepareDuplex48k: raw parity start gen=%u localNode=0x%02x rxIso=%u txIso=%u",
+             restartSession_.generation.value,
+             busInfo_.GetLocalNodeID().value,
+             channels.hostToDeviceIsoChannel,
+             channels.deviceToHostIsoChannel);
+
+    DoReadGlobalStatus(channels,
+                       [this, channels, callback = std::move(callback)](IOReturn status) mutable {
+                           DiceDuplexPrepareResult result{};
+                           if (status == kIOReturnSuccess) {
+                               result.generation = restartSession_.generation;
+                               result.channels = channels;
+                               result.appliedClock = restartSession_.appliedClock;
+                               result.runtimeCaps = runtimeCaps_;
+                           }
+                           callback(status, result);
+                       });
+}
+
+void DICEDuplexBringupController::DoReadGlobalStatus(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kStatus),
+                   [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                        const IOReturn status = MapTransportStatus(transportStatus);
+                        if (status != kIOReturnSuccess) {
+                            DoRollback(status, std::move(cb));
+                            return;
+                        }
+                        DoRefreshSectionLayout(channels, std::move(cb));
+                    });
+}
+
+void DICEDuplexBringupController::DoRefreshSectionLayout(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    diceReader_.ReadGeneralSections([this, channels, cb = std::move(cb)](IOReturn status, GeneralSections sections) mutable {
+        if (status != kIOReturnSuccess) {
+            DoRollback(status, std::move(cb));
+            return;
+        }
+
+        sections_ = sections;
+        DoReadGlobalBeforeClaim(channels, std::move(cb));
+    });
+}
+
+void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    diceReader_.ReadGlobalStateFull(sections_,
+                                    [this, channels, cb = std::move(cb)](IOReturn status, GlobalState state) mutable {
+                                if (status != kIOReturnSuccess) {
+                                    DoRollback(status, std::move(cb));
+                                    return;
+                                }
+
+                                ASFW_LOG(DICE,
+                                         "PrepareDuplex48k: global pre-claim owner=0x%016llx enable=%u notify=0x%08x",
+                                         state.owner,
+                                         state.enabled ? 1U : 0U,
+                                         state.notification);
+                                DoReadOwnerBeforeClaim(channels, std::move(cb));
+                            });
+}
+
+void DICEDuplexBringupController::DoReadOwnerBeforeClaim(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    (void)io_.ReadBlock(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+                  8,
+                  [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
+                      const IOReturn status = MapTransportStatus(transportStatus);
+                      if (status != kIOReturnSuccess || payload.size() < 8) {
+                          DoRollback((status == kIOReturnSuccess) ? kIOReturnUnderrun : status, std::move(cb));
+                          return;
+                      }
+
+                      ASFW_LOG(DICE,
+                               "PrepareDuplex48k: owner before claim=0x%016llx",
+                               DecodeOwnerOctlet(payload.data(), payload.size()));
+                      DoClaimOwner(channels, std::move(cb));
+                  });
+}
+
+void DICEDuplexBringupController::DoClaimOwner(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    const uint64_t ownerValue = OwnerValue();
+    (void)io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+                        kOwnerNoOwner,
+                        ownerValue,
+                        [this, channels, ownerValue, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint64_t previous) mutable {
+                              const IOReturn status = MapTransportStatus(transportStatus);
+                              if (status != kIOReturnSuccess) {
+                                  DoRollback(status, std::move(cb));
+                                  return;
+                              }
+                              if (previous != kOwnerNoOwner && previous != ownerValue) {
+                                  DoRollback(kIOReturnExclusiveAccess, std::move(cb));
+                                  return;
+                              }
+
+                              restartSession_.ownerClaimed = true;
+                              DoReadOwnerAfterClaim(channels, std::move(cb));
+                          });
+}
+
+void DICEDuplexBringupController::DoReadOwnerAfterClaim(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    (void)io_.ReadBlock(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+                  8,
+                  [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
+                      const IOReturn status = MapTransportStatus(transportStatus);
+                      if (status != kIOReturnSuccess || payload.size() < 8) {
+                          DoRollback((status == kIOReturnSuccess) ? kIOReturnUnderrun : status, std::move(cb));
+                          return;
+                      }
+
+                      const uint64_t ownerReadback = DecodeOwnerOctlet(payload.data(), payload.size());
+                      if (ownerReadback != OwnerValue()) {
+                          DoRollback(kIOReturnExclusiveAccess, std::move(cb));
+                          return;
+                      }
+
+                      DoWriteClockSelect(channels, std::move(cb));
+                  });
+}
+
+void DICEDuplexBringupController::DoWriteClockSelect(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    NotificationMailbox::Reset();
+    (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kClockSelect),
+                    restartSession_.desiredClock.clockSelect,
+                    [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus) mutable {
+                         const IOReturn status = MapTransportStatus(transportStatus);
+                         if (status != kIOReturnSuccess) {
+                             DoRollback(status, std::move(cb));
+                             return;
+                         }
+                         // Check mailbox immediately — notification may have arrived during write
+                         const uint32_t earlyBits = NotificationMailbox::Consume();
+                         if ((earlyBits & Notify::kClockAccepted) != 0) {
+                             ASFW_LOG(DICE,
+                                      "PrepareDuplex48k: CLOCK_ACCEPTED arrived during write, bits=0x%08x",
+                                      earlyBits);
+                             DoReadGlobalAfterClockAccepted(
+                                 channels, earlyBits, kIOReturnNotReady, std::move(cb));
+                             return;
+                         }
+                         // Active poll: read global status to short-circuit if already locked
+                         DoActiveClockCheck(channels, earlyBits, std::move(cb));
+                     });
+}
+
+void DICEDuplexBringupController::DoActiveClockCheck(
+    AudioDuplexChannels channels,
+    uint32_t accumulatedNotify,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    diceReader_.ReadGlobalStateFull(sections_,
+                                    [this, channels, accumulatedNotify,
+                                     cb = std::move(cb)](IOReturn status, GlobalState state) mutable {
+                                if (status != kIOReturnSuccess) {
+                                    // Read failed — fall through to mailbox polling
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: active clock check read failed (0x%08x), falling back to mailbox poll",
+                                             status);
+                                    DoWaitClockAccepted(channels, 0, std::move(cb));
+                                    return;
+                                }
+
+                                // Accumulate any mailbox bits that arrived during the read
+                                const uint32_t combinedNotify = accumulatedNotify | NotificationMailbox::Consume();
+
+                                const bool clockAccepted =
+                                    (combinedNotify & Notify::kClockAccepted) != 0;
+                                const bool sourceLockedAtTarget =
+                                    IsSourceLocked(state.status) &&
+                                    NominalRateHz(state.status) == restartSession_.desiredClock.sampleRateHz;
+                                const bool sampleRateAtTarget =
+                                    state.sampleRate == restartSession_.desiredClock.sampleRateHz;
+
+                                if (clockAccepted || (sourceLockedAtTarget && sampleRateAtTarget)) {
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: clock confirmed via active check "
+                                             "(notify=0x%08x status=0x%08x rate=%u locked=%u)",
+                                             combinedNotify, state.status, state.sampleRate,
+                                             sourceLockedAtTarget ? 1U : 0U);
+                                    if (flowMode_ == FlowMode::kClockApply) {
+                                        DoCompleteClockApply(std::move(cb));
+                                        return;
+                                    }
+                                    DoDiscoverStreams(channels, 0, std::move(cb));
+                                    return;
+                                }
+
+                                ASFW_LOG(DICE,
+                                         "PrepareDuplex48k: active check not yet locked "
+                                         "(notify=0x%08x status=0x%08x rate=%u), entering mailbox poll",
+                                         combinedNotify, state.status, state.sampleRate);
+                                DoWaitClockAccepted(channels, 0, std::move(cb));
+                            });
+}
+
+void DICEDuplexBringupController::DoWaitClockAccepted(
+    AudioDuplexChannels channels,
+    uint32_t attempt,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    const uint32_t mailboxBits = NotificationMailbox::Consume();
+    if ((mailboxBits & Notify::kClockAccepted) != 0) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: observed async CLOCK_ACCEPTED bits=0x%08x",
+                 mailboxBits);
+        DoReadGlobalAfterClockAccepted(
+            channels, mailboxBits, kIOReturnNotReady, std::move(cb));
+        return;
+    }
+
+    if (attempt * kPollIntervalMs >= kAsyncTimeoutMs) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: CLOCK_ACCEPTED wait reached %u ms; performing final confirmation",
+                 kAsyncTimeoutMs);
+        DoConfirmClockAccepted(channels, mailboxBits, std::move(cb));
+        return;
+    }
+
+    // Periodically do an active global status read instead of only checking the mailbox
+    const uint32_t elapsedMs = attempt * kPollIntervalMs;
+    if (elapsedMs > 0 && (elapsedMs % kActiveStatusPollIntervalMs) == 0) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: active status poll at %u ms",
+                 elapsedMs);
+        DoActiveClockCheck(channels, mailboxBits, std::move(cb));
+        return;
+    }
+
+    ScheduleRetry(kPollIntervalMs, [this, channels, attempt, cb = std::move(cb)]() mutable {
+        DoWaitClockAccepted(channels, attempt + 1, std::move(cb));
+    });
+}
+
+void DICEDuplexBringupController::DoConfirmClockAccepted(
+    AudioDuplexChannels channels,
+    uint32_t observedNotify,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    const uint32_t lateMailboxBits = NotificationMailbox::Consume();
+    if ((lateMailboxBits & Notify::kClockAccepted) != 0) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: observed late async CLOCK_ACCEPTED bits=0x%08x",
+                 lateMailboxBits);
+    }
+
+    DoReadGlobalAfterClockAccepted(
+        channels, observedNotify | lateMailboxBits, kIOReturnTimeout, std::move(cb));
+}
+
+void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
+    AudioDuplexChannels channels,
+    uint32_t observedNotify,
+    IOReturn failureStatus,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    diceReader_.ReadGlobalStateFull(sections_,
+                                    [this,
+                                     channels,
+                                     observedNotify,
+                                     failureStatus,
+                                     cb = std::move(cb)](IOReturn status, GlobalState state) mutable {
+                                if (status != kIOReturnSuccess) {
+                                    DoRollback(status, std::move(cb));
+                                    return;
+                                }
+
+                                const uint32_t combinedNotify = observedNotify | state.notification;
+                                const bool clockAccepted =
+                                    (combinedNotify & Notify::kClockAccepted) != 0;
+                                const bool sourceLockedAtTarget =
+                                    IsSourceLocked(state.status) &&
+                                    NominalRateHz(state.status) == restartSession_.desiredClock.sampleRateHz;
+                                const bool sampleRateAtTarget =
+                                    state.sampleRate == restartSession_.desiredClock.sampleRateHz;
+
+                                if (state.clockSelect != restartSession_.desiredClock.clockSelect) {
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: clock confirm failed, clockSelect=0x%08x notify=0x%08x status=0x%08x sampleRate=%u",
+                                             state.clockSelect,
+                                             combinedNotify,
+                                             state.status,
+                                             state.sampleRate);
+                                    DoRollback(failureStatus, std::move(cb));
+                                    return;
+                                }
+
+                                if (!clockAccepted && !(sourceLockedAtTarget && sampleRateAtTarget)) {
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: CLOCK_ACCEPTED not confirmed, notify=0x%08x status=0x%08x sampleRate=%u",
+                                             combinedNotify,
+                                             state.status,
+                                             state.sampleRate);
+                                    DoRollback(failureStatus, std::move(cb));
+                                    return;
+                                }
+
+                                if (!clockAccepted) {
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: confirmed clock via global state after timeout, status=0x%08x sampleRate=%u",
+                                             state.status,
+                                             state.sampleRate);
+                                }
+
+                                if (flowMode_ == FlowMode::kClockApply) {
+                                    DoCompleteClockApply(std::move(cb));
+                                    return;
+                                }
+
+                                DoDiscoverStreams(channels, 0, std::move(cb));
+                            });
+}
+
+void DICEDuplexBringupController::DoDiscoverStreams(
+    AudioDuplexChannels channels,
+    uint32_t step,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    const uint32_t txBase = sections_.txStreamFormat.offset;
+    const uint32_t rxBase = sections_.rxStreamFormat.offset;
+
+    switch (step) {
+    case 0:
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumber),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 1, std::move(cb));
+                        });
+        return;
+    case 1:
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumber),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 2, std::move(cb));
+                        });
+        return;
+    case 2:
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kSize),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 3, std::move(cb));
+                        });
+        return;
+    case 3:
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kIsochronous),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 4, std::move(cb));
+                        });
+        return;
+    case 4:
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumberAudio),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 5, std::move(cb));
+                        });
+        return;
+    case 5:
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumberMidi),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 6, std::move(cb));
+                        });
+        return;
+    case 6:
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kSpeed),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 7, std::move(cb));
+                        });
+        return;
+    case 7:
+        (void)io_.ReadBlock(MakeDICEAddress(txBase + TxOffset::kNames),
+                      256,
+                      [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
+                          const IOReturn status = MapTransportStatus(transportStatus);
+                          if (status != kIOReturnSuccess || payload.size() < 256) {
+                              DoRollback((status == kIOReturnSuccess) ? kIOReturnUnderrun : status, std::move(cb));
+                              return;
+                          }
+                          DoDiscoverStreams(channels, 8, std::move(cb));
+                      });
+        return;
+    case 8:
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kSize),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 9, std::move(cb));
+                        });
+        return;
+    case 9:
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kIsochronous),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 10, std::move(cb));
+                        });
+        return;
+    case 10:
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumberMidi),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 11, std::move(cb));
+                        });
+        return;
+    case 11:
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kSeqStart),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 12, std::move(cb));
+                        });
+        return;
+    case 12:
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumberAudio),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            DoDiscoverStreams(channels, 13, std::move(cb));
+                        });
+        return;
+    case 13:
+        (void)io_.ReadBlock(MakeDICEAddress(rxBase + RxOffset::kNames),
+                      256,
+                      [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
+                          const IOReturn status = MapTransportStatus(transportStatus);
+                          if (status != kIOReturnSuccess || payload.size() < 256) {
+                              DoRollback((status == kIOReturnSuccess) ? kIOReturnUnderrun : status, std::move(cb));
+                              return;
+                          }
+                          DoFinishPrepare(std::move(cb));
+                      });
+        return;
+    default:
+        DoFinishPrepare(std::move(cb));
+        return;
+    }
+}
+
+void DICEDuplexBringupController::DoProgramRx(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    restartSession_.phase = DiceRestartPhase::kProgrammingDeviceRx;
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
+                    [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t rxSize) mutable {
+                        const IOReturn status = MapTransportStatus(transportStatus);
+                        ASFW_LOG(DICE,
+                                 "DoProgramRx: RX_SIZE transport status=%u value=0x%08x",
+                                 static_cast<unsigned>(transportStatus),
+                                 rxSize);
+                        if (status != kIOReturnSuccess) {
+                            DoRollback(status, std::move(cb));
+                            return;
+                        }
+
+                        ASFW_LOG(DICE,
+                                 "DoProgramRx: RX_SIZE complete, entering RX program lambda value=0x%08x",
+                                 rxSize);
+                        ASFW_LOG(DICE,
+                                 "DoProgramRx: writing RX isoch channel %u",
+                                 channels.hostToDeviceIsoChannel);
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
+                                        channels.hostToDeviceIsoChannel,
+                                        [this, channels, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                                             if (isoStatus != kIOReturnSuccess) {
+                                                 DoRollback(isoStatus, std::move(cb));
+                                                 return;
+                                             }
+
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
+                                                             kRxSeqStartDefault,
+                                                             [this, channels, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
+                                                                  const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
+                                                                  if (seqStatus != kIOReturnSuccess) {
+                                                                      DoRollback(seqStatus, std::move(cb));
+                                                                      return;
+                                                                  }
+                                                                  restartSession_.deviceRxProgrammed = true;
+                                                                  restartSession_.phase = DiceRestartPhase::kDeviceRxProgrammed;
+                                                                  cb(kIOReturnSuccess);
+                                                              });
+                                         });
+                    });
+}
+
+void DICEDuplexBringupController::DoProgramTx(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    restartSession_.phase = DiceRestartPhase::kProgrammingDeviceTx;
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
+                   [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
+                        const IOReturn status = MapTransportStatus(transportStatus);
+                        if (status != kIOReturnSuccess) {
+                            DoRollback(status, std::move(cb));
+                            return;
+                        }
+
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
+                                        channels.deviceToHostIsoChannel,
+                                        [this, channels, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                                             if (isoStatus != kIOReturnSuccess) {
+                                                 DoRollback(isoStatus, std::move(cb));
+                                                 return;
+                                             }
+
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
+                                                             kTxSpeedS400,
+                                                             [this, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
+                                                                  const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
+                                                                  if (speedStatus != kIOReturnSuccess) {
+                                                                      DoRollback(speedStatus, std::move(cb));
+                                                                      return;
+                                                                  }
+                                                                  (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
+                                                                                  1,
+                                                                                  [this, cb = std::move(cb)](Async::AsyncStatus enableTransportStatus) mutable {
+                                                                                       const IOReturn enableStatus = MapTransportStatus(enableTransportStatus);
+                                                                                       if (enableStatus != kIOReturnSuccess) {
+                                                                                           DoRollback(enableStatus, std::move(cb));
+                                                                                           return;
+                                                                                       }
+                                                                                       restartSession_.deviceTxArmed = true;
+                                                                                       restartSession_.phase = DiceRestartPhase::kDeviceTxArmed;
+                                                                                       cb(kIOReturnSuccess);
+                                                                                   });
+                                                              });
+                                         });
+                    });
+}
+
+void DICEDuplexBringupController::DoFinishPrepare(VoidCallback cb) {
+    if (!refreshRuntimeCapsOnPrepare_) {
+        restartSession_.devicePrepared = true;
+        restartSession_.deviceTxArmed = false;
+        restartSession_.deviceRunning = false;
+        restartSession_.deviceRxProgrammed = false;
+        restartSession_.phase = DiceRestartPhase::kPrepared;
+        restartSession_.appliedClock = restartSession_.desiredClock;
+        cb(kIOReturnSuccess);
+        return;
+    }
+
+    RefreshRuntimeCaps([this, cb = std::move(cb)](IOReturn status) mutable {
+        if (status != kIOReturnSuccess) {
+            DoRollback(status, std::move(cb));
+            return;
+        }
+
+        restartSession_.devicePrepared = true;
+        restartSession_.deviceTxArmed = false;
+        restartSession_.deviceRunning = false;
+        restartSession_.deviceRxProgrammed = false;
+        restartSession_.phase = DiceRestartPhase::kPrepared;
+        restartSession_.appliedClock = restartSession_.desiredClock;
+        cb(kIOReturnSuccess);
+    });
+}
+
+void DICEDuplexBringupController::DoCompleteClockApply(VoidCallback cb) {
+    RefreshRuntimeCaps([this, cb = std::move(cb)](IOReturn status) mutable {
+        if (status != kIOReturnSuccess) {
+            DoRollback(status, std::move(cb));
+            return;
+        }
+
+        restartSession_.appliedClock = restartSession_.desiredClock;
+        ReleaseOwner([this, cb = std::move(cb)](IOReturn releaseStatus) mutable {
+            if (releaseStatus != kIOReturnSuccess) {
+                restartSession_.terminalError = releaseStatus;
+                ClearRestartProgress(restartSession_, DiceRestartPhase::kFailed);
+                flowMode_ = FlowMode::kNone;
+                cb(releaseStatus);
+                return;
+            }
+
+            ClearRestartProgress(restartSession_);
+            flowMode_ = FlowMode::kNone;
+            cb(kIOReturnSuccess);
+        });
+    });
+}
+
+void DICEDuplexBringupController::RefreshRuntimeCaps(VoidCallback cb) {
+    struct RuntimeCapsState {
+        GlobalState global;
+        StreamConfig tx;
+        StreamConfig rx;
+    };
+
+    auto state = std::make_shared<RuntimeCapsState>();
+    diceReader_.ReadGlobalState(
+        sections_,
+        [this, state, cb = std::move(cb)](IOReturn globalStatus, GlobalState global) mutable {
+            if (globalStatus != kIOReturnSuccess) {
+                cb(globalStatus);
+                return;
+            }
+
+            state->global = global;
+            diceReader_.ReadTxStreamConfig(
+                sections_,
+                [this, state, cb = std::move(cb)](IOReturn txStatus, StreamConfig tx) mutable {
+                    if (txStatus != kIOReturnSuccess) {
+                        cb(txStatus);
+                        return;
+                    }
+
+                    state->tx = tx;
+                    diceReader_.ReadRxStreamConfig(
+                        sections_,
+                        [this, state, cb = std::move(cb)](IOReturn rxStatus, StreamConfig rx) mutable {
+                            if (rxStatus != kIOReturnSuccess) {
+                                cb(rxStatus);
+                                return;
+                            }
+
+                            state->rx = rx;
+                            CacheRuntimeCaps(runtimeCaps_, state->global, state->tx, state->rx);
+                            restartSession_.runtimeCaps = runtimeCaps_;
+                            restartSession_.appliedClock = DiceDesiredClockConfig{
+                                .sampleRateHz = state->global.sampleRate,
+                                .clockSelect = state->global.clockSelect,
+                            };
+                            cb(kIOReturnSuccess);
+                        });
+                });
+        });
+}
+
+void DICEDuplexBringupController::DoRollback(IOReturn error, VoidCallback cb) {
+    restartSession_.phase = DiceRestartPhase::kFailed;
+    restartSession_.terminalError = error;
+
+    if (!restartSession_.ownerClaimed) {
+        ResetRestartSession(restartSession_);
+        flowMode_ = FlowMode::kNone;
+        cb(error);
+        return;
+    }
+
+    if (!EnsureGenerationCurrent()) {
+        ResetRestartSession(restartSession_);
+        flowMode_ = FlowMode::kNone;
+        cb(error);
+        return;
+    }
+
+    DoStopSequence(restartSession_.ownerClaimed, [this, error, cb = std::move(cb)](IOReturn stopStatus) mutable {
+        if (stopStatus != kIOReturnSuccess) {
+            ASFW_LOG(DICE, "DoRollback: cleanup reported 0x%x after start failure 0x%x", stopStatus, error);
+        }
+        flowMode_ = FlowMode::kNone;
+        cb(error);
+    });
+}
+
+void DICEDuplexBringupController::DoPollSourceLock(
+    uint32_t attempt,
+    uint32_t accumulatedNotify,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        (void)StopDuplex();
+        cb(kIOReturnOffline);
+        return;
+    }
+
+    uint32_t notify = accumulatedNotify | NotificationMailbox::Consume();
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kStatus),
+                   [this, attempt, notify, cb = std::move(cb)](Async::AsyncStatus statusTransport, uint32_t statusValue) mutable {
+                        const IOReturn statusRead = MapTransportStatus(statusTransport);
+                        if (statusRead != kIOReturnSuccess) {
+                            (void)StopDuplex();
+                            cb(statusRead);
+                            return;
+                        }
+
+                        if (IsSourceLocked(statusValue)) {
+                            (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kNotification),
+                                           [this, notify, statusValue, cb = std::move(cb)](Async::AsyncStatus notifyTransport, uint32_t nv) mutable {
+                                                const IOReturn ns = MapTransportStatus(notifyTransport);
+                                                if (ns == kIOReturnSuccess) {
+                                                    notify |= nv;
+                                                }
+                                                (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kExtStatus),
+                                                               [this, notify, statusValue, cb = std::move(cb)](Async::AsyncStatus extTransport, uint32_t ev) mutable {
+                                                                    const IOReturn es = MapTransportStatus(extTransport);
+                                                                    const uint32_t extStatus =
+                                                                        (es == kIOReturnSuccess) ? ev : 0;
+                                                                    confirmNotification_ = notify;
+                                                                    confirmStatus_ = statusValue;
+                                                                    confirmExtStatus_ = extStatus;
+                                                                    RefreshRuntimeCaps([this,
+                                                                                        notify,
+                                                                                        statusValue,
+                                                                                        extStatus,
+                                                                                        cb = std::move(cb)](IOReturn refreshStatus) mutable {
+                                                                        if (refreshStatus != kIOReturnSuccess) {
+                                                                            (void)StopDuplex();
+                                                                            cb(refreshStatus);
+                                                                            return;
+                                                                        }
+
+                                                                        const bool channelsMatch =
+                                                                            runtimeCaps_.deviceToHostIsoChannel ==
+                                                                                restartSession_.channels.deviceToHostIsoChannel &&
+                                                                            runtimeCaps_.hostToDeviceIsoChannel ==
+                                                                                restartSession_.channels.hostToDeviceIsoChannel;
+                                                                        if (!channelsMatch) {
+                                                                            ASFW_LOG_ERROR(
+                                                                                DICE,
+                                                                                "ConfirmDuplex48kStart: stream channel readback mismatch expected d2h=%u h2d=%u actual d2h=%u h2d=%u",
+                                                                                restartSession_.channels.deviceToHostIsoChannel,
+                                                                                restartSession_.channels.hostToDeviceIsoChannel,
+                                                                                runtimeCaps_.deviceToHostIsoChannel,
+                                                                                runtimeCaps_.hostToDeviceIsoChannel);
+                                                                            (void)StopDuplex();
+                                                                            cb(kIOReturnNotReady);
+                                                                            return;
+                                                                        }
+
+                                                                        restartSession_.deviceRunning = true;
+                                                                        restartSession_.phase = DiceRestartPhase::kRunning;
+                                                                        restartSession_.appliedClock = restartSession_.desiredClock;
+                                                                        ASFW_LOG(DICE,
+                                                                                 "ConfirmDuplex48kStart: source lock ok notify=0x%08x status=0x%08x ext=0x%08x",
+                                                                                 notify,
+                                                                                 statusValue,
+                                                                                 extStatus);
+                                                                        cb(kIOReturnSuccess);
+                                                                    });
+                                                                });
+                                            });
+                            return;
+                        }
+
+                        if (attempt * kPollIntervalMs >= kReadyTimeoutMs) {
+                            ASFW_LOG_ERROR(DICE,
+                                           "ConfirmDuplex48kStart: DICE clock failed to lock within %u ms (status=0x%08x)",
+                                           kReadyTimeoutMs, statusValue);
+                            (void)StopDuplex();
+                            cb(kIOReturnTimeout);
+                            return;
+                        }
+
+                        ScheduleRetry(kPollIntervalMs,
+                                      [this, attempt, notify, cb = std::move(cb)]() mutable {
+                                          DoPollSourceLock(attempt + 1, notify, std::move(cb));
+                                      });
+                    });
+}
+
+void DICEDuplexBringupController::ProgramRxForDuplex48k(VoidCallback callback) {
+    if (!restartSession_.devicePrepared) {
+        callback(kIOReturnNotReady);
+        return;
+    }
+    if (!EnsureGenerationCurrent()) {
+        callback(kIOReturnOffline);
+        return;
+    }
+
+    if (restartSession_.channels.deviceToHostIsoChannel > 63 ||
+        restartSession_.channels.hostToDeviceIsoChannel > 63) {
+        callback(kIOReturnNotReady);
+        return;
+    }
+
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = restartSession_.channels.deviceToHostIsoChannel,
+        .hostToDeviceIsoChannel = restartSession_.channels.hostToDeviceIsoChannel,
+    };
+    DoProgramRx(channels, std::move(callback));
+}
+
+void DICEDuplexBringupController::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
+    if (!restartSession_.devicePrepared || !restartSession_.deviceRxProgrammed) {
+        callback(kIOReturnNotReady);
+        return;
+    }
+
+    if (!EnsureGenerationCurrent()) {
+        callback(kIOReturnOffline);
+        return;
+    }
+
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = restartSession_.channels.deviceToHostIsoChannel,
+        .hostToDeviceIsoChannel = restartSession_.channels.hostToDeviceIsoChannel,
+    };
+    DoProgramTx(channels, std::move(callback));
+}
+
+void DICEDuplexBringupController::ConfirmDuplex48kStart(VoidCallback callback) {
+    if (!restartSession_.devicePrepared || !restartSession_.deviceTxArmed) {
+        callback(kIOReturnNotReady);
+        return;
+    }
+
+    restartSession_.phase = DiceRestartPhase::kConfirmingDeviceStart;
+    NotificationMailbox::Reset();
+    DoPollSourceLock(0, 0, std::move(callback));
+}
+
+IOReturn DICEDuplexBringupController::StopDuplex() {
+    if (!HasDeviceRestartState(restartSession_)) {
+        return kIOReturnSuccess;
+    }
+    if (TeardownRequested()) {
+        RecordStopTeardownAbort("Entry");
+        ResetRestartSession(restartSession_);
+        flowMode_ = FlowMode::kNone;
+        return kIOReturnAborted;
+    }
+
+    struct WaitState {
+        std::atomic<bool> done{false};
+        std::atomic<IOReturn> status{kIOReturnTimeout};
+    };
+
+    auto waitState = std::make_shared<WaitState>();
+    DoStopSequence(true, [waitState](IOReturn status) {
+        waitState->status.store(status, std::memory_order_relaxed);
+        waitState->done.store(true, std::memory_order_release);
+    });
+
+    for (uint32_t waited = 0; waited < kStopSyncTimeoutMs; waited += kStopSyncPollMs) {
+        if (waitState->done.load(std::memory_order_acquire)) {
+            return waitState->status.load(std::memory_order_relaxed);
+        }
+        if (TeardownRequested()) {
+            RecordStopTeardownAbort("Wait");
+            ResetRestartSession(restartSession_);
+            flowMode_ = FlowMode::kNone;
+            return kIOReturnAborted;
+        }
+        IOSleep(kStopSyncPollMs);
+    }
+
+    return waitState->done.load(std::memory_order_acquire)
+        ? waitState->status.load(std::memory_order_relaxed)
+        : kIOReturnTimeout;
+}
+
+void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
+    if (!restartSession_.ownerClaimed) {
+        callback(kIOReturnSuccess);
+        return;
+    }
+    if (TeardownRequested()) {
+        RecordStopTeardownAbort("ReleaseOwnerEntry");
+        callback(kIOReturnAborted);
+        return;
+    }
+
+    if (!EnsureGenerationCurrent()) {
+        restartSession_.ownerClaimed = false;
+        callback(kIOReturnSuccess);
+        return;
+    }
+
+    (void)io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+                        OwnerValue(),
+                        kOwnerNoOwner,
+                        [this, callback = std::move(callback)](Async::AsyncStatus transportStatus, uint64_t previous) mutable {
+                              const IOReturn status = MapTransportStatus(transportStatus);
+                              if (status != kIOReturnSuccess) {
+                                  callback(status);
+                                  return;
+                              }
+                              if (previous != OwnerValue() && previous != kOwnerNoOwner) {
+                                  callback(kIOReturnExclusiveAccess);
+                                  return;
+                              }
+
+                              restartSession_.ownerClaimed = false;
+                              callback(kIOReturnSuccess);
+                          });
+}
+
+void DICEDuplexBringupController::DoStopSequence(
+    bool releaseOwner,
+    VoidCallback cb) {
+    stopSequenceError_ = kIOReturnSuccess;
+    restartSession_.phase = DiceRestartPhase::kStopping;
+    if (AbortStopIfTeardown("SequenceEntry", cb)) {
+        return;
+    }
+    DoStopDisableGlobal(releaseOwner, std::move(cb));
+}
+
+void DICEDuplexBringupController::DoStopDisableGlobal(
+    bool releaseOwner,
+    VoidCallback cb) {
+    if (AbortStopIfTeardown("DisableGlobal", cb)) {
+        return;
+    }
+    if (!EnsureGenerationCurrent()) {
+        RecordFirstError(stopSequenceError_, kIOReturnOffline);
+        ResetRestartSession(restartSession_);
+        cb(stopSequenceError_);
+        return;
+    }
+
+    (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
+                    0,
+                    [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus transportStatus) mutable {
+                         const IOReturn status = MapTransportStatus(transportStatus);
+                         RecordFirstError(stopSequenceError_, status);
+                         if (AbortStopIfTeardown("DisableGlobalComplete", cb)) {
+                             return;
+                         }
+                         DoStopDisableTx(releaseOwner, std::move(cb));
+                     });
+}
+
+void DICEDuplexBringupController::DoStopDisableTx(
+    bool releaseOwner,
+    VoidCallback cb) {
+    if (AbortStopIfTeardown("DisableTx", cb)) {
+        return;
+    }
+    if (!EnsureGenerationCurrent()) {
+        RecordFirstError(stopSequenceError_, kIOReturnOffline);
+        cb(stopSequenceError_);
+        return;
+    }
+
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
+                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
+                        const IOReturn readStatus = MapTransportStatus(readTransportStatus);
+                        RecordFirstError(stopSequenceError_, readStatus);
+                        if (AbortStopIfTeardown("DisableTxReadComplete", cb)) {
+                            return;
+                        }
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
+                                        kDisabledIsoChannel,
+                                        [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                                             RecordFirstError(stopSequenceError_, isoStatus);
+                                             if (AbortStopIfTeardown("DisableTxIsoComplete", cb)) {
+                                                 return;
+                                             }
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
+                                                             kTxSpeedS400,
+                                                             [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
+                                                                  const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
+                                                                  RecordFirstError(stopSequenceError_, speedStatus);
+                                                                  if (AbortStopIfTeardown("DisableTxSpeedComplete", cb)) {
+                                                                      return;
+                                                                  }
+                                                                  DoStopReleaseTx(releaseOwner, std::move(cb));
+                                                              });
+                                         });
+                    });
+}
+
+void DICEDuplexBringupController::DoStopReleaseTx(
+    bool releaseOwner,
+    VoidCallback cb) {
+    if (AbortStopIfTeardown("ReleaseTx", cb)) {
+        return;
+    }
+    DoStopDisableRx(releaseOwner, std::move(cb));
+}
+
+void DICEDuplexBringupController::DoStopDisableRx(
+    bool releaseOwner,
+    VoidCallback cb) {
+    if (AbortStopIfTeardown("DisableRx", cb)) {
+        return;
+    }
+    if (!EnsureGenerationCurrent()) {
+        RecordFirstError(stopSequenceError_, kIOReturnOffline);
+        cb(stopSequenceError_);
+        return;
+    }
+
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
+                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
+                        const IOReturn readStatus = MapTransportStatus(readTransportStatus);
+                        RecordFirstError(stopSequenceError_, readStatus);
+                        if (AbortStopIfTeardown("DisableRxReadComplete", cb)) {
+                            return;
+                        }
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
+                                        kDisabledIsoChannel,
+                                        [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                                             RecordFirstError(stopSequenceError_, isoStatus);
+                                             if (AbortStopIfTeardown("DisableRxIsoComplete", cb)) {
+                                                 return;
+                                             }
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
+                                                             kRxSeqStartDefault,
+                                                             [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
+                                                                  const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
+                                                                  RecordFirstError(stopSequenceError_, seqStatus);
+                                                                  if (AbortStopIfTeardown("DisableRxSeqComplete", cb)) {
+                                                                      return;
+                                                                  }
+                                                                  DoStopReleaseRx(releaseOwner, std::move(cb));
+                                                              });
+                                         });
+                    });
+}
+
+void DICEDuplexBringupController::DoStopReleaseRx(
+    bool releaseOwner,
+    VoidCallback cb) {
+    if (AbortStopIfTeardown("ReleaseRx", cb)) {
+        return;
+    }
+    if (releaseOwner) {
+        DoStopReleaseOwner(std::move(cb));
+        return;
+    }
+
+    restartSession_.devicePrepared = false;
+    restartSession_.deviceTxArmed = false;
+    restartSession_.deviceRunning = false;
+    restartSession_.deviceRxProgrammed = false;
+    restartSession_.phase = DiceRestartPhase::kIdle;
+    flowMode_ = FlowMode::kNone;
+    cb(stopSequenceError_);
+}
+
+void DICEDuplexBringupController::DoStopReleaseOwner(VoidCallback cb) {
+    if (AbortStopIfTeardown("ReleaseOwner", cb)) {
+        return;
+    }
+    if (!restartSession_.ownerClaimed) {
+        ResetRestartSession(restartSession_);
+        flowMode_ = FlowMode::kNone;
+        cb(stopSequenceError_);
+        return;
+    }
+
+    if (!EnsureGenerationCurrent()) {
+        RecordFirstError(stopSequenceError_, kIOReturnOffline);
+        ResetRestartSession(restartSession_);
+        flowMode_ = FlowMode::kNone;
+        cb(stopSequenceError_);
+        return;
+    }
+
+    (void)io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+                        OwnerValue(),
+                        kOwnerNoOwner,
+                        [this, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint64_t previous) mutable {
+                              if (AbortStopIfTeardown("ReleaseOwnerComplete", cb)) {
+                                  return;
+                              }
+                              const IOReturn status = MapTransportStatus(transportStatus);
+                              RecordFirstError(stopSequenceError_, status);
+                              if (status == kIOReturnSuccess &&
+                                  previous != OwnerValue() &&
+                                  previous != kOwnerNoOwner) {
+                                  RecordFirstError(stopSequenceError_, kIOReturnExclusiveAccess);
+                              }
+
+                              ResetRestartSession(restartSession_);
+                              flowMode_ = FlowMode::kNone;
+                              cb(stopSequenceError_);
+                          });
+}
+
+} // namespace ASFW::Audio::DICE

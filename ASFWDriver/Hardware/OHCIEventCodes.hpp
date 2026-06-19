@@ -32,6 +32,21 @@ enum class OHCIEventCode : uint8_t {
     kAckDataError      = 0x1D,
     kAckTypeError      = 0x1E,
 };
+static_assert(static_cast<uint8_t>(OHCIEventCode::kEvtNoStatus) == 0x00);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kEvtLongPacket) == 0x02);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kEvtMissingAck) == 0x03);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kEvtBusReset) == 0x09);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kEvtTimeout) == 0x0A);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kEvtUnknown) == 0x0E);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kEvtFlushed) == 0x0F);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckComplete) == 0x11);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckPending) == 0x12);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckBusyX) == 0x14);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckBusyA) == 0x15);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckBusyB) == 0x16);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckTardy) == 0x1B);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckDataError) == 0x1D);
+static_assert(static_cast<uint8_t>(OHCIEventCode::kAckTypeError) == 0x1E);
 
 /** Human-readable name for diagnostics and logging. */
 inline const char* ToString(OHCIEventCode code) {
@@ -68,4 +83,3 @@ inline const char* ToString(OHCIEventCode code) {
  * - ContextControl event_code field definition: Section 3.1.1.
  * - Packet event codes: Table 3-2 (pages 18-19).
  */
-

@@ -7,7 +7,7 @@ Compares our implementation against Apple's known-good value.
 def build_control_word(reqCount, cmd, key, i, b, ping=False):
     """
     Build OHCI descriptor control word.
-    Current implementation from OHCI_HW_Specs.hpp
+    Current implementation from OHCIDescriptors.hpp
     """
     # Shift constants - CORRECTED VALUES
     kCmdShift = 12

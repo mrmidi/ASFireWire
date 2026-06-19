@@ -65,20 +65,19 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
         if (auto topo = controller->LatestTopology()) {
             status.generation = topo->generation;
             status.nodeCount = topo->nodeCount;
-            status.localNodeID = topo->localNodeId.has_value()
-                                     ? static_cast<uint32_t>(*topo->localNodeId)
+            status.localNodeID = topo->localNodeId != Driver::kInvalidPhysicalId
+                                     ? static_cast<uint32_t>(topo->localNodeId)
                                      : 0xFFFFFFFFu;
-            status.rootNodeID = topo->rootNodeId.has_value()
-                                    ? static_cast<uint32_t>(*topo->rootNodeId)
+            status.rootNodeID = topo->rootNodeId != Driver::kInvalidPhysicalId
+                                    ? static_cast<uint32_t>(topo->rootNodeId)
                                     : 0xFFFFFFFFu;
             status.irmNodeID =
-                topo->irmNodeId.has_value() ? static_cast<uint32_t>(*topo->irmNodeId) : 0xFFFFFFFFu;
+                topo->irmNodeId != Driver::kInvalidPhysicalId ? static_cast<uint32_t>(topo->irmNodeId) : 0xFFFFFFFFu;
 
-            if (topo->irmNodeId.has_value() && topo->localNodeId.has_value() &&
+            if (topo->irmNodeId != Driver::kInvalidPhysicalId && topo->localNodeId != Driver::kInvalidPhysicalId &&
                 topo->irmNodeId == topo->localNodeId) {
                 status.flags |= Wire::ControllerStatusFlags::kIsIRM;
             }
-            // TODO: Determine cycle-master role from hardware registers/topology
         }
     }
 

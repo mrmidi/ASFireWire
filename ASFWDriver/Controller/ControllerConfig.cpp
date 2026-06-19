@@ -11,7 +11,8 @@ ControllerConfig ControllerConfig::MakeDefault() {
     config.enableVerboseLogging = false;
     config.experimentalHostCycleMasterBringup = false;
     config.allowCycleMasterEligibility = false;
-    config.supportedSpeeds = {100, 200, 400};
+    // Role/BM policy is no longer part of ControllerConfig — it lives in the
+    // separately-owned, runtime-mutable RolePolicy (see ControllerConfig.hpp).
     return config;
 }
 

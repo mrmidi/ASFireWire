@@ -24,9 +24,8 @@ namespace ASFW::Async {
  * ---------------
  * Factory returns unique_ptr<PayloadContext> (exclusive ownership).
  * Caller retains unique ownership until PayloadRegistry::Attach().
- * ToSharedPtr() converts to shared_ptr<void> with custom deleter:
- *   [](void* p){ delete static_cast<PayloadContext*>(p); }
- * enabling RAII semantics across shared ownership boundary.
+ * IntoShared() converts to shared_ptr<PayloadContext>, keeping the ownership
+ * explicit while still allowing registry-style shared lifetime.
  * 
  * Destructor guarantees DMA resource cleanup on scope exit or shared_ptr destruction.
  * No manual Cleanup() calls required - RAII handles lifecycle automatically.
@@ -36,7 +35,7 @@ namespace ASFW::Async {
  * 1. Create() allocates DMABuffer and maps to bus-addressable memory
  * 2. Caller holds unique_ptr during descriptor chain construction
  * 3. DeviceAddress() provides bus address for descriptor.dataAddress field
- * 4. ToSharedPtr() converts for PayloadRegistry tracking
+ * 4. IntoShared() converts for PayloadRegistry tracking
  * 5. Destructor unmaps IOMemoryMap and releases DMABuffer when refcount→0
  * 
  * Reference: Apple's IOFWAsyncCommand allocates per-transaction IODMACommand
@@ -55,7 +54,7 @@ public:
      */
     static std::unique_ptr<PayloadContext> Create(
         ASFW::Driver::HardwareInterface& hw,
-        const void* data,
+        const uint8_t* data,
         std::size_t length,
         uint64_t direction);
     
@@ -79,11 +78,11 @@ public:
     
     /**
      * Convert unique_ptr to shared_ptr for PayloadRegistry attachment.
-     * Consumes the unique_ptr and transfers ownership to shared_ptr with custom deleter.
+     * Consumes the unique_ptr and transfers ownership to shared ownership.
      * @param up unique_ptr to consume (will be moved)
-     * @return shared_ptr managing the PayloadContext with type-correct deleter
+     * @return shared_ptr managing the PayloadContext lifetime
      */
-    static std::shared_ptr<void> IntoShared(std::unique_ptr<PayloadContext>&& up);
+    static std::shared_ptr<PayloadContext> IntoShared(std::unique_ptr<PayloadContext>&& up);
 
     [[nodiscard]] std::size_t Length() const noexcept { return length_; }
 
@@ -96,7 +95,7 @@ private:
      * @return true on success, false on allocation/mapping failure
      */
     bool Initialize(ASFW::Driver::HardwareInterface& hw,
-                   const void* data,
+                   const uint8_t* data,
                    std::size_t length,
                    uint64_t direction);
     
@@ -111,7 +110,7 @@ private:
     std::unique_ptr<DMABufferImpl> dmaBufferImpl_;
     IOMemoryMap* mapping_{nullptr};
     uint8_t* virtualAddress_{nullptr};
-    const void* logicalAddress_{nullptr};  // Source data pointer (host virtual address)
+    const uint8_t* logicalAddress_{nullptr};  // Source data pointer (host virtual address)
     std::size_t length_{0};
     uint64_t deviceAddress_{0};
 };

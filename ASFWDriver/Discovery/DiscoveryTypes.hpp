@@ -8,11 +8,6 @@
 #include <string>
 #include <vector>
 
-// Forward declaration for device protocol
-namespace ASFW::Audio {
-    class IDeviceProtocol;
-}
-
 namespace ASFW::Discovery {
 
 // ============================================================================
@@ -21,6 +16,15 @@ namespace ASFW::Discovery {
 
 using Generation = ASFW::FW::Generation;
 using Guid64 = uint64_t;
+inline constexpr uint16_t kInvalidNodeId = 0xFFFFu;
+
+[[nodiscard]] inline constexpr std::optional<uint8_t>
+TryOperationalNodeId(uint16_t nodeId) noexcept {
+    if (nodeId > 0xFFu) {
+        return std::nullopt;
+    }
+    return static_cast<uint8_t>(nodeId);
+}
 
 struct FwAddress {
     struct BusNodeParts {
@@ -51,10 +55,18 @@ struct LinkPolicy {
 // Config ROM Structure (IEEE 1394-1995 §8.3, OHCI §7.8)
 // ============================================================================
 
-// Bus Info Block (BIB) - mandatory first 5 quadlets of Config ROM
-// Located at address 0xFFFFF0000400 (20 bytes)
-// IEEE 1394-1995 §8.3.2: BIB[0]=header, BIB[1]="1394", BIB[2]=capabilities, BIB[3:4]=GUID
+enum class ConfigROMFormat : uint8_t {
+    Unknown,
+    Minimal1212,
+    General1394,
+};
+
+// Bus Info Block (BIB) - IEEE 1394 general Config ROMs use q0..q4 at minimum.
+// Located at address 0xFFFFF0000400. True IEEE 1212 minimal ROMs are q0-only
+// and do not carry the IEEE 1394 GUID/options fields.
 struct BusInfoBlock {
+    ConfigROMFormat format{ConfigROMFormat::Unknown};
+
     // BIB header quadlet (quadlet 0) - IEEE 1212
     uint8_t busInfoLength{0};    // [31:24] quadlets following header in BIB
     uint8_t crcLength{0};        // [23:16] quadlets covered by CRC (starting at quadlet 1)
@@ -129,7 +141,7 @@ enum class ROMState : uint8_t {
 // NOTE: rawQuadlets is stored in BIG-ENDIAN wire order (byte-exact for GUI export).
 struct ConfigROM {
     Generation gen{0};
-    uint16_t nodeId{0xFFFF};
+    uint16_t nodeId{kInvalidNodeId};
     BusInfoBlock bib{};
 
     // Bounded slice of Root Directory (first N entries, typically 8-16)
@@ -186,7 +198,7 @@ struct DeviceRecord {
 
     // ---- Live mapping (current generation) ----
     Generation gen{0};
-    uint16_t nodeId{0xFFFF};        // 0xFFFF when not present this gen
+    uint16_t nodeId{kInvalidNodeId}; // 0xFFFF when not present this gen
     LinkPolicy link{};
     LifeState state{LifeState::Discovered};
 
@@ -197,9 +209,6 @@ struct DeviceRecord {
     // ---- Optional metadata ----
     std::optional<uint32_t> unitSpecId;
     std::optional<uint32_t> unitSwVersion;
-    
-    // ---- Device-specific protocol handler (for DICE, etc.) ----
-    std::shared_ptr<Audio::IDeviceProtocol> protocol;
 };
 
 // ============================================================================
@@ -222,6 +231,8 @@ struct ROMScannerParams {
     FwSpeed startSpeed{FwSpeed::S400};
     uint8_t maxInflight{2};
     uint8_t perStepRetries{2};
+    uint8_t configROMReadyRetries{4};
+    uint64_t configROMReadyRetryDelayNs{500ULL * 1'000'000ULL};
     bool doIRMCheck{false};
 };
 

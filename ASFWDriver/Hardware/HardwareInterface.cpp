@@ -3,8 +3,9 @@
 #include <algorithm>
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
+#include "../Bus/IRM/IRMCSRConstants.hpp"
 #include "IEEE1394.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 #ifndef ASFW_HOST_TEST
 #include <DriverKit/IOLib.h>
@@ -329,7 +330,53 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
         return false;
     }
 
-    ASFW_LOG(Hardware, "PHY GLOBAL RESUME submitted handle=0x%x", handle.value);
+    ASFW_LOG(Hardware, "PHY GLOBAL RESUME submitted handle=0x%x data=(0x%08x, 0x%08x)",
+             handle.value, params.quadlet1, params.quadlet2);
+    return true;
+}
+
+bool HardwareInterface::SendLinkOnPacket(uint8_t targetNodeId) {
+    if (!device_) {
+        return false;
+    }
+    if (!asyncControllerPort_) {
+        ASFW_LOG_ERROR(Hardware, "Link-On aborted - async controller port not bound");
+        return false;
+    }
+
+    // Cross-validated with linux: core-cdev.c:1624-1640.
+    // Linux uses ioctl_send_phy_packet to wrap raw PHY packets.
+    // IEEE 1394a-2000 §4.3.4.2: Link-On packet.
+    const auto quadlets = LinkOnPacket{targetNodeId}.EncodeBusOrder();
+
+    ASFW_LOG(Hardware, "[M8] Send Link-On packet: target=node %u quad=0x%08x", targetNodeId,
+             quadlets[0]);
+
+    ASFW::Async::PhyParams params{};
+    params.quadlet1 = quadlets[0];
+    params.quadlet2 = quadlets[1];
+
+    auto completion = [packetQuad = quadlets[0], targetNodeId](
+                          ASFW::Async::AsyncHandle handle, ASFW::Async::AsyncStatus status, uint8_t,
+                          std::span<const uint8_t>) {
+        if (status == ASFW::Async::AsyncStatus::kSuccess) {
+            ASFW_LOG(Hardware, "Link-On complete handle=0x%x target=node %u quad=0x%08x",
+                     handle.value, targetNodeId, packetQuad);
+        } else {
+            ASFW_LOG_ERROR(Hardware, "Link-On handle=0x%x failed status=%u target=node %u quad=0x%08x",
+                           handle.value, static_cast<unsigned>(status), targetNodeId, packetQuad);
+        }
+    };
+
+    const auto handle = asyncControllerPort_->PhyRequest(params, std::move(completion));
+    if (!handle) {
+        ASFW_LOG_ERROR(Hardware, "Link-On submission rejected (handle=0) quad=0x%08x",
+                       quadlets[0]);
+        return false;
+    }
+
+    ASFW_LOG(Hardware, "Link-On submitted handle=0x%x data=(0x%08x, 0x%08x)", handle.value,
+             params.quadlet1, params.quadlet2);
     return true;
 }
 
@@ -364,14 +411,14 @@ void HardwareInterface::InitializePhyReg4Cache() {
 }
 
 void HardwareInterface::SetRootHoldOff(bool enable) {
-    const auto currentOpt = ReadPhyRegister(1);
+    const auto currentOpt = ReadPhyRegister(kPhyReg1Address);
     if (!currentOpt.has_value()) {
         ASFW_LOG_ERROR(Hardware, "Failed to read PHY Register 1 for SetRootHoldOff(%d)", enable);
         return;
     }
 
     const uint8_t current = currentOpt.value();
-    const bool rhbSet = (current & 0x80) != 0;
+    const bool rhbSet = (current & kPhyRootHoldOff) != 0;
 
     if (enable) {
         if (rhbSet) {
@@ -379,8 +426,8 @@ void HardwareInterface::SetRootHoldOff(bool enable) {
             return;
         }
 
-        const uint8_t newValue = current | 0x80;
-        if (WritePhyRegister(1, newValue)) {
+        const uint8_t newValue = current | kPhyRootHoldOff;
+        if (WritePhyRegister(kPhyReg1Address, newValue)) {
             ASFW_LOG(Hardware, "PHY Register 1 RHB enabled");
         } else {
             ASFW_LOG_ERROR(Hardware, "Failed to enable RHB");
@@ -391,8 +438,13 @@ void HardwareInterface::SetRootHoldOff(bool enable) {
             return;
         }
 
-        ASFW_LOG(Hardware, "PHY Register 1 RHB set, triggering bus reset to clear");
-        InitiateBusReset(false);
+        const uint8_t newValue = current & static_cast<uint8_t>(~kPhyRootHoldOff);
+        if (WritePhyRegister(kPhyReg1Address, newValue)) {
+            ASFW_LOG(Hardware, "PHY Register 1 RHB cleared (0x%02x -> 0x%02x)",
+                     current, newValue);
+        } else {
+            ASFW_LOG_ERROR(Hardware, "Failed to clear RHB");
+        }
     }
 }
 
@@ -788,6 +840,152 @@ std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const 
     const uint32_t cycleTimer = Read(Register32::kCycleTimer);
     const uint64_t uptime = mach_absolute_time();
     return {cycleTimer, uptime};
+}
+
+LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
+    if (!device_) {
+        return {LocalCSRLockResult::Status::HardwareUnavailable};
+    }
+    const auto currentValResult = ReadLocalIRMResource(selectCode);
+    if (currentValResult.status != LocalCSRLockResult::Status::Success) {
+        return {currentValResult.status};
+    }
+    if (currentValResult.value == value) {
+        return {LocalCSRLockResult::Status::Success};
+    }
+    
+    // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
+    // Cross-validated with Linux: firewire/ohci.c:1680-1682
+    const uint32_t expectedOld = currentValResult.value;
+    Write(Register32::kCSRData, value);
+    Write(Register32::kCSRCompareData, expectedOld);
+    Write(Register32::kCSRControl, selectCode & 0x3u);
+    FlushPostedWrites();
+    
+    constexpr int kMaxTries = 10000;
+    for (int i = 0; i < kMaxTries; ++i) {
+        uint32_t ctrl = Read(Register32::kCSRControl);
+        if (ctrl & 0x80000000u) {
+            // OHCI places the previous value into CSRData upon completion.
+            const uint32_t actualOld = Read(Register32::kCSRData);
+            if (actualOld != expectedOld) {
+                ASFW_LOG(Hardware, "❌ WriteLocalIRMResource raced: expected old 0x%08x, got 0x%08x", expectedOld, actualOld);
+                return {LocalCSRLockResult::Status::Timeout}; // Reuse timeout or add Raced
+            }
+            
+            // Final verification readback
+            const auto finalVal = ReadLocalIRMResource(selectCode);
+            if (finalVal.status == LocalCSRLockResult::Status::Success && finalVal.value != value) {
+                ASFW_LOG(Hardware, "❌ WriteLocalIRMResource verification failed: expected 0x%08x, read back 0x%08x", value, finalVal.value);
+                return {LocalCSRLockResult::Status::Timeout};
+            }
+
+            return {LocalCSRLockResult::Status::Success};
+        }
+#ifndef ASFW_HOST_TEST
+        IODelay(5);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+#endif
+    }
+    ASFW_LOG(Hardware, "WriteLocalIRMResource timeout select=%u value=0x%08x", selectCode, value);
+    return {LocalCSRLockResult::Status::Timeout};
+}
+
+LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
+    if (!device_) {
+        return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
+    }
+    Write(Register32::kCSRControl, selectCode & 0x3u);
+    FlushPostedWrites();
+    
+    constexpr int kMaxTries = 10000;
+    for (int i = 0; i < kMaxTries; ++i) {
+        uint32_t ctrl = Read(Register32::kCSRControl);
+        if (ctrl & 0x80000000u) {
+            return {LocalCSRLockResult::Status::Success, Read(Register32::kCSRData)};
+        }
+#ifndef ASFW_HOST_TEST
+        IODelay(5);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+#endif
+    }
+    ASFW_LOG(Hardware, "ReadLocalIRMResource timeout select=%u", selectCode);
+    return {LocalCSRLockResult::Status::Timeout, 0};
+}
+
+LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept {
+    if (!device_) {
+        return {LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
+    }
+    // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
+    // Cross-validated with Linux: firewire/ohci.c:1680-1682
+    Write(Register32::kCSRData, newValue);
+    Write(Register32::kCSRCompareData, compareValue);
+    Write(Register32::kCSRControl, selectCode & 0x3u);
+    FlushPostedWrites();
+    
+    constexpr int kMaxTries = 10000;
+    for (int i = 0; i < kMaxTries; ++i) {
+        uint32_t ctrl = Read(Register32::kCSRControl);
+        if (ctrl & 0x80000000u) {
+            const uint32_t oldValue = Read(Register32::kCSRData);
+            return {LocalCSRLockResult::Status::Success, oldValue, (oldValue == compareValue)};
+        }
+#ifndef ASFW_HOST_TEST
+        IODelay(5);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+#endif
+    }
+    ASFW_LOG(Hardware, "CompareSwapLocalIRMResource timeout select=%u compare=0x%08x new=0x%08x", selectCode, compareValue, newValue);
+    return {LocalCSRLockResult::Status::Timeout, 0, false};
+}
+
+kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
+    if (!device_) {
+        return kIOReturnNotAttached;
+    }
+
+    using namespace ASFW::Driver::IRMCSR;
+
+    ASFW_LOG(Hardware, "[IRM] Programming initial registers: bw=0x%08x hi=0x%08x lo=0x%08x",
+             kInitialBandwidthAvailable, kInitialChannelsAvailableHi, kInitialChannelsAvailableLo);
+
+    WriteAndFlush(Register32::kInitialBandwidthAvailable, kInitialBandwidthAvailable);
+    WriteAndFlush(Register32::kInitialChannelsAvailableHi, kInitialChannelsAvailableHi);
+    WriteAndFlush(Register32::kInitialChannelsAvailableLo, kInitialChannelsAvailableLo);
+
+    // Read back verification
+    uint32_t bw = Read(Register32::kInitialBandwidthAvailable);
+    uint32_t hi = Read(Register32::kInitialChannelsAvailableHi);
+    uint32_t lo = Read(Register32::kInitialChannelsAvailableLo);
+
+    if (bw != kInitialBandwidthAvailable || hi != kInitialChannelsAvailableHi || lo != kInitialChannelsAvailableLo) {
+        ASFW_LOG(Hardware, "❌ [IRM] Initial register readback mismatch! read: bw=0x%08x hi=0x%08x lo=0x%08x",
+                 bw, hi, lo);
+        initialIRMRegistersProgrammed_ = false;
+        return kIOReturnError;
+    }
+
+    initialIRMRegistersProgrammed_ = true;
+    return kIOReturnSuccess;
+}
+
+bool HardwareInterface::IsLocalCycleMasterEnabled() const noexcept {
+    return (ReadLinkControl() & LinkControlBits::kCycleMaster) != 0;
+}
+
+bool HardwareInterface::SetLocalCycleMasterEnabled(bool enable) noexcept {
+    if (enable) {
+        WriteAndFlush(Register32::kLinkControlSet, LinkControlBits::kCycleMaster);
+    } else {
+        WriteAndFlush(Register32::kLinkControlClear, LinkControlBits::kCycleMaster);
+    }
+
+    // Verify via readback
+    return IsLocalCycleMasterEnabled() == enable;
 }
 
 } // namespace ASFW::Driver

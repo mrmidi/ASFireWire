@@ -11,6 +11,12 @@
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/CSR/BroadcastChannelCSR.hpp"
+#include "../Bus/CSR/TopologyMapService.hpp"
+#include "../Bus/CSR/SpeedMapService.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
+#include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -26,30 +32,371 @@
 #include "../Hardware/OHCIConstants.hpp"
 #include "../Hardware/OHCIEventCodes.hpp"
 #include "../Hardware/RegisterMap.hpp"
-#include "../IRM/IRMClient.hpp"
+#include "../Bus/IRM/IRMClient.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
-#include "../Protocols/Audio/DeviceProtocolFactory.hpp"
+#include "../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
 #include "BringupOverrides.hpp"
 #include "ControllerStateMachine.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace {
 // NOTE: OHCI hardware constants moved to OHCIConstants.hpp
+
+kern_return_t EnableLinkPowerStatus(ASFW::Driver::HardwareInterface& hw) {
+    hw.SetHCControlBits(ASFW::Driver::kPostedWritePrimingBits);
+
+    bool lpsAchieved = false;
+    for (int lpsRetry = 0; lpsRetry < 3; lpsRetry++) {
+        IOSleep(50);
+        const uint32_t hcControl = hw.ReadHCControl();
+        if ((hcControl & ASFW::Driver::HCControlBits::kLPS) != 0U) {
+            lpsAchieved = true;
+            break;
+        }
+    }
+
+    if (!lpsAchieved) {
+        const uint32_t finalHC = hw.ReadHCControl();
+        ASFW_LOG(Hardware,
+                 "✗ Failed to set Link Power Status after 3 × 50ms attempts (HCControl=0x%08x)",
+                 finalHC);
+        return kIOReturnTimeout;
+    }
+
+    IOSleep(50);
+    return kIOReturnSuccess;
+}
+
+void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
+    const uint8_t kTargetGap = ASFW::Driver::kPhyGapCountMask;
+    const uint8_t clearReg1Bits = ASFW::Driver::kPhyGapCountMask |
+                                  ASFW::Driver::kPhyRootHoldOff |
+                                  ASFW::Driver::kPhyInitiateBusReset;
+    const uint8_t newReg1 =
+        static_cast<uint8_t>((reg1Value & ~clearReg1Bits) | kTargetGap);
+
+    if (newReg1 == reg1Value) {
+        ASFW_LOG_PHY("PHY Register 1 already gap=0x%02x with RHB/IBR clear; skipping cold-init write",
+                     kTargetGap);
+        return;
+    }
+
+    ASFW_LOG_PHY("Updating PHY Gap Count (Reg 1): 0x%02x -> 0x%02x (RHB/IBR clear)",
+                 reg1Value, newReg1);
+
+    constexpr int kMaxPhyWriteAttempts = 3;
+    for (int attempt = 0; attempt < kMaxPhyWriteAttempts; ++attempt) {
+        if (!hw.WritePhyRegister(1, newReg1)) {
+            ASFW_LOG_PHY("PHY write attempt %d failed (writePhyRegister returned false)",
+                         attempt + 1);
+            IOSleep(1);
+            continue;
+        }
+
+        IODelay(2000);
+
+        const auto verify = hw.ReadPhyRegister(1);
+        if (verify && ((*verify & ASFW::Driver::kPhyGapCountMask) == kTargetGap) &&
+            ((*verify & ASFW::Driver::kPhyRootHoldOff) == 0)) {
+            ASFW_LOG_PHY("✅ PHY Gap Count confirmed: 0x%02x -> 0x%02x (attempt %d)",
+                         reg1Value, *verify, attempt + 1);
+            return;
+        }
+
+        ASFW_LOG_PHY("PHY gap write verify failed on attempt %d (readback=0x%02x)",
+                     attempt + 1, verify.value_or(0));
+        hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kLPS);
+        IODelay(5);
+        hw.SetHCControlBits(ASFW::Driver::HCControlBits::kLPS);
+        IOSleep(5);
+    }
+
+    ASFW_LOG(Hardware,
+             "Failed to reliably write PHY Register 1 (gap count) after %d attempts",
+             kMaxPhyWriteAttempts);
+}
+
+bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
+                                      const ASFW::Driver::ControllerConfig& config,
+                                      const ASFW::Driver::RolePolicy& policy) {
+    // ClientOnly is intentionally absent here: a pure client that advertises no
+    // BM/IRM capability also does NOT set the Self-ID/PHY contender bit, so it can
+    // never win an IRM/BM election. ServiceContext now seeds the live driver with
+    // FullBusManager/ForceRootAllowed for hardware validation, matching the
+    // reference stacks' contender posture and exercising root/gap BM duties.
+    // cross-validated with Linux: ohci.c:2510-2511
+    const bool shouldAdvertiseContender =
+        (policy.roleMode == ASFW::FW::RoleMode::FullBusManager &&
+         policy.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly) ||
+        policy.roleMode == ASFW::FW::RoleMode::IRMResourceHost ||
+        (policy.roleMode == ASFW::FW::RoleMode::LegacyBmcCleared &&
+         config.allowCycleMasterEligibility);
+
+    const uint8_t phyReg4Bits =
+        shouldAdvertiseContender
+            ? (ASFW::Driver::kPhyLinkActive | ASFW::Driver::kPhyContender)
+            : ASFW::Driver::kPhyLinkActive;
+
+    ASFW_LOG_PHY("Configuring PHY register 4 (link_on=1 contender=%d)",
+                 shouldAdvertiseContender ? 1 : 0);
+    const uint8_t clearReg4Bits =
+        shouldAdvertiseContender ? uint8_t{0} : ASFW::Driver::kPhyContender;
+    bool phyConfigOk = hw.UpdatePhyRegister(ASFW::Driver::kPhyReg4Address,
+                                            clearReg4Bits,
+                                            phyReg4Bits);
+    if (!phyConfigOk) {
+        ASFW_LOG(Hardware, "Failed to configure PHY register 4");
+        return false;
+    }
+
+    ASFW_LOG_PHY("PHY reg4 configured: link_on=1 contender=%d",
+                 shouldAdvertiseContender ? 1 : 0);
+    hw.InitializePhyReg4Cache();
+
+    const uint8_t phyReg5EnhanceBits =
+        ASFW::Driver::kPhyEnableAcceleration | ASFW::Driver::kPhyEnableMulti;
+    const bool accelEnabled =
+        hw.UpdatePhyRegister(ASFW::Driver::kPhyReg5Address, 0, phyReg5EnhanceBits);
+    if (!accelEnabled) {
+        ASFW_LOG(Hardware, "Failed to enable PHY accelerated/multi arbitration (reg5 bits 1:0)");
+        return false;
+    }
+
+    ASFW_LOG_PHY("PHY reg5 configured: Enab_accel=1 Enab_multi=1");
+    return true;
+}
+
+bool ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
+                           const ASFW::Driver::ControllerConfig& config,
+                           const ASFW::Driver::RolePolicy& policy) {
+    hw.SetHCControlBits(ASFW::Driver::HCControlBits::kProgramPhyEnable);
+    ASFW_LOG_PHY("Opened PHY programming gate (programPhyEnable=1)");
+    IODelay(1000);
+
+    auto phyId = hw.ReadPhyRegister(1);
+    if (!phyId) {
+        ASFW_LOG(Hardware, "PHY probe failed on first attempt; retrying with LPS toggle");
+        hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kLPS);
+        IODelay(5000);
+        hw.SetHCControlBits(ASFW::Driver::HCControlBits::kLPS);
+        IOSleep(50);
+        phyId = hw.ReadPhyRegister(1);
+    }
+
+    if (!phyId) {
+        ASFW_LOG(Hardware, "PHY probe failed after retry; relying on firmware defaults");
+        return false;
+    }
+
+    const uint8_t reg1Value = phyId.value();
+    ASFW_LOG_PHY("PHY probe OK (reg1=0x%02x)", reg1Value);
+    ConfigureGapCount(hw, reg1Value);
+    return ConfigurePhyOperationalRegisters(hw, config, policy);
+}
+
+void FinalizePhyLinkConfiguration(ASFW::Driver::HardwareInterface& hw,
+                                  bool programPhyEnableSupported,
+                                  bool phyConfigOk) {
+    if (!programPhyEnableSupported) {
+        return;
+    }
+
+    if (phyConfigOk) {
+        hw.SetHCControlBits(ASFW::Driver::HCControlBits::kAPhyEnhanceEnable);
+    } else {
+        hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kAPhyEnhanceEnable);
+        ASFW_LOG(Hardware, "aPhyEnhanceEnable CLEARED - IEEE1394a enhancements disabled in "
+                           "Link (PHY config failed/skipped)");
+    }
+
+    hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kProgramPhyEnable);
+
+    const uint32_t hcControlAfter = hw.ReadHCControl();
+    ASFW_LOG(
+        Hardware,
+        "HCControl after PHY/Link config: 0x%08x (programPhyEnable=%d aPhyEnhanceEnable=%d)",
+        hcControlAfter, (hcControlAfter & ASFW::Driver::HCControlBits::kProgramPhyEnable) ? 1 : 0,
+        (hcControlAfter & ASFW::Driver::HCControlBits::kAPhyEnhanceEnable) ? 1 : 0);
+}
+
+void ConfigureAtRetries(ASFW::Driver::HardwareInterface& hw) {
+    const uint32_t atRetriesVal = ASFW::Driver::kDefaultATRetries;
+    hw.WriteAndFlush(ASFW::Driver::Register32::kATRetries, atRetriesVal);
+    const uint32_t atRetriesReadback = hw.Read(ASFW::Driver::Register32::kATRetries);
+    ASFW_LOG(Hardware, "ATRetries configured: maxReq=15 maxResp=2 maxPhys=8 cycleLimit=200");
+    ASFW_LOG(Hardware, "ATRetries write/readback: 0x%08x / 0x%08x", atRetriesVal,
+             atRetriesReadback);
+}
+
+void ClearIsoReceiveMultiChannelMode(ASFW::Driver::HardwareInterface& hw) {
+    const uint32_t irContextSupport = hw.Read(ASFW::Driver::Register32::kIsoRecvIntMaskSet);
+    uint32_t irContextsCleared = 0;
+    for (uint32_t i = 0; i < 32; ++i) {
+        if ((irContextSupport & (1U << i)) != 0U) {
+            const uint32_t ctrlClearReg = DMAContextHelpers::IsoRcvContextControlClear(i);
+            hw.WriteAndFlush(ASFW::Driver::Register32FromOffsetUnchecked(ctrlClearReg),
+                             DMAContextHelpers::kIRContextMultiChannelMode);
+            ++irContextsCleared;
+        }
+    }
+
+    ASFW_LOG(Hardware, "Isochronous DMA stack is still required before this path is enabled");
+    ASFW_LOG(Hardware, "Cleared multi-channel mode on %u IR contexts (support=0x%08x)",
+             irContextsCleared, irContextSupport);
+    ASFW_LOG(Hardware,
+             "IR contexts ready for isochronous receive allocation (stack not yet implemented)");
+}
+
+kern_return_t PrepareSelfIdBuffer(const std::shared_ptr<ASFW::Driver::SelfIDCapture>& selfId,
+                                  ASFW::Driver::HardwareInterface& hw) {
+    if (!selfId) {
+        return kIOReturnSuccess;
+    }
+
+    const kern_return_t prepStatus = selfId->PrepareBuffers(512, hw);
+    if (prepStatus != kIOReturnSuccess) {
+        ASFW_LOG(Hardware, "Self-ID PrepareBuffers failed: 0x%08x (DMA allocation failed)",
+                 prepStatus);
+        return prepStatus;
+    }
+
+    const kern_return_t armStatus = selfId->Arm(hw);
+    if (armStatus != kIOReturnSuccess) {
+        ASFW_LOG(Hardware, "Self-ID Arm failed: 0x%08x", armStatus);
+        return armStatus;
+    }
+
+    ASFW_LOG(
+        Hardware,
+        "Self-ID buffer armed prior to first bus reset (per OHCI §11.2 / linux ohci_enable)");
+    return kIOReturnSuccess;
+}
+
+void SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
+                              ASFW::Driver::InterruptManager* interrupts) {
+    hw.Write(ASFW::Driver::Register32::kIntMaskClear, 0xFFFFFFFFU);
+    hw.Write(ASFW::Driver::Register32::kIntEventClear, 0xFFFFFFFFU);
+
+    const uint32_t initialMask =
+        ASFW::Driver::kBaseIntMask | ASFW::Driver::IntMaskBits::kMasterIntEnable;
+    hw.Write(ASFW::Driver::Register32::kIntMaskSet, initialMask);
+    if (interrupts) {
+        interrupts->EnableInterrupts(initialMask);
+    }
+    ASFW_LOG(Hardware, "IntMask seeded: base|master=0x%08x", initialMask);
+}
+
+void MaybeForceInitialBusReset(ASFW::Driver::HardwareInterface& hw,
+                               bool phyProgramSupported,
+                               bool phyConfigOk) {
+    if (phyProgramSupported && phyConfigOk) {
+        ASFW_LOG(Hardware, "Forcing bus reset via PHY to guarantee Config ROM shadow activation");
+        const bool forced = hw.InitiateBusReset(false);
+        if (!forced) {
+            ASFW_LOG(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
+        }
+        return;
+    }
+
+    ASFW_LOG(Hardware, "Skipping forced reset; relying on auto reset from linkEnable");
+}
+
+kern_return_t ArmAsyncReceiveContexts(ASFW::Async::IAsyncControllerPort* asyncController) {
+    if (!asyncController) {
+        ASFW_LOG(Controller, "No AsyncSubsystem - DMA contexts not armed");
+        return kIOReturnSuccess;
+    }
+
+    const kern_return_t armStatus = asyncController->ArmARContextsOnly();
+    if (armStatus != kIOReturnSuccess) {
+        ASFW_LOG(Hardware, "Failed to arm AR contexts: 0x%08x", armStatus);
+        return armStatus;
+    }
+
+    ASFW_LOG(Hardware, "AR contexts armed successfully");
+    return kIOReturnSuccess;
+}
+
+void LogInitSummary(ASFW::Driver::HardwareInterface& hw,
+                    uint32_t ohciVersion,
+                    const std::shared_ptr<ASFW::Driver::SelfIDCapture>& selfId,
+                    const std::shared_ptr<ASFW::Async::IAsyncControllerPort>& asyncController) {
+    const bool linkEnabled = (hw.ReadHCControl() & ASFW::Driver::HCControlBits::kLinkEnable) != 0;
+    const uint32_t configRomMap = hw.Read(ASFW::Driver::Register32::kConfigROMMap);
+    const char* selfIdState = selfId ? "armed" : "missing";
+    const char* asyncState = asyncController ? "armed" : "missing";
+
+    ASFW_LOG(Hardware,
+             "OHCI init complete: version=0x%08x link=%{public}s configROM=0x%08x "
+             "selfID=%{public}s async=%{public}s",
+             ohciVersion, linkEnabled ? "enabled" : "disabled", configRomMap, selfIdState,
+             asyncState);
+}
 
 } // namespace
 
 namespace ASFW::Driver {
 
-ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
-    : config_(std::move(config)), deps_(std::move(deps)) {
+ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy, Dependencies deps)
+    : config_(std::move(config)),
+      rolePolicy_(initialPolicy),
+      deps_(std::move(deps)),
+      roleCoordinator_(Role::RoleExecutors{
+          static_cast<Role::IPhyConfigReset*>(this),
+          static_cast<Role::IRemoteCsrWriter*>(this),
+          static_cast<Role::IContenderControl*>(this)}) {
+
+    // FW-21: the RoleCoordinator's mutating actions are gated by the capability
+    // ladder. Seed it from the initial role policy; ApplyRolePolicy() keeps the
+    // gate in sync on any subsequent runtime change.
+    roleCoordinator_.SetActivityLevel(rolePolicy_.fullBMActivityLevel);
+    roleCoordinator_.SetLinuxStyleCmcForceRoot(rolePolicy_.linuxStyleCmcForceRoot);
+
+    broadcastChannel_ = deps_.broadcastChannel;
+    if (broadcastChannel_ && deps_.hardware) {
+        localIrmController_ = std::make_unique<Bus::LocalIRMResourceController>(*deps_.hardware, *broadcastChannel_);
+        ASFW_LOG(Controller, "✅ LocalIRMResourceController created");
+    }
+
+    if (deps_.hardware && deps_.busReset) {
+        Bus::IRMFallbackCoordinator::Deps fallbackDeps{
+            .hardware = *deps_.hardware,
+            .timing = &deps_.busReset->PostResetTiming(),
+            .scheduler = deps_.scheduler.get()
+        };
+        irmFallback_ = std::make_shared<Bus::IRMFallbackCoordinator>(fallbackDeps);
+        ASFW_LOG(Controller, "✅ IRMFallbackCoordinator created");
+    }
+
+    cyclePolicy_ = std::make_unique<Bus::CyclePolicyCoordinator>();
+    ASFW_LOG(Controller, "✅ CyclePolicyCoordinator created");
+
+    rootSelection_ = std::make_unique<Bus::RootSelectionCoordinator>(Bus::RootSelectionConfig{});
+    ASFW_LOG(Controller, "✅ RootSelectionCoordinator created");
+
+    gapPolicy_ = std::make_unique<Bus::GapPolicyCoordinator>(Bus::GapPolicyConfig{});
+    ASFW_LOG(Controller, "✅ GapPolicyCoordinator created");
+
+    powerLinkPolicy_ = std::make_unique<Bus::PowerLinkPolicyCoordinator>(Bus::PowerLinkPolicyConfig{});
+    ASFW_LOG(Controller, "✅ PowerLinkPolicyCoordinator created");
+
+    speedMapService_ = std::make_shared<Bus::SpeedMapService>();
+    ASFW_LOG(Controller, "✅ SpeedMapService created");
 
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
             std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);
         ASFW_LOG(Controller, "✅ FireWireBusImpl facade created");
+        bmPolicyCoordinator_ = std::make_unique<Bus::BusManagerPolicyCoordinator>(
+            Bus::BusManagerPolicyCoordinator::Deps{
+                .hardware = deps_.hardware.get(),
+                .executor = this
+            }
+        );
+        ASFW_LOG(Controller, "✅ BusManagerPolicyCoordinator created");
     }
 
     if (deps_.hardware && deps_.asyncController) {
@@ -90,7 +437,7 @@ kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
     deps_.busReset->Initialize(deps_.hardware.get(), workQueue, deps_.asyncController.get(),
                                deps_.selfId.get(), deps_.configRomStager.get(),
                                deps_.interrupts.get(), deps_.topology.get(), deps_.busManager.get(),
-                               deps_.romScanner.get());
+                               deps_.romScanner.get(), deps_.topologyMapService.get());
 
     ASFW_LOG(Controller, "Binding topology callback for Discovery integration");
     deps_.busReset->BindCallbacks(
@@ -174,6 +521,12 @@ kern_return_t ControllerCore::Start(IOService* provider) {
 
     ASFW_LOG(Controller, "✓ Hardware initialization complete - interrupt delivery active");
 
+    if (deps_.topologyMapService) {
+        if (!deps_.topologyMapService->Start()) {
+            ASFW_LOG(Controller, "⚠️ WARNING: TopologyMapService failed to start");
+        }
+    }
+
     if (deps_.stateMachine) {
         deps_.stateMachine->TransitionTo(ControllerState::kRunning,
                                          "ControllerCore::Start complete", mach_absolute_time());
@@ -202,6 +555,14 @@ void ControllerCore::Stop() {
 
     // Mark as not running to prevent HandleInterrupt from processing events
     running_ = false;
+
+    if (deps_.topologyMapService) {
+        deps_.topologyMapService->Stop();
+    }
+
+    if (deps_.busManagerElectionDriver) {
+        deps_.busManagerElectionDriver->Stop();
+    }
 
     if (hardwareAttached_ && deps_.hardware) {
         if (deps_.configRomStager) {
@@ -248,7 +609,6 @@ kern_return_t ControllerCore::PerformSoftReset() const {
     return kIOReturnSuccess;
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     (void)provider;
     if (hardwareInitialised_) {
@@ -292,34 +652,14 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     }
 
     ASFW_LOG(Hardware, "Initialising OHCI core (LPS bring-up ➜ config ROM staging)");
-
-    // Per Linux ohci_enable() lines 2428-2441: Enable LPS and poll with retry
-    // Some controllers (TI TSB82AA2, ALI M5251) need multiple attempts
-    hw.SetHCControlBits(ASFW::Driver::kPostedWritePrimingBits);
-
-    // Retry loop: 50ms × 3 attempts (matches Linux lps polling)
-    bool lpsAchieved = false;
-    for (int lpsRetry = 0; lpsRetry < 3; lpsRetry++) {
-        IOSleep(50); // 50ms per attempt (Linux uses msleep(50))
-        const uint32_t hcControl = hw.ReadHCControl();
-        if ((hcControl & HCControlBits::kLPS) != 0U) {
-            lpsAchieved = true;
-            break;
-        }
+    const kern_return_t lpsStatus = EnableLinkPowerStatus(hw);
+    if (lpsStatus != kIOReturnSuccess) {
+        return lpsStatus;
     }
 
-    if (!lpsAchieved) {
-        const uint32_t finalHC = hw.ReadHCControl();
-        ASFW_LOG(Hardware,
-                 "✗ Failed to set Link Power Status after 3 × 50ms attempts (HCControl=0x%08x)",
-                 finalHC);
-        return kIOReturnTimeout;
+    if (broadcastChannel_) {
+        broadcastChannel_->ResetImplementedInvalid();
     }
-
-    // Additional settling time after LPS before PHY access
-    // Per Linux ohci_enable(): some cards signal LPS early but cannot use
-    // the PHY immediately; add a small pause before accessing PHY.
-    IOSleep(50); // Additional 50ms settling (total 100-200ms from LPS enable)
 
     // Step 3: Detect OHCI version
     const uint32_t version = hw.Read(Register32::kVersion);
@@ -327,13 +667,14 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     const bool isOHCI_1_1_OrLater = (ohciVersion_ >= ASFW::Driver::kOHCI_1_1);
 
     // Step 3a: Enable OHCI 1.1+ features if supported
-    // Linux: if (version >= OHCI_VERSION_1_1) { reg_write(ohci,
-    // OHCI1394_InitialChannelsAvailableHi, 0xfffffffe); } OHCI 1.1 spec §5.5:
-    // InitialChannelsAvailableHi enables channels 32-62 for isochronous Bit pattern 0xfffffffe =
-    // channels 33-63 available (bit 0 = channel 32, reserved) This enables broadcast channel (63)
-    // auto-allocation behavior
+    // OHCI 1.1 spec §5.5: Program initial default values for autonomous IRM CSRs.
+    // This prepares the controller to host IRM resources correctly after a bus reset.
     if (isOHCI_1_1_OrLater) {
-        hw.WriteAndFlush(Register32::kInitialChannelsAvailableHi, 0xFFFFFFFE);
+        const kern_return_t kr = hw.ProgramInitialIRMResourceRegisters();
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Hardware, "❌ Failed to program initial IRM registers: 0x%08x", kr);
+            // We continue anyway, as basic operation might still work
+        }
     }
 
     // Step 4: Clear noByteSwapData - enable byte-swapping for data phases per OHCI spec
@@ -360,126 +701,9 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
         // Don't fail - firmware may have already configured PHY correctly
     }
 
-    // Step 5a: Configure PHY registers
-    // Only attempt if programPhyEnable is set
-    bool phyConfigOk =
-        false; // Track PHY configuration success for later aPhyEnhanceEnable decision
+    bool phyConfigOk = false;
     if (programPhyEnableSupported) {
-        // Per Linux configure_1394a_enhancements(): open gate, settle, probe, configure
-        hw.SetHCControlBits(HCControlBits::kProgramPhyEnable);
-        ASFW_LOG_PHY("Opened PHY programming gate (programPhyEnable=1)");
-
-        // Settle delay
-        IODelay(1000);
-
-        // Probe PHY (Register 1 contains Gap Count)
-        auto phyId = hw.ReadPhyRegister(1);
-        if (!phyId) {
-            ASFW_LOG(Hardware, "PHY probe failed on first attempt; retrying with LPS toggle");
-            // Existing retry logic: toggle LPS and attempt read again
-            hw.ClearHCControlBits(HCControlBits::kLPS);
-            IODelay(5000);
-            hw.SetHCControlBits(HCControlBits::kLPS);
-            IOSleep(50);
-            phyId = hw.ReadPhyRegister(1);
-        }
-
-        if (!phyId) {
-            ASFW_LOG(Hardware, "PHY probe failed after retry; relying on firmware defaults");
-        } else {
-            uint8_t reg1Value = phyId.value();
-            ASFW_LOG_PHY("PHY probe OK (reg1=0x%02x)", reg1Value);
-
-            // --- FIX START: Force Gap Count to 0x3F ---
-            // Problem: Some PHYs report the strapped value over the register interface
-            //          but require a write to latch it into the active core after reset.
-            // Fix:     Always write register 1 so the latch is triggered even if the
-            //          desired value already appears to be programmed.
-            const uint8_t kTargetGap = ASFW::Driver::kPhyGapCountMask;
-            const uint8_t newReg1 = (reg1Value & 0xC0U) | kTargetGap;
-
-            ASFW_LOG_PHY("Forcing PHY Gap Count write (Reg 1): 0x%02x -> 0x%02x", reg1Value,
-                         newReg1);
-
-            constexpr int kMaxPhyWriteAttempts = 3;
-            bool wroteOk = false;
-            for (int attempt = 0; attempt < kMaxPhyWriteAttempts; ++attempt) {
-                if (!hw.WritePhyRegister(1, newReg1)) {
-                    ASFW_LOG_PHY("PHY write attempt %d failed (writePhyRegister returned false)",
-                                 attempt + 1);
-                    // Short delay before retry
-                    IOSleep(1);
-                    continue;
-                }
-
-                // Give PHY time to latch the value (some parts need an explicit delay)
-                IODelay(2000);
-
-                // Read-back verification
-                auto verify = hw.ReadPhyRegister(1);
-                if (verify && ((*verify & ASFW::Driver::kPhyGapCountMask) == kTargetGap)) {
-                    ASFW_LOG_PHY("✅ PHY Gap Count confirmed: 0x%02x -> 0x%02x (attempt %d)",
-                                 reg1Value, *verify, attempt + 1);
-                    wroteOk = true;
-                    break;
-                }
-
-                // Toggle LPS to try to force PHY latch, then small pause and retry
-                ASFW_LOG_PHY("PHY gap write verify failed on attempt %d (readback=0x%02x)",
-                             attempt + 1, verify.value_or(0));
-                hw.ClearHCControlBits(HCControlBits::kLPS);
-                IODelay(5);
-                hw.SetHCControlBits(HCControlBits::kLPS);
-                IOSleep(5);
-            }
-
-            if (!wroteOk) {
-                ASFW_LOG(Hardware,
-                         "Failed to reliably write PHY Register 1 (gap count) after %d attempts",
-                         kMaxPhyWriteAttempts);
-            }
-            // --- FIX END ---
-
-            // Step 4: Configure PHY register 4 (Link Active + Contender)
-            // Use constants from IEEE1394.hpp
-            // (kPhyReg4Address, kPhyLinkActive, kPhyContender)
-            //
-            // CRITICAL FIX: Only set Contender bit if allowCycleMasterEligibility is true
-            // - This matches Apple's behavior (conditional PHY reg 4 setup)
-            // - Prevents two-contender bus topology issues with devices like Apogee Duet
-            // - Default config has allowCycleMasterEligibility=false (delegate mode)
-
-            const uint8_t phyReg4Bits =
-                config_.allowCycleMasterEligibility
-                    ? (kPhyLinkActive | kPhyContender) // Want to be cycle master: L=1, C=1
-                    : kPhyLinkActive;                  // Delegate mode: L=1, C=0
-
-            ASFW_LOG_PHY("Configuring PHY register 4 (link_on=1 contender=%d)",
-                         config_.allowCycleMasterEligibility ? 1 : 0);
-            phyConfigOk = hw.UpdatePhyRegister(kPhyReg4Address, 0, phyReg4Bits);
-
-            if (phyConfigOk) {
-                ASFW_LOG_PHY("PHY reg4 configured: link_on=1 contender=%d",
-                             config_.allowCycleMasterEligibility ? 1 : 0);
-
-                // Initialize PHY reg 4 cache for SetContender() cached writes
-                hw.InitializePhyReg4Cache();
-            } else {
-                ASFW_LOG(Hardware, "Failed to configure PHY register 4");
-            }
-
-            // Enable PHY accelerated arbitration (IEEE 1394a reg5 bit6) before linkEnable.
-            if (phyConfigOk) {
-                const bool accelEnabled =
-                    hw.UpdatePhyRegister(kPhyReg5Address, 0, kPhyEnableAcceleration);
-                if (accelEnabled) {
-                    ASFW_LOG_PHY("PHY reg5 configured: Enab_accel=1 (gap writes will stick)");
-                } else {
-                    ASFW_LOG(Hardware, "Failed to enable PHY accelerated arbitration (reg5 bit6)");
-                    phyConfigOk = false;
-                }
-            }
-        }
+        phyConfigOk = ConfigurePhyRegisters(hw, config_, rolePolicy_);
     }
 
     phyConfigOk_ = phyConfigOk;
@@ -496,32 +720,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     //
     // Note: Previously programPhyEnable was not cleared, leaving hardware in configuration
     // mode which could cause undefined behavior per OHCI §5.7.2 and trigger faults.
-    if (programPhyEnableSupported) {
-        // Decide aPhyEnhanceEnable state based on PHY configuration success
-        // If PHY config succeeded → assume IEEE1394a PHY → enable Link enhancements
-        // If PHY config failed → assume legacy PHY or firmware-configured → disable Link
-        // enhancements for safety
-        if (phyConfigOk) {
-            hw.SetHCControlBits(HCControlBits::kAPhyEnhanceEnable);
-        } else {
-            hw.ClearHCControlBits(HCControlBits::kAPhyEnhanceEnable);
-            ASFW_LOG(Hardware, "aPhyEnhanceEnable CLEARED - IEEE1394a enhancements disabled in "
-                               "Link (PHY config failed/skipped)");
-        }
-
-        // Clear programPhyEnable to signal configuration complete
-        // Per OHCI §5.7.2: "Software should clear programPhyEnable once the PHY and Link
-        // have been programmed consistently."
-        // Per Linux ohci.c line 2387: "Clean up: configuration has been taken care of."
-        hw.ClearHCControlBits(HCControlBits::kProgramPhyEnable);
-
-        const uint32_t hcControlAfter = hw.ReadHCControl();
-        ASFW_LOG(
-            Hardware,
-            "HCControl after PHY/Link config: 0x%08x (programPhyEnable=%d aPhyEnhanceEnable=%d)",
-            hcControlAfter, (hcControlAfter & HCControlBits::kProgramPhyEnable) ? 1 : 0,
-            (hcControlAfter & HCControlBits::kAPhyEnhanceEnable) ? 1 : 0);
-    }
+    FinalizePhyLinkConfiguration(hw, programPhyEnableSupported, phyConfigOk);
 
     // Step 6: Stage Config ROM BEFORE enabling link (OHCI §5.5.6 compliance)
     // This ensures the shadow register (ConfigROMmapNext) is loaded before
@@ -542,20 +741,11 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // The kProvisionalNodeId value would be immediately overwritten anyway
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
     ASFW_LOG(Hardware,
-             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable (cycleMaster deferred)");
+             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable "
+             "(cycleMaster is role-policy controlled)");
     hw.WriteAndFlush(Register32::kAsReqFilterHiSet, ASFW::Driver::kAsReqAcceptAllMask);
 
-    // Build full 32-bit value explicitly per OHCI spec:
-    // [31:24]=reserved(0), [23:16]=cycleLimit, [15:8]=maxPhys, [7:4]=maxResp, [3:0]=maxReq
-    const uint32_t atRetriesVal = ASFW::Driver::kDefaultATRetries;
-
-    // Write ATRetries AFTER cycle timer enable (ensures top byte sticks)
-    hw.WriteAndFlush(Register32::kATRetries, atRetriesVal);
-    // Force readback to flush write pipeline
-    const uint32_t atRetriesReadback = hw.Read(Register32::kATRetries);
-    ASFW_LOG(Hardware, "ATRetries configured: maxReq=3 maxResp=3 maxPhys=3 cycleLimit=200");
-    ASFW_LOG(Hardware, "ATRetries write/readback: 0x%08x / 0x%08x", atRetriesVal,
-             atRetriesReadback);
+    ConfigureAtRetries(hw);
 
     // Bus timing state: mark cycle timer as inactive during init
     // Linux: ohci->bus_time_running = false;
@@ -563,56 +753,10 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     busTimeRunning_ = false;
     ASFW_LOG(Hardware, "Bus time marked inactive - isochronous cycle timer not yet running");
 
-    // Clear multi-channel mode on all IR contexts for clean initialization
-    // Detect how many IR contexts hardware supports (read IsoRecvIntMaskSet)
-    const uint32_t irContextSupport = hw.Read(Register32::kIsoRecvIntMaskSet);
-    uint32_t irContextsCleared = 0;
-    for (uint32_t i = 0; i < 32; ++i) {
-        if ((irContextSupport & (1U << i)) != 0U) {
-            const uint32_t ctrlClearReg = DMAContextHelpers::IsoRcvContextControlClear(i);
-            hw.WriteAndFlush(Register32FromOffsetUnchecked(ctrlClearReg),
-                             DMAContextHelpers::kIRContextMultiChannelMode);
-            ++irContextsCleared;
-        }
-    }
-    ASFW_LOG(Hardware, "Isochronous DMA stack is still required before this path is enabled");
-    ASFW_LOG(Hardware, "Cleared multi-channel mode on %u IR contexts (support=0x%08x)",
-             irContextsCleared, irContextSupport);
-    ASFW_LOG(Hardware,
-             "IR contexts ready for isochronous receive allocation (stack not yet implemented)");
-
-    // Allocate and map Self-ID DMA buffer before arming
-    // Per OHCI §11: hardware DMAs Self-ID packets to the buffer pointed to by SelfIDBuffer.
-    // Per OHCI §13.2.5: an invalid/unmapped buffer address causes UnrecoverableError.
-    // Sequence:
-    //   1. PrepareBuffers() - allocate IOBufferMemoryDescriptor, map DMA, set segment valid
-    //   2. Arm() - write valid DMA address to kSelfIDBuffer register
-    // The buffer must be prepared before Arm() to avoid DMA errors during Self-ID completion.
-    if (deps_.selfId) {
-        // Allocate DMA buffer for Self-ID packets (512 quadlets = 2048 bytes, enough for 64 nodes)
-        const kern_return_t prepStatus = deps_.selfId->PrepareBuffers(512, hw);
-        if (prepStatus != kIOReturnSuccess) {
-            ASFW_LOG(Hardware, "Self-ID PrepareBuffers failed: 0x%08x (DMA allocation failed)",
-                     prepStatus);
-            return prepStatus;
-        }
-        // OHCI §11.2 requires SelfIDBuffer to contain a valid DMA address before linkEnable
-        // triggers the first bus reset. Linux ohci_enable() (firewire/ohci.c:2471) programs the
-        // register immediately after allocation; we mirror that here so the soft-reset induced
-        // bus reset cannot DMA into address 0 and leave stale generation metadata behind.
-        const kern_return_t armStatus = deps_.selfId->Arm(hw);
-        if (armStatus != kIOReturnSuccess) {
-            ASFW_LOG(Hardware, "Self-ID Arm failed: 0x%08x", armStatus);
-            return armStatus;
-        }
-        ASFW_LOG(
-            Hardware,
-            "Self-ID buffer armed prior to first bus reset (per OHCI §11.2 / linux ohci_enable)");
-    }
-    return kIOReturnSuccess;
+    ClearIsoReceiveMultiChannelMode(hw);
+    return PrepareSelfIdBuffer(deps_.selfId, hw);
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     if (hardwareInitialised_) {
         return kIOReturnSuccess;
@@ -623,55 +767,20 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     }
 
     auto& hw = *deps_.hardware;
-
-    hw.Write(Register32::kIntMaskClear, 0xFFFFFFFFU);  // Clear all mask bits
-    hw.Write(Register32::kIntEventClear, 0xFFFFFFFFU); // Clear all pending events
-
-    const uint32_t initialMask = kBaseIntMask | IntMaskBits::kMasterIntEnable;
-    hw.Write(Register32::kIntMaskSet, initialMask);
-    if (deps_.interrupts) {
-        deps_.interrupts->EnableInterrupts(initialMask); // Update software shadow
-    }
-    ASFW_LOG(Hardware, "IntMask seeded: base|master=0x%08x", initialMask);
+    SeedInitialInterruptMask(hw, deps_.interrupts.get());
 
     ASFW_LOG(Hardware,
              "Setting linkEnable + BIBimageValid atomically - will trigger auto bus reset");
     hw.SetHCControlBits(HCControlBits::kLinkEnable | HCControlBits::kBibImageValid);
+    MaybeForceInitialBusReset(hw, phyProgramSupported_, phyConfigOk_);
 
-    if (phyProgramSupported_ && phyConfigOk_) {
-        ASFW_LOG(Hardware, "Forcing bus reset via PHY to guarantee Config ROM shadow activation");
-        const bool forced = hw.InitiateBusReset(false);
-        if (!forced) {
-            ASFW_LOG(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
-        }
-    } else {
-        ASFW_LOG(Hardware, "Skipping forced reset; relying on auto reset from linkEnable");
-    }
-
-    if (deps_.asyncController) {
-        const kern_return_t armStatus = deps_.asyncController->ArmARContextsOnly();
-        if (armStatus != kIOReturnSuccess) {
-            ASFW_LOG(Hardware, "Failed to arm AR contexts: 0x%08x", armStatus);
-            return armStatus;
-        }
-        ASFW_LOG(Hardware, "AR contexts armed successfully");
-    } else {
-        ASFW_LOG(Controller, "No AsyncSubsystem - DMA contexts not armed");
+    const kern_return_t armStatus = ArmAsyncReceiveContexts(deps_.asyncController.get());
+    if (armStatus != kIOReturnSuccess) {
+        return armStatus;
     }
 
     hardwareInitialised_ = true;
-
-    const bool linkEnabled = (hw.ReadHCControl() & HCControlBits::kLinkEnable) != 0;
-    const uint32_t configRomMap = hw.Read(Register32::kConfigROMMap);
-    const char* selfIdState = deps_.selfId ? "armed" : "missing";
-    const char* asyncState = deps_.asyncController ? "armed" : "missing";
-
-    ASFW_LOG(Hardware,
-             "OHCI init complete: version=0x%08x link=%{public}s configROM=0x%08x "
-             "selfID=%{public}s async=%{public}s",
-             ohciVersion_, linkEnabled ? "enabled" : "disabled", configRomMap, selfIdState,
-             asyncState);
-
+    LogInitSummary(hw, ohciVersion_, deps_.selfId, deps_.asyncController);
     return kIOReturnSuccess;
 }
 
@@ -689,7 +798,19 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
         (static_cast<uint64_t>(guidHi) << 32) | static_cast<uint64_t>(guidLo);
     const uint64_t effectiveGuid = (config_.localGuid != 0) ? config_.localGuid : hardwareGuid;
 
-    builder->Build(busOptions, effectiveGuid, ASFW::Driver::MakeNodeCapabilities(phyConfigOk_),
+    // FW-11/FW-22: advertise only the capabilities ASFW actually backs, gated by
+    // the configured role mode. In FullBusManager validation mode, normalize the
+    // local BIB like an OHCI host instead of trusting a zeroed hardware capability
+    // nibble; peers use this evidence when deciding who can safely be root.
+    const uint32_t localBusOptions = ASFW::FW::NormalizeLocalBusOptions(
+        busOptions, rolePolicy_.roleMode, rolePolicy_.fullBMActivityLevel);
+    const auto advertisedCaps = ASFW::FW::DecodeBusOptions(localBusOptions);
+    ASFW_LOG(Hardware,
+             "FW-22: roleMode=%u advertising bmc=%d irmc=%d cmc=%d isc=%d (hw=0x%08x -> 0x%08x)",
+             static_cast<unsigned>(rolePolicy_.roleMode), advertisedCaps.bmc ? 1 : 0,
+             advertisedCaps.irmc ? 1 : 0, advertisedCaps.cmc ? 1 : 0, advertisedCaps.isc ? 1 : 0,
+             busOptions, localBusOptions);
+    builder->Build(localBusOptions, effectiveGuid, ASFW::Driver::MakeNodeCapabilities(phyConfigOk_),
                    config_.vendor.vendorName);
     if (builder->QuadletCount() < 5) {
         ASFW_LOG(Hardware, "Config ROM builder produced insufficient quadlets (%zu)",
@@ -703,6 +824,40 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
         ASFW_LOG(Hardware, "Config ROM staging failed: 0x%08x", kr);
     }
     return kr;
+}
+
+kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
+    rolePolicy_ = policy;
+    // Keep the RoleCoordinator gate in sync with the new policy.
+    roleCoordinator_.SetActivityLevel(rolePolicy_.fullBMActivityLevel);
+    roleCoordinator_.SetLinuxStyleCmcForceRoot(rolePolicy_.linuxStyleCmcForceRoot);
+
+    if (deps_.busManagerElectionDriver) {
+        deps_.busManagerElectionDriver->SetRolePolicy(policy);
+    }
+
+    // Before the link is up there is nothing to re-advertise — Start() stages the
+    // Config ROM from rolePolicy_ during bring-up. Once running, re-stage the BIB
+    // capabilities and force a long bus reset so peers re-read the local ROM.
+    if (!running_ || !deps_.hardware) {
+        return kIOReturnSuccess;
+    }
+
+    auto& hw = *deps_.hardware;
+    const uint32_t busOptions = hw.Read(Register32::kBusOptions);
+    const uint32_t guidHi = hw.Read(Register32::kGUIDHi);
+    const uint32_t guidLo = hw.Read(Register32::kGUIDLo);
+    const kern_return_t kr = StageConfigROM(busOptions, guidHi, guidLo);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "ApplyRolePolicy: Config ROM re-stage failed: 0x%08x", kr);
+        return kr;
+    }
+    ASFW_LOG(Controller,
+             "ApplyRolePolicy: roleMode=%u activity=%u — re-staged BIB, forcing bus reset",
+             static_cast<unsigned>(rolePolicy_.roleMode),
+             static_cast<unsigned>(rolePolicy_.fullBMActivityLevel));
+    hw.InitiateBusReset(/*shortReset=*/false);
+    return kIOReturnSuccess;
 }
 
 void ControllerCore::DiagnoseUnrecoverableError() const {

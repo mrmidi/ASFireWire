@@ -65,7 +65,7 @@ private:
         ASFW::Async::AsyncStatus status,
         uint8_t responseCode,
         void* context,
-        const void* responsePayload,
+        const uint8_t* responsePayload,
         uint32_t responseLength);
 };
 

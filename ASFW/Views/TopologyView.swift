@@ -53,9 +53,12 @@ struct TopologyView: View {
                             selfIDCard(selfID)
                         }
                         
-                        // Topology tree visualization
+                        // Topology tree (rooted at the bus root)
                         topologyTreeCard(topology)
-                        
+
+                        // Per-PHY reported port detail (collapsible)
+                        portDetailCard(topology)
+
                         // Warnings
                         if !topology.warnings.isEmpty {
                             warningsCard(topology.warnings)
@@ -221,25 +224,74 @@ struct TopologyView: View {
     }
     
     // MARK: - Topology Tree
-    
+
+    /// parent node id -> child nodes, derived from each node's parent port link.
+    private func childrenByParent(_ topology: TopologySnapshot) -> [UInt8: [TopologyNode]] {
+        var map: [UInt8: [TopologyNode]] = [:]
+        for node in topology.nodes where !node.isRoot {
+            guard let parentPort = node.parentPort, Int(parentPort) < node.links.count else { continue }
+            let link = node.links[Int(parentPort)]
+            guard link.connected else { continue }
+            map[link.remoteNodeId, default: []].append(node)
+        }
+        for key in map.keys { map[key]?.sort { $0.nodeId < $1.nodeId } }
+        return map
+    }
+
     private func topologyTreeCard(_ topology: TopologySnapshot) -> some View {
-        GroupBox {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(topology.nodes) { node in
-                    nodeRow(node, topology: topology)
-                        .background(selectedNode?.nodeId == node.nodeId ? Color.accentColor.opacity(0.1) : Color.clear)
-                        .cornerRadius(4)
-                        .onTapGesture {
-                            selectedNode = node
-                        }
+        let children = childrenByParent(topology)
+        // Root(s): nodes flagged isRoot; fall back to the highest id if none.
+        let roots = topology.nodes.filter { $0.isRoot }
+        let effectiveRoots = roots.isEmpty ? Array(topology.nodes.suffix(1)) : roots
+
+        return GroupBox {
+            if topology.nodes.isEmpty {
+                Text("No nodes")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(effectiveRoots) { root in
+                        TopologyTreeNodeView(
+                            node: root,
+                            parentLinkSpeed: nil,
+                            topology: topology,
+                            children: children,
+                            selectedNode: $selectedNode
+                        )
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } label: {
             Label("Bus Topology Tree", systemImage: "circle.hexagongrid.fill")
                 .font(.headline)
         }
     }
-    
+
+    // MARK: - Per-PHY Port Detail (collapsible)
+
+    private func portDetailCard(_ topology: TopologySnapshot) -> some View {
+        GroupBox {
+            DisclosureGroup("Per-PHY reported ports") {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(topology.nodes) { node in
+                        nodeRow(node, topology: topology)
+                            .background(selectedNode?.nodeId == node.nodeId ? Color.accentColor.opacity(0.1) : Color.clear)
+                            .cornerRadius(4)
+                            .onTapGesture { selectedNode = node }
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .font(.subheadline)
+        } label: {
+            Label("Self-ID Port Detail", systemImage: "rectangle.split.3x1")
+                .font(.headline)
+        }
+    }
+
     private func nodeRow(_ node: TopologyNode, topology: TopologySnapshot) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -331,5 +383,116 @@ struct TopologyView: View {
                 .font(.headline)
                 .foregroundColor(.orange)
         }
+    }
+}
+
+// MARK: - Recursive Tree Node
+
+/// One node in the bus topology tree, drawn rooted at the bus root. Children are
+/// the nodes whose parent-port link points back at this node; the recursion walks
+/// down the tree via the physical adjacency carried in TopologyNode.links.
+private struct TopologyTreeNodeView: View {
+    let node: TopologyNode
+    /// Mbps of the edge from this node's parent, nil for the root.
+    let parentLinkSpeed: UInt32?
+    let topology: TopologySnapshot
+    let children: [UInt8: [TopologyNode]]
+    /// Node ids on the path from the root to (and including) this node's parent.
+    /// Used to break cycles in malformed/stale topology adjacency so recursion
+    /// can't run away and overflow the stack.
+    var ancestors: Set<UInt8> = []
+    @Binding var selectedNode: TopologyNode?
+
+    /// Children, excluding any that are already ancestors (back-edge / cycle).
+    private var childList: [TopologyNode] {
+        (children[node.nodeId] ?? []).filter { !ancestors.contains($0.nodeId) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            nodeBadge
+
+            if !childList.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(childList) { child in
+                        HStack(alignment: .top, spacing: 6) {
+                            Text("└─")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            TopologyTreeNodeView(
+                                node: child,
+                                parentLinkSpeed: edgeSpeed(node, child),
+                                topology: topology,
+                                children: children,
+                                ancestors: ancestors.union([node.nodeId]),
+                                selectedNode: $selectedNode
+                            )
+                        }
+                    }
+                }
+                .padding(.leading, 14)
+            }
+        }
+    }
+
+    private var nodeBadge: some View {
+        HStack(spacing: 8) {
+            Text("Node \(node.nodeId)")
+                .font(.system(.body, design: .monospaced))
+                .fontWeight(.semibold)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(4)
+
+            Text(node.speedDescription)
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            if let edge = parentLinkSpeed {
+                Text("· \(edge) Mbps link")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            if node.isRoot {
+                Image(systemName: "crown.fill").foregroundColor(.yellow).help("Bus root")
+            }
+            if topology.irmNodeId == node.nodeId {
+                Image(systemName: "star.fill").foregroundColor(.blue).help("Isochronous Resource Manager")
+            }
+            if topology.localNodeId == node.nodeId {
+                Image(systemName: "person.fill").foregroundColor(.orange).help("Local node")
+            }
+            if node.initiatedReset {
+                Image(systemName: "bolt.fill").foregroundColor(.orange).help("Initiated last bus reset")
+            }
+            if !node.linkActive {
+                Text("PHY-only")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .help("Link layer inactive (repeater)")
+            }
+        }
+        .padding(.vertical, 2)
+        .background(selectedNode?.nodeId == node.nodeId ? Color.accentColor.opacity(0.12) : Color.clear)
+        .cornerRadius(4)
+        .contentShape(Rectangle())
+        .onTapGesture { selectedNode = node }
+    }
+
+    private var accentColor: Color {
+        if topology.localNodeId == node.nodeId { return .orange }
+        if topology.rootNodeId == node.nodeId { return .green }
+        if topology.irmNodeId == node.nodeId { return .blue }
+        return .gray
+    }
+
+    /// A cable runs at the slower of the two PHYs' max speeds.
+    private func edgeSpeed(_ a: TopologyNode, _ b: TopologyNode) -> UInt32 {
+        let sa = a.maxSpeedMbps == 0 ? b.maxSpeedMbps : a.maxSpeedMbps
+        let sb = b.maxSpeedMbps == 0 ? a.maxSpeedMbps : b.maxSpeedMbps
+        return min(sa, sb)
     }
 }

@@ -32,13 +32,24 @@ public:
                              Debug::BusResetPacketCapture* busResetCapture);
 
 private:
+    void ProcessRequestInterrupts();
+    void ProcessResponseInterrupts(Debug::BusResetPacketCapture* busResetCapture);
+    void DumpRequestBuffer(uint32_t buffersProcessed,
+                           const uint8_t* bufferStart,
+                           size_t bufferSize) const;
+    void DumpResponseInterruptState(ARResponseContext& ctx) const;
+    void LogResponseNewData(const uint8_t* newDataStart,
+                            size_t startOffset,
+                            size_t bufferSize) const;
+    void DumpEmptyResponseBuffer(ARResponseContext& ctx) const;
+
     // Private helper to process a single parsed packet.
     void ProcessReceivedPacket(ARContextType contextType,
                                const ARPacketParser::PacketInfo& info,
                                Debug::BusResetPacketCapture* busResetCapture);
 
     // Handle synthetic bus reset packet
-    void HandleSyntheticBusResetPacket(const uint32_t* quadlets,
+    void HandleSyntheticBusResetPacket(const ARPacketView& view,
                                        uint8_t newGeneration,
                                        Debug::BusResetPacketCapture* busResetCapture);
 

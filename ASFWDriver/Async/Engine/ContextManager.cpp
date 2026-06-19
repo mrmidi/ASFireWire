@@ -140,9 +140,10 @@ kern_return_t ContextManager::provision(ASFW::Driver::HardwareInterface& hw,
     const size_t arRspBytes     = align16(spec.arRespBufCount  * sizeof(HW::OHCIDescriptor));
     const size_t arReqDataBytes = align16(spec.arReqBufCount   * spec.arReqBufSize);
     const size_t arRspDataBytes = align16(spec.arRespBufCount  * spec.arRespBufSize);
+    const size_t atRspScratchBytes = align16(spec.atRespScratchBytes);
 
     const size_t totalSize = atReqBytes + atRspBytes + arReqBytes + arRspBytes
-                           + arReqDataBytes + arRspDataBytes;
+                           + arReqDataBytes + arRspDataBytes + atRspScratchBytes;
 
     if (totalSize == 0) {
         ASFW_LOG_ERROR(Async, "ContextManager::provision: totalSize computed as 0 – refusing to init DMA slab");
@@ -151,14 +152,15 @@ kern_return_t ContextManager::provision(ASFW::Driver::HardwareInterface& hw,
 
     // Detailed logging to diagnose allocation size discrepancies
     ASFW_LOG(Async,
-        "ContextManager::provision: totalSize=0x%zx (%zu) (atReq=0x%zx/%zu, atRsp=0x%zx/%zu, arReqDesc=0x%zx/%zu, arRspDesc=0x%zx/%zu, arReqBuf=0x%zx/%zu, arRspBuf=0x%zx/%zu)",
+        "ContextManager::provision: totalSize=0x%zx (%zu) (atReq=0x%zx/%zu, atRsp=0x%zx/%zu, arReqDesc=0x%zx/%zu, arRspDesc=0x%zx/%zu, arReqBuf=0x%zx/%zu, arRspBuf=0x%zx/%zu, atRspScratch=0x%zx/%zu)",
         totalSize, totalSize,
         atReqBytes, atReqBytes,
         atRspBytes, atRspBytes,
         arReqBytes, arReqBytes,
         arRspBytes, arRspBytes,
         arReqDataBytes, arReqDataBytes,
-        arRspDataBytes, arRspDataBytes);
+        arRspDataBytes, arRspDataBytes,
+        atRspScratchBytes, atRspScratchBytes);
 
     auto doProvision = [&]() -> ExVoid {
 

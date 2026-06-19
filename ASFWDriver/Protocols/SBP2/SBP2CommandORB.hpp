@@ -3,7 +3,6 @@
 // SBP-2 Normal Command ORB.
 // Represents a single SCSI command submitted to the device after login.
 //
-// Ported from Apple IOFireWireSBP2ORB.
 // Ref: SBP-2 §5.1.1 (Normal Command ORB format)
 
 #include "AddressSpaceManager.hpp"
@@ -50,39 +49,42 @@ public:
     SBP2CommandORB& operator=(const SBP2CommandORB&) = delete;
 
     // Configuration (call before submit)
+    // Returns false if the CDB exceeds maxCommandBlockSize_ (rejected, not truncated).
     [[nodiscard]] bool SetCommandBlock(std::span<const uint8_t> cdb) noexcept;
     void SetFlags(uint32_t flags) noexcept { flags_ = flags; }
+    void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
     void SetTimeout(uint32_t ms) noexcept { timeoutDuration_ = ms; }
-    void SetCompletionCallback(CompletionCallback cb) noexcept {
-        completionCallback_ = std::move(cb);
-        timerState_->completionCallback = completionCallback_;
-    }
+    [[nodiscard]] uint32_t GetTimeout() const noexcept { return timeoutDuration_; }
+    void SetCompletionCallback(CompletionCallback cb) noexcept { completionCallback_ = std::move(cb); }
 
     // Bind page table result from SBP2PageTable::Build.
     void SetDataDescriptor(const SBP2PageTable::Result& ptResult) noexcept {
         dataDescriptor_ = ptResult;
     }
 
-    // Internal: called by SBP2LoginSession before submission.
-    [[nodiscard]] kern_return_t PrepareForExecution(uint16_t localNodeID,
-                                                    FW::FwSpeed speed,
+    // Internal: called by the session layer before submission. Flushes the ORB to
+    // address space; returns the write status (kIOReturnNotReady if not allocated).
+    [[nodiscard]] kern_return_t PrepareForExecution(uint16_t localNodeID, FW::FwSpeed speed,
                                                     uint16_t maxPayloadLog) noexcept;
 
     // Internal: ORB address for fetch agent / chaining.
     [[nodiscard]] Async::FWAddress GetORBAddress() const noexcept;
 
-    // Internal: set the next ORB pointer (big-endian values).
+    // Internal: set the next ORB pointer (big-endian values). Re-flushes the ORB.
     [[nodiscard]] kern_return_t SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
 
     // Set rq_fmt=3 (NOP dummy) so device skips this ORB if already fetched.
     [[nodiscard]] kern_return_t SetToDummy() noexcept;
 
     // Internal: timer management.
-    void StartTimer(IODispatchQueue* completionQueue, IODispatchQueue* timeoutQueue) noexcept;
+    void StartTimer(IODispatchQueue* queue) noexcept;
     void CancelTimer() noexcept;
 
     // State tracking.
-    [[nodiscard]] bool IsValid() const noexcept { return isValid_; }
+    // True once the ORB's address-space backing was allocated successfully.
+    // The constructor swallows an allocation failure, so callers must check this
+    // before submitting a freshly-constructed ORB.
+    [[nodiscard]] bool IsValid() const noexcept { return orbHandle_ != 0; }
     [[nodiscard]] bool IsAppended() const noexcept { return isAppended_; }
     void SetAppended(bool state) noexcept { isAppended_ = state; }
 
@@ -93,12 +95,6 @@ public:
     [[nodiscard]] CompletionCallback& GetCompletionCallback() noexcept { return completionCallback_; }
 
 private:
-    struct TimerState {
-        std::atomic<bool> inProgress{false};
-        std::atomic<uint64_t> generation{0};
-        CompletionCallback completionCallback{};
-    };
-
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
     [[nodiscard]] kern_return_t WriteORBToAddressSpace() noexcept;
@@ -108,6 +104,7 @@ private:
     uint32_t maxCommandBlockSize_;
 
     uint32_t flags_{0};
+    uint16_t maxPayloadSize_{0};
     uint32_t timeoutDuration_{0};
     CompletionCallback completionCallback_;
 
@@ -120,14 +117,14 @@ private:
     SBP2PageTable::Result dataDescriptor_{};
 
     // State.
-    bool isValid_{false};
     bool isAppended_{false};
+    std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
 
     // Timer.
-    IODispatchQueue* completionQueue_{nullptr};
     IODispatchQueue* timerQueue_{nullptr};
-    std::shared_ptr<TimerState> timerState_{std::make_shared<TimerState>()};
+    std::atomic<uint64_t> timerGeneration_{0};
+    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 
 } // namespace ASFW::Protocols::SBP2

@@ -7,6 +7,10 @@
 #include "ARPacketParser.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Tx/ResponseSender.hpp"
+#include "../PacketHelpers.hpp"
+#include "../../Debug/AsyncTraceCapture.hpp"
+#include "../../Shared/ASFWDiagnosticsABI.h"
+#include <DriverKit/IOLib.h>
 
 namespace ASFW::Async {
 
@@ -54,7 +58,7 @@ void PacketRouter::RegisterResponseHandler(uint8_t tCode, PacketHandler handler)
     responseHandlers_[tCode] = std::move(handler);
 }
 
-void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_t> packetData) {
+void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_t> packetData, uint32_t generation) {
     // Phase 2.2: Use std::span for type-safe buffer access
     if (packetData.empty()) {
         return;
@@ -123,8 +127,11 @@ void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_
             view.tLabel   = 0;
         }
 
+        // Capture incoming transaction
+        CaptureIncomingEvent(contextType, view, generation);
+
         if (tCode < 16 && handlers[tCode]) {
-            const ResponseCode rcode = handlers[tCode](view);
+            const ResponseCode rcode = handlers[tCode](view, generation);
 
             if (contextType == ARContextType::Request &&
                 responseSender_ &&
@@ -192,6 +199,132 @@ uint8_t PacketRouter::ExtractTLabel(std::span<const uint8_t> header) noexcept {
     // IEEE 1394 Q0: [destID:16][tLabel:6][rt:2][tCode:4][pri:4]
     // After LE load, tLabel is at header[1] bits[7:2]
     return static_cast<uint8_t>((header[1] >> 2) & 0x3F);
+}
+
+void PacketRouter::CaptureIncomingEvent(ARContextType contextType, const ARPacketView& view, uint32_t generation) noexcept {
+    if (traceCapture_) {
+        ASFWDiagAsyncEvent event{};
+        
+        static mach_timebase_info_data_t timebase{};
+        if (timebase.denom == 0) {
+            mach_timebase_info(&timebase);
+        }
+        event.timestampNs = (mach_absolute_time() * timebase.numer) / timebase.denom;
+        event.generation = generation;
+        event.direction = 0; // 0 for RX (incoming)
+        event.context = (contextType == ARContextType::Request) ? 0 : 1;
+        event.tLabel = view.tLabel;
+        event.tCode = view.tCode;
+        event.sourceId = view.sourceID;
+        event.destinationId = view.destID;
+        
+        // Extract address from header if header is long enough
+        if (view.header.size() >= 12) {
+            event.address = ExtractDestOffset(view.header);
+        }
+        
+        // Extract quadletData if it's a quadlet read/write request/response
+        if (view.tCode == 0x0 || view.tCode == 0x6) {
+            if (view.payload.size() >= 4) {
+                std::memcpy(&event.quadletData, view.payload.data(), 4);
+                event.quadletData = OSSwapBigToHostInt32(event.quadletData);
+            } else if (view.header.size() >= 16) {
+                std::memcpy(&event.quadletData, view.header.data() + 12, 4);
+                event.quadletData = OSSwapLittleToHostInt32(event.quadletData);
+            }
+        }
+        
+        event.payloadBytes = static_cast<uint32_t>(view.payload.size());
+        event.ackCode = view.xferStatus & 0x1F; 
+        
+        if (view.header.size() >= 8) {
+            event.rCode = (view.header[5] >> 4) & 0x0F;
+        }
+        
+        event.speed = 0; // S100
+        
+        traceCapture_->CaptureEvent(event);
+    }
+
+    if (contextType == ARContextType::Request && csrStats_) {
+        const uint64_t destOffset = ExtractDestOffset(view.header);
+        const uint8_t tCode = view.tCode;
+        
+        if (destOffset >= 0xFFFFF0000000ULL && destOffset <= 0xFFFFF000FFFFULL) {
+            bool handled = false;
+            
+            if (destOffset >= 0xFFFFF0000400ULL && destOffset <= 0xFFFFF00007FFULL) {
+                if (tCode == 0x4 || tCode == 0x5) {
+                    csrStats_->inboundConfigROMReads++;
+                    handled = true;
+                }
+            } else if (destOffset == 0xFFFFF0000000ULL) {
+                // +0x000 is STATE_CLEAR (IEEE 1212 / Apple IOFireWireFamilyCommon.h:544)
+                if (tCode == 0x0 || tCode == 0x1) {
+                    csrStats_->inboundStateClearWrites++;
+                    handled = true;
+                }
+            } else if (destOffset == 0xFFFFF0000004ULL) {
+                // +0x004 is STATE_SET
+                if (tCode == 0x0 || tCode == 0x1) {
+                    csrStats_->inboundStateSetWrites++;
+                    handled = true;
+                }
+            } else if (destOffset == 0xFFFFF000021CULL) {
+                if (tCode == 0x4) {
+                    csrStats_->inboundBusManagerIdReads++;
+                    handled = true;
+                } else if (tCode == 0x9) {
+                    csrStats_->inboundBusManagerIdLocks++;
+                    handled = true;
+                }
+            } else if (destOffset == 0xFFFFF0000220ULL) {
+                if (tCode == 0x4) {
+                    csrStats_->inboundBandwidthReads++;
+                    handled = true;
+                } else if (tCode == 0x9) {
+                    csrStats_->inboundBandwidthLocks++;
+                    handled = true;
+                }
+            } else if (destOffset == 0xFFFFF0000224ULL || destOffset == 0xFFFFF0000228ULL) {
+                if (tCode == 0x4) {
+                    csrStats_->inboundChannelReads++;
+                    handled = true;
+                } else if (tCode == 0x9) {
+                    csrStats_->inboundChannelLocks++;
+                    handled = true;
+                }
+            } else if (destOffset == 0xFFFFF0000234ULL) {
+                // BROADCAST_CHANNEL is at +0x234 (Apple IOFireWireFamilyCommon.h:586)
+                if (tCode == 0x4) {
+                    csrStats_->inboundBroadcastChannelReads++;
+                    handled = true;
+                } else if (tCode == 0x0 || tCode == 0x1) {
+                    csrStats_->inboundBroadcastChannelWrites++;
+                    handled = true;
+                }
+            } else if (destOffset >= 0xFFFFF0001000ULL && destOffset <= 0xFFFFF00013FFULL) {
+                if (tCode == 0x4 || tCode == 0x5) {
+                    csrStats_->inboundTopologyMapReads++;
+                    handled = true;
+                }
+            } else if (destOffset >= 0xFFFFF0002000ULL && destOffset <= 0xFFFFF00027FFULL) {
+                if (tCode == 0x4 || tCode == 0x5) {
+                    csrStats_->inboundSpeedMapReads++;
+                    handled = true;
+                }
+            } else if (destOffset == 0xFFFFF0000B00ULL || destOffset == 0xFFFFF0000D00ULL) {
+                // FCP_COMMAND (+0xB00) / FCP_RESPONSE (+0xD00) are AV/C transaction space,
+                // not CSR registers (Apple IOFireWireFamilyCommon.h:593-594). They live in the
+                // initial register window but must not be counted as "unsupported CSR".
+                handled = true;
+            }
+
+            if (!handled) {
+                csrStats_->unsupportedCSRRequests++;
+            }
+        }
+    }
 }
 
 } // namespace ASFW::Async

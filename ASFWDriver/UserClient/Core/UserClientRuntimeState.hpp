@@ -13,6 +13,7 @@
 #include "../Handlers/StatusHandler.hpp"
 #include "../Handlers/TopologyHandler.hpp"
 #include "../Handlers/TransactionHandler.hpp"
+#include "../Handlers/DiagnosticsHandler.hpp"
 #include "../Storage/TransactionStorage.hpp"
 
 class ASFWDriver;
@@ -22,9 +23,8 @@ namespace ASFW::UserClient {
 /**
  * @brief Typed bridge that owns UserClient handlers and transient transaction storage.
  *
- * DriverKit's IIG ivars force an opaque pointer field. This object keeps that
- * opacity confined to a single bridge while the rest of the UserClient logic
- * stays fully typed.
+ * The generated UserClient ivars hold an opaque pointer to this bridge because
+ * IIG cannot model plain project C++ class pointers directly.
  */
 class UserClientRuntimeState final {
   public:
@@ -51,11 +51,12 @@ class UserClientRuntimeState final {
 
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
-        auto* sbp2Mgr = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
-        auto* sbp2Registry = controllerCore ? controllerCore->GetSBP2SessionRegistry() : nullptr;
+        auto* sbp2Manager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
+        auto* sbp2Registry = controllerCore ? controllerCore->GetSbp2SessionRegistry() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(driver);
-        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Mgr, sbp2Registry);
+        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager, sbp2Registry);
+        diagnosticsHandler_ = std::make_unique<DiagnosticsHandler>(driver);
 
         return HandlersReady();
     }
@@ -70,13 +71,11 @@ class UserClientRuntimeState final {
         statusHandler_.reset();
         topologyHandler_.reset();
         busResetHandler_.reset();
+        diagnosticsHandler_.reset();
     }
 
     void ReleaseOwner(void* owner) noexcept {
-        if (owner == nullptr) {
-            return;
-        }
-        if (sbp2Handler_ != nullptr) {
+        if (owner != nullptr && sbp2Handler_ != nullptr) {
             sbp2Handler_->ReleaseOwner(owner);
         }
     }
@@ -86,7 +85,7 @@ class UserClientRuntimeState final {
                statusHandler_ != nullptr && transactionHandler_ != nullptr &&
                configRomHandler_ != nullptr && deviceDiscoveryHandler_ != nullptr &&
                avcHandler_ != nullptr && isochHandler_ != nullptr &&
-               sbp2Handler_ != nullptr;
+               sbp2Handler_ != nullptr && diagnosticsHandler_ != nullptr;
     }
 
     [[nodiscard]] TransactionStorage& TransactionResults() noexcept { return transactionStorage_; }
@@ -102,6 +101,7 @@ class UserClientRuntimeState final {
     [[nodiscard]] AVCHandler& AVC() noexcept { return *avcHandler_; }
     [[nodiscard]] IsochHandler& Isoch() noexcept { return *isochHandler_; }
     [[nodiscard]] SBP2Handler& SBP2() noexcept { return *sbp2Handler_; }
+    [[nodiscard]] DiagnosticsHandler& Diagnostics() noexcept { return *diagnosticsHandler_; }
 
   private:
     TransactionStorage transactionStorage_{};
@@ -114,6 +114,7 @@ class UserClientRuntimeState final {
     std::unique_ptr<AVCHandler> avcHandler_{};
     std::unique_ptr<IsochHandler> isochHandler_{};
     std::unique_ptr<SBP2Handler> sbp2Handler_{};
+    std::unique_ptr<DiagnosticsHandler> diagnosticsHandler_{};
 };
 
 template <typename ClientLike>

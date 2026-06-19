@@ -6,12 +6,6 @@
 
 #include "DiscoveryTypes.hpp"
 
-// Forward declaration
-namespace ASFW::Async {
-    class IFireWireBusOps;
-    class IFireWireBusInfo;
-}
-
 namespace ASFW::Discovery {
 
 // Stable GUID-keyed device registry with per-generation live mapping.
@@ -21,13 +15,10 @@ public:
     DeviceRegistry();
     ~DeviceRegistry() = default;
 
-    // Create or update device record from parsed ROM
-    // Returns reference to live record
-    // @param busOps Optional - if provided and device is known, creates protocol handler
-    // @param busInfo Optional - paired with busOps (generation/speed queries)
-    DeviceRecord& UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
-                                 Async::IFireWireBusOps* busOps = nullptr,
-                                 Async::IFireWireBusInfo* busInfo = nullptr);
+    // Create or update device record from parsed ROM. Returns reference to live record.
+    // Pure metadata: device-specific runtime protocol creation is owned by the Audio layer
+    // (Audio::AudioRuntimeRegistry), triggered from the controller discovery path.
+    DeviceRecord& UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link);
 
     // Mark device as discovered (seen in Self-ID, before ROM fetch)
     void MarkDiscovered(Generation gen, uint8_t nodeId);

@@ -40,7 +40,7 @@ public:
      * Called from ATContextBase::ScanCompletion when AT descriptor completes.
      * Extracts ACK code from xferStatus and transitions transaction state.
      *
-     * \param comp TxCompletion from OHCI driver
+     * \param rawComp TxCompletion from OHCI driver (ackCode normalized from eventCode here)
      *
      * \par State Transitions
      * - ackCode==0x1 (pending): ATCompleted → AwaitingAR (wait for AR response)
@@ -55,9 +55,28 @@ public:
      * - ack_complete (0x0): Unified transaction, done immediately
      * - ack_busy_X/A/B (0x4-0x6): Retry after backoff
      */
-    void OnATCompletion(const TxCompletion& comp) noexcept {
+    void OnATCompletion(const TxCompletion& rawComp) noexcept {
         if (!txnMgr_) {
             return;
+        }
+
+        // eventCode is authoritative for AT completions. Validated with Linux —
+        // refs: ohci.c (handle_at_packet): the acknowledge is carried in the event-code
+        // field, so derive the internal ack scheme from it here at the point of
+        // consumption. This makes the handler robust to controllers that surface a
+        // raw/packed ack value (e.g. 0x8, the ContextControl RUN bit) in the
+        // descriptor's ack nibble regardless of how the TxCompletion was produced.
+        const uint8_t rawAckCode = rawComp.ackCode;
+        TxCompletion comp = rawComp;
+        comp.ackCode = NormalizeAckFromEvent(comp.eventCode, comp.ackCode);
+
+        if (rawAckCode == 0x8 && comp.ackCode == rawAckCode) {
+            ASFW_LOG_V1(Async,
+                        "AT completion raw ack nibble 0x8 survived normalization: "
+                        "tLabel=%u event=0x%02X (%{public}s) ts=%u ackCount=%u. "
+                        "Linux treats eventCode, not this nibble, as authoritative.",
+                        comp.tLabel, static_cast<uint8_t>(comp.eventCode),
+                        ToString(comp.eventCode), comp.timeStamp, comp.ackCount);
         }
 
         // AT Response context completions correspond to WrResp acks we send back
@@ -67,28 +86,11 @@ public:
             return;
         }
 
-        enum class PostAction {
-            kNone,
-            kCompleteSuccess,
-            kCompleteError,
-            kCompleteTimeout,
-            kCompleteCancelled,
-            kCompletePhySuccess,
-        };
-
-        PostAction postAction = PostAction::kNone;
-        const char* transitionTag1 = nullptr;
-        const char* transitionTag2 = nullptr;
-        kern_return_t postKr = kIOReturnSuccess;
-
-        uint8_t eventCode = static_cast<uint8_t>(comp.eventCode);
-        uint8_t ackCode = comp.ackCode;
+        ATPostResult postResult;
 
         ASFW_LOG_V2(Async,
                     "🔄 OnATCompletion: tLabel=%u ack=0x%X event=0x%02X ts=%u ackCount=%u",
-                    comp.tLabel, ackCode, eventCode, comp.timeStamp, comp.ackCount);
-
-
+                    comp.tLabel, comp.ackCode, static_cast<uint8_t>(comp.eventCode), comp.timeStamp, comp.ackCount);
 
         // Find transaction by tLabel
         bool found = txnMgr_->WithTransactionByLabel(TLabel{comp.tLabel}, [&](Transaction* txn) {
@@ -102,12 +104,16 @@ public:
                 return;
             }
 
+            // Store ACK code in transaction for timeout handler
+            txn->SetAckCode(comp.ackCode);
+
             // PHY packets complete on AT path only (no AR response expected).
             if (txn->GetCompletionStrategy() == CompletionStrategy::CompleteOnPHY) {
-                ASFW_LOG(Async, "  → Completed (PHY, AT-only) ackCode=0x%X event=0x%02X", ackCode, eventCode);
-                postAction = PostAction::kCompletePhySuccess;
-                transitionTag1 = "OnATCompletion: phy";
-                transitionTag2 = "OnATCompletion: phy";
+                ASFW_LOG(Async, "  → Completed (PHY, AT-only) ackCode=0x%X event=0x%02X",
+                         comp.ackCode, static_cast<uint8_t>(comp.eventCode));
+                postResult.action = ATPostAction::kCompletePhySuccess;
+                postResult.transitionTag1 = "OnATCompletion: phy";
+                postResult.transitionTag2 = "OnATCompletion: phy";
                 return;
             }
 
@@ -128,185 +134,11 @@ public:
                 return;  // Don't process ack code for reads
             }
 
-            // Check for hardware error events FIRST (these override ACK codes)
-            // eventCode 0x0A = evt_timeout, 0x03 = evt_missing_ack
-            if (eventCode == 0x0A || eventCode == 0x03) {
-                // Hardware timeout - but ACK code tells us what actually happened
-                // If ackCode is 0x1 (pending), the AT completed but we're waiting for AR
-                // If ackCode is 0xF or invalid, the transmission truly failed
-                ASFW_LOG(Async, "  → Hardware event: %{public}s (ackCode=0x%X)",
-                         ToString(comp.eventCode), ackCode);
-
-                if (ackCode == 0x1) {
-                    // ack_pending: AT transmission succeeded, wait for AR response
-                    ASFW_LOG(Async, "  → AwaitingAR (ackPending despite hw timeout)");
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: hw_timeout_pending");
-                    txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackPending");
-                    return;
-                } else {
-                    // True hardware failure
-                    ASFW_LOG(Async, "  → Failed (hw timeout, ackCode=0x%X)", ackCode);
-                    
-                    // Extract transaction to complete it safely outside lock
-                    postAction = PostAction::kCompleteTimeout;
-                    transitionTag1 = "OnATCompletion: hw_timeout";
-                    transitionTag2 = "OnATCompletion: hw_timeout";
-                    postKr = kIOReturnTimeout;
-                    return;
-                }
-            }
-
-            // Other hardware errors: fail immediately
-            if (eventCode == static_cast<uint8_t>(OHCIEventCode::kEvtFlushed)) {
-                ASFW_LOG(Async, "  → Cancelled (flushed)");
-                
-                // Extract transaction to complete it safely outside lock
-                postAction = PostAction::kCompleteCancelled;
-                transitionTag1 = "OnATCompletion: flushed";
-                postKr = kIOReturnAborted;
+            if (HandleHardwareEventCompletion(*txn, comp, postResult)) {
                 return;
             }
 
-            // Now handle ACK code (IEEE 1394 acknowledgment from target device)
-            // Per COMPLETION_ARCHITECTURE.md and IEEE 1394-1995 section 6.2.4.3
-            const auto strategy = txn->GetCompletionStrategy();
-            const bool needsARData = txn->IsReadOperation() || strategy == CompletionStrategy::CompleteOnAR;
-
-            // Normalize ACK semantics from OHCI event code first.
-            // Some controllers report raw ackCode values (e.g. 0x8) that do not map
-            // directly to IEEE 1394 ack constants; eventCode is authoritative.
-            uint8_t normalizedAckCode = ackCode;
-            switch (static_cast<OHCIEventCode>(eventCode)) {
-                case OHCIEventCode::kAckComplete:
-                    normalizedAckCode = 0x0;
-                    break;
-                case OHCIEventCode::kAckPending:
-                    normalizedAckCode = 0x1;
-                    break;
-                case OHCIEventCode::kAckBusyX:
-                    normalizedAckCode = 0x4;
-                    break;
-                case OHCIEventCode::kAckBusyA:
-                    normalizedAckCode = 0x5;
-                    break;
-                case OHCIEventCode::kAckBusyB:
-                    normalizedAckCode = 0x6;
-                    break;
-                case OHCIEventCode::kAckTardy:
-                    normalizedAckCode = 0xC;
-                    break;
-                case OHCIEventCode::kAckDataError:
-                    normalizedAckCode = 0xD;
-                    break;
-                case OHCIEventCode::kAckTypeError:
-                    normalizedAckCode = 0xE;
-                    break;
-                default:
-                    break;
-            }
-            if (normalizedAckCode != ackCode) {
-                ASFW_LOG_V2(Async,
-                            "  ℹ️  Normalized ackCode 0x%X -> 0x%X from event=0x%02X",
-                            ackCode,
-                            normalizedAckCode,
-                            eventCode);
-                ackCode = normalizedAckCode;
-            }
-
-            // Store normalized ACK code in transaction for timeout handler.
-            txn->SetAckCode(ackCode);
-
-            switch (ackCode) {
-                case 0x1:  // kFWAckPending (split transaction)
-                    ASFW_LOG_V2(Async, "  → AwaitingAR (ackPending, need AR response)");
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackPending");
-                    txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackPending");
-                    // Keep transaction alive, wait for AR response
-                    break;
-
-                case 0x0:  // kFWAckComplete (unified transaction)
-                    if (needsARData) {
-                        ASFW_LOG_V2(Async, "  → AwaitingAR (ackComplete but data required)");
-                        txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackComplete_read");
-                        txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackComplete_read");
-                        break;
-                    }
-                    // Only complete if AR hasn't already won the race
-                    if (txn->TryMarkCompleted()) {
-                        ASFW_LOG_V1(Async, "  → Completed (ackComplete, AT path won)");
-                        postAction = PostAction::kCompleteSuccess;
-                        transitionTag1 = "OnATCompletion: ackComplete";
-                        transitionTag2 = "OnATCompletion: ackComplete";
-                    } else {
-                        ASFW_LOG_V3(Async, "  → ackComplete but AR already completed, ignoring");
-                    }
-                    break;
-
-                case 0x4:  // kFWAckBusyX
-                case 0x5:  // kFWAckBusyA
-                case 0x6:  // kFWAckBusyB
-                    ASFW_LOG_V2(Async, "  → Busy (0x%X), extending deadline for retry", ackCode);
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: busy");
-
-                    // Phase 2: Extend deadline immediately to prevent rapid timeout
-                    // Device is busy, give it time to recover (200ms) before checking again
-                    txn->SetDeadline(Engine::NowUs() + 200000);  // +200ms from now
-
-                    // Stay in ATCompleted, timeout handler will retry if still busy
-                    break;
-
-                case 0xC:  // kFWAckTardy (CRITICAL FIX!)
-                case 0x11: // Missing ACK after multiple retries
-                case 0x1B: // Hardware-level tardy indication
-                    // CRITICAL FIX: ack_tardy means the device acknowledged receipt but is slow to respond.
-                    // Per Apple's IOFWAsyncCommand::gotAck(), we should NOT fail here - wait for AR response.
-                    // The AT element completed successfully (packet was transmitted), now wait for the
-                    // response packet to arrive via AR path.
-                    ASFW_LOG_V2(Async, "  → AwaitingAR (ackCode=0x%X tardy/slow, wait for response)", ackCode);
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: tardy");
-                    txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: tardy");
-                    // Keep transaction alive, wait for AR response (don't fail!)
-                    break;
-
-                case 0xD:  // kFWAckDataError
-                case 0xE:  // kFWAckTypeError
-                    ASFW_LOG_V1(Async, "  → Failed (ackError 0x%X)", ackCode);
-                    
-                    postAction = PostAction::kCompleteError;
-                    transitionTag1 = "OnATCompletion: ackError";
-                    transitionTag2 = "OnATCompletion: ackError";
-                    postKr = kIOReturnError;
-                    break;
-
-                case 0x8:
-                    // Compatibility fallback for controllers that surface legacy/packed
-                    // ack values. For write-like commands without response payload, treat
-                    // this as completion on AT; reads/locks still require AR data.
-                    if (needsARData) {
-                        ASFW_LOG_V2(Async, "  → AwaitingAR (legacy ackCode=0x8, data required)");
-                        txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: legacy_ack8");
-                        txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: legacy_ack8");
-                        break;
-                    }
-                    if (txn->TryMarkCompleted()) {
-                        ASFW_LOG_V1(Async, "  → Completed (legacy ackCode=0x8, AT path won)");
-                        postAction = PostAction::kCompleteSuccess;
-                        transitionTag1 = "OnATCompletion: legacy_ack8";
-                        transitionTag2 = "OnATCompletion: legacy_ack8";
-                    } else {
-                        ASFW_LOG_V3(Async, "  → legacy ackCode=0x8 but AR already completed, ignoring");
-                    }
-                    break;
-
-                default:
-                    ASFW_LOG_V2(Async, "  → Unknown ackCode=0x%X, treating as tardy (wait for AR)", ackCode);
-                    // CRITICAL FIX: Unknown ACKs should wait for AR response, not fail immediately.
-                    // Per Apple's split-transaction model, only explicit errors (0xD, 0xE) should fail.
-                    // Everything else might still result in a valid AR response.
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: unknown_ack");
-                    txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: unknown_ack");
-                    break;
-            }
+            HandleAckCompletion(*txn, comp, postResult);
         });
 
         if (!found) {
@@ -315,34 +147,7 @@ public:
             ASFW_LOG_V3(Async, "OnATCompletion: Transaction already completed for tLabel=%u (AR won race)", comp.tLabel);
         }
 
-        if (postAction != PostAction::kNone) {
-            auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
-            if (txnPtr) {
-                switch (postAction) {
-                    case PostAction::kCompleteSuccess:
-                    case PostAction::kCompletePhySuccess:
-                        txnPtr->TransitionTo(TransactionState::ATCompleted, transitionTag1 ? transitionTag1 : "OnATCompletion");
-                        txnPtr->TransitionTo(TransactionState::Completed, transitionTag2 ? transitionTag2 : "OnATCompletion");
-                        txnPtr->InvokeResponseHandler(postKr, 0xFF, {});
-                        break;
-                    case PostAction::kCompleteError:
-                    case PostAction::kCompleteTimeout:
-                        txnPtr->TransitionTo(TransactionState::ATCompleted, transitionTag1 ? transitionTag1 : "OnATCompletion");
-                        txnPtr->TransitionTo(TransactionState::Failed, transitionTag2 ? transitionTag2 : "OnATCompletion");
-                        txnPtr->InvokeResponseHandler(postKr, 0xFF, {});
-                        break;
-                    case PostAction::kCompleteCancelled:
-                        txnPtr->TransitionTo(TransactionState::Cancelled, transitionTag1 ? transitionTag1 : "OnATCompletion");
-                        txnPtr->InvokeResponseHandler(postKr, 0xFF, {});
-                        break;
-                    case PostAction::kNone:
-                        break;
-                }
-                if (labelAllocator_) {
-                    labelAllocator_->Free(comp.tLabel);
-                }
-            }
-        }
+        FinalizeATPostAction(TLabel{comp.tLabel}, postResult);
     }
 
     /**
@@ -376,9 +181,7 @@ public:
 
         Transaction* txn = txnMgr_->FindByMatchKey(key);
         if (!txn) {
-            ASFW_LOG(Async,
-                     "OnARResponse: no transaction for key node=0x%04X gen=%u tLabel=%u",
-                     key.node.value, key.generation.value, key.label.value);
+            ASFW_LOG(Async, "⚠️  OnARResponse: No transaction for key");
             return;
         }
 
@@ -419,8 +222,23 @@ public:
 
         txnPtr->TransitionTo(TransactionState::ARReceived, "OnARResponse");
 
+        // Free the label before invoking the callback so re-entrant submits from the
+        // callback do not inherit stale bitmap state from the just-completed transaction.
+        if (labelAllocator_) {
+            labelAllocator_->Free(key.label.value);
+        }
+
         // Convert rcode to kern_return_t
         kern_return_t kr = (rcode == 0) ? kIOReturnSuccess : kIOReturnError;
+
+        ASFW_LOG(Async,
+                 "OnARResponse: completing tLabel=%u gen=%u node=0x%04X rcode=0x%X kr=0x%08x len=%zu",
+                 key.label.value,
+                 key.generation.value,
+                 key.node.value,
+                 rcode,
+                 kr,
+                 data.size());
 
         // Complete transaction
         ASFW_LOG_V2(Async, "  → Completed (rcode=0x%X, kr=0x%08X)", rcode, kr);
@@ -434,11 +252,6 @@ public:
 
         // Invoke callback
         txnPtr->InvokeResponseHandler(kr, rcode, data);
-
-        // Free label (allocator is thread-safe)
-        if (labelAllocator_) {
-            labelAllocator_->Free(key.label.value);
-        }
     }
 
     /**
@@ -469,91 +282,12 @@ public:
                         "⏱️ OnTimeout: tLabel=%u state=%{public}s ackCode=0x%X retries=%u",
                         txn->label().value, ToString(state), ackCode, txn->retryCount());
 
-            // Smart retry based on ACK code and state
-            if (ackCode == 0x4 || ackCode == 0x5 || ackCode == 0x6) {  // Busy
-                const uint8_t kMaxBusyRetries = 3;
-                if (txn->retryCount() < kMaxBusyRetries) {
-                    txn->IncrementRetry();
-
-                    // Extend deadline to allow device time to become non-busy
-                    // Phase 2: Simple deadline extension (prevents rapid retimeout)
-                    // Device returned busy ACK, give it 200ms to recover
-                    const uint64_t newDeadline = Engine::NowUs() + 200000;  // +200ms
-                    txn->SetDeadline(newDeadline);
-
-                    ASFW_LOG_V1(Async, "🔄 RECOVERY: tLabel=%u Busy ACK (0x%X). "
-                             "Device is busy, extending deadline +200ms (attempt %u/%u)",
-                             txn->label().value, ackCode, txn->retryCount(), kMaxBusyRetries);
-
-                    // Don't complete transaction - let timeout engine check again at new deadline
-                    // If device becomes non-busy and sends AR response, OnARResponse will complete it
-                    // If still busy after 3 retries, next timeout will fail the transaction
-                    return;
-                }
+            if (HandleBusyTimeout(*txn) ||
+                HandleATPostedTimeout(*txn) ||
+                HandleAwaitingARTimeout(*txn)) {
+                return;
             }
 
-            // ATPosted with ackCode=0x0: AT completion never arrived (packet wasn't sent)
-            // This can happen if AT context is backed up or hardware issue.
-            // Give it another chance - the packet might just be delayed in the queue.
-            if (state == TransactionState::ATPosted && ackCode == 0x0) {
-                constexpr uint8_t kMaxATRetries = 2;
-                if (txn->retryCount() < kMaxATRetries) {
-                    txn->IncrementRetry();
-                    
-                    // Extend deadline: give AT context more time to process
-                    const uint64_t newDeadline = Engine::NowUs() + 250000;  // +250ms
-                    txn->SetDeadline(newDeadline);
-                    
-                    ASFW_LOG_V1(Async, 
-                             "🔄 RECOVERY: tLabel=%u ATPosted timeout with no ACK. "
-                             "Packet may be queued in AT context. Extending deadline +250ms "
-                             "(attempt %u/%u)",
-                             txn->label().value, txn->retryCount(), kMaxATRetries);
-                    return;  // Don't fail, let AT complete
-                }
-                ASFW_LOG_V1(Async, 
-                         "❌ FAILED: tLabel=%u ATPosted - AT completion never arrived after %u attempts. "
-                         "Possible AT context stall or hardware issue.",
-                         txn->label().value, kMaxATRetries);
-            }
-
-            // Apple-style retry: When waiting for AR response and ACK indicated device
-            // acknowledged the request (ackPending), give it more time instead of failing.
-            // This matches IOFWAsyncCommand::complete() which retries on timeout when
-            // ACK was pending/busy. See IOFireWireFamily.kmodproj/IOFWAsyncCommand.cpp:425-470
-            if (state == TransactionState::AwaitingAR) {
-                // ackCode 0x1 = ack_pending (device acknowledged, processing)
-                // ackCode 0x8 = used in some device responses (observed in logs)
-                // ackCode 0xC = ack_tardy (slow device)
-                if (ackCode == 0x1 || ackCode == 0x8 || ackCode == 0xC) {
-                    constexpr uint8_t kMaxPendingRetries = 3;  // Apple's kFWCmdDefaultRetries
-                    if (txn->retryCount() < kMaxPendingRetries) {
-                        txn->IncrementRetry();
-                        
-                        // Extend deadline: 250ms per retry (matching base timeout)
-                        const uint64_t newDeadline = Engine::NowUs() + 250000;  // +250ms
-                        txn->SetDeadline(newDeadline);
-                        
-                        // Log loudly for debugging - Apple-style recovery
-                        ASFW_LOG_V1(Async, 
-                                 "🔄 RECOVERY: tLabel=%u AwaitingAR timeout with ackCode=0x%X. "
-                                 "Device acknowledged but response late. Extending deadline +250ms "
-                                 "(attempt %u/%u)",
-                                 txn->label().value, ackCode, txn->retryCount(), kMaxPendingRetries);
-                        return;  // Don't fail, let AR response arrive or retry again
-                    }
-                    ASFW_LOG_V1(Async, 
-                             "❌ FAILED: tLabel=%u AwaitingAR with ackCode=0x%X - max retries (%u) exhausted. "
-                             "Device never sent response.",
-                             txn->label().value, ackCode, kMaxPendingRetries);
-                }
-            }
-
-            // Timeout is terminal
-            
-            // Extract transaction to complete it safely outside lock
-            // We can't do this inside WithTransaction because it invalidates 'txn'
-            // So we mark a flag and do it after
             shouldFail = true;
         });
 
@@ -561,14 +295,15 @@ public:
         auto txnPtr = txnMgr_->Extract(label);
         if (txnPtr) {
             txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
-            
-            // Invoke callback
-            txnPtr->InvokeResponseHandler(kIOReturnTimeout, 0xFF, {});
-            
-            // Free label
+
+            // Free the label before invoking the callback so retries started from the
+            // callback do not trip stale-bitmap recovery.
             if (labelAllocator_) {
                 labelAllocator_->Free(label.value);
             }
+
+            // Invoke callback
+            txnPtr->InvokeResponseHandler(kIOReturnTimeout, 0xFF, {});
         }
         }
 
@@ -578,6 +313,263 @@ public:
     }
 
 private:
+    enum class ATPostAction {
+        kNone,
+        kCompleteSuccess,
+        kCompleteError,
+        kCompleteTimeout,
+        kCompleteCancelled,
+        kCompletePhySuccess,
+    };
+
+    struct ATPostResult {
+        ATPostAction action{ATPostAction::kNone};
+        const char* transitionTag1{nullptr};
+        const char* transitionTag2{nullptr};
+        kern_return_t postKr{kIOReturnSuccess};
+    };
+
+    [[nodiscard]] bool HandleHardwareEventCompletion(Transaction& txn,
+                                                     const TxCompletion& comp,
+                                                     ATPostResult& postResult) noexcept {
+        const uint8_t eventCode = static_cast<uint8_t>(comp.eventCode);
+        const uint8_t ackCode = comp.ackCode;
+
+        if (eventCode == 0x0A || eventCode == 0x03) {
+            ASFW_LOG(Async, "  → Hardware event: %{public}s (ackCode=0x%X)",
+                     ToString(comp.eventCode), ackCode);
+
+            if (ackCode == 0x1) {
+                ASFW_LOG(Async, "  → AwaitingAR (ackPending despite hw timeout)");
+                txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: hw_timeout_pending");
+                txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackPending");
+            } else {
+                ASFW_LOG(Async, "  → Failed (hw timeout, ackCode=0x%X)", ackCode);
+                postResult.action = ATPostAction::kCompleteTimeout;
+                postResult.transitionTag1 = "OnATCompletion: hw_timeout";
+                postResult.transitionTag2 = "OnATCompletion: hw_timeout";
+                postResult.postKr = kIOReturnTimeout;
+            }
+            return true;
+        }
+
+        if (eventCode == static_cast<uint8_t>(OHCIEventCode::kEvtFlushed)) {
+            ASFW_LOG(Async, "  → Cancelled (flushed)");
+            postResult.action = ATPostAction::kCompleteCancelled;
+            postResult.transitionTag1 = "OnATCompletion: flushed";
+            postResult.postKr = kIOReturnAborted;
+            return true;
+        }
+
+        return false;
+    }
+
+    // Map the OHCI event code to this driver's internal ack scheme (complete=0x0,
+    // pending=0x1, busy=0x4/0x5/0x6, tardy=0xC, dataError=0xD, typeError=0xE).
+    // Non-ack event codes keep the raw nibble for the hardware-event / default paths.
+    // Validated with Linux — refs: ohci.c (handle_at_packet): ack == evt - 0x10 for the
+    // 0x11..0x1e range carried in the event-code field.
+    [[nodiscard]] static uint8_t NormalizeAckFromEvent(OHCIEventCode eventCode,
+                                                       uint8_t rawAckCode) noexcept {
+        switch (eventCode) {
+            case OHCIEventCode::kAckComplete:  return 0x0;
+            case OHCIEventCode::kAckPending:   return 0x1;
+            case OHCIEventCode::kAckBusyX:     return 0x4;
+            case OHCIEventCode::kAckBusyA:     return 0x5;
+            case OHCIEventCode::kAckBusyB:     return 0x6;
+            case OHCIEventCode::kAckTardy:     return 0xC;
+            case OHCIEventCode::kAckDataError: return 0xD;
+            case OHCIEventCode::kAckTypeError: return 0xE;
+            default:                           return rawAckCode;
+        }
+    }
+
+    void HandleAckCompletion(Transaction& txn,
+                             const TxCompletion& comp,
+                             ATPostResult& postResult) noexcept {
+        const uint8_t ackCode = comp.ackCode;
+        const auto strategy = txn.GetCompletionStrategy();
+        const bool needsARData = txn.IsReadOperation() || strategy == CompletionStrategy::CompleteOnAR;
+
+        switch (ackCode) {
+            case 0x1:
+                ASFW_LOG_V2(Async, "  → AwaitingAR (ackPending, need AR response)");
+                txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackPending");
+                txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackPending");
+                break;
+
+            case 0x0:
+                if (needsARData) {
+                    ASFW_LOG_V2(Async, "  → AwaitingAR (ackComplete but data required)");
+                    txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackComplete_read");
+                    txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackComplete_read");
+                    break;
+                }
+                if (txn.TryMarkCompleted()) {
+                    ASFW_LOG_V1(Async, "  → Completed (ackComplete, AT path won)");
+                    postResult.action = ATPostAction::kCompleteSuccess;
+                    postResult.transitionTag1 = "OnATCompletion: ackComplete";
+                    postResult.transitionTag2 = "OnATCompletion: ackComplete";
+                } else {
+                    ASFW_LOG_V3(Async, "  → ackComplete but AR already completed, ignoring");
+                }
+                break;
+
+            case 0x4:
+            case 0x5:
+            case 0x6:
+                ASFW_LOG_V2(Async, "  → Busy (0x%X), extending deadline for retry", ackCode);
+                txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: busy");
+                txn.SetDeadline(Engine::NowUs() + 200000);
+                break;
+
+            case 0xC:
+            case 0x11:
+            case 0x1B:
+                ASFW_LOG_V2(Async, "  → AwaitingAR (ackCode=0x%X tardy/slow, wait for response)", ackCode);
+                txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: tardy");
+                txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: tardy");
+                break;
+
+            case 0xD:
+            case 0xE:
+                ASFW_LOG_V1(Async, "  → Failed (ackError 0x%X)", ackCode);
+                postResult.action = ATPostAction::kCompleteError;
+                postResult.transitionTag1 = "OnATCompletion: ackError";
+                postResult.transitionTag2 = "OnATCompletion: ackError";
+                postResult.postKr = kIOReturnError;
+                break;
+
+            default:
+                ASFW_LOG_V2(Async,
+                            "  → Unknown ackCode=0x%X event=0x%02X (%{public}s), treating as tardy (wait for AR)",
+                            ackCode, static_cast<uint8_t>(comp.eventCode),
+                            ToString(comp.eventCode));
+                txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: unknown_ack");
+                txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: unknown_ack");
+                break;
+        }
+    }
+
+    void FinalizeATPostAction(TLabel label, const ATPostResult& postResult) noexcept {
+        if (postResult.action == ATPostAction::kNone) {
+            return;
+        }
+
+        auto txnPtr = txnMgr_->Extract(label);
+        if (!txnPtr) {
+            return;
+        }
+
+        switch (postResult.action) {
+            case ATPostAction::kCompleteSuccess:
+            case ATPostAction::kCompletePhySuccess:
+                txnPtr->TransitionTo(TransactionState::ATCompleted,
+                                     postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
+                txnPtr->TransitionTo(TransactionState::Completed,
+                                     postResult.transitionTag2 ? postResult.transitionTag2 : "OnATCompletion");
+                break;
+            case ATPostAction::kCompleteError:
+            case ATPostAction::kCompleteTimeout:
+                txnPtr->TransitionTo(TransactionState::ATCompleted,
+                                     postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
+                txnPtr->TransitionTo(TransactionState::Failed,
+                                     postResult.transitionTag2 ? postResult.transitionTag2 : "OnATCompletion");
+                break;
+            case ATPostAction::kCompleteCancelled:
+                txnPtr->TransitionTo(TransactionState::Cancelled,
+                                     postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
+                break;
+            case ATPostAction::kNone:
+                break;
+        }
+
+        if (labelAllocator_) {
+            labelAllocator_->Free(label.value);
+        }
+
+        switch (postResult.action) {
+            case ATPostAction::kCompleteSuccess:
+            case ATPostAction::kCompletePhySuccess:
+            case ATPostAction::kCompleteError:
+            case ATPostAction::kCompleteTimeout:
+            case ATPostAction::kCompleteCancelled:
+                txnPtr->InvokeResponseHandler(postResult.postKr, 0xFF, {});
+                break;
+            case ATPostAction::kNone:
+                break;
+        }
+    }
+
+    [[nodiscard]] bool HandleBusyTimeout(Transaction& txn) noexcept {
+        const uint8_t ackCode = txn.ackCode();
+        if (ackCode != 0x4 && ackCode != 0x5 && ackCode != 0x6) {
+            return false;
+        }
+
+        constexpr uint8_t kMaxBusyRetries = 3;
+        if (txn.retryCount() >= kMaxBusyRetries) {
+            return false;
+        }
+
+        txn.IncrementRetry();
+        txn.SetDeadline(Engine::NowUs() + 200000);
+        ASFW_LOG_V1(Async, "🔄 RECOVERY: tLabel=%u Busy ACK (0x%X). Device is busy, extending deadline +200ms (attempt %u/%u)",
+                    txn.label().value, ackCode, txn.retryCount(), kMaxBusyRetries);
+        return true;
+    }
+
+    [[nodiscard]] bool HandleATPostedTimeout(Transaction& txn) noexcept {
+        if (txn.state() != TransactionState::ATPosted || txn.ackCode() != 0x0) {
+            return false;
+        }
+
+        constexpr uint8_t kMaxATRetries = 2;
+        if (txn.retryCount() < kMaxATRetries) {
+            txn.IncrementRetry();
+            txn.SetDeadline(Engine::NowUs() + 250000);
+            ASFW_LOG_V1(Async,
+                        "🔄 RECOVERY: tLabel=%u ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt %u/%u)",
+                        txn.label().value, txn.retryCount(), kMaxATRetries);
+            return true;
+        }
+
+        ASFW_LOG_V1(Async,
+                    "❌ FAILED: tLabel=%u ATPosted - AT completion never arrived after %u attempts. Possible AT context stall or hardware issue.",
+                    txn.label().value, kMaxATRetries);
+        return false;
+    }
+
+    [[nodiscard]] bool HandleAwaitingARTimeout(Transaction& txn) noexcept {
+        if (txn.state() != TransactionState::AwaitingAR) {
+            return false;
+        }
+
+        // "Device acknowledged but response is late" set, in the normalized ack
+        // scheme: pending (0x1), ack_complete-needing-AR-data (0x0), and tardy (0xC).
+        // The old 0x8 was the xferStatus[15:12] RUN-bit artifact (see
+        // DecodeCompletionState) and no longer occurs for a real ack_complete.
+        const uint8_t ackCode = txn.ackCode();
+        if (ackCode != 0x0 && ackCode != 0x1 && ackCode != 0xC) {
+            return false;
+        }
+
+        constexpr uint8_t kMaxPendingRetries = 3;
+        if (txn.retryCount() < kMaxPendingRetries) {
+            txn.IncrementRetry();
+            txn.SetDeadline(Engine::NowUs() + 250000);
+            ASFW_LOG_V1(Async,
+                        "🔄 RECOVERY: tLabel=%u AwaitingAR timeout with ackCode=0x%X. Device acknowledged but response late. Extending deadline +250ms (attempt %u/%u)",
+                        txn.label().value, ackCode, txn.retryCount(), kMaxPendingRetries);
+            return true;
+        }
+
+        ASFW_LOG_V1(Async,
+                    "❌ FAILED: tLabel=%u AwaitingAR with ackCode=0x%X - max retries (%u) exhausted. Device never sent response.",
+                    txn.label().value, ackCode, kMaxPendingRetries);
+        return false;
+    }
+
     TransactionManager* txnMgr_;
     LabelAllocator* labelAllocator_;
 };

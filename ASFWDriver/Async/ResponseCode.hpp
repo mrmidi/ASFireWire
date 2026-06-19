@@ -17,6 +17,7 @@ namespace ASFW::Async {
  */
 enum class ResponseCode : uint8_t {
     Complete      = 0x0,  ///< OK - request successfully completed
+    Busy          = 0x1,  ///< Resource temporarily unavailable, retry later
     ConflictError = 0x4,  ///< Resource conflict, may retry
     DataError     = 0x5,  ///< Data not available / corrupted
     TypeError     = 0x6,  ///< Operation not supported for this address

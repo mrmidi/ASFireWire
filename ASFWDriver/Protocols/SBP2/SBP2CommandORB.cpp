@@ -1,10 +1,12 @@
 // SBP-2 Normal Command ORB implementation.
-// Ported from Apple IOFireWireSBP2ORB.
 // Ref: SBP-2 §5.1.1 (Normal Command ORB format)
 
 #include "SBP2CommandORB.hpp"
+#include <DriverKit/IOLib.h>
 #include "SBP2DelayedDispatch.hpp"
 #include "../../Common/FWCommon.hpp"
+
+#include <algorithm>
 
 namespace ASFW::Protocols::SBP2 {
 
@@ -18,11 +20,12 @@ SBP2CommandORB::SBP2CommandORB(AddressSpaceManager& addrMgr, void* owner,
     , owner_(owner)
     , maxCommandBlockSize_(maxCommandBlockSize)
 {
-    isValid_ = AllocateResources();
+    AllocateResources();
 }
 
 SBP2CommandORB::~SBP2CommandORB() {
     CancelTimer();
+    lifetimeToken_.reset();
     DeallocateResources();
 }
 
@@ -31,10 +34,6 @@ SBP2CommandORB::~SBP2CommandORB() {
 // ---------------------------------------------------------------------------
 
 bool SBP2CommandORB::AllocateResources() noexcept {
-    if (orbHandle_ != 0) {
-        return true;
-    }
-
     const uint32_t orbSize = Wire::NormalORB::kHeaderSize + maxCommandBlockSize_;
 
     orbStorage_.resize(orbSize, 0);
@@ -43,11 +42,11 @@ bool SBP2CommandORB::AllocateResources() noexcept {
         owner_, 0xFFFF, orbSize,
         &orbHandle_, &orbMeta_);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(SBP2, "SBP2CommandORB: failed to allocate ORB address space: 0x%08x", kr);
+        ASFW_LOG(Async, "SBP2CommandORB: failed to allocate ORB address space: 0x%08x", kr);
         return false;
     }
 
-    ASFW_LOG(SBP2, "SBP2CommandORB: allocated %u-byte ORB at %04x:%08x",
+    ASFW_LOG(Async, "SBP2CommandORB: allocated %u-byte ORB at %04x:%08x",
              orbSize, orbMeta_.addressHi, orbMeta_.addressLo);
     return true;
 }
@@ -66,16 +65,14 @@ void SBP2CommandORB::DeallocateResources() noexcept {
 // ---------------------------------------------------------------------------
 
 bool SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
-    if (!IsValid() || orbStorage_.size() < Wire::NormalORB::kHeaderSize) {
-        return false;
-    }
-
+    // Reject (do not silently truncate) a CDB that won't fit the command block.
     if (cdb.size() > static_cast<size_t>(maxCommandBlockSize_)) {
+        ASFW_LOG(Async, "SBP2CommandORB: CDB size %zu exceeds max command block %u",
+                 cdb.size(), maxCommandBlockSize_);
         return false;
     }
 
     const uint32_t copyLen = static_cast<uint32_t>(cdb.size());
-
     if (copyLen > 0) {
         std::memcpy(orbStorage_.data() + Wire::NormalORB::kHeaderSize,
                      cdb.data(), copyLen);
@@ -86,7 +83,6 @@ bool SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
         std::memset(orbStorage_.data() + Wire::NormalORB::kHeaderSize + copyLen,
                      0, maxCommandBlockSize_ - copyLen);
     }
-
     return true;
 }
 
@@ -97,27 +93,24 @@ bool SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
 kern_return_t SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
                                                   FW::FwSpeed speed,
                                                   uint16_t maxPayloadLog) noexcept {
-    if (!IsValid() || orbStorage_.size() < sizeof(Wire::NormalORB)) {
+    if (!IsValid()) {
         return kIOReturnNotReady;
-    }
-    if (maxPayloadLog > 15) {
-        return kIOReturnBadArgument;
     }
 
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
     const uint16_t busNodeID = Wire::NormalizeBusNodeID(localNodeID);
 
     // Null next-ORB pointer (bit 31 set = null terminator)
-    orb->nextORBAddressHi = Wire::ToBE32(Wire::NormalORB::kNextORBNull);
+    orb->nextORBAddressHi = OSSwapHostToBigInt32(Wire::NormalORB::kNextORBNull);
     orb->nextORBAddressLo = 0;
 
     // Data descriptor: fill in localNodeID in the hi word
     if (dataDescriptor_.isDirect) {
         // Direct mode: preserve addressHi and inject local node ID.
-        orb->dataDescriptorHi = Wire::ToBE32(
+        orb->dataDescriptorHi = OSSwapHostToBigInt32(
             Wire::ComposeBusAddressHi(
                 busNodeID,
-                static_cast<uint16_t>(Wire::FromBE32(dataDescriptor_.dataDescriptorHi) & 0xFFFFu)));
+                static_cast<uint16_t>(OSSwapBigToHostInt32(dataDescriptor_.dataDescriptorHi) & 0xFFFFu)));
         orb->dataDescriptorLo = dataDescriptor_.dataDescriptorLo;
     } else {
         // Page table mode: dataDescriptorHi already has nodeID + addressHi from Build()
@@ -130,11 +123,11 @@ kern_return_t SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
 
     // ORB format: Normal = 0x0000, Reserved = 0x2000, Vendor = 0x4000, Dummy = 0x6000
     if (flags_ & kDummyORB) {
-        options |= Wire::ToBE16(0x6000);
+        options |= OSSwapHostToBigInt16(0x6000);
     } else if (flags_ & kVendorORB) {
-        options |= Wire::ToBE16(0x4000);
+        options |= OSSwapHostToBigInt16(0x4000);
     } else if (flags_ & kReservedORB) {
-        options |= Wire::ToBE16(0x2000);
+        options |= OSSwapHostToBigInt16(0x2000);
     }
     // kNormalORB (default) → 0x0000, no bits needed
 
@@ -157,7 +150,7 @@ kern_return_t SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
     }
 
     // Max payload size (log2 of max payload in quadlets, shifted left by 4)
-    options |= Wire::ToBE16(
+    options |= OSSwapHostToBigInt16(
         static_cast<uint16_t>(maxPayloadLog << Wire::Options::kMaxPayloadShift));
 
     // Page table format bits from data descriptor
@@ -177,15 +170,11 @@ kern_return_t SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
 // ---------------------------------------------------------------------------
 
 kern_return_t SBP2CommandORB::WriteORBToAddressSpace() noexcept {
-    if (!IsValid() || orbHandle_ == 0) {
-        return kIOReturnNotReady;
-    }
-
     const auto span = std::span<const uint8_t>(orbStorage_.data(), orbStorage_.size());
     const kern_return_t kr = addrMgr_.WriteLocalData(
         owner_, orbHandle_, 0, span);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(SBP2, "SBP2CommandORB: failed to write ORB to address space: 0x%08x", kr);
+        ASFW_LOG(Async, "SBP2CommandORB: failed to write ORB to address space: 0x%08x", kr);
     }
     return kr;
 }
@@ -203,10 +192,9 @@ Async::FWAddress SBP2CommandORB::GetORBAddress() const noexcept {
 }
 
 kern_return_t SBP2CommandORB::SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept {
-    if (!IsValid() || orbStorage_.size() < sizeof(Wire::NormalORB)) {
+    if (!IsValid()) {
         return kIOReturnNotReady;
     }
-
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
     orb->nextORBAddressHi = hi;
     orb->nextORBAddressLo = lo;
@@ -214,15 +202,14 @@ kern_return_t SBP2CommandORB::SetNextORBAddress(uint32_t hi, uint32_t lo) noexce
 }
 
 kern_return_t SBP2CommandORB::SetToDummy() noexcept {
-    if (!IsValid() || orbStorage_.size() < sizeof(Wire::NormalORB)) {
+    if (!IsValid()) {
         return kIOReturnNotReady;
     }
-
     // Set rq_fmt=3 (bits [13:12] = 11) to make device skip this ORB
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
-    uint16_t hostOptions = Wire::FromBE16(orb->options);
+    uint16_t hostOptions = OSSwapBigToHostInt16(orb->options);
     hostOptions = (hostOptions & ~0x3000u) | 0x6000u;
-    orb->options = Wire::ToBE16(hostOptions);
+    orb->options = OSSwapHostToBigInt16(hostOptions);
     return WriteORBToAddressSpace();
 }
 
@@ -230,49 +217,42 @@ kern_return_t SBP2CommandORB::SetToDummy() noexcept {
 // Timer management
 // ---------------------------------------------------------------------------
 
-void SBP2CommandORB::StartTimer(IODispatchQueue* completionQueue,
-                                IODispatchQueue* timeoutQueue) noexcept {
+void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
     CancelTimer();
 
-    if (completionQueue == nullptr || timeoutQueue == nullptr || timeoutDuration_ == 0) {
+    if (queue == nullptr || timeoutDuration_ == 0) {
         return;
     }
 
-    completionQueue_ = completionQueue;
-    timerQueue_ = timeoutQueue;
-    auto timerState = timerState_;
-    timerState->inProgress.store(true, std::memory_order_relaxed);
+    timerQueue_ = queue;
+    inProgress_.store(true, std::memory_order_relaxed);
     const uint32_t timeout = timeoutDuration_;
     const uint64_t expectedGeneration =
-        timerState->generation.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
+        timerGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
+    const std::weak_ptr<int> weakLifetime = lifetimeToken_;
     const uint64_t delayNs = static_cast<uint64_t>(timeout) * 1'000'000ULL;
 
-    DispatchAfterCompat(timeoutQueue, delayNs, [timerState,
-                                                expectedGeneration,
-                                                timeout,
-                                                completionQueue]() {
-        DispatchAsyncCompat(completionQueue, [timerState,
-                                              expectedGeneration,
-                                              timeout]() {
-            if (timerState->generation.load(std::memory_order_acquire) != expectedGeneration ||
-                !timerState->inProgress.load(std::memory_order_relaxed) ||
-                !timerState->completionCallback) {
-                return;
-            }
+    DispatchAfterCompat(queue, delayNs, [this, weakLifetime, expectedGeneration, timeout]() {
+        if (weakLifetime.expired()) {
+            return;
+        }
+        if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
+            !inProgress_.load(std::memory_order_relaxed) ||
+            !completionCallback_) {
+            return;
+        }
 
-            ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
-            timerState->inProgress.store(false, std::memory_order_relaxed);
-            timerState->generation.fetch_add(1, std::memory_order_acq_rel);
-            timerState->completionCallback(-1, Wire::SBPStatus::kUnspecifiedError);
-        });
+        ASFW_LOG(Async, "SBP2CommandORB: ORB timeout after %u ms", timeout);
+        inProgress_.store(false, std::memory_order_relaxed);
+        timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        completionCallback_(-1, Wire::SBPStatus::kUnspecifiedError);
     });
 }
 
 void SBP2CommandORB::CancelTimer() noexcept {
-    timerState_->inProgress.store(false, std::memory_order_relaxed);
-    completionQueue_ = nullptr;
+    inProgress_.store(false, std::memory_order_relaxed);
     timerQueue_ = nullptr;
-    timerState_->generation.fetch_add(1, std::memory_order_acq_rel);
+    timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 } // namespace ASFW::Protocols::SBP2

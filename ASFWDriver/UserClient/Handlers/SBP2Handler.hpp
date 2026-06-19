@@ -1,7 +1,20 @@
 #pragma once
 
+// SBP2Handler — user-client boundary for the SBP-2 address-space + session/command
+// layer. Foundation methods (address-range alloc/dealloc/read/write) operate on the
+// AddressSpaceManager; session methods (FW-56's SessionRegistry) expose create/login/
+// state/inquiry/command/task-management/release across the DriverKit selector ABI.
+//
+// Ported from PR #19 (re-threaded onto DICE's decomposed SessionRegistry). The
+// owner-validation contract is load-bearing: every session call passes the opaque
+// (void* owner, uint64_t handle) pair straight through to the registry, which
+// rejects cross-owner access (8b64806). `registry` defaults to null so the existing
+// address-space-only construction keeps working until the registry is wired into the
+// driver lifecycle (FW-58).
+
 #include <cstring>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include <DriverKit/IOUserClient.h>
@@ -10,7 +23,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/SBP2/AddressSpaceManager.hpp"
 #include "../../Protocols/SBP2/SCSICommandSet.hpp"
-#include "../../Protocols/SBP2/SBP2SessionRegistry.hpp"
+#include "../../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../WireFormats/SBP2CommandWireFormats.hpp"
 
 namespace ASFW::UserClient {
@@ -18,7 +31,7 @@ namespace ASFW::UserClient {
 class SBP2Handler {
 public:
     explicit SBP2Handler(ASFW::Protocols::SBP2::AddressSpaceManager* manager,
-                         ASFW::Protocols::SBP2::SBP2SessionRegistry* registry)
+                         ASFW::Protocols::SBP2::SessionRegistry* registry = nullptr)
         : manager_(manager), registry_(registry) {}
 
     ~SBP2Handler() = default;
@@ -26,7 +39,10 @@ public:
     SBP2Handler(const SBP2Handler&) = delete;
     SBP2Handler& operator=(const SBP2Handler&) = delete;
 
-    // Address space management (selectors 46-49)
+    // -----------------------------------------------------------------------
+    // Address space management
+    // -----------------------------------------------------------------------
+
     kern_return_t AllocateAddressRange(IOUserClientMethodArguments* args, void* owner) {
         if (!manager_) {
             return kIOReturnNotReady;
@@ -42,12 +58,7 @@ public:
 
         uint64_t handle = 0;
         const kern_return_t kr = manager_->AllocateAddressRange(
-            owner,
-            addressHi,
-            addressLo,
-            length,
-            &handle,
-            nullptr);
+            owner, addressHi, addressLo, length, &handle, nullptr);
         if (kr != kIOReturnSuccess) {
             return kr;
         }
@@ -84,34 +95,14 @@ public:
         std::vector<uint8_t> data;
         const kern_return_t kr = manager_->ReadIncomingData(owner, handle, offset, length, &data);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(UserClient,
-                     "ReadIncomingData: owner=%p handle=0x%llx offset=%u len=%u -> kr=0x%x",
-                     owner,
-                     static_cast<unsigned long long>(handle),
-                     offset,
-                     length,
-                     static_cast<unsigned int>(kr));
             return kr;
         }
 
         OSData* output = OSData::withBytes(data.data(), static_cast<uint32_t>(data.size()));
         if (!output) {
-            ASFW_LOG(UserClient,
-                     "ReadIncomingData: owner=%p handle=0x%llx offset=%u len=%u -> no memory",
-                     owner,
-                     static_cast<unsigned long long>(handle),
-                     offset,
-                     length);
             return kIOReturnNoMemory;
         }
 
-        ASFW_LOG(UserClient,
-                 "ReadIncomingData: owner=%p handle=0x%llx offset=%u len=%u -> %u bytes",
-                 owner,
-                 static_cast<unsigned long long>(handle),
-                 offset,
-                 length,
-                 static_cast<unsigned int>(data.size()));
         args->structureOutput = output;
         args->structureOutputDescriptor = nullptr;
         return kIOReturnSuccess;
@@ -144,22 +135,22 @@ public:
         }
 
         return manager_->WriteLocalData(
-            owner,
-            handle,
-            offset,
-            std::span<const uint8_t>(bytes, length));
+            owner, handle, offset, std::span<const uint8_t>(bytes, length));
     }
 
+    // Release every address range and session owned by this client.
     void ReleaseOwner(void* owner) {
         if (registry_) {
-            registry_->ReleaseOwner(owner);
+            registry_->ReleaseOwner(owner);  // sessions before address ranges (9ca0d8e)
         }
         if (manager_) {
             manager_->ReleaseOwner(owner);
         }
     }
 
-    // Session management (selectors 53-58)
+    // -----------------------------------------------------------------------
+    // Session / command management
+    // -----------------------------------------------------------------------
 
     kern_return_t CreateSBP2Session(IOUserClientMethodArguments* args, void* owner) {
         if (!registry_) {
@@ -212,7 +203,7 @@ public:
             return kIOReturnNotFound;
         }
 
-        // Return as scalars: loginState, loginID, generation, lastError, reconnectPending
+        // Return as scalars: loginState, loginID, generation, lastError, reconnectPending.
         args->scalarOutput[0] = static_cast<uint64_t>(state->loginState);
         args->scalarOutput[1] = static_cast<uint64_t>(state->loginID);
         args->scalarOutput[2] = static_cast<uint64_t>(state->generation);
@@ -232,9 +223,8 @@ public:
 
         const uint64_t handle = args->scalarInput[0];
         const uint8_t allocationLength = static_cast<uint8_t>(args->scalarInput[1] & 0xFFu);
-        return registry_->SubmitInquiry(owner, handle, allocationLength)
-            ? kIOReturnSuccess
-            : kIOReturnError;
+        return registry_->SubmitInquiry(owner, handle, allocationLength) ? kIOReturnSuccess
+                                                                         : kIOReturnError;
     }
 
     kern_return_t GetSBP2InquiryResult(IOUserClientMethodArguments* args, void* owner) {
@@ -252,8 +242,8 @@ public:
         }
         if (result->transportStatus != 0) {
             return result->transportStatus > 0
-                ? static_cast<kern_return_t>(result->transportStatus)
-                : kIOReturnError;
+                       ? static_cast<kern_return_t>(result->transportStatus)
+                       : kIOReturnError;
         }
         if (result->sbpStatus != ASFW::Protocols::SBP2::Wire::SBPStatus::kNoAdditionalInfo) {
             return kIOReturnError;
@@ -290,19 +280,16 @@ public:
         }
 
         const auto* header = reinterpret_cast<const Wire::SBP2CommandRequestWire*>(bytes);
-        if (header->cdbLength == 0 ||
-            header->cdbLength > Wire::kSBP2CommandMaxCDBLength ||
+        if (header->cdbLength == 0 || header->cdbLength > Wire::kSBP2CommandMaxCDBLength ||
             header->transferLength > Wire::kSBP2CommandMaxTransferLength ||
-            header->captureSenseData > 1 ||
-            header->_reserved[0] != 0 ||
+            header->captureSenseData > 1 || header->_reserved[0] != 0 ||
             header->_reserved[1] != 0) {
             return kIOReturnBadArgument;
         }
 
-        const size_t expectedLength =
-            sizeof(Wire::SBP2CommandRequestWire) +
-            static_cast<size_t>(header->cdbLength) +
-            static_cast<size_t>(header->outgoingLength);
+        const size_t expectedLength = sizeof(Wire::SBP2CommandRequestWire) +
+                                      static_cast<size_t>(header->cdbLength) +
+                                      static_cast<size_t>(header->outgoingLength);
         if (inputLength != expectedLength) {
             return kIOReturnBadArgument;
         }
@@ -329,8 +316,7 @@ public:
         } else if (header->outgoingLength != 0) {
             return kIOReturnBadArgument;
         }
-        if (direction == Protocols::SBP2::SCSI::DataDirection::None &&
-            header->transferLength != 0) {
+        if (direction == Protocols::SBP2::SCSI::DataDirection::None && header->transferLength != 0) {
             return kIOReturnBadArgument;
         }
 
@@ -346,7 +332,8 @@ public:
         request.outgoingPayload.assign(cursor, cursor + header->outgoingLength);
 
         const uint64_t handle = args->scalarInput[0];
-        return registry_->SubmitCommand(owner, handle, request) ? kIOReturnSuccess : kIOReturnError;
+        return registry_->SubmitCommand(owner, handle, request) ? kIOReturnSuccess
+                                                                : kIOReturnError;
     }
 
     kern_return_t GetSBP2CommandResult(IOUserClientMethodArguments* args, void* owner) {
@@ -369,22 +356,22 @@ public:
         header.payloadLength = static_cast<uint32_t>(result->payload.size());
         header.senseLength = static_cast<uint32_t>(result->senseData.size());
 
-        std::vector<uint8_t> serialized(
-            sizeof(Wire::SBP2CommandResultWire) +
-            result->payload.size() +
-            result->senseData.size());
-        memcpy(serialized.data(), &header, sizeof(header));
+        std::vector<uint8_t> serialized(sizeof(Wire::SBP2CommandResultWire) +
+                                        result->payload.size() + result->senseData.size());
+        std::memcpy(serialized.data(), &header, sizeof(header));
 
         size_t offset = sizeof(Wire::SBP2CommandResultWire);
         if (!result->payload.empty()) {
-            memcpy(serialized.data() + offset, result->payload.data(), result->payload.size());
+            std::memcpy(serialized.data() + offset, result->payload.data(), result->payload.size());
             offset += result->payload.size();
         }
         if (!result->senseData.empty()) {
-            memcpy(serialized.data() + offset, result->senseData.data(), result->senseData.size());
+            std::memcpy(serialized.data() + offset, result->senseData.data(),
+                        result->senseData.size());
         }
 
-        OSData* output = OSData::withBytes(serialized.data(), static_cast<uint32_t>(serialized.size()));
+        OSData* output = OSData::withBytes(serialized.data(),
+                                           static_cast<uint32_t>(serialized.size()));
         if (!output) {
             return kIOReturnNoMemory;
         }
@@ -418,9 +405,8 @@ public:
         }
 
         const uint64_t handle = args->scalarInput[0];
-        return registry_->SubmitTaskManagement(owner, handle, function)
-            ? kIOReturnSuccess
-            : kIOReturnError;
+        return registry_->SubmitTaskManagement(owner, handle, function) ? kIOReturnSuccess
+                                                                        : kIOReturnError;
     }
 
     kern_return_t ReleaseSBP2Session(IOUserClientMethodArguments* args, void* owner) {
@@ -437,7 +423,7 @@ public:
 
 private:
     ASFW::Protocols::SBP2::AddressSpaceManager* manager_{nullptr};
-    ASFW::Protocols::SBP2::SBP2SessionRegistry* registry_{nullptr};
+    ASFW::Protocols::SBP2::SessionRegistry* registry_{nullptr};
 };
 
 } // namespace ASFW::UserClient

@@ -13,16 +13,11 @@ kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemo
     const auto descR = dmaMemory.AllocateDescriptor(Layout::kDescriptorRingSize);
     if (!descR) return kIOReturnNoMemory;
 
-    const auto bufR = dmaMemory.AllocatePayloadBuffer(Layout::kPayloadBufferSize);
-    if (!bufR) return kIOReturnNoMemory;
-    
-    // Only commit to members once we have both regions.
     descRegion_ = *descR;
-    bufRegion_ = *bufR;
 
-    if (descRegion_.deviceBase > 0xFFFFFFFFULL || bufRegion_.deviceBase > 0xFFFFFFFFULL) {
-        ASFW_LOG(Isoch, "IT: SetupRings - IOVA out of 32-bit range: desc=0x%llx buf=0x%llx",
-                 descRegion_.deviceBase, bufRegion_.deviceBase);
+    if (descRegion_.deviceBase > 0xFFFFFFFFULL) {
+        ASFW_LOG(Isoch, "IT: SetupRings - descriptor IOVA out of 32-bit range: 0x%llx",
+                 descRegion_.deviceBase);
         return kIOReturnNoResources;
     }
 
@@ -46,8 +41,8 @@ kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemo
     // Zero the entire slab (will be filled with 0xDE in Start()).
     std::memset(descRegion_.virtualBase, 0, Layout::kDescriptorRingSize);
 
-    ASFW_LOG(Isoch, "IT: Rings Ready. DescIOVA=0x%llx (pageOff=0x%llx) BufIOVA=0x%llx",
-             descRegion_.deviceBase, pageOffset, bufRegion_.deviceBase);
+    ASFW_LOG(Isoch, "IT: Descriptor ring ready. DescIOVA=0x%llx (pageOff=0x%llx)",
+             descRegion_.deviceBase, pageOffset);
     ASFW_LOG(Isoch, "IT: Layout: %u packets, %u blocks, %u pages, %zu bytes/page usable",
              Layout::kNumPackets, Layout::kRingBlocks, Layout::kTotalPages,
              static_cast<size_t>(Layout::kDescriptorsPerPage * Layout::kDescriptorStride));
@@ -131,15 +126,21 @@ void IsochTxDescriptorSlab::ValidateDescriptorLayout() const noexcept {
         }
     }
 
-    // Verify packet alignment: each packet's 3 descriptors must be in same page.
+    // Verify packet alignment: each packet program must stay in one page.
     for (uint32_t pkt = 0; pkt < Layout::kNumPackets; ++pkt) {
         const uint32_t base = pkt * Layout::kBlocksPerPacket;
-        const uint32_t page0 = GetDescriptorIOVA(base) / Layout::kOHCIPageSize;
-        const uint32_t page1 = GetDescriptorIOVA(base + 1) / Layout::kOHCIPageSize;
-        const uint32_t page2 = GetDescriptorIOVA(base + 2) / Layout::kOHCIPageSize;
-        if (page0 != page1 || page1 != page2) {
-            ASFW_LOG(Isoch, "❌ IT: Packet %u spans pages! descBase=%u pages=[%u,%u,%u]",
-                     pkt, base, page0, page1, page2);
+        const uint32_t firstPage =
+            GetDescriptorIOVA(base) / Layout::kOHCIPageSize;
+        const uint32_t lastPage =
+            GetDescriptorIOVA(base + Layout::kBlocksPerPacket - 1) /
+            Layout::kOHCIPageSize;
+        if (firstPage != lastPage) {
+            ASFW_LOG(Isoch,
+                     "❌ IT: Packet %u spans pages! descBase=%u pages=[%u,%u]",
+                     pkt,
+                     base,
+                     firstPage,
+                     lastPage);
         }
     }
 #endif

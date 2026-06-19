@@ -2,13 +2,18 @@
 
 #include "IsochTxDmaRing.hpp"
 
+#include "../../Common/TimingUtils.hpp"
+
+#include <algorithm>
+#include <DriverKit/IOLib.h>
+
 namespace ASFW::Isoch::Tx {
 
 using namespace ASFW::Async::HW;
 using namespace ASFW::Driver;
 
 void IsochTxDmaRing::ResetForStart() noexcept {
-    softwareFillIndex_ = 0;
+    softwareFillAbsIdx_ = 0;
     lastHwPacketIndex_ = 0;
     ringPacketsAhead_ = 0;
 
@@ -18,6 +23,95 @@ void IsochTxDmaRing::ResetForStart() noexcept {
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
+
+    counters_.wireDataPackets.store(0, std::memory_order_relaxed);
+    counters_.wireZeroPcmPackets.store(0, std::memory_order_relaxed);
+    counters_.wireInfoQuads.store(0, std::memory_order_relaxed);
+    counters_.wirePcmDropouts.store(0, std::memory_order_relaxed);
+    counters_.wireMaxAbs24.store(0, std::memory_order_relaxed);
+    counters_.wireLastInfoQuad.store(0, std::memory_order_relaxed);
+    counters_.wireFirstInfoAbsIdx.store(0, std::memory_order_relaxed);
+    wireLastPacketHadInfo_ = false;
+    wireFirstInfoLogged_ = false;
+}
+
+void IsochTxDmaRing::GaugeWirePayload(uint64_t fillAbsIdx,
+                                      const uint8_t* packetBytes,
+                                      uint32_t payloadLength) noexcept {
+    constexpr uint32_t kCipHeaderBytes = 8;
+    constexpr uint32_t kIdleSlotWord = 0x80000000u; // AM824 no-info / idle MIDI
+    if (payloadLength <= kCipHeaderBytes) {
+        return; // NO-DATA packet: CIP header only
+    }
+
+    const uint64_t dataPackets =
+        counters_.wireDataPackets.fetch_add(1, std::memory_order_relaxed) + 1;
+    if ((dataPackets % 8192) == 0) {
+        ASFW_LOG(Isoch,
+                 "IT WIRE gauge data=%llu zeroPcm=%llu infoQuads=%llu dropouts=%llu maxAbs24=%u lastQuad=0x%08x",
+                 dataPackets,
+                 counters_.wireZeroPcmPackets.load(std::memory_order_relaxed),
+                 counters_.wireInfoQuads.load(std::memory_order_relaxed),
+                 counters_.wirePcmDropouts.load(std::memory_order_relaxed),
+                 counters_.wireMaxAbs24.load(std::memory_order_relaxed),
+                 counters_.wireLastInfoQuad.load(std::memory_order_relaxed));
+    }
+
+    const uint32_t quadCount = (payloadLength - kCipHeaderBytes) / 4;
+    const uint8_t* quadBytes = packetBytes + kCipHeaderBytes;
+    uint32_t infoQuads = 0;
+    uint32_t lastInfoQuad = 0;
+    uint32_t maxAbs24 = 0;
+    for (uint32_t i = 0; i < quadCount; ++i, quadBytes += 4) {
+        // Payload is stored in bus (big-endian) byte order.
+        const uint32_t quad = (static_cast<uint32_t>(quadBytes[0]) << 24) |
+                              (static_cast<uint32_t>(quadBytes[1]) << 16) |
+                              (static_cast<uint32_t>(quadBytes[2]) << 8) |
+                              static_cast<uint32_t>(quadBytes[3]);
+        if (quad == 0 || quad == kIdleSlotWord) {
+            continue;
+        }
+        ++infoQuads;
+        lastInfoQuad = quad;
+        // 24-bit two's-complement magnitude, label-agnostic (works for both
+        // raw sign-extended 24-in-32 and 0x40-labelled AM824 MBLA slots).
+        const int32_t sample24 = static_cast<int32_t>(quad << 8) >> 8;
+        const uint32_t abs24 = static_cast<uint32_t>(
+            sample24 < 0 ? -static_cast<int64_t>(sample24) : sample24);
+        if (abs24 > maxAbs24) {
+            maxAbs24 = abs24;
+        }
+    }
+
+    if (infoQuads == 0) {
+        counters_.wireZeroPcmPackets.fetch_add(1, std::memory_order_relaxed);
+        if (wireLastPacketHadInfo_) {
+            const uint64_t dropouts =
+                counters_.wirePcmDropouts.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (dropouts <= 8 || (dropouts % 64) == 0) {
+                ASFW_LOG(Isoch,
+                         "IT WIRE PCM dropout #%llu at absIdx=%llu (nonzero->zero)",
+                         dropouts, fillAbsIdx);
+            }
+        }
+        wireLastPacketHadInfo_ = false;
+        return;
+    }
+
+    counters_.wireInfoQuads.fetch_add(infoQuads, std::memory_order_relaxed);
+    counters_.wireLastInfoQuad.store(lastInfoQuad, std::memory_order_relaxed);
+    uint32_t previousMax = counters_.wireMaxAbs24.load(std::memory_order_relaxed);
+    if (maxAbs24 > previousMax) {
+        counters_.wireMaxAbs24.store(maxAbs24, std::memory_order_relaxed);
+    }
+    if (!wireFirstInfoLogged_) {
+        counters_.wireFirstInfoAbsIdx.store(fillAbsIdx, std::memory_order_relaxed);
+        ASFW_LOG(Isoch,
+                 "IT WIRE first nonzero PCM absIdx=%llu infoQuads=%u/%u lastQuad=0x%08x maxAbs24=%u",
+                 fillAbsIdx, infoQuads, quadCount, lastInfoQuad, maxAbs24);
+        wireFirstInfoLogged_ = true;
+    }
+    wireLastPacketHadInfo_ = true;
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
@@ -31,7 +125,6 @@ void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
 }
 
 uint32_t IsochTxDmaRing::BuildIsochHeaderQ0(uint8_t channel) noexcept {
-    // Packet header Q0 (IEEE-1394 isoch header; same values as previous implementation).
     return ((2u & 0x7) << 16) |   // spd
            ((1u & 0x3) << 14) |   // tag
            ((channel & 0x3F) << 8) |
@@ -39,151 +132,12 @@ uint32_t IsochTxDmaRing::BuildIsochHeaderQ0(uint8_t channel) noexcept {
            (0u & 0xF);
 }
 
-IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provider) noexcept {
-    constexpr uint32_t numPackets = Layout::kNumPackets;
-    PrimeStats stats{};
-
-    ASFW_LOG(Isoch, "IT: PrimeRing - packets=%u blocks=%u pages=%u descPerPage=%u",
-             numPackets, Layout::kRingBlocks, Layout::kTotalPages, Layout::kDescriptorsPerPage);
-
-    slab_.ValidateDescriptorLayout();
-
-    for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
-        const auto pkt = provider.NextSilentPacket(nextTransmitCycle_);
-        nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
-
-        if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
-            ASFW_LOG(Isoch, "IT: FATAL pkt.size=%u > max=%u pktIdx=%u",
-                     pkt.sizeBytes, Layout::kMaxPacketSize, pktIdx);
-            return stats;
-        }
-
-        const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
-        const uint32_t nextPktBase = ((pktIdx + 1) % numPackets) * Layout::kBlocksPerPacket;
-
-        if (descBase >= Layout::kRingBlocks ||
-            (descBase + Layout::kBlocksPerPacket - 1) >= Layout::kRingBlocks) {
-            ASFW_LOG(Isoch, "IT: ❌ FATAL: descBase=%u OUT OF BOUNDS (max=%u) pktIdx=%u",
-                     descBase, Layout::kRingBlocks - 1, pktIdx);
-            return stats;
-        }
-
-        const uint32_t nextBlockIOVA = slab_.GetDescriptorIOVA(nextPktBase);
-
-        uint8_t* payloadVirt = slab_.PayloadPtr(pktIdx);
-        const uint32_t payloadIOVA = slab_.PayloadIOVA(pktIdx);
-        if (!payloadVirt) {
-            ASFW_LOG(Isoch, "IT: PrimeRing - no payload buffer");
-            return stats;
-        }
-
-        if (pkt.sizeBytes > 0 && pkt.words) {
-            uint32_t* dst32 = reinterpret_cast<uint32_t*>(payloadVirt);
-            const size_t count32 = pkt.sizeBytes / 4;
-            for (size_t k = 0; k < count32; ++k) {
-                dst32[k] = pkt.words[k];
-            }
-        }
-
-        const uint32_t isochHeaderQ0 = BuildIsochHeaderQ0(channel_);
-        const uint32_t isochHeaderQ1 = (static_cast<uint32_t>(static_cast<uint16_t>(pkt.sizeBytes)) << 16);
-
-        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(slab_.GetDescriptorPtr(descBase));
-        immDesc->common.control = (0x0200u << 16) | 8;
-        immDesc->common.dataAddress = 0;
-        immDesc->common.branchWord = (nextBlockIOVA & 0xFFFFFFF0u) | Layout::kBlocksPerPacket;
-        immDesc->common.statusWord = 0;
-        immDesc->immediateData[0] = isochHeaderQ0;
-        immDesc->immediateData[1] = isochHeaderQ1;
-        immDesc->immediateData[2] = 0;
-        immDesc->immediateData[3] = 0;
-
-        auto* lastDesc = slab_.GetDescriptorPtr(descBase + 2);
-
-        const uint16_t lastReqCount = static_cast<uint16_t>(pkt.sizeBytes);
-        const uint8_t intBits = ((pktIdx % 8) == 7) ? OHCIDescriptor::kIntAlways : OHCIDescriptor::kIntNever;
-
-        const uint32_t lastControl =
-            (0x1u << 28) |
-            (0x1u << 27) |
-            (0x0u << 24) |
-            (static_cast<uint32_t>(intBits) << 20) |
-            (0x3u << 18) |
-            lastReqCount;
-
-        lastDesc->control = lastControl;
-        lastDesc->dataAddress = payloadIOVA;
-        lastDesc->branchWord = (nextBlockIOVA & 0xFFFFFFF0u) | Layout::kBlocksPerPacket;
-        lastDesc->statusWord = 0;
-
-        stats.packetsAssembled++;
-        if (pkt.isData) {
-            stats.dataPackets++;
-        } else {
-            stats.noDataPackets++;
-        }
-    }
-
-    softwareFillIndex_ = 0;
-    ringPacketsAhead_ = numPackets;
-    lastHwPacketIndex_ = 0;
-
-    std::atomic_thread_fence(std::memory_order_release);
-    ASFW::Driver::WriteBarrier();
-
-    return stats;
-}
-
-IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& hw,
-                                                     uint8_t contextIndex,
-                                                     IIsochTxPacketProvider& provider,
-                                                     IsochTxCaptureHook* captureHook,
-                                                     IIsochTxAudioInjector* injector) noexcept {
-    counters_.calls.fetch_add(1, std::memory_order_relaxed);
-
-    RefillOutcome out{};
-
-    Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
-    const uint32_t ctrl = hw.Read(ctrlReg);
-    const bool dead = (ctrl & ContextControl::kDead) != 0;
-    if (dead) {
-        counters_.exitDead.fetch_add(1, std::memory_order_relaxed);
-        out.dead = true;
-        return out;
-    }
-
-    Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex));
-    const uint32_t cmdPtr = hw.Read(cmdPtrReg);
-    const uint32_t cmdAddr = cmdPtr & 0xFFFFFFF0u;
-
-    out.cmdPtr = cmdPtr;
-    out.cmdAddr = cmdAddr;
-
-    // Use page-aware inverse mapping for cmdPtr decoding
-    uint32_t hwLogicalIndex = 0;
-    if (!slab_.DecodeCmdAddrToLogicalIndex(cmdAddr, hwLogicalIndex)) {
-        counters_.exitDecodeFail.fetch_add(1, std::memory_order_relaxed);
-        out.decodeFailed = true;
-        return out;
-    }
-
-    const uint32_t hwPacketIndex = hwLogicalIndex / Layout::kBlocksPerPacket;
-    if (hwPacketIndex >= Layout::kNumPackets) {
-        counters_.exitHwOOB.fetch_add(1, std::memory_order_relaxed);
-        out.hwOOB = true;
-        return out;
-    }
-
-    out.hwPacketIndex = hwPacketIndex;
-
-    // Fill-ahead policy tracking
+uint32_t IsochTxDmaRing::ComputeDeltaConsumed(const uint32_t hwPacketIndex) noexcept {
     const uint32_t prevHwPacketIndex = lastHwPacketIndex_;
-    uint32_t deltaConsumed = 0;
-    if (hwPacketIndex >= prevHwPacketIndex) {
-        deltaConsumed = hwPacketIndex - prevHwPacketIndex;
-    } else {
-        deltaConsumed = (Layout::kNumPackets - prevHwPacketIndex) + hwPacketIndex;
-    }
+    const uint32_t deltaConsumed =
+        (hwPacketIndex >= prevHwPacketIndex)
+            ? (hwPacketIndex - prevHwPacketIndex)
+            : ((Layout::kNumPackets - prevHwPacketIndex) + hwPacketIndex);
     lastHwPacketIndex_ = hwPacketIndex;
 
     ringPacketsAhead_ -= deltaConsumed;
@@ -191,116 +145,615 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
         ringPacketsAhead_ = 0;
     }
 
-    // Gap monitoring
-    const uint32_t gap = ringPacketsAhead_;
+    return deltaConsumed;
+}
+
+void IsochTxDmaRing::UpdateGapCounters(const uint32_t gap) noexcept {
     counters_.lastDmaGapPackets.store(gap, std::memory_order_relaxed);
     uint32_t prevMin = counters_.minDmaGapPackets.load(std::memory_order_relaxed);
-    while (gap < prevMin && !counters_.minDmaGapPackets.compare_exchange_weak(
-               prevMin, gap, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    while (gap < prevMin &&
+           !counters_.minDmaGapPackets.compare_exchange_weak(
+               prevMin, gap, std::memory_order_relaxed, std::memory_order_relaxed)) {
+    }
+
     constexpr uint32_t kCriticalGapThreshold = Layout::kNumPackets / 5;
     if (gap < kCriticalGapThreshold) {
         counters_.criticalGapEvents.fetch_add(1, std::memory_order_relaxed);
     }
+}
 
-    // Cycle resync from hardware timestamp (descriptor completion timestamp)
-    if (deltaConsumed > 0 && cycleTrackingValid_) {
-        const uint32_t lastProcessedPkt = (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
-        auto* processedOL = slab_.GetDescriptorPtr(lastProcessedPkt * Layout::kBlocksPerPacket + 2);
-        const uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
-        out.hwTimestamp = hwTimestamp;
+void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
+                                         const uint32_t hwPacketIndex,
+                                         const uint32_t deltaConsumed,
+                                         RefillOutcome& out) noexcept {
+    if (deltaConsumed == 0 || !cycleTrackingValid_) {
+        return;
+    }
 
-        if (processedOL->statusWord != 0) {
-            const uint32_t hwCycle = hwTimestamp & 0x1FFF;
-            lastHwTimestamp_ = hwTimestamp;
+    const uint32_t lastProcessedPkt = (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
+    out.completedPacketIndex = lastProcessedPkt;
+    out.completedPacketCount = deltaConsumed;
+    auto* processedOL = slab_.GetDescriptorPtr(
+        lastProcessedPkt * Layout::kBlocksPerPacket +
+        Layout::kCompletionBlock);
 
-            const uint32_t aheadCount = (softwareFillIndex_ + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
-            nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(processedOL), sizeof(*processedOL));
+    }
+
+    const uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
+    out.hwTimestamp = hwTimestamp;
+
+    if (processedOL->statusWord == 0) {
+        return;
+    }
+
+    const uint32_t hwCycle = (hwTimestamp & 0x1FFFu) % 8000u;
+    out.hwTimestamp = static_cast<uint16_t>(0x8000u | hwCycle);
+    lastHwTimestamp_ = hwTimestamp;
+
+    const uint32_t softwareFillIndex = static_cast<uint32_t>(softwareFillAbsIdx_ % Layout::kNumPackets);
+    const uint32_t aheadCount =
+        (softwareFillIndex + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
+    nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
+}
+
+void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
+    softwareFillAbsIdx_ += toFill;
+    ringPacketsAhead_ += toFill;
+
+    std::atomic_thread_fence(std::memory_order_release);
+    ASFW::Driver::WriteBarrier();
+
+    counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
+}
+
+IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+    const TxPayloadDmaMap& payloadDmaMap,
+    const uint32_t numSlots,
+    const uint32_t slotStrideBytes,
+    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+    const uint64_t preFillCount) noexcept {
+    PrimeStats stats{};
+    if (!slab_.IsValid()) {
+        ASFW_LOG(Isoch, "IT: Prime failed - descriptor slab is invalid");
+        return stats;
+    }
+    if (!payloadDmaMap.IsValid() ||
+        numSlots == 0 || slotStrideBytes == 0 || metadataRing == nullptr) {
+        ASFW_LOG(Isoch,
+                 "IT: Prime failed - invalid shared payload contract segments=%zu slots=%u stride=%u meta=%p",
+                 payloadDmaMap.SegmentCount(), numSlots, slotStrideBytes, metadataRing);
+        return stats;
+    }
+
+    const uint32_t numPackets = Layout::kNumPackets;
+    if (preFillCount < numPackets || preFillCount > numSlots) {
+        ASFW_LOG(
+            Isoch,
+            "IT: Prime failed - committed prefill=%llu must cover %u descriptors within %u slots",
+            preFillCount,
+            numPackets,
+            numSlots);
+        return stats;
+    }
+
+    for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
+        const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
+        auto* desc0 = slab_.GetDescriptorPtr(descBase);
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(desc0);
+
+        // Fetch pre-filled metadata for this slot.
+        const uint32_t producerSlot = pktIdx % numSlots;
+        const auto& meta = metadataRing[producerSlot];
+        const uint64_t expectedGen =
+            ASFW::IsochTransport::ExpectedCommitGen(pktIdx, numSlots);
+        if (meta.commitGen.load(std::memory_order_acquire) != expectedGen) {
+            ASFW_LOG(
+                Isoch,
+                "IT: Prime failed - slot %u is not committed for packet %u",
+                producerSlot,
+                pktIdx);
+            return stats;
+        }
+        if (meta.payloadLength < 2 || meta.payloadLength > slotStrideBytes) {
+            ASFW_LOG(
+                Isoch,
+                "IT: Prime failed - invalid payload length packet=%u slot=%u len=%u stride=%u",
+                pktIdx,
+                producerSlot,
+                meta.payloadLength,
+                slotStrideBytes);
+            return stats;
+        }
+
+        std::array<TxPayloadDmaFragment, 2> payloadFragments{};
+        const uint64_t payloadOffset =
+            static_cast<uint64_t>(producerSlot) * slotStrideBytes;
+        if (!payloadDmaMap.ResolveTwoFragments(
+                payloadOffset, meta.payloadLength, payloadFragments)) {
+            ASFW_LOG(
+                Isoch,
+                "IT: Prime payload mapping failed packet=%u slot=%u offset=%llu len=%u segments=%zu",
+                pktIdx,
+                producerSlot,
+                payloadOffset,
+                meta.payloadLength,
+                payloadDmaMap.SegmentCount());
+            return stats;
+        }
+
+        // Prime the OMI descriptor structure (Descriptor 0 and 1)
+        std::memset(immDesc, 0, sizeof(OHCIDescriptorImmediate));
+        immDesc->common.control = OHCIDescriptor::BuildControl({
+            .reqCount = 8, // isoch packet header = 2 immediate quadlets (Q0 + data_length)
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyImmediate,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
+
+        // Set the immediate isochronous headers from metadata.
+        immDesc->immediateData[0] = meta.immediateHeader[0];
+        immDesc->immediateData[1] = meta.immediateHeader[1];
+
+        // Linux queue_iso_transmit() self-links the skip address so a lost
+        // cycle/FIFO overrun skips one cycle without dropping this packet.
+        immDesc->common.branchWord =
+            MakeBranchWordAT(slab_.GetDescriptorIOVA(descBase), Layout::kBlocksPerPacket);
+
+        // Standard OUTPUT_MORE for the first payload fragment.
+        auto* desc2 =
+            slab_.GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
+        std::memset(desc2, 0, sizeof(OHCIDescriptor));
+        desc2->control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(payloadFragments[0].length),
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
+        desc2->dataAddress = payloadFragments[0].deviceAddress;
+
+        // OUTPUT_LAST owns status, interrupt, and the branch to the next packet.
+        auto* desc3 =
+            slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        std::memset(desc3, 0, sizeof(OHCIDescriptor));
+        desc3->control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(payloadFragments[1].length),
+            .command = OHCIDescriptor::kCmdOutputLast,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits =
+                Core::IsTimingGroupBoundary(pktIdx)
+                    ? OHCIDescriptor::kIntAlways
+                    : OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchAlways,
+        });
+        desc3->control |=
+            (1u << (OHCIDescriptor::kStatusShift +
+                    OHCIDescriptor::kControlHighShift));
+        desc3->dataAddress = payloadFragments[1].deviceAddress;
+
+        const uint32_t nextPktIdx = (pktIdx + 1) % numPackets;
+        const uint32_t nextDescIOVA =
+            slab_.GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
+        desc3->branchWord =
+            MakeBranchWordAT(nextDescIOVA, Layout::kBlocksPerPacket);
+        AR_init_status(*desc3, 0);
+    }
+
+    if (dmaMemory_) {
+        dmaMemory_->PublishToDevice(slab_.DescriptorRegion().virtualBase, slab_.DescriptorRegion().size);
+    }
+
+    // Since we've primed the ring with the pre-filled data, advance the
+    // software tracking state to match the primed count (the hardware capacity).
+    // This stops the first refill ISR from immediately trying to "refill" what
+    // we just primed, ensuring it fetches the next packet in the sequence.
+    softwareFillAbsIdx_ = numPackets;
+    ringPacketsAhead_ = numPackets;
+
+    stats.packetsAssembled = numPackets;
+    ASFW_LOG(Isoch, "IT: Dynamic descriptor ring primed. numPackets=%u softwareFillIdx=%llu",
+             numPackets, softwareFillAbsIdx_);
+    return stats;
+}
+
+bool IsochTxDmaRing::DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
+                                               const uint8_t contextIndex,
+                                               uint32_t& outPacketIndex,
+                                               uint32_t& outCmdPtr) noexcept {
+    const Register32 cmdPtrReg =
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex));
+    outCmdPtr = hw.Read(cmdPtrReg);
+    const uint32_t cmdAddr = outCmdPtr & 0xFFFFFFF0u;
+
+    uint32_t hwLogicalIndex = 0;
+    if (!slab_.DecodeCmdAddrToLogicalIndex(cmdAddr, hwLogicalIndex)) {
+        return false;
+    }
+
+    outPacketIndex = hwLogicalIndex / Layout::kBlocksPerPacket;
+    return outPacketIndex < Layout::kNumPackets;
+}
+
+const char* IsochTxDmaRing::RefillFailureReasonName(
+    RefillFailureReason reason) noexcept {
+    switch (reason) {
+        case RefillFailureReason::None:
+            return "none";
+        case RefillFailureReason::InvalidSharedContract:
+            return "invalid-shared-contract";
+        case RefillFailureReason::DeadContext:
+            return "dead-context";
+        case RefillFailureReason::ProducerFatalStatus:
+            return "producer-fatal-status";
+        case RefillFailureReason::CommandPointerDecode:
+            return "command-pointer-decode";
+        case RefillFailureReason::UncommittedSlot:
+            return "uncommitted-slot";
+        case RefillFailureReason::InvalidPacketSize:
+            return "invalid-packet-size";
+        case RefillFailureReason::PayloadMapping:
+            return "payload-mapping";
+    }
+    return "unknown";
+}
+
+IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
+    Driver::HardwareInterface& hw,
+    uint8_t contextIndex,
+    ASFW::IsochTransport::TxPacketMeta* metadataRing,
+    ASFW::IsochTransport::TxStreamControl* controlBlock,
+    uint32_t numSlots,
+    uint8_t* payloadBase,
+    const TxPayloadDmaMap& payloadDmaMap) noexcept
+{
+    counters_.calls.fetch_add(1, std::memory_order_relaxed);
+    RefillOutcome out{};
+
+    if (!metadataRing || !controlBlock || !payloadBase ||
+        !payloadDmaMap.IsValid() ||
+        numSlots == 0 || numSlots != controlBlock->numSlots ||
+        controlBlock->slotStrideBytes == 0 ||
+        controlBlock->maxPacketBytes == 0 ||
+        controlBlock->maxPacketBytes > controlBlock->slotStrideBytes) {
+        out.failureReason = RefillFailureReason::InvalidSharedContract;
+        return out;
+    }
+
+    // 1. Capture CYCLE_TIMER and host time, and publish under seqlock.
+    // Clock-smoothing / filtering is handled natively by AudioDriverKit's clock algorithms.
+    const uint32_t refillCycleTimer =
+        hw.Read(static_cast<Register32>(Register32::kCycleTimer));
+    {
+        const uint64_t hostTime = mach_absolute_time();
+
+        ASFW::IsochTransport::ClockPairSample sample{};
+        sample.hostTimeMid = hostTime;
+        sample.cycleTimer32 = refillCycleTimer;
+        controlBlock->clockPair.Publish(sample);
+    }
+
+    // 2. Check context status
+    const Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
+    const uint32_t ctrl = hw.Read(ctrlReg);
+    out.contextControl = ctrl;
+    const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
+    if (dead) {
+        counters_.exitDead.fetch_add(1, std::memory_order_relaxed);
+        controlBlock->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
+        controlBlock->streamGeneration.fetch_add(1, std::memory_order_release);
+        out.dead = true;
+        out.failureReason = RefillFailureReason::DeadContext;
+        out.streamStatus = static_cast<uint32_t>(
+            ASFW::IsochTransport::TxStreamStatus::kDeadContext);
+        return out;
+    }
+    const auto streamStatus =
+        controlBlock->statusWord.load(std::memory_order_acquire);
+    out.streamStatus = static_cast<uint32_t>(streamStatus);
+    if (streamStatus ==
+        ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal) {
+        out.failureReason = RefillFailureReason::ProducerFatalStatus;
+        out.producerFailureAvailable =
+            controlBlock->producerFailure.TryRead(
+                out.producerFailure);
+        return out;
+    }
+
+    // 3. Decode hardware pointer and advance completed cursor
+    uint32_t hwPacketIndex = 0;
+    uint32_t cmdPtr = 0;
+    if (!DecodeHardwarePacketIndex(hw, contextIndex, hwPacketIndex, cmdPtr)) {
+        counters_.exitDecodeFail.fetch_add(1, std::memory_order_relaxed);
+        out.decodeFailed = true;
+        out.failureReason = RefillFailureReason::CommandPointerDecode;
+        out.cmdPtr = cmdPtr;
+        out.cmdAddr = cmdPtr & 0xFFFFFFF0u;
+        return out;
+    }
+
+    out.hwPacketIndex = hwPacketIndex;
+    out.cmdPtr = cmdPtr;
+    out.cmdAddr = cmdPtr & 0xFFFFFFF0u;
+
+    const uint32_t deltaConsumed = ComputeDeltaConsumed(hwPacketIndex);
+    const uint32_t gap = ringPacketsAhead_;
+    UpdateGapCounters(gap);
+    ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
+
+    // Track the worst single coalesced completion. The committed slack
+    // (kTxPreparationSlackPackets) must cover this; a new high-water at or above
+    // the slack is one phase-slip away from an underrun, so surface it.
+    {
+        uint32_t prevMax =
+            counters_.maxDeltaConsumed.load(std::memory_order_relaxed);
+        while (deltaConsumed > prevMax &&
+               !counters_.maxDeltaConsumed.compare_exchange_weak(
+                   prevMax, deltaConsumed, std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+        constexpr uint32_t kSlack =
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kTxPreparationSlackPackets;
+        if (deltaConsumed > prevMax && deltaConsumed * 2 >= kSlack) {
+            ASFW_LOG(
+                Isoch,
+                "IT deltaConsumed high-water=%u (slack budget=%u) — coalesced "
+                "completion approaching the coverage bound",
+                deltaConsumed,
+                kSlack);
         }
     }
 
-    // Phase 2: keep ring full with silent/cadence-correct packets
-    const uint32_t toFill = (ringPacketsAhead_ < Layout::kMaxWriteAhead)
-        ? (Layout::kMaxWriteAhead - ringPacketsAhead_) : 0;
+    // Fetch and publish completed stamps
+    const uint64_t completedAbsIdx = controlBlock->completionCursor.load(std::memory_order_relaxed);
+    for (uint32_t i = 0; i < deltaConsumed; ++i) {
+        const uint64_t currentAbsIdx = completedAbsIdx + i;
+        const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
 
-    if (toFill > 0) {
-        counters_.refills.fetch_add(1, std::memory_order_relaxed);
-
-        for (uint32_t i = 0; i < toFill; ++i) {
-            const uint32_t pktIdx = (softwareFillIndex_ + i) % Layout::kNumPackets;
-            const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
-
-            uint8_t* payloadVirt = slab_.PayloadPtr(pktIdx);
-            const uint32_t payloadIOVA = slab_.PayloadIOVA(pktIdx);
-            if (!payloadVirt) {
-                counters_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
-                return out;
-            }
-
-            if (captureHook) {
-                auto* existingLastDesc = slab_.GetDescriptorPtr(descBase + 2);
-                captureHook->CaptureBeforeOverwrite(pktIdx,
-                                                    hwPacketIndex,
-                                                    cmdPtr,
-                                                    existingLastDesc,
-                                                    reinterpret_cast<const uint32_t*>(payloadVirt));
-            }
-
-            const auto pkt = provider.NextSilentPacket(nextTransmitCycle_);
-            nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
-
-            if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
-                counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
-                return out;
-            }
-
-            if (descBase >= Layout::kRingBlocks || (descBase + Layout::kBlocksPerPacket - 1) >= Layout::kRingBlocks) {
-                counters_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
-                return out;
-            }
-
-            if (pkt.sizeBytes > 0 && pkt.words) {
-                uint32_t* dst32 = reinterpret_cast<uint32_t*>(payloadVirt);
-                const size_t count32 = pkt.sizeBytes / 4;
-                for (size_t k = 0; k < count32; ++k) {
-                    dst32[k] = pkt.words[k];
-                }
-            }
-
-            auto* lastDesc = slab_.GetDescriptorPtr(descBase + 2);
-            const uint16_t lastReqCount = static_cast<uint16_t>(pkt.sizeBytes);
-
-            const uint32_t existingControl = lastDesc->control & 0xFFFF0000u;
-            lastDesc->control = existingControl | lastReqCount;
-            lastDesc->dataAddress = payloadIOVA;
-            lastDesc->statusWord = 0;
-
-            auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(slab_.GetDescriptorPtr(descBase));
-            const uint32_t isochHeaderQ1 = (static_cast<uint32_t>(pkt.sizeBytes) & 0xFFFFu) << 16;
-            immDesc->immediateData[1] = isochHeaderQ1;
-
-            out.packetsFilled++;
-            if (pkt.isData) {
-                out.dataPackets++;
-            } else {
-                out.noDataPackets++;
-            }
+        auto* desc2 = slab_.GetDescriptorPtr(
+            completedPktSlot * Layout::kBlocksPerPacket +
+            Layout::kCompletionBlock);
+        if (dmaMemory_) {
+            dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(*desc2));
         }
 
-        softwareFillIndex_ = (softwareFillIndex_ + toFill) % Layout::kNumPackets;
-        ringPacketsAhead_ += toFill;
+        const uint16_t hwTimestamp =
+            static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
 
-        std::atomic_thread_fence(std::memory_order_release);
-        ASFW::Driver::WriteBarrier();
+        // OHCI OUTPUT_LAST reports sec[2:0]:cycle[12:0] and omits the
+        // intra-cycle offset. Reconstruct the packet cycle at offset zero.
+        const uint32_t completionCycleTimer =
+            (static_cast<uint32_t>((hwTimestamp >> 13) & 0x7u) << 25) |
+            (static_cast<uint32_t>(hwTimestamp & 0x1FFFu) << 12);
+        controlBlock->PushCompletionStamp(currentAbsIdx,
+                                          completionCycleTimer);
+    }
+    if (deltaConsumed > 0) {
+        controlBlock->completionCursor.store(completedAbsIdx + deltaConsumed, std::memory_order_release);
 
-        counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
+        const uint64_t requested =
+            controlBlock->preparationRequestGeneration.load(
+                std::memory_order_relaxed);
+        const uint64_t handled =
+            controlBlock->preparationHandledGeneration.load(
+                std::memory_order_acquire);
+        if (requested == handled) {
+            const uint64_t generation = requested + 1;
+            controlBlock->preparationRequestHostTicks.store(
+                mach_absolute_time(), std::memory_order_relaxed);
+            controlBlock->preparationRequestGeneration.store(
+                generation, std::memory_order_release);
+            controlBlock->preparationRequestCount.fetch_add(
+                1, std::memory_order_relaxed);
+            out.preparationRequestGeneration = generation;
+        } else {
+            controlBlock->preparationCoalescedCount.fetch_add(
+                1, std::memory_order_relaxed);
+        }
     }
 
-    // Phase 3: near-HW audio injection
-    if (injector) {
-        injector->InjectNearHw(hwPacketIndex, slab_);
+    // 4. Refill batch: try to fill deltaConsumed slots
+    // If softwareFillAbsIdx_ is 0, initialize it from the completedAbsIdx + ringPacketsAhead_
+    if (softwareFillAbsIdx_ == 0) {
+        softwareFillAbsIdx_ = completedAbsIdx + ringPacketsAhead_;
+    }
+
+    uint32_t packetsFilled = 0;
+    for (uint32_t i = 0; i < deltaConsumed; ++i) {
+        const uint64_t fillAbsIdx = softwareFillAbsIdx_ + i;
+        const uint32_t pktSlot = static_cast<uint32_t>(fillAbsIdx % numSlots);
+
+        auto& meta = metadataRing[pktSlot];
+        const uint64_t expectedGen = ASFW::IsochTransport::ExpectedCommitGen(fillAbsIdx, numSlots);
+        const uint64_t commitGen = meta.commitGen.load(std::memory_order_acquire);
+
+        if (commitGen != expectedGen) {
+            const uint64_t requestGeneration =
+                controlBlock->preparationRequestGeneration.load(
+                    std::memory_order_acquire);
+            const uint64_t handledGeneration =
+                controlBlock->preparationHandledGeneration.load(
+                    std::memory_order_acquire);
+            const uint64_t requestHostTicks =
+                controlBlock->preparationRequestHostTicks.load(
+                    std::memory_order_relaxed);
+            const uint64_t nowHostTicks = mach_absolute_time();
+            const uint64_t requestAgeUs =
+                requestHostTicks != 0 && nowHostTicks >= requestHostTicks
+                    ? ASFW::Timing::hostTicksToNanos(
+                          nowHostTicks - requestHostTicks) /
+                          1000
+                    : 0;
+            counters_.txUnderruns.fetch_add(1, std::memory_order_relaxed);
+            controlBlock->statusWord.store(
+                ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal,
+                std::memory_order_release);
+            controlBlock->streamGeneration.fetch_add(
+                1, std::memory_order_release);
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL: slot %u not committed packet=%llu commitGen=%llu expectedGen=%llu",
+                pktSlot,
+                fillAbsIdx,
+                commitGen,
+                expectedGen);
+            // Refill-coverage post-mortem: was this absolute packet ever
+            // prepared into its slot, or does the slot still hold a previous
+            // lap's packet? meta.packetIndex == fillAbsIdx with a stale
+            // commitGen => commit/writeback ordering bug; meta.packetIndex one
+            // lap behind => the producer's exposeCursor never reached this
+            // packet (coverage/margin). The producer cursors localize it.
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL dump: fatalAbs=%llu slot=%u expectedGen=%llu commitGen=%llu "
+                "slotLastPacketAbs=%llu exposeCursor=%llu completionCursor=%llu "
+                "softwareFillAbs=%llu ringPacketsAhead=%u deltaConsumed=%u i=%u numSlots=%u "
+                "prepReq=%llu prepHandled=%llu prepAgeUs=%llu prepCoalesced=%llu",
+                fillAbsIdx,
+                pktSlot,
+                expectedGen,
+                commitGen,
+                meta.packetIndex,
+                controlBlock->exposeCursor.load(std::memory_order_acquire),
+                controlBlock->completionCursor.load(std::memory_order_acquire),
+                softwareFillAbsIdx_,
+                ringPacketsAhead_,
+                deltaConsumed,
+                i,
+                numSlots,
+                requestGeneration,
+                handledGeneration,
+                requestAgeUs,
+                controlBlock->preparationCoalescedCount.load(
+                    std::memory_order_relaxed));
+            out.failureReason = RefillFailureReason::UncommittedSlot;
+            out.failurePacketAbs = fillAbsIdx;
+            out.failureSlot = pktSlot;
+            return out;
+        }
+
+        const uint32_t hwSlot = static_cast<uint32_t>(fillAbsIdx % Layout::kNumPackets);
+        const uint64_t payloadOffset =
+            static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
+
+        const uint32_t payloadLength = meta.payloadLength;
+
+        if (payloadLength < 2 ||
+            payloadLength > controlBlock->maxPacketBytes) {
+            counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
+            out.failureReason = RefillFailureReason::InvalidPacketSize;
+            out.failurePacketAbs = fillAbsIdx;
+            out.failureSlot = pktSlot;
+            out.failurePayloadLength = payloadLength;
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL: invalid payload size packet=%llu slot=%u len=%u max=%u stride=%u",
+                fillAbsIdx,
+                pktSlot,
+                payloadLength,
+                controlBlock->maxPacketBytes,
+                controlBlock->slotStrideBytes);
+            return out;
+        }
+
+        if (payloadBase) {
+            GaugeWirePayload(fillAbsIdx,
+                             payloadBase + payloadOffset,
+                             payloadLength);
+        }
+
+        std::array<TxPayloadDmaFragment, 2> payloadFragments{};
+        if (!payloadDmaMap.ResolveTwoFragments(
+                payloadOffset, payloadLength, payloadFragments)) {
+            counters_.fatalPayloadMapping.fetch_add(1, std::memory_order_relaxed);
+            ASFW_LOG(
+                Isoch,
+                "IT: Refill payload mapping failed packet=%u slot=%u offset=%llu len=%u segments=%zu",
+                hwSlot,
+                pktSlot,
+                payloadOffset,
+                meta.payloadLength,
+                payloadDmaMap.SegmentCount());
+            out.failureReason = RefillFailureReason::PayloadMapping;
+            out.failurePacketAbs = fillAbsIdx;
+            out.failureSlot = pktSlot;
+            out.failurePayloadLength = payloadLength;
+            return out;
+        }
+
+        // Linux queue_iso_transmit() writes this pair through (__le32 *)&d[1]:
+        // offsets 0x10/0x14 after the OMI command descriptor. Offsets 0x08/0x0c
+        // are the cycle-loss skip address and command status, not transmitted
+        // data. Cross-validated with Linux: firewire/ohci.c:3373-3383.
+        const uint32_t descBase = hwSlot * Layout::kBlocksPerPacket;
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
+            slab_.GetDescriptorPtr(descBase));
+        immDesc->immediateData[0] = meta.immediateHeader[0];
+        immDesc->immediateData[1] = meta.immediateHeader[1];
+        immDesc->common.branchWord = MakeBranchWordAT(
+            slab_.GetDescriptorIOVA(descBase),
+            Layout::kBlocksPerPacket);
+
+        auto* desc2 =
+            slab_.GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
+        desc2->control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(payloadFragments[0].length),
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
+        desc2->dataAddress = payloadFragments[0].deviceAddress;
+        desc2->branchWord = 0;
+        desc2->statusWord = 0;
+
+        auto* desc3 =
+            slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        desc3->control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(payloadFragments[1].length),
+            .command = OHCIDescriptor::kCmdOutputLast,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits =
+                Core::IsTimingGroupBoundary(hwSlot)
+                    ? OHCIDescriptor::kIntAlways
+                    : OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchAlways,
+        });
+        desc3->control |=
+            (1u << (OHCIDescriptor::kStatusShift +
+                    OHCIDescriptor::kControlHighShift));
+        desc3->dataAddress = payloadFragments[1].deviceAddress;
+        const uint32_t nextHwSlot = (hwSlot + 1) % Layout::kNumPackets;
+        desc3->branchWord = MakeBranchWordAT(
+            slab_.GetDescriptorIOVA(nextHwSlot * Layout::kBlocksPerPacket),
+            Layout::kBlocksPerPacket);
+        AR_init_status(
+            *desc3, static_cast<uint16_t>(payloadFragments[1].length));
+
+        // Publish the shared producer slot before exposing descriptor changes.
+        if (dmaMemory_) {
+            const auto* payloadSlot =
+                reinterpret_cast<const std::byte*>(
+                    payloadBase + static_cast<size_t>(pktSlot) * controlBlock->slotStrideBytes);
+            dmaMemory_->PublishToDevice(payloadSlot, payloadLength);
+            dmaMemory_->PublishBarrier();
+            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(immDesc), sizeof(OHCIDescriptorImmediate));
+            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(OHCIDescriptor));
+            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc3), sizeof(OHCIDescriptor));
+        }
+
+        packetsFilled++;
+    }
+
+    if (packetsFilled > 0) {
+        CommitRefill(packetsFilled);
     }
 
     out.ok = true;
+    out.packetsFilled = packetsFilled;
     return out;
 }
 
@@ -308,13 +761,13 @@ void IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t c
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     const uint32_t ctrl = hw.Read(ctrlReg);
 
-    const bool run = (ctrl & ContextControl::kRun) != 0;
-    const bool dead = (ctrl & ContextControl::kDead) != 0;
-    const bool active = (ctrl & ContextControl::kActive) != 0;
+    const bool run = (ctrl & Driver::ContextControl::kRun) != 0;
+    const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
+    const bool active = (ctrl & Driver::ContextControl::kActive) != 0;
 
     if (run && !dead && !active) {
         Register32 ctrlSetReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex));
-        hw.Write(ctrlSetReg, ContextControl::kWake);
+        hw.Write(ctrlSetReg, Driver::ContextControl::kWake);
     }
 }
 
@@ -347,43 +800,6 @@ void IsochTxDmaRing::DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t context
 #endif
 }
 
-void IsochTxDmaRing::DumpPayloadBuffers(uint32_t numPackets) const noexcept {
-    const auto buf = slab_.PayloadRegion();
-    if (!buf.virtualBase) {
-        ASFW_LOG(Isoch, "IT: DumpPayloadBuffers - no buffer allocated");
-        return;
-    }
-
-    const uint32_t numTotalPackets = Layout::kNumPackets;
-    if (numPackets > numTotalPackets) numPackets = numTotalPackets;
-
-    ASFW_LOG(Isoch, "IT: === DMA Payload Buffer Dump (first %u of %u packets) ===", numPackets, numTotalPackets);
-
-    for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
-        const uint8_t* payloadVirt = reinterpret_cast<const uint8_t*>(buf.virtualBase) +
-                                     (static_cast<size_t>(pktIdx) * Layout::kMaxPacketSize);
-        const uint32_t* payload32 = reinterpret_cast<const uint32_t*>(payloadVirt);
-
-        const uint32_t cip0 = payload32[0];
-        const uint32_t cip1 = payload32[1];
-
-        const uint32_t aud0 = payload32[2];
-        const uint32_t aud1 = payload32[3];
-        const uint32_t aud2 = payload32[4];
-        const uint32_t aud3 = payload32[5];
-
-        const bool isNoData = (aud0 == 0 && aud1 == 0);
-        const bool isSilence = ((aud0 & 0xFFFFFF) == 0) && ((aud1 & 0xFFFFFF) == 0);
-
-        ASFW_LOG(Isoch, "  Pkt[%u] CIP=[%08x %08x] Audio=[%08x %08x %08x %08x] %{public}s%{public}s",
-                 pktIdx, cip0, cip1, aud0, aud1, aud2, aud3,
-                 isNoData ? "NO-DATA" : "DATA",
-                 (isSilence && !isNoData) ? " (SILENCE!)" : "");
-    }
-
-    ASFW_LOG(Isoch, "IT: === End DMA Buffer Dump ===");
-}
-
 void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
     const auto desc = slab_.DescriptorRegion();
     if (!desc.virtualBase) {
@@ -402,11 +818,9 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
     }
 
     const uint32_t descBaseIOVA = static_cast<uint32_t>(desc.deviceBase);
-    const uint32_t bufBaseIOVA = static_cast<uint32_t>(slab_.PayloadRegion().deviceBase);
-
-    ASFW_LOG(Isoch, "IT: DescRing Dump pkts %u-%u (total=%u pages=%u) DescBase=0x%08x BufBase=0x%08x Z=%u",
+    ASFW_LOG(Isoch, "IT: DescRing Dump pkts %u-%u (total=%u pages=%u) DescBase=0x%08x Z=%u",
              startPacket, startPacket + numPackets - 1, totalPackets, Layout::kTotalPages,
-             descBaseIOVA, bufBaseIOVA, Layout::kBlocksPerPacket);
+             descBaseIOVA, Layout::kBlocksPerPacket);
 
     for (uint32_t pktIdx = startPacket; pktIdx < startPacket + numPackets; ++pktIdx) {
         const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
@@ -429,14 +843,21 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
         const uint32_t sy = itQ0 & 0xF;
         const uint32_t dataLen = (itQ1 >> 16) & 0xFFFF;
 
-        auto* desc2 = slab_.GetDescriptorPtr(descBase + 2);
+        auto* desc2 =
+            slab_.GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
         const uint32_t ctl1 = desc2->control;
-        const uint32_t i1 = (ctl1 >> 18) & 0x3;
-        const uint32_t b1 = (ctl1 >> 16) & 0x3;
         const uint32_t reqCount1 = ctl1 & 0xFFFF;
-        const uint32_t branchAddr = desc2->branchWord & 0xFFFFFFF0u;
-        const uint32_t branchZ = desc2->branchWord & 0xF;
-        const uint16_t xferStatus = static_cast<uint16_t>(desc2->statusWord >> 16);
+
+        auto* desc3 =
+            slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        const uint32_t ctl2 = desc3->control;
+        const uint32_t i2 = (ctl2 >> 18) & 0x3;
+        const uint32_t b2 = (ctl2 >> 16) & 0x3;
+        const uint32_t reqCount2 = ctl2 & 0xFFFF;
+        const uint32_t branchAddr = desc3->branchWord & 0xFFFFFFF0u;
+        const uint32_t branchZ = desc3->branchWord & 0xF;
+        const uint16_t xferStatus =
+            static_cast<uint16_t>(desc3->statusWord >> 16);
 
         const uint32_t computedIOVA = slab_.GetDescriptorIOVA(descBase);
 
@@ -444,8 +865,21 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
                  pktIdx, descBase, computedIOVA, ctl0, i0, b0, skipAddr, skipZ,
                  itQ0, spd, tag, chan, tcode, sy,
                  itQ1, dataLen);
-        ASFW_LOG(Isoch, "         OL:  ctl=0x%08x i=%u b=%u req=%u data=0x%08x br=0x%08x|%u st=0x%04x",
-                 ctl1, i1, b1, reqCount1, desc2->dataAddress, branchAddr, branchZ, xferStatus);
+        ASFW_LOG(Isoch,
+                 "         OM:  ctl=0x%08x req=%u data=0x%08x",
+                 ctl1,
+                 reqCount1,
+                 desc2->dataAddress);
+        ASFW_LOG(Isoch,
+                 "         OL:  ctl=0x%08x i=%u b=%u req=%u data=0x%08x br=0x%08x|%u st=0x%04x",
+                 ctl2,
+                 i2,
+                 b2,
+                 reqCount2,
+                 desc3->dataAddress,
+                 branchAddr,
+                 branchZ,
+                 xferStatus);
     }
 }
 

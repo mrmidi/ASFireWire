@@ -14,7 +14,7 @@
 #include "AVCDefs.hpp"
 #include "AVCUnit.hpp"
 #include "../Ports/FireWireBusPort.hpp"
-#include "../../IRM/IRMAllocationManager.hpp"
+#include "../../Bus/IRM/IRMAllocationManager.hpp"
 
 namespace ASFW::Protocols::AVC {
 

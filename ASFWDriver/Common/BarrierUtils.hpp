@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <DriverKit/IOLib.h> // OSSynchronizeIO
 #include "../Shared/Memory/DMAMemoryManager.hpp"
@@ -33,9 +34,14 @@ namespace ASFW::Driver {
 // Consistent DMA publish helper: synchronize DMA range and ensure MMIO ordering
 // Use this after building/patching any descriptor you expect the HC to fetch,
 // after setting control word, and prior to WAKE or programming CommandPtr+RUN
-inline void PublishForDMA(ASFW::Shared::DMAMemoryManager& mm, const void* p, size_t n) {
+inline void PublishForDMA(ASFW::Shared::DMAMemoryManager& mm, const std::byte* p, size_t n) {
     mm.PublishRange(p, n);
     IoBarrier();
+}
+
+template <typename T>
+inline void PublishForDMA(ASFW::Shared::DMAMemoryManager& mm, const T* p, size_t n) {
+    PublishForDMA(mm, reinterpret_cast<const std::byte*>(p), n);
 }
 
 } // namespace ASFW::Driver

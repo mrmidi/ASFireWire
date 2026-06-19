@@ -1,0 +1,84 @@
+# Phase 0 Reference Parity Timeline
+
+- Source log: `ref-full.txt`
+- Filters: Config ROM skipped, initial IRM compare-verify skipped, Self-ID skipped, CycleStart skipped, PHY Resume skipped, WrResp skipped
+- Session window: last `BusReset` before final `GLOBAL_ENABLE = 1` (074:3832:2172 → 076:5377:2584)
+- Generation target: unknown (FireBug does not encode generation directly)
+- Checklist items: 74
+
+## Ordered Timeline
+
+- [ ] 001 [bus_reset] `BusReset` `Bus Reset` `-` — session begins at the last bus reset before final `GLOBAL_ENABLE = 1`
+- [ ] 002 [global] `Qread` `ffff.e000.007c` `GLOBAL_STATUS` `-` — read request
+- [ ] 003 [global] `QRresp` `ffff.e000.007c` `GLOBAL_STATUS` `0x00000201` — locked=True, R48000
+- [ ] 004 [layout] `Bread` `ffff.e000.0000` `DICE_GLOBAL_OFFSET` `40B` — 40B read request
+- [ ] 005 [layout] `BRresp` `ffff.e000.0000` `DICE_GLOBAL_OFFSET` `40B` — 40B GLOBAL_OFF=10q (0x28B) | GLOBAL_SIZE=95q (0x17cB) | TX_OFF=105q (0x1a4B) | TX_SIZE=142q (0x238B) | RX_OFF=247q (0x3dcB) | RX_SIZE=282q (0x468B)
+- [ ] 006 [owner] `Bread` `ffff.e000.0028` `GLOBAL_OWNER` `380B` — 380B read request
+- [ ] 007 [owner] `BRresp` `ffff.e000.0028` `GLOBAL_OWNER` `380B` — 380B OWNER=No owner | NOTIFY=0x00000010 | CLOCK=R48000, Internal | ENABLE=False | STATUS=locked=True, R48000 | RATE=48000Hz
+- [ ] 008 [owner] `Bread` `ffff.e000.0028` `GLOBAL_OWNER` `8B` — 8B read request
+- [ ] 009 [owner] `BRresp` `ffff.e000.0028` `GLOBAL_OWNER` `8B` — 8B OWNER=No owner
+- [ ] 010 [owner] `LockRq` `ffff.e000.0028` `GLOBAL_OWNER` `16B` — 16B CAS.old=0xffff000000000000 | CAS.new=0xffc0000100000000
+- [ ] 011 [owner] `LockResp` `ffff.e000.0028` `GLOBAL_OWNER` `8B` — 8B OWNER=No owner
+- [ ] 012 [owner] `Bread` `ffff.e000.0028` `GLOBAL_OWNER` `8B` — 8B read request
+- [ ] 013 [owner] `BRresp` `ffff.e000.0028` `GLOBAL_OWNER` `8B` — 8B OWNER=node 0xffc0 notify@0x000100000000
+- [ ] 014 [clock] `Qwrite` `ffff.e000.0074` `GLOBAL_CLOCK_SELECT` `0x0000020c` — R48000, Internal
+- [ ] 015 [wait] `Qwrite` `0001.0000.0000` `FW notification address` `0x00000020` — 0x00000020
+- [ ] 016 [global] `Bread` `ffff.e000.0028` `GLOBAL_OWNER` `380B` — 380B read request
+- [ ] 017 [global] `BRresp` `ffff.e000.0028` `GLOBAL_OWNER` `380B` — 380B OWNER=node 0xffc0 notify@0x000100000000 | NOTIFY=0x00000020 | CLOCK=R48000, Internal | ENABLE=False | STATUS=locked=True, R48000 | RATE=48000Hz
+- [ ] 018 [stream] `Qread` `ffff.e000.01a4` `TX_NUMBER` `-` — read request
+- [ ] 019 [stream] `QRresp` `ffff.e000.01a4` `TX_NUMBER` `0x00000001` — 1
+- [ ] 020 [stream] `Qread` `ffff.e000.03dc` `RX_NUMBER` `-` — read request
+- [ ] 021 [stream] `QRresp` `ffff.e000.03dc` `RX_NUMBER` `0x00000001` — 1
+- [ ] 022 [stream] `Qread` `ffff.e000.01a8` `TX_SIZE` `-` — read request
+- [ ] 023 [stream] `QRresp` `ffff.e000.01a8` `TX_SIZE` `0x00000046` — 70 quadlets (0x118 bytes)
+- [ ] 024 [stream] `Qread` `ffff.e000.01ac` `TX[0] ISOCHRONOUS channel` `-` — read request
+- [ ] 025 [stream] `QRresp` `ffff.e000.01ac` `TX[0] ISOCHRONOUS channel` `0x00000001` — channel 1
+- [ ] 026 [stream] `Qread` `ffff.e000.01b0` `TX[0] audio channels` `-` — read request
+- [ ] 027 [stream] `QRresp` `ffff.e000.01b0` `TX[0] audio channels` `0x00000010` — 16
+- [ ] 028 [stream] `Qread` `ffff.e000.01b4` `TX[0] MIDI ports` `-` — read request
+- [ ] 029 [stream] `QRresp` `ffff.e000.01b4` `TX[0] MIDI ports` `0x00000001` — 1
+- [ ] 030 [stream] `Qread` `ffff.e000.01b8` `TX[0] speed` `-` — read request
+- [ ] 031 [stream] `QRresp` `ffff.e000.01b8` `TX[0] speed` `0x00000002` — s400
+- [ ] 032 [stream] `Bread` `ffff.e000.01bc` `TX[0] channel names` `256B` — 256B read request
+- [ ] 033 [stream] `BRresp` `ffff.e000.01bc` `TX[0] channel names` `256B` — 256B TX[0] ch 0: 'IP 1' | TX[0] ch 1: 'IP 2' | TX[0] ch 2: 'IP 3' | TX[0] ch 3: 'IP 4'
+- [ ] 034 [stream] `Qread` `ffff.e000.03e0` `RX_SIZE` `-` — read request
+- [ ] 035 [stream] `QRresp` `ffff.e000.03e0` `RX_SIZE` `0x00000046` — 70 quadlets (0x118 bytes)
+- [ ] 036 [stream] `Qread` `ffff.e000.03e4` `RX[0] ISOCHRONOUS channel` `-` — read request
+- [ ] 037 [stream] `QRresp` `ffff.e000.03e4` `RX[0] ISOCHRONOUS channel` `0x00000000` — channel 0
+- [ ] 038 [stream] `Qread` `ffff.e000.03f0` `RX[0] MIDI ports` `-` — read request
+- [ ] 039 [stream] `QRresp` `ffff.e000.03f0` `RX[0] MIDI ports` `0x00000001` — 1
+- [ ] 040 [stream] `Qread` `ffff.e000.03e8` `RX[0] seq start` `-` — read request
+- [ ] 041 [stream] `QRresp` `ffff.e000.03e8` `RX[0] seq start` `0x00000000` — 0
+- [ ] 042 [stream] `Qread` `ffff.e000.03ec` `RX[0] audio channels` `-` — read request
+- [ ] 043 [stream] `QRresp` `ffff.e000.03ec` `RX[0] audio channels` `0x00000008` — 8
+- [ ] 044 [stream] `Bread` `ffff.e000.03f4` `RX[0] channel names` `256B` — 256B read request
+- [ ] 045 [stream] `BRresp` `ffff.e000.03f4` `RX[0] channel names` `256B` — 256B RX[0] ch 0: 'Mon 1' | RX[0] ch 1: 'Mon 2' | RX[0] ch 2: 'Line 3' | RX[0] ch 3: 'Line 4'
+- [ ] 046 [irm] `Qread` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `-` — read request
+- [ ] 047 [irm] `QRresp` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `0x00001333` — 4915
+- [ ] 048 [irm] `Qread` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `-` — read request
+- [ ] 049 [irm] `QRresp` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `0xfffffffe` — 0xfffffffe
+- [ ] 050 [irm] `Qread` `ffff.f000.0228` `IRM_CHANNELS_AVAILABLE_LO` `-` — read request
+- [ ] 051 [irm] `QRresp` `ffff.f000.0228` `IRM_CHANNELS_AVAILABLE_LO` `0xffffffff` — 0xffffffff
+- [ ] 052 [irm] `LockRq` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `8B` — 8B IRM_BANDWIDTH_AVAILABLE: old=4915, new=4595 | → allocate 320 (0x140) units
+- [ ] 053 [irm] `LockResp` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `4B` — 4B BW=4915 units
+- [ ] 054 [irm] `LockRq` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `8B` — 8B IRM_CHANNELS_AVAILABLE_HI: old=0xfffffffe, new=0x7ffffffe | → allocate channel 0
+- [ ] 055 [irm] `LockResp` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `4B` — 4B HI=0xfffffffe
+- [ ] 056 [stream] `Qread` `ffff.e000.03e0` `RX_SIZE` `-` — read request
+- [ ] 057 [stream] `QRresp` `ffff.e000.03e0` `RX_SIZE` `0x00000046` — 70 quadlets (0x118 bytes)
+- [ ] 058 [rx] `Qwrite` `ffff.e000.03e4` `RX[0] ISOCHRONOUS channel` `0x00000000` — channel 0
+- [ ] 059 [rx] `Qwrite` `ffff.e000.03e8` `RX[0] seq start` `0x00000000` — 0
+- [ ] 060 [irm] `Qread` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `-` — read request
+- [ ] 061 [irm] `QRresp` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `0x000011f3` — 4595
+- [ ] 062 [irm] `Qread` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `-` — read request
+- [ ] 063 [irm] `QRresp` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `0x7ffffffe` — 0x7ffffffe
+- [ ] 064 [irm] `Qread` `ffff.f000.0228` `IRM_CHANNELS_AVAILABLE_LO` `-` — read request
+- [ ] 065 [irm] `QRresp` `ffff.f000.0228` `IRM_CHANNELS_AVAILABLE_LO` `0xffffffff` — 0xffffffff
+- [ ] 066 [irm] `LockRq` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `8B` — 8B IRM_BANDWIDTH_AVAILABLE: old=4595, new=4019 | → allocate 576 (0x240) units
+- [ ] 067 [irm] `LockResp` `ffff.f000.0220` `IRM_BANDWIDTH_AVAILABLE` `4B` — 4B BW=4595 units
+- [ ] 068 [irm] `LockRq` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `8B` — 8B IRM_CHANNELS_AVAILABLE_HI: old=0x7ffffffe, new=0x3ffffffe | → allocate channel 1
+- [ ] 069 [irm] `LockResp` `ffff.f000.0224` `IRM_CHANNELS_AVAILABLE_HI` `4B` — 4B HI=0x7ffffffe
+- [ ] 070 [stream] `Qread` `ffff.e000.01a8` `TX_SIZE` `-` — read request
+- [ ] 071 [stream] `QRresp` `ffff.e000.01a8` `TX_SIZE` `0x00000046` — 70 quadlets (0x118 bytes)
+- [ ] 072 [tx] `Qwrite` `ffff.e000.01ac` `TX[0] ISOCHRONOUS channel` `0x00000001` — channel 1
+- [ ] 073 [tx] `Qwrite` `ffff.e000.01b8` `TX[0] speed` `0x00000002` — s400
+- [ ] 074 [enable] `Qwrite` `ffff.e000.0078` `GLOBAL_ENABLE` `0x00000001` — True

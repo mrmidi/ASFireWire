@@ -9,9 +9,10 @@
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "BusManager.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 #include "TopologyManager.hpp"
 #include "../ConfigROM/ROMScanner.hpp"
+#include "CSR/TopologyMapService.hpp"
 
 namespace {
 
@@ -30,6 +31,10 @@ void BusResetCoordinator::BeginNewResetCycle() {
     filtersEnabled_ = false;
     atArmed_ = false;
     cycle_.ResetForNewEdge();
+    // A new reset edge invalidates all post-reset timing gates from the prior
+    // generation; no gate reopens until Self-ID completion is observed for the
+    // new generation. lastGeneration_ still holds the outgoing generation here.
+    postResetTiming_.OnBusResetStarted(lastGeneration_.value, MonotonicNow());
     ++resetEpoch_;
     readyForDiscoveryFailureBits_ = 0;
 
@@ -41,6 +46,10 @@ void BusResetCoordinator::BeginNewResetCycle() {
 
     if (topologyManager_ != nullptr) {
         topologyManager_->InvalidateForBusReset();
+    }
+
+    if (topologyMapService_ != nullptr) {
+        topologyMapService_->Invalidate();
     }
 
     TransitionTo(State::Detecting, "busReset edge observed");
@@ -74,8 +83,19 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepDetecting() {
 
 BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
     if (CanAttemptSelfIDDecode()) {
+        const uint64_t completionTime = selfIdLatch_.complete ? selfIdLatch_.completeTimeNs
+                                                              : selfIdLatch_.stickyCompleteTimeNs;
+        ArmSoftwareResetHoldoffAfterSelfIDCompletion(completionTime);
+
         const bool decoded = DecodeSelfID();
         ClearConsumedSelfIDInterrupts();
+        if (decoded) {
+            // Anchor post-reset timing gates to Self-ID completion, BEFORE the
+            // topology graph is built, so they stay armed even if that build
+            // later fails (IEEE 1394-2008 §8.x / Annex H). DecodeSelfID() has set
+            // lastGeneration_ to the freshly decoded generation.
+            postResetTiming_.OnSelfIDComplete(lastGeneration_.value, completionTime);
+        }
         if (!decoded) {
             RecordRecoveryReasonCode(RecoveryReasonCode::SelfIDDecodeFailed);
             RequestSoftwareReset(
@@ -121,34 +141,38 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRestoringConfigROM() {
     BuildTopology();
 
     if (cycle_.acceptedTopology.has_value()) {
-        EvaluateRootDelegation(*cycle_.acceptedTopology);
-
-        bool delegationRequested = false;
-        if (busManager_ != nullptr) {
-            if (auto command =
-                    busManager_->AssignCycleMaster(*cycle_.acceptedTopology,
-                                                   topologyManager_->GetBadIRMFlags())) {
-                RequestSoftwareReset({ResetRequestKind::Delegation, ResetFlavor::Long, command,
-                                      "AssignCycleMaster"});
-                delegationRequested = true;
-            }
-
-            if (!delegationRequested && cycle_.acceptedSelfId.has_value()) {
-                if (const auto gapDecision =
-                        busManager_->EvaluateGapPolicy(*cycle_.acceptedTopology,
-                                                       cycle_.acceptedSelfId->quads)) {
-                    BusManager::PhyConfigCommand command{};
-                    command.gapCount = gapDecision->gapCount;
-                    RequestSoftwareReset({ResetRequestKind::GapCorrection, ResetFlavor::Long, command,
-                                          BusManager::GapDecisionReasonString(gapDecision->reason),
-                                          gapDecision->reason});
-                }
-            }
-        }
+        MaybeRequestTopologyDrivenReset();
     }
 
     TransitionTo(State::ClearingBusReset, "Config ROM restored");
     return StepResult::Continue;
+}
+
+void BusResetCoordinator::MaybeRequestTopologyDrivenReset() {
+    if (!cycle_.acceptedTopology.has_value() || busManager_ == nullptr) {
+        return;
+    }
+
+    if (!cycle_.acceptedSelfId.has_value()) {
+        return;
+    }
+
+    const auto gapDecision =
+        busManager_->EvaluateGapPolicy(*cycle_.acceptedTopology,
+                                       cycle_.acceptedSelfId->quads);
+    if (!gapDecision) {
+        return;
+    }
+
+    if (gapDecision->reason != BusManager::GapDecisionReason::MismatchForce63) {
+        return;
+    }
+
+    BusManager::PhyConfigCommand command{};
+    command.gapCount = gapDecision->gapCount;
+    RequestSoftwareReset({ResetRequestKind::GapCorrection, ResetFlavor::Long, command,
+                          BusManager::GapDecisionReasonString(gapDecision->reason),
+                          gapDecision->reason});
 }
 
 BusResetCoordinator::StepResult BusResetCoordinator::StepClearingBusReset() {
@@ -169,12 +193,9 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRearming() {
         return StepResult::Yield;
     }
 
-    // Per Linux bus_reset_work(): re-assert cycleMaster after bus reset.
-    // The OHCI hardware may have auto-cleared it if cycleTooLong fired during
-    // the reset sequence. Without cycle-start packets, devices like the Nikon
-    // SAA7356HL cannot complete MCU firmware download.
     if (hardware_ != nullptr) {
-        hardware_->SetLinkControlBits(LinkControlBits::kCycleMaster);
+        const bool isRoot = G_IsRoot();
+        wasRoot_ = isRoot;
     }
 
     EnableFilters();

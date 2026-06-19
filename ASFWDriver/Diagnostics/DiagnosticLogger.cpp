@@ -1,5 +1,6 @@
 #include "DiagnosticLogger.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -8,6 +9,62 @@
 // Use snprintf-based formatting to avoid depending on <sstream>/<iomanip>
 
 namespace ASFW::Driver {
+
+namespace {
+
+struct InterruptBitName {
+    uint32_t mask;
+    std::string_view name;
+};
+
+constexpr std::array<InterruptBitName, 25> kInterruptBitNames = {{
+    {IntEventBits::kReqTxComplete, "AT_req"},
+    {IntEventBits::kRespTxComplete, "AT_resp"},
+    {IntEventBits::kARRQ, "AR_req"},
+    {IntEventBits::kARRS, "AR_resp"},
+    {IntEventBits::kRQPkt, "RQPkt"},
+    {IntEventBits::kRSPkt, "RSPkt"},
+    {IntEventBits::kIsochTx, "IT"},
+    {IntEventBits::kIsochRx, "IR"},
+    {IntEventBits::kPostedWriteErr, "postedWriteErr"},
+    {IntEventBits::kLockRespErr, "lockRespErr"},
+    {IntEventBits::kSelfIDComplete2, "selfID2"},
+    {IntEventBits::kSelfIDComplete, "selfID"},
+    {IntEventBits::kBusReset, "busReset"},
+    {IntEventBits::kRegAccessFail, "regAccessFail"},
+    {IntEventBits::kPhy, "phy"},
+    {IntEventBits::kCycleSynch, "cycleSynch"},
+    {IntEventBits::kCycle64Seconds, "cycle64Seconds"},
+    {IntEventBits::kCycleLost, "cycleLost"},
+    {IntEventBits::kCycleInconsistent, "cycleInconsistent"},
+    {IntEventBits::kUnrecoverableError, "unrecoverableError"},
+    {IntEventBits::kCycleTooLong, "cycleTooLong"},
+    {IntEventBits::kPhyRegRcvd, "phyRegRcvd"},
+    {IntEventBits::kAckTardy, "ack_tardy"},
+    {IntEventBits::kVendorSpecific, "vendor"},
+    {IntMaskBits::kMasterIntEnable, "masterIntEnable"},
+}};
+
+constexpr uint32_t KnownInterruptBits() {
+    uint32_t knownBits = 0;
+    for (const auto& entry : kInterruptBitNames) {
+        knownBits |= entry.mask;
+    }
+    return knownBits;
+}
+
+void AppendInterruptBitNames(std::string& out, const uint32_t events) {
+    for (const auto& entry : kInterruptBitNames) {
+        if (events & entry.mask) {
+            out.push_back(' ');
+            out += entry.name;
+        }
+    }
+}
+
+constexpr uint32_t kKnownInterruptBits = KnownInterruptBits();
+
+} // namespace
 
 std::string DiagnosticLogger::DecodeInterruptEvents(uint32_t events) {
     // Adapted from Linux log_irqs() (ohci.c lines 480-503)
@@ -18,51 +75,10 @@ std::string DiagnosticLogger::DecodeInterruptEvents(uint32_t events) {
     snprintf(buf, sizeof(buf), "IRQ 0x%08x", events);
     oss += buf;
 
-    // Bits ordered by position for clarity (matching OHCI Table 6-1)
-    if (events & IntEventBits::kReqTxComplete)     oss += " AT_req";        // bit 0
-    if (events & IntEventBits::kRespTxComplete)    oss += " AT_resp";       // bit 1
-    if (events & IntEventBits::kARRQ)              oss += " AR_req";        // bit 2
-    if (events & IntEventBits::kARRS)              oss += " AR_resp";       // bit 3
-    if (events & IntEventBits::kRQPkt)             oss += " RQPkt";         // bit 4
-    if (events & IntEventBits::kRSPkt)             oss += " RSPkt";         // bit 5
-    if (events & IntEventBits::kIsochTx)           oss += " IT";            // bit 6
-    if (events & IntEventBits::kIsochRx)           oss += " IR";            // bit 7
-    if (events & IntEventBits::kPostedWriteErr)    oss += " postedWriteErr"; // bit 8
-    if (events & IntEventBits::kLockRespErr)       oss += " lockRespErr";   // bit 9
-    if (events & IntEventBits::kSelfIDComplete2)   oss += " selfID2";       // bit 15
-    if (events & IntEventBits::kSelfIDComplete)    oss += " selfID";        // bit 16
-    if (events & IntEventBits::kBusReset)          oss += " busReset";      // bit 17
-    if (events & IntEventBits::kRegAccessFail)     oss += " regAccessFail"; // bit 18
-    if (events & IntEventBits::kPhy)               oss += " phy";           // bit 19
-    if (events & IntEventBits::kCycleSynch)        oss += " cycleSynch";    // bit 20
-    if (events & IntEventBits::kCycle64Seconds)    oss += " cycle64Seconds"; // bit 21
-    if (events & IntEventBits::kCycleLost)         oss += " cycleLost";     // bit 22
-    if (events & IntEventBits::kCycleInconsistent) oss += " cycleInconsistent"; // bit 23
-    if (events & IntEventBits::kUnrecoverableError)oss += " unrecoverableError"; // bit 24
-    if (events & IntEventBits::kCycleTooLong)      oss += " cycleTooLong";  // bit 25
-    if (events & IntEventBits::kPhyRegRcvd)        oss += " phyRegRcvd";    // bit 26
-    if (events & IntEventBits::kAckTardy)          oss += " ack_tardy";     // bit 27
-    if (events & IntEventBits::kVendorSpecific)    oss += " vendor";        // bit 30
-    if (events & IntMaskBits::kMasterIntEnable)    oss += " masterIntEnable"; // bit 31 (IntMask bit, not IntEvent)
+    AppendInterruptBitNames(oss, events);
 
-    // Check for unknown bits (per OHCI 1.1 Table 6-1)
-    constexpr uint32_t kKnownBits =
-        IntEventBits::kReqTxComplete | IntEventBits::kRespTxComplete |
-        IntEventBits::kARRQ | IntEventBits::kARRS |
-        IntEventBits::kRQPkt | IntEventBits::kRSPkt |
-        IntEventBits::kIsochTx | IntEventBits::kIsochRx |
-        IntEventBits::kPostedWriteErr | IntEventBits::kLockRespErr |
-        IntEventBits::kSelfIDComplete2 | IntEventBits::kSelfIDComplete |
-        IntEventBits::kBusReset | IntEventBits::kRegAccessFail |
-        IntEventBits::kPhy | IntEventBits::kCycleSynch |
-        IntEventBits::kCycle64Seconds | IntEventBits::kCycleLost |
-        IntEventBits::kCycleInconsistent | IntEventBits::kUnrecoverableError |
-        IntEventBits::kCycleTooLong | IntEventBits::kPhyRegRcvd |
-        IntEventBits::kAckTardy | IntEventBits::kVendorSpecific |
-        IntMaskBits::kMasterIntEnable;  // bit 31 is IntMask, not IntEvent
-
-    if (events & ~kKnownBits) {
-        snprintf(buf, sizeof(buf), " UNKNOWN(0x%08x)", events & ~kKnownBits);
+    if (events & ~kKnownInterruptBits) {
+        snprintf(buf, sizeof(buf), " UNKNOWN(0x%08x)", events & ~kKnownInterruptBits);
         oss += buf;
     }
 
@@ -86,61 +102,74 @@ std::string DiagnosticLogger::DecodeSelfIDSequence(std::span<const uint32_t> sel
 
     size_t idx = 0;
     while (idx < selfIdBuffer.size()) {
-        const uint32_t sid0 = selfIdBuffer[idx];
-        const uint32_t phyId = GetPhyId(sid0);
-
-        // Determine sequence length (check for extended packets)
-        size_t quadletCount = 1;
-        while (idx + quadletCount < selfIdBuffer.size() &&
-               (selfIdBuffer[idx + quadletCount] & 0x80000000) == 0) {
-            quadletCount++;
-        }
-
-        std::span<const uint32_t> sequence = selfIdBuffer.subspan(idx, quadletCount);
-
-        // Decode primary Self-ID quadlet (quadlet 0)
-        const uint32_t speed = (sid0 >> 14) & 0x3;
-        const uint32_t gapCount = (sid0 >> 16) & 0x3F;
-        const uint32_t powerClass = (sid0 >> 8) & 0x7;
-        const bool linkActive = (sid0 >> 22) & 0x1;
-        const bool contender = (sid0 >> 11) & 0x1;
-        const bool initiator = (sid0 & 0x2) != 0;
-
-    snprintf(buf, sizeof(buf), "  Self-ID PHY %u [", phyId);
-    oss += buf;
-
-        // Port status for ports 0-2 (in primary quadlet)
-        for (size_t p = 0; p < 3; ++p) {
-            oss.push_back(kPortChars[static_cast<size_t>(GetPortStatus(sequence, p))]);
-        }
-
-        oss += "] ";
-        oss += std::string(kSpeedNames[speed]);
-        snprintf(buf, sizeof(buf), " gc=%u ", gapCount);
-        oss += buf;
-        oss += std::string(kPowerNames[powerClass]);
-        if (linkActive) oss += " L";
-        if (contender) oss += " c";
-        if (initiator) oss += " i";
-        oss += "\n";
-
-        // Decode extended Self-ID quadlets (ports 3-26)
-        for (size_t q = 1; q < quadletCount; ++q) {
-            oss += "    Extended [";
-            for (size_t p = 0; p < 8; ++p) {
-                size_t portIndex = 3 + (q - 1) * 8 + p;
-                if (portIndex < 27) {  // Max 27 ports per PHY
-                    char c = kPortChars[static_cast<size_t>(GetPortStatus(sequence, portIndex))];
-                    oss.push_back(c);
-                }
-            }
-            oss += "]\n";
-        }
-
+        const size_t quadletCount = GetSelfIDSequenceLength(selfIdBuffer, idx);
+        const std::span<const uint32_t> sequence = selfIdBuffer.subspan(idx, quadletCount);
+        AppendPrimarySelfID(oss, sequence);
+        AppendExtendedSelfIDs(oss, sequence);
         idx += quadletCount;
     }
 
     return oss;
+}
+
+size_t DiagnosticLogger::GetSelfIDSequenceLength(const std::span<const uint32_t> selfIdBuffer,
+                                                 const size_t start) noexcept {
+    size_t quadletCount = 1;
+    while (start + quadletCount < selfIdBuffer.size() &&
+           (selfIdBuffer[start + quadletCount] & 0x80000000) == 0) {
+        quadletCount++;
+    }
+    return quadletCount;
+}
+
+void DiagnosticLogger::AppendPortRange(std::string& out,
+                                       const std::span<const uint32_t> sequence,
+                                       const size_t firstPort,
+                                       const size_t portCount) {
+    const size_t lastPort = std::min<size_t>(27, firstPort + portCount);
+    for (size_t portIndex = firstPort; portIndex < lastPort; ++portIndex) {
+        out.push_back(kPortChars[static_cast<size_t>(GetPortStatus(sequence, portIndex))]);
+    }
+}
+
+void DiagnosticLogger::AppendPrimarySelfID(std::string& out, const std::span<const uint32_t> sequence) {
+    const uint32_t sid0 = sequence.front();
+    const uint32_t phyId = GetPhyId(sid0);
+    const uint32_t speed = (sid0 >> 14) & 0x3;
+    const uint32_t gapCount = (sid0 >> 16) & 0x3F;
+    const uint32_t powerClass = (sid0 >> 8) & 0x7;
+    const bool linkActive = (sid0 >> 22) & 0x1;
+    const bool contender = (sid0 >> 11) & 0x1;
+    const bool initiator = (sid0 & 0x2) != 0;
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "  Self-ID PHY %u [", phyId);
+    out += buf;
+    AppendPortRange(out, sequence, 0, 3);
+    out += "] ";
+    out += std::string(kSpeedNames[speed]);
+    snprintf(buf, sizeof(buf), " gc=%u ", gapCount);
+    out += buf;
+    out += std::string(kPowerNames[powerClass]);
+    if (linkActive) {
+        out += " L";
+    }
+    if (contender) {
+        out += " c";
+    }
+    if (initiator) {
+        out += " i";
+    }
+    out += "\n";
+}
+
+void DiagnosticLogger::AppendExtendedSelfIDs(std::string& out, const std::span<const uint32_t> sequence) {
+    for (size_t quadletIndex = 1; quadletIndex < sequence.size(); ++quadletIndex) {
+        out += "    Extended [";
+        const size_t firstPort = 3 + (quadletIndex - 1) * 8;
+        AppendPortRange(out, sequence, firstPort, 8);
+        out += "]\n";
+    }
 }
 
 std::string DiagnosticLogger::DecodeAsyncPacket(Direction dir,
@@ -302,7 +331,7 @@ std::string DiagnosticLogger::DecodePhyPacket(uint32_t phy0, uint32_t phy1) {
         const bool forceRoot = (phy0 & 0x00800000) != 0;
         const uint8_t rootId = (phy0 >> 24) & 0x3F;
         const uint8_t gapCount = (phy0 >> 16) & 0x3F;
-        snprintf(buf, sizeof(buf), " root=%u%{public}s gap=%u",
+        snprintf(buf, sizeof(buf), " root=%u%s gap=%u",
                  static_cast<uint32_t>(rootId),
                  forceRoot ? " FORCE" : "",
                  static_cast<uint32_t>(gapCount));

@@ -1,0 +1,456 @@
+// PacketSerDesTests.cpp - Unit tests for IEEE 1394 packet serialization/deserialization
+//
+// Based on Linux kernel KUnit tests from packet-serdes-test.c
+// Tests verify correct bit field extraction/insertion for async packet headers.
+//
+// Critical areas tested:
+// 1. tLabel encoding (AT transmit) vs extraction (AR receive) - THE BUG!
+// 2. Round-trip consistency (build packet → parse packet → values match)
+// 3. Compliance with Linux kernel test vectors
+//
+// IEEE 1394-1995 §6.2: Async packet header format (big-endian wire order)
+// Quadlet 0: [destination_ID:16][tLabel:6][rt:2][tCode:4][pri:4]
+//           bytes:  [0-1: destID] [2: tLabel|rt] [3: tCode|pri]
+
+#include <gtest/gtest.h>
+#include <array>
+#include <cstring>
+#include <span>
+
+#include "ASFWDriver/Async/Tx/PacketBuilder.hpp"
+#include "ASFWDriver/Async/Rx/ARPacketParser.hpp"
+#include "ASFWDriver/Async/Rx/PacketRouter.hpp"
+#include "ASFWDriver/Async/AsyncTypes.hpp"
+#include "ASFWDriver/Phy/PhyPackets.hpp"
+
+using namespace ASFW::Async;
+using namespace ASFW::Driver;
+
+// =============================================================================
+// Test Fixture
+// =============================================================================
+
+class PacketSerDesTest : public ::testing::Test {
+protected:
+    PacketBuilder builder_;
+
+    // Helper: Extract tLabel from IEEE 1394 wire format (big-endian bytes)
+    static uint8_t ExtractTLabelWireFormat(const uint8_t* header) {
+        // IEEE 1394: tLabel at byte 2, bits[7:2]
+        return (header[2] >> 2) & 0x3F;
+    }
+
+    // Helper: Extract tCode from IEEE 1394 wire format
+    static uint8_t ExtractTCodeWireFormat(const uint8_t* header) {
+        // IEEE 1394: tCode at byte 3, bits[7:4]
+        return (header[3] >> 4) & 0x0F;
+    }
+
+    // Helper: Extract destination ID from IEEE 1394 wire format
+    static uint16_t ExtractDestIDWireFormat(const uint8_t* header) {
+        // IEEE 1394: destID at bytes[0-1], big-endian
+        return (static_cast<uint16_t>(header[0]) << 8) | header[1];
+    }
+};
+
+// =============================================================================
+// Critical Bug Test: tLabel Extraction Mismatch
+// =============================================================================
+
+TEST_F(PacketSerDesTest, ARResponse_ExtractTLabel_ReadQuadletResponse) {
+    // From Linux kernel test: test_async_header_read_quadlet_response
+    // This is the EXACT packet from our failure log!
+    const uint8_t expectedResponsePacket[] = {
+        0x60, 0x01, 0xC2, 0x6F,  // q0: destID=0x6001, tLabel=48, rt=2, tCode=0x6, pri=0xF
+        0x00, 0x00, 0xC0, 0xFF,  // q1: srcID=0x0000, rCode=0, ...
+        0x00, 0x00, 0x00, 0x00,  // q2: reserved
+        0x04, 0x20, 0x8F, 0xE2,  // q3: quadlet data
+    };
+
+    // Extract using wire format (correct method)
+    uint8_t tLabelWire = ExtractTLabelWireFormat(expectedResponsePacket);
+    EXPECT_EQ(48, tLabelWire) << "Wire format extraction should give tLabel=48";
+
+    // Extract using PacketRouter (current implementation - THE BUG!)
+    // This will FAIL because PacketRouter reads header[1] instead of header[2]
+    std::span<const uint8_t> headerSpan(expectedResponsePacket, 16);
+
+    // Note: We can't directly call PacketRouter::ExtractTLabel (it's private)
+    // But we can test via RoutePacket → ARPacketView.tLabel
+    // For now, verify the wire format is correct
+
+    uint8_t tCode = ExtractTCodeWireFormat(expectedResponsePacket);
+    EXPECT_EQ(0x6, tCode) << "tCode should be 0x6 (Read Quadlet Response)";
+
+    uint16_t destID = ExtractDestIDWireFormat(expectedResponsePacket);
+    EXPECT_EQ(0x6001, destID) << "Destination ID should be 0x6001";
+}
+
+TEST_F(PacketSerDesTest, ARRequest_PhyPacketExtractsPayloadQuadletsNotLinkHeader) {
+    // Regression for the "Bus reset shitstorm" capture. OHCI AR PHY packets use
+    // a 3-quadlet link-internal header: q0 is the link header, while q1/q2 are the
+    // PHY packet payload passed by Apple as processPHYPacket(data[1], data[2]).
+    // cross-validated with Linux: ohci.c:935-936 Apple: IOFireWireController.cpp:5178-5182
+    const std::array<uint8_t, 12> phyHeader = {
+        0xE0, 0x00, 0x00, 0x00, // q0: link-internal tCode header, not PHY config data
+        0x00, 0x00, 0x80, 0x02, // q1: 0x02800000, "PHY Config, force_root = 02"
+        0xFF, 0xFF, 0x7F, 0xFD, // q2: inverse of q1
+    };
+
+    const auto quadlets = ARPacketParser::ExtractPhyPacketQuadletsHostOrder(phyHeader);
+    ASSERT_TRUE(quadlets.has_value());
+    EXPECT_EQ((*quadlets)[0], 0x02800000u);
+    EXPECT_EQ((*quadlets)[1], 0xFD7FFFFFu);
+
+    const AlphaPhyConfig decoded = AlphaPhyConfig::DecodeHostOrder((*quadlets)[0]);
+    EXPECT_EQ(decoded.rootId, 2);
+    EXPECT_TRUE(decoded.forceRoot);
+    EXPECT_FALSE(decoded.gapCountOptimization);
+}
+
+// =============================================================================
+// Linux Kernel Test Vectors: Read Quadlet Request
+// =============================================================================
+
+TEST_F(PacketSerDesTest, ATRequest_BuildReadQuadlet_MatchesLinuxTestVector) {
+    // Linux kernel test vector: test_async_header_read_quadlet_request
+    // Expected wire format (big-endian):
+    // 0xffc0f140, 0xffc1ffff, 0xf0000984, 0x00000000
+    // Decoded: dst=0xffc0, tLabel=0x3c, rt=0x01, tCode=0x4, pri=0x0, src=0xffc1
+
+    ReadParams params{};
+    params.destinationID = 0xffc0;
+    params.addressHigh = 0xffff;
+    params.addressLow = 0xf0000984;
+    params.length = 4;
+    params.speedCode = 0xFF;  // Use context speed
+
+    PacketContext context{};
+    context.sourceNodeID = 0xffc1;
+    context.generation = 1;
+    context.speedCode = 0x02;  // S400
+
+    uint8_t label = 0x3c;  // 60 decimal
+
+    uint8_t headerBuffer[16] = {0};
+    size_t headerSize = builder_.BuildReadQuadlet(params, label, context, headerBuffer, sizeof(headerBuffer));
+
+    ASSERT_EQ(12, headerSize) << "Read quadlet header should be 12 bytes";
+
+    // Note: PacketBuilder creates OHCI internal format, not IEEE wire format!
+    // OHCI format (CORRECTED): [destID:16][tl:6][rt:2][tCode:4][pri:4]
+    //                bits[31:16]  [15:10] [9:8] [7:4]   [3:0]
+    // We need to verify the label is encoded correctly in OHCI format
+
+    // Extract from OHCI format (quadlet 0, bits[15:10]) - FIXED from bits[23:18]
+    uint32_t q0;
+    std::memcpy(&q0, headerBuffer, 4);
+    uint8_t tLabelOHCI = (q0 >> 10) & 0x3F;  // FIXED: shift 10, not 18
+
+    EXPECT_EQ(0x3c, tLabelOHCI) << "tLabel should be correctly encoded in OHCI format at bits[15:10]";
+
+    // Extract tCode from OHCI format (bits[7:4])
+    uint8_t tCodeOHCI = (q0 >> 4) & 0x0F;
+    EXPECT_EQ(0x4, tCodeOHCI) << "tCode should be 0x4 (Read Quadlet Request)";
+}
+
+// =============================================================================
+// Round-Trip Test: Build → Parse → Verify
+// =============================================================================
+
+TEST_F(PacketSerDesTest, RoundTrip_ReadQuadletRequest_LabelPreserved) {
+    // Build a read quadlet request with tLabel=0
+    ReadParams params{};
+    params.destinationID = 0xffc0;
+    params.addressHigh = 0xffff;
+    params.addressLow = 0xf0000400;
+    params.length = 4;
+    params.speedCode = 0xFF;
+
+    PacketContext context{};
+    context.sourceNodeID = 0xffc1;
+    context.generation = 4;
+    context.speedCode = 0x02;
+
+    uint8_t labelSent = 0;  // This is what we're testing - label=0
+
+    uint8_t headerBuffer[16] = {0};
+    size_t headerSize = builder_.BuildReadQuadlet(params, labelSent, context, headerBuffer, sizeof(headerBuffer));
+
+    ASSERT_GT(headerSize, 0) << "Header build should succeed";
+
+    // Extract tLabel from OHCI format to verify encoding (FIXED: shift 10, not 18)
+    uint32_t q0;
+    std::memcpy(&q0, headerBuffer, 4);
+    uint8_t tLabelEncoded = (q0 >> 10) & 0x3F;  // FIXED: shift 10, not 18
+
+    EXPECT_EQ(labelSent, tLabelEncoded) << "tLabel=0 should be correctly encoded at bits[15:10]";
+
+    // Note: In real hardware, OHCI converts this to IEEE wire format before transmission
+    // The AR context receives IEEE wire format, which should be parseable
+    // But we can't fully test this without a format conversion step
+}
+
+// =============================================================================
+// Regression Test: Label=48 (The Bug From Logs)
+// =============================================================================
+
+TEST_F(PacketSerDesTest, ARResponse_ParseLabel48_DetectsBug) {
+    // This is the EXACT scenario from the failure log:
+    // - Request sent with label=0
+    // - Response received with label=48 (parsed incorrectly)
+    // The bug: ExtractTLabel reads header[1] instead of header[2]
+
+    const uint8_t responseWithLabel48[] = {
+        0x60, 0x01, 0xC2, 0xFF,  // q0: destID=0x6001, tLabel=48 (0xC2>>2=48), tCode=0x6
+        0x00, 0x00, 0xC0, 0xFF,  // q1: srcID=0x0000
+        0x00, 0x00, 0x00, 0x00,  // q2
+        0x04, 0x20, 0x8F, 0xE2,  // q3: data
+    };
+
+    // Manual extraction (correct algorithm)
+    uint8_t tLabelCorrect = (responseWithLabel48[2] >> 2) & 0x3F;
+    EXPECT_EQ(48, tLabelCorrect) << "Correct extraction: tLabel from header[2]";
+
+    // Buggy extraction (what PacketRouter currently does)
+    uint8_t tLabelBuggy = (responseWithLabel48[1] >> 2) & 0x3F;
+    EXPECT_EQ(0, tLabelBuggy) << "Buggy extraction: tLabel from header[1] gives 0";
+
+    // This test documents the bug: header[1]=0x01 → (0x01>>2)=0
+    // Should be: header[2]=0xC2 → (0xC2>>2)=48
+}
+
+// =============================================================================
+// Boundary Test: All tLabel Values (0-63)
+// =============================================================================
+
+TEST_F(PacketSerDesTest, RoundTrip_AllTLabelValues_0to63) {
+    ReadParams params{};
+    params.destinationID = 0xffc0;
+    params.addressHigh = 0xffff;
+    params.addressLow = 0xf0000400;
+    params.length = 4;
+    params.speedCode = 0xFF;
+
+    PacketContext context{};
+    context.sourceNodeID = 0xffc1;
+    context.generation = 4;
+    context.speedCode = 0x02;
+
+    for (uint8_t label = 0; label < 64; ++label) {
+        uint8_t headerBuffer[16] = {0};
+        size_t headerSize = builder_.BuildReadQuadlet(params, label, context, headerBuffer, sizeof(headerBuffer));
+
+        ASSERT_GT(headerSize, 0) << "Build should succeed for label=" << static_cast<int>(label);
+
+        // Extract and verify (FIXED: shift 10, not 18)
+        uint32_t q0;
+        std::memcpy(&q0, headerBuffer, 4);
+        uint8_t extractedLabel = (q0 >> 10) & 0x3F;  // FIXED: shift 10, not 18
+
+        EXPECT_EQ(label, extractedLabel) << "Label mismatch at label=" << static_cast<int>(label);
+    }
+}
+
+// =============================================================================
+// Wire Format Compliance: Verify Byte Positions
+// =============================================================================
+
+TEST_F(PacketSerDesTest, WireFormat_VerifyByteLayout) {
+    // IEEE 1394-1995 §6.2: Control quadlet byte layout
+    // Byte 0: destination_ID[15:8]
+    // Byte 1: destination_ID[7:0]
+    // Byte 2: tLabel[5:0] | rt[1:0]
+    // Byte 3: tCode[3:0] | pri[3:0]
+
+    const uint8_t testPacket[] = {
+        0xFF, 0xC0,  // destID = 0xFFC0
+        0xC2,        // tLabel=48 (0b110000), rt=2 (0b10) → 0b11000010 = 0xC2
+        0x64,        // tCode=6 (0b0110), pri=4 (0b0100) → 0b01100100 = 0x64
+    };
+
+    // Extract destination ID
+    uint16_t destID = (static_cast<uint16_t>(testPacket[0]) << 8) | testPacket[1];
+    EXPECT_EQ(0xFFC0, destID);
+
+    // Extract tLabel (byte 2, bits[7:2])
+    uint8_t tLabel = (testPacket[2] >> 2) & 0x3F;
+    EXPECT_EQ(48, tLabel);
+
+    // Extract retry (byte 2, bits[1:0])
+    uint8_t rt = testPacket[2] & 0x03;
+    EXPECT_EQ(2, rt);
+
+    // Extract tCode (byte 3, bits[7:4])
+    uint8_t tCode = (testPacket[3] >> 4) & 0x0F;
+    EXPECT_EQ(6, tCode);
+
+    // Extract priority (byte 3, bits[3:0])
+    uint8_t pri = testPacket[3] & 0x0F;
+    EXPECT_EQ(4, pri);
+}
+
+// =============================================================================
+// OHCI vs IEEE Format: Document the Difference
+// =============================================================================
+
+TEST_F(PacketSerDesTest, FormatDifference_OHCI_vs_IEEE) {
+    // OHCI Internal AT Format (host byte order):
+    // bits[31]    = srcBusID
+    // bits[30:27] = reserved
+    // bits[26:24] = speed
+    // bits[23:18] = tLabel  ← HERE
+    // bits[17:10] = reserved
+    // bits[9:8]   = retry
+    // bits[7:4]   = tCode
+    // bits[3:0]   = reserved
+
+    // IEEE 1394 Wire Format (big-endian bytes):
+    // byte 0: destID[15:8]
+    // byte 1: destID[7:0]
+    // byte 2: tLabel[5:0] | rt[1:0]  ← HERE (different position!)
+    // byte 3: tCode[3:0] | pri[3:0]
+
+    // This test documents that AT (transmit) uses OHCI format,
+    // but AR (receive) uses IEEE wire format - they're DIFFERENT!
+
+    // OHCI format: label at bits[23:18]
+    uint32_t ohciControlWord = 0x00FC0000;  // tLabel=63 (0x3F << 18)
+    uint8_t tLabelOHCI = (ohciControlWord >> 18) & 0x3F;
+    EXPECT_EQ(63, tLabelOHCI);
+
+    // IEEE wire format: label at byte 2 bits[7:2]
+    uint8_t ieeeBytes[4] = {0xFF, 0xC0, 0xFC, 0x64};  // tLabel=63 (0xFC>>2=63)
+    uint8_t tLabelIEEE = (ieeeBytes[2] >> 2) & 0x3F;
+    EXPECT_EQ(63, tLabelIEEE);
+
+    // KEY INSIGHT: These are at DIFFERENT BIT POSITIONS!
+    // PacketBuilder encodes using OHCI format (bits[23:18])
+    // PacketRouter must decode using IEEE format (byte 2 bits[7:2])
+}
+
+// =============================================================================
+// PHY Packet Tests (Immediate Descriptor Format)
+// =============================================================================
+
+TEST_F(PacketSerDesTest, PHYPacket_BuildPhyPacket_MatchesAppleImplementation) {
+    // Test PHY packet building to match Apple's AppleFWOHCI_AsyncTransmitRequest::asyncPHYPacket
+    //
+    // Expected format per OHCI §7.8.1.4 Figure 7-14 and IDA analysis:
+    // - 16-byte immediate descriptor payload structure
+    // - 12 bytes transmitted (reqCount=12)
+    // - Quadlet 0: 0x000000E0 (tCode = 0xE for PHY_PACKET)
+    // - Quadlets 1-2: PHY configuration data
+    // - Quadlet 3: Reserved (not transmitted)
+    //
+    // Apple's descriptor control field: 0x120C000C
+    //   cmd=1 (OUTPUT_LAST), key=2 (Immediate), i=3 (IntAlways)
+    //   b=3 (BranchAlways), reqCount=12
+
+    PhyParams params{};
+    params.quadlet1 = 0x00401234;  // Example: Force root node (bit 22) + root ID = 0x1234
+    params.quadlet2 = 0x00000000;  // Reserved for PHY config packets
+
+    uint8_t buffer[32] = {};  // Oversized for safety
+    const uint8_t label = 5;
+    size_t returnedSize = builder_.BuildPhyPacket(label, params, buffer, sizeof(buffer));
+
+    // Verify returned size (should be 12 for reqCount)
+    EXPECT_EQ(12u, returnedSize) << "BuildPhyPacket should return 12 bytes for reqCount";
+
+    // Verify tCode quadlet contains tCode and tLabel (label=5 → bits[15:10]=0b000101)
+    // Host-order quadlet = (label<<10) | (tCode<<4) = 0x000014E0 → bytes [E0,14,00,00] on little-endian host.
+    EXPECT_EQ(0xE0, buffer[0]) << "Quadlet 0 byte 0 should carry tCode nibble";
+    EXPECT_EQ(0x14, buffer[1]) << "Quadlet 0 byte 1 should carry tLabel bits[15:8]";
+    EXPECT_EQ(0x00, buffer[2]) << "Quadlet 0 byte 2 should be 0x00";
+    EXPECT_EQ(0x00, buffer[3]) << "Quadlet 0 byte 3 should be 0x00";
+
+    // Verify data quadlet 1 (big-endian)
+    // Wire format: 00 40 12 34
+    EXPECT_EQ(0x00, buffer[4]) << "Quadlet 1 byte 0 should match params.quadlet1";
+    EXPECT_EQ(0x40, buffer[5]) << "Quadlet 1 byte 1 should match params.quadlet1";
+    EXPECT_EQ(0x12, buffer[6]) << "Quadlet 1 byte 2 should match params.quadlet1";
+    EXPECT_EQ(0x34, buffer[7]) << "Quadlet 1 byte 3 should match params.quadlet1";
+
+    // Verify data quadlet 2 (big-endian)
+    // Wire format: 00 00 00 00
+    EXPECT_EQ(0x00, buffer[8]) << "Quadlet 2 byte 0 should match params.quadlet2";
+    EXPECT_EQ(0x00, buffer[9]) << "Quadlet 2 byte 1 should match params.quadlet2";
+    EXPECT_EQ(0x00, buffer[10]) << "Quadlet 2 byte 2 should match params.quadlet2";
+    EXPECT_EQ(0x00, buffer[11]) << "Quadlet 2 byte 3 should match params.quadlet2";
+}
+
+TEST_F(PacketSerDesTest, PHYPacket_GapCountOptimization_MatchesLinuxTestVector) {
+    // Linux kernel test vector: test_phy_packet_phy_config_gap_count_optimization
+    // Expected: 0x00833f05 (gap count optimization, gap_count=5)
+    //
+    // IEEE 1394a-2000 §5.5.3.2 PHY configuration packet format:
+    // Quadlet 0:
+    //   bits[31:24] = 0x00 (packet ID type)
+    //   bits[23:22] = 0x2  (PHY configuration packet)
+    //   bits[21:16] = root_id
+    //   bits[15]    = 0    (reserved)
+    //   bits[14]    = T    (force root)
+    //   bits[13]    = 0    (reserved)
+    //   bits[12]    = 1    (gap count optimization enable)
+    //   bits[11:6]  = gap_count
+    //   bits[5:0]   = 0x05 (inverse quadlet for validation)
+    //
+    // Decoded from Linux test vector 0x00833f05:
+    //   root_id = 0x00
+    //   force_root = 0 (T bit)
+    //   gap_count_opt = 1 (bit 12)
+    //   gap_count = 0x3f (63)
+
+    // For ASFW, we send PHY packets as raw data via asyncPHYPacket
+    // The quadlets are already formatted according to IEEE 1394a spec
+    PhyParams params{};
+    params.quadlet1 = 0x00833f05;  // Gap count optimization packet
+    params.quadlet2 = 0x00000000;  // Inverse/reserved
+
+    uint8_t buffer[32] = {};
+    size_t returnedSize = builder_.BuildPhyPacket(/*label=*/0, params, buffer, sizeof(buffer));
+
+    EXPECT_EQ(12u, returnedSize) << "PHY packet should return 12 bytes";
+
+    // Verify tCode quadlet
+    EXPECT_EQ(0xE0, buffer[0]) << "tCode should be 0xE";
+
+    // Verify PHY config data (big-endian)
+    uint32_t quadlet1 = (static_cast<uint32_t>(buffer[4]) << 24) |
+                        (static_cast<uint32_t>(buffer[5]) << 16) |
+                        (static_cast<uint32_t>(buffer[6]) << 8) |
+                        static_cast<uint32_t>(buffer[7]);
+    EXPECT_EQ(0x00833f05u, quadlet1) << "Quadlet 1 should match Linux test vector";
+}
+
+TEST_F(PacketSerDesTest, PHYPacket_ForceRootNode_MatchesLinuxTestVector) {
+    // Linux kernel test vector: test_phy_packet_phy_config_force_root_node
+    // Expected: 0x0083401e (force root node, root_id=0x00)
+    //
+    // Decoded from Linux test vector 0x0083401e:
+    //   root_id = 0x00
+    //   force_root = 1 (T bit set, bit 14)
+    //   gap_count_opt = 0
+    //   gap_count = 0x00
+    //   inverse = 0x1e
+
+    PhyParams params{};
+    params.quadlet1 = 0x0083401e;  // Force root node packet
+    params.quadlet2 = 0x00000000;  // Inverse/reserved
+
+    uint8_t buffer[32] = {};
+    size_t returnedSize = builder_.BuildPhyPacket(/*label=*/0, params, buffer, sizeof(buffer));
+
+    EXPECT_EQ(12u, returnedSize) << "PHY packet should return 12 bytes";
+
+    // Verify tCode quadlet
+    EXPECT_EQ(0xE0, buffer[0]) << "tCode should be 0xE";
+
+    // Verify PHY config data (big-endian)
+    uint32_t quadlet1 = (static_cast<uint32_t>(buffer[4]) << 24) |
+                        (static_cast<uint32_t>(buffer[5]) << 16) |
+                        (static_cast<uint32_t>(buffer[6]) << 8) |
+                        static_cast<uint32_t>(buffer[7]);
+    EXPECT_EQ(0x0083401eu, quadlet1) << "Quadlet 1 should match Linux test vector";
+}

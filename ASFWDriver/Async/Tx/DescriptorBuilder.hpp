@@ -80,7 +80,7 @@ public:
     DescriptorBuilder(DescriptorRing& ring, DMAMemoryManager& dmaManager);
     ~DescriptorBuilder() = default;
 
-    [[nodiscard]] DescriptorChain BuildTransactionChain(const void* headerData,
+    [[nodiscard]] DescriptorChain BuildTransactionChain(const uint8_t* headerData,
                                                         std::size_t headerSize,
                                                         uint64_t payloadDeviceAddress,
                                                         std::size_t payloadSize,

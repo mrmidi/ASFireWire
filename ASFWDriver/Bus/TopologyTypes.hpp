@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
+#include <vector>
 #include <optional>
 #include <utility>
 
@@ -61,6 +62,176 @@ enum class PortState : uint8_t {
     NotActive = 1,
     Parent = 2,
     Child = 3,
+};
+
+enum class SelfIDStreamStatus : uint8_t {
+    Unknown = 0,
+    Valid = 1,
+    Invalid = 2,
+    Timeout = 3,
+    CrcError = 4,
+};
+
+enum class TopologyGraphStatus : uint8_t {
+    Unknown = 0,
+    Valid = 1,
+    Invalid = 2,
+};
+
+enum class TopologyBuildErrorCode : uint8_t {
+    None = 0,
+
+    // Low-level Self-ID stream problems.
+    InvalidSelfID = 1,
+    EmptySequenceSet = 2,
+    NonContiguousPhysicalIds = 3,
+    DuplicatePhysicalId = 4,
+    MissingBasePacket = 5,
+    InvalidExtendedPacketOrder = 6,
+
+    // Annex P graph reconstruction problems.
+    NonRootWithoutParentPort = 20,
+    RootHasParentPort = 21,
+    ChildPortWithEmptyStack = 22,
+    PoppedNodeHasNoUnresolvedParent = 23,
+    UnresolvedStackAfterRoot = 24,
+    ReciprocalLinkMissing = 25,
+    EdgeCountMismatch = 26,
+    LocalNodeUnavailable = 27,
+};
+
+struct TopologyBuildError {
+    TopologyBuildErrorCode code{TopologyBuildErrorCode::None};
+    std::string detail;
+};
+
+static constexpr uint8_t kInvalidPhysicalId = 0xFF;
+static constexpr uint8_t kMaxFireWireNodes = 63;
+static constexpr uint8_t kMaxPhyPorts = 16;
+
+struct SelfIDNodeRecord {
+    uint8_t physicalId{kInvalidPhysicalId};
+
+    bool linkActive{false};
+    bool contender{false};
+    bool initiatedReset{false};
+
+    uint8_t gapCount{63};
+    uint8_t powerClass{0};
+    uint32_t speedCode{0};
+    uint32_t maxSpeedMbps{0};
+    uint32_t baseRaw{0};
+
+    std::array<PortState, kMaxPhyPorts> ports{};
+    uint8_t portCount{0};
+
+    bool hasBasePacket{false};
+};
+
+struct TopologyPortLink {
+    bool connected{false};
+    uint8_t remoteNodeId{kInvalidPhysicalId};
+    uint8_t remotePort{kInvalidPhysicalId};
+};
+
+struct TopologyNodeRecord {
+    uint8_t physicalId{kInvalidPhysicalId};
+
+    bool linkActive{false};
+    bool contender{false};
+    bool initiatedReset{false};
+
+    bool isRoot{false};
+    bool isLocal{false};
+    bool isIRM{false};
+
+    uint8_t gapCount{63};
+    uint8_t powerClass{0};
+    uint32_t speedCode{0};
+    uint32_t maxSpeedMbps{0};
+    uint32_t baseRaw{0};
+
+    std::array<PortState, kMaxPhyPorts> reportedPorts{};
+    std::array<TopologyPortLink, kMaxPhyPorts> links{};
+
+    uint8_t portCount{0};
+};
+
+struct PhysicalTopologyGraph {
+    uint8_t rootId{kInvalidPhysicalId};
+    uint8_t localId{kInvalidPhysicalId};
+    uint8_t irmId{kInvalidPhysicalId};
+
+    uint8_t nodeCount{0};
+
+    // Bus diameter in cable hops: the maximum number of hops between ANY two
+    // nodes (the tree's longest path), NOT the depth from the root. This is the
+    // quantity IEEE 1394-2008 Annex E / Table E.1 is indexed by for gap_count
+    // optimization. A single-node bus is 0 hops. Computed in BuildPhysicalGraph.
+    uint8_t busDiameterHops{0};
+    
+    // IEEE 1394b-2002 Beta repeaters require larger gap counts.
+    bool betaRepeatersPresent{false};
+
+    std::vector<TopologyNodeRecord> nodes;
+};
+
+struct NormalizedPortLink {
+    bool connected{false};
+
+    uint8_t remotePhysicalId{kInvalidPhysicalId};
+    uint8_t remotePort{kInvalidPhysicalId};
+
+    // Parent means "toward the local observer-root".
+    // Child means "away from the local observer-root".
+    PortState normalizedState{PortState::NotPresent};
+};
+
+struct NormalizedNode {
+    uint64_t eui64{0};
+
+    uint8_t physicalId{kInvalidPhysicalId};
+    bool isObserver{false};
+
+    std::array<NormalizedPortLink, kMaxPhyPorts> ports{};
+};
+
+struct NormalizedTopologyGraph {
+    uint8_t observerPhysicalId{kInvalidPhysicalId};
+    std::vector<NormalizedNode> nodes;
+};
+
+struct TopologySnapshot {
+    uint32_t generation{0};
+    uint64_t capturedAt{0};
+
+    SelfIDStreamStatus selfIdStatus{SelfIDStreamStatus::Unknown};
+    TopologyGraphStatus graphStatus{TopologyGraphStatus::Unknown};
+
+    TopologyBuildErrorCode errorCode{TopologyBuildErrorCode::None};
+    std::string errorDetail;
+
+    uint16_t busBase16{0};
+    std::optional<uint16_t> busNumber;
+
+    uint8_t localNodeId{kInvalidPhysicalId};
+    uint8_t rootNodeId{kInvalidPhysicalId};
+    uint8_t irmNodeId{kInvalidPhysicalId};
+
+    uint8_t nodeCount{0};
+    uint8_t gapCount{63};
+    bool gapCountConsistent{true};
+    bool betaRepeatersPresent{false};
+
+    std::vector<uint32_t> rawSelfIdQuadlets;
+
+    // Number of decoded Self-ID packet sequences (one per node: each node emits a
+    // sequence of 1-4 Self-ID packets). Carried for diagnostics; sourced from
+    // SelfIDCapture::Result::sequences.
+    uint32_t selfIdSequenceCount{0};
+
+    PhysicalTopologyGraph physical;
+    NormalizedTopologyGraph normalizedFromLocal;
 };
 
 // Power class (pwr) enumeration matching Table 16-13 descriptions
@@ -210,3 +381,4 @@ struct SelfIDSequenceEnumerator {
 };
 
 } // namespace ASFW::Driver
+

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #pragma once
 
 #include <atomic>
@@ -22,6 +23,8 @@
 #endif
 
 #include "../Bus/GenerationTracker.hpp"
+#include "../Debug/AsyncTraceCapture.hpp"
+#include "../Shared/ASFWDiagnosticsABI.h"
 #include "AsyncTypes.hpp"
 #include "Rx/RxPath.hpp"
 #include "Track/CompletionQueue.hpp"
@@ -174,6 +177,9 @@ class AsyncSubsystem : public IAsyncControllerPort {
         return busResetCapture_.get();
     }
 
+    [[nodiscard]] Debug::AsyncTraceCapture* GetAsyncTraceCapture() const override;
+    [[nodiscard]] ASFWDiagInboundCSRStats* GetInboundCSRStats() const override;
+
     [[nodiscard]] std::optional<AsyncStatusSnapshot> GetStatusSnapshot() const override;
 
     [[nodiscard]] std::optional<TransactionContext> PrepareTransactionContext();
@@ -242,6 +248,8 @@ class AsyncSubsystem : public IAsyncControllerPort {
     ResetHook* resetHook_{nullptr};
     AsyncMetricsSink* metricsSink_{nullptr};
     std::unique_ptr<Debug::BusResetPacketCapture> busResetCapture_{};
+    std::unique_ptr<Debug::AsyncTraceCapture> asyncTraceCapture_{};
+    ASFWDiagInboundCSRStats inboundCSRStats_{};
     bool isRunning_{false};
 
     std::unique_ptr<ASFW::Async::Engine::ContextManager> contextManager_;
@@ -301,6 +309,12 @@ class AsyncSubsystem : public IAsyncControllerPort {
     mutable std::mutex hostPostedWorkLock_{};
     std::deque<std::function<void()>> hostPostedWork_{};
 #endif
+
+    [[nodiscard]] bool CancelQueuedCommand(AsyncHandle handle);
+    [[nodiscard]] bool CancelQueuedCommandInFlight(AsyncHandle handle,
+                                                   const PendingCommandPtr& inFlight);
+    [[nodiscard]] bool CancelTransactionHandle(AsyncHandle handle);
+    void PostQueuedCancellation(AsyncHandle handle, CompletionCallback callback);
 
     void ExecuteNextCommand();
 

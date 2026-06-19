@@ -1,5 +1,6 @@
 #include "BusManager.hpp"
-#include "Logging.hpp"
+#include "GapCountOptimizer.hpp"
+#include "../Logging/Logging.hpp"
 
 #include <algorithm>
 #include <span>
@@ -7,6 +8,15 @@
 namespace ASFW::Driver {
 
 namespace {
+
+struct CycleMasterInputs {
+    uint8_t localNodeID{0};
+    uint8_t rootNodeID{0};
+    uint8_t irmNodeID{0xFF};
+    bool localContender{false};
+    std::optional<uint8_t> otherContenderID;
+    bool badIRM{false};
+};
 
 [[nodiscard]] std::vector<uint8_t> ExtractObservedBaseGaps(const std::vector<uint32_t>& selfIDs) {
     std::vector<uint8_t> gaps;
@@ -43,17 +53,152 @@ namespace {
     });
 }
 
+[[nodiscard]] BusManager::PhyConfigCommand MakePhyConfigCommand(const std::optional<uint8_t> forceRootNodeID,
+                                                               const std::optional<bool> setContender) {
+    BusManager::PhyConfigCommand cmd{};
+    cmd.forceRootNodeID = forceRootNodeID;
+    cmd.setContender = setContender;
+    return cmd;
+}
+
+[[nodiscard]] CycleMasterInputs CollectCycleMasterInputs(const TopologySnapshot& topology,
+                                                        const std::vector<bool>& badIRMFlags,
+                                                        const uint8_t localNodeID,
+                                                        const uint8_t rootNodeID) {
+    CycleMasterInputs inputs{};
+    inputs.localNodeID = localNodeID;
+    inputs.rootNodeID = rootNodeID;
+    inputs.irmNodeID = topology.irmNodeId;
+
+    for (const auto& node : topology.physical.nodes) {
+        if (!node.contender || !node.linkActive) {
+            continue;
+        }
+
+        if (node.physicalId == localNodeID) {
+            inputs.localContender = true;
+            continue;
+        }
+
+        const bool isBad = (node.physicalId < badIRMFlags.size() && badIRMFlags[node.physicalId]);
+        if (!isBad) {
+            inputs.otherContenderID = node.physicalId;
+        }
+    }
+
+    if (badIRMFlags.empty()) {
+        return inputs;
+    }
+
+    if (inputs.irmNodeID == kInvalidPhysicalId) {
+        inputs.badIRM = true;
+        return inputs;
+    }
+
+    if (inputs.irmNodeID < badIRMFlags.size() && badIRMFlags[inputs.irmNodeID]) {
+        inputs.badIRM = true;
+    }
+
+    return inputs;
+}
+
+[[nodiscard]] bool ShouldEvaluateCycleMasterPolicy(const BusManager::Config& config,
+                                                   const std::vector<bool>& badIRMFlags) {
+    return config.delegateCycleMaster || !badIRMFlags.empty() ||
+           config.rootPolicy == BusManager::RootPolicy::Delegate;
+}
+
+[[nodiscard]] std::optional<BusManager::PhyConfigCommand> MaybeForceConfiguredRoot(
+    const BusManager::Config& config,
+    const CycleMasterInputs& inputs) {
+    if (config.rootPolicy != BusManager::RootPolicy::ForceNode || config.forcedRootNodeID == 0xFF) {
+        return std::nullopt;
+    }
+
+    if (inputs.rootNodeID != inputs.localNodeID || config.forcedRootNodeID == inputs.localNodeID) {
+        return std::nullopt;
+    }
+
+    ASFW_LOG(BusManager, "Forcing root to node %u", config.forcedRootNodeID);
+    return MakePhyConfigCommand(config.forcedRootNodeID, false);
+}
+
+[[nodiscard]] std::optional<BusManager::PhyConfigCommand> MaybeDelegateOrClaimRoot(
+    const BusManager::Config& config,
+    const CycleMasterInputs& inputs) {
+    if (inputs.otherContenderID.has_value()) {
+        if (inputs.rootNodeID != inputs.localNodeID || !config.delegateCycleMaster) {
+            return std::nullopt;
+        }
+
+        ASFW_LOG(BusManager, "🔄 Attempting to delegate root to node %u", *inputs.otherContenderID);
+        return MakePhyConfigCommand(*inputs.otherContenderID, false);
+    }
+
+    if (inputs.rootNodeID == inputs.localNodeID || !inputs.localContender || config.delegateCycleMaster) {
+        return std::nullopt;
+    }
+
+    ASFW_LOG(BusManager, "Forcing local controller as root");
+    return MakePhyConfigCommand(inputs.localNodeID, true);
+}
+
+[[nodiscard]] std::optional<BusManager::PhyConfigCommand> MaybeRecoverBadIRM(
+    const BusManager::Config& config,
+    const CycleMasterInputs& inputs) {
+    if (!inputs.badIRM && inputs.irmNodeID != 0xFF) {
+        return std::nullopt;
+    }
+
+    if (!config.delegateCycleMaster) {
+        ASFW_LOG(BusManager, "Forcing local node as IRM (bad IRM or no contenders)");
+        return MakePhyConfigCommand(inputs.localNodeID, true);
+    }
+
+    if (inputs.otherContenderID.has_value()) {
+        ASFW_LOG(BusManager, "Delegating IRM to node %u (bad IRM=%u)", *inputs.otherContenderID,
+                 inputs.irmNodeID);
+        return MakePhyConfigCommand(*inputs.otherContenderID, false);
+    }
+
+    ASFW_LOG(BusManager, "No IRM candidates — forcing local node as contender (Apple fallback)");
+    return MakePhyConfigCommand(inputs.localNodeID, true);
+}
+
+[[nodiscard]] std::optional<BusManager::PhyConfigCommand> MaybeClaimRootForLocalIRM(
+    const CycleMasterInputs& inputs) {
+    if (inputs.irmNodeID != inputs.localNodeID || inputs.rootNodeID == inputs.localNodeID) {
+        return std::nullopt;
+    }
+
+    if (inputs.otherContenderID.has_value()) {
+        return std::nullopt;
+    }
+
+    if (!inputs.localContender) {
+        return std::nullopt;
+    }
+
+    // Apple IOFireWireController::finishedBusScan(): when the local node is IRM,
+    // it forces local root before turning on cycle master. This handles buses where
+    // a remote root is not an IRM contender, e.g. Saffire behind a passive middle PHY.
+    ASFW_LOG(BusManager,
+             "⚠️  Local node is IRM but remote node %u is root and no peer contender exists; forcing local root",
+             inputs.rootNodeID);
+    return MakePhyConfigCommand(inputs.localNodeID, true);
+}
+
 [[nodiscard]] bool IsTwoNodeLocalRootTopology(const TopologySnapshot& topology) {
-    if (!topology.localNodeId.has_value() || !topology.rootNodeId.has_value()) {
+    if (topology.localNodeId == kInvalidPhysicalId || topology.rootNodeId == kInvalidPhysicalId) {
         return false;
     }
-    if (*topology.localNodeId != *topology.rootNodeId) {
+    if (topology.localNodeId != topology.rootNodeId) {
         return false;
     }
 
     uint8_t remoteActiveNodes = 0;
-    for (const auto& node : topology.nodes) {
-        if (node.linkActive && node.nodeId != *topology.localNodeId) {
+    for (const auto& node : topology.physical.nodes) {
+        if (node.linkActive && node.physicalId != topology.localNodeId) {
             ++remoteActiveNodes;
         }
     }
@@ -115,113 +260,48 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
     const TopologySnapshot& topology,
     const std::vector<bool>& badIRMFlags)
 {
-    if (!topology.localNodeId.has_value() || !topology.rootNodeId.has_value()) {
+    if (topology.localNodeId == kInvalidPhysicalId || topology.rootNodeId == kInvalidPhysicalId) {
         ASFW_LOG(BusManager, "AssignCycleMaster: Invalid topology (local=%d root=%d)",
-                 topology.localNodeId.has_value(), topology.rootNodeId.has_value());
+                 topology.localNodeId != kInvalidPhysicalId, topology.rootNodeId != kInvalidPhysicalId);
         return std::nullopt;
     }
 
-    const uint8_t localNodeID = *topology.localNodeId;
-    const uint8_t rootNodeID = *topology.rootNodeId;
-    const uint8_t irmNodeID = topology.irmNodeId.value_or(0xFF);
+    const uint8_t localNodeID = topology.localNodeId;
+    const uint8_t rootNodeID = topology.rootNodeId;
+    const CycleMasterInputs inputs = CollectCycleMasterInputs(topology, badIRMFlags, localNodeID, rootNodeID);
 
-    bool localContender = false;
-    bool otherContender = false;
-    uint8_t otherContenderID = 0;
-    bool badIRM = false;
-    
-    for (const auto& node : topology.nodes) {
-        if (node.isIRMCandidate && node.linkActive) {
-            if (node.nodeId == localNodeID) {
-                localContender = true;
-            } else {
-                bool isBad = (node.nodeId < badIRMFlags.size() && badIRMFlags[node.nodeId]);
-                if (!isBad) {
-                    otherContender = true;
-                    otherContenderID = node.nodeId;
-                }
-            }
-        }
+    if (const auto forcedRoot = MaybeForceConfiguredRoot(config_, inputs)) {
+        return forcedRoot;
     }
 
-    if (config_.rootPolicy == RootPolicy::ForceNode && config_.forcedRootNodeID != 0xFF) {
-        if (rootNodeID == localNodeID && config_.forcedRootNodeID != localNodeID) {
-            ASFW_LOG(BusManager, "Forcing root to node %u", config_.forcedRootNodeID);
-            
-            PhyConfigCommand cmd{};
-            cmd.setContender = false; 
-            cmd.forceRootNodeID = config_.forcedRootNodeID;
-            return cmd;
-        }
+    if (!ShouldEvaluateCycleMasterPolicy(config_, badIRMFlags)) {
+        ASFW_LOG(BusManager, "✅ AssignCycleMaster: No action needed (root=%u IRM=%u local=%u)",
+                 rootNodeID, inputs.irmNodeID, localNodeID);
+        return std::nullopt;
     }
 
-    if (config_.delegateCycleMaster || !badIRMFlags.empty() || config_.rootPolicy == RootPolicy::Delegate) {
-        
-        if (otherContender) {
-            if (rootNodeID == localNodeID && config_.delegateCycleMaster) {
-                ASFW_LOG(BusManager, "🔄 Attempting to delegate root to node %u", otherContenderID);
-                
-                PhyConfigCommand cmd{};
-                cmd.setContender = false;
-                cmd.forceRootNodeID = otherContenderID;
-                return cmd;
-            }
-        }
-        else if (rootNodeID != localNodeID && localContender && !config_.delegateCycleMaster) {
-            ASFW_LOG(BusManager, "Forcing local controller as root");
-            
-            PhyConfigCommand cmd{};
-            cmd.setContender = true;
-            cmd.forceRootNodeID = localNodeID;
-            return cmd;
-        }
-        
-        if (!badIRMFlags.empty()) {
-            if (irmNodeID != 0xFF && irmNodeID < badIRMFlags.size() && badIRMFlags[irmNodeID]) {
-                badIRM = true;
-            }
-            if (irmNodeID == 0xFF) {
-                badIRM = true;
-            }
+    if (const auto rootDecision = MaybeDelegateOrClaimRoot(config_, inputs)) {
+        return rootDecision;
+    }
 
-            if (badIRM) {
-                ASFW_LOG(BusManager, "⚠️  Bad IRM detected (node %u)", irmNodeID);
-            }
-        }
+    if (const auto localIRMRootDecision = MaybeClaimRootForLocalIRM(inputs)) {
+        return localIRMRootDecision;
+    }
 
-        // Apple's AssignCycleMaster fallback (IOFireWireController.cpp):
-        // If bad IRM or no IRM at all, we must ensure *somebody* becomes IRM.
-        // DICE-class devices don't support IRM, so our node must take over
-        // for isochronous resource management to work.
-        if (badIRM || irmNodeID == 0xFF) {
-            if (!config_.delegateCycleMaster) {
-                // We want to be cycle master — force ourselves as IRM
-                PhyConfigCommand cmd{};
-                cmd.setContender = true;
-                cmd.forceRootNodeID = localNodeID;
-                ASFW_LOG(BusManager, "Forcing local node as IRM (bad IRM or no contenders)");
-                return cmd;
-            } else if (otherContender) {
-                // Delegate mode but other node can do it
-                PhyConfigCommand cmd{};
-                cmd.setContender = false;
-                cmd.forceRootNodeID = otherContenderID;
-                ASFW_LOG(BusManager, "Delegating IRM to node %u (bad IRM=%u)", otherContenderID, irmNodeID);
-                return cmd;
-            } else {
-                // Nobody else can do it.  Apple pattern:
-                // "Oh well, nobody else can do it. Make Mac root."
-                PhyConfigCommand cmd{};
-                cmd.setContender = true;
-                cmd.forceRootNodeID = localNodeID;
-                ASFW_LOG(BusManager, "No IRM candidates — forcing local node as contender (Apple fallback)");
-                return cmd;
-            }
-        }
+    if (inputs.badIRM) {
+        ASFW_LOG(BusManager, "⚠️  Bad IRM detected (node %u)", inputs.irmNodeID);
+    }
+
+    // Apple's AssignCycleMaster fallback (IOFireWireController.cpp):
+    // If bad IRM or no IRM at all, we must ensure *somebody* becomes IRM.
+    // DICE-class devices don't support IRM, so our node must take over
+    // for isochronous resource management to work.
+    if (const auto irmRecovery = MaybeRecoverBadIRM(config_, inputs)) {
+        return irmRecovery;
     }
 
     ASFW_LOG(BusManager, "✅ AssignCycleMaster: No action needed (root=%u IRM=%u local=%u)",
-             rootNodeID, irmNodeID, localNodeID);
+             rootNodeID, inputs.irmNodeID, localNodeID);
     return std::nullopt;
 }
 
@@ -233,14 +313,14 @@ std::optional<BusManager::GapDecision> BusManager::EvaluateGapPolicy(
         return std::nullopt;
     }
 
-    if (!topology.localNodeId.has_value() || !topology.irmNodeId.has_value()) {
+    if (topology.localNodeId == kInvalidPhysicalId || topology.irmNodeId == kInvalidPhysicalId) {
         return std::nullopt;
     }
 
-    const uint8_t localNodeID = *topology.localNodeId;
-    if (*topology.irmNodeId != localNodeID) {
+    const uint8_t localNodeID = topology.localNodeId;
+    if (topology.irmNodeId != localNodeID) {
         ASFW_LOG_V3(BusManager, "Skipping gap optimization because local node %u is not IRM %u",
-                    localNodeID, *topology.irmNodeId);
+                    localNodeID, topology.irmNodeId);
         return std::nullopt;
     }
 
@@ -259,7 +339,8 @@ std::optional<BusManager::GapDecision> BusManager::EvaluateGapPolicy(
     }
 
     const uint8_t targetGap =
-        config_.forcedGapFlag ? config_.forcedGapCount : CalculateGapFromHops(topology.maxHopsFromRoot);
+        config_.forcedGapFlag ? config_.forcedGapCount
+                              : GapCountOptimizer::CalculateFromHops(topology.physical.busDiameterHops);
 
     if (config_.forcedGapFlag) {
         if (targetGap == gapState_.lastConfirmedGap) {
@@ -327,11 +408,6 @@ void BusManager::ClearInFlightGapReset() {
     ASFW_LOG_V2(BusManager, "Discarding in-flight gap target %u after dispatch failure",
                 gapState_.inFlight->gapCount);
     gapState_.inFlight.reset();
-}
-
-uint8_t BusManager::CalculateGapFromHops(uint8_t maxHops) const {
-    if (maxHops >= 26) maxHops = 25;
-    return GAP_TABLE[maxHops];
 }
 
 } // namespace ASFW::Driver

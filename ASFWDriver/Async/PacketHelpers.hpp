@@ -89,19 +89,19 @@ inline uint16_t ExtractDataLength(std::span<const uint8_t> header) {
            (static_cast<uint16_t>(header[15]) << 8);
 }
 
-/// Extract extended transaction code from packet header
-///
-/// For block write/read packets, extended_tcode is at byte 7.
+/// Extract extended transaction code from packet header.
 ///
 /// @param header Packet header bytes in OHCI AR DMA memory order, minimum 16 bytes
 /// @return Extended tcode, or 0 if header too short
-inline uint8_t ExtractExtendedTCode(std::span<const uint8_t> header) {
+inline uint16_t ExtractExtendedTCode(std::span<const uint8_t> header) {
     if (header.size() < 16) {
         return 0;
     }
 
-    // Extended tcode: byte 7
-    return header[7];
+    // Q3 is stored little-endian in the AR DMA buffer:
+    // [extended_tcode_lo][extended_tcode_hi][data_length_lo][data_length_hi].
+    return static_cast<uint16_t>(header[12]) |
+           (static_cast<uint16_t>(header[13]) << 8);
 }
 
 } // namespace ASFW::Async

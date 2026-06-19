@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #include "AsyncSubsystem.hpp"
 #include "Engine/ContextManager.hpp"
 
@@ -73,25 +74,34 @@ constexpr uint32_t kLinkControlRcvPhyPktBit = 1u << 12;
 constexpr uint8_t kDefaultAsyncSpeed = 0; // S100 (98.304 Mbps)
 constexpr size_t kDefaultCompletionQueueCapacity = size_t{64} * 1024u;
 
-bool ShouldEnableCoherencyTrace(OSObject* owner) {
-    bool enabled = false;
-    if (auto service = OSDynamicCast(IOService, owner)) {
-        OSDictionary* properties = nullptr;
-        const kern_return_t kr = service->CopyProperties(&properties);
-        if (kr == kIOReturnSuccess && properties != nullptr) {
-            if (auto property = properties->getObject("ASFWTraceDMACoherency")) {
-                if (auto booleanProp = OSDynamicCast(OSBoolean, property)) {
-                    enabled = (booleanProp == kOSBooleanTrue);
-                } else if (auto numberProp = OSDynamicCast(OSNumber, property)) {
-                    enabled = numberProp->unsigned32BitValue() != 0;
-                } else if (auto stringProp = OSDynamicCast(OSString, property)) {
-                    enabled = stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
-                              stringProp->isEqualTo("TRUE");
-                }
-            }
-            properties->release();
-        }
+bool ParseBooleanLikeProperty(OSObject* property) {
+    if (auto booleanProp = OSDynamicCast(OSBoolean, property)) {
+        return booleanProp == kOSBooleanTrue;
     }
+    if (auto numberProp = OSDynamicCast(OSNumber, property)) {
+        return numberProp->unsigned32BitValue() != 0;
+    }
+    if (auto stringProp = OSDynamicCast(OSString, property)) {
+        return stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
+               stringProp->isEqualTo("TRUE");
+    }
+    return false;
+}
+
+bool ShouldEnableCoherencyTrace(OSObject* owner) {
+    auto service = OSDynamicCast(IOService, owner);
+    if (!service) {
+        return false;
+    }
+
+    OSDictionary* properties = nullptr;
+    const kern_return_t kr = service->CopyProperties(&properties);
+    if (kr != kIOReturnSuccess || properties == nullptr) {
+        return false;
+    }
+
+    const bool enabled = ParseBooleanLikeProperty(properties->getObject("ASFWTraceDMACoherency"));
+    properties->release();
     return enabled;
 }
 
@@ -111,13 +121,19 @@ struct RetryState {
           subsystem(sub) {}
 };
 
+using RetryStatePtr = std::shared_ptr<RetryState>;
+
 // Static callback function that implements retry logic
 // This matches Apple's IOFWAsyncCommand::complete() pattern where retries
 // are decremented and execute() is called again on transient failures
 // Signature matches CompletionCallback: (AsyncHandle, AsyncStatus, responseCode, std::span<const
 // uint8_t>)
 void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
-                           std::span<const uint8_t> responsePayload, RetryState* state) {
+                           std::span<const uint8_t> responsePayload,
+                           const RetryStatePtr& state) {
+    if (!state) {
+        return;
+    }
 
     // Check if retry is needed (Apple's pattern: retry on timeout/busy)
     bool shouldRetry = false;
@@ -174,7 +190,6 @@ void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, uint8_t respo
                 state->userCallback(handle, AsyncStatus::kHardwareError, 0xFF,
                                     std::span<const uint8_t>{});
             }
-            delete state;
         }
     } else {
         // Final completion - no more retries available or success achieved
@@ -188,7 +203,6 @@ void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, uint8_t respo
         if (state->userCallback) {
             state->userCallback(handle, status, responseCode, responsePayload);
         }
-        delete state; // Free retry state
     }
 }
 
@@ -199,7 +213,7 @@ struct PayloadContext {
     PayloadContext(const PayloadContext&) = delete;
     PayloadContext& operator=(const PayloadContext&) = delete;
 
-    bool Initialize(Driver::HardwareInterface& hw, const void* logicalData, std::size_t length,
+    bool Initialize(Driver::HardwareInterface& hw, const uint8_t* logicalData, std::size_t length,
                     uint64_t options) {
         Reset();
 
@@ -272,7 +286,7 @@ struct PayloadContext {
 
     [[nodiscard]] uint8_t* VirtualAddress() const noexcept { return virtualAddress_; }
 
-    [[nodiscard]] const void* LogicalAddress() const noexcept { return logicalAddress_; }
+    [[nodiscard]] const uint8_t* LogicalAddress() const noexcept { return logicalAddress_; }
 
     [[nodiscard]] std::size_t Length() const noexcept { return length_; }
 
@@ -280,7 +294,7 @@ struct PayloadContext {
     Driver::HardwareInterface::DMABuffer dmaBuffer_{};
     IOMemoryMap* mapping_{nullptr};
     uint8_t* virtualAddress_{nullptr};
-    const void* logicalAddress_{nullptr};
+    const uint8_t* logicalAddress_{nullptr};
     std::size_t length_{0};
 };
 
@@ -337,6 +351,13 @@ kern_return_t AsyncSubsystem::InitializeCoreStartState(size_t completionQueueCap
 
     tracking_ = std::make_unique<Track_Tracking<CompletionQueue>>(
         labelAllocator_.get(), txnMgr_.get(), *completionQueue_, nullptr);
+
+    asyncTraceCapture_ = std::make_unique<Debug::AsyncTraceCapture>();
+    std::memset(&inboundCSRStats_, 0, sizeof(inboundCSRStats_));
+    inboundCSRStats_.header.abiVersion = ASFW_DIAG_ABI_VERSION;
+    inboundCSRStats_.header.structSize = sizeof(inboundCSRStats_);
+    inboundCSRStats_.header.status = ASFWDiagStatusOK;
+
     return kIOReturnSuccess;
 }
 
@@ -385,6 +406,9 @@ kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) 
     }
 
     submitter_ = std::make_unique<Tx::Submitter>(*contextManager_, *descriptorBuilder_);
+    if (submitter_) {
+        submitter_->SetDiagnostics(asyncTraceCapture_.get());
+    }
     if (tracking_ && contextManager_) {
         contextManager_->SetPayloads(tracking_->Payloads());
         if (submitter_) {
@@ -395,6 +419,7 @@ kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) 
     }
 
     packetRouter_ = std::make_unique<PacketRouter>();
+    packetRouter_->SetDiagnostics(asyncTraceCapture_.get(), &inboundCSRStats_);
     rxPath_ = std::make_unique<Rx::RxPath>(*contextManager_->GetArRequestContext(),
                                            *contextManager_->GetArResponseContext(), *tracking_,
                                            *generationTracker_, *packetRouter_);
@@ -563,10 +588,7 @@ void AsyncSubsystem::Teardown(bool disableHardware) {
         txnMgr_.reset();
     }
 
-    if (responseSender_) {
-        responseSender_->ClearOutstandingResponses();
-        responseSender_.reset();
-    }
+    responseSender_.reset();
     descriptorBuilder_ = nullptr;
     descriptorBuilderResponse_ = nullptr;
     packetBuilder_.reset();

@@ -10,8 +10,6 @@ namespace ASFW::Async {
 namespace {
 
 using HW::AsyncRequestHeader;
-using HW::ToBigEndian16;
-using HW::ToBigEndian32;
 
 constexpr uint8_t kRetryX = 0b01;
 constexpr uint16_t kNodeIDMask = 0xFFFFu;
@@ -124,7 +122,7 @@ static_assert(sizeof(HeaderPhyPacket) == 16);
 std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
                                             uint8_t label,
                                             const PacketContext& context,
-                                            void* headerBuffer,
+                                            uint8_t* headerBuffer,
                                             std::size_t bufferSize) const {
     // 12 bytes for read-quadlet - NO ADDITIONAL DATA!
     constexpr std::size_t headerSize = sizeof(HeaderNoData);
@@ -141,12 +139,12 @@ std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderNoData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderNoData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
     // CRITICAL FIX: tLabel must be at bits[15:10], NOT bits[23:18]!
-    // Per ExtractTLabel in OHCI_HW_Specs.hpp and Apple reference implementation.
+    // Per ExtractTLabel in OHCIDescriptors.hpp.
     //
     // Quadlet 0: [source_bus_ID:1][reserved:4][spd:3][tl:6][rt:2][tCode:4][reserved:4]
     //            bit[31]           [30:27]     [26:24] [23:18] [9:8] [7:4]   [3:0]
@@ -205,7 +203,7 @@ std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
 std::size_t PacketBuilder::BuildReadBlock(const ReadParams& params,
                                           uint8_t label,
                                           const PacketContext& context,
-                                          void* headerBuffer,
+                                          uint8_t* headerBuffer,
                                           std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderBlockData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -221,7 +219,7 @@ std::size_t PacketBuilder::BuildReadBlock(const ReadParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderBlockData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderBlockData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -273,7 +271,7 @@ std::size_t PacketBuilder::BuildReadBlock(const ReadParams& params,
 std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
                                              uint8_t label,
                                              const PacketContext& context,
-                                             void* headerBuffer,
+                                             uint8_t* headerBuffer,
                                              std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderQuadletData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -289,7 +287,7 @@ std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderQuadletData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderQuadletData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -331,7 +329,7 @@ std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
     std::memcpy(&payloadQuadlet, params.payload, sizeof(payloadQuadlet));
 #if ASFW_SWAP_IMMEDIATE
     // Convert immediate payload to big-endian if hardware doesn't convert it
-    payloadQuadlet = ToBigEndian32(payloadQuadlet);
+    payloadQuadlet = OSSwapHostToBigInt32(payloadQuadlet);
 #endif
 
     // Write all four quadlets in native byte order
@@ -346,7 +344,7 @@ std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
 std::size_t PacketBuilder::BuildWriteBlock(const WriteParams& params,
                                            uint8_t label,
                                            const PacketContext& context,
-                                           void* headerBuffer,
+                                           uint8_t* headerBuffer,
                                            std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderBlockData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -362,7 +360,7 @@ std::size_t PacketBuilder::BuildWriteBlock(const WriteParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderBlockData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderBlockData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -416,7 +414,7 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
                                      uint8_t label, // NOLINT(bugprone-easily-swappable-parameters)
                                      uint16_t extendedTCode,
                                      const PacketContext& context,
-                                     void* headerBuffer,
+                                     uint8_t* headerBuffer,
                                      std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderBlockData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -436,7 +434,7 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderBlockData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderBlockData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -489,7 +487,7 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
 
 std::size_t PacketBuilder::BuildPhyPacket(uint8_t label,
                                           const PhyParams& params,
-                                          void* headerBuffer,
+                                          uint8_t* headerBuffer,
                                           std::size_t bufferSize) const {
     // PHY packet: 12 bytes transmitted (3 quadlets) per OHCI §7.8.1.4 Figure 7-14
     // Apple's implementation: reqCount=12 (not 16!)
@@ -507,7 +505,7 @@ std::size_t PacketBuilder::BuildPhyPacket(uint8_t label,
     }
 
     // Use byte pointer for direct big-endian wire format construction
-    auto* bytes = static_cast<uint8_t*>(headerBuffer);
+    auto* bytes = headerBuffer;
 
     // Quadlet 0: include tLabel in host-order word so ExtractTLabel() (bits[15:10]) matches tracking.
     // Retry/priority left at zero; tCode=0xE in bits [7:4].
@@ -517,9 +515,9 @@ std::size_t PacketBuilder::BuildPhyPacket(uint8_t label,
 
     // Quadlets 1-2: PHY configuration data in big-endian wire format
     // params.quadlet1/2 are already in the format expected on the wire (big-endian)
-    // So convert them to wire format using ToBigEndian32
-    const uint32_t data1Wire = ToBigEndian32(params.quadlet1);
-    const uint32_t data2Wire = ToBigEndian32(params.quadlet2);
+    // So convert them to wire format using OSSwapHostToBigInt32
+    const uint32_t data1Wire = OSSwapHostToBigInt32(params.quadlet1);
+    const uint32_t data2Wire = OSSwapHostToBigInt32(params.quadlet2);
     std::memcpy(bytes + 4, &data1Wire, 4);
     std::memcpy(bytes + 8, &data2Wire, 4);
 

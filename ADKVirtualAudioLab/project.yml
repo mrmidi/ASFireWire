@@ -1,0 +1,65 @@
+name: ADKVirtualAudioLab
+options:
+  bundleIdPrefix: net.mrmidi.ASFW
+targets:
+  net.mrmidi.ASFW.ADKVirtualAudioLab:
+    type: com.apple.product-type.driver-extension
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Core
+      - path: Driver
+      - path: Lab
+      - path: Ports
+      - path: Protocols
+      - path: Info.plist
+    settings:
+      SDKROOT: driverkit
+      DEXT_INSTALL_PATH: /System/Library/DriverExtensions
+      AD_HOC_CODE_SIGNING_ALLOWED: YES
+      DEVELOPMENT_TEAM: F6YA6B56LR
+      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: Driver/ADKVirtualAudioLab.entitlements
+      PRODUCT_NAME: net.mrmidi.ASFW.ADKVirtualAudioLab
+      PRODUCT_BUNDLE_IDENTIFIER: net.mrmidi.ASFW.ADKVirtualAudioLab
+      CLANG_CXX_LANGUAGE_STANDARD: gnu++2b
+      FRAMEWORK_SEARCH_PATHS: $(SDKROOT)/System/DriverKit/System/Library/Frameworks
+      OTHER_LDFLAGS: -framework DriverKit -framework AudioDriverKit
+  ADKVirtualAudioLabTests:
+    type: com.apple.product-type.tool
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests
+      - path: Core
+      - path: Protocols
+      - path: Lab
+      - path: Ports
+    settings:
+      CLANG_CXX_LANGUAGE_STANDARD: gnu++2b
+  # Milestone 3 activation host: embeds the dext and submits the
+  # OSSystemExtensionRequest. Signing stays off by default like the dext —
+  # see BENCH.md for the ad-hoc (SIP-off bench) and Developer-ID/provisioned
+  # (SIP-on) signing override lanes.
+  ADKLabHost:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Host
+    dependencies:
+      - target: net.mrmidi.ASFW.ADKVirtualAudioLab
+        embed: true
+    info:
+      path: Host/Info.plist
+      properties:
+        CFBundleDisplayName: ADKLab Host
+        NSPrincipalClass: NSApplication
+    settings:
+      AD_HOC_CODE_SIGNING_ALLOWED: YES
+      DEVELOPMENT_TEAM: F6YA6B56LR
+      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: Host/ADKLabHost.entitlements
+      SWIFT_VERSION: "5.9"

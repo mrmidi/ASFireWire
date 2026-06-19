@@ -12,11 +12,12 @@
 #include "../ConfigROM/ROMScanner.hpp"
 #include "../Hardware/OHCIConstants.hpp"
 #include "BusManager.hpp"
-#include "HardwareInterface.hpp"
-#include "InterruptManager.hpp"
-#include "Logging.hpp"
+#include "../Hardware/HardwareInterface.hpp"
+#include "../Hardware/InterruptManager.hpp"
+#include "../Logging/Logging.hpp"
 #include "SelfIDCapture.hpp"
 #include "TopologyManager.hpp"
+#include "CSR/TopologyMapService.hpp"
 
 namespace {
 
@@ -120,6 +121,10 @@ void BusResetCoordinator::ArmSelfIDBuffer() {
 }
 
 void BusResetCoordinator::StopFlushAT() {
+    if (topologyMapService_ != nullptr) {
+        topologyMapService_->Invalidate();
+    }
+
     if (asyncSubsystem_ == nullptr) {
         return;
     }
@@ -171,20 +176,24 @@ bool BusResetCoordinator::BuildTopology() {
                              TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code));
         RecordRecoveryReasonCode(RecoveryReasonCode::TopologyBuildFailed);
         cycle_.acceptedTopology.reset();
-        RequestSoftwareReset({ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt,
-                              "Invalid Self-ID topology"});
-        ASFW_LOG_V2(BusReset, "Topology build failed: %{public}s (%{public}s)",
-                    TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code),
-                    snapshot.error().detail.c_str());
+
+        if (topologyMapService_ != nullptr) {
+            topologyMapService_->Invalidate();
+        }
+
+        ASFW_LOG(Topology,
+                 "Topology graph invalid: code=%{public}s detail=%{public}s; "
+                 "suppressing recovery reset and leaving TOPOLOGY_MAP unavailable",
+                 TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code),
+                 snapshot.error().detail.c_str());
+
         return false;
     }
 
     cycle_.acceptedTopology = *snapshot;
     lastAcceptedGeneration_ = snapshot->generation;
     lastTopologyNodeCount_ =
-        static_cast<uint8_t>(std::min<std::size_t>(snapshot->nodes.size(), 0xFFU));
-    cycle_.timing.lastSelfIdCompletionNs = timestamp;
-    cycle_.timing.softwareResetBlockedUntilNs = timestamp + kRepeatedResetHoldoffNs;
+        static_cast<uint8_t>(std::min<std::size_t>(snapshot->physical.nodes.size(), 0xFFU));
 
     if (busManager_ != nullptr && snapshot->gapCountConsistent) {
         busManager_->NoteStableGapObserved(snapshot->gapCount);
@@ -255,20 +264,13 @@ void BusResetCoordinator::LogMetrics() {
 }
 
 void BusResetCoordinator::SendGlobalResumeIfNeeded() {
-    if ((hardware_ == nullptr) || !cycle_.acceptedTopology.has_value() ||
-        !cycle_.acceptedTopology->localNodeId.has_value()) {
-        return;
-    }
-
-    const uint32_t generation = cycle_.acceptedTopology->generation;
-    if (lastResumeGeneration_ == generation) {
-        return;
-    }
-
-    const uint8_t localNode = *cycle_.acceptedTopology->localNodeId;
-    if (hardware_->SendPhyGlobalResume(localNode)) {
-        lastResumeGeneration_ = generation;
-    }
+    // Do not send PHY Global Resume automatically on ordinary post-reset completion.
+    // On real hardware this eager wake signal can provoke a second bus reset while
+    // discovery is still enumerating the freshly accepted topology. Keep the helper
+    // available for future explicit wake/recovery flows, but leave normal reset
+    // stabilization undisturbed.
+    ASFW_LOG_V2(BusReset,
+                "Skipping automatic PHY global resume after reset; no explicit wake trigger");
 }
 
 void BusResetCoordinator::HandleStraySelfID() {
@@ -291,20 +293,20 @@ void BusResetCoordinator::HandleStraySelfID() {
 
 void BusResetCoordinator::EvaluateRootDelegation(const TopologySnapshot& topology) {
     if (!delegateAttemptActive_) {
-        if (delegateSuppressed_ && topology.rootNodeId.has_value() &&
-            topology.localNodeId.has_value() &&
-            *topology.rootNodeId != *topology.localNodeId) {
+        if (delegateSuppressed_ && topology.rootNodeId != kInvalidPhysicalId &&
+            topology.localNodeId != kInvalidPhysicalId &&
+            topology.rootNodeId != topology.localNodeId) {
             delegateSuppressed_ = false;
         }
         return;
     }
 
-    if (!topology.rootNodeId.has_value()) {
+    if (topology.rootNodeId == kInvalidPhysicalId) {
         return;
     }
 
-    const uint8_t currentRoot = *topology.rootNodeId;
-    const uint8_t localNode = topology.localNodeId.value_or(0xFF);
+    const uint8_t currentRoot = topology.rootNodeId;
+    const uint8_t localNode = topology.localNodeId;
     if ((delegateTarget_ != 0xFF && currentRoot == delegateTarget_) ||
         (localNode != 0xFF && currentRoot != localNode)) {
         delegateAttemptActive_ = false;
@@ -478,48 +480,71 @@ bool BusResetCoordinator::DispatchSoftwareReset(const ResetRequest& request) {
              request.reason.c_str());
     lastResetKind_ = request.kind;
 
-    if (request.phyConfig.has_value()) {
-        const auto& command = *request.phyConfig;
-        if (command.setContender.has_value()) {
-            hardware_->SetContender(*command.setContender);
-        }
-
-        if (!hardware_->SendPhyConfig(command.gapCount, command.forceRootNodeID,
-                                      request.reason.c_str())) {
-            RecordRecoveryReason(std::string{"PHY config dispatch failed: "} + request.reason);
-            if (request.gapDecisionReason.has_value() && busManager_ != nullptr) {
-                busManager_->ClearInFlightGapReset();
-            }
-            if (carriesDelegation) {
-                ClearDelegationAttempt();
-            }
-            return false;
-        }
+    if (!ApplySoftwareResetPhyConfig(request, carriesDelegation)) {
+        return false;
     }
 
     if (!hardware_->InitiateBusReset(request.flavor == ResetFlavor::Short)) {
         RecordRecoveryReason(std::string{"Software reset dispatch failed: "} + request.reason);
+        // DICE's ClearSoftwareResetTracking performs the same cleanup main inlined
+        // (ClearInFlightGapReset + ClearDelegationAttempt); additionally record main's
+        // structured recovery reason code.
         RecordRecoveryReasonCode(RecoveryReasonCode::SoftwareResetDispatchFailed);
-        if (request.gapDecisionReason.has_value() && busManager_ != nullptr) {
-            busManager_->ClearInFlightGapReset();
-        }
-        if (carriesDelegation) {
-            ClearDelegationAttempt();
-        }
+        ClearSoftwareResetTracking(request, carriesDelegation);
         return false;
     }
 
-    if (request.gapDecisionReason.has_value() && request.phyConfig.has_value() &&
-        request.phyConfig->gapCount.has_value() && (busManager_ != nullptr)) {
-        busManager_->NoteGapResetIssued(*request.phyConfig->gapCount, *request.gapDecisionReason);
-    }
+    NoteIssuedGapReset(request);
 
+    // Wire main's manual-reset recovery into DICE's DispatchSoftwareReset structure.
+    // main kept this tail inline in its reset-issue path; DICE extracted the gap-reset
+    // note into the void NoteIssuedGapReset helper, so the issued-reset count and the
+    // manual-reset watchdog arming (ScheduleManualResetWatchdog → recovered by
+    // MaybeRecoverMissingManualResetIrq if the manual-reset IRQ goes missing) live here.
     ++softwareResetIssuedCount_;
     if (request.kind == ResetRequestKind::ManualBusManager) {
         ScheduleManualResetWatchdog(manualResetEpoch_, resetEpoch_);
     }
 
     return true;
+}
+
+void BusResetCoordinator::ClearSoftwareResetTracking(const ResetRequest& request,
+                                                     bool carriesDelegation) {
+    if (request.gapDecisionReason.has_value() && busManager_ != nullptr) {
+        busManager_->ClearInFlightGapReset();
+    }
+    if (carriesDelegation) {
+        ClearDelegationAttempt();
+    }
+}
+
+bool BusResetCoordinator::ApplySoftwareResetPhyConfig(const ResetRequest& request,
+                                                      bool carriesDelegation) {
+    if (!request.phyConfig.has_value()) {
+        return true;
+    }
+
+    const auto& command = *request.phyConfig;
+    if (command.setContender.has_value()) {
+        hardware_->SetContender(*command.setContender);
+    }
+
+    if (hardware_->SendPhyConfig(command.gapCount, command.forceRootNodeID,
+                                 request.reason.c_str())) {
+        return true;
+    }
+
+    RecordRecoveryReason(std::string{"PHY config dispatch failed: "} + request.reason);
+    ClearSoftwareResetTracking(request, carriesDelegation);
+    return false;
+}
+
+void BusResetCoordinator::NoteIssuedGapReset(const ResetRequest& request) {
+    if (request.gapDecisionReason.has_value() && request.phyConfig.has_value() &&
+        request.phyConfig->gapCount.has_value() && (busManager_ != nullptr)) {
+        busManager_->NoteGapResetIssued(*request.phyConfig->gapCount, *request.gapDecisionReason);
+    }
 }
 
 void BusResetCoordinator::ClearDelegationAttempt() {
@@ -591,9 +616,42 @@ void BusResetCoordinator::RequestUserReset(bool shortReset) {
                           "UserClient-initiated", std::nullopt});
 }
 
+void BusResetCoordinator::RequestRolePolicyReset(uint8_t targetRoot, bool longReset,
+                                                 std::optional<uint8_t> gapCount,
+                                                 std::optional<bool> setContender,
+                                                 std::string reason) {
+    BusManager::PhyConfigCommand command{};
+    command.forceRootNodeID = targetRoot;
+    command.gapCount = gapCount;
+    command.setContender = setContender;
+
+    if (reason.empty()) {
+        reason = "RoleCoordinator";
+    }
+
+    RequestSoftwareReset({ResetRequestKind::Delegation,
+                          longReset ? ResetFlavor::Long : ResetFlavor::Short,
+                          command,
+                          std::move(reason),
+                          std::nullopt});
+}
+
 void BusResetCoordinator::ResetDelegationRetryCounter() {
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;
+}
+
+void BusResetCoordinator::ArmSoftwareResetHoldoffAfterSelfIDCompletion(uint64_t timestampNs) noexcept {
+    // IEEE 1394-2008 §8.2.1: software-initiated bus resets are rate-limited
+    // after the self-identify process completes. This holdoff belongs to Self-ID
+    // completion, not to successful topology graph construction. Linux follows the
+    // same shape by recording reset_jiffies before build_tree().
+    cycle_.timing.lastSelfIdCompletionNs = timestampNs;
+    cycle_.timing.softwareResetBlockedUntilNs = timestampNs + kRepeatedResetHoldoffNs;
+
+    ASFW_LOG_V2(BusReset,
+                "Software reset holdoff armed for %llu ns after Self-ID completion",
+                kRepeatedResetHoldoffNs);
 }
 
 } // namespace ASFW::Driver

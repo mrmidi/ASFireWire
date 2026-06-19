@@ -1,0 +1,140 @@
+//
+// ASFWAudioNub.iig
+// ASFWDriver
+//
+// Audio nub published by ASFWDriver when music subunit is discovered.
+// ASFWAudioDriver (IOUserAudioDriver) matches on this nub.
+//
+// Cross-process communication:
+//   ASFWAudioNub forwards RPCs to the GUID-keyed AudioEndpointRuntime. The
+//   endpoint runtime owns shared direct audio memory/control state.
+//
+
+#ifndef ASFWAudioNub_h
+#define ASFWAudioNub_h
+
+#include <DriverKit/IOService.iig>
+#include <DriverKit/IOBufferMemoryDescriptor.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
+#include <DriverKit/IOMemoryMap.iig>
+#include <DriverKit/OSString.iig>
+#include <DriverKit/OSArray.iig>
+#include <DriverKit/OSAction.iig>
+#include <atomic>
+#include <cstdint>
+
+class ASFWDriver;
+// Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
+// Properties set by ASFWDriver:
+//   - ASFWDeviceName (OSString): Device name from config ROM
+//   - ASFWChannelCount (OSNumber): Number of audio channels
+//   - ASFWSampleRates (OSArray of OSNumber): Supported sample rates
+//   - ASFWGUID (OSNumber): Device GUID for identification
+
+class ASFWAudioNub: public IOService
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+
+    virtual kern_return_t CopyDirectAudioMemory(IOMemoryDescriptor** outOutputMemory,
+                                                IOMemoryDescriptor** outInputMemory,
+                                                IOMemoryDescriptor** outControlMemory,
+                                                uint32_t* outOutputFrames,
+                                                uint32_t* outOutputChannels,
+                                                uint32_t* outInputFrames,
+                                                uint32_t* outInputChannels,
+                                                uint32_t* outSampleRateHz,
+                                                uint64_t* outGeneration);
+
+    virtual kern_return_t StartAudioStreaming();
+    virtual kern_return_t StopAudioStreaming();
+
+    /**
+     * @brief Allocate memory resources for isochronous audio transmit.
+     * Mapped memory is shared between the user-space ADK engine client and the core Dext.
+     * @param numSlots The number of packet slots in the payload ring buffer.
+     * @param maxPacketBytes Maximum size of a single packet payload in bytes.
+     * @param interruptInterval Frequency of interrupts in packets.
+     * @param outPayloadSlab Shared memory descriptor containing all packet payloads.
+     * @param outMetadataRing Shared memory descriptor containing packet metadata.
+     * @param outControlBlock Shared memory descriptor containing stream control states.
+     */
+    virtual kern_return_t AllocateTxIsochResources(
+        uint32_t numSlots,
+        uint32_t maxPacketBytes,
+        uint32_t interruptInterval,
+        IOMemoryDescriptor** outPayloadSlab,
+        IOMemoryDescriptor** outMetadataRing,
+        IOMemoryDescriptor** outControlBlock);
+
+    /**
+     * @brief Release all allocated transmit isochronous resources.
+     */
+    virtual kern_return_t FreeTxIsochResources();
+
+    /**
+     * @brief Query the current host time and FireWire cycle timer snapshot.
+     * Captures a synchronized pair from the hardware for clock seeding.
+     * @param outHostTimeMid Monotonic host system time in ticks.
+     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
+     */
+    virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
+
+    virtual void TxPreparationReady(OSAction* action TARGET,
+                                    uint64_t generation);
+    virtual kern_return_t RegisterTxPreparationAction(
+        OSAction* action TYPE(TxPreparationReady));
+
+    virtual void ZtsAnchorReady(OSAction* action TARGET,
+                                uint64_t generation);
+    virtual kern_return_t RegisterZtsAnchorAction(
+        OSAction* action TYPE(ZtsAnchorReady));
+
+    // LOCALONLY methods for ASFWDriver-side access (same process)
+    ASFWDriver* GetParentDriver() const LOCALONLY;
+
+    // Set channel count directly (called by AVCDiscovery after Create())
+    void SetChannelCount(uint32_t channels) LOCALONLY;
+    uint32_t GetChannelCount() const LOCALONLY;
+    uint32_t GetInputChannelCount() const LOCALONLY;
+    uint32_t GetOutputChannelCount() const LOCALONLY;
+
+    // Stream mode selected during discovery:
+    //   0 = non-blocking, 1 = blocking
+    void SetStreamMode(uint32_t modeRaw) LOCALONLY;
+    uint32_t GetStreamMode() const LOCALONLY;
+
+    // Device identity for protocol bridge routing
+    void SetGuid(uint64_t guid) LOCALONLY;
+    uint64_t GetGuid() const LOCALONLY;
+
+    // RPC protocol-backed boolean control bridge (AudioDriver -> ASFWDriver process)
+    virtual kern_return_t GetProtocolBooleanControl(
+        uint32_t classIdFourCC,
+        uint32_t element,
+        bool* outValue);
+
+    virtual kern_return_t SetProtocolBooleanControl(
+        uint32_t classIdFourCC,
+        uint32_t element,
+        bool value);
+};
+
+struct ASFWAudioNub_IVars {
+    IOService* parentDriver;              // ASFWDriver instance (not retained, provider lifetime)
+
+    // Audio channel counts (read from ASFWDriver properties; may be refined from protocol runtime caps)
+    uint64_t guid{0};
+    uint32_t channelCount{2};
+    uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
+    uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
+    uint32_t currentSampleRateHz{48000};
+    uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
+    OSAction* txPreparationAction{nullptr};
+    OSAction* ztsAnchorAction{nullptr};
+};
+
+#endif /* ASFWAudioNub_h */

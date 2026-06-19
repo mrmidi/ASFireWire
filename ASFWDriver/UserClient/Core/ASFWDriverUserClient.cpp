@@ -16,6 +16,8 @@
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
+#include <memory>
+#include <optional>
 
 // Method selectors for ExternalMethod (matching .iig definitions)
 enum {
@@ -25,7 +27,8 @@ enum {
     kMethodGetMetricsSnapshot = 3,
     kMethodClearHistory = 4,
     kMethodGetSelfIDCapture = 5,
-    kMethodGetTopologySnapshot = 6,
+    // 6 (kMethodGetTopologySnapshot) retired: topology now served via the
+    // diagnostics ABI (kMethodDiagGetTopology / ASFWDiagTopology).
     kMethodPing = 7,
     kMethodAsyncRead = 8,
     kMethodAsyncWrite = 9,
@@ -48,7 +51,7 @@ enum {
     kMethodSendRawFCPCommand = 38,
     kMethodGetRawFCPCommandResult = 39,
     kMethodSetIsochVerbosity = 40,
-    kMethodSetIsochTxVerifier = 41,
+    // 41 retired (was the dev TX-verifier toggle)
     kMethodSetAudioAutoStart = 42,
     kMethodGetAudioAutoStart = 43,
     kMethodAsyncBlockRead = 44,
@@ -58,16 +61,15 @@ enum {
     kMethodDeallocateAddressRange = 47,
     kMethodReadIncomingData = 48,
     kMethodWriteLocalData = 49,
-    // SBP-2 session management
-    kMethodCreateSBP2Session = 53,
-    kMethodStartSBP2Login = 54,
-    kMethodGetSBP2SessionState = 55,
-    kMethodSubmitSBP2Inquiry = 56,
-    kMethodGetSBP2InquiryResult = 57,
-    kMethodReleaseSBP2Session = 58,
-    kMethodSubmitSBP2Command = 59,
-    kMethodGetSBP2CommandResult = 60,
-    kMethodSubmitSBP2TaskManagement = 61,
+    kMethodCreateSBP2Session = 52,
+    kMethodStartSBP2Login = 53,
+    kMethodGetSBP2SessionState = 54,
+    kMethodSubmitSBP2Inquiry = 55,
+    kMethodGetSBP2InquiryResult = 56,
+    kMethodSubmitSBP2Command = 57,
+    kMethodGetSBP2CommandResult = 58,
+    kMethodSubmitSBP2TaskManagement = 59,
+    kMethodReleaseSBP2Session = 60,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -88,7 +90,331 @@ enum {
     // Isoch Transmit Control (IT DMA allocation only - no CMP)
     kMethodStartIsochTransmit = 36,
     kMethodStopIsochTransmit = 37,
+
+    // DV capture (raw DIF stream via shared ring, memory type 1)
+    kMethodStartDVCapture = 50,
+    kMethodStopDVCapture = 51,
 };
+
+namespace {
+
+using MethodDispatchResult = std::optional<kern_return_t>;
+
+std::optional<uint32_t> GetFirstScalarInput(const IOUserClientMethodArguments* arguments) {
+    if (!arguments || !arguments->scalarInput || arguments->scalarInputCount < 1) {
+        return std::nullopt;
+    }
+
+    return static_cast<uint32_t>(arguments->scalarInput[0]);
+}
+
+MethodDispatchResult DispatchBusResetMethods(ASFW::UserClient::UserClientRuntimeState& runtimeState,
+                                             IOUserClientMethodArguments* arguments,
+                                             uint64_t selector) {
+    switch (selector) {
+    case kMethodGetBusResetCount:
+        return runtimeState.BusReset().GetBusResetCount(arguments);
+    case kMethodGetBusResetHistory:
+        return runtimeState.BusReset().GetBusResetHistory(arguments);
+    case kMethodClearHistory:
+        return runtimeState.BusReset().ClearHistory(arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
+MethodDispatchResult DispatchTopologyMethods(ASFW::UserClient::UserClientRuntimeState& runtimeState,
+                                             IOUserClientMethodArguments* arguments,
+                                             uint64_t selector) {
+    switch (selector) {
+    case kMethodGetSelfIDCapture:
+        return runtimeState.Topology().GetSelfIDCapture(arguments);
+    // kMethodGetTopologySnapshot (6) retired: topology now served via the
+    // diagnostics ABI (kMethodDiagGetTopology / ASFWDiagTopology).
+    default:
+        return std::nullopt;
+    }
+}
+
+MethodDispatchResult DispatchStatusMethods(ASFW::UserClient::UserClientRuntimeState& runtimeState,
+                                           ASFWDriverUserClient& userClient,
+                                           IOUserClientMethodArguments* arguments,
+                                           uint64_t selector) {
+    switch (selector) {
+    case kMethodGetControllerStatus:
+        return runtimeState.Status().GetControllerStatus(arguments);
+    case kMethodGetMetricsSnapshot:
+        return runtimeState.Status().GetMetricsSnapshot(arguments);
+    case kMethodPing:
+        return runtimeState.Status().Ping(arguments);
+    case kMethodRegisterStatusListener:
+        return runtimeState.Status().RegisterStatusListener(arguments, &userClient);
+    case kMethodCopyStatusSnapshot:
+        return runtimeState.Status().CopyStatusSnapshot(arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
+MethodDispatchResult DispatchTransactionMethods(
+    ASFW::UserClient::UserClientRuntimeState& runtimeState, ASFWDriverUserClient& userClient,
+    IOUserClientMethodArguments* arguments, uint64_t selector) {
+    switch (selector) {
+    case kMethodAsyncRead:
+        return runtimeState.Transactions().AsyncRead(arguments, &userClient);
+    case kMethodAsyncWrite:
+        return runtimeState.Transactions().AsyncWrite(arguments, &userClient);
+    case kMethodAsyncBlockRead:
+        return runtimeState.Transactions().AsyncBlockRead(arguments, &userClient);
+    case kMethodAsyncBlockWrite:
+        return runtimeState.Transactions().AsyncBlockWrite(arguments, &userClient);
+    case kMethodGetTransactionResult:
+        return runtimeState.Transactions().GetTransactionResult(arguments);
+    case kMethodRegisterTransactionListener:
+        return runtimeState.Transactions().RegisterTransactionListener(arguments, &userClient);
+    case kMethodAsyncCompareSwap:
+        return runtimeState.Transactions().AsyncCompareSwap(arguments, &userClient);
+    default:
+        return std::nullopt;
+    }
+}
+
+MethodDispatchResult DispatchConfigRomMethods(
+    ASFW::UserClient::UserClientRuntimeState& runtimeState, IOUserClientMethodArguments* arguments,
+    uint64_t selector) {
+    switch (selector) {
+    case kMethodExportConfigROM:
+        return runtimeState.ConfigROM().ExportConfigROM(arguments);
+    case kMethodTriggerROMRead:
+        return runtimeState.ConfigROM().TriggerROMRead(arguments);
+    case kMethodGetDiscoveredDevices:
+        return runtimeState.DeviceDiscovery().GetDiscoveredDevices(arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
+MethodDispatchResult DispatchAVCMethods(ASFW::UserClient::UserClientRuntimeState& runtimeState,
+                                        IOUserClientMethodArguments* arguments,
+                                        uint64_t selector) {
+    switch (selector) {
+    case kMethodGetAVCUnits:
+        return runtimeState.AVC().GetAVCUnits(arguments);
+    case kMethodGetSubunitCapabilities:
+        return runtimeState.AVC().GetSubunitCapabilities(arguments);
+    case kMethodGetSubunitDescriptor:
+        return runtimeState.AVC().GetSubunitDescriptor(arguments);
+    case kMethodReScanAVCUnits:
+        return runtimeState.AVC().ReScanAVCUnits(arguments);
+    case kMethodSendRawFCPCommand:
+        return runtimeState.AVC().SendRawFCPCommand(arguments);
+    case kMethodGetRawFCPCommandResult:
+        return runtimeState.AVC().GetRawFCPCommandResult(arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
+kern_return_t HandleGetDriverVersion(IOUserClientMethodArguments* arguments) {
+    ASFW_LOG_V3(UserClient, "GetDriverVersion called");
+    ASFW_LOG_V3(UserClient, "  structureOutput=%p", arguments->structureOutput);
+    ASFW_LOG_V3(UserClient, "  structureOutputDescriptor=%p",
+                arguments->structureOutputDescriptor);
+
+    const ASFW::Shared::DriverVersionInfo versionInfo =
+        ASFW::Shared::DriverVersionInfo::Create(ASFW::Version::kSemanticVersion,
+                                                ASFW::Version::kGitCommitShort,
+                                                ASFW::Version::kGitCommitFull,
+                                                ASFW::Version::kGitBranch,
+                                                ASFW::Version::kBuildTimestamp,
+                                                ASFW::Version::kBuildHost,
+                                                ASFW::Version::kGitDirty);
+
+    ASFW_LOG_V3(UserClient, "  Creating OSData with %zu bytes", sizeof(versionInfo));
+
+    OSData* data = OSData::withBytes(&versionInfo, sizeof(versionInfo));
+    if (!data) {
+        ASFW_LOG_V0(UserClient, "  OSData::withBytes failed!");
+        return kIOReturnNoMemory;
+    }
+
+    arguments->structureOutput = data;
+    ASFW_LOG_V3(UserClient, "GetDriverVersion: %{public}s", ASFW::Version::kFullVersionString);
+    return kIOReturnSuccess;
+}
+
+MethodDispatchResult DispatchDriverScalarSetters(ASFWDriver& driver,
+                                                 IOUserClientMethodArguments* arguments,
+                                                 uint64_t selector) {
+    const auto value = GetFirstScalarInput(arguments);
+    switch (selector) {
+    case kMethodSetAsyncVerbosity:
+        return value ? MethodDispatchResult{driver.SetAsyncVerbosity(*value)}
+                     : MethodDispatchResult{kIOReturnBadArgument};
+    case kMethodSetIsochVerbosity:
+        return value ? MethodDispatchResult{driver.SetIsochVerbosity(*value)}
+                     : MethodDispatchResult{kIOReturnBadArgument};
+    case kMethodSetHexDumps:
+        return value ? MethodDispatchResult{driver.SetHexDumps(*value)}
+                     : MethodDispatchResult{kIOReturnBadArgument};
+    case kMethodSetAudioAutoStart:
+        return value ? MethodDispatchResult{driver.SetAudioAutoStart(*value)}
+                     : MethodDispatchResult{kIOReturnBadArgument};
+    default:
+        return std::nullopt;
+    }
+}
+
+kern_return_t HandleGetAudioAutoStart(ASFWDriver& driver,
+                                      IOUserClientMethodArguments* arguments) {
+    if (!arguments->scalarOutput || arguments->scalarOutputCount < 1) {
+        return kIOReturnBadArgument;
+    }
+
+    uint32_t enabled = 0;
+    const kern_return_t kr = driver.GetAudioAutoStart(&enabled);
+    if (kr == kIOReturnSuccess) {
+        arguments->scalarOutput[0] = enabled;
+        arguments->scalarOutputCount = 1;
+    }
+    return kr;
+}
+
+kern_return_t HandleGetLogConfig(ASFWDriver& driver,
+                                 IOUserClientMethodArguments* arguments) {
+    if (!arguments->scalarOutput || arguments->scalarOutputCount < 2) {
+        return kIOReturnBadArgument;
+    }
+
+    uint32_t asyncVerbosity = 0;
+    uint32_t hexDumpsEnabled = 0;
+    uint32_t isochVerbosity = 0;
+    const kern_return_t kr =
+        driver.GetLogConfig(&asyncVerbosity, &hexDumpsEnabled, &isochVerbosity);
+    if (kr != kIOReturnSuccess) {
+        return kr;
+    }
+
+    arguments->scalarOutput[0] = asyncVerbosity;
+    arguments->scalarOutput[1] = hexDumpsEnabled;
+    if (arguments->scalarOutputCount >= 4) {
+        arguments->scalarOutput[2] = isochVerbosity;
+        arguments->scalarOutput[3] = 0;  // reserved (was the removed dev TX-verifier flag)
+        arguments->scalarOutputCount = 4;
+    } else if (arguments->scalarOutputCount >= 3) {
+        arguments->scalarOutput[2] = isochVerbosity;
+        arguments->scalarOutputCount = 3;
+    } else {
+        arguments->scalarOutputCount = 2;
+    }
+
+    return kr;
+}
+
+MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
+                                                  IOUserClientMethodArguments* arguments,
+                                                  uint64_t selector) {
+    if (selector == kMethodGetDriverVersion) {
+        return HandleGetDriverVersion(arguments);
+    }
+
+    if (const auto setterResult =
+            DispatchDriverScalarSetters(driver, arguments, selector);
+        setterResult.has_value()) {
+        return setterResult;
+    }
+
+    switch (selector) {
+    case kMethodGetAudioAutoStart:
+        return HandleGetAudioAutoStart(driver, arguments);
+    case kMethodGetLogConfig:
+        return HandleGetLogConfig(driver, arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
+MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeState& runtimeState,
+                                          IOUserClientMethodArguments* arguments,
+                                          uint64_t selector) {
+    switch (selector) {
+    case kMethodTestIRMAllocation:
+        return runtimeState.Isoch().TestIRMAllocation(arguments);
+    case kMethodTestIRMRelease:
+        return runtimeState.Isoch().TestIRMRelease(arguments);
+    case kMethodTestCMPConnectOPCR:
+        return runtimeState.Isoch().TestCMPConnectOPCR(arguments);
+    case kMethodTestCMPDisconnectOPCR:
+        return runtimeState.Isoch().TestCMPDisconnectOPCR(arguments);
+    case kMethodTestCMPConnectIPCR:
+        return runtimeState.Isoch().TestCMPConnectIPCR(arguments);
+    case kMethodTestCMPDisconnectIPCR:
+        return runtimeState.Isoch().TestCMPDisconnectIPCR(arguments);
+    case kMethodStartIsochReceive:
+        return runtimeState.Isoch().StartIsochReceive(arguments);
+    case kMethodStopIsochReceive:
+        return runtimeState.Isoch().StopIsochReceive(arguments);
+    case kMethodGetIsochRxMetrics:
+        return runtimeState.Isoch().GetIsochRxMetrics(arguments);
+    case kMethodResetIsochRxMetrics:
+        return runtimeState.Isoch().ResetIsochRxMetrics(arguments);
+    case kMethodStartIsochTransmit:
+        return runtimeState.Isoch().StartIsochTransmit(arguments);
+    case kMethodStopIsochTransmit:
+        return runtimeState.Isoch().StopIsochTransmit(arguments);
+    case kMethodStartDVCapture:
+        return runtimeState.Isoch().StartDVCapture(arguments);
+    case kMethodStopDVCapture:
+        return runtimeState.Isoch().StopDVCapture(arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
+constexpr uint64_t kMethodDiagGetBusContract      = 1000;
+constexpr uint64_t kMethodDiagGetTopology         = 1001;
+constexpr uint64_t kMethodDiagGetRoleCoordinator  = 1002;
+constexpr uint64_t kMethodDiagGetOHCI             = 1003;
+constexpr uint64_t kMethodDiagGetPHY              = 1004;
+constexpr uint64_t kMethodDiagGetCSRContract      = 1005;
+constexpr uint64_t kMethodDiagGetAsyncTrace       = 1006;
+constexpr uint64_t kMethodDiagGetInboundCSRStats  = 1007;
+constexpr uint64_t kMethodDiagClearAsyncTrace     = 1008;
+constexpr uint64_t kMethodDiagGetBusManager       = 1009;
+constexpr uint64_t kMethodDiagGetPostResetTiming  = 1010;
+
+MethodDispatchResult DispatchDiagnosticsMethods(
+    ASFW::UserClient::UserClientRuntimeState& runtimeState,
+    IOUserClientMethodArguments* arguments, uint64_t selector) {
+    switch (selector) {
+    case kMethodDiagGetBusContract:
+        return runtimeState.Diagnostics().GetBusContract(arguments);
+    case kMethodDiagGetTopology:
+        return runtimeState.Diagnostics().GetTopology(arguments);
+    case kMethodDiagGetRoleCoordinator:
+        return runtimeState.Diagnostics().GetRoleCoordinator(arguments);
+    case kMethodDiagGetOHCI:
+        return runtimeState.Diagnostics().GetOHCI(arguments);
+    case kMethodDiagGetPHY:
+        return runtimeState.Diagnostics().GetPHY(arguments);
+    case kMethodDiagGetCSRContract:
+        return runtimeState.Diagnostics().GetCSRContract(arguments);
+    case kMethodDiagGetAsyncTrace:
+        return runtimeState.Diagnostics().GetAsyncTrace(arguments);
+    case kMethodDiagGetInboundCSRStats:
+        return runtimeState.Diagnostics().GetInboundCSRStats(arguments);
+    case kMethodDiagClearAsyncTrace:
+        return runtimeState.Diagnostics().ClearAsyncTrace(arguments);
+    case kMethodDiagGetBusManager:
+        return runtimeState.Diagnostics().GetBusManager(arguments);
+    case kMethodDiagGetPostResetTiming:
+        return runtimeState.Diagnostics().GetPostResetTiming(arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
+} // namespace
 
 bool ASFWDriverUserClient::init() {
     if (!super::init()) {
@@ -111,9 +437,8 @@ bool ASFWDriverUserClient::init() {
     }
     ivars->stopping = false;
 
-    auto* runtimeState = new ASFW::UserClient::UserClientRuntimeState();
+    auto runtimeState = std::make_unique<ASFW::UserClient::UserClientRuntimeState>();
     if (!runtimeState || !runtimeState->IsValid()) {
-        delete runtimeState;
         if (ivars->actionLock) {
             IOLockFree(ivars->actionLock);
             ivars->actionLock = nullptr;
@@ -121,7 +446,7 @@ bool ASFWDriverUserClient::init() {
         IOSafeDeleteNULL(ivars, ASFWDriverUserClient_IVars, 1);
         return false;
     }
-    ivars->runtimeState = static_cast<void*>(runtimeState);
+    ivars->runtimeState = runtimeState.release();
 
     return true;
 }
@@ -148,10 +473,10 @@ void ASFWDriverUserClient::free() {
         }
 
         if (ivars->runtimeState) {
-            auto* runtimeState =
-                static_cast<ASFW::UserClient::UserClientRuntimeState*>(ivars->runtimeState);
+            auto runtimeState =
+                std::unique_ptr<ASFW::UserClient::UserClientRuntimeState>(
+                    static_cast<ASFW::UserClient::UserClientRuntimeState*>(ivars->runtimeState));
             runtimeState->ReleaseOwner(this);
-            delete runtimeState;
             ivars->runtimeState = nullptr;
         }
         IOSafeDeleteNULL(ivars, ASFWDriverUserClient_IVars, 1);
@@ -215,8 +540,6 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
         ivars->driver = nullptr;
     }
     if (auto* runtimeState = ASFW::UserClient::GetRuntimeState(this); runtimeState != nullptr) {
-        // Release owner-bound SBP-2 resources before handler teardown so
-        // abrupt client exit cannot strand address ranges inside the driver.
         runtimeState->ReleaseOwner(this);
         runtimeState->ResetHandlers();
     }
@@ -246,297 +569,68 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
         return kIOReturnNotReady;
     }
 
-    // Simple dispatcher to appropriate handler
+    if (auto result = DispatchBusResetMethods(*runtimeState, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchTopologyMethods(*runtimeState, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchStatusMethods(*runtimeState, *this, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchTransactionMethods(*runtimeState, *this, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchConfigRomMethods(*runtimeState, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchAVCMethods(*runtimeState, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchDriverControlMethods(*ivars->driver, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchIsochMethods(*runtimeState, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchDiagnosticsMethods(*runtimeState, arguments, selector)) {
+        return *result;
+    }
+
+    // main's SBP2 address-space management methods (46-49), wired into DICE's
+    // dispatch-helper ExternalMethod.
     switch (selector) {
-    // BusResetHandler methods (0, 1, 4)
-    case kMethodGetBusResetCount:
-        return runtimeState->BusReset().GetBusResetCount(arguments);
-
-    case kMethodGetBusResetHistory:
-        return runtimeState->BusReset().GetBusResetHistory(arguments);
-
-    case kMethodClearHistory:
-        return runtimeState->BusReset().ClearHistory(arguments);
-
-    // TopologyHandler methods (5, 6)
-    case kMethodGetSelfIDCapture:
-        return runtimeState->Topology().GetSelfIDCapture(arguments);
-
-    case kMethodGetTopologySnapshot:
-        return runtimeState->Topology().GetTopologySnapshot(arguments);
-
-    // StatusHandler methods (2, 3, 7, 10, 11)
-    case kMethodGetControllerStatus:
-        return runtimeState->Status().GetControllerStatus(arguments);
-
-    case kMethodGetMetricsSnapshot:
-        return runtimeState->Status().GetMetricsSnapshot(arguments);
-
-    case kMethodPing:
-        return runtimeState->Status().Ping(arguments);
-
-    case kMethodRegisterStatusListener:
-        return runtimeState->Status().RegisterStatusListener(arguments, this);
-
-    case kMethodCopyStatusSnapshot:
-        return runtimeState->Status().CopyStatusSnapshot(arguments);
-
-    // TransactionHandler methods (8, 9, 12, 13)
-    case kMethodAsyncRead:
-        return runtimeState->Transactions().AsyncRead(arguments, this);
-
-    case kMethodAsyncWrite:
-        return runtimeState->Transactions().AsyncWrite(arguments, this);
-
-    case kMethodAsyncBlockRead:
-        return runtimeState->Transactions().AsyncBlockRead(arguments, this);
-
-    case kMethodAsyncBlockWrite:
-        return runtimeState->Transactions().AsyncBlockWrite(arguments, this);
-
-    case kMethodGetTransactionResult:
-        return runtimeState->Transactions().GetTransactionResult(arguments);
-
-    case kMethodRegisterTransactionListener:
-        return runtimeState->Transactions().RegisterTransactionListener(arguments, this);
-
-    // ConfigROMHandler methods (14, 15)
-    case kMethodExportConfigROM:
-        return runtimeState->ConfigROM().ExportConfigROM(arguments);
-
-    case kMethodTriggerROMRead:
-        return runtimeState->ConfigROM().TriggerROMRead(arguments);
-
-    // DeviceDiscoveryHandler methods (16)
-    case kMethodGetDiscoveredDevices:
-        return runtimeState->DeviceDiscovery().GetDiscoveredDevices(arguments);
-
-    // AVCHandler methods (22, 23, 24)
-    case kMethodGetAVCUnits:
-        return runtimeState->AVC().GetAVCUnits(arguments);
-
-    case kMethodGetSubunitCapabilities:
-        return runtimeState->AVC().GetSubunitCapabilities(arguments);
-
-    case kMethodGetSubunitDescriptor:
-        return runtimeState->AVC().GetSubunitDescriptor(arguments);
-
-    case kMethodReScanAVCUnits:
-        return runtimeState->AVC().ReScanAVCUnits(arguments);
-
-    case kMethodSendRawFCPCommand:
-        return runtimeState->AVC().SendRawFCPCommand(arguments);
-
-    case kMethodGetRawFCPCommandResult:
-        return runtimeState->AVC().GetRawFCPCommandResult(arguments);
-
-    // SBP2 address space management (46-49)
     case kMethodAllocateAddressRange:
         return runtimeState->SBP2().AllocateAddressRange(arguments, this);
-
     case kMethodDeallocateAddressRange:
         return runtimeState->SBP2().DeallocateAddressRange(arguments, this);
-
     case kMethodReadIncomingData:
         return runtimeState->SBP2().ReadIncomingData(arguments, this);
-
     case kMethodWriteLocalData:
         return runtimeState->SBP2().WriteLocalData(arguments, this);
-
-    // TransactionHandler methods - CompareSwap (17)
-    case kMethodAsyncCompareSwap:
-        return runtimeState->Transactions().AsyncCompareSwap(arguments, this);
-
-    // Version query (18)
-    case kMethodGetDriverVersion: {
-        ASFW_LOG_V3(UserClient, "GetDriverVersion called");
-        ASFW_LOG_V3(UserClient, "  structureOutput=%p", arguments->structureOutput);
-        ASFW_LOG_V3(UserClient, "  structureOutputDescriptor=%p",
-                    arguments->structureOutputDescriptor);
-
-        // Create version info
-        ASFW::Shared::DriverVersionInfo versionInfo{};
-        std::strncpy(versionInfo.semanticVersion, ASFW::Version::kSemanticVersion,
-                     sizeof(versionInfo.semanticVersion) - 1);
-        std::strncpy(versionInfo.gitCommitShort, ASFW::Version::kGitCommitShort,
-                     sizeof(versionInfo.gitCommitShort) - 1);
-        std::strncpy(versionInfo.gitCommitFull, ASFW::Version::kGitCommitFull,
-                     sizeof(versionInfo.gitCommitFull) - 1);
-        std::strncpy(versionInfo.gitBranch, ASFW::Version::kGitBranch,
-                     sizeof(versionInfo.gitBranch) - 1);
-        std::strncpy(versionInfo.buildTimestamp, ASFW::Version::kBuildTimestamp,
-                     sizeof(versionInfo.buildTimestamp) - 1);
-        std::strncpy(versionInfo.buildHost, ASFW::Version::kBuildHost,
-                     sizeof(versionInfo.buildHost) - 1);
-        versionInfo.gitDirty = ASFW::Version::kGitDirty;
-
-        ASFW_LOG_V3(UserClient, "  Creating OSData with %zu bytes", sizeof(versionInfo));
-
-        // Create OSData to return structure output
-        // Note: structureOutput is initially NULL. We must create and assign the OSData object.
-        // The kernel will copy the data from this object to the user's buffer.
-        OSData* data = OSData::withBytes(&versionInfo, sizeof(versionInfo));
-        if (!data) {
-            ASFW_LOG_V0(UserClient, "  OSData::withBytes failed!");
-            return kIOReturnNoMemory;
-        }
-
-        ASFW_LOG_V3(UserClient, "  OSData created successfully, assigning to structureOutput");
-        arguments->structureOutput = data;
-
-        ASFW_LOG_V3(UserClient, "GetDriverVersion: %{public}s", ASFW::Version::kFullVersionString);
-        return kIOReturnSuccess;
-    }
-
-    // Logging configuration (19, 20, 21, 40)
-    case kMethodSetAsyncVerbosity: {
-        if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
-            return kIOReturnBadArgument;
-        }
-        uint32_t level = static_cast<uint32_t>(arguments->scalarInput[0]);
-        return ivars->driver->SetAsyncVerbosity(level);
-    }
-
-    case kMethodSetIsochVerbosity: {
-        if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
-            return kIOReturnBadArgument;
-        }
-        uint32_t level = static_cast<uint32_t>(arguments->scalarInput[0]);
-        return ivars->driver->SetIsochVerbosity(level);
-    }
-
-    case kMethodSetHexDumps: {
-        if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
-            return kIOReturnBadArgument;
-        }
-        uint32_t enabled = static_cast<uint32_t>(arguments->scalarInput[0]);
-        return ivars->driver->SetHexDumps(enabled);
-    }
-
-    case kMethodSetIsochTxVerifier: {
-        if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
-            return kIOReturnBadArgument;
-        }
-        uint32_t enabled = static_cast<uint32_t>(arguments->scalarInput[0]);
-        return ivars->driver->SetIsochTxVerifier(enabled);
-    }
-
-    case kMethodSetAudioAutoStart: {
-        if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
-            return kIOReturnBadArgument;
-        }
-        uint32_t enabled = static_cast<uint32_t>(arguments->scalarInput[0]);
-        return ivars->driver->SetAudioAutoStart(enabled);
-    }
-
-    case kMethodGetAudioAutoStart: {
-        if (!arguments->scalarOutput || arguments->scalarOutputCount < 1) {
-            return kIOReturnBadArgument;
-        }
-        uint32_t enabled = 0;
-        const kern_return_t kr = ivars->driver->GetAudioAutoStart(&enabled);
-        if (kr == kIOReturnSuccess) {
-            arguments->scalarOutput[0] = enabled;
-            arguments->scalarOutputCount = 1;
-        }
-        return kr;
-    }
-
-    case kMethodGetLogConfig: {
-        if (!arguments->scalarOutput || arguments->scalarOutputCount < 2) {
-            return kIOReturnBadArgument;
-        }
-        uint32_t asyncVerbosity = 0;
-        uint32_t hexDumpsEnabled = 0;
-        uint32_t isochVerbosity = 0;
-        kern_return_t kr =
-            ivars->driver->GetLogConfig(&asyncVerbosity, &hexDumpsEnabled, &isochVerbosity);
-        if (kr == kIOReturnSuccess) {
-            arguments->scalarOutput[0] = asyncVerbosity;
-            arguments->scalarOutput[1] = hexDumpsEnabled;
-            if (arguments->scalarOutputCount >= 4) {
-                arguments->scalarOutput[2] = isochVerbosity;
-                arguments->scalarOutput[3] =
-                    ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled() ? 1 : 0;
-                arguments->scalarOutputCount = 4;
-            } else if (arguments->scalarOutputCount >= 3) {
-                arguments->scalarOutput[2] = isochVerbosity;
-                arguments->scalarOutputCount = 3;
-            } else {
-                arguments->scalarOutputCount = 2;
-            }
-        }
-        return kr;
-    }
-
-    case kMethodTestIRMAllocation:
-        return runtimeState->Isoch().TestIRMAllocation(arguments);
-
-    case kMethodTestIRMRelease:
-        return runtimeState->Isoch().TestIRMRelease(arguments);
-
-    case kMethodTestCMPConnectOPCR:
-        return runtimeState->Isoch().TestCMPConnectOPCR(arguments);
-
-    case kMethodTestCMPDisconnectOPCR:
-        return runtimeState->Isoch().TestCMPDisconnectOPCR(arguments);
-
-    case kMethodTestCMPConnectIPCR:
-        return runtimeState->Isoch().TestCMPConnectIPCR(arguments);
-
-    case kMethodTestCMPDisconnectIPCR:
-        return runtimeState->Isoch().TestCMPDisconnectIPCR(arguments);
-
-    case kMethodStartIsochReceive:
-        return runtimeState->Isoch().StartIsochReceive(arguments);
-
-    case kMethodStopIsochReceive:
-        return runtimeState->Isoch().StopIsochReceive(arguments);
-
-    case kMethodGetIsochRxMetrics:
-        return runtimeState->Isoch().GetIsochRxMetrics(arguments);
-
-    case kMethodResetIsochRxMetrics:
-        return runtimeState->Isoch().ResetIsochRxMetrics(arguments);
-
-    // IT DMA Allocation (no CMP - just allocates memory)
-    case kMethodStartIsochTransmit:
-        return runtimeState->Isoch().StartIsochTransmit(arguments);
-
-    case kMethodStopIsochTransmit:
-        return runtimeState->Isoch().StopIsochTransmit(arguments);
-
-    // SBP-2 session management (53-61)
     case kMethodCreateSBP2Session:
         return runtimeState->SBP2().CreateSBP2Session(arguments, this);
-
     case kMethodStartSBP2Login:
         return runtimeState->SBP2().StartSBP2Login(arguments, this);
-
     case kMethodGetSBP2SessionState:
         return runtimeState->SBP2().GetSBP2SessionState(arguments, this);
-
     case kMethodSubmitSBP2Inquiry:
         return runtimeState->SBP2().SubmitSBP2Inquiry(arguments, this);
-
     case kMethodGetSBP2InquiryResult:
         return runtimeState->SBP2().GetSBP2InquiryResult(arguments, this);
-
-    case kMethodReleaseSBP2Session:
-        return runtimeState->SBP2().ReleaseSBP2Session(arguments, this);
-
     case kMethodSubmitSBP2Command:
         return runtimeState->SBP2().SubmitSBP2Command(arguments, this);
-
     case kMethodGetSBP2CommandResult:
         return runtimeState->SBP2().GetSBP2CommandResult(arguments, this);
-
     case kMethodSubmitSBP2TaskManagement:
         return runtimeState->SBP2().SubmitSBP2TaskManagement(arguments, this);
-
+    case kMethodReleaseSBP2Session:
+        return runtimeState->SBP2().ReleaseSBP2Session(arguments, this);
     default:
-        return kIOReturnBadArgument;
+        break;
     }
+
+    return kIOReturnBadArgument;
 }
 
 // LOCALONLY user-client ABI entry point.
@@ -555,7 +649,7 @@ kern_return_t ASFWDriverUserClient::AsyncRead(uint16_t destinationID, uint16_t a
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriverUserClient::AsyncWrite(uint16_t destinationID, uint16_t addressHi,
                                                uint32_t addressLo, uint32_t length,
-                                               const void* payload, uint16_t* handle) {
+                                               const uint8_t* payload, uint16_t* handle) {
     // LOCALONLY method - implementation is in TransactionHandler via ExternalMethod case 9
     // This should never be called directly
     if (handle) {
@@ -567,7 +661,7 @@ kern_return_t ASFWDriverUserClient::AsyncWrite(uint16_t destinationID, uint16_t 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriverUserClient::AsyncCompareSwap(uint16_t destinationID, uint16_t addressHi,
                                                      uint32_t addressLo, uint8_t size,
-                                                     const void* compareValue, const void* newValue, // NOLINT(bugprone-easily-swappable-parameters)
+                                                     const uint8_t* compareValue, const uint8_t* newValue, // NOLINT(bugprone-easily-swappable-parameters)
                                                      uint16_t* handle, uint8_t* locked) {
     // LOCALONLY method - implementation is in TransactionHandler via ExternalMethod case 17
     // This should never be called directly
@@ -633,7 +727,7 @@ void ASFWDriverUserClient::NotifyTransactionComplete(uint16_t handle, uint32_t s
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriverUserClient::GetTransactionResult(uint16_t handle, uint32_t* status,
-                                                         uint32_t* dataLength, void* data,
+                                                         uint32_t* dataLength, uint8_t* data,
                                                          uint32_t maxDataLength) {
     // LOCALONLY method - implementation is in TransactionHandler via ExternalMethod case 12
     // This should never be called directly
@@ -653,12 +747,14 @@ kern_return_t IMPL(ASFWDriverUserClient, CopyClientMemoryForType) {
         return kIOReturnNotReady;
     }
 
-    // Only support kSharedStatusMemoryType = 0
-    if (type != 0) {
-        return kIOReturnUnsupported;
+    // Type 0: shared status memory. Type 1: DV capture ring.
+    if (type == 0) {
+        return ivars->driver->CopySharedStatusMemory(options, memory);
     }
-
-    return ivars->driver->CopySharedStatusMemory(options, memory);
+    if (type == 1) {
+        return ivars->driver->CopyDVCaptureMemory(options, memory);
+    }
+    return kIOReturnUnsupported;
 }
 
 // Note: GetDiscoveredDevices is handled in ExternalMethod (selector 16), no stub needed

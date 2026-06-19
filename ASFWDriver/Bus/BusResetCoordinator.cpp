@@ -12,11 +12,12 @@
 #include "../ConfigROM/ROMScanner.hpp"
 #include "../Hardware/OHCIConstants.hpp"
 #include "BusManager.hpp"
-#include "HardwareInterface.hpp"
-#include "InterruptManager.hpp"
-#include "Logging.hpp"
+#include "../Hardware/HardwareInterface.hpp"
+#include "../Hardware/InterruptManager.hpp"
+#include "../Logging/Logging.hpp"
 #include "SelfIDCapture.hpp"
 #include "TopologyManager.hpp"
+#include "CSR/TopologyMapService.hpp"
 
 namespace {
 
@@ -38,6 +39,15 @@ void LogDeferredRunAlreadyScheduled(const char* reason) {
                 (reason != nullptr) ? reason : "unspecified");
 }
 
+// TODO(ASFW-concurrency, deferred / not critical): this blocks the dext's "Default"
+// IODispatchQueue, which also owns the OHCI interrupt dispatch source — so sleeping
+// here stalls AR/AT/isoch DMA interrupt servicing for the sleep duration. Tolerable
+// for bus-reset settle (stop-the-world, µs-scale per OHCI "5µs→255µs" rule), but
+// IOSleep is ms-granularity: verify callers pass µs-equivalent delays, not ms. Part
+// of a broader audit of which IOSleep/DispatchSync sites run on Default vs a side
+// queue (FCPTransport, IsochService, DICE bring-up, PayloadRegistry). Possible future
+// fix if it bites: move the OHCI interrupt source to a dedicated queue (which then
+// reintroduces a lock requirement for shared bus state, e.g. TopologyManager).
 void SleepForDelay(uint32_t delayMs) {
 #ifdef ASFW_HOST_TEST
     if (delayMs > 0U) {
@@ -71,7 +81,8 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
                                      Async::IAsyncControllerPort* asyncSys,
                                      SelfIDCapture* selfIdCapture, ConfigROMStager* configRom,
                                      InterruptManager* interrupts, TopologyManager* topology,
-                                     BusManager* busManager, Discovery::ROMScanner* romScanner) {
+                                     BusManager* busManager, Discovery::ROMScanner* romScanner,
+                                     Bus::TopologyMapService* topologyMapService) {
     hardware_ = hw;
     workQueue_ = std::move(workQueue);
     asyncSubsystem_ = asyncSys;
@@ -81,6 +92,7 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
     topologyManager_ = topology;
     busManager_ = busManager;
     romScanner_ = romScanner;
+    topologyMapService_ = topologyMapService;
 
     state_ = State::Idle;
     selfIdLatch_.Reset();
@@ -91,6 +103,10 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;
     stopFlushIssued_ = false;
+
+    if (topologyMapService_) {
+        topologyMapService_->Invalidate();
+    }
 
     if (hardware_ == nullptr || workQueue_.get() == nullptr || asyncSubsystem_ == nullptr ||
         selfIdCapture_ == nullptr || configRomStager_ == nullptr || interruptManager_ == nullptr ||
@@ -155,7 +171,7 @@ BusResetCoordinator::ResetDiagnostics BusResetCoordinator::Diagnostics() const {
     };
 }
 
-uint64_t BusResetCoordinator::MonotonicNow() {
+uint64_t BusResetCoordinator::MonotonicNow() noexcept {
 #ifdef ASFW_HOST_TEST
     return ASFW::Testing::HostMonotonicNow();
 #else
@@ -276,6 +292,14 @@ bool BusResetCoordinator::G_NodeIDValid() const {
 
     const uint32_t nodeId = hardware_->Read(Register32::kNodeID);
     return ((nodeId & 0x80000000U) != 0U) && ((nodeId & 0x3FU) != 63U);
+}
+
+bool BusResetCoordinator::G_IsRoot() const {
+    if (hardware_ == nullptr) {
+        return false;
+    }
+    // OHCI NodeID.root (bit 30) — set when the PHY reports this controller is root.
+    return (hardware_->Read(Register32::kNodeID) & NodeIDBits::kRoot) != 0U;
 }
 
 } // namespace ASFW::Driver

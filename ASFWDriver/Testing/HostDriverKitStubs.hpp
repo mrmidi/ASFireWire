@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (c) 2024 ASFireWire Project
+//
+// HostDriverKitStubs.hpp — Minimal stubs for DriverKit types to allow unit testing on host.
+
 #pragma once
 
 #ifdef ASFW_HOST_TEST
@@ -39,7 +44,37 @@ struct IOAddressSegment {
 // Forward declare for Create
 class IOBufferMemoryDescriptor;
 
-class IOService {};
+class OSObject {
+public:
+    virtual ~OSObject() = default;
+    virtual bool init() { return true; }
+    virtual void free() { delete this; }
+    void retain() {}
+    void release() {}
+};
+
+class OSAction : public OSObject {};
+
+class IOService : public OSObject {
+public:
+    virtual kern_return_t Start(IOService*) { return kIOReturnSuccess; }
+    virtual void Stop(IOService*) {}
+};
+
+using IODispatchQueueName = const char*;
+
+#define OSDynamicCast(T, obj) dynamic_cast<T*>(obj)
+
+#define kPCIBARTypeM32 1
+#define kPCIBARTypeM32PF 2
+#define kPCIBARTypeM64 3
+#define kPCIBARTypeM64PF 4
+
+struct IODMACommandSpecification {
+    uint32_t type;
+    uint32_t options;
+    uint32_t maxAddressBits;
+};
 
 namespace ASFW::Testing {
 
@@ -53,7 +88,7 @@ inline std::function<uint64_t()>& HostMonotonicClockOverride() {
     return clockOverride;
 }
 
-inline uint64_t HostMonotonicNow() {
+inline uint64_t HostMonotonicNow() noexcept {
     auto& clockOverride = HostMonotonicClockOverride();
     if (clockOverride) {
         return clockOverride();
@@ -70,17 +105,6 @@ inline void ResetHostMonotonicClockForTesting() {
 }
 
 } // namespace ASFW::Testing
-
-class OSObject {
-public:
-    virtual ~OSObject() = default;
-    virtual bool init() { return true; }
-    virtual void free() { delete this; }
-    void retain() {}
-    void release() {}
-};
-
-class OSAction : public OSObject {};
 
 class IODispatchQueue : public OSObject {
 public:
@@ -203,12 +227,10 @@ private:
         pending_.push_back(PendingWorkItem{dueNs, work});
     }
 
+    bool manualDispatchForTesting_{false};
     mutable std::mutex pendingLock_;
     std::deque<PendingWorkItem> pending_;
-    bool manualDispatchForTesting_{false};
 };
-
-using IODispatchQueueName = const char*;
 
 class IOInterruptDispatchSource : public OSObject {
 public:
@@ -244,13 +266,13 @@ public:
     kern_return_t Cancel(void*) { return kIOReturnUnsupported; }
 };
 
-class IOPCIDevice : public OSObject {
+class IOPCIDevice : public IOService {
 public:
-    kern_return_t Open(IOService*) { return kIOReturnUnsupported; }
-    void Close(IOService*) {}
-    kern_return_t GetBARInfo(uint8_t, uint8_t*, uint64_t*, uint8_t*) { return kIOReturnUnsupported; }
-    void MemoryRead32(uint8_t, uint64_t, uint32_t*) {}
-    void MemoryWrite32(uint8_t, uint64_t, uint32_t) {}
+    virtual kern_return_t Open(IOService*) { return kIOReturnUnsupported; }
+    virtual void Close(IOService*) {}
+    virtual kern_return_t GetBARInfo(uint8_t, uint8_t*, uint64_t*, uint8_t*) { return kIOReturnUnsupported; }
+    virtual void MemoryRead32(uint8_t, uint64_t, uint32_t*) {}
+    virtual void MemoryWrite32(uint8_t, uint64_t, uint32_t) {}
 };
 
 class IOMemoryMap : public OSObject {
@@ -264,7 +286,19 @@ public:
     uint64_t GetLength() const { return length_; }
 };
 
-class IOBufferMemoryDescriptor : public OSObject {
+class IOMemoryDescriptor : public OSObject {
+public:
+    virtual kern_return_t GetAddressRange(IOAddressSegment* range) = 0;
+    virtual void GetLength(uint64_t* length) = 0;
+    virtual kern_return_t CreateMapping(uint64_t options,
+                                        uint64_t address,
+                                        uint64_t offset,
+                                        uint64_t length,
+                                        uint64_t alignment,
+                                        IOMemoryMap** map) = 0;
+};
+
+class IOBufferMemoryDescriptor : public IOMemoryDescriptor {
     void* buffer_{nullptr};
     uint64_t length_{0};
 public:
@@ -289,11 +323,17 @@ public:
         return kIOReturnSuccess;
     }
 
-    kern_return_t GetAddressRange(IOAddressSegment* range) {
+    virtual kern_return_t GetAddressRange(IOAddressSegment* range) override {
         if (!range) return kIOReturnBadArgument;
         range->address = reinterpret_cast<uint64_t>(buffer_);
         range->length = length_;
         return kIOReturnSuccess;
+    }
+
+    void GetLength(uint64_t* length) override {
+        if (length) {
+            *length = length_;
+        }
     }
     
     kern_return_t SetLength(uint64_t len) {
@@ -302,7 +342,12 @@ public:
         return kIOReturnSuccess;
     }
 
-    kern_return_t CreateMapping(uint64_t options, uint64_t address, uint64_t offset, uint64_t length, uint64_t alignment, IOMemoryMap** map) {
+    kern_return_t CreateMapping(uint64_t options,
+                                uint64_t address,
+                                uint64_t offset,
+                                uint64_t length,
+                                uint64_t alignment,
+                                IOMemoryMap** map) override {
         if (!map) return kIOReturnBadArgument;
         auto* m = new IOMemoryMap();
         // In stub, buffer_ is the pointer. 'address' arg to CreateMapping is usually 0 (offset in descriptor).
@@ -322,8 +367,19 @@ public:
     }
     void FullBarrier() {}
     kern_return_t CompleteDMA(uint64_t options) { return kIOReturnSuccess; }
-    kern_return_t PrepareForDMA(uint64_t options, IOBufferMemoryDescriptor* buffer, uint64_t offset, uint64_t length, uint64_t* flags, uint32_t* segments, IOAddressSegment* segmentOut) {
-        if (!segmentOut) return kIOReturnBadArgument;
+    kern_return_t PrepareForDMA(uint64_t options,
+                                IOMemoryDescriptor* buffer,
+                                uint64_t offset,
+                                uint64_t length,
+                                uint64_t* flags,
+                                uint32_t* segments,
+                                IOAddressSegment* segmentOut) {
+        if (!segmentOut || !segments || *segments == 0) {
+            return kIOReturnBadArgument;
+        }
+        if (*segments > 32) {
+            return kIOReturnOverrun;
+        }
         IOAddressSegment seg;
         buffer->GetAddressRange(&seg);
         static std::atomic<uint32_t> sMockIOVA{0x10000000u};
@@ -348,10 +404,12 @@ static constexpr kern_return_t kIOReturnUnsupported = static_cast<kern_return_t>
 static constexpr uint64_t kIOMemoryDirectionInOut = 0;
 static constexpr uint64_t kIOMemoryDirectionIn = 1;
 static constexpr uint64_t kIOMemoryDirectionOut = 2;
+static constexpr uint64_t kIOMemoryDirectionOutIn = 3;
 static constexpr uint64_t kIODMACommandCreateNoOptions = 0;
 static constexpr uint64_t kIODMACommandPrepareForDMANoOptions = 0;
 static constexpr uint64_t kIODMACommandCompleteDMANoOptions = 0;
 static constexpr uint64_t kIODMACommandSpecificationNoOptions = 0;
+static constexpr uint64_t kIOMemoryMapCacheModeDefault = 0;
 static constexpr uint64_t kIOMemoryMapCacheModeInhibit = 0;
 
 template <typename T>

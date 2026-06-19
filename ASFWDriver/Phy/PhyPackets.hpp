@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <DriverKit/IOLib.h>
+
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -17,14 +19,14 @@ using Quadlet = std::uint32_t;
 // Helpers for endian conversion between host order and bus (big-endian) order.
 constexpr Quadlet ToBusOrder(Quadlet value) noexcept {
     if constexpr (std::endian::native == std::endian::little) {
-        return std::byteswap(value);
+        return OSSwapBigToHostInt32(value);
     }
     return value;
 }
 
 constexpr Quadlet FromBusOrder(Quadlet value) noexcept {
     if constexpr (std::endian::native == std::endian::little) {
-        return std::byteswap(value);
+        return OSSwapBigToHostInt32(value);
     }
     return value;
 }
@@ -116,6 +118,26 @@ struct PhyGlobalResumePacket {
         const Quadlet first =
             (static_cast<Quadlet>(phyId & 0x3Fu) << AlphaPhyConfig::kRootIdShift) |
             0x003C'0000u;
+        return {first, ~first};
+    }
+
+    [[nodiscard]] constexpr std::array<Quadlet, 2> EncodeBusOrder() const noexcept {
+        auto host = EncodeHostOrder();
+        return {ToBusOrder(host[0]), ToBusOrder(host[1])};
+    }
+};
+
+/**
+ * @brief Represents a Link-On PHY packet.
+ * IEEE 1394a-2000 §4.3.4.2: identifier = 01b, bits 2:7 = target phy_ID, rest = 0.
+ */
+struct LinkOnPacket {
+    std::uint8_t phyId{0};
+
+    [[nodiscard]] constexpr std::array<Quadlet, 2> EncodeHostOrder() const noexcept {
+        // identifier = 01b (bit 30 set, 31 clear), bits 2:7 = phy_ID (shift 24).
+        const Quadlet first =
+            (1u << 30) | (static_cast<Quadlet>(phyId & 0x3Fu) << AlphaPhyConfig::kRootIdShift);
         return {first, ~first};
     }
 

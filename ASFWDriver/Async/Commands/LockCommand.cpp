@@ -55,7 +55,10 @@ std::unique_ptr<PayloadContext> LockCommand::PreparePayload(
     
     // Lock operand: allocate DMA buffer for compare-and-swap data
     constexpr uint64_t kLockPayloadDirection = kIOMemoryDirectionInOut;  // host writes, controller reads
-    return PayloadContext::Create(hw, params_.operand, params_.operandLength, kLockPayloadDirection);
+    return PayloadContext::Create(hw,
+                                  reinterpret_cast<const uint8_t*>(params_.operand),
+                                  params_.operandLength,
+                                  kLockPayloadDirection);
 }
 
 } // namespace ASFW::Async

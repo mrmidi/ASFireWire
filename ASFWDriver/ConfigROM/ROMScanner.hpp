@@ -15,6 +15,7 @@
 #include "../Controller/ControllerTypes.hpp"
 #include "../Discovery/DiscoveryTypes.hpp"
 #include "../Discovery/SpeedPolicy.hpp"
+#include "../Bus/Role/RolePolicy.hpp"
 
 namespace ASFW::Async {
 class IFireWireBus;
@@ -41,6 +42,10 @@ struct ROMScanRequest {
     // If empty: scan all remote nodes (excluding local node, and skipping link-inactive nodes).
     // If non-empty: scan only these node IDs (local node is always skipped).
     std::vector<uint8_t> targetNodes;
+
+    // Optional FW-8 callback: emits root BIB/CMC evidence while the normal full
+    // discovery scan continues unchanged.
+    std::function<void(Driver::Role::RootCapabilityEvidence)> rootCapabilityCallback;
 };
 
 using ScanCompletionCallback =

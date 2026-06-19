@@ -9,6 +9,9 @@
 #include "../Async/FireWireBusImpl.hpp"
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/CSR/CSRResponder.hpp"
+#include "../Bus/CSR/SpeedMapService.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
@@ -26,14 +29,15 @@
 #include "../Hardware/OHCIConstants.hpp"
 #include "../Hardware/OHCIEventCodes.hpp"
 #include "../Hardware/RegisterMap.hpp"
-#include "../IRM/IRMClient.hpp"
+#include "../Bus/IRM/IRMClient.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
-#include "../Protocols/Audio/DeviceProtocolFactory.hpp"
+#include "../Protocols/SBP2/Session/SessionRegistry.hpp"
+#include "../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
 #include "ControllerStateMachine.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace ASFW::Driver {
 
@@ -49,23 +53,8 @@ MetricsSink& ControllerCore::Metrics() const {
 
 std::optional<TopologySnapshot> ControllerCore::LatestTopology() const {
     if (deps_.topology) {
-        auto snapshot = deps_.topology->LatestSnapshot();
-        if (snapshot.has_value()) {
-            // mute log spamming
-            // ASFW_LOG(Controller, "LatestTopology() returning snapshot: gen=%u nodes=%u
-            // root=%{public}s IRM=%{public}s",
-            //          snapshot->generation,
-            //          snapshot->nodeCount,
-            //          snapshot->rootNodeId.has_value() ?
-            //          std::to_string(*snapshot->rootNodeId).c_str() : "none",
-            //          snapshot->irmNodeId.has_value() ?
-            //          std::to_string(*snapshot->irmNodeId).c_str() : "none");
-        } else {
-            ASFW_LOG(Controller, "LatestTopology() returning nullopt (no topology built yet)");
-        }
-        return snapshot;
+        return deps_.topology->LatestSnapshot();
     }
-    ASFW_LOG(Controller, "LatestTopology() returning nullopt (no TopologyManager)");
     return std::nullopt;
 }
 
@@ -91,6 +80,10 @@ Discovery::DeviceRegistry* ControllerCore::GetDeviceRegistry() const {
     return deps_.deviceRegistry.get();
 }
 
+Audio::AudioRuntimeRegistry* ControllerCore::GetAudioRuntimeRegistry() const {
+    return deps_.audioRuntimeRegistry.get();
+}
+
 Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
     return deps_.avcDiscovery.get();
 }
@@ -104,14 +97,8 @@ void ControllerCore::SetFCPResponseRouter(
     deps_.fcpResponseRouter = std::move(fcpResponseRouter);
 }
 
-IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }
-
 Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager() const {
     return deps_.sbp2AddressSpaceManager.get();
-}
-
-Protocols::SBP2::SBP2SessionRegistry* ControllerCore::GetSBP2SessionRegistry() const {
-    return deps_.sbp2SessionRegistry.get();
 }
 
 void ControllerCore::SetSbp2AddressSpaceManager(
@@ -119,10 +106,16 @@ void ControllerCore::SetSbp2AddressSpaceManager(
     deps_.sbp2AddressSpaceManager = std::move(sbp2AddressSpaceManager);
 }
 
-void ControllerCore::SetSBP2SessionRegistry(
-    std::shared_ptr<Protocols::SBP2::SBP2SessionRegistry> sbp2SessionRegistry) {
+Protocols::SBP2::SessionRegistry* ControllerCore::GetSbp2SessionRegistry() const {
+    return deps_.sbp2SessionRegistry.get();
+}
+
+void ControllerCore::SetSbp2SessionRegistry(
+    std::shared_ptr<Protocols::SBP2::SessionRegistry> sbp2SessionRegistry) {
     deps_.sbp2SessionRegistry = std::move(sbp2SessionRegistry);
 }
+
+IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }
 
 void ControllerCore::SetIRMClient(std::shared_ptr<IRM::IRMClient> client) {
     deps_.irmClient = std::move(client);
@@ -132,6 +125,21 @@ CMP::CMPClient* ControllerCore::GetCMPClient() const { return deps_.cmpClient.ge
 
 void ControllerCore::SetCMPClient(std::shared_ptr<CMP::CMPClient> client) {
     deps_.cmpClient = std::move(client);
+}
+
+Bus::BusManagerElectionDriver* ControllerCore::GetBusManagerElectionDriver() const {
+    return deps_.busManagerElectionDriver.get();
+}
+
+void ControllerCore::SetBusManagerElectionDriver(std::shared_ptr<Bus::BusManagerElectionDriver> driver) {
+    deps_.busManagerElectionDriver = std::move(driver);
+}
+
+void ControllerCore::SetCSRResponder(std::shared_ptr<Bus::CSRResponder> responder) {
+    deps_.csrResponder = std::move(responder);
+    if (deps_.csrResponder) {
+        deps_.csrResponder->SetSpeedMapProvider(speedMapService_.get());
+    }
 }
 
 // Diagnostic accessors for UserClient handlers

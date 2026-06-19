@@ -7,6 +7,8 @@
 
 namespace ASFW::Async {
 
+class PayloadContext;
+
 class PayloadRegistry {
 public:
     enum class CancelMode {
@@ -19,10 +21,10 @@ public:
 
     // Attach a payload for a given outstanding handle. The registry takes
     // ownership via shared_ptr so callers can pass ownership-friendly types.
-    void Attach(uint32_t handle, std::shared_ptr<void> payload, uint32_t epoch = 0);
+    void Attach(uint32_t handle, std::shared_ptr<PayloadContext> payload, uint32_t epoch = 0);
 
     // Detach and return the payload for the given handle (or nullptr if none).
-    std::shared_ptr<void> Detach(uint32_t handle);
+    std::shared_ptr<PayloadContext> Detach(uint32_t handle);
 
     // Cancel all payloads. If mode==Synchronous, blocks until drain completes.
     void CancelAll(CancelMode mode = CancelMode::Deferred);
@@ -40,7 +42,7 @@ public:
 
 private:
     struct Entry {
-        std::shared_ptr<void> payload;
+        std::shared_ptr<PayloadContext> payload;
         uint32_t epoch{0};
     };
 

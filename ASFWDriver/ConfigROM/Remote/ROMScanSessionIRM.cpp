@@ -2,7 +2,7 @@
 
 #include "../../Async/Interfaces/IFireWireBus.hpp"
 #include "../../Bus/TopologyManager.hpp"
-#include "../../IRM/IRMTypes.hpp"
+#include "../../Bus/IRM/IRMTypes.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -79,8 +79,8 @@ void ROMScanSession::HandleIRMReadComplete(uint8_t nodeId, bool success, uint32_
         ASFW_LOG_V1(ConfigROM, "ROMScanSession: Node %u IRM read verify failed - marking bad IRM",
                     nodeId);
         node.SetIRMIsBad(true);
-        if (topologyManager_ != nullptr && topology_.irmNodeId.has_value() &&
-            *topology_.irmNodeId == nodeId) {
+        if (topologyManager_ != nullptr && topology_.irmNodeId != Driver::kInvalidPhysicalId &&
+            topology_.irmNodeId == nodeId) {
             topologyManager_->MarkNodeAsBadIRM(nodeId);
         }
 
@@ -160,8 +160,8 @@ void ROMScanSession::HandleIRMLockComplete(uint8_t nodeId, bool success) {
         ASFW_LOG_V1(ConfigROM, "ROMScanSession: Node %u IRM lock verify failed - marking bad IRM",
                     nodeId);
         node.SetIRMIsBad(true);
-        if (topologyManager_ != nullptr && topology_.irmNodeId.has_value() &&
-            *topology_.irmNodeId == nodeId) {
+        if (topologyManager_ != nullptr && topology_.irmNodeId != Driver::kInvalidPhysicalId &&
+            topology_.irmNodeId == nodeId) {
             topologyManager_->MarkNodeAsBadIRM(nodeId);
         }
     } else {
@@ -173,17 +173,6 @@ void ROMScanSession::HandleIRMLockComplete(uint8_t nodeId, bool success) {
 }
 
 void ROMScanSession::ContinueAfterIRMCheck(ROMScanNodeStateMachine& node) {
-    if (node.ROM().bib.crcLength <= node.ROM().bib.busInfoLength) {
-        if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::Complete,
-                                 "IRM check complete minimal ROM complete")) {
-            Pump();
-            return;
-        }
-        completedROMs_.push_back(std::move(node.MutableROM()));
-        Pump();
-        return;
-    }
-
     StartRootDirRead(node);
 }
 

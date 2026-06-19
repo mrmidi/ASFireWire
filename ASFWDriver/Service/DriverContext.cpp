@@ -4,19 +4,20 @@
 
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
-#include <utility>
-
 #include "../Async/AsyncSubsystem.hpp"
 #include "../Async/Interfaces/IFireWireBus.hpp"
 #include "../Async/PacketHelpers.hpp"
 #include "../Async/ResponseCode.hpp"
-#include "../Async/Rx/PacketRouter.hpp"
 #include "../Async/Tx/ResponseSender.hpp"
-#include "../Audio/AudioCoordinator.hpp"
+#include "../Audio/Core/AudioCoordinator.hpp"
+#include "../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/CSR/BroadcastChannelCSR.hpp"
+#include "../Bus/CSR/TopologyMapService.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -28,32 +29,37 @@
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Hardware/InterruptManager.hpp"
 #include "../Logging/Logging.hpp"
-#include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
-#include "../Protocols/SBP2/SBP2SessionRegistry.hpp"
+#include "../Protocols/SBP2/Session/DriverKitSessionScheduler.hpp"
+#include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
-namespace {
-
-void StopAndClearAsyncRouting(ServiceContext& ctx) {
-    if (!ctx.deps.asyncSubsystem) {
-        return;
+void ServiceContext::DisarmProviderNotifications() {
+#ifndef ASFW_HOST_TEST
+    if (providerNotifications) {
+        (void)providerNotifications->SetEnableWithCompletion(false, nullptr);
+        // Do not call Cancel(nullptr) here. DriverKit dispatches cancel asynchronously,
+        // and releasing the source before that block runs can crash in Cancel_Impl.
     }
-
-    ctx.deps.asyncSubsystem->Stop();
-    if (auto* router = ctx.deps.asyncSubsystem->GetPacketRouter()) {
-        router->ClearAllHandlers();
-    }
+    providerNotifications.reset();
+    providerNotificationAction.reset();
+#endif
 }
-
-} // namespace
 
 void ServiceContext::Reset() {
     stopping.store(true, std::memory_order_release);
-    StopAndClearAsyncRouting(*this);
+    if (audioCoordinator) {
+        audioCoordinator->BeginTeardown();
+    }
+    isoch.StopAll();
     controller.reset();
     audioCoordinator.reset();
+    // Tear down the runtime audio protocols while the services they were built from
+    // (bus/hardware/IRM) are still alive. controller.reset() above dropped the controller's
+    // copy of this shared_ptr, so the deps copy is the last owner; resetting it here lets the
+    // protocol destructors run before the bus/IRM teardown below.
+    deps.audioRuntimeRegistry.reset();
     deps.hardware.reset();
     deps.busReset.reset();
     deps.busManager.reset();
@@ -65,26 +71,22 @@ void ServiceContext::Reset() {
     deps.configRomStager.reset();
     deps.interrupts.reset();
     deps.topology.reset();
-    deps.fcpResponseRouter.reset();  // Clean up FCP router
-    deps.sbp2AddressSpaceManager.reset();
+    deps.topologyMapService.reset();
+    deps.busManagerElectionDriver.reset();
+    deps.fcpResponseRouter.reset(); // Clean up FCP router
     deps.sbp2SessionRegistry.reset();
-    deps.avcDiscovery.reset();       // Clean up AV/C discovery
-    deps.irmClient.reset();          // Clean up IRM client
+    deps.sbp2SessionScheduler.reset();
+    deps.sbp2AddressSpaceManager.reset();
+    deps.avcDiscovery.reset();      // Clean up AV/C discovery
+    deps.irmClient.reset();         // Clean up IRM client
     deps.asyncController.reset();
-    deps.asyncSubsystem.reset();     // Cleanup asyncSubsystem after handlers are cleared.
+    deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    deps.cycleInconsistentCallback = {};
     statusPublisher.Reset();
     watchdog.Reset();
-#ifndef ASFW_HOST_TEST
-    if (providerNotifications) {
-        providerNotifications->SetEnableWithCompletion(false, nullptr);
-        providerNotifications->Cancel(nullptr);
-    }
-    providerNotifications.reset();
-    providerNotificationAction.reset();
-#endif
+    DisarmProviderNotifications();
     workQueue.reset();
     interruptAction.reset();
-    isoch.StopAll();
 }
 
 namespace ASFW::Driver {
@@ -124,6 +126,12 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     if (!d.busManager) {
         d.busManager = std::make_shared<BusManager>();
     }
+    if (!d.broadcastChannel) {
+        d.broadcastChannel = std::make_shared<ASFW::Bus::BroadcastChannelCSR>();
+    }
+    if (!d.topologyMapService && d.hardware) {
+        d.topologyMapService = std::make_shared<ASFW::Bus::TopologyMapService>(d.hardware.get());
+    }
 
     if (!d.asyncSubsystem) {
         d.asyncSubsystem = std::make_shared<ASFW::Async::AsyncSubsystem>();
@@ -146,199 +154,74 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         d.deviceManager = std::make_shared<ASFW::Discovery::DeviceManager>();
     }
 
-    if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware) {
+    // Runtime owner of device-specific IDeviceProtocol instances. Constructed here,
+    // before AudioCoordinator and ControllerCore, so both can hold the same instance:
+    // the controller triggers creation from its discovery path; the Audio layer reads it.
+    if (!d.audioRuntimeRegistry) {
+        d.audioRuntimeRegistry = std::make_shared<ASFW::Audio::AudioRuntimeRegistry>();
+    }
+
+    if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware &&
+        d.audioRuntimeRegistry) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
-            driver, *d.deviceManager, *d.deviceRegistry, ctx.isoch, *d.hardware);
+            driver, *d.deviceManager, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isoch,
+            *d.hardware);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
+    }
+
+    if (ctx.audioCoordinator) {
+        std::weak_ptr<ASFW::Audio::AudioCoordinator> weakAudio = ctx.audioCoordinator;
+        d.cycleInconsistentCallback = [weakAudio] {
+            if (auto audio = weakAudio.lock()) {
+                audio->HandleCycleInconsistent();
+            }
+        };
+    } else {
+        d.cycleInconsistentCallback = {};
     }
 
     // AV/C discovery wiring is done after ControllerCore is created so it can
     // depend only on IFireWireBus ports (ControllerCore::Bus()).
 }
 
-void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
+kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext& ctx) {
     auto& d = ctx.deps;
 
-    if (!d.fcpResponseRouter && d.avcDiscovery && ctx.controller) {
-        auto& bus = ctx.controller->Bus();
-        d.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
-            *d.avcDiscovery,
-            bus
-        );
-        ASFW_LOG(Controller, "[Controller] FCPResponseRouter initialized");
-    }
-
     if (!d.sbp2AddressSpaceManager && d.hardware) {
-        d.sbp2AddressSpaceManager = std::make_shared<ASFW::Protocols::SBP2::AddressSpaceManager>(
-            d.hardware.get());
+        d.sbp2AddressSpaceManager =
+            std::make_shared<ASFW::Protocols::SBP2::AddressSpaceManager>(d.hardware.get());
         ASFW_LOG(Controller, "[Controller] SBP2 AddressSpaceManager initialized");
     }
 
-    if (!d.sbp2SessionRegistry && ctx.controller && d.deviceManager && d.sbp2AddressSpaceManager) {
+    if (!d.sbp2SessionScheduler) {
+        d.sbp2SessionScheduler =
+            std::make_shared<ASFW::Protocols::SBP2::DriverKitSessionScheduler>();
+        const auto kr = d.sbp2SessionScheduler->Prepare(service, ctx.workQueue);
+        if (kr != kIOReturnSuccess) {
+            d.sbp2SessionScheduler.reset();
+            return kr;
+        }
+        ASFW_LOG(Controller, "[Controller] SBP2 session scheduler initialized");
+    }
+
+    if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
+        d.deviceManager && d.sbp2SessionScheduler) {
         auto& bus = ctx.controller->Bus();
-        d.sbp2SessionRegistry =
-            std::make_shared<ASFW::Protocols::SBP2::SBP2SessionRegistry>(
-                bus,
-                bus,
-                *d.sbp2AddressSpaceManager,
-                *d.deviceManager,
-                ctx.workQueue.get());
+        d.sbp2SessionRegistry = std::make_shared<ASFW::Protocols::SBP2::SessionRegistry>(
+            bus, bus, *d.sbp2AddressSpaceManager, *d.deviceManager, *d.sbp2SessionScheduler,
+            ctx.workQueue.get());
         ASFW_LOG(Controller, "[Controller] SBP2 SessionRegistry initialized");
     }
 
     if (ctx.controller) {
         ctx.controller->SetSbp2AddressSpaceManager(d.sbp2AddressSpaceManager);
-        ctx.controller->SetSBP2SessionRegistry(d.sbp2SessionRegistry);
+        ctx.controller->SetSbp2SessionRegistry(d.sbp2SessionRegistry);
     }
 
-    if (d.asyncSubsystem) {
-        if (auto* router = d.asyncSubsystem->GetPacketRouter()) {
-            auto* sbp2Manager = d.sbp2AddressSpaceManager.get();
-            auto* fcpRouter = d.fcpResponseRouter.get();
-            auto* responder = router->GetResponseSender();
-
-            // Quadlet write requests (tCode 0x0): direct address-space writes.
-            router->RegisterRequestHandler(
-                0x0,
-                [sbp2Manager](const ASFW::Async::ARPacketView& packet) {
-                    uint64_t destOffset = 0;
-                    ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
-                    if (!sbp2Manager || packet.header.size() < 16) {
-                        return ASFW::Async::ResponseCode::AddressError;
-                    }
-
-                    destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-                    const auto quadletData =
-                        std::span<const uint8_t>(packet.header.data() + 12, 4);
-                    result = sbp2Manager->ApplyRemoteWrite(destOffset, quadletData);
-                    ASFW_LOG_V2(
-                        Async,
-                        "SBP2 AR write-quadlet req: src=0x%04x offset=0x%012llx len=4 -> rcode=0x%x",
-                        packet.sourceID,
-                        static_cast<unsigned long long>(destOffset),
-                        static_cast<unsigned>(result));
-                    return result;
-                });
-
-            // Block write requests (tCode 0x1): SBP-2 first, then FCP fallback.
-            router->RegisterRequestHandler(
-                0x1,
-                [sbp2Manager, fcpRouter](const ASFW::Async::ARPacketView& packet) {
-                    uint64_t destOffset = 0;
-                    if (sbp2Manager && packet.header.size() >= 16 && !packet.payload.empty()) {
-                        destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-                        const auto sbp2Result =
-                            sbp2Manager->ApplyRemoteWrite(destOffset, packet.payload);
-                        ASFW_LOG_V2(
-                            Async,
-                            "SBP2 AR write-block req: src=0x%04x offset=0x%012llx len=%zu -> rcode=0x%x",
-                            packet.sourceID,
-                            static_cast<unsigned long long>(destOffset),
-                            packet.payload.size(),
-                            static_cast<unsigned>(sbp2Result));
-                        if (sbp2Result != ASFW::Async::ResponseCode::AddressError) {
-                            return sbp2Result;
-                        }
-                    }
-
-                    if (fcpRouter) {
-                        const Protocols::Ports::BlockWriteRequestView request{
-                            .sourceID = packet.sourceID,
-                            .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
-                            .payload = packet.payload,
-                        };
-                        const auto disposition = fcpRouter->RouteBlockWrite(request);
-                        if (disposition ==
-                            Protocols::Ports::BlockWriteDisposition::kAddressError) {
-                            return ASFW::Async::ResponseCode::AddressError;
-                        }
-                        return ASFW::Async::ResponseCode::Complete;
-                    }
-
-                    return ASFW::Async::ResponseCode::AddressError;
-                });
-
-            // Read quadlet requests (tCode 0x4): active read response from address-space manager.
-            router->RegisterRequestHandler(
-                0x4,
-                [sbp2Manager, responder](const ASFW::Async::ARPacketView& packet) {
-                    uint32_t quadlet = 0;
-                    ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
-
-                    if (sbp2Manager && packet.header.size() >= 12) {
-                        const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-                        result = sbp2Manager->ReadQuadlet(destOffset, &quadlet);
-                    }
-
-                    if (responder) {
-                        responder->SendReadQuadletResponse(packet, result, quadlet);
-                    }
-                    return ASFW::Async::ResponseCode::NoResponse;
-                });
-
-            // Read block requests (tCode 0x5): active read response from address-space manager.
-            router->RegisterRequestHandler(
-                0x5,
-                [sbp2Manager, responder](const ASFW::Async::ARPacketView& packet) {
-                    ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
-                    ASFW::Protocols::SBP2::AddressSpaceManager::ReadSlice slice{};
-                    uint64_t destOffset = 0;
-                    uint32_t readLength = 0;
-
-                    if (sbp2Manager && packet.header.size() >= 16) {
-                        destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-                        readLength =
-                            static_cast<uint32_t>(ASFW::Async::ExtractDataLength(packet.header));
-                        if (readLength > 0) {
-                            result = sbp2Manager->ResolveReadSlice(destOffset, readLength, &slice);
-                        } else {
-                            result = ASFW::Async::ResponseCode::DataError;
-                        }
-                    }
-
-                    if (result == ASFW::Async::ResponseCode::Complete) {
-                        ASFW_LOG_V2(
-                            Async,
-                            "SBP2 AR read-block req: src=0x%04x offset=0x%012llx len=%u -> "
-                            "rcode=0x%x payload=0x%08x/%u",
-                            packet.sourceID,
-                            static_cast<unsigned long long>(destOffset),
-                            readLength,
-                            static_cast<unsigned>(result),
-                            static_cast<unsigned>(slice.payloadDeviceAddress),
-                            slice.payloadLength);
-                    } else {
-                        ASFW_LOG_V2(
-                            Async,
-                            "SBP2 AR read-block req: src=0x%04x offset=0x%012llx len=%u -> "
-                            "rcode=0x%x",
-                            packet.sourceID,
-                            static_cast<unsigned long long>(destOffset),
-                            readLength,
-                            static_cast<unsigned>(result));
-                    }
-
-                    if (responder) {
-                        if (result == ASFW::Async::ResponseCode::Complete) {
-                            responder->SendReadBlockResponse(
-                                packet,
-                                result,
-                                slice.payloadDeviceAddress,
-                                slice.payloadLength,
-                                std::move(slice.backingLease));
-                        } else {
-                            responder->SendReadBlockResponse(packet, result, 0, 0);
-                        }
-                    }
-
-                    return ASFW::Async::ResponseCode::NoResponse;
-                });
-
-            ASFW_LOG(
-                Controller,
-                "[Controller] PacketRouter wired for SBP2/FCP handlers (tCode 0x0/0x1/0x4/0x5)");
-        }
-    }
+    // Inbound local-request routing remains owned centrally by LocalRequestDispatch
+    // (see WireLocalRequestDispatch). This helper owns the higher-level SBP-2
+    // session dependencies that sit above the address-space manager.
+    return kIOReturnSuccess;
 }
 
 kern_return_t DriverWiring::PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx) {
@@ -397,14 +280,20 @@ kern_return_t DriverWiring::PrepareWatchdog(ASFWDriver& service, ::ServiceContex
 
 void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     ctx.stopping.store(true, std::memory_order_release);
+    if (ctx.audioCoordinator) {
+        ctx.audioCoordinator->BeginTeardown();
+    }
+    ctx.isoch.StopAll();
     if (ctx.controller) {
         ctx.controller->Stop();
         ctx.controller.reset();
     }
 
-    // CRITICAL: Stop async routing before releasing protocol dependencies.
-    // This prevents PacketRouter callbacks from outliving captured SBP2/FCP objects.
-    StopAndClearAsyncRouting(ctx);
+    // CRITICAL: Stop asyncSubsystem BEFORE cancelling watchdog
+    // This prevents the crash where watchdog fires after completion queue is deactivated
+    if (ctx.deps.asyncSubsystem) {
+        ctx.deps.asyncSubsystem->Stop();
+    }
 
     if (ctx.deps.interrupts)
         ctx.deps.interrupts->Disable();
@@ -418,14 +307,7 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
         ctx.deps.hardware->Detach();
     ctx.interruptAction.reset();
     ctx.watchdog.Reset();
-#ifndef ASFW_HOST_TEST
-    if (ctx.providerNotifications) {
-        ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
-        ctx.providerNotifications->Cancel(nullptr);
-    }
-    ctx.providerNotifications.reset();
-    ctx.providerNotificationAction.reset();
-#endif
+    ctx.DisarmProviderNotifications();
     ctx.workQueue.reset();
     ctx.statusPublisher.Reset();
 }

@@ -27,15 +27,17 @@ The goal is to provide a generic framework for building isochronous DMA programs
 ```mermaid
 graph TD
     subgraph "Core Audio Space"
-        CA["Core Audio Engine"] --> |"PCM S32"| ARB["AudioRingBuffer"]
+        CA["Core Audio Engine"] --> |"PCM S32"| HAL["Mapped HAL output ring"]
     end
 
     subgraph "Encoding Layer (AMDTP)"
-        ARB --> PA["PacketAssembler"]
-        BC["BlockingCadence48k"] --> PA
-        SYT["SYTGenerator"] --> PA
-        ENC["AM824Encoder"] --> PA
-        PA --> |"CIP + AM824"| TXC["IsochTransmitContext"]
+        HAL --> PW["AmdtpPayloadWriter"]
+        BC["Shared 8-packet cadence"] --> PZ["AmdtpTxPacketizer"]
+        RX["RX recovered cadence"] --> TM["TxTimingModel"]
+        FB["OHCI OUTPUT completion"] --> TM
+        TM --> PZ
+        PZ --> |"CIP DATA / NO-DATA"| TXC["IsochTransmitContext"]
+        PW --> TXC
     end
 
     subgraph "Hardware Layer (OHCI)"
@@ -162,31 +164,13 @@ The Isoch stack is organized into functional layers:
     *   **Role**: Protocol Type Definitions.
     *   **Responsibilities**: Defines high-level protocol enums like `SampleRate`, `SampleRateFamily` (44.1k vs 48k base), and SYT interval constants. Differentiated from the root `IsochTypes.hpp` which is hardware-focused.
 
-### Encoding/
-*   [AM824Encoder.hpp](Encoding/AM824Encoder.hpp)
-    *   **Role**: IEC 61883-6 Audio Encoder.
-    *   **Responsibilities**: Packs 24-bit PCM samples into 32-bit AM824 quadlets (**A**udio/**M**usic, **8**-bit label, **24**-bit data), applying the Multi-Bit Linear Audio (MBLA) label (`0x40`) and handling endianness.
-*   [AudioRingBuffer.hpp](Encoding/AudioRingBuffer.hpp)
-    *   **Role**: Lock-Free Ring Buffer.
-    *   **Responsibilities**: A high-performance Single-Producer Single-Consumer (SPSC) ring buffer. Safely transfers audio data from the high-priority audio callback thread to the isochronous transmit thread without locking.
-*   [BlockingCadence48k.hpp](Encoding/BlockingCadence48k.hpp)
-    *   **Role**: Transmission Cadence Generator.
-    *   **Responsibilities**: Implements the strict N-D-D-D blocking pattern required for 48kHz audio streams. Determines whether the current isochronous cycle sends a DATA packet (8 samples) or a NO-DATA packet (empty CIP only).
-*   [BlockingDbcGenerator.hpp](Encoding/BlockingDbcGenerator.hpp)
-    *   **Role**: Data Block Counter (DBC) Tracker.
-    *   **Responsibilities**: Maintains DBC continuity across DATA and NO-DATA packets, ensuring compliance with the IEC 61883-1 blocking transmission specification.
-*   [CIPHeaderBuilder.hpp](Encoding/CIPHeaderBuilder.hpp)
-    *   **Role**: CIP Header Factory.
-    *   **Responsibilities**: Constructs valid 8-byte CIP headers for outgoing packets, populating fields like SID, DBS, FN, QPC, SPH, and DBC/SYT.
-*   [PacketAssembler.hpp](Encoding/PacketAssembler.hpp)
-    *   **Role**: Transmit orchestrator.
-    *   **Responsibilities**: The central hub for the transmit path. Pulls data from the ring buffer, consults the Cadence and DBC generators, encodes samples, and builds the final packet payload for the DMA engine.
-*   [SYTGenerator.cpp](Encoding/SYTGenerator.cpp) / [SYTGenerator.hpp](Encoding/SYTGenerator.hpp)
-    *   **Role**: Timestamp (SYT) Engine.
-    *   **Responsibilities**: Generates precise presentation timestamps (SYT) for outgoing packets. Correlates host time with the FireWire cycle timer, implementing a smoothing algorithm to prevent jitter.
-*   [TimingUtils.hpp](Encoding/TimingUtils.hpp)
-    *   **Role**: Timing Constants & Helpers.
-    *   **Responsibilities**: Provides conversion utilities for FireWire time units (ticks, cycles, seconds) and defines constants for the 24.576 MHz cycle clock.
+### Audio/Wire/AMDTP/
+*   `AmdtpTxPacketizer`
+    *   **Role**: Owns blocking cadence, DBC continuity, explicit DATA/NO-DATA disposition, and CIP headers.
+*   `AmdtpPayloadWriter`
+    *   **Role**: Encodes mapped HAL `int32` playback frames directly into exposed packet payloads.
+*   `TxTimingModel`
+    *   **Role**: Combines OHCI OUTPUT completion timestamps with delayed RX-recovered cadence to produce TX SYT.
 
 ### Memory/
 
@@ -208,10 +192,6 @@ The Isoch stack is organized into functional layers:
 *   [IsochTransmitContext.cpp](Transmit/IsochTransmitContext.cpp) / [IsochTransmitContext.hpp](Transmit/IsochTransmitContext.hpp)
     *   **Role**: OHCI Isochronous Transmit (IT) DMA Context Manager.
     *   **Responsibilities**: Manages the IT DMA context. Handles descriptor ring priming, interrupt-driven recycling of completed packets, and synchronizes with the hardware cycle timer.
-*   [SimITEngine.hpp](Transmit/SimITEngine.hpp)
-    *   **Role**: Offline Hardware Simulator.
-    *   **Responsibilities**: A test harness that mocks the behavior of the OHCI IT context. Used for validating the `PacketAssembler` and `CadenceGenerator` logic without requiring physical FireWire hardware.
-
 ---
 
 ## DMA Memory Architecture
@@ -240,7 +220,7 @@ IR Context (Receive):
 
 ## IT DMA Program Structure
 
-The Isoch Transmit (IT) context uses a carefully constructed descriptor program to handle the 8000Hz isochronous cycle. Each isochronous packet is described by **two DMA commands** (OMI header + OL payload) but occupies **three 16-byte descriptor blocks (48 bytes)**, because the OMI command carries an additional 16-byte immediate-data block containing the CIP header quadlets.
+The Isoch Transmit (IT) context uses a carefully constructed descriptor program to handle the 8000Hz isochronous cycle. Each isochronous packet occupies **four 16-byte descriptor blocks (64 bytes)**: two blocks for the OMI header, one `OUTPUT_MORE` payload fragment, and one `OUTPUT_LAST` payload fragment. This fixed `Z=4` shape supports a payload crossing one DMA segment boundary without changing branch geometry at runtime.
 
 ### Descriptor Layout (Linux/Apple Validated)
 This driver follows **Linux firewire-ohci + AppleFWOHCI-validated behavior** for `OUTPUT_MORE_IMMEDIATE` descriptors.
@@ -253,28 +233,34 @@ classDiagram
     class DescriptorBlock {
         +0x00 Control (OUTPUT_MORE_IMMEDIATE)
         +0x04 DataAddress (Unused/0)
-        +0x08 Branch (SkipAddress | Z=3)
+        +0x08 Branch (SkipAddress | Z=4)
         +0x0C Status (0)
         +0x10 ImmediateData[0] (CIP Header Q0)
         +0x14 ImmediateData[1] (CIP Header Q1)
         +0x18 ImmediateData[2] (0)
         +0x1C ImmediateData[3] (0)
-        +0x20 Control (OUTPUT_LAST)
-        +0x24 DataAddress (Ptr to Payload Slab)
-        +0x28 Branch (NextBlock | Z=3)
-        +0x2C Status (Writeback)
+        +0x20 Control (OUTPUT_MORE)
+        +0x24 DataAddress (Payload Fragment 0)
+        +0x28 Branch (0)
+        +0x2C Status (0)
+        +0x30 Control (OUTPUT_LAST)
+        +0x34 DataAddress (Payload Fragment 1)
+        +0x38 Branch (NextBlock | Z=4)
+        +0x3C Status (Writeback)
     }
-    note for DescriptorBlock "2 DMA commands, 3 x 16B blocks = 48 bytes total\nZ=3 in low nibble of branch word"
+    note for DescriptorBlock "3 DMA commands, 4 x 16B blocks = 64 bytes total\nZ=4 in low nibble of branch word"
 ```
 
 ### Components
 1.  **OUTPUT_MORE_IMMEDIATE (OMI Header)**:
     *   Carries the **CIP Header** (8 bytes) as immediate data stored in the 16-byte immediate block.
-    *   **Skip Address**: Points to the *next packet's* first descriptor (used if this command were skipped, though normal execution chains to `OUTPUT_LAST`).
-2.  **OUTPUT_LAST (OL Payload)**:
-    *   Points to the **Data Payload** (audio samples) in the Payload Slab.
+    *   **Skip Address**: Self-links the current packet with `Z=4`, matching Linux cycle-loss handling.
+2.  **OUTPUT_MORE (OM Payload)**:
+    *   Points to the first payload fragment.
+3.  **OUTPUT_LAST (OL Payload)**:
+    *   Points to the second payload fragment. Contiguous payloads are split into two adjacent fragments; page-crossing payloads split at the DMA boundary.
     *   **Branch Address**: Points to the *next* packet's descriptor block in the ring.
-    *   **Interrupt**: Configured to fire every 8th packet (1kHz interval) to trigger the `IsochTransmitContext::HandleInterrupt` refill mechanism.
+    *   **Interrupt**: Configured at each timing-group boundary to trigger the `IsochTransmitContext::HandleInterrupt` refill mechanism.
 
 ---
 

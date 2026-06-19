@@ -54,6 +54,10 @@
 #define ASFW_DEBUG_BUS_RESET_PACKET 0
 #endif
 
+#ifndef ASFW_DEBUG_TEMP_RX_TX
+#define ASFW_DEBUG_TEMP_RX_TX 0
+#endif
+
 #ifndef ASFW_DEBUG_CONFIG_ROM
 #define ASFW_DEBUG_CONFIG_ROM 0
 #endif
@@ -97,8 +101,11 @@ os_log_t CMP();
 os_log_t AVC();
 os_log_t Isoch();
 os_log_t Audio();
+os_log_t DirectAudio();
 os_log_t DICE();
-os_log_t SBP2();
+os_log_t Zts();
+os_log_t TxSyt();
+os_log_t PayloadWriter();
 } // namespace ASFW::Driver::Logging
 
 // ----- time helpers (header-only, safe in DriverKit) -----

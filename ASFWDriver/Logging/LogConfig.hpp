@@ -24,9 +24,10 @@ namespace ASFW {
  * - ASFWAsyncVerbosity (integer 0-4): Controls Async subsystem logging detail
  * - ASFWControllerVerbosity (integer 0-4): Controls Controller logging (future)
  * - ASFWHardwareVerbosity (integer 0-4): Controls Hardware logging (future)
+ * - ASFWDICEVerbosity (integer 0-4): Controls DICE/FSM logging detail
+ * - ASFWDirectAudioVerbosity (integer 0-4): Controls slow direct ADK metrics logging
  * - ASFWEnableHexDumps (boolean): Force enable/disable packet dumps
  * - ASFWLogStatistics (boolean): Enable aggregate statistics logging
- * - ASFWEnableIsochTxVerifier (boolean): Enable dev-only IT TX verifier (expensive)
  * - ASFWAutoStartAudioStreams (boolean): Enable/disable CoreAudio-driven stream auto-start
  *
  * Thread-safe singleton with runtime update support via user client.
@@ -104,7 +105,9 @@ public:
      * @brief Get AVC subsystem verbosity level (0-4)
      */
     uint8_t GetAVCVerbosity() const;
+    uint8_t GetDICEVerbosity() const;
     uint8_t GetIsochVerbosity() const;
+    uint8_t GetDirectAudioVerbosity() const;
 
     /**
      * @brief Check if hex dumps are enabled
@@ -115,11 +118,6 @@ public:
      * @brief Check if aggregate statistics logging is enabled
      */
     bool IsStatisticsEnabled() const;
-
-    /**
-     * @brief Check if dev-only IT TX verifier is enabled
-     */
-    bool IsIsochTxVerifierEnabled() const;
 
     /**
      * @brief Check if CoreAudio-driven auto-start is enabled
@@ -184,13 +182,10 @@ public:
      * @brief Set AVC verbosity at runtime
      */
     void SetAVCVerbosity(uint8_t level);
+    void SetDICEVerbosity(uint8_t level);
     void SetIsochVerbosity(uint8_t level);
+    void SetDirectAudioVerbosity(uint8_t level);
     void SetHexDumps(bool enable);
-
-    /**
-     * @brief Enable or disable dev-only IT TX verifier at runtime
-     */
-    void SetIsochTxVerifierEnabled(bool enable);
 
     /**
      * @brief Enable or disable CoreAudio-driven auto-start at runtime
@@ -237,9 +232,10 @@ private:
     std::atomic<uint8_t> cmpVerbosity_;
     std::atomic<uint8_t> irmVerbosity_;
     std::atomic<uint8_t> avcVerbosity_;
+    std::atomic<uint8_t> diceVerbosity_;
     std::atomic<uint8_t> isochVerbosity_;
+    std::atomic<uint8_t> directAudioVerbosity_;
     std::atomic<bool> enableHexDumps_;
-    std::atomic<bool> isochTxVerifierEnabled_;
     std::atomic<bool> audioAutoStartEnabled_;
     std::atomic<bool> logStatistics_;
     std::atomic<bool> initialized_;

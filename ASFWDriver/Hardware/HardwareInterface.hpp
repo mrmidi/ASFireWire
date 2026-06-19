@@ -3,8 +3,9 @@
 #include <optional>
 #include <utility> // for std::pair
 
+
 #ifdef ASFW_HOST_TEST
-#include "Testing/HostDriverKitStubs.hpp"
+#include "../Testing/HostDriverKitStubs.hpp"
 #include <vector>
 #else
 #include <DriverKit/IOBufferMemoryDescriptor.h>
@@ -28,6 +29,28 @@ class IAsyncControllerPort;
 } // namespace ASFW::Async
 
 namespace ASFW::Driver {
+
+/// Result of a local autonomous IRM CSR compare-swap operation (OHCI §5.5).
+struct LocalCSRLockResult {
+    enum class Status : uint8_t {
+        Success,             ///< Hardware completed the operation.
+        Timeout,             ///< CSRControl done bit was never set.
+        HardwareUnavailable, ///< No hardware interface (device_ is null).
+    };
+    Status status{Status::HardwareUnavailable};
+    uint32_t oldValue{0};    ///< Previous register value (valid only on Success).
+    bool compareMatched{false}; ///< True if oldValue == compareValue (swap occurred).
+};
+
+struct LocalCSRReadResult {
+    LocalCSRLockResult::Status status{LocalCSRLockResult::Status::HardwareUnavailable};
+    uint32_t value{0};
+};
+
+struct LocalCSRWriteResult {
+    LocalCSRLockResult::Status status{LocalCSRLockResult::Status::HardwareUnavailable};
+};
+
 
 class HardwareInterface {
   public:
@@ -55,6 +78,7 @@ class HardwareInterface {
     bool SendPhyConfig(std::optional<uint8_t> gapCount, std::optional<uint8_t> forceRootPhyId,
                        std::string_view caller);
     bool SendPhyGlobalResume(uint8_t phyId);
+    bool SendLinkOnPacket(uint8_t targetNodeId);
     bool InitiateBusReset(bool shortReset);
     bool ReadIntEvent(uint32_t& value);
     void AckIntEvent(uint32_t bits);
@@ -89,6 +113,17 @@ class HardwareInterface {
 
     [[nodiscard]] uint32_t ReadNodeID() const noexcept;
 
+    [[nodiscard]] bool InitialIRMRegistersProgrammed() const noexcept {
+        return initialIRMRegistersProgrammed_;
+    }
+
+    /**
+     * @brief Forced state override for unit tests.
+     */
+    void SetInitialIRMRegistersProgrammed(bool programmed) noexcept {
+        initialIRMRegistersProgrammed_ = programmed;
+    }
+
     [[nodiscard]] bool WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                               uint32_t pollIntervalUsec = 100) const;
     [[nodiscard]] bool WaitLink(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
@@ -107,6 +142,18 @@ class HardwareInterface {
         return Read(Register32::kLinkControl);
     }
 
+    /**
+     * @brief Checks if the local OHCI cycleMaster bit is currently set in LinkControl.
+     */
+    [[nodiscard]] bool IsLocalCycleMasterEnabled() const noexcept;
+
+    /**
+     * @brief Sets or clears the local OHCI cycleMaster bit via LinkControlSet/Clear.
+     * Per OHCI §5.3.3: This node generates cycle-start packets only when it is the bus root.
+     * Returns true if the hardware readback matches the requested state.
+     */
+    bool SetLocalCycleMasterEnabled(bool enable) noexcept;
+
     // Cycle Timer access (OHCI §5.6, offset 0xF0)
     // Format: [seconds:7][cycles:13][offset:12] = 32 bits total
     // - seconds: 0-127 (wraps every 128 seconds, triggers cycle64Seconds interrupt)
@@ -116,6 +163,19 @@ class HardwareInterface {
 
     // Atomically read cycle timer and host uptime for timestamp correlation
     [[nodiscard]] std::pair<uint32_t, uint64_t> ReadCycleTimeAndUpTime() const noexcept;
+
+    // Local autonomous IRM CSR helpers (OHCI §5.5)
+    [[nodiscard]] LocalCSRWriteResult WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept;
+    [[nodiscard]] LocalCSRReadResult ReadLocalIRMResource(uint32_t selectCode) noexcept;
+    [[nodiscard]] LocalCSRLockResult CompareSwapLocalIRMResource(
+        uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept;
+
+    /**
+     * @brief Writes canonical initial values to OHCI registers 0x0B0, 0x0B4, and 0x0B8.
+     * OHCI 1.1 §5.5: These registers provide the default values for the autonomous CSRs
+     * after a bus reset.
+     */
+    kern_return_t ProgramInitialIRMResourceRegisters() noexcept;
 
 #ifdef ASFW_HOST_TEST
     enum class TestOperation : uint8_t {
@@ -127,6 +187,7 @@ class HardwareInterface {
         SendPhyConfig,
         InitiateBusReset,
         SendPhyGlobalResume,
+        SendLinkOn,
         SetContender,
     };
 
@@ -158,6 +219,7 @@ class HardwareInterface {
     uint8_t phyReg4Cache_{0};
 
     bool quirk_agere_lsi_{false};
+    bool initialIRMRegistersProgrammed_{false};
 
     std::optional<uint8_t> ReadPhyRegisterUnlocked(uint8_t address);
     bool WritePhyRegisterUnlocked(uint8_t address, uint8_t value);

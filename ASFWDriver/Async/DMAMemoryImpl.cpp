@@ -17,19 +17,19 @@ std::optional<DMARegion> DMAMemoryImpl::AllocateRegion(size_t size, size_t align
     };
 }
 
-uint64_t DMAMemoryImpl::VirtToIOVA(const void* virt) const noexcept {
+uint64_t DMAMemoryImpl::VirtToIOVA(const std::byte* virt) const noexcept {
     return mgr_.VirtToIOVA(virt);
 }
 
-void* DMAMemoryImpl::IOVAToVirt(uint64_t iova) const noexcept {
+std::byte* DMAMemoryImpl::IOVAToVirt(uint64_t iova) const noexcept {
     return mgr_.IOVAToVirt(iova);
 }
 
-void DMAMemoryImpl::PublishToDevice(const void* address, size_t length) const noexcept {
+void DMAMemoryImpl::PublishToDevice(const std::byte* address, size_t length) const noexcept {
     mgr_.PublishRange(address, length);
 }
 
-void DMAMemoryImpl::FetchFromDevice(const void* address, size_t length) const noexcept {
+void DMAMemoryImpl::FetchFromDevice(const std::byte* address, size_t length) const noexcept {
     mgr_.FetchRange(address, length);
 }
 

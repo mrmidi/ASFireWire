@@ -44,10 +44,18 @@ class WatchdogCoordinator {
                     StatusPublisher& statusPublisher);
 
   private:
+    void TickAsyncSubsystem(ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
+                            StatusPublisher& statusPublisher) const;
+    void TickIsochReceive(ASFW::Isoch::IsochReceiveContext* isochReceiveContext);
+    void TickIsochTransmit(ASFW::Isoch::IsochTransmitContext* isochTransmitContext);
+
     OSSharedPtr<IOTimerDispatchSource> timer_;
     OSSharedPtr<OSAction> action_;
     uint32_t isochLogDivider_{0};
     uint32_t itLogDivider_{0};
+    uint32_t ztsLogDivider_{0};
+    uint32_t payloadWriterLogDivider_{0};
+    uint32_t txSytTraceDivider_{0};
 };
 
 } // namespace ASFW::Driver

@@ -44,7 +44,7 @@ struct alignas(16) OHCIDescriptor {
     static constexpr uint32_t kIntShift = 4;
     static constexpr uint32_t kBranchShift = 2;
     static constexpr uint32_t kWaitShift = 0;
-    static constexpr uint32_t kZShift = 28;
+    static constexpr uint32_t kZShift = 0;
 
     static constexpr uint8_t kCmdOutputMore = 0x0;
     static constexpr uint8_t kCmdOutputLast = 0x1;
@@ -96,9 +96,29 @@ static_assert((sizeof(OHCIDescriptor) % 16) == 0,
               "OHCIDescriptor size must be a multiple of 16 so every descriptor in the array stays 16B-aligned.");
 static_assert(alignof(OHCIDescriptor) >= 16,
               "OHCIDescriptor alignment must be >= 16.");
+static_assert(OHCIDescriptor::kCmdShift == 12 && OHCIDescriptor::kKeyShift == 8 &&
+              OHCIDescriptor::kIntShift == 4 && OHCIDescriptor::kBranchShift == 2,
+              "Descriptor control high-word shifts must match Linux ohci.c descriptor bits");
+static_assert(OHCIDescriptor::kCmdOutputMore == 0x0 &&
+              OHCIDescriptor::kCmdOutputLast == 0x1 &&
+              OHCIDescriptor::kCmdInputMore == 0x2 &&
+              OHCIDescriptor::kCmdInputLast == 0x3);
+static_assert(OHCIDescriptor::kKeyStandard == 0x0 &&
+              OHCIDescriptor::kKeyImmediate == 0x2);
+static_assert(OHCIDescriptor::kIntNever == 0x0 &&
+              OHCIDescriptor::kIntOnError == 0x1 &&
+              OHCIDescriptor::kIntAlways == 0x3);
+static_assert(OHCIDescriptor::kBranchNever == 0x0 &&
+              OHCIDescriptor::kBranchAlways == 0x3);
+static_assert(OHCIDescriptor::kZShift == 0,
+              "AT/AR branch Z is encoded in the low nibble, not the high nibble");
 
 struct alignas(16) OHCIDescriptorImmediate {
     OHCIDescriptor common;
+    // For OHCI IT OUTPUT_MORE-Immediate, reqCount=8 and these first two
+    // quadlets form the controller-specific transmit header. Linux programs
+    // the same bytes through (__le32 *)&d[1].
+    // Cross-validated with Linux: firewire/ohci.c:3364-3375.
     uint32_t immediateData[4]{};
 };
 static_assert(sizeof(OHCIDescriptorImmediate) == 32, "OHCIDescriptorImmediate must be 32 bytes per OHCI");
@@ -141,8 +161,10 @@ struct IsochHeader {
 
 struct ITDescriptorBuilder {
     struct OutputMoreImmediateParams {
-        uint32_t isochHeaderLE{0};
-        uint32_t cipQ0LE{0};
+        uint32_t itHeaderQ0LE{0};
+        uint32_t itHeaderQ1LE{0};
+        uint32_t skipIOVA{0};
+        uint8_t zValue{0};
         uint8_t interruptBits{OHCIDescriptor::kIntNever};
     };
 
@@ -155,12 +177,16 @@ struct ITDescriptorBuilder {
     };
 
     // OUTPUT_MORE-Immediate (32 bytes)
-    // - Control: cmd=0, key=2 (Immediate), b=0, i=0/3, reqCount=4 (CIP Q0 only)
-    // - Immediate[0]: IsochHeader (Framing - NOT payload) - Mapped to branchWord offset
-    // - Immediate[1]: CIP Q0 (First 4 bytes of payload)   - Mapped to statusWord offset
+    // - Control: cmd=0, key=2 (Immediate), b=0, i=0/3, reqCount=8
+    // - common.branchWord: cycle-loss skip address
+    // - immediateData[0]: IT Q0 (speed/tag/channel/tcode/sy)
+    // - immediateData[1]: IT Q1 (data length in bits 31:16)
+    // Cross-validated with Linux: firewire/ohci.c:3364-3383 and
+    // firewire/ohci.h:277-288.
     static void BuildOutputMoreImmediate(OHCIDescriptorImmediate& desc,
                                          const OutputMoreImmediateParams& params) {
-        constexpr uint16_t kReqCount = 4; // CIP Q0 only (IsochHeader is not payload)
+        constexpr uint16_t kReqCount = 8;
+        desc = {};
         desc.common.control = OHCIDescriptor::BuildControl({
             .reqCount = kReqCount,
             .command = OHCIDescriptor::kCmdOutputMore,
@@ -168,20 +194,9 @@ struct ITDescriptorBuilder {
             .interruptBits = params.interruptBits,
             .branchBits = OHCIDescriptor::kBranchNever,
         });
-        
-        // CRITICAL FIX: For OUTPUT_MORE-Immediate, the first 16 bytes contain Imm0 and Imm1.
-        // In the generic OHCIDescriptor struct, these map to:
-        // offset 0x08 (branchWord) -> Imm0 (IsochHeader)
-        // offset 0x0C (statusWord) -> Imm1 (CIP Q0)
-        desc.common.dataAddress = 0; // Skip (offset 0x04)
-        desc.common.branchWord = params.isochHeaderLE;
-        desc.common.statusWord = params.cipQ0LE;
-
-        // Second 16-byte block is unused for this specific format
-        desc.immediateData[0] = 0;
-        desc.immediateData[1] = 0;
-        desc.immediateData[2] = 0;
-        desc.immediateData[3] = 0;
+        desc.common.branchWord = MakeBranchWordAT(params.skipIOVA, params.zValue);
+        desc.immediateData[0] = params.itHeaderQ0LE;
+        desc.immediateData[1] = params.itHeaderQ1LE;
     }
 
     // OUTPUT_LAST (16 bytes)
@@ -213,12 +228,20 @@ struct ITDescriptorBuilder {
     if (Zblocks != 0 && (Zblocks < 2 || Zblocks > 8)) return 0;
     return (static_cast<uint32_t>(physAddr) & 0xFFFFFFF0u) | (static_cast<uint32_t>(Zblocks) & 0xFu);
 }
+static_assert(MakeBranchWordAT(0x12345000u, 2) == 0x12345002u,
+              "AT branch word must encode Z in bits 3:0");
+static_assert(MakeBranchWordAT(0x12345000u, 1) == 0,
+              "AT branch Z=1 is reserved for ASFW descriptor chains");
 
 [[nodiscard]] constexpr uint32_t MakeBranchWordAR(uint64_t physAddr, uint8_t Z) noexcept {
     if ((physAddr & 0xFULL) != 0 || physAddr > 0xFFFFFFFFu) return 0;
-    // Z is a 4-bit field, but typically 0 or 1 for AR
-    return (static_cast<uint32_t>(physAddr) & 0xFFFFFFF0u) | (static_cast<uint32_t>(Z) & 0xFu);
+    if (Z > 1) return 0;
+    return (static_cast<uint32_t>(physAddr) & 0xFFFFFFF0u) | static_cast<uint32_t>(Z);
 }
+static_assert(MakeBranchWordAR(0x12345000u, 1) == 0x12345001u,
+              "AR branch word must encode single-bit Z in bit 0");
+static_assert(MakeBranchWordAR(0x12345000u, 2) == 0,
+              "AR branch Z must reject reserved bits 3:1");
 
 [[nodiscard]] constexpr uint32_t DecodeBranchPhys32_AT(uint32_t branchWord) noexcept { return branchWord & 0xFFFFFFF0u; }
 [[nodiscard]] constexpr uint32_t DecodeBranchPhys32_AR(uint32_t branchWord) noexcept { return branchWord & 0xFFFFFFF0u; }

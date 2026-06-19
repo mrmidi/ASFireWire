@@ -13,6 +13,8 @@ struct ModernContentView: View {
     @StateObject private var debugVM = DebugViewModel()
     @StateObject private var topologyVM: TopologyViewModel
     @StateObject private var romExplorerVM: RomExplorerViewModel
+    @StateObject private var diagnosticsStore: DiagnosticsStore
+    @StateObject private var mcpVM: ASFWMCPControlViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
 
@@ -27,6 +29,8 @@ struct ModernContentView: View {
             connector: debugViewModel.connector,
             topologyViewModel: topologyViewModel
         ))
+        _diagnosticsStore = StateObject(wrappedValue: DiagnosticsStore(connector: debugViewModel.connector))
+        _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -40,12 +44,15 @@ struct ModernContentView: View {
         case topology = "Topology & Self-ID"
         case romExplorer = "ROM Explorer"
         case metrics = "Isoch Metrics"
+        case dvCapture = "DV Capture"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
+        case mcpSettings = "MCP Control"
         case audio = "Core Audio"
         case saffire = "Saffire"
         case duet = "Duet"
+        case diagnostics = "1394 Diagnostics"
 
         var id: String { rawValue }
 
@@ -61,12 +68,15 @@ struct ModernContentView: View {
             case .topology: return "network"
             case .romExplorer: return "memorychip"
             case .metrics: return "chart.bar.xaxis"
+            case .dvCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
+            case .mcpSettings: return "point.3.connected.trianglepath.dotted"
             case .audio: return "hifispeaker.fill"
             case .saffire: return "slider.vertical.3"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
+            case .diagnostics: return "heart.text.square"
             }
         }
 
@@ -107,18 +117,24 @@ struct ModernContentView: View {
                     ROMExplorerView(viewModel: romExplorerVM)
                 case .metrics:
                     MetricsView(connector: debugVM.connector)
+                case .dvCapture:
+                    DVCaptureView(viewModel: debugVM)
                 case .busReset:
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:
                     SystemLogsView(viewModel: driverVM)
                 case .loggingSettings:
                     LoggingSettingsView(connector: debugVM.connector)
+                case .mcpSettings:
+                    MCPSettingsView(viewModel: mcpVM)
                 case .audio:
                     AudioDebugView()
                 case .saffire:
                     SaffireMixerView(connector: debugVM.connector)
                 case .duet:
                     DuetControlView(connector: debugVM.connector)
+                case .diagnostics:
+                    DiagnosticsView(store: diagnosticsStore)
                 case .none:
                     Text("Select a section")
                         .foregroundStyle(.secondary)
@@ -171,8 +187,12 @@ struct ModernContentView: View {
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
             loadLoggingPreset()
+            if mcpVM.isEnabled {
+                Task { await mcpVM.start() }
+            }
         }
         .onDisappear {
+            Task { await mcpVM.stop() }
             debugVM.disconnect()
             topologyVM.stopAutoRefresh()
         }

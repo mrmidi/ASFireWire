@@ -1,0 +1,51 @@
+#ifndef VirtualAudioDevice_h
+#define VirtualAudioDevice_h
+
+#include <DriverKit/DriverKit.iig>
+#include <DriverKit/IOTimerDispatchSource.iig>
+#include <AudioDriverKit/IOUserAudioDevice.iig>
+#include <AudioDriverKit/IOUserAudioStream.iig>
+#include <AudioDriverKit/AudioDriverKitTypes.h>
+
+using namespace AudioDriverKit;
+
+class IOUserAudioDriver;
+
+class VirtualAudioDevice : public IOUserAudioDevice
+{
+public:
+    virtual bool init(IOUserAudioDriver* in_driver,
+                      bool in_supports_prewarming,
+                      OSString* in_device_uid,
+                      OSString* in_model_uid,
+                      OSString* in_manufacturer_uid,
+                      uint32_t in_zero_timestamp_period) override LOCALONLY;
+
+    virtual void free() override LOCALONLY;
+
+    virtual kern_return_t StartIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
+    virtual kern_return_t StopIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
+
+    virtual kern_return_t PerformDeviceConfigurationChange(uint64_t change_action,
+                                                           OSObject* in_change_info) override LOCALONLY;
+
+    virtual kern_return_t AbortDeviceConfigurationChange(uint64_t change_action,
+                                                         OSObject* in_change_info) override LOCALONLY;
+
+    virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override LOCALONLY;
+
+    // M3: the dext clock model — a timer fires once per ZTS period, anchors
+    // UpdateCurrentZeroTimestamp with the raw fire time, and exposes the next
+    // period's packets (the lab's stand-in for a hardware ring interrupt).
+    virtual void ZtsTimerOccurred(OSAction* action,
+                                  uint64_t time) TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    // Inspector dump: snapshot up to in_count recent packets (ending at
+    // in_anchor, ~0 = latest) into a PacketDumpBlob. Dispatches onto the
+    // work queue internally — callable from the diag user client.
+    virtual kern_return_t CopyPacketDump(uint32_t in_count,
+                                         uint64_t in_anchor,
+                                         OSData** out_data) LOCALONLY;
+};
+
+#endif

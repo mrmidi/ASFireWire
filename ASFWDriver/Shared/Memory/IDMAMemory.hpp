@@ -68,7 +68,12 @@ public:
      * Precondition: [virt] must be from a previously allocated DMARegion.
      * Behavior is undefined for addresses outside the DMA slab.
      */
-    virtual uint64_t VirtToIOVA(const void* virt) const noexcept = 0;
+    virtual uint64_t VirtToIOVA(const std::byte* virt) const noexcept = 0;
+
+    template <typename T>
+    [[nodiscard]] uint64_t VirtToIOVA(const T* virt) const noexcept {
+        return VirtToIOVA(reinterpret_cast<const std::byte*>(virt));
+    }
 
     /**
      * @brief Convert device IOVA to CPU virtual address.
@@ -78,7 +83,12 @@ public:
      *
      * Precondition: [iova] must be within allocated slab range.
      */
-    virtual void* IOVAToVirt(uint64_t iova) const noexcept = 0;
+    virtual std::byte* IOVAToVirt(uint64_t iova) const noexcept = 0;
+
+    template <typename T = std::byte>
+    [[nodiscard]] T* IOVAToPtr(uint64_t iova) const noexcept {
+        return reinterpret_cast<T*>(IOVAToVirt(iova));
+    }
 
     // -------------------------------------------------------------------------
     // Cache Coherency
@@ -93,7 +103,12 @@ public:
      * For uncached mappings (current implementation) this is a lightweight
      * memory barrier; no cache flush is needed.
      */
-    virtual void PublishToDevice(const void* address, size_t length) const noexcept = 0;
+    virtual void PublishToDevice(const std::byte* address, size_t length) const noexcept = 0;
+
+    template <typename T>
+    void PublishToDevice(const T* address, size_t length) const noexcept {
+        PublishToDevice(reinterpret_cast<const std::byte*>(address), length);
+    }
 
     /**
      * @brief Ensure ordering of device writes before CPU reads.
@@ -104,7 +119,12 @@ public:
      * For uncached mappings (current implementation) this is a lightweight
      * memory barrier; no cache invalidation is needed.
      */
-    virtual void FetchFromDevice(const void* address, size_t length) const noexcept = 0;
+    virtual void FetchFromDevice(const std::byte* address, size_t length) const noexcept = 0;
+
+    template <typename T>
+    void FetchFromDevice(const T* address, size_t length) const noexcept {
+        FetchFromDevice(reinterpret_cast<const std::byte*>(address), length);
+    }
 
     // -------------------------------------------------------------------------
     // Resource Queries

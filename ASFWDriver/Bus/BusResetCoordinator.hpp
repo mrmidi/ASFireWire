@@ -12,6 +12,7 @@
 #include "../Hardware/RegisterMap.hpp"
 #include "BusManager.hpp"
 #include "SelfIDCapture.hpp"
+#include "Timing/PostResetTimingCoordinator.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -37,6 +38,10 @@ class IAsyncControllerPort;
 
 namespace ASFW::Discovery {
 class ROMScanner;
+}
+
+namespace ASFW::Bus {
+class TopologyMapService;
 }
 
 namespace ASFW::Driver {
@@ -88,7 +93,8 @@ class BusResetCoordinator {
                     Async::IAsyncControllerPort* asyncSys, SelfIDCapture* selfIdCapture,
                     ConfigROMStager* configRom, InterruptManager* interrupts,
                     TopologyManager* topology, BusManager* busManager = nullptr,
-                    Discovery::ROMScanner* romScanner = nullptr);
+                    Discovery::ROMScanner* romScanner = nullptr,
+                    ASFW::Bus::TopologyMapService* topologyMapService = nullptr);
 
     /**
      * Latch bus-reset related interrupt bits and schedule deferred recovery work.
@@ -105,10 +111,29 @@ class BusResetCoordinator {
 
     /// Return the most recent reset metrics snapshot.
     const BusResetMetrics& Metrics() const { return metrics_; }
+
+    /// Post-reset timing gates (IEEE 1394-2008 §8.x / Annex H), anchored to
+    /// Self-ID completion. Read-only: consumed by diagnostics now and by the
+    /// BM/IRM/Isoch policy layers in later milestones.
+    const ASFW::Bus::Timing::PostResetTimingCoordinator& PostResetTiming() const noexcept {
+        return postResetTiming_;
+    }
+    ASFW::Bus::Timing::PostResetTimingCoordinator& PostResetTiming() noexcept {
+        return postResetTiming_;
+    }
     /// Return the current FSM state.
     State GetState() const { return state_; }
     const char* StateString() const;
     static const char* StateString(State state);
+
+    /// Legacy helper retained for tests that document the pre-FW-9 behavior.
+    /// Local cycleMaster is now controlled by RoleCoordinator, not reset rearm.
+    [[nodiscard]] static constexpr bool ShouldReassertCycleMasterOnRearm(bool wasRoot,
+                                                                         bool isRootNow) noexcept {
+        (void)wasRoot;
+        (void)isRootNow;
+        return false;
+    }
 
     // ASFW-defined diagnostics codes for BusResetCoordinator recovery paths.
     // These are not OHCI/IEEE 1394 wire or register values. They label the
@@ -172,6 +197,14 @@ class BusResetCoordinator {
 
     /// Request a user-initiated bus reset (short or long).
     void RequestUserReset(bool shortReset);
+
+    /// Request a RoleCoordinator-initiated PHY config + bus reset.
+    void RequestRolePolicyReset(uint8_t targetRoot, bool longReset,
+                                std::optional<uint8_t> gapCount,
+                                std::optional<bool> setContender,
+                                std::string reason);
+
+    static uint64_t MonotonicNow() noexcept;
 
   private:
 #ifdef ASFW_HOST_TEST
@@ -257,12 +290,18 @@ class BusResetCoordinator {
     void EnableFilters();
     void RearmAT();
     void LogMetrics();
+    void ArmSoftwareResetHoldoffAfterSelfIDCompletion(uint64_t timestampNs) noexcept;
     void SendGlobalResumeIfNeeded();
+    void MaybeRequestTopologyDrivenReset();
     void EvaluateRootDelegation(const TopologySnapshot& topo);
     void RequestSoftwareReset(ResetRequest request);
     [[nodiscard]] ResetRequest MergeResetRequests(const ResetRequest& current,
                                                   const ResetRequest& incoming) const;
     bool MaybeDispatchPendingSoftwareReset();
+    void ClearSoftwareResetTracking(const ResetRequest& request, bool carriesDelegation);
+    [[nodiscard]] bool ApplySoftwareResetPhyConfig(const ResetRequest& request,
+                                                   bool carriesDelegation);
+    void NoteIssuedGapReset(const ResetRequest& request);
     bool DispatchSoftwareReset(const ResetRequest& request);
     void ClearDelegationAttempt();
     void RecordRecoveryReason(std::string reason);
@@ -274,16 +313,17 @@ class BusResetCoordinator {
     bool HasSelfIDCompletion() const;
     bool CanAttemptSelfIDDecode() const;
     bool G_NodeIDValid() const;
+    bool G_IsRoot() const;
 
     bool ReadyForDiscovery(Discovery::Generation gen);
-
-    static uint64_t MonotonicNow();
 
     State state_{State::Idle};
     uint64_t stateEntryTime_{0};
     std::atomic<bool> workInProgress_{false};
     bool pendingBusResetEdge_{false};
     bool stopFlushIssued_{false};
+    /// Tracks whether local was root at the previous rearm (Linux ohci->is_root).
+    bool wasRoot_{false};
 
     BusResetMetrics metrics_{};
 
@@ -300,11 +340,14 @@ class BusResetCoordinator {
     TopologyManager* topologyManager_{nullptr};
     BusManager* busManager_{nullptr};
     Discovery::ROMScanner* romScanner_{nullptr};
+    ASFW::Bus::TopologyMapService* topologyMapService_{nullptr};
 
     OSSharedPtr<IODispatchQueue> workQueue_;
 
     SelfIDLatchState selfIdLatch_{};
     ResetCycleState cycle_{};
+    // Post-reset timing gates, anchored to Self-ID completion (see PostResetTiming()).
+    ASFW::Bus::Timing::PostResetTimingCoordinator postResetTiming_{};
     bool busResetMasked_{false};
     Discovery::Generation lastGeneration_{0};
 

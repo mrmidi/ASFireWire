@@ -1,10 +1,11 @@
 #pragma once
 
+#include <DriverKit/IOLib.h>
+
 // SBP-2 Page Table builder.
 // Converts scatter-gather DMA segments into SBP-2 Page Table Entries (PTEs)
 // or a single direct-address descriptor when possible.
 //
-// Ported from Apple IOFireWireSBP2ORB::setCommandBuffers.
 // Ref: SBP-2 §5.1.2 (Page Table Entry format)
 
 #include "AddressSpaceManager.hpp"
@@ -34,10 +35,6 @@ public:
 
     explicit SBP2PageTable(AddressSpaceManager& addrMgr, void* owner) noexcept
         : addrMgr_(addrMgr), owner_(owner) {}
-
-    ~SBP2PageTable() noexcept {
-        Clear();
-    }
 
     SBP2PageTable(const SBP2PageTable&) = delete;
     SBP2PageTable& operator=(const SBP2PageTable&) = delete;
@@ -78,10 +75,10 @@ public:
                 uint32_t chunk = (remaining > maxPageClipSize) ? maxPageClipSize : remaining;
 
                 Wire::PageTableEntry pte{};
-                pte.segmentLength = Wire::ToBE16(static_cast<uint16_t>(chunk));
-                pte.segmentBaseAddressHi = Wire::ToBE16(
+                pte.segmentLength = OSSwapHostToBigInt16(static_cast<uint16_t>(chunk));
+                pte.segmentBaseAddressHi = OSSwapHostToBigInt16(
                     static_cast<uint16_t>((phys >> 32) & 0xFFFFULL));
-                pte.segmentBaseAddressLo = Wire::ToBE32(
+                pte.segmentBaseAddressLo = OSSwapHostToBigInt32(
                     static_cast<uint32_t>(phys & 0xFFFFFFFFULL));
 
                 ptes.push_back(pte);
@@ -99,8 +96,8 @@ public:
         pteCount_ = static_cast<uint32_t>(ptes.size());
 
         // Optimization: single PTE with quadlet-aligned address → direct mode.
-        if (pteCount_ == 1 && (ptes[0].segmentBaseAddressLo & Wire::ToBE32(0x3u)) == 0) {
-            result_.dataDescriptorHi = Wire::ToBE32(
+        if (pteCount_ == 1 && (ptes[0].segmentBaseAddressLo & OSSwapHostToBigInt32(0x3u)) == 0) {
+            result_.dataDescriptorHi = OSSwapHostToBigInt32(
                 static_cast<uint32_t>(segments.front().address >> 32) & 0xFFFFu);
             result_.dataDescriptorLo = ptes[0].segmentBaseAddressLo;
             result_.dataSize = ptes[0].segmentLength;  // still BE, ORB reads it BE
@@ -116,7 +113,7 @@ public:
             owner_, 0xFFFF, ptSize,
             &pageTableHandle_, &pageTableMeta_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(SBP2, "SBP2PageTable: failed to allocate page table: 0x%08x", kr);
+            ASFW_LOG(Async, "SBP2PageTable: failed to allocate page table: 0x%08x", kr);
             return false;
         }
 
@@ -125,19 +122,19 @@ public:
             reinterpret_cast<const uint8_t*>(ptes.data()), ptSize);
         kr = addrMgr_.WriteLocalData(owner_, pageTableHandle_, 0, pteSpan);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(SBP2, "SBP2PageTable: failed to write page table: 0x%08x", kr);
+            ASFW_LOG(Async, "SBP2PageTable: failed to write page table: 0x%08x", kr);
             Clear();
             return false;
         }
 
-        result_.dataDescriptorHi = Wire::ToBE32(
+        result_.dataDescriptorHi = OSSwapHostToBigInt32(
             Wire::ComposeBusAddressHi(busNodeID, pageTableMeta_.addressHi));
-        result_.dataDescriptorLo = Wire::ToBE32(pageTableMeta_.addressLo);
-        result_.dataSize = Wire::ToBE16(static_cast<uint16_t>(pteCount_));
+        result_.dataDescriptorLo = OSSwapHostToBigInt32(pageTableMeta_.addressLo);
+        result_.dataSize = OSSwapHostToBigInt16(static_cast<uint16_t>(pteCount_));
         result_.options = Wire::Options::kPageTableUnrestricted;
         result_.isDirect = false;
 
-        ASFW_LOG(SBP2, "SBP2PageTable: built %u PTEs (%u bytes) at %04x:%08x",
+        ASFW_LOG(Async, "SBP2PageTable: built %u PTEs (%u bytes) at %04x:%08x",
                  pteCount_, ptSize, pageTableMeta_.addressHi, pageTableMeta_.addressLo);
         return true;
     }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #include "AsyncSubsystem.hpp"
 
 #include "../Hardware/OHCIDescriptors.hpp"
@@ -83,6 +84,14 @@ AsyncWatchdogStats AsyncSubsystem::GetWatchdogStats() const {
     stats.contextsRearmed = watchdogContextsRearmed_.load(std::memory_order_relaxed);
     stats.lastTickUsec = watchdogLastTickUsec_.load(std::memory_order_relaxed);
     return stats;
+}
+
+Debug::AsyncTraceCapture* AsyncSubsystem::GetAsyncTraceCapture() const {
+    return asyncTraceCapture_.get();
+}
+
+ASFWDiagInboundCSRStats* AsyncSubsystem::GetInboundCSRStats() const {
+    return const_cast<ASFWDiagInboundCSRStats*>(&inboundCSRStats_);
 }
 
 void AsyncSubsystem::DumpState() {

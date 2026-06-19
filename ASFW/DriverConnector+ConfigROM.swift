@@ -4,7 +4,15 @@ import IOKit
 extension ASFWDriverConnector {
     // MARK: - Config ROM Operations
 
-    func getConfigROM(nodeId: UInt8, generation: UInt16) -> Data? {
+    struct ConfigROMFetchResult {
+        let data: Data
+        let requestedGeneration: UInt16
+        let resolvedGeneration: UInt16
+
+        var isExactGenerationMatch: Bool { requestedGeneration == resolvedGeneration }
+    }
+
+    func getConfigROM(nodeId: UInt8, generation: UInt16) -> ConfigROMFetchResult? {
         guard isConnected else {
             log("getConfigROM: Not connected", level: .warning)
             return nil
@@ -14,6 +22,8 @@ extension ASFWDriverConnector {
         let maxSize = 1024 * 4  // Max 1024 quadlets
         var outputStruct = Data(count: maxSize)
         var outputSize = outputStruct.count
+        var resolvedGeneration: UInt64 = UInt64(generation)
+        var scalarOutputCount: UInt32 = 1
 
         let kr = outputStruct.withUnsafeMutableBytes { bufferPtr in
             IOConnectCallMethod(
@@ -23,8 +33,8 @@ extension ASFWDriverConnector {
                 UInt32(input.count),
                 nil,
                 0,
-                nil,
-                nil,
+                &resolvedGeneration,
+                &scalarOutputCount,
                 bufferPtr.baseAddress,
                 &outputSize
             )
@@ -43,8 +53,15 @@ extension ASFWDriverConnector {
         }
 
         let romData = outputStruct.prefix(outputSize)
-        log("getConfigROM: received \(outputSize) bytes for node=\(nodeId) gen=\(generation)", level: .success)
-        return romData
+        let resolvedGen16 = UInt16(truncatingIfNeeded: resolvedGeneration)
+        if resolvedGen16 != generation {
+            log("getConfigROM: received stale cache for node=\(nodeId) requestedGen=\(generation) resolvedGen=\(resolvedGen16) bytes=\(outputSize)", level: .warning)
+        } else {
+            log("getConfigROM: received \(outputSize) bytes for node=\(nodeId) gen=\(generation)", level: .success)
+        }
+        return ConfigROMFetchResult(data: Data(romData),
+                                    requestedGeneration: generation,
+                                    resolvedGeneration: resolvedGen16)
     }
 
     enum ROMReadStatus: UInt32 {

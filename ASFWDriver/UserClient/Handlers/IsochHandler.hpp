@@ -33,6 +33,10 @@ public:
     // Isoch Streaming Control
     kern_return_t StartIsochReceive(IOUserClientMethodArguments* args);
     kern_return_t StopIsochReceive(IOUserClientMethodArguments* args);
+
+    // DV Capture Control
+    kern_return_t StartDVCapture(IOUserClientMethodArguments* args);
+    kern_return_t StopDVCapture(IOUserClientMethodArguments* args);
     
     // Isoch Metrics
     kern_return_t GetIsochRxMetrics(IOUserClientMethodArguments* args);

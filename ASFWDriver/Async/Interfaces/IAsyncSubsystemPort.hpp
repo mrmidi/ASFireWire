@@ -6,7 +6,10 @@
 
 namespace ASFW::Debug {
 class BusResetPacketCapture;
+class AsyncTraceCapture;
 } // namespace ASFW::Debug
+
+struct ASFWDiagInboundCSRStats;
 
 namespace ASFW::Async {
 
@@ -50,6 +53,8 @@ class IAsyncSubsystemPort {
 
     [[nodiscard]] virtual AsyncWatchdogStats GetWatchdogStats() const = 0;
     [[nodiscard]] virtual Debug::BusResetPacketCapture* GetBusResetCapture() const = 0;
+    [[nodiscard]] virtual Debug::AsyncTraceCapture* GetAsyncTraceCapture() const = 0;
+    [[nodiscard]] virtual ASFWDiagInboundCSRStats* GetInboundCSRStats() const = 0;
     [[nodiscard]] virtual std::optional<AsyncStatusSnapshot> GetStatusSnapshot() const = 0;
 };
 

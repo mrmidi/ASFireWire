@@ -23,6 +23,17 @@ struct DriverVersionInfo {
     bool gitDirty{};             ///< True if working tree had uncommitted changes
     uint8_t padding[3]{};        ///< Padding for alignment
     uint32_t reserved[8]{};      ///< Reserved for future expansion
+
+    static void CopyTruncated(char* dest, size_t destSize, const char* src) {
+        if (dest == nullptr || destSize == 0) {
+            return;
+        }
+        if (src == nullptr) {
+            dest[0] = '\0';
+            return;
+        }
+        strlcpy(dest, src, destSize);
+    }
     
     /// Helper to populate from compile-time constants
     template <size_t N1, size_t N2, size_t N3, size_t N4, size_t N5, size_t N6>
@@ -46,6 +57,28 @@ struct DriverVersionInfo {
         strlcpy(info.buildHost, host, sizeof(info.buildHost));
         info.gitDirty = dirty;
         
+        return info;
+    }
+
+    static DriverVersionInfo Create(
+        const char* semVer,
+        const char* commitShort,
+        const char* commitFull,
+        const char* branch,
+        const char* timestamp,
+        const char* host,
+        bool dirty)
+    {
+        DriverVersionInfo info{};
+
+        CopyTruncated(info.semanticVersion, sizeof(info.semanticVersion), semVer);
+        CopyTruncated(info.gitCommitShort, sizeof(info.gitCommitShort), commitShort);
+        CopyTruncated(info.gitCommitFull, sizeof(info.gitCommitFull), commitFull);
+        CopyTruncated(info.gitBranch, sizeof(info.gitBranch), branch);
+        CopyTruncated(info.buildTimestamp, sizeof(info.buildTimestamp), timestamp);
+        CopyTruncated(info.buildHost, sizeof(info.buildHost), host);
+        info.gitDirty = dirty;
+
         return info;
     }
 };

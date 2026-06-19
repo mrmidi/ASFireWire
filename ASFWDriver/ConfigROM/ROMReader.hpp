@@ -1,5 +1,7 @@
 #pragma once
 
+#include <DriverKit/IOLib.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -89,10 +91,11 @@ class ROMReader {
                         QuadletReadPolicy policy = QuadletReadPolicy::AllOrNothing);
 
     /**
-     * @brief Read Bus Info Block (20 bytes, 5 quadlets).
+     * @brief Read Bus Info Block.
      *
-     * Reads the BIB starting at the standard Config ROM address 0xFFFFF0000400
-     * (IEEE 1394-1995 §8.3.2).
+     * Reads q0 first, then decides whether the remote ROM is q0-only minimal
+     * IEEE 1212 or a general IEEE 1394 BIB. General ROMs return q0..qN where
+     * N == bus_info_length, with q1 ("1394") synthesized for compatibility.
      *
      * @param nodeId Target node ID.
      * @param generation Expected bus generation.

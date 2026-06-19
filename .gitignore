@@ -32,6 +32,9 @@ diff.txt
 # Other
 compile_commands.json
 
+# Sonar run with token
+sonar.sh
+
 # PVS studio
 .PVS-Studio*
 
@@ -57,3 +60,34 @@ opencode.json
 
 # Local Codex scratch builds
 build-codex/
+
+# Node modules (for lint-math tooling)
+node_modules/
+
+# Xcode generated projects
+ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
+
+# In-tree reference stacks (third-party, local only — wire-compat doctrine refs)
+/firewire/
+/IOFireWireFamily.kmodproj/
+/IOFireWireAVC/
+/IOFireWireSBP2/
+/libffado-2.5.0/
+
+# Local scratch / tool artifacts
+/Testing/
+/tmp/
+/CMakeLists.txt.bak
+/validation_data.json
+__pycache__/
+/ZTS_BUFFERS_AND_IRS.md
+
+# Log dumps
+/tools/*.txt
+/tools/*.log
+
+# mimo
+.mimocode
+
+# references - libffado, apple, linux firewire ohci driver, linux sound/firewire stack, alsa snd-firewire-ctl-services
+/references/

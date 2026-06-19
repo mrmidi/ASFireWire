@@ -12,6 +12,8 @@
 		3A1694002E8087BD000BD368 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */; };
 		3A27C5302ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
 		3A27C5322ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
+		3A9501012F13000000C0DE95 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 3A9501002F13000000C0DE95 /* MCP */; };
+		3A9501032F13000000C0DE95 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 3A9501022F13000000C0DE95 /* MCP */; };
 		3ABA31132EF8564A0046405D /* AudioDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3ABA31122EF8564A0046405D /* AudioDriverKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -95,6 +97,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A9501012F13000000C0DE95 /* MCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +115,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A9501032F13000000C0DE95 /* MCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -185,6 +189,9 @@
 				3A1693DA2E808727000BD368 /* ASFW */,
 			);
 			name = ASFW;
+			packageProductDependencies = (
+				3A9501002F13000000C0DE95 /* MCP */,
+			);
 			productName = ASFW;
 			productReference = 3A1693D82E808727000BD368 /* ASFW.app */;
 			productType = "com.apple.product-type.application";
@@ -229,6 +236,7 @@
 			);
 			name = ASFWTests;
 			packageProductDependencies = (
+				3A9501022F13000000C0DE95 /* MCP */,
 			);
 			productName = ASFWTests;
 			productReference = 3AB4713F2EE31CF0003A4E2A /* ASFWTests.xctest */;
@@ -266,6 +274,9 @@
 			);
 			mainGroup = 3A1693CF2E808727000BD368;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				3A9501042F13000000C0DE95 /* XCRemoteSwiftPackageReference "swift-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3A1693D92E808727000BD368 /* Products */;
 			projectDirPath = "";
@@ -518,6 +529,10 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/ASFWDriver/Shared",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -531,6 +546,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "ASFW/ASFW-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -553,6 +569,10 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/ASFWDriver/Shared",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -566,6 +586,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "ASFW/ASFW-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -720,6 +741,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		3A9501042F13000000C0DE95 /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3A9501002F13000000C0DE95 /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3A9501042F13000000C0DE95 /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
+		3A9501022F13000000C0DE95 /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3A9501042F13000000C0DE95 /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3A1693D02E808727000BD368 /* Project object */;
 }

@@ -251,18 +251,18 @@ bool DMAMemoryManager::AlignCursorToIOVA(size_t alignment) noexcept {
     return true;
 }
 
-uint64_t DMAMemoryManager::VirtToIOVA(const void* virt) const noexcept {
+uint64_t DMAMemoryManager::VirtToIOVA(const std::byte* virt) const noexcept {
     if (!IsInSlabRange(virt)) {
         return 0;
     }
 
-    const auto* bytePtr = static_cast<const uint8_t*>(virt);
+    const auto* bytePtr = reinterpret_cast<const uint8_t*>(virt);
     const ptrdiff_t offset = bytePtr - slabVirt_;
 
     return slabIOVA_ + static_cast<uint64_t>(offset);
 }
 
-void* DMAMemoryManager::IOVAToVirt(uint64_t iova) const noexcept {
+std::byte* DMAMemoryManager::IOVAToVirt(uint64_t iova) const noexcept {
     if (!IsInSlabRange(iova)) {
         return nullptr;
     }
@@ -274,15 +274,15 @@ void* DMAMemoryManager::IOVAToVirt(uint64_t iova) const noexcept {
         return nullptr;
     }
 
-    return slabVirt_ + offset;
+    return reinterpret_cast<std::byte*>(slabVirt_ + offset);
 }
 
-bool DMAMemoryManager::IsInSlabRange(const void* ptr) const noexcept {
+bool DMAMemoryManager::IsInSlabRange(const std::byte* ptr) const noexcept {
     if (slabVirt_ == nullptr || ptr == nullptr) {
         return false;
     }
 
-    const auto* bytePtr = static_cast<const uint8_t*>(ptr);
+    const auto* bytePtr = reinterpret_cast<const uint8_t*>(ptr);
     return (bytePtr >= slabVirt_) && (bytePtr < (slabVirt_ + slabSize_));
 }
 
@@ -308,7 +308,7 @@ void DMAMemoryManager::ZeroSlab(size_t length) noexcept {
     }
 }
 
-void DMAMemoryManager::PublishRange(const void* address, size_t length) const noexcept {
+void DMAMemoryManager::PublishRange(const std::byte* address, size_t length) const noexcept {
     if (address == nullptr || length == 0) {
         ::ASFW::Driver::IoBarrier();
         return;
@@ -335,7 +335,7 @@ void DMAMemoryManager::PublishRange(const void* address, size_t length) const no
     ::ASFW::Driver::IoBarrier();
 }
 
-void DMAMemoryManager::FetchRange(const void* address, size_t length) const noexcept {
+void DMAMemoryManager::FetchRange(const std::byte* address, size_t length) const noexcept {
     if (address == nullptr || length == 0) {
         ::ASFW::Driver::IoBarrier();
         return;
@@ -363,13 +363,13 @@ void DMAMemoryManager::FetchRange(const void* address, size_t length) const noex
 }
 
 void DMAMemoryManager::TraceHexPreview(const char* tag,
-                                       const void* address,
+                                       const std::byte* address,
                                        size_t length) const noexcept {
     if (!IsTracingEnabled() || address == nullptr || length == 0) {
         return;
     }
 
-    const auto* bytes = static_cast<const uint8_t*>(address);
+    const auto* bytes = reinterpret_cast<const uint8_t*>(address);
     const size_t preview = std::min(length, kTracePreviewBytes);
     char line[3 * 16 + 1];
 
@@ -394,7 +394,7 @@ void DMAMemoryManager::TraceHexPreview(const char* tag,
     }
 }
 
-void DMAMemoryManager::HexDump64(const void* address, const char* tag) const noexcept {
+void DMAMemoryManager::HexDump64(const std::byte* address, const char* tag) const noexcept {
     // Align to 64-byte cache line boundary
     const auto* d = reinterpret_cast<const uint32_t*>(
         reinterpret_cast<uintptr_t>(address) & ~uintptr_t(63));

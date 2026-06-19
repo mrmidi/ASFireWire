@@ -12,6 +12,7 @@
 #include "MusicSubunitCapabilities.hpp"
 #include "../Descriptors/AVCInfoBlock.hpp"
 #include "../StreamFormats/StreamFormatTypes.hpp"
+#include <span>
 
 class MusicSubunitIdentifierParserTests;
 class MusicSubunitTests;
@@ -106,6 +107,13 @@ public:
     bool HasCompleteDescriptorParse() const noexcept;
 
 private:
+    struct DescriptorParsingContext {
+        std::vector<PlugInfo> discoveredPlugs;
+        int numDest{0};
+        int numSrc{0};
+        bool foundRouting{false};
+    };
+
     MusicSubunitCapabilities capabilities_;
     std::vector<PlugInfo> plugs_;
     std::vector<::ASFW::Protocols::AVC::Descriptors::AVCInfoBlock> dynamicStatus_;  // Phase 3
@@ -123,6 +131,10 @@ private:
 
     void ParseSignalFormats(AVCUnit& unit, std::function<void(bool)> completion);
     void QueryPlugFormats(AVCUnit& unit, size_t plugIndex, std::function<void(bool)> completion);
+    void ContinueAfterPlugFormatQueries(AVCUnit& unit, std::function<void(bool)> completion);
+    void HandlePlugFormatResult(size_t plugIndex,
+                                AVCResult result,
+                                const std::optional<StreamFormats::AudioStreamFormat>& format);
     void ParsePlugNames(AVCUnit& unit, std::function<void(bool)> completion);
     
     /// Parse Music Subunit Identifier Descriptor
@@ -135,6 +147,25 @@ private:
     
     /// Helper to parse specific descriptor blocks
     void ParseDescriptorBlock(const uint8_t* data, size_t length);
+    void ProcessDescriptorInfoBlock(const ::ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
+                                    DescriptorParsingContext& ctx);
+    void ProcessStatusAreaBlock(uint16_t type, std::span<const uint8_t> primaryData);
+    void HandleRoutingStatusBlock(const ::ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
+                                  DescriptorParsingContext& ctx);
+    void HandleSubunitPlugInfoBlock(const ::ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
+                                    DescriptorParsingContext& ctx);
+    void ParseClusterInfoBlocks(const ::ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
+                                PlugInfo& plug);
+    void ParseDescriptorInfoBlocks(const uint8_t* data,
+                                   size_t parseEnd,
+                                   size_t infoBlockOffset,
+                                   DescriptorParsingContext& ctx,
+                                   size_t& parsedBlockCount);
+    void FinalizeDescriptorContext(DescriptorParsingContext& ctx);
+    void AssignDescriptorPlugDirections(DescriptorParsingContext& ctx);
+    void ApplyMusicChannelNamesToPlugs();
+    void UpdateCapabilitiesFromPlugs();
+    [[nodiscard]] static uint16_t ChannelCountForFormat(const StreamFormats::AudioStreamFormat& format) noexcept;
 
     /// Helper to log connection info
     void LogConnection(size_t index, const StreamFormats::ConnectionInfo& info);
