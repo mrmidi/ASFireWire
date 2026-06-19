@@ -71,9 +71,16 @@ enum CoolScan {
         return false
     }
 
-    /// MODE SELECT(6) — set the base resolution unit (1/unitDpi inch).
-    /// NOT part of VueScan's flow (the capture never sends it — offsets are in
-    /// 1/4000″ device units by default). Kept only for the windowcheck diagnostic.
+    /// MODE SELECT(6) — set the base measurement unit (1/unitDpi inch).
+    /// Rob Sims' LS-9000 backend (`cs9k_mode_select`) sends this once in
+    /// `sane_open`, right after INQUIRY and before RESERVE. SET WINDOW
+    /// offsets/extents are expressed and validated against the unit it
+    /// establishes. Our DTrace capture never showed it ONLY because the trace
+    /// attached AFTER VueScan had already opened the device — one-time open-time
+    /// commands are invisible to a mid-session capture, so "VueScan never sends
+    /// MODE SELECT" was a wrong inference. Leading suspect for the SET WINDOW
+    /// 5/26 wall: without it the scanner validates our (otherwise byte-identical)
+    /// field values against its power-on-default unit → INVALID FIELD IN PARAM LIST.
     static func modeSelect(_ s: SBP2Session, unitDpi: UInt16) throws -> SCSIResult {
         // 20-byte MODE SELECT(6) parameter list, byte-exact from coolscan3
         // cs3_mode_select. It is a well-formed SCSI parameter list:
@@ -98,6 +105,28 @@ enum CoolScan {
     }
     static func release(_ s: SBP2Session) throws -> SCSIResult {
         try s.sendSCSI(cdb: [0x17, 0, 0, 0, 0, 0], direction: .none)
+    }
+
+    /// Replicate Rob Sims' LS-9000 `sane_open` device setup: MODE SELECT (set the
+    /// measurement unit to 1/`unitDpi`″) then RESERVE UNIT. We dropped both earlier
+    /// on the (mistaken) grounds that the VueScan capture never showed them — but
+    /// they are open-time commands the mid-session capture could not see. This is
+    /// the primary fix attempt for the SET WINDOW 5/26 wall: it establishes the
+    /// unit context SET WINDOW's offsets/extents are validated against.
+    /// Returns the MODE SELECT result (RESERVE is best-effort).
+    @discardableResult
+    static func establishUnit(_ s: SBP2Session, unitDpi: UInt16) throws -> SCSIResult {
+        var r = try modeSelect(s, unitDpi: unitDpi)
+        // coolscan9k reissues MODE SELECT once on sense 0x05/0x2c (COMMAND
+        // SEQUENCE ERROR — "scanner found in middle of sequence"): the first
+        // non-info command after a prior aborted run can land in that state.
+        if !r.ok, r.scsiStatus == 0x02, r.sense.count >= 13,
+           (r.sense[r.sense.startIndex + 2] & 0x0F) == 0x05,
+           r.sense[r.sense.startIndex + 12] == 0x2c {
+            r = try modeSelect(s, unitDpi: unitDpi)
+        }
+        _ = try? reserve(s)   // RESERVE(6) — coolscan9k reserves the unit at open
+        return r
     }
 
     /// EXECUTE (vendor trigger) — issued after parameter-setting commands
@@ -599,9 +628,9 @@ enum CoolScan {
         let t0 = Date()
         func step(_ msg: String) { print(String(format: "  [%5.1fs] %@", Date().timeIntervalSince(t0), msg)) }
 
-        // 0) No RESERVE — VueScan never sends it (full-capture CDB vocabulary
-        //    checked); dropped to eliminate every sequence difference while
-        //    SET WINDOW 5/26 is unexplained.
+        // 0) MODE SELECT + RESERVE now happen in step 1a (after the scanner reports
+        //    ready) — they are open-time commands the capture could not see, and
+        //    re-adding them is the primary fix attempt for the SET WINDOW 5/26 wall.
 
         // 0b) Let the scanner finish its post-power-cycle boot before the first
         //     AGENT_RESET-routed command. The ORBs in main (INQUIRY/TUR/caps)
@@ -618,6 +647,21 @@ enum CoolScan {
         // 1) Wait until the scanner reports ready (film loaded, lamp warm).
         guard waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (sense-timeout)") }
         step("scanner klar")
+
+        // 1a) Establish the measurement unit + reservation BEFORE any window/read
+        //     ops — exactly as Rob Sims' LS-9000 backend does at sane_open
+        //     (INQUIRY → MODE SELECT → RESERVE). The DTrace capture missed these
+        //     (open-time, before the trace attached), so we wrongly dropped them.
+        //     Without MODE SELECT the scanner validates SET WINDOW's fields against
+        //     its power-on-default unit → 5/26. This is the primary fix attempt for
+        //     that wall: if SET WINDOW now succeeds, the missing unit was the cause.
+        //     Done after waitReady so a still-booting device can't wedge it.
+        do {
+            let mr = try establishUnit(s, unitDpi: max(caps.resXMax, 1))
+            step("MODE SELECT (enhet 1/\(caps.resXMax)″) + RESERVE: \(mr.ok ? "ok ✅" : "❌ \(mr.statusText)")")
+        } catch {
+            print("  ⚠️ MODE SELECT/RESERVE feilet: \(error) — fortsetter (SET WINDOW gir uansett sitt eget verdikt)")
+        }
 
         // 1b) Post-ready state dumps. The boot-time reads in main happen while
         //     the scanner still reports UA/not-ready and return zeros — these
