@@ -41,6 +41,7 @@
 #include "../Hardware/RegisterMap.hpp"
 #include "../Bus/IRM/IRMClient.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
+#include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
@@ -624,6 +625,10 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                  "ROM scan for gen=%u produced 0 ROMs but topology still has remote "
                  "link-active nodes; keeping existing devices until a conclusive scan",
                  gen.value);
+    }
+
+    if (deps_.sbp2SessionRegistry) {
+        deps_.sbp2SessionRegistry->RefreshTargets(gen);
     }
 
     ASFW_LOG(Discovery, "Discovery complete: %zu devices processed in gen=%u", roms.size(),

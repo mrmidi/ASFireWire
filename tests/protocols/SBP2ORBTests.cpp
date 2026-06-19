@@ -253,7 +253,7 @@ TEST(SBP2ORBTests, CommandORBDirectDescriptorUsesFullBusNodeId) {
     descriptor.isDirect = true;
 
     orb.SetDataDescriptor(descriptor);
-    orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 6);
+    ASSERT_EQ(kIOReturnSuccess, orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 6));
 
     const auto orbAddress = orb.GetORBAddress();
     const uint64_t packedAddress = ComposeAddress(orbAddress.addressHi, orbAddress.addressLo);
@@ -287,6 +287,39 @@ TEST(SBP2ORBTests, ManagementORBDestructionInvalidatesPendingTimeout) {
 
     rig.AdvanceMs(5);
     EXPECT_EQ(0, completionCount);
+}
+
+// --- CommandORB configuration hardening (FW-56 step 1) --------------------
+
+TEST(SBP2ORBTests, CommandORBIsValidAfterSuccessfulConstruction) {
+    AddressSpaceManager manager{nullptr};
+    SBP2CommandORB orb(manager, reinterpret_cast<void*>(0x70), 16);
+    EXPECT_TRUE(orb.IsValid());
+}
+
+TEST(SBP2ORBTests, SetCommandBlockRejectsOversizedCdb) {
+    AddressSpaceManager manager{nullptr};
+    SBP2CommandORB orb(manager, reinterpret_cast<void*>(0x71), 16);
+
+    const std::array<uint8_t, 16> exact{};
+    EXPECT_TRUE(orb.SetCommandBlock(std::span<const uint8_t>(exact.data(), exact.size())));
+
+    const std::array<uint8_t, 6> shorter{};
+    EXPECT_TRUE(orb.SetCommandBlock(std::span<const uint8_t>(shorter.data(), shorter.size())));
+
+    const std::array<uint8_t, 17> oversized{};
+    EXPECT_FALSE(orb.SetCommandBlock(std::span<const uint8_t>(oversized.data(), oversized.size())));
+}
+
+TEST(SBP2ORBTests, ChainAndDummyOpsReturnSuccessOnValidORB) {
+    AddressSpaceManager manager{nullptr};
+    SBP2CommandORB orb(manager, reinterpret_cast<void*>(0x72), 16);
+    ASSERT_TRUE(orb.IsValid());
+
+    EXPECT_EQ(kIOReturnSuccess, orb.SetNextORBAddress(0x8000'0000u, 0x0000'0000u));
+    EXPECT_EQ(kIOReturnSuccess, orb.SetToDummy());
+    EXPECT_EQ(kIOReturnSuccess,
+              orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 6));
 }
 
 } // namespace

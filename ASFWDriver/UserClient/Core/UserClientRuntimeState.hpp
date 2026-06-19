@@ -52,9 +52,10 @@ class UserClientRuntimeState final {
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
         auto* sbp2Manager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
+        auto* sbp2Registry = controllerCore ? controllerCore->GetSbp2SessionRegistry() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(driver);
-        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager);
+        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager, sbp2Registry);
         diagnosticsHandler_ = std::make_unique<DiagnosticsHandler>(driver);
 
         return HandlersReady();

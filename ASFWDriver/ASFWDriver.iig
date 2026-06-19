@@ -51,6 +51,10 @@ public:
                                          uint64_t time)
         TYPE(IOTimerDispatchSource::TimerOccurred);
 
+    virtual void SBP2SessionTimerFired(OSAction* action,
+                                       uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+
     virtual void ProviderNotificationReady(OSAction* action)
         TYPE(IOServiceNotificationDispatchSource::ServiceNotificationReady);
 

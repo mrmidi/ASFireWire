@@ -185,3 +185,55 @@ add_protocols_test(SBP2ORBTests
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
 )
+
+# SBP2 Session Scheduler Tests (ISessionScheduler interface + virtual-clock fake)
+add_protocols_test(SessionSchedulerTests
+    SessionSchedulerTests.cpp
+)
+
+# SBP2 FetchAgent Tests (command-plane ORB submission/chaining/completion)
+add_protocols_test(FetchAgentTests
+    FetchAgentTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+)
+
+# SBP2 LoginSession Tests (login/reconnect/logout state machine + status routing)
+add_protocols_test(LoginSessionTests
+    LoginSessionTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+)
+
+# SBP2 SessionRegistry Tests (identity/lifecycle + per-record CommandExecutor)
+add_protocols_test(SessionRegistryTests
+    SessionRegistryTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/SessionRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/CommandExecutor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+)
+
+# SBP2Handler Tests (user-client boundary: session state + command ABI hardening)
+add_protocols_test(SBP2HandlerTests
+    SBP2HandlerTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/SessionRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/CommandExecutor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+)

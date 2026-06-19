@@ -64,10 +64,15 @@ void SBP2CommandORB::DeallocateResources() noexcept {
 // Command block (CDB)
 // ---------------------------------------------------------------------------
 
-void SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
-    const uint32_t copyLen = static_cast<uint32_t>(
-        std::min(cdb.size(), static_cast<size_t>(maxCommandBlockSize_)));
+bool SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
+    // Reject (do not silently truncate) a CDB that won't fit the command block.
+    if (cdb.size() > static_cast<size_t>(maxCommandBlockSize_)) {
+        ASFW_LOG(Async, "SBP2CommandORB: CDB size %zu exceeds max command block %u",
+                 cdb.size(), maxCommandBlockSize_);
+        return false;
+    }
 
+    const uint32_t copyLen = static_cast<uint32_t>(cdb.size());
     if (copyLen > 0) {
         std::memcpy(orbStorage_.data() + Wire::NormalORB::kHeaderSize,
                      cdb.data(), copyLen);
@@ -78,15 +83,20 @@ void SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
         std::memset(orbStorage_.data() + Wire::NormalORB::kHeaderSize + copyLen,
                      0, maxCommandBlockSize_ - copyLen);
     }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
 // Prepare for execution (fills in dynamic fields)
 // ---------------------------------------------------------------------------
 
-void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
-                                         FW::FwSpeed speed,
-                                         uint16_t maxPayloadLog) noexcept {
+kern_return_t SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
+                                                  FW::FwSpeed speed,
+                                                  uint16_t maxPayloadLog) noexcept {
+    if (!IsValid()) {
+        return kIOReturnNotReady;
+    }
+
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
     const uint16_t busNodeID = Wire::NormalizeBusNodeID(localNodeID);
 
@@ -152,20 +162,21 @@ void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
     orb->dataSize = dataDescriptor_.dataSize;
 
     // Flush ORB to address space
-    WriteORBToAddressSpace();
+    return WriteORBToAddressSpace();
 }
 
 // ---------------------------------------------------------------------------
 // Write ORB buffer to DMA-backed address space
 // ---------------------------------------------------------------------------
 
-void SBP2CommandORB::WriteORBToAddressSpace() noexcept {
+kern_return_t SBP2CommandORB::WriteORBToAddressSpace() noexcept {
     const auto span = std::span<const uint8_t>(orbStorage_.data(), orbStorage_.size());
     const kern_return_t kr = addrMgr_.WriteLocalData(
         owner_, orbHandle_, 0, span);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Async, "SBP2CommandORB: failed to write ORB to address space: 0x%08x", kr);
     }
+    return kr;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,20 +191,26 @@ Async::FWAddress SBP2CommandORB::GetORBAddress() const noexcept {
     return Async::FWAddress(parts);
 }
 
-void SBP2CommandORB::SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept {
+kern_return_t SBP2CommandORB::SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept {
+    if (!IsValid()) {
+        return kIOReturnNotReady;
+    }
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
     orb->nextORBAddressHi = hi;
     orb->nextORBAddressLo = lo;
-    WriteORBToAddressSpace();
+    return WriteORBToAddressSpace();
 }
 
-void SBP2CommandORB::SetToDummy() noexcept {
+kern_return_t SBP2CommandORB::SetToDummy() noexcept {
+    if (!IsValid()) {
+        return kIOReturnNotReady;
+    }
     // Set rq_fmt=3 (bits [13:12] = 11) to make device skip this ORB
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
     uint16_t hostOptions = OSSwapBigToHostInt16(orb->options);
     hostOptions = (hostOptions & ~0x3000u) | 0x6000u;
     orb->options = OSSwapHostToBigInt16(hostOptions);
-    WriteORBToAddressSpace();
+    return WriteORBToAddressSpace();
 }
 
 // ---------------------------------------------------------------------------

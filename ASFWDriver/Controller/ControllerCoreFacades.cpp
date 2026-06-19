@@ -32,6 +32,7 @@
 #include "../Bus/IRM/IRMClient.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
+#include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
@@ -103,6 +104,15 @@ Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager
 void ControllerCore::SetSbp2AddressSpaceManager(
     std::shared_ptr<Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager) {
     deps_.sbp2AddressSpaceManager = std::move(sbp2AddressSpaceManager);
+}
+
+Protocols::SBP2::SessionRegistry* ControllerCore::GetSbp2SessionRegistry() const {
+    return deps_.sbp2SessionRegistry.get();
+}
+
+void ControllerCore::SetSbp2SessionRegistry(
+    std::shared_ptr<Protocols::SBP2::SessionRegistry> sbp2SessionRegistry) {
+    deps_.sbp2SessionRegistry = std::move(sbp2SessionRegistry);
 }
 
 IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }

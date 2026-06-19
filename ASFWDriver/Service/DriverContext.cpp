@@ -31,6 +31,8 @@
 #include "../Logging/Logging.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
+#include "../Protocols/SBP2/Session/DriverKitSessionScheduler.hpp"
+#include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
 void ServiceContext::DisarmProviderNotifications() {
@@ -72,6 +74,8 @@ void ServiceContext::Reset() {
     deps.topologyMapService.reset();
     deps.busManagerElectionDriver.reset();
     deps.fcpResponseRouter.reset(); // Clean up FCP router
+    deps.sbp2SessionRegistry.reset();
+    deps.sbp2SessionScheduler.reset();
     deps.sbp2AddressSpaceManager.reset();
     deps.avcDiscovery.reset();      // Clean up AV/C discovery
     deps.irmClient.reset();         // Clean up IRM client
@@ -180,7 +184,7 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     // depend only on IFireWireBus ports (ControllerCore::Bus()).
 }
 
-void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
+kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext& ctx) {
     auto& d = ctx.deps;
 
     if (!d.sbp2AddressSpaceManager && d.hardware) {
@@ -189,14 +193,35 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
         ASFW_LOG(Controller, "[Controller] SBP2 AddressSpaceManager initialized");
     }
 
-    if (ctx.controller) {
-        ctx.controller->SetSbp2AddressSpaceManager(d.sbp2AddressSpaceManager);
+    if (!d.sbp2SessionScheduler) {
+        d.sbp2SessionScheduler =
+            std::make_shared<ASFW::Protocols::SBP2::DriverKitSessionScheduler>();
+        const auto kr = d.sbp2SessionScheduler->Prepare(service, ctx.workQueue);
+        if (kr != kIOReturnSuccess) {
+            d.sbp2SessionScheduler.reset();
+            return kr;
+        }
+        ASFW_LOG(Controller, "[Controller] SBP2 session scheduler initialized");
     }
 
-    // Inbound request routing (tCodes 0x0/0x1/0x4/0x5) is owned centrally by
-    // LocalRequestDispatch (see WireLocalRequestDispatch), which registers the
-    // SBP-2 / CSR / FCP / DICE address handlers in one place. This function only
-    // constructs the SBP-2 manager dependency.
+    if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
+        d.deviceManager && d.sbp2SessionScheduler) {
+        auto& bus = ctx.controller->Bus();
+        d.sbp2SessionRegistry = std::make_shared<ASFW::Protocols::SBP2::SessionRegistry>(
+            bus, bus, *d.sbp2AddressSpaceManager, *d.deviceManager, *d.sbp2SessionScheduler,
+            ctx.workQueue.get());
+        ASFW_LOG(Controller, "[Controller] SBP2 SessionRegistry initialized");
+    }
+
+    if (ctx.controller) {
+        ctx.controller->SetSbp2AddressSpaceManager(d.sbp2AddressSpaceManager);
+        ctx.controller->SetSbp2SessionRegistry(d.sbp2SessionRegistry);
+    }
+
+    // Inbound local-request routing remains owned centrally by LocalRequestDispatch
+    // (see WireLocalRequestDispatch). This helper owns the higher-level SBP-2
+    // session dependencies that sit above the address-space manager.
+    return kIOReturnSuccess;
 }
 
 kern_return_t DriverWiring::PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx) {

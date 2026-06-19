@@ -1,8 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
-#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -392,6 +392,21 @@ public:
         IOLockUnlock(lock_);
     }
 
+    // Attach a human-readable label to a range for diagnostic logging only.
+    // No-op if the handle is unknown. Truncated to fit the fixed buffer.
+    void SetDebugLabel(uint64_t handle, const char* label) {
+        if (!lock_ || handle == 0) {
+            return;
+        }
+
+        IOLockLock(lock_);
+        auto it = ranges_.find(handle);
+        if (it != ranges_.end()) {
+            CopyDebugLabel(it->second, label);
+        }
+        IOLockUnlock(lock_);
+    }
+
     void ClearAll() {
         if (!lock_) {
             return;
@@ -411,11 +426,14 @@ private:
     static constexpr uint32_t kAutoAddressWindowEndLo = 0x0FFF'FFFFu;
     static constexpr uint64_t kAutoAddressAlignment = 8ULL;
 
+    static constexpr std::size_t kDebugLabelCapacity = 32;
+
     struct AddressRange {
         AddressRangeMeta meta{};
         void* owner{nullptr};
         std::vector<uint8_t> buffer;
         RemoteWriteCallback onRemoteWrite;
+        std::array<char, kDebugLabelCapacity> debugLabel{};
 
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
         OSSharedPtr<IODMACommand> dmaCommand{};
@@ -424,6 +442,18 @@ private:
         uint64_t deviceAddress{0};
         bool hasBacking{false};
     };
+
+    static void CopyDebugLabel(AddressRange& range, const char* label) {
+        range.debugLabel.fill('\0');
+        if (!label) {
+            return;
+        }
+        std::strncpy(range.debugLabel.data(), label, range.debugLabel.size() - 1);
+    }
+
+    [[maybe_unused]] static const char* DebugLabelCString(const AddressRange& range) {
+        return range.debugLabel[0] != '\0' ? range.debugLabel.data() : "unlabeled";
+    }
 
     static uint64_t ComposeAddress(uint16_t hi, uint32_t lo) {
         return (static_cast<uint64_t>(hi) << 32) | static_cast<uint64_t>(lo);
@@ -485,8 +515,9 @@ private:
         for (const auto& entry : ranges_) {
             const auto& range = entry.second;
             ASFW_ADDRSPACE_LOG(
-                "AddressSpaceManager[%p] range handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
+                "AddressSpaceManager[%p] range label=%s handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
                 this,
+                DebugLabelCString(range),
                 static_cast<unsigned long long>(range.meta.handle),
                 range.owner,
                 static_cast<unsigned long long>(range.meta.address),
