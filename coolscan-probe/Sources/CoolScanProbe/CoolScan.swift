@@ -771,8 +771,24 @@ enum CoolScan {
             bisectSetWindow(s, g)
             throw error
         }
+        // VueScan polls scanner_ready (a TEST UNIT READY) between the last SET
+        // WINDOW and the first SEND LUT (capture line 5623); coolscan9k calls
+        // cs9k_scanner_ready(READY) before send_lut too. Skipping it left SEND
+        // LUT rejected 5/24 (INVALID FIELD IN CDB) despite a byte-identical CDB
+        // and payload — same class of missing-precondition as the SET WINDOW
+        // 5/26 wall that MODE SELECT fixed.
+        let lutReady = waitReady(s, timeout: 30)
+        step(lutReady ? "scanner klar før SEND LUT" : "⚠️ ikke klar før SEND LUT — fortsetter")
         for c in colors {
-            _ = try attempt("SEND LUT (\(c))", recover: ride) { try sendLUT(s, color: c) }
+            // scanner_ready before EVERY colour LUT (coolscan9k cs9k_send_lut
+            // loops scanner_ready(READY) per colour, not once). xferDiag on
+            // rejection reveals whether the dext's 32 KB struct-input path
+            // actually delivered all 32768 bytes — never proven on v14+ (run 3's
+            // "OK" predates SCSI-status visibility and may have masked a 5/24).
+            _ = waitReady(s, timeout: 30)
+            _ = try attempt("SEND LUT (\(c))", diag: xferDiag, recover: ride) {
+                try sendLUT(s, color: c)
+            }
             step("SEND LUT \(c) ok (32768B)")
         }
 
