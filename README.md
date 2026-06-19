@@ -16,6 +16,7 @@
 - [What currently works](#what-currently-works)
 - [Driver initialization (high level)](#driver-initialization-high-level)
 - [What is planned](#what-is-planned)
+- [Developer MCP control plane](#developer-mcp-control-plane)
 - [Code guidelines](#code-guidelines)
 - [General pitfalls and gotchas](#general-pitfalls-and-gotchas)
 - [Project structure](#project-structure)
@@ -247,6 +248,19 @@ Planned work:
 4. Improve hardware coverage with more community-tested hosts, adapters, and interfaces.
 5. Continue filling out device-specific controls where generic FireWire or generic DICE handling is not enough.
 
+## Developer MCP control plane
+
+The ASFW control app hosts an experimental Model Context Protocol (MCP) control plane (`ASFW/MCP/`) so AI agents and tooling can inspect driver state and run guarded low-level FireWire operations without parsing log dumps. It is a **development-only diagnostics interface**, not an audio-control or production feature, and it is **not enabled by default**.
+
+Key points:
+
+- It lives inside the existing Xcode project (no separate Swift package or CLI). The MCP layer talks to the driver through a narrow `ASFWDriverControlling` boundary over `ASFWDriverConnector`, so handlers can be unit-tested with mocks and later backed by the live connector.
+- A local HTTP/SSE endpoint exposes the tool surface, gated behind an explicit runtime mode plus a write-policy engine — read/inspection tools first, with raw register and CAS writes refused unless the policy and test gates allow them.
+- Tool surfaces include register access, AV/C and raw FCP, CMP, IRM/CAS, SBP-2, and DICE/TCAT inspection. Telemetry and transaction schemas are published as MCP resources.
+- Design and usage are documented under `documentation/MCP_*.md` (control-plane architecture, tool taxonomy, write policy, mock/smoke harness, telemetry resources, tool-use examples, and agent workflows).
+
+Because this can issue real bus transactions, keep it disabled unless you are actively developing against it.
+
 ## Code guidelines
 
 Current code is a work in progress. Target guidelines:
@@ -270,7 +284,7 @@ Recommendations based on experience:
 
 The repository is organized into these top-level components:
 
-- **ASFW/** — Control app and installer (Swift/SwiftUI). The supported method to install DriverKit-based drivers on macOS.
+- **ASFW/** — Control app and installer (Swift/SwiftUI). The supported method to install DriverKit-based drivers on macOS. Also hosts the developer-only MCP control plane (`ASFW/MCP/`).
 - **ASFWDriver/** — Main DriverKit-based FireWire driver (detailed below).
 - **ASFWTests/** — DriverKit-independent unit and integration tests.
 - **tests/** — Additional test fixtures and test infrastructure.
