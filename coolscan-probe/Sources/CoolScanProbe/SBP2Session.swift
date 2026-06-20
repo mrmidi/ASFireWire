@@ -142,6 +142,30 @@ final class SBP2Session {
         throw ProbeError("SCSI-kommando timeout (ingen resultat)")
     }
 
+    /// Diagnostics: how much the target actually transferred against the last
+    /// completed command's data buffer. `targetWroteBytes` is data-IN (target →
+    /// host); `targetReadBytes` is data-OUT (host → target). Zero on a direction
+    /// that should be non-zero means the target never touched our buffer.
+    struct TransferInfo {
+        let opcode: UInt8
+        let direction: UInt8      // 0=none, 1=fromTarget(data-in), 2=toTarget(data-out)
+        let expectedBytes: UInt32
+        let targetWroteBytes: UInt64; let targetWroteCalls: UInt32
+        let targetReadBytes: UInt64;  let targetReadCalls: UInt32
+        var dirLabel: String { direction == 1 ? "data-IN" : direction == 2 ? "data-OUT" : "no-data" }
+    }
+
+    func lastTransferInfo() -> TransferInfo? {
+        guard let (out, _) = try? conn.call(.getSBP2TransferInfo, scalarIn: [handle], scalarOutCount: 7),
+              out.count >= 7 else { return nil }
+        return TransferInfo(
+            opcode: UInt8(truncatingIfNeeded: out[0]),
+            direction: UInt8(truncatingIfNeeded: out[1]),
+            expectedBytes: UInt32(truncatingIfNeeded: out[2]),
+            targetWroteBytes: out[3], targetWroteCalls: UInt32(truncatingIfNeeded: out[4]),
+            targetReadBytes: out[5], targetReadCalls: UInt32(truncatingIfNeeded: out[6]))
+    }
+
     private func parseResult(_ data: Data) -> SCSIResult {
         guard data.count >= 16 else {
             return SCSIResult(transportStatus: -1, sbpStatus: 0xFF, payload: Data(), sense: Data())

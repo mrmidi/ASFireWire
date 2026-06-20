@@ -97,19 +97,248 @@ func run() -> Int32 {
         print("⚠️  TEST UNIT READY feilet: \(error)")
     }
 
+    // CHAINTEST mode: isolate WHY command #3 (the 2nd doorbell) fails. Every run
+    // already issued INQUIRY (cmd1, via ORB_POINTER) + TUR (cmd2, 1st doorbell)
+    // above. In windowcheck, cmd3 is MODE SELECT — which is BOTH the 2nd doorbell
+    // AND the first data-OUT command, so we can't tell which property breaks it.
+    // Here we extend the chain with pure no-data (TUR) and data-IN (INQUIRY)
+    // commands so the failure point is unambiguous:
+    //   • cmd3 (TUR) times out      ⇒ the 2nd doorbell is broken for ANY command
+    //                                  = a pure chain-depth bug (data dir is moot).
+    //   • cmd3/cmd4 (TUR) complete  ⇒ no-data chaining works deep; MODE SELECT's
+    //                                  failure is data-OUT-specific.
+    //   • cmd5/cmd7 (INQUIRY) ok    ⇒ data-IN works in a chain ⇒ the bug is
+    //                                  specifically data-OUT inside a doorbell chain.
+    if CommandLine.arguments.contains("chaintest") {
+        print("\n=== CHAINTEST: doorbell-chain depth (cmd1=INQUIRY, cmd2=TUR allerede gjort) ===")
+        print("Hver kommando under forlenger doorbell-kjeden med én. Vi vil vite HVOR den knekker.\n")
+        func step(_ n: Int, _ label: String, _ body: () throws -> SCSIResult) -> Bool {
+            do {
+                let r = try body()
+                let extra = r.payload.count > 0 ? " — \(r.payload.count)B mottatt" : ""
+                print("  cmd\(n) [\(label)]: ✅ fullført (transport=\(r.transportStatus) sbp=\(r.sbpStatus))\(extra)")
+                if let t = session.lastTransferInfo() {
+                    print("       [xfer] \(t.dirLabel) expected=\(t.expectedBytes)B "
+                        + "targetWROTE=\(t.targetWroteBytes)B/\(t.targetWroteCalls)x "
+                        + "targetREAD=\(t.targetReadBytes)B/\(t.targetReadCalls)x")
+                }
+                return true
+            } catch {
+                print("  cmd\(n) [\(label)]: ❌ \(error)")
+                return false
+            }
+        }
+        var allOk = true
+        allOk = step(3, "TUR no-data (2. doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
+        allOk = step(4, "TUR no-data (3. doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
+        allOk = step(5, "INQUIRY 96B data-IN i kjede") { try SCSI.inquiry(session, allocation: 96) } && allOk
+        allOk = step(6, "TUR no-data (5. doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
+        allOk = step(7, "INQUIRY 36B data-IN")        { try SCSI.inquiry(session, allocation: 36) } && allOk
+        print("""
+
+        TOLKNING:
+          • cmd3 (TUR) timeout            ⇒ 2. doorbell knekt for ALLE kommandoer = ren kjede-dybde-bug.
+          • cmd3/cmd4 (TUR) OK            ⇒ no-data-kjeding funker dypt; MODE SELECT-feilen er data-OUT-spesifikk.
+          • cmd5/cmd7 (INQUIRY data-IN) OK ⇒ data-IN funker i kjede ⇒ feilen er spesifikt data-OUT i doorbell-kjede.
+        """)
+        return allOk ? 0 : 9
+    }
+
+    // SCANDIAG mode: the transport works and a scan completes, but every byte is
+    // zero. Find WHERE in the scan sequence it goes wrong, using the scanner's own
+    // SCSI state instead of relying on listening to the mechanism:
+    //   • TUR polled right after SCAN — a BUSY/not-ready → ready transition PROVES
+    //     the scanner is physically acquiring. Staying instantly ready = it never
+    //     scanned (⇒ missing pre-scan setup: SEND LUT / SET FOCUS / LOAD).
+    //   • REQUEST SENSE at each step — a sense key/ASC tells us what it wants.
+    //   • the first READ's actual bytes — zero vs non-zero, decisively.
+    if CommandLine.arguments.contains("scandiag") {
+        print("\n=== SCANDIAG v3: dren UNIT ATTENTION, så les hver kommandos EGEN sense ===")
+        // Retry transient reset-per-ORB timeouts (~1 command in ~10) so a single
+        // hiccup doesn't abort the diagnostic.
+        func attempt<T>(_ label: String, _ body: () throws -> T) throws -> T {
+            var last: Error = ProbeError("\(label): ingen forsøk")
+            for i in 1...4 {
+                do { return try body() }
+                catch { last = error; if i < 4 { usleep(250_000) } }
+            }
+            throw last
+        }
+        // One REQUEST SENSE → decoded (key,asc,ascq), or nil on empty/timeout.
+        func senseOnce() -> (key: UInt8, asc: UInt8, ascq: UInt8)? {
+            guard let r = try? CoolScan.requestSense(session) else { return nil }
+            let b = [UInt8](r.payload)
+            guard b.count >= 14 else { return nil }
+            return (b[2] & 0x0f, b[12], b[13])
+        }
+        func show(_ label: String, _ s: (key: UInt8, asc: UInt8, ascq: UInt8)) {
+            print("  [\(label)] key=0x\(String(format: "%x", s.key)) "
+                + "ASC=0x\(String(format: "%02x", s.asc)) ASCQ=0x\(String(format: "%02x", s.ascq)) "
+                + "(\(senseText(key: s.key, asc: s.asc, ascq: s.ascq)))")
+        }
+        // Drain queued UNIT ATTENTION (key 6) conditions until NO SENSE or a real
+        // (non-UA) condition appears. A pending UA makes the scanner CHECK-CONDITION
+        // the next command WITHOUT executing it, so the window never applies until
+        // the queue is empty (this is what coolscan3's scanner_ready does).
+        @discardableResult
+        func drainUA(_ label: String) -> UInt8 {
+            for _ in 0..<8 {
+                guard let s = senseOnce() else { print("  [\(label)] (sense tom/timeout)"); return 0xff }
+                show(label, s)
+                if s.key != 6 { return s.key }   // NO SENSE (0) or a real condition — done
+                usleep(120_000)
+            }
+            return 6
+        }
+        do {
+            let caps = CoolScan.Capabilities.coolScan9000
+            print("— drener UA-kø (etter strømsyklus/film-isetting) —")
+            _ = drainUA("drain")
+            print("— MODE SELECT —")
+            let ms = try attempt("MODE SELECT") { try CoolScan.modeSelect(session, unitDpi: caps.resXMax) }
+            print("  status transport=\(ms.transportStatus) sbp=\(ms.sbpStatus)")
+            _ = drainUA("etter MODE SELECT")   // UA(0x3f) here = MODE SELECT EXECUTED; 0x5/0x26 = rejected
+            // With the UA queue empty, each SET WINDOW's OWN sense is now visible:
+            //   key 0 = accepted, key 5 (0x26) = field rejected, key 6 = it re-armed a UA.
+            // Bisect the bit-depth field [34]: 16 (maxBits) vs 14 (true sensor) vs 8.
+            for d: UInt8 in [16, 14, 8] {
+                print("— SET WINDOW depth=\(d) —")
+                let pre = drainUA("pre-clean d\(d)")
+                if pre != 0 && pre != 0xff {
+                    print("    (advarsel: køen ikke ren før test, sense kan være misvisende)")
+                }
+                let gd = CoolScan.geometry(caps, resolution: 500, depth: d, yOffsetDU: 0)
+                let sw = try attempt("SET WINDOW d\(d)") { try CoolScan.setWindow(session, CoolScan.window(gd, color: .red)) }
+                print("  status transport=\(sw.transportStatus) sbp=\(sw.sbpStatus)")
+                if let s = senseOnce() {
+                    let verdict = s.key == 5 ? "❌ AVVIST (bad felt)"
+                                : s.key == 0 ? "✅ AKSEPTERT (ren)"
+                                : s.key == 6 ? "≈ utført? (ny UA)" : "? key=0x\(String(format:"%x",s.key))"
+                    show("sense d\(d) → \(verdict)", s)
+                } else { print("  [sense d\(d)] (tom/timeout)") }
+            }
+            let descRef = CoolScan.windowDescriptor(
+                CoolScan.window(CoolScan.geometry(caps, resolution: 500, depth: 16, yOffsetDU: 0), color: .red))
+            print("  descriptor depth=16 (58B): \(descRef.map { String(format: "%02x", $0) }.joined(separator: " "))")
+        } catch { print("❌ scandiag feilet: \(error)"); return 8 }
+        return 0
+    }
+
+    // WINDOWCHECK mode: prove whether data-OUT actually reaches the scanner.
+    // SET WINDOW (data-out) with distinctive values, then GET WINDOW (small
+    // data-in, a path we KNOW works via INQUIRY/0xC1) and compare. If the fields
+    // survive the round-trip, data-out is fine and the scan no-op is elsewhere
+    // (missing LOAD/focus/ready-poll). If they read back zero, our SET WINDOW
+    // payload never landed = a data-OUT DMA bug.
+    if CommandLine.arguments.contains("windowcheck") {
+        // Retry transient timeouts (the reset-per-ORB path is flaky) so a single
+        // hiccup doesn't waste a replug. Only retries on THROWN errors, never on a
+        // !ok result — the invalid-window probe below MUST keep its CHECK CONDITION.
+        func attempt<T>(_ label: String, _ body: () throws -> T) throws -> T {
+            var last: Error = ProbeError("\(label): ingen forsøk")
+            for i in 1...4 {
+                do { return try body() }
+                catch {
+                    last = error
+                    if i < 4 { print("   ↻ \(label) forsøk \(i) feilet (\(error)); prøver igjen…"); usleep(300_000) }
+                }
+            }
+            throw last
+        }
+        // Print the dext's view of how many bytes the target actually moved against
+        // the last command's data buffer — the whole point of this run.
+        func xfer(_ label: String) {
+            if let t = session.lastTransferInfo() {
+                print("  [xfer \(label)] \(t.dirLabel) expected=\(t.expectedBytes)B  "
+                    + "targetWROTE=\(t.targetWroteBytes)B/\(t.targetWroteCalls)x  "
+                    + "targetREAD=\(t.targetReadBytes)B/\(t.targetReadCalls)x")
+            } else {
+                print("  [xfer \(label)] (ingen dext-info — eldre dext? selector 62 mangler)")
+            }
+        }
+        do {
+            // Use the known fallback caps instead of reading 0xC1 — that read is
+            // itself flaky and irrelevant to whether data-OUT lands. Fewer commands
+            // before the critical SET WINDOW = fewer chances to derail the test.
+            let caps = CoolScan.Capabilities.coolScan9000
+            print("\nBruker fallback-caps: areal \(caps.boundaryX)×\(caps.boundaryY) du, \(caps.maxBits) bit.")
+            _ = try attempt("MODE SELECT") { try CoolScan.modeSelect(session, unitDpi: caps.resXMax) }
+
+            // Distinctive, non-zero, easy-to-spot geometry.
+            let g = CoolScan.geometry(caps, resolution: 500, yOffsetDU: 2900)
+            let w = CoolScan.window(g, color: .red)
+            let sent = CoolScan.windowDescriptor(w)
+            print("\n— SET WINDOW (R) sender \(sent.count) byte —")
+            print("  hex: \(sent.map { String(format: "%02x", $0) }.joined(separator: " "))")
+            print(String(format: "  fields: resX=%d resY=%d xOff=%d yOff=%d w=%d h=%d depth=%d",
+                         w.resX, w.resY, w.xOffset, w.yOffset, w.width, w.height, w.depth))
+
+            let sr = try attempt("SET WINDOW") { try CoolScan.setWindow(session, w) }
+            print("  SET WINDOW status: transport=\(sr.transportStatus) sbp=\(sr.sbpStatus) \(sr.ok ? "✅" : "❌")")
+            xfer("SET WINDOW")   // data-OUT → expect targetREAD≈58 if delivery works
+
+            let gr = try attempt("GET WINDOW") { try CoolScan.getWindowRaw(session, color: .red) }
+            xfer("GET WINDOW")   // data-IN → expect targetWROTE≈58 if delivery works
+            let b = [UInt8](gr.payload)
+            print("\n— GET WINDOW (R) leste \(b.count) byte —")
+            print("  hex: \(b.map { String(format: "%02x", $0) }.joined(separator: " "))")
+            func be16(_ o: Int) -> Int { b.count > o+1 ? (Int(b[o])<<8)|Int(b[o+1]) : -1 }
+            func be32(_ o: Int) -> Int { b.count > o+3 ? (Int(b[o])<<24)|(Int(b[o+1])<<16)|(Int(b[o+2])<<8)|Int(b[o+3]) : -1 }
+            // Same offsets we wrote (descriptor body starts after the 8-byte header).
+            print(String(format: "  parsed @SET-offsets: resX=%d resY=%d xOff=%d yOff=%d w=%d h=%d",
+                         be16(10), be16(12), be32(14), be32(18), be32(22), be32(26)))
+            let match = be16(10) == Int(w.resX) && be32(18) == Int(w.yOffset) && be32(22) == Int(w.width)
+            print(match
+                ? "\n✅ Data-OUT VIRKER — SET WINDOW-verdiene overlevde round-trip. Skann-no-op ligger et annet sted (LOAD/fokus/ready-poll)."
+                : "\n⚠️  GET WINDOW matcher ikke det vi skrev — enten landet payloaden ikke, ELLER scanneren forkastet innholdet.")
+
+            // DISCRIMINATOR: send a SET WINDOW with an IMPOSSIBLE resolution
+            // (0xFFFF dpi). If the scanner READ our bytes it must reject this with
+            // CHECK CONDITION (sense). If it returns GOOD, it never saw our payload
+            // (read zeros → empty descriptor) = data-OUT delivery is broken.
+            var bad = sent
+            bad[10] = 0xFF; bad[11] = 0xFF   // resX = 65535 dpi — impossible
+            print("\n— SET WINDOW (R) med UGYLDIG resX=0xFFFF (skiller levering fra innhold) —")
+            let badCdb: [UInt8] = [0x24, 0, 0, 0, 0, 0, 0, 0, 0x3a, 0x00]
+            let br = try attempt("SET WINDOW(bad)") {
+                try session.sendSCSI(cdb: badCdb, direction: .toTarget,
+                                     transferLength: UInt32(bad.count), outgoing: bad,
+                                     captureSense: true)
+            }
+            print("  status: transport=\(br.transportStatus) sbp=\(br.sbpStatus) \(br.ok ? "GOOD" : "CHECK/feil")")
+            xfer("SET WINDOW(bad)")   // data-OUT → did the target read these bytes?
+            if !br.sense.isEmpty { print("  sense: \(br.sense.map { String(format: "%02x", $0) }.joined(separator: " "))") }
+            print(br.ok
+                ? "→ GOOD på umulig verdi ⇒ scanneren leste ALDRI payloaden vår (null-buffer) = DATA-OUT-LEVERING ER ØDELAGT i dext-en."
+                : "→ CHECK CONDITION ⇒ scanneren LESTE bytene våre = data-OUT leverer; SET WINDOW-no-op er et innholds-/protokollproblem.")
+        } catch {
+            print("❌ windowcheck feilet: \(error)")
+            return 8
+        }
+        return 0
+    }
+
     // SCAN mode: «CoolScanProbe scan [dpi]» runs the minimal scan path and dumps
     // the raw byte stream for offline inspection. Default 500 dpi (fast, ~13 MB).
     if CommandLine.arguments.contains("scan") {
         let dpi = scanDpiArg() ?? 500
+        let rows = scanRowsArg()   // optional thin-strip cap
+        let yOff = scanYOffsetArg() ?? 0   // optional: start strip N device units down
         do {
             let caps = try CoolScan.capabilities(session)
             print("\nKapabiliteter: optisk \(caps.resXOptical) dpi, areal "
                 + "\(caps.boundaryX)×\(caps.boundaryY) du, \(caps.maxBits) bit.")
-            let g = CoolScan.geometry(caps, resolution: dpi)
+            var g = CoolScan.geometry(caps, resolution: dpi, yOffsetDU: yOff)
+            if let rows = rows, rows > 0, UInt32(rows) < g.logicalHeight {
+                g.logicalHeight = UInt32(rows); g.heightDU = UInt32(rows) * g.pitchY
+            }
             print("Skann @ \(g.realResX)×\(g.realResY) dpi → \(g.logicalWidth)×\(g.logicalHeight) px, "
-                + "\(g.nColors) kanaler, \(g.bytesPerPixel)B/px → \(g.totalBytes) byte forventet.")
+                + "\(g.nColors) kanaler, \(g.bytesPerPixel)B/px → \(g.totalBytes) byte forventet"
+                + (rows != nil ? " (stripe: \(rows!) rader)" : "")
+                + (yOff > 0 ? " @ y-offset \(yOff) du" : "") + ".")
             var lastPct = -1
-            let result = try CoolScan.scanFrame(session, caps: caps, resolution: dpi) { got, total in
+            let result = try CoolScan.scanFrame(session, caps: caps, resolution: dpi,
+                                                rows: rows, yOffsetDU: yOff) { got, total in
                 let pct = total > 0 ? got * 100 / total : 0
                 if pct != lastPct { lastPct = pct; FileHandle.standardError.write(Data("\r  les \(pct)% (\(got)/\(total) byte)".utf8)) }
             }
@@ -221,11 +450,31 @@ func scanDpiArg() -> UInt16? {
     return v
 }
 
+/// Parse an optional row-count following the dpi (e.g. «scan 500 8» → 8 rows).
+/// Caps the scan height for a fast, reliable thin-strip proof.
+func scanRowsArg() -> Int? {
+    let args = CommandLine.arguments
+    guard let i = args.firstIndex(of: "scan"), i + 2 < args.count,
+          let v = Int(args[i + 2]) else { return nil }
+    return v
+}
+
+/// Parse an optional y-offset (device units) following the row count
+/// (e.g. «scan 500 2 2900» → 2-row strip starting 2900 du down). Lets us scan
+/// from the middle of the frame to skip the opaque holder-mask top edge.
+func scanYOffsetArg() -> UInt32? {
+    let args = CommandLine.arguments
+    guard let i = args.firstIndex(of: "scan"), i + 3 < args.count,
+          let v = UInt32(args[i + 3]) else { return nil }
+    return v
+}
+
 /// Save the raw scan stream + a sidecar describing the geometry, so the byte/colour
 /// layout can be confirmed offline before we commit to a TIFF writer.
 func saveScan(_ r: CoolScan.ScanResult) throws {
     let g = r.geometry
-    let base = "coolscan-\(g.realResX)dpi-\(g.logicalWidth)x\(g.logicalHeight)-\(g.nColors)ch-\(g.depth)bit"
+    let yTag = g.yOffsetDU > 0 ? "-y\(g.yOffsetDU)" : ""
+    let base = "coolscan-\(g.realResX)dpi-\(g.logicalWidth)x\(g.logicalHeight)-\(g.nColors)ch-\(g.depth)bit\(yTag)"
     let binURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent(base + ".raw")
     try r.raw.write(to: binURL)
@@ -254,10 +503,14 @@ func senseText(key: UInt8, asc: UInt8, ascq: UInt8) -> String {
     case (0x0, _, _):        return "NO SENSE — klar"
     case (0x2, 0x04, _):     return "NOT READY (LOGICAL UNIT)"
     case (0x2, 0x3a, _):     return "MEDIUM NOT PRESENT — ingen film/holder"
-    case (0x6, 0x29, _):     return "POWER ON / RESET"
-    case (0x6, 0x28, _):     return "NOT READY TO READY CHANGE (medium isatt)"
+    case (0x6, 0x29, _):     return "POWER ON / RESET (UA)"
+    case (0x6, 0x28, _):     return "NOT READY→READY, medium isatt (UA)"
+    case (0x6, 0x3f, _):     return "TARGET OPERATING CONDITIONS CHANGED (UA)"
+    case (0x6, _, _):        return "UNIT ATTENTION (annen)"
     case (0x5, 0x20, _):     return "INVALID COMMAND OPCODE"
     case (0x5, 0x24, _):     return "INVALID FIELD IN CDB"
+    case (0x5, 0x26, _):     return "INVALID FIELD IN PARAMETER LIST"
+    case (0x5, _, _):        return "ILLEGAL REQUEST (annen)"
     default:                 return "ukjent — slå opp i SPC sense-tabell"
     }
 }

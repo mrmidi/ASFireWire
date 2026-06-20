@@ -2,3 +2,6 @@
 .swiftpm/
 *.xcodeproj/xcuserdata/
 .DS_Store
+# Raw scan dumps + sidecars (test output, not source)
+coolscan-*.raw
+coolscan-*.txt

@@ -51,10 +51,12 @@ enum CoolScan {
     /// SET WINDOW offsets/extents are then expressed in. coolscan3 sets
     /// `unit_dpi = resx_max` (the optical max, 4000 on the 9000).
     static func modeSelect(_ s: SBP2Session, unitDpi: UInt16) throws -> SCSIResult {
-        // 20-byte parameter list; the unit dpi is a BE word at offset 18.
+        // 20-byte parameter list (coolscan3 cs3_mode_select); the unit dpi is a BE
+        // word at offset 18, the LAST field — no trailing bytes follow it. (A stray
+        // 2-byte tail here made it 22 bytes, which mis-sizes the parameter list and
+        // can make the scanner misread the measurement unit → corrupt window units.)
         var p: [UInt8] = [0, 0, 0, 0, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x03, 0x06, 0, 0]
-        p += be16(unitDpi)
-        p += [0, 0]
+        p += be16(unitDpi)   // offset 18..19 → 20 bytes total
         return try s.sendSCSI(cdb: [0x15, 0x10, 0x00, 0x00, UInt8(p.count), 0x00],
                               direction: .toTarget, transferLength: UInt32(p.count), outgoing: p)
     }
@@ -287,6 +289,14 @@ enum CoolScan {
         return (UInt32(b[54]) << 24) | (UInt32(b[55]) << 16) | (UInt32(b[56]) << 8) | UInt32(b[57])
     }
 
+    /// GET WINDOW → read back the full 58-byte window parameter block for one color.
+    /// Used to verify that a preceding SET WINDOW (data-OUT) actually reached the
+    /// scanner: the descriptor fields are at the same offsets we wrote them.
+    static func getWindowRaw(_ s: SBP2Session, color: Color) throws -> SCSIResult {
+        try s.sendSCSI(cdb: [0x25, 0x01, 0, 0, 0, color.rawValue, 0, 0, 0x3a, 0x00],
+                       direction: .fromTarget, transferLength: 58)
+    }
+
     // MARK: - Scan & read
 
     /// SCAN — lists the colour channels to acquire (RGB or RGBI).
@@ -306,7 +316,7 @@ enum CoolScan {
         // SCSI sense, just a copy). For image reads that only inflates the
         // user-client struct-output past the inline limit.
         return try s.sendSCSI(cdb: cdb, direction: .fromTarget,
-                              transferLength: length, timeoutMs: 30_000, captureSense: false)
+                              transferLength: length, timeoutMs: 5_000, captureSense: false)
     }
 
     // TODO: sendLUT (0x2a 00 03 …), setBoundary (0x2a 00 88 …)
@@ -336,17 +346,33 @@ enum CoolScan {
     static func scanFrame(_ s: SBP2Session, caps: Capabilities,
                           resolution: UInt16, depth: UInt8? = nil,
                           infrared: Bool = false, negative: Bool = false,
+                          rows: Int? = nil,   // cap output height (thin-strip proof)
+                          // Start the strip this many device units (1/resXMax″) down
+                          // the scannable area. The top edge of the boundary is the
+                          // opaque holder mask / film leader, which scans as pure
+                          // zero — offsetting into the frame is how we tell "masked
+                          // edge" apart from "data-in DMA delivered nothing".
+                          yOffsetDU: UInt32 = 0,
                           // READ(10) results come back via the user client's INLINE
-                          // struct-output, which DriverKit caps (~4 KB). With
-                          // captureSense off the result is 16 + chunk; 2048 keeps it
-                          // (2064) well under any reasonable limit. Conservative on
-                          // purpose — each hardware test costs a scanner power-cycle.
-                          // A dext-side structureOutputDescriptor path would lift this
-                          // for full-res speed (TODO).
+                          // struct-output. The framework rejects the *requested*
+                          // output buffer (transferLength + 256 headroom, see
+                          // sendSCSI) once it exceeds an inline ceiling — measured
+                          // empirically between 2304 (works) and 3256 (BadArgument
+                          // 0xe00002c2), so well below one page. chunk=2048 → cap
+                          // 2304 is the proven-good value; 3000/4080 both got
+                          // rejected. Do NOT raise this without a dext-side
+                          // structureOutputDescriptor path (the real fix; TODO),
+                          // which lifts the ceiling AND collapses ~1080 fragile
+                          // AGENT_RESET→resubmit reads into a handful.
                           maxChunkBytes: Int = 2048,
                           readTimeoutMs: UInt32 = 30_000,
                           progress: ((Int, Int) -> Void)? = nil) throws -> ScanResult {
-        let g = geometry(caps, resolution: resolution, depth: depth, infrared: infrared)
+        var g = geometry(caps, resolution: resolution, depth: depth, infrared: infrared,
+                         yOffsetDU: yOffsetDU)
+        if let rows = rows, rows > 0, UInt32(rows) < g.logicalHeight {
+            g.logicalHeight = UInt32(rows)
+            g.heightDU = UInt32(rows) * g.pitchY
+        }
 
         // 1) Wait until the scanner reports ready (film loaded, lamp warm).
         guard try waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (TUR-timeout)") }
@@ -377,19 +403,26 @@ enum CoolScan {
             let remaining = g.totalBytes - raw.count
             let want = UInt32(min(Int(chunkBytes), remaining))
             // Each non-first ORB resets the fetch agent before ORB_POINTER; under
-            // back-to-back reads the resubmit can transiently fail
-            // (transport=-1 / sbp=0xFF). Retry with a short settle delay before
-            // giving up — recovers a flaky agent reset without aborting the scan.
-            var r = try readData(s, length: want)
+            // back-to-back reads the submit/resubmit transiently fails (selector-59
+            // kIOReturnError, transport=-1/sbp=0xFF, or a hang→timeout). Retry the
+            // whole command — on a thrown error OR a non-ok result — with an
+            // escalating settle delay, so the scan limps through a flaky path.
+            var ok: SCSIResult? = nil
             var attempt = 0
-            while !r.ok && attempt < 8 {
+            var lastInfo = ""
+            while attempt < 12 {
+                do {
+                    let r = try readData(s, length: want)
+                    if r.ok { ok = r; break }
+                    lastInfo = "transport=\(r.transportStatus) sbp=\(r.sbpStatus)"
+                } catch {
+                    lastInfo = "\(error)"
+                }
                 attempt += 1
-                usleep(UInt32(50_000 * attempt)) // 50ms, 100ms, … let the agent settle
-                r = try readData(s, length: want)
+                usleep(UInt32(min(50_000 * attempt, 400_000))) // 50ms … 400ms cap
             }
-            guard r.ok else {
-                throw ProbeError("READ(10) avvist ved \(raw.count)/\(g.totalBytes) byte etter \(attempt) forsøk: "
-                    + "transport=\(r.transportStatus) sbp=\(r.sbpStatus)")
+            guard let r = ok else {
+                throw ProbeError("READ(10) ga opp ved \(raw.count)/\(g.totalBytes) byte etter \(attempt) forsøk: \(lastInfo)")
             }
             if r.payload.isEmpty { break } // short read — scanner says done
             raw.append(r.payload)
