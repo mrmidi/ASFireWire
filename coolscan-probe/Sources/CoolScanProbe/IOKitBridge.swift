@@ -27,6 +27,7 @@ enum ASFW {
         case getSBP2CommandResult    = 60
         case submitSBP2TaskManagement = 61
         case getSBP2TransferInfo     = 62
+        case setSBP2SubmitMode       = 63
     }
 
     /// SBP-2 login state (mirror of ASFW::Protocols::SBP2::LoginState).

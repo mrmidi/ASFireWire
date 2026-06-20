@@ -73,6 +73,17 @@ func run() -> Int32 {
     }
     defer { session.release() }
 
+    // ORB submission model: dext defaults to direct ORB_POINTER (Linux
+    // firewire-sbp2). `--reset-per-orb` flips this session back to the legacy
+    // reset-per-ORB path for A/B comparison on hardware.
+    if CommandLine.arguments.contains("--reset-per-orb") {
+        session.setSubmitMode(directOrbPointer: false)
+        print("↩︎ Submit-modell: legacy reset-per-ORB (eksplisitt valgt).")
+    } else {
+        session.setSubmitMode(directOrbPointer: true)
+        print("➡︎ Submit-modell: direkte ORB_POINTER per kommando (Linux-modell).")
+    }
+
     // 5) INQUIRY — the actual go/no-go signal.
     do {
         let r = try SCSI.inquiry(session)

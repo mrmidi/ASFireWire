@@ -243,6 +243,15 @@ final class SBP2Session {
                           scsiStatus: scsiStatus, payload: payload, sense: sense)
     }
 
+    /// Select the dext's ORB submission model for this session. `directOrbPointer`
+    /// true (dext default) writes ORB_POINTER per command (Linux firewire-sbp2);
+    /// false uses legacy reset-per-ORB. Lets us A/B both models on hardware without
+    /// rebuilding the dext. Best-effort; older dexts without the selector ignore it.
+    func setSubmitMode(directOrbPointer: Bool) {
+        _ = try? conn.call(.setSBP2SubmitMode,
+                           scalarIn: [handle, directOrbPointer ? 1 : 0])
+    }
+
     /// SBP-2 LOGICAL UNIT RESET (task management function 0x0E) via the separate
     /// management agent. Resets the LU's task state to un-wedge a command fetch
     /// agent that has stopped servicing ORBs — the dext's slot-recovery frees the
