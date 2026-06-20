@@ -73,16 +73,10 @@ func run() -> Int32 {
     }
     defer { session.release() }
 
-    // ORB submission model: dext defaults to direct ORB_POINTER (Linux
-    // firewire-sbp2). `--reset-per-orb` flips this session back to the legacy
-    // reset-per-ORB path for A/B comparison on hardware.
-    if CommandLine.arguments.contains("--reset-per-orb") {
-        session.setSubmitMode(directOrbPointer: false)
-        print("↩︎ Submit-modell: legacy reset-per-ORB (eksplisitt valgt).")
-    } else {
-        session.setSubmitMode(directOrbPointer: true)
-        print("➡︎ Submit-modell: direkte ORB_POINTER per kommando (Linux-modell).")
-    }
+    // Submission model is no longer probe-selectable: main's FetchAgent always
+    // submits the first ORB to the fetch-agent register and chains the rest via
+    // their next-ORB pointer (the Linux firewire-sbp2 model). The old
+    // --reset-per-orb A/B toggle drove a dext selector that no longer exists.
 
     // 5) INQUIRY — the actual go/no-go signal.
     do {

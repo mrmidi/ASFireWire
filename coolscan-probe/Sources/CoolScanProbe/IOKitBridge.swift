@@ -15,19 +15,24 @@ enum ASFW {
     static let serviceName = "ASFWDriver"
 
     /// ExternalMethod selectors (subset we need for SBP-2 / SCSI passthrough).
+    /// Values MUST match ASFWDriver/UserClient/Core/ASFWDriverUserClient.iig on
+    /// the dext we talk to. Aligned to mrmidi/main's Session/ architecture (the
+    /// SBP-2 block is 52–60 there, NOT the 53–61 of the old coolscan-9000 dext).
     enum Selector: UInt32 {
         case getDiscoveredDevices    = 16
-        case createSBP2Session       = 53
-        case startSBP2Login          = 54
-        case getSBP2SessionState     = 55
-        case submitSBP2Inquiry       = 56
-        case getSBP2InquiryResult    = 57
-        case releaseSBP2Session      = 58
-        case submitSBP2Command       = 59
-        case getSBP2CommandResult    = 60
-        case submitSBP2TaskManagement = 61
+        case createSBP2Session       = 52
+        case startSBP2Login          = 53
+        case getSBP2SessionState     = 54
+        case submitSBP2Inquiry       = 55
+        case getSBP2InquiryResult    = 56
+        case submitSBP2Command       = 57
+        case getSBP2CommandResult    = 58
+        case submitSBP2TaskManagement = 59
+        case releaseSBP2Session      = 60
+        // Not present on main's dext (was a coolscan-9000-only diagnostic). Left
+        // dormant: lastTransferInfo() calls it best-effort and degrades to nil.
+        // 62 is unused on main, so no collision. Re-add to the dext to revive it.
         case getSBP2TransferInfo     = 62
-        case setSBP2SubmitMode       = 63
     }
 
     /// SBP-2 login state (mirror of ASFW::Protocols::SBP2::LoginState).
