@@ -477,7 +477,16 @@ main() {
     summarize
     echo
     ok "Build Succeeded"
-    
+
+    # build runs with CODE_SIGNING_ALLOWED=NO → app is linker-signed with NO
+    # entitlements and the dext is unsigned. Re-sign ad-hoc WITH entitlements so
+    # sysextd accepts Install (the free/ad-hoc path; honored once SIP is off).
+    if [[ -x ./sign.sh ]]; then
+      log "Re-signing app + dext ad-hoc with entitlements…"
+      CONFIGURATION="${CONFIGURATION}" DERIVED="${DERIVED}" ./sign.sh || \
+        warn "Ad-hoc signing step failed (app may lack entitlements)."
+    fi
+
     # If --analyze was requested, run static analysis after successful build
     if $RUN_ANALYZER; then
       # Ensure compile_commands.json exists (generate if needed)
