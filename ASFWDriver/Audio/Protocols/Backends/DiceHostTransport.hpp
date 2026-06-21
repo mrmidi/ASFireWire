@@ -22,54 +22,42 @@ class ASFWAudioNub;
 namespace ASFW::Audio {
 
 class IDiceHostTransport {
-public:
+  public:
     virtual ~IDiceHostTransport() = default;
 
     [[nodiscard]] virtual kern_return_t BeginSplitDuplex(uint64_t guid) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t ReservePlaybackResources(uint64_t guid,
-                                                                 ::ASFW::IRM::IRMClient& irmClient,
-                                                                 uint8_t channel,
-                                                                 uint32_t bandwidthUnits) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t ReserveCaptureResources(uint64_t guid,
-                                                                ::ASFW::IRM::IRMClient& irmClient,
-                                                                uint8_t channel,
-                                                                uint32_t bandwidthUnits) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t PrepareReceive(
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0,
-        uint32_t streamChannels = 0) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t PrepareTransmit(
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        uint8_t sourceId) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint8_t channel,
+                             uint32_t bandwidthUnits) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    ReserveCaptureResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint8_t channel,
+                            uint32_t bandwidthUnits) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
+                   ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                   Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                   uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t PrepareTransmit(uint8_t channel,
+                                                        Driver::HardwareInterface& hardware,
+                                                        uint8_t sourceId) noexcept = 0;
     // Secondary streams (streamIndex >= 1) for multi-stream DICE devices; the
     // master stream uses PrepareReceive/PrepareTransmit above.
-    [[nodiscard]] virtual kern_return_t PrepareReceiveStream(
-        uint32_t streamIndex,
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        uint32_t channelOffset,
-        uint32_t streamChannels,
-        Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t PrepareTransmitStream(
-        uint32_t streamIndex,
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        uint8_t sourceId) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
+                         uint32_t channelOffset,
+                         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                         uint32_t am824Slots = 0) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+                                                              Driver::HardwareInterface& hardware,
+                                                              uint8_t sourceId) noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedReceive() noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedTransmit() noexcept = 0;
     [[nodiscard]] virtual kern_return_t StopAll() noexcept = 0;
 };
 
 class DiceIsochHostTransport final : public IDiceHostTransport {
-public:
-    explicit DiceIsochHostTransport(Driver::IsochService& isoch) noexcept
-        : isoch_(isoch) {}
+  public:
+    explicit DiceIsochHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
 
     void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
 
@@ -82,36 +70,27 @@ public:
                                                         ::ASFW::IRM::IRMClient& irmClient,
                                                         uint8_t channel,
                                                         uint32_t bandwidthUnits) noexcept override;
-    [[nodiscard]] kern_return_t PrepareReceive(
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0,
-        uint32_t streamChannels = 0) noexcept override;
-    [[nodiscard]] kern_return_t PrepareTransmit(
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        uint8_t sourceId) noexcept override;
-    [[nodiscard]] kern_return_t PrepareReceiveStream(
-        uint32_t streamIndex,
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        uint32_t channelOffset,
-        uint32_t streamChannels,
-        Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0) noexcept override;
-    [[nodiscard]] kern_return_t PrepareTransmitStream(
-        uint32_t streamIndex,
-        uint8_t channel,
-        Driver::HardwareInterface& hardware,
-        uint8_t sourceId) noexcept override;
+    [[nodiscard]] kern_return_t
+    PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
+                   ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                   Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                   uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept override;
+    [[nodiscard]] kern_return_t PrepareTransmit(uint8_t channel,
+                                                Driver::HardwareInterface& hardware,
+                                                uint8_t sourceId) noexcept override;
+    [[nodiscard]] kern_return_t
+    PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
+                         uint32_t channelOffset,
+                         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                         uint32_t am824Slots = 0) noexcept override;
+    [[nodiscard]] kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+                                                      Driver::HardwareInterface& hardware,
+                                                      uint8_t sourceId) noexcept override;
     [[nodiscard]] kern_return_t StartPreparedReceive() noexcept override;
     [[nodiscard]] kern_return_t StartPreparedTransmit() noexcept override;
     [[nodiscard]] kern_return_t StopAll() noexcept override;
 
-private:
+  private:
     Driver::IsochService& isoch_;
 };
 

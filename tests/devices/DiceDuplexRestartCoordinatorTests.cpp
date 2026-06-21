@@ -1,20 +1,20 @@
 #include <gtest/gtest.h>
 
-#include "Testing/HostDriverKitStubs.hpp"
-#include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
-#include "Audio/Protocols/Backends/DiceDuplexRestartCoordinator.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
-#include "Discovery/DeviceRegistry.hpp"
-#include "Hardware/HardwareInterface.hpp"
-#include "Bus/IRM/IRMClient.hpp"
+#include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
+#include "Audio/Protocols/Backends/DiceDuplexRestartCoordinator.hpp"
+#include "Audio/Protocols/DICE/Core/IDICEDuplexProtocol.hpp"
 #include "Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
-#include "Audio/Protocols/DICE/Core/IDICEDuplexProtocol.hpp"
+#include "Bus/IRM/IRMClient.hpp"
+#include "Discovery/DeviceRegistry.hpp"
+#include "Hardware/HardwareInterface.hpp"
+#include "Testing/HostDriverKitStubs.hpp"
 
 #include <atomic>
-#include <condition_variable>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <future>
 #include <memory>
@@ -33,7 +33,11 @@ using ASFW::Async::AsyncStatus;
 using ASFW::Async::FWAddress;
 using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioDuplexChannels;
+using ASFW::Audio::AudioRuntimeRegistry;
 using ASFW::Audio::AudioStreamRuntimeCaps;
+using ASFW::Audio::DiceDuplexRestartCoordinator;
+using ASFW::Audio::IDeviceProtocol;
+using ASFW::Audio::IDiceHostTransport;
 using ASFW::Audio::DICE::DiceClockApplyResult;
 using ASFW::Audio::DICE::DiceClockRequestOutcome;
 using ASFW::Audio::DICE::DiceDesiredClockConfig;
@@ -45,13 +49,9 @@ using ASFW::Audio::DICE::DiceRestartErrorClass;
 using ASFW::Audio::DICE::DiceRestartFailureCause;
 using ASFW::Audio::DICE::DiceRestartPhase;
 using ASFW::Audio::DICE::DiceRestartReason;
-using ASFW::Audio::DICE::DiceRestartState;
 using ASFW::Audio::DICE::DiceRestartSession;
+using ASFW::Audio::DICE::DiceRestartState;
 using ASFW::Audio::DICE::IDICEDuplexProtocol;
-using ASFW::Audio::AudioRuntimeRegistry;
-using ASFW::Audio::DiceDuplexRestartCoordinator;
-using ASFW::Audio::IDeviceProtocol;
-using ASFW::Audio::IDiceHostTransport;
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceRegistry;
@@ -102,38 +102,24 @@ struct SharedCallLog {
 };
 
 class NullFireWireBus final : public IFireWireBus {
-public:
-    AsyncHandle ReadBlock(Generation,
-                          NodeId,
-                          FWAddress,
-                          uint32_t,
-                          FwSpeed,
+  public:
+    AsyncHandle ReadBlock(Generation, NodeId, FWAddress, uint32_t, FwSpeed,
                           ASFW::Async::InterfaceCompletionCallback callback) override {
         callback(AsyncStatus::kSuccess, {});
         return AsyncHandle{.value = 1};
     }
 
-    AsyncHandle WriteBlock(Generation,
-                           NodeId,
-                           FWAddress,
-                           std::span<const uint8_t>,
-                           FwSpeed,
+    AsyncHandle WriteBlock(Generation, NodeId, FWAddress, std::span<const uint8_t>, FwSpeed,
                            ASFW::Async::InterfaceCompletionCallback callback) override {
         callback(AsyncStatus::kSuccess, {});
         return AsyncHandle{.value = 2};
     }
 
-    AsyncHandle Lock(Generation,
-                     NodeId,
-                     FWAddress,
-                     LockOp,
-                     std::span<const uint8_t>,
-                     uint32_t responseLength,
-                     FwSpeed,
+    AsyncHandle Lock(Generation, NodeId, FWAddress, LockOp, std::span<const uint8_t>,
+                     uint32_t responseLength, FwSpeed,
                      ASFW::Async::InterfaceCompletionCallback callback) override {
         std::array<uint8_t, 8> zeroes{};
-        callback(AsyncStatus::kSuccess,
-                 std::span<const uint8_t>(zeroes.data(), responseLength));
+        callback(AsyncStatus::kSuccess, std::span<const uint8_t>(zeroes.data(), responseLength));
         return AsyncHandle{.value = 3};
     }
 
@@ -146,8 +132,9 @@ public:
 };
 
 class FakeDirectAudioBindingSource final : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
-public:
-    bool CopyDirectAudioBinding(ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
+  public:
+    bool CopyDirectAudioBinding(
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out.generation = 1;
         out.valid = true;
         out.inputBase = reinterpret_cast<float*>(0x1234);
@@ -163,9 +150,8 @@ public:
 };
 
 class FakeDiceHostTransport final : public IDiceHostTransport {
-public:
-    explicit FakeDiceHostTransport(SharedCallLog& log) noexcept
-        : log_(log) {}
+  public:
+    explicit FakeDiceHostTransport(SharedCallLog& log) noexcept : log_(log) {}
 
     kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override {
         log_.Add("host.begin");
@@ -174,9 +160,7 @@ public:
         return beginStatus;
     }
 
-    kern_return_t ReservePlaybackResources(uint64_t guid,
-                                           IRMClient&,
-                                           uint8_t channel,
+    kern_return_t ReservePlaybackResources(uint64_t guid, IRMClient&, uint8_t channel,
                                            uint32_t bandwidthUnits) noexcept override {
         log_.Add("host.reserve_playback");
         lastGuid = guid;
@@ -186,9 +170,7 @@ public:
         return reservePlaybackStatus;
     }
 
-    kern_return_t ReserveCaptureResources(uint64_t guid,
-                                          IRMClient&,
-                                          uint8_t channel,
+    kern_return_t ReserveCaptureResources(uint64_t guid, IRMClient&, uint8_t channel,
                                           uint32_t bandwidthUnits) noexcept override {
         log_.Add("host.reserve_capture");
         lastGuid = guid;
@@ -199,13 +181,10 @@ public:
     }
 
     kern_return_t PrepareReceive(
-        uint8_t channel,
-        HardwareInterface&,
+        uint8_t channel, HardwareInterface&,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        ASFW::Encoding::AudioWireFormat wireFormat =
-            ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0,
-        uint32_t streamChannels = 0) noexcept override {
+        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept override {
         log_.Add("host.prepare_receive");
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
@@ -216,8 +195,7 @@ public:
         return prepareReceiveStatus;
     }
 
-    kern_return_t PrepareTransmit(uint8_t channel,
-                                  HardwareInterface&,
+    kern_return_t PrepareTransmit(uint8_t channel, HardwareInterface&,
                                   uint8_t sourceId) noexcept override {
         log_.Add("host.prepare_transmit");
         lastTransmitChannel = channel;
@@ -227,30 +205,20 @@ public:
     }
 
     kern_return_t PrepareReceiveStream(
-        uint32_t streamIndex,
-        uint8_t channel,
-        HardwareInterface&,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        uint32_t channelOffset,
-        uint32_t streamChannels,
-        ASFW::Encoding::AudioWireFormat wireFormat =
-            ASFW::Encoding::AudioWireFormat::kAM824,
+        uint32_t streamIndex, uint8_t channel, HardwareInterface&, uint32_t channelOffset,
+        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
         uint32_t am824Slots = 0) noexcept override {
         log_.Add("host.prepare_receive_stream");
         lastSecondaryReceiveIndex = streamIndex;
         lastSecondaryReceiveChannel = channel;
         lastSecondaryReceiveOffset = channelOffset;
-        lastSecondaryReceiveChannels = streamChannels;
-        lastSecondaryReceiveBindingSource = bindingSource;
         (void)wireFormat;
         (void)am824Slots;
         ++prepareReceiveStreamCalls;
         return prepareReceiveStatus;
     }
 
-    kern_return_t PrepareTransmitStream(uint32_t streamIndex,
-                                        uint8_t channel,
-                                        HardwareInterface&,
+    kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel, HardwareInterface&,
                                         uint8_t sourceId) noexcept override {
         log_.Add("host.prepare_transmit_stream");
         lastSecondaryTransmitIndex = streamIndex;
@@ -302,8 +270,7 @@ public:
     uint32_t lastTransmitMode{0};
     uint32_t lastTransmitPcmChannels{0};
     uint32_t lastTransmitDataBlockSize{0};
-    ASFW::Encoding::AudioWireFormat lastTransmitWireFormat{
-        ASFW::Encoding::AudioWireFormat::kAM824};
+    ASFW::Encoding::AudioWireFormat lastTransmitWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
     ASFW::Audio::Runtime::IDirectAudioBindingSource* lastTransmitBindingSource{nullptr};
 
     int beginCalls{0};
@@ -316,8 +283,6 @@ public:
     uint32_t lastSecondaryReceiveIndex{0};
     uint8_t lastSecondaryReceiveChannel{0};
     uint32_t lastSecondaryReceiveOffset{0};
-    uint32_t lastSecondaryReceiveChannels{0};
-    ASFW::Audio::Runtime::IDirectAudioBindingSource* lastSecondaryReceiveBindingSource{nullptr};
     uint32_t lastSecondaryTransmitIndex{0};
     uint8_t lastSecondaryTransmitChannel{0};
     uint8_t lastSecondaryTransmitSourceId{0};
@@ -325,15 +290,14 @@ public:
     int startTransmitCalls{0};
     int stopCalls{0};
 
-private:
+  private:
     SharedCallLog& log_;
 };
 
 class FakeDiceProtocol final : public IDeviceProtocol, public IDICEDuplexProtocol {
-public:
+  public:
     FakeDiceProtocol(SharedCallLog& log, IRMClient& irmClient) noexcept
-        : log_(log)
-        , irmClient_(irmClient) {}
+        : log_(log), irmClient_(irmClient) {}
 
     IOReturn Initialize() override { return kIOReturnSuccess; }
     IOReturn Shutdown() override { return kIOReturnSuccess; }
@@ -375,37 +339,34 @@ public:
             currentCaps_ = prepareCaps_;
         }
 
-        callback(prepareStatus,
-                 DiceDuplexPrepareResult{
-                     .generation = Generation{1},
-                     .channels = channels,
-                     .appliedClock = currentClock_,
-                     .runtimeCaps = currentCaps_,
-                 });
+        callback(prepareStatus, DiceDuplexPrepareResult{
+                                    .generation = Generation{1},
+                                    .channels = channels,
+                                    .appliedClock = currentClock_,
+                                    .runtimeCaps = currentCaps_,
+                                });
     }
 
     void ProgramRx(StageCallback callback) override {
         log_.Add("device.program_rx");
         ++programRxCalls;
-        callback(programRxStatus,
-                 DiceDuplexStageResult{
-                     .generation = Generation{1},
-                     .channels = lastChannels_,
-                     .phase = DiceRestartPhase::kDeviceRxProgrammed,
-                     .runtimeCaps = currentCaps_,
-                 });
+        callback(programRxStatus, DiceDuplexStageResult{
+                                      .generation = Generation{1},
+                                      .channels = lastChannels_,
+                                      .phase = DiceRestartPhase::kDeviceRxProgrammed,
+                                      .runtimeCaps = currentCaps_,
+                                  });
     }
 
     void ProgramTxAndEnableDuplex(StageCallback callback) override {
         log_.Add("device.program_tx");
         ++programTxCalls;
-        callback(programTxStatus,
-                 DiceDuplexStageResult{
-                     .generation = Generation{1},
-                     .channels = lastChannels_,
-                     .phase = DiceRestartPhase::kDeviceTxArmed,
-                     .runtimeCaps = currentCaps_,
-                 });
+        callback(programTxStatus, DiceDuplexStageResult{
+                                      .generation = Generation{1},
+                                      .channels = lastChannels_,
+                                      .phase = DiceRestartPhase::kDeviceTxArmed,
+                                      .runtimeCaps = currentCaps_,
+                                  });
     }
 
     void ConfirmDuplexStart(ConfirmCallback callback) override {
@@ -414,16 +375,15 @@ public:
         if (confirmStatus == kIOReturnSuccess) {
             currentCaps_ = confirmCaps_;
         }
-        callback(confirmStatus,
-                 DiceDuplexConfirmResult{
-                     .generation = Generation{1},
-                     .channels = lastChannels_,
-                     .appliedClock = currentClock_,
-                     .runtimeCaps = currentCaps_,
-                     .notification = 0x20,
-                     .status = 0x201,
-                     .extStatus = 0,
-                 });
+        callback(confirmStatus, DiceDuplexConfirmResult{
+                                    .generation = Generation{1},
+                                    .channels = lastChannels_,
+                                    .appliedClock = currentClock_,
+                                    .runtimeCaps = currentCaps_,
+                                    .notification = 0x20,
+                                    .status = 0x201,
+                                    .extStatus = 0,
+                                });
     }
 
     void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
@@ -446,30 +406,28 @@ public:
             currentCaps_ = applyCaps_;
         }
 
-        callback(applyClockStatus,
-                 DiceClockApplyResult{
-                     .generation = Generation{1},
-                     .appliedClock = currentClock_,
-                     .runtimeCaps = currentCaps_,
-                 });
+        callback(applyClockStatus, DiceClockApplyResult{
+                                       .generation = Generation{1},
+                                       .appliedClock = currentClock_,
+                                       .runtimeCaps = currentCaps_,
+                                   });
     }
 
     void ReadDuplexHealth(HealthCallback callback) override {
         log_.Add("device.health");
         const size_t readIndex = static_cast<size_t>(healthReadCalls++);
-        const uint32_t statusValue = healthStatusSequence.empty()
-            ? healthStatusValue
-            : healthStatusSequence[
-                  std::min(readIndex, healthStatusSequence.size() - 1)];
-        callback(healthStatus,
-                 DiceDuplexHealthResult{
-                     .generation = healthGeneration,
-                     .appliedClock = currentClock_,
-                     .runtimeCaps = currentCaps_,
-                     .notification = healthNotification,
-                     .status = statusValue,
-                     .extStatus = healthExtStatusValue,
-                 });
+        const uint32_t statusValue =
+            healthStatusSequence.empty()
+                ? healthStatusValue
+                : healthStatusSequence[std::min(readIndex, healthStatusSequence.size() - 1)];
+        callback(healthStatus, DiceDuplexHealthResult{
+                                   .generation = healthGeneration,
+                                   .appliedClock = currentClock_,
+                                   .runtimeCaps = currentCaps_,
+                                   .notification = healthNotification,
+                                   .status = statusValue,
+                                   .extStatus = healthExtStatusValue,
+                               });
     }
 
     IOReturn StopDuplex() override {
@@ -504,11 +462,9 @@ public:
 
     bool WaitUntilPrepareBlocked(int expectedCalls) {
         std::unique_lock lock(mutex_);
-        return cv_.wait_for(lock,
-                            std::chrono::seconds(2),
-                            [this, expectedCalls] {
-                                return prepareCalls >= expectedCalls && prepareBlocked_;
-                            });
+        return cv_.wait_for(lock, std::chrono::seconds(2), [this, expectedCalls] {
+            return prepareCalls >= expectedCalls && prepareBlocked_;
+        });
     }
 
     DiceDesiredClockConfig currentClock_{kSupportedClock};
@@ -539,7 +495,7 @@ public:
     int healthReadCalls{0};
     int stopCalls{0};
 
-private:
+  private:
     SharedCallLog& log_;
     IRMClient& irmClient_;
     AudioDuplexChannels lastChannels_{};
@@ -555,10 +511,8 @@ private:
     PrepareCallback deferredPrepareCallback_{};
 };
 
-ConfigROM MakeConfigRom(uint64_t guid,
-                        uint32_t vendorId = kFocusriteVendorId,
-                        uint32_t modelId = kSPro24DspModelId,
-                        Generation gen = Generation{1}) {
+ConfigROM MakeConfigRom(uint64_t guid, uint32_t vendorId = kFocusriteVendorId,
+                        uint32_t modelId = kSPro24DspModelId, Generation gen = Generation{1}) {
     ConfigROM rom{};
     rom.gen = gen;
     rom.firstSeen = gen;
@@ -574,16 +528,11 @@ ConfigROM MakeConfigRom(uint64_t guid,
 }
 
 class DiceDuplexRestartCoordinatorTests : public ::testing::Test {
-protected:
+  protected:
     DiceDuplexRestartCoordinatorTests()
-        : irmClient_(bus_)
-        , hostTransport_(log_)
-        , protocol_(std::make_shared<FakeDiceProtocol>(log_, irmClient_))
-        , coordinator_(registry_,
-                       runtime_,
-                       hostTransport_,
-                       hardware_,
-                       &cancel_,
+        : irmClient_(bus_), hostTransport_(log_),
+          protocol_(std::make_shared<FakeDiceProtocol>(log_, irmClient_)),
+          coordinator_(registry_, runtime_, hostTransport_, hardware_, &cancel_,
                        [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
                            return &bindingSource_;
                        }) {
@@ -596,12 +545,10 @@ protected:
         runtime_.Insert(kTestGuid, protocol);
     }
 
-    void InstallDeviceAtGeneration(Generation gen, const std::shared_ptr<IDeviceProtocol>& protocol) {
-        registry_.UpsertFromROM(MakeConfigRom(kTestGuid,
-                                              kFocusriteVendorId,
-                                              kSPro24DspModelId,
-                                              gen),
-                                LinkPolicy{});
+    void InstallDeviceAtGeneration(Generation gen,
+                                   const std::shared_ptr<IDeviceProtocol>& protocol) {
+        registry_.UpsertFromROM(
+            MakeConfigRom(kTestGuid, kFocusriteVendorId, kSPro24DspModelId, gen), LinkPolicy{});
         runtime_.Insert(kTestGuid, protocol);
         protocol_->healthGeneration = gen;
     }
@@ -610,9 +557,7 @@ protected:
         return coordinator_.GetSession(kTestGuid);
     }
 
-    [[nodiscard]] std::vector<std::string> LogSnapshot() const {
-        return log_.Snapshot();
-    }
+    [[nodiscard]] std::vector<std::string> LogSnapshot() const { return log_.Snapshot(); }
 
     void ClearLog() { log_.Clear(); }
 
@@ -658,7 +603,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
     EXPECT_TRUE(session->deviceRunning);
     EXPECT_TRUE(session->hostTransmitStarted);
     EXPECT_TRUE(session->hostReceiveStarted);
-    EXPECT_EQ(session->runtimeCaps.hostOutputPcmChannels, kDefaultRuntimeCaps.hostOutputPcmChannels);
+    EXPECT_EQ(session->runtimeCaps.hostOutputPcmChannels,
+              kDefaultRuntimeCaps.hostOutputPcmChannels);
     EXPECT_EQ(hostTransport_.reservePlaybackCalls, 1);
     EXPECT_EQ(hostTransport_.reserveCaptureCalls, 1);
     EXPECT_EQ(hostTransport_.prepareReceiveCalls, 1);
@@ -671,32 +617,29 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
     EXPECT_EQ(protocol_->healthReadCalls, 3);
     EXPECT_EQ(protocol_->confirmCalls, 1);
 
-    EXPECT_EQ(
-        LogSnapshot(),
-        (std::vector<std::string>{
-            "host.begin",
-            "device.prepare",
-            "host.reserve_playback",
-            "host.reserve_capture",
-            "host.prepare_receive",
-            "host.prepare_transmit",
-            "device.health",
-            "device.health",
-            "device.health",
-            "device.program_rx",
-            "device.program_tx",
-            "host.start_receive",
-            "host.start_transmit",
-            "device.confirm",
-        }));
+    EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{
+                                 "host.begin",
+                                 "device.prepare",
+                                 "host.reserve_playback",
+                                 "host.reserve_capture",
+                                 "host.prepare_receive",
+                                 "host.prepare_transmit",
+                                 "device.health",
+                                 "device.health",
+                                 "device.health",
+                                 "device.program_rx",
+                                 "device.program_tx",
+                                 "host.start_receive",
+                                 "host.start_transmit",
+                                 "device.confirm",
+                             }));
 }
 
 TEST_F(DiceDuplexRestartCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {
     protocol_->SetDeferPrepareCallback(true);
 
-    auto start = std::async(std::launch::async, [this] {
-        return coordinator_.StartStreaming(kTestGuid);
-    });
+    auto start =
+        std::async(std::launch::async, [this] { return coordinator_.StartStreaming(kTestGuid); });
 
     ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(1));
     cancel_.store(true, std::memory_order_release);
@@ -713,11 +656,7 @@ TEST_F(DiceDuplexRestartCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {
 TEST_F(DiceDuplexRestartCoordinatorTests,
        GlobalClockRequiresConsecutiveStableReadsBeforeHostIsochStarts) {
     protocol_->healthStatusSequence = {
-        0x201,
-        0x200,
-        0x201,
-        0x201,
-        0x201,
+        0x201, 0x200, 0x201, 0x201, 0x201,
     };
 
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
@@ -727,8 +666,7 @@ TEST_F(DiceDuplexRestartCoordinatorTests,
     EXPECT_EQ(hostTransport_.startTransmitCalls, 1);
 }
 
-TEST_F(DiceDuplexRestartCoordinatorTests,
-       GlobalClockHealthFailureRollsBackBeforeHostIsochStarts) {
+TEST_F(DiceDuplexRestartCoordinatorTests, GlobalClockHealthFailureRollsBackBeforeHostIsochStarts) {
     protocol_->healthStatus = kIOReturnNoDevice;
 
     EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNoDevice);
@@ -737,10 +675,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests,
     ASSERT_TRUE(session.has_value());
     EXPECT_EQ(session->phase, DiceRestartPhase::kFailed);
     ASSERT_TRUE(session->lastFailure.has_value());
-    EXPECT_EQ(session->lastFailure->failedPhase,
-              DiceRestartPhase::kWaitingGlobalClock);
-    EXPECT_EQ(session->lastFailure->cause,
-              DiceRestartFailureCause::kGlobalClockLock);
+    EXPECT_EQ(session->lastFailure->failedPhase, DiceRestartPhase::kWaitingGlobalClock);
+    EXPECT_EQ(session->lastFailure->cause, DiceRestartFailureCause::kGlobalClockLock);
     EXPECT_EQ(hostTransport_.startReceiveCalls, 0);
     EXPECT_EQ(hostTransport_.startTransmitCalls, 0);
     EXPECT_EQ(hostTransport_.stopCalls, 1);
@@ -774,8 +710,7 @@ TEST_F(DiceDuplexRestartCoordinatorTests, IdleClockApplyUsesDeviceOnlyPathAndRet
         .sampleRateHz = 48000,
     };
 
-    ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid,
-                                              kSupportedClock,
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid, kSupportedClock,
                                               DiceRestartReason::kManualReconfigure),
               kIOReturnSuccess);
 
@@ -797,8 +732,7 @@ TEST_F(DiceDuplexRestartCoordinatorTests, RunningClockRequestPerformsFullStopAnd
     ClearLog();
     const int prepareBefore = protocol_->prepareCalls;
 
-    ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid,
-                                              kSupportedClock,
+    ASSERT_EQ(coordinator_.RequestClockConfig(kTestGuid, kSupportedClock,
                                               DiceRestartReason::kManualReconfigure),
               kIOReturnSuccess);
 
@@ -967,8 +901,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests, LatestPendingClockRequestWinsDuringRes
     ASSERT_TRUE(WaitForPendingClockReason(DiceRestartReason::kRecoverAfterTimingLoss));
 
     std::thread thirdThread([&] {
-        thirdPromise.set_value(coordinator_.RequestClockConfig(
-            kTestGuid, kSupportedClock, DiceRestartReason::kBusResetRebind));
+        thirdPromise.set_value(coordinator_.RequestClockConfig(kTestGuid, kSupportedClock,
+                                                               DiceRestartReason::kBusResetRebind));
     });
 
     // The third request must supersede the second before prepare is released so the drain
@@ -1020,9 +954,7 @@ TEST_F(DiceDuplexRestartCoordinatorTests, StopStreamingAbortsClockRequestsDuring
 
     std::promise<IOReturn> stopPromise;
     std::future<IOReturn> stopFuture = stopPromise.get_future();
-    std::thread stopThread([&] {
-        stopPromise.set_value(coordinator_.StopStreaming(kTestGuid));
-    });
+    std::thread stopThread([&] { stopPromise.set_value(coordinator_.StopStreaming(kTestGuid)); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     protocol_->SetHoldPrepare(false);
@@ -1051,9 +983,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests, GenerationChangeDuringPrepareInvalidat
 
     std::promise<IOReturn> startPromise;
     std::future<IOReturn> startFuture = startPromise.get_future();
-    std::thread startThread([&] {
-        startPromise.set_value(coordinator_.StartStreaming(kTestGuid));
-    });
+    std::thread startThread(
+        [&] { startPromise.set_value(coordinator_.StartStreaming(kTestGuid)); });
 
     ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(1));
     InstallDeviceAtGeneration(Generation{2}, protocol_);
@@ -1091,21 +1022,20 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ProgramRxFailureRollsBackHostAndDevice
     EXPECT_TRUE(session->lastFailure->rollbackAttempted);
     EXPECT_FALSE(session->hostReceiveStarted);
     EXPECT_FALSE(session->deviceRunning);
-    EXPECT_EQ(LogSnapshot(),
-              (std::vector<std::string>{
-                  "host.begin",
-                  "device.prepare",
-                  "host.reserve_playback",
-                  "host.reserve_capture",
-                  "host.prepare_receive",
-                  "host.prepare_transmit",
-                  "device.health",
-                  "device.health",
-                  "device.health",
-                  "device.program_rx",
-                  "host.stop",
-                  "device.stop",
-              }));
+    EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{
+                                 "host.begin",
+                                 "device.prepare",
+                                 "host.reserve_playback",
+                                 "host.reserve_capture",
+                                 "host.prepare_receive",
+                                 "host.prepare_transmit",
+                                 "device.health",
+                                 "device.health",
+                                 "device.health",
+                                 "device.program_rx",
+                                 "host.stop",
+                                 "device.stop",
+                             }));
 }
 
 TEST_F(DiceDuplexRestartCoordinatorTests, UnsupportedClockConfigFailsBeforeHostAllocation) {
@@ -1114,8 +1044,7 @@ TEST_F(DiceDuplexRestartCoordinatorTests, UnsupportedClockConfigFailsBeforeHostA
         .clockSelect = kSupportedClock.clockSelect,
     };
 
-    EXPECT_EQ(coordinator_.RequestClockConfig(kTestGuid,
-                                              unsupportedClock,
+    EXPECT_EQ(coordinator_.RequestClockConfig(kTestGuid, unsupportedClock,
                                               DiceRestartReason::kSampleRateChange),
               kIOReturnUnsupported);
     EXPECT_EQ(hostTransport_.beginCalls, 0);
@@ -1124,7 +1053,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests, UnsupportedClockConfigFailsBeforeHostA
     EXPECT_FALSE(GetSession().has_value());
 }
 
-TEST_F(DiceDuplexRestartCoordinatorTests, RecoveryTriggerIsIgnoredWhenSessionIsIdleWithoutFootprint) {
+TEST_F(DiceDuplexRestartCoordinatorTests,
+       RecoveryTriggerIsIgnoredWhenSessionIsIdleWithoutFootprint) {
     ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
               kIOReturnSuccess);
 

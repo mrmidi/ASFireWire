@@ -12,10 +12,10 @@
 #include <DriverKit/OSSharedPtr.h>
 #endif
 
+#include "../Common/DriverKitOwnership.hpp"
 #include "IsochReceiveContext.hpp"
 #include "Receive/DVCaptureSink.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
-#include "../Common/DriverKitOwnership.hpp"
 
 namespace ASFW::Audio::Runtime {
 class IDirectAudioBindingSource;
@@ -30,7 +30,7 @@ namespace ASFW::Driver {
 class HardwareInterface;
 
 class IsochService {
-public:
+  public:
     using TimingLossCallback = std::function<void(uint64_t guid)>;
     using TxPreparationCallback = std::function<void(uint64_t generation)>;
     using ZtsAnchorReadyCallback = std::function<void(uint64_t generation)>;
@@ -44,39 +44,30 @@ public:
     // IR/IT hardware context backs each stream (contextIndex == streamIndex).
     static constexpr uint32_t kMaxStreamsPerDirection = 4;
 
-    kern_return_t StartReceive(uint8_t channel,
-                               HardwareInterface& hardware,
-                               ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                               ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-                               uint32_t am824Slots = 0,
-                               ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
-    kern_return_t PrepareReceive(uint8_t channel,
-                                 HardwareInterface& hardware,
-                                 ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                                 ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-                                 uint32_t am824Slots = 0,
-                                 ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr,
-                                 uint32_t streamChannels = 0);
+    kern_return_t StartReceive(
+        uint8_t channel, HardwareInterface& hardware,
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0, ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
+    kern_return_t PrepareReceive(
+        uint8_t channel, HardwareInterface& hardware,
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0, ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
     // Prepare a secondary capture stream (streamIndex >= 1) on its own OHCI IR
     // context. channelOffset is the first host input channel this stream writes
     // (e.g. 16 for the second 16-ch slice of a 32-ch device); it is recorded for
     // the audio-engine de-interleave pass and not yet applied to the decoder.
-    kern_return_t PrepareReceiveStream(uint32_t streamIndex,
-                                       uint8_t channel,
-                                       HardwareInterface& hardware,
-                                       ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                                       uint32_t channelOffset,
-                                       uint32_t streamChannels,
-                                       ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-                                       uint32_t am824Slots = 0);
+    kern_return_t PrepareReceiveStream(
+        uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware, uint32_t channelOffset,
+        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0);
     kern_return_t StartPreparedReceive();
 
     kern_return_t StopReceive();
 
     [[nodiscard]] uint32_t CaptureStreamChannelOffset(uint32_t streamIndex) const noexcept {
-        return (streamIndex < kMaxStreamsPerDirection)
-                   ? captureChannelOffset_[streamIndex]
-                   : 0;
+        return (streamIndex < kMaxStreamsPerDirection) ? captureChannelOffset_[streamIndex] : 0;
     }
 
     // Minimal DV (IEC 61883-2) capture tap: starts IR on the given channel with
@@ -86,32 +77,22 @@ public:
     kern_return_t StopDVCapture();
     kern_return_t CopyDVCaptureMemory(uint64_t* options, IOMemoryDescriptor** memory) const;
 
-    kern_return_t StartTransmit(uint8_t channel,
-                                HardwareInterface& hardware,
-                                uint8_t sid);
-    kern_return_t PrepareTransmit(uint8_t channel,
-                                  HardwareInterface& hardware,
-                                  uint8_t sid);
+    kern_return_t StartTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
+    kern_return_t PrepareTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
     // Prepare a secondary playback stream (streamIndex >= 1) on its own OHCI IT
     // context. The shared payload slab for the secondary stream is wired by the
     // audio-engine pass via SetSecondaryTransmitSharedMemory(); this only
     // creates and configures the hardware context.
-    kern_return_t PrepareTransmitStream(uint32_t streamIndex,
-                                        uint8_t channel,
-                                        HardwareInterface& hardware,
-                                        uint8_t sid);
+    kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+                                        HardwareInterface& hardware, uint8_t sid);
     kern_return_t StartPreparedTransmit();
 
     kern_return_t StopTransmit();
 
     kern_return_t BeginSplitDuplex(uint64_t guid);
-    kern_return_t ReservePlaybackResources(uint64_t guid,
-                                           IRM::IRMClient& irmClient,
-                                           uint8_t channel,
-                                           uint32_t bandwidthUnits);
-    kern_return_t ReserveCaptureResources(uint64_t guid,
-                                          IRM::IRMClient& irmClient,
-                                          uint8_t channel,
+    kern_return_t ReservePlaybackResources(uint64_t guid, IRM::IRMClient& irmClient,
+                                           uint8_t channel, uint32_t bandwidthUnits);
+    kern_return_t ReserveCaptureResources(uint64_t guid, IRM::IRMClient& irmClient, uint8_t channel,
                                           uint32_t bandwidthUnits);
 
     void StopAll();
@@ -128,13 +109,11 @@ public:
      * @param outMetadataRing Shared memory descriptor containing packet metadata.
      * @param outControlBlock Shared memory descriptor containing stream control states.
      */
-    kern_return_t AllocateTxIsochResources(
-        uint32_t numSlots,
-        uint32_t maxPacketBytes,
-        uint32_t interruptInterval,
-        IOMemoryDescriptor** outPayloadSlab,
-        IOMemoryDescriptor** outMetadataRing,
-        IOMemoryDescriptor** outControlBlock);
+    kern_return_t AllocateTxIsochResources(uint32_t numSlots, uint32_t maxPacketBytes,
+                                           uint32_t interruptInterval,
+                                           IOMemoryDescriptor** outPayloadSlab,
+                                           IOMemoryDescriptor** outMetadataRing,
+                                           IOMemoryDescriptor** outControlBlock);
 
     /**
      * @brief Releases all allocated shared transmit resources.
@@ -147,26 +126,31 @@ public:
      * @param outCycleTimer Raw FireWire cycle timer value from hardware.
      * @param hardware Reference to the hardware interface.
      */
-    kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware);
+    kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer,
+                                   HardwareInterface& hardware);
 
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
-    ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
+    ASFW::Isoch::IsochTransmitContext* TransmitContext() const {
+        return isochTransmitContext_.get();
+    }
 
     // Per-stream accessors: index 0 == master, index 1+ == secondary streams.
     ASFW::Isoch::IsochReceiveContext* ReceiveContext(uint32_t streamIndex) const {
-        if (streamIndex == 0) return isochReceiveContext_.get();
+        if (streamIndex == 0)
+            return isochReceiveContext_.get();
         if (streamIndex < kMaxStreamsPerDirection)
             return secondaryReceiveContexts_[streamIndex - 1].get();
         return nullptr;
     }
     ASFW::Isoch::IsochTransmitContext* TransmitContext(uint32_t streamIndex) const {
-        if (streamIndex == 0) return isochTransmitContext_.get();
+        if (streamIndex == 0)
+            return isochTransmitContext_.get();
         if (streamIndex < kMaxStreamsPerDirection)
             return secondaryTransmitContexts_[streamIndex - 1].get();
         return nullptr;
     }
 
-private:
+  private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
     void RefreshReceiveTimingLossCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
@@ -202,7 +186,8 @@ private:
         }
 
         [[nodiscard]] void* BaseAddress() const noexcept {
-            return map ? reinterpret_cast<void*>(static_cast<uintptr_t>(map->GetAddress())) : nullptr;
+            return map ? reinterpret_cast<void*>(static_cast<uintptr_t>(map->GetAddress()))
+                       : nullptr;
         }
     };
 
