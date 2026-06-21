@@ -82,11 +82,10 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::PrepareReceiveStream(uint32_t streamIndex, uint8_t channel,
-                                                 HardwareInterface& hardware,
-                                                 uint32_t channelOffset,
-                                                 ASFW::Encoding::AudioWireFormat wireFormat,
-                                                 uint32_t am824Slots) {
+kern_return_t IsochService::PrepareReceiveStream(
+    uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
+    uint32_t streamChannels, ASFW::Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) {
     // Stream 0 is the master; callers use PrepareReceive() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -117,9 +116,15 @@ kern_return_t IsochService::PrepareReceiveStream(uint32_t streamIndex, uint8_t c
         // the master context, so no ZTS/replay/timing-loss callbacks here.
     }
 
+    // Bind to the SAME shared input buffer as the master so this stream can
+    // write its de-interleaved slice; the context itself applies channelOffset.
+    slot->SetDirectAudioBindingSource(bindingSource);
+
     // contextIndex == streamIndex routes this stream to its own OHCI IR context.
+    // isSecondary=true makes it write PCM only (no clock/replay/ZTS).
     const kern_return_t kr =
-        slot->Configure(channel, static_cast<uint8_t>(streamIndex), wireFormat, am824Slots);
+        slot->Configure(channel, static_cast<uint8_t>(streamIndex), wireFormat, am824Slots,
+                        channelOffset, streamChannels, /*isSecondary=*/true);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
                  streamIndex, kr);
@@ -127,8 +132,9 @@ kern_return_t IsochService::PrepareReceiveStream(uint32_t streamIndex, uint8_t c
     }
 
     captureChannelOffset_[streamIndex] = channelOffset;
-    ASFW_LOG(Isoch, "IsochService: Prepared secondary IR stream %u on channel %u (offset %u)",
-             streamIndex, channel, channelOffset);
+    ASFW_LOG(Isoch,
+             "IsochService: Prepared secondary IR stream %u on channel %u (offset %u, %u ch)",
+             streamIndex, channel, channelOffset, streamChannels);
     return kIOReturnSuccess;
 }
 

@@ -44,7 +44,8 @@ class IDiceHostTransport {
     // master stream uses PrepareReceive/PrepareTransmit above.
     [[nodiscard]] virtual kern_return_t
     PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
-                         uint32_t channelOffset,
+                         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                         uint32_t channelOffset, uint32_t streamChannels,
                          Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
                          uint32_t am824Slots = 0) noexcept = 0;
     [[nodiscard]] virtual kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
@@ -80,7 +81,8 @@ class DiceIsochHostTransport final : public IDiceHostTransport {
                                                 uint8_t sourceId) noexcept override;
     [[nodiscard]] kern_return_t
     PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
-                         uint32_t channelOffset,
+                         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                         uint32_t channelOffset, uint32_t streamChannels,
                          Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
                          uint32_t am824Slots = 0) noexcept override;
     [[nodiscard]] kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,

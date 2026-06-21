@@ -205,13 +205,17 @@ class FakeDiceHostTransport final : public IDiceHostTransport {
     }
 
     kern_return_t PrepareReceiveStream(
-        uint32_t streamIndex, uint8_t channel, HardwareInterface&, uint32_t channelOffset,
+        uint32_t streamIndex, uint8_t channel, HardwareInterface&,
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
+        uint32_t streamChannels,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
         uint32_t am824Slots = 0) noexcept override {
         log_.Add("host.prepare_receive_stream");
         lastSecondaryReceiveIndex = streamIndex;
         lastSecondaryReceiveChannel = channel;
         lastSecondaryReceiveOffset = channelOffset;
+        lastSecondaryReceiveChannels = streamChannels;
+        lastSecondaryReceiveBindingSource = bindingSource;
         (void)wireFormat;
         (void)am824Slots;
         ++prepareReceiveStreamCalls;
@@ -283,6 +287,8 @@ class FakeDiceHostTransport final : public IDiceHostTransport {
     uint32_t lastSecondaryReceiveIndex{0};
     uint8_t lastSecondaryReceiveChannel{0};
     uint32_t lastSecondaryReceiveOffset{0};
+    uint32_t lastSecondaryReceiveChannels{0};
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* lastSecondaryReceiveBindingSource{nullptr};
     uint32_t lastSecondaryTransmitIndex{0};
     uint8_t lastSecondaryTransmitChannel{0};
     uint8_t lastSecondaryTransmitSourceId{0};

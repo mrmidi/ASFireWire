@@ -47,13 +47,12 @@ kern_return_t DiceIsochHostTransport::PrepareTransmit(uint8_t channel,
     return isoch_.PrepareTransmit(channel, hardware, sourceId);
 }
 
-kern_return_t DiceIsochHostTransport::PrepareReceiveStream(uint32_t streamIndex, uint8_t channel,
-                                                           Driver::HardwareInterface& hardware,
-                                                           uint32_t channelOffset,
-                                                           Encoding::AudioWireFormat wireFormat,
-                                                           uint32_t am824Slots) noexcept {
-    return isoch_.PrepareReceiveStream(streamIndex, channel, hardware, channelOffset, wireFormat,
-                                       am824Slots);
+kern_return_t DiceIsochHostTransport::PrepareReceiveStream(
+    uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
+    uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) noexcept {
+    return isoch_.PrepareReceiveStream(streamIndex, channel, hardware, bindingSource, channelOffset,
+                                       streamChannels, wireFormat, am824Slots);
 }
 
 kern_return_t DiceIsochHostTransport::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,

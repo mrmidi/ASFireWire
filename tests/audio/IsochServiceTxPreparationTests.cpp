@@ -97,12 +97,15 @@ TEST(IsochServiceTxPreparation, SecondaryStreamRejectsIndexZeroAndOutOfRange) {
     HardwareInterface hardware;
 
     // Index 0 is the master — must go through PrepareReceive/PrepareTransmit.
-    EXPECT_EQ(service.PrepareReceiveStream(0, /*channel=*/1, hardware, /*offset=*/0),
+    EXPECT_EQ(service.PrepareReceiveStream(0, /*channel=*/1, hardware,
+                                           /*binding=*/nullptr, /*offset=*/0,
+                                           /*streamChannels=*/16),
               kIOReturnBadArgument);
     EXPECT_EQ(service.PrepareTransmitStream(0, /*channel=*/0, hardware, /*sid=*/0x3f),
               kIOReturnBadArgument);
     // Out of range.
-    EXPECT_EQ(service.PrepareReceiveStream(IsochService::kMaxStreamsPerDirection, 2, hardware, 16),
+    EXPECT_EQ(service.PrepareReceiveStream(IsochService::kMaxStreamsPerDirection, 2, hardware,
+                                           nullptr, 16, 16),
               kIOReturnBadArgument);
 }
 
@@ -113,7 +116,9 @@ TEST(IsochServiceTxPreparation, SecondaryReceiveStreamCreatesContextAndRecordsOf
     EXPECT_EQ(service.ReceiveContext(1), nullptr);
 
     ASSERT_EQ(service.PrepareReceiveStream(/*streamIndex=*/1, /*channel=*/2, hardware,
-                                           /*channelOffset=*/16),
+                                           /*bindingSource=*/nullptr,
+                                           /*channelOffset=*/16,
+                                           /*streamChannels=*/16),
               kIOReturnSuccess);
 
     // Master untouched; secondary now exists and its de-interleave offset is recorded.
