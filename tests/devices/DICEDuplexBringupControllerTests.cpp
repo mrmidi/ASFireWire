@@ -1516,3 +1516,35 @@ TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesReturnsGenerationMism
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::GenerationMismatch);
 }
+
+// AudioDuplexChannels invariant: stream[0] resolves to the legacy scalar field so
+// single-stream call sites that only set the scalar stay byte-for-byte unchanged;
+// the per-stream arrays carry the *additional* streams (Venice F32 = 2×16).
+TEST(DICEDuplexBringupControllerTests, DuplexChannelsStreamZeroIsLegacyScalar) {
+    AudioDuplexChannels ch{};
+    ch.deviceToHostIsoChannel = 7;  // capture stream[0] (host IR)
+    ch.hostToDeviceIsoChannel = 5;  // playback stream[0] (host IT)
+    // Arrays still at defaults; stream[0] must ignore them.
+    EXPECT_EQ(ch.CaptureChannel(0), 7);
+    EXPECT_EQ(ch.PlaybackChannel(0), 5);
+}
+
+TEST(DICEDuplexBringupControllerTests, DuplexChannelsAdditionalStreamsUseArrays) {
+    AudioDuplexChannels ch{};
+    ch.deviceToHostIsoChannel = 1;
+    ch.hostToDeviceIsoChannel = 0;
+    ch.captureStreamCount = 2;
+    ch.playbackStreamCount = 2;
+    ch.captureIsoChannels[1] = 2;   // capture stream[1]
+    ch.playbackIsoChannels[1] = 3;  // playback stream[1]
+
+    EXPECT_EQ(ch.CaptureChannel(0), 1);
+    EXPECT_EQ(ch.CaptureChannel(1), 2);
+    EXPECT_EQ(ch.PlaybackChannel(0), 0);
+    EXPECT_EQ(ch.PlaybackChannel(1), 3);
+    // All four wire channels distinct — no bus collision across the duplex set.
+    EXPECT_NE(ch.CaptureChannel(0), ch.CaptureChannel(1));
+    EXPECT_NE(ch.PlaybackChannel(0), ch.PlaybackChannel(1));
+    EXPECT_NE(ch.CaptureChannel(0), ch.PlaybackChannel(0));
+    EXPECT_NE(ch.CaptureChannel(1), ch.PlaybackChannel(1));
+}

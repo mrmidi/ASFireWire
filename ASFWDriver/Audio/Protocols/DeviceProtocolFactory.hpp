@@ -54,6 +54,8 @@ public:
     static constexpr uint32_t kApogeeDuetModelId = DeviceProfiles::Audio::kApogeeDuetModelId;
     static constexpr uint32_t kAlesisVendorId = DeviceProfiles::Audio::kAlesisVendorId;
     static constexpr uint32_t kAlesisMultiMixModelId = DeviceProfiles::Audio::kAlesisMultiMixModelId;
+    static constexpr uint32_t kMidasVendorId = DeviceProfiles::Audio::kMidasVendorId;
+    static constexpr uint32_t kMidasVeniceModelId = DeviceProfiles::Audio::kMidasVeniceModelId;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 =
         DeviceProfiles::Audio::kFocusriteGuidModelSPro40Tcd3070;
     static constexpr const char* kFocusriteVendorName = DeviceProfiles::Audio::kFocusriteVendorName;
@@ -70,6 +72,9 @@ public:
     static constexpr const char* kAlesisVendorName = DeviceProfiles::Audio::kAlesisVendorName;
     static constexpr const char* kAlesisMultiMixModelName =
         DeviceProfiles::Audio::kAlesisMultiMixModelName;
+    static constexpr const char* kMidasVendorName = DeviceProfiles::Audio::kMidasVendorName;
+    static constexpr const char* kMidasVeniceModelName =
+        DeviceProfiles::Audio::kMidasVeniceModelName;
 
     struct KnownIdentity {
         uint32_t vendorId{0};

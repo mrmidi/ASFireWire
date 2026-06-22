@@ -88,8 +88,16 @@ private:
     void DoConfirmClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, VoidCallback cb);
     void DoReadGlobalAfterClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, IOReturn failureStatus, VoidCallback cb);
     void DoDiscoverStreams(AudioDuplexChannels channels, uint32_t step, VoidCallback cb);
-    void DoProgramRx(AudioDuplexChannels channels, VoidCallback cb);
-    void DoProgramTx(AudioDuplexChannels channels, VoidCallback cb);
+    // Per-stream device programming. A multi-stream DICE device (e.g. Venice F32,
+    // 2×16 channels) requires every advertised stream's ISOC register written
+    // before the single GLOBAL_ENABLE, so these recurse over the stream index.
+    // entrySizeBytes is the per-stream register stride (kSize*4), read once at
+    // streamIndex 0 and threaded through.
+    void DoProgramRx(AudioDuplexChannels channels, uint32_t streamIndex,
+                     uint32_t entrySizeBytes, VoidCallback cb);
+    void DoProgramTx(AudioDuplexChannels channels, uint32_t streamIndex,
+                     uint32_t entrySizeBytes, VoidCallback cb);
+    void DoEnableGlobal(AudioDuplexChannels channels, VoidCallback cb);
     void DoFinishPrepare(VoidCallback cb);
     void DoRollback(IOReturn error, VoidCallback cb);
     void DoCompleteClockApply(VoidCallback cb);

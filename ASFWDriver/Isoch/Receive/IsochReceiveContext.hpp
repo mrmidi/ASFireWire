@@ -87,10 +87,17 @@ public:
                   "IR descriptor ring must be an integer number of interrupt "
                   "groups or the interrupt cadence breaks at the ring wrap");
 
+    // channelOffset/streamChannels/isSecondary configure multi-stream
+    // de-interleave: this context writes `streamChannels` PCM channels (0 == the
+    // binding's full width) into the shared input buffer at `channelOffset`. A
+    // secondary context writes PCM only and does not own the clock/ZTS/replay.
     kern_return_t Configure(uint8_t channel,
                             uint8_t contextIndex,
                             Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-                            uint32_t am824Slots = 0);
+                            uint32_t am824Slots = 0,
+                            uint32_t channelOffset = 0,
+                            uint32_t streamChannels = 0,
+                            bool isSecondary = false);
     kern_return_t Start();
     void Stop();
     uint32_t Poll();
@@ -159,6 +166,24 @@ private:
 
     Encoding::AudioWireFormat wireFormat_{Encoding::AudioWireFormat::kAM824};
     uint32_t am824Slots_{0};
+
+    // Multi-stream de-interleave: this context decodes `streamChannels_` PCM
+    // channels (0 == use the binding's full inputChannels) and writes them into
+    // the shared interleaved input buffer at `channelOffset_`. A secondary
+    // stream writes PCM only — the master (isSecondary_ == false) owns the
+    // clock/ZTS/replay timeline and the producer cursor.
+    uint32_t channelOffset_{0};
+    uint32_t streamChannels_{0};
+    bool isSecondary_{false};
+
+    // Secondary-slice frame anchoring. A secondary context runs on its own OHCI
+    // IR context that arms/starts independently of the master, so its private
+    // cursor (from 0) has no relation to the master's ring position. We anchor it
+    // to the master's published inputProducedEndFrame on the first write of each
+    // replay epoch so both halves of a frame land in the same ring slot; the two
+    // streams are frame-locked by the device clock and stay aligned thereafter.
+    bool secondaryAnchored_{false};
+    uint64_t secondaryAnchorEpoch_{0};
 
     uint64_t absoluteFrameCursor_{0};
     bool cursorInitialized_{false};

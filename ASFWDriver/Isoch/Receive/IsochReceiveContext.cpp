@@ -62,7 +62,10 @@ IsochReceiveContext::Registers IsochReceiveContext::GetRegisters(uint8_t index) 
 kern_return_t IsochReceiveContext::Configure(uint8_t channel,
                                             uint8_t contextIndex,
                                             Encoding::AudioWireFormat wireFormat,
-                                            uint32_t am824Slots) {
+                                            uint32_t am824Slots,
+                                            uint32_t channelOffset,
+                                            uint32_t streamChannels,
+                                            bool isSecondary) {
     if (!hardware_ || !dmaMemory_) {
         return kIOReturnNotReady;
     }
@@ -76,6 +79,9 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel,
     registers_ = GetRegisters(contextIndex_);
     wireFormat_ = wireFormat;
     am824Slots_ = am824Slots;
+    channelOffset_ = channelOffset;
+    streamChannels_ = streamChannels;
+    isSecondary_ = isSecondary;
 
     return rxRing_.SetupRings(*dmaMemory_, kNumDescriptors, kMaxPacketSize);
 }
@@ -119,6 +125,8 @@ kern_return_t IsochReceiveContext::Start() {
     rxRing_.ResetForStart();
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
+    secondaryAnchored_ = false;
+    secondaryAnchorEpoch_ = 0;
     dbcInitialized_ = false;
     lastDbc_ = 0;
     rxZtsPublishCount_ = 0;
@@ -197,7 +205,11 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.streamMode = ASFW::Audio::Runtime::AudioStreamMode::kUnknown;
                     directInputView_.hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
 
-                    if (!replayResetForStart_ &&
+                    // Master-only: reset the shared clock/replay timeline once
+                    // on (re)bind. A secondary slice must never touch the shared
+                    // control block's cadence/replay — the master owns it.
+                    if (!isSecondary_ &&
+                        !replayResetForStart_ &&
                         directInputView_.control) {
                         directInputView_.control->rxSytCadence.Reset();
                         directInputView_.control->rxSequenceReplay.Reset();
@@ -206,11 +218,13 @@ uint32_t IsochReceiveContext::Poll() {
                         replayResetForStart_ = true;
                     }
 
-                    // Data plane (RX -> input buffer) and the controller-side clock
-                    // publisher both arm. The clock publisher writes the shared
-                    // timeline; the ADK side mirrors that timeline to HAL.
+                    // Data plane (RX -> input buffer) arms for every stream. The
+                    // controller-side clock publisher is master-only: it writes
+                    // the shared timeline the ADK side mirrors to HAL.
                     directInputWriter_.Bind(&directInputView_);
-                    clockPublisher_.Bind(&directInputView_);
+                    if (!isSecondary_) {
+                        clockPublisher_.Bind(&directInputView_);
+                    }
                 } else {
                     ASFW_LOG(Isoch,
                              "IR: direct audio binding invalid or has no input (gen %llu -> %llu). Disarming valid=%d hasIn=%d control=%p rate=%u",
@@ -257,16 +271,46 @@ uint32_t IsochReceiveContext::Poll() {
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         uint64_t callbackTimestamp = 0;
         if (pkt.payload) {
+            // Anchor a secondary slice to the master's published ring position
+            // before writing. The master owns inputProducedEndFrame; this stream
+            // is frame-locked to it but its OHCI context armed/started at a
+            // different time, so its private cursor must be re-based to the
+            // master's leading edge once per replay epoch. Until the master has
+            // produced (masterEnd != 0) we drop this stream's packets rather than
+            // write a mis-anchored slice.
+            if (isSecondary_ && directInputView_.control) {
+                const uint64_t epoch = directInputView_.control->rxReplayEpochResets.load(
+                    std::memory_order_acquire);
+                if (!secondaryAnchored_ || epoch != secondaryAnchorEpoch_) {
+                    const uint64_t masterEnd =
+                        directInputView_.control->inputProducedEndFrame.load(
+                            std::memory_order_acquire);
+                    if (masterEnd == 0) {
+                        return;
+                    }
+                    absoluteFrameCursor_ = masterEnd;
+                    secondaryAnchored_ = true;
+                    secondaryAnchorEpoch_ = epoch;
+                }
+            }
+
             const uint64_t packetFirstAudioFrame =
                 absoluteFrameCursor_;
-            const uint32_t channels = directInputView_.memory.inputChannels;
+            // This stream decodes its own slice width (streamChannels_), or the
+            // binding's full width for single-stream devices, and writes it at
+            // channelOffset_. Only the master publishes the producer timeline.
+            const uint32_t channels = streamChannels_ > 0
+                ? streamChannels_
+                : directInputView_.memory.inputChannels;
             const uint32_t slots = directInputView_.deviceToHostAm824Slots;
             const auto result = directProcessor_.ProcessPacket(pkt.payload,
                                                                pkt.actualLength,
                                                                packetFirstAudioFrame,
                                                                channels,
                                                                slots,
-                                                               wireFormat_);
+                                                               wireFormat_,
+                                                               channelOffset_,
+                                                               /*publishTimeline=*/!isSecondary_);
             const bool packetAccepted =
                 result.status ==
                     AudioEngine::Direct::Rx::
@@ -274,6 +318,20 @@ uint32_t IsochReceiveContext::Poll() {
                 result.status ==
                     AudioEngine::Direct::Rx::
                         DirectRxWriteStatus::kInvalidBinding;
+
+            // Secondary slice: PCM is already written at its channel offset.
+            // Skip all master-only bookkeeping (clock/replay/ZTS/DBC/callback);
+            // just advance this stream's frame cursor in lockstep with the
+            // master (both are frame-locked by the device clock). Under packet
+            // loss the two halves can transiently skew until a discontinuity
+            // re-anchors — the input safety offset absorbs the sub-cycle case.
+            if (isSecondary_) {
+                if (packetAccepted) {
+                    absoluteFrameCursor_ =
+                        packetFirstAudioFrame + result.framesDecoded;
+                }
+                return;
+            }
             if (!packetAccepted) {
                 ResetReplayEpochForDiscontinuity();
             } else {
