@@ -174,6 +174,15 @@ class IsochReceiveContext
     uint32_t streamChannels_{0};
     bool isSecondary_{false};
 
+    // Secondary-slice frame anchoring. A secondary context runs on its own OHCI
+    // IR context that arms/starts independently of the master, so its private
+    // cursor (from 0) has no relation to the master's ring position. We anchor it
+    // to the master's published inputProducedEndFrame on the first write of each
+    // replay epoch so both halves of a frame land in the same ring slot; the two
+    // streams are frame-locked by the device clock and stay aligned thereafter.
+    bool secondaryAnchored_{false};
+    uint64_t secondaryAnchorEpoch_{0};
+
     uint64_t absoluteFrameCursor_{0};
     bool cursorInitialized_{false};
     uint64_t rxZtsPublishCount_{0};
