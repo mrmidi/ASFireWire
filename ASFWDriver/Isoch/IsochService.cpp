@@ -39,7 +39,8 @@ kern_return_t IsochService::PrepareReceive(
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     ASFW::Encoding::AudioWireFormat wireFormat,
     uint32_t am824Slots,
-    ASFW::Isoch::IsochReceiveCallback packetCallback) {
+    ASFW::Isoch::IsochReceiveCallback packetCallback,
+    uint32_t streamChannels) {
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -73,7 +74,12 @@ kern_return_t IsochService::PrepareReceive(
 
     isochReceiveContext_->SetDirectAudioBindingSource(bindingSource);
 
-    const kern_return_t kr = isochReceiveContext_->Configure(channel, 0, wireFormat, am824Slots);
+    // Master stream: contextIndex 0, channelOffset 0, isSecondary false.
+    // streamChannels 0 == full binding width (single-stream back-compat);
+    // multi-stream devices pass their first slice's PCM count.
+    const kern_return_t kr = isochReceiveContext_->Configure(
+        channel, 0, wireFormat, am824Slots,
+        /*channelOffset=*/0, streamChannels, /*isSecondary=*/false);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: IR Configure failed: 0x%08x", kr);
         return kr;
@@ -87,12 +93,90 @@ kern_return_t IsochService::PrepareReceive(
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochService::PrepareReceiveStream(
+    uint32_t streamIndex,
+    uint8_t channel,
+    HardwareInterface& hardware,
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+    uint32_t channelOffset,
+    uint32_t streamChannels,
+    ASFW::Encoding::AudioWireFormat wireFormat,
+    uint32_t am824Slots) {
+    // Stream 0 is the master; callers use PrepareReceive() for it.
+    if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
+        return kIOReturnBadArgument;
+    }
+
+    auto& slot = secondaryReceiveContexts_[streamIndex - 1];
+    if (!slot) {
+        ASFW::Isoch::Memory::IsochMemoryConfig config;
+        config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
+        config.packetSizeBytes = ASFW::Isoch::IsochReceiveContext::kMaxPacketSize;
+        config.descriptorAlignment = 16;
+        config.payloadPageAlignment = 16384;
+
+        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
+        if (!isochMem || !isochMem->Initialize(hardware)) {
+            ASFW_LOG(Isoch,
+                     "IsochService: secondary RX DMA memory init failed (stream %u)",
+                     streamIndex);
+            return kIOReturnNoMemory;
+        }
+
+        slot = IsochReceiveContext::Create(&hardware, isochMem);
+        if (!slot) {
+            ASFW_LOG(Isoch,
+                     "IsochService: Failed to create secondary IR context (stream %u)",
+                     streamIndex);
+            return kIOReturnNoMemory;
+        }
+        // Secondary streams do NOT own the clock/ZTS/replay role — those stay on
+        // the master context, so no ZTS/replay/timing-loss callbacks here.
+    }
+
+    // Bind to the SAME shared input buffer as the master so this stream can
+    // write its de-interleaved slice; the context itself applies channelOffset.
+    slot->SetDirectAudioBindingSource(bindingSource);
+
+    // contextIndex == streamIndex routes this stream to its own OHCI IR context.
+    // isSecondary=true makes it write PCM only (no clock/replay/ZTS).
+    const kern_return_t kr = slot->Configure(
+        channel, static_cast<uint8_t>(streamIndex), wireFormat, am824Slots,
+        channelOffset, streamChannels, /*isSecondary=*/true);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Isoch,
+                 "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
+                 streamIndex, kr);
+        return kr;
+    }
+
+    captureChannelOffset_[streamIndex] = channelOffset;
+    ASFW_LOG(Isoch,
+             "IsochService: Prepared secondary IR stream %u on channel %u (offset %u, %u ch)",
+             streamIndex, channel, channelOffset, streamChannels);
+    return kIOReturnSuccess;
+}
+
 kern_return_t IsochService::StartPreparedReceive() {
     if (!isochReceiveContext_) {
         return kIOReturnNotReady;
     }
     ASFW_LOG(Isoch, "IsochService: Starting prepared IR (Direct-Only)");
-    return isochReceiveContext_->Start();
+    const kern_return_t kr = isochReceiveContext_->Start();
+    if (kr != kIOReturnSuccess) {
+        return kr;
+    }
+    for (auto& ctx : secondaryReceiveContexts_) {
+        if (ctx) {
+            const kern_return_t skr = ctx->Start();
+            if (skr != kIOReturnSuccess) {
+                ASFW_LOG(Isoch,
+                         "IsochService: secondary IR start failed: 0x%08x", skr);
+                return skr;
+            }
+        }
+    }
+    return kIOReturnSuccess;
 }
 
 kern_return_t IsochService::StopReceive() {
@@ -101,6 +185,13 @@ kern_return_t IsochService::StopReceive() {
         isochReceiveContext_->SetDirectAudioBindingSource(nullptr);
         // Safe after Stop(): Poll no longer runs, so no callback is in flight.
         isochReceiveContext_->SetCallback(nullptr);
+    }
+    for (auto& ctx : secondaryReceiveContexts_) {
+        if (ctx) {
+            ctx->Stop();
+            ctx->SetDirectAudioBindingSource(nullptr);
+            ctx->SetCallback(nullptr);
+        }
     }
 
     if (dvCaptureActive_) {
@@ -269,29 +360,102 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel,
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex,
+                                                  uint8_t channel,
+                                                  HardwareInterface& hardware,
+                                                  uint8_t sid) {
+    // Stream 0 is the master; callers use PrepareTransmit() for it.
+    if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
+        return kIOReturnBadArgument;
+    }
+
+    auto& slot = secondaryTransmitContexts_[streamIndex - 1];
+    if (!slot) {
+        ASFW::Isoch::Memory::IsochMemoryConfig config;
+        config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
+        config.packetSizeBytes = 0;
+        config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kOHCIPageSize;
+        config.payloadPageAlignment = 16384;
+        config.allocatePayloadSlab = false;
+
+        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
+        if (!isochMem || !isochMem->Initialize(hardware)) {
+            ASFW_LOG(Isoch,
+                     "IsochService: secondary TX DMA memory init failed (stream %u)",
+                     streamIndex);
+            return kIOReturnNoMemory;
+        }
+
+        slot = IsochTransmitContext::Create(&hardware, isochMem);
+        if (!slot) {
+            ASFW_LOG(Isoch,
+                     "IsochService: Failed to create secondary IT context (stream %u)",
+                     streamIndex);
+            return kIOReturnNoMemory;
+        }
+        // No TX-preparation callback on secondaries; the master drives refill.
+    }
+
+    const kern_return_t kr = slot->Configure(channel, sid);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Isoch,
+                 "IsochService: secondary IT Configure failed (stream %u): 0x%08x",
+                 streamIndex, kr);
+        return kr;
+    }
+    // The secondary stream's shared payload slab is wired by the audio-engine
+    // pass; without it the context is configured but not yet startable.
+    ASFW_LOG(Isoch,
+             "IsochService: Prepared secondary IT stream %u on channel %u",
+             streamIndex, channel);
+    return kIOReturnSuccess;
+}
+
 kern_return_t IsochService::StartPreparedTransmit() {
     if (!isochTransmitContext_) {
         return kIOReturnNotReady;
     }
-    if (isochReceiveContext_ &&
-        isochReceiveContext_->GetState() ==
-            ASFW::Isoch::IRPolicy::State::Running &&
-        !isochReceiveContext_->IsReplayEstablished()) {
-        txStartPending_ = true;
-        ASFW_LOG(
-            Isoch,
-            "IsochService: IT RUN deferred until IR cadence/replay is established");
-        return kIOReturnSuccess;
-    }
+    // Start IT immediately — do NOT defer on IR cadence/replay. The TX producer
+    // already gates *data* packets on replay establishment (sending NO-DATA CIP
+    // until the device clock is recovered), so an early start only emits the
+    // NO-DATA "dry-run" packets that bootstrap the device's stream — matching
+    // FFADO's DICE streaming engine, which runs the transmit processor to drive
+    // the device rather than waiting on receive sync.
+    //
+    // FW: the old deferral deadlocked devices (e.g. Midas Venice F32) that won't
+    // transmit their capture stream until they see an active host playback
+    // stream: IT waited for IR cadence, IR cadence waited for device TX, device
+    // TX waited for host IT. Focusrite happens to transmit unconditionally so it
+    // never hit this, but the deferral was an ASFW-specific deviation from the
+    // reference and is removed.
     txStartPending_ = false;
     ASFW_LOG(Isoch, "IsochService: Starting prepared IT (Direct-Only)");
-    return isochTransmitContext_->Start();
+    const kern_return_t kr = isochTransmitContext_->Start();
+    if (kr != kIOReturnSuccess) {
+        return kr;
+    }
+    for (auto& ctx : secondaryTransmitContexts_) {
+        if (ctx) {
+            const kern_return_t skr = ctx->Start();
+            if (skr != kIOReturnSuccess) {
+                ASFW_LOG(Isoch,
+                         "IsochService: secondary IT start failed: 0x%08x", skr);
+                return skr;
+            }
+        }
+    }
+    return kIOReturnSuccess;
 }
 
 kern_return_t IsochService::StopTransmit() {
     txStartPending_ = false;
     if (isochTransmitContext_) {
         isochTransmitContext_->Stop();
+    }
+    for (auto& ctx : secondaryTransmitContexts_) {
+        if (ctx) {
+            ctx->Stop();
+        }
     }
     return kIOReturnSuccess;
 }

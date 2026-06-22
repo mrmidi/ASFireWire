@@ -15,7 +15,9 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
                                                                    uint64_t absoluteFrame,
                                                                    uint32_t channels,
                                                                    uint32_t am824Slots,
-                                                                   ASFW::Encoding::AudioWireFormat format) noexcept {
+                                                                   ASFW::Encoding::AudioWireFormat format,
+                                                                   uint32_t channelOffset,
+                                                                   bool publishTimeline) noexcept {
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
@@ -82,12 +84,20 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
         }
 
         const uint32_t* frameIn = dataBlocks + (i * cip->dataBlockSize);
-        DecodeDirectRxFrame(frameIn, channels, cip->dataBlockSize, format, frameOut);
+        // Write this stream's slice at its channel offset into the interleaved
+        // frame; the writer stride covers the buffer's full channel width.
+        DecodeDirectRxFrame(frameIn, channels, cip->dataBlockSize, format,
+                            frameOut + channelOffset);
     }
 
-    const uint64_t producedEnd = absoluteFrame + eventCount;
-    writer_.PublishProducedEnd(producedEnd, static_cast<uint32_t>(eventCount));
-    
+    // Only the master stream advances the producer cursor/frame counters; a
+    // secondary slice writes PCM into the same frames without re-publishing the
+    // timeline (the two streams are frame-locked by the device clock).
+    if (publishTimeline) {
+        const uint64_t producedEnd = absoluteFrame + eventCount;
+        writer_.PublishProducedEnd(producedEnd, static_cast<uint32_t>(eventCount));
+    }
+
     result.status = DirectRxWriteStatus::kAvailable;
     return result;
 }

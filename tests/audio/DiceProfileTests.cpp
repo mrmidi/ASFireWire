@@ -11,6 +11,7 @@
 #include "Audio/DriverKit/Config/DICE/DiceProfileRegistry.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
 
 namespace {
 
@@ -76,6 +77,54 @@ TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
     EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 288);
     EXPECT_EQ(profile->TxReportedLatencyFrames(96000.0), 59);
     EXPECT_EQ(profile->RxReportedLatencyFrames(96000.0), 59);
+}
+
+TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
+    const auto* profile = AudioProfileRegistry::FindProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
+
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "Midas Venice F32 (DICE)");
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+
+    // Venice F32 at 48 kHz: single 32-ch stream per direction, 0 MIDI, DBS=32.
+    EXPECT_EQ(profile->TxChannelCount(), 32);
+    EXPECT_EQ(profile->RxChannelCount(), 32);
+    EXPECT_EQ(profile->TxMidiSlots(), 0);
+    EXPECT_EQ(profile->RxMidiSlots(), 0);
+    EXPECT_EQ(profile->TxDbs(), 32);
+    EXPECT_EQ(profile->RxDbs(), 32);
+
+    const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
+    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+    EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
+              ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+}
+
+TEST(DiceProfileTests, MidasVeniceSafetyOffsetsAndLatencies) {
+    const auto* profile = AudioProfileRegistry::FindProfile(0x10c73f, 0x000001, 0x10c73f04004011dfULL);
+    ASSERT_NE(profile, nullptr);
+
+    // 48 kHz: Tx = 6 * 8 = 48, Rx = 16 * 8 = 128
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
+    EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
+
+    // 96 kHz: Tx = 8 * 16 = 128, Rx = 18 * 16 = 288
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(96000.0), 128);
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 288);
+    EXPECT_EQ(profile->TxReportedLatencyFrames(96000.0), 59);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(96000.0), 59);
+}
+
+TEST(DiceProfileTests, MidasVendorWithWrongModelDoesNotMatchVeniceProfile) {
+    // Only vendor+model together should match — no vendor-only fallback for Midas.
+    const auto* profile = AudioProfileRegistry::FindProfile(0x10c73f, 0x999999, 0x0ULL);
+    // Should fall through to generic profile, not Venice.
+    if (profile != nullptr) {
+        EXPECT_STRNE(profile->Name(), "Midas Venice F32 (DICE)");
+    }
 }
 
 TEST(DiceProfileTests, GenericDiceDefaultOffsetsAndLatencies) {

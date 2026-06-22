@@ -54,6 +54,7 @@ public:
     void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
                           ClockApplyCallback callback) override;
     void ReadDuplexHealth(HealthCallback callback) override;
+    void EnsureRuntimeStreamGeometry(VoidCallback callback) override;
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
@@ -96,6 +97,16 @@ private:
     std::atomic<uint32_t> hostToDeviceAm824Slots_{0};
     std::atomic<uint32_t> deviceToHostIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
     std::atomic<uint32_t> hostToDeviceIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
+
+    // Per-stream wire geometry (DICE TX_NUMBER/RX_NUMBER + per-stream channels).
+    // Counts are atomic; the arrays are plain and published through the
+    // runtimeCapsValid_ release/acquire fence (written before the release-store,
+    // read after the acquire-load), mirroring the scalar fields above.
+    std::atomic<uint32_t> deviceToHostStreamCount_{0};
+    std::atomic<uint32_t> hostToDeviceStreamCount_{0};
+    AudioStreamWireInfo deviceToHostStreams_[kMaxAudioStreamsPerDirection]{};
+    AudioStreamWireInfo hostToDeviceStreams_[kMaxAudioStreamsPerDirection]{};
+
     std::atomic<bool> runtimeCapsValid_{false};
 };
 

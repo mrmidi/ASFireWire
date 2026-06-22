@@ -47,6 +47,15 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
     }
 
+    if (vendorId == kMidasVendorId && modelId == kMidasVeniceModelId) {
+        ASFW_LOG(DICE,
+                 "Creating generic DICETcatProtocol for Midas Venice vendor=0x%06x model=0x%06x node=0x%04x",
+                 vendorId,
+                 modelId,
+                 nodeId);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+    }
+
     // Check for Apogee Duet FireWire (AV/C + vendor-dependent commands).
     if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
         ASFW_LOG(Audio,
