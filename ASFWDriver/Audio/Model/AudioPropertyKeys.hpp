@@ -15,6 +15,11 @@ inline constexpr const char* kInputChannelCount = "ASFWInputChannelCount";
 inline constexpr const char* kOutputChannelCount = "ASFWOutputChannelCount";
 inline constexpr const char* kInputPlugName = "ASFWInputPlugName";
 inline constexpr const char* kOutputPlugName = "ASFWOutputPlugName";
+// Optional per-channel device labels (OSArray of OSString, in channel order).
+// When present they override the synthesized "<plug> N" names; missing/empty
+// entries fall back to the synthesized name.
+inline constexpr const char* kInputChannelNames = "ASFWInputChannelNames";
+inline constexpr const char* kOutputChannelNames = "ASFWOutputChannelNames";
 inline constexpr const char* kCurrentSampleRate = "ASFWCurrentSampleRate";
 inline constexpr const char* kStreamMode = "ASFWStreamMode";
 inline constexpr const char* kHasPhantomOverride = "ASFWHasPhantomOverride";
