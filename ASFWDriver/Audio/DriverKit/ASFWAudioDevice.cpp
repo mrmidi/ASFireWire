@@ -218,6 +218,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             auto* metadataRing = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars.txMetadataMap->GetAddress());
             auto* controlBlock = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars.txControlMap->GetAddress());
 
+            // Clear stale runtime cursors before prefill: the shared slab can be
+            // reused across StartIO/StopIO probes (CoreAudio re-probes on a
+            // sample-rate change), and a carried-over exposeCursor fails the IT
+            // prime ("committed prefill > slots").
+            controlBlock->ResetForStart();
+
             ivars.runtime.txSlotProvider.payloadBase = payloadBase;
             ivars.runtime.txSlotProvider.metadataRing = metadataRing;
             ivars.runtime.txSlotProvider.controlBlock = controlBlock;
@@ -303,6 +309,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             uint8_t* payloadBase2 = reinterpret_cast<uint8_t*>(ivars.txPayloadMapSecondary->GetAddress());
             auto* metadataRing2 = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars.txMetadataMapSecondary->GetAddress());
             auto* controlBlock2 = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars.txControlMapSecondary->GetAddress());
+
+            controlBlock2->ResetForStart();
 
             ivars.runtime.txSlotProviderSecondary.payloadBase = payloadBase2;
             ivars.runtime.txSlotProviderSecondary.metadataRing = metadataRing2;
