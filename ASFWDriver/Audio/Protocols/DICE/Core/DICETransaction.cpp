@@ -6,10 +6,12 @@
 #include "DICETransaction.hpp"
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace ASFW::Audio::DICE {
 
@@ -217,15 +219,19 @@ void CopyLabelBlob(char (&dst)[256], const uint8_t* src, size_t bytesAvailable) 
     const size_t copyBytes = (bytesAvailable < (sizeof(dst) - 1)) ? bytesAvailable : (sizeof(dst) - 1);
     size_t out = 0;
 
-    // DICE stores text fields as big-endian quadlets. Decode quadlet-wise into
-    // host-order bytes instead of using memcpy; this avoids alignment-sensitive
-    // vectorized memmove paths on DriverKit RX payload buffers.
+    // DICE stores text fields little-endian: the first character of each quadlet
+    // lives in the least-significant byte. The wire transmits quadlets big-endian,
+    // so characters must be emitted LSB-first (same byte order as the nickname;
+    // emitting MSB-first byte-reverses each quadlet). Decoding quadlet-wise also
+    // avoids alignment-sensitive vectorized memmove paths on DriverKit RX buffers.
+    // cross-validated with FFADO dice_avdevice.cpp:1527,1547
+    // ("Strings from the device are always little-endian").
     while (out + 4 <= copyBytes) {
         const uint32_t q = ReadBE32(src + out);
-        dst[out + 0] = static_cast<char>((q >> 24) & 0xFF);
-        dst[out + 1] = static_cast<char>((q >> 16) & 0xFF);
-        dst[out + 2] = static_cast<char>((q >>  8) & 0xFF);
-        dst[out + 3] = static_cast<char>( q        & 0xFF);
+        dst[out + 0] = static_cast<char>( q        & 0xFF);
+        dst[out + 1] = static_cast<char>((q >>  8) & 0xFF);
+        dst[out + 2] = static_cast<char>((q >> 16) & 0xFF);
+        dst[out + 3] = static_cast<char>((q >> 24) & 0xFF);
         out += 4;
     }
 
@@ -352,6 +358,32 @@ void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
     }
 }
 } // anonymous namespace
+
+std::vector<std::string> SplitDiceLabels(const char* labels) {
+    std::vector<std::string> names;
+    if (!labels) {
+        return names;
+    }
+    // CopyLabelBlob NUL-terminates the decoded blob.
+    std::string in(labels);
+
+    // The device terminates the channel-name list with a double backslash;
+    // anything past it is padding. (FFADO splitNameString.)
+    if (const auto term = in.find("\\\\"); term != std::string::npos) {
+        in.resize(term);
+    }
+
+    // Split on single-backslash separators, preserving empty tokens so the
+    // result index stays aligned with the channel index (FFADO splitString).
+    const std::string delim = "\\";
+    size_t start = 0;
+    while (start < in.size()) {
+        const size_t end = std::min(in.size(), in.find(delim, start));
+        names.push_back(in.substr(start, end - start));
+        start = end + delim.size();
+    }
+    return names;
+}
 
 void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
                                         std::function<void(IOReturn, StreamConfig)> callback) {

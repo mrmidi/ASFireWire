@@ -4,6 +4,7 @@
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Common/WireFormat.hpp"
 #include "Audio/Protocols/DICE/Core/DICETypes.hpp"
+#include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
 
@@ -37,6 +38,7 @@ using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioStreamRuntimeCaps;
 using ASFW::Audio::DICE::ClockSource;
 using ASFW::Audio::DICE::DecodeDiceNickname;
+using ASFW::Audio::DICE::SplitDiceLabels;
 using ASFW::Audio::DICE::ExtensionSections;
 using ASFW::Audio::DICE::Focusrite::EffectGeneralParams;
 using ASFW::Audio::DICE::GeneralSections;
@@ -407,6 +409,49 @@ TEST(DiceNicknameTests, EmptyNicknameYieldsEmptyString) {
     char out[64]{};
     DecodeDiceNickname(payload.data(), payload.size(), out);
     EXPECT_STREQ(out, "");
+}
+
+// ---------------------------------------------------------------------------
+// DICE channel-label splitting (FFADO splitNameString).
+// ---------------------------------------------------------------------------
+
+TEST(DiceLabelTests, SplitsSingleBackslashSeparatedNames) {
+    const auto names = SplitDiceLabels("Mic 1\\Mic 2\\Line 3\\\\");
+    ASSERT_EQ(names.size(), 3u);
+    EXPECT_EQ(names[0], "Mic 1");
+    EXPECT_EQ(names[1], "Mic 2");
+    EXPECT_EQ(names[2], "Line 3");
+}
+
+TEST(DiceLabelTests, StopsAtDoubleBackslashTerminator) {
+    // Padding after the "\\\\" terminator must be ignored.
+    const auto names = SplitDiceLabels("A\\B\\\\garbage\\more");
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[0], "A");
+    EXPECT_EQ(names[1], "B");
+}
+
+TEST(DiceLabelTests, PreservesLeadingEmptyTokenForChannelAlignment) {
+    // A leading separator yields an empty first token (channel 0 unnamed).
+    // (Two consecutive separators would form the "\\\\" terminator, so an
+    // interior empty token cannot occur.)
+    const auto names = SplitDiceLabels("\\A\\B\\\\");
+    ASSERT_EQ(names.size(), 3u);
+    EXPECT_EQ(names[0], "");
+    EXPECT_EQ(names[1], "A");
+    EXPECT_EQ(names[2], "B");
+}
+
+TEST(DiceLabelTests, NullAndEmptyYieldNoNames) {
+    EXPECT_TRUE(SplitDiceLabels(nullptr).empty());
+    EXPECT_TRUE(SplitDiceLabels("").empty());
+    EXPECT_TRUE(SplitDiceLabels("\\\\").empty());
+}
+
+TEST(DiceLabelTests, SingleNameWithoutTerminator) {
+    const auto names = SplitDiceLabels("Solo");
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names[0], "Solo");
 }
 
 } // namespace
