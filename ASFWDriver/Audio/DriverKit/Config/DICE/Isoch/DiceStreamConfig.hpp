@@ -30,6 +30,11 @@ struct DiceStreamConfig final {
     uint8_t framesPerDataPacket{8};
     uint8_t fdf{0x02};
     uint8_t fmt{0x10};
+
+    // First host buffer channel this stream encodes (de-interleave). Stream 0
+    // reads from 0; for a multi-stream device the Nth stream reads from
+    // N × pcmChannels. Single-stream devices keep 0.
+    uint8_t sourceChannelOffset{0};
 };
 
 } // namespace ASFW::Isoch::Audio::DICE
