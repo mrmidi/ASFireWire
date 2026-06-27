@@ -320,9 +320,10 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
         return kr;
     }
 
-    if (txPayloadSlab_ && txMetadataRing_ && txControlBlock_) {
+    if (txPayloadSlab_[0] && txMetadataRing_[0] && txControlBlock_[0]) {
         const kern_return_t memKr = isochTransmitContext_->SetSharedMemoryDescriptors(
-            txPayloadSlab_.get(), txMetadataRing_.get(), txControlBlock_.get(), interruptInterval_,
+            txPayloadSlab_[0].get(), txMetadataRing_[0].get(), txControlBlock_[0].get(),
+            interruptInterval_,
             ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
         if (memKr != kIOReturnSuccess) {
             ASFW_LOG(Isoch, "IsochService: IT shared-memory setup failed: 0x%08x", memKr);
@@ -372,8 +373,31 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
                  streamIndex, kr);
         return kr;
     }
-    // The secondary stream's shared payload slab is wired by the audio-engine
-    // pass; without it the context is configured but not yet startable.
+    // The audio-side slot provider encodes a placeholder channel; have the ring
+    // stamp this context's real transmit channel (from Configure above) instead.
+    slot->EnableChannelStamping();
+
+    // Wire this stream's own shared payload slab (allocated via
+    // AllocateTxIsochResources(streamIndex)) so the context can DMA it. The
+    // audio engine maps the same descriptors and writes the de-interleaved slice.
+    if (txPayloadSlab_[streamIndex] && txMetadataRing_[streamIndex] &&
+        txControlBlock_[streamIndex]) {
+        const kern_return_t memKr = slot->SetSharedMemoryDescriptors(
+            txPayloadSlab_[streamIndex].get(), txMetadataRing_[streamIndex].get(),
+            txControlBlock_[streamIndex].get(), interruptInterval_,
+            ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
+        if (memKr != kIOReturnSuccess) {
+            ASFW_LOG(Isoch,
+                     "IsochService: secondary IT shared-memory setup failed (stream %u): 0x%08x",
+                     streamIndex, memKr);
+            return memKr;
+        }
+    } else {
+        ASFW_LOG(Isoch, "IsochService: secondary IT stream %u has no shared slab — not startable",
+                 streamIndex);
+        return kIOReturnNotReady;
+    }
+
     ASFW_LOG(Isoch, "IsochService: Prepared secondary IT stream %u on channel %u", streamIndex,
              channel);
     return kIOReturnSuccess;
@@ -519,7 +543,8 @@ void IsochService::StartDeferredTransmitIfReady() noexcept {
     }
 }
 
-kern_return_t IsochService::AllocateTxIsochResources(uint32_t numSlots, uint32_t maxPacketBytes,
+kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint32_t numSlots,
+                                                     uint32_t maxPacketBytes,
                                                      uint32_t interruptInterval,
                                                      IOMemoryDescriptor** outPayloadSlab,
                                                      IOMemoryDescriptor** outMetadataRing,
@@ -527,11 +552,17 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t numSlots, uint32_t
     if (!outPayloadSlab || !outMetadataRing || !outControlBlock) {
         return kIOReturnBadArgument;
     }
+    if (streamIndex >= kMaxStreamsPerDirection) {
+        return kIOReturnBadArgument;
+    }
     *outPayloadSlab = nullptr;
     *outMetadataRing = nullptr;
     *outControlBlock = nullptr;
 
-    FreeTxIsochResources();
+    // Free only this stream's prior resources; other streams keep theirs.
+    txPayloadSlab_[streamIndex] = nullptr;
+    txMetadataRing_[streamIndex] = nullptr;
+    txControlBlock_[streamIndex] = nullptr;
 
     // 1. Allocate payload slab (page-aligned)
     const size_t payloadSlabBytes = static_cast<size_t>(numSlots) * maxPacketBytes;
@@ -540,10 +571,10 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t numSlots, uint32_t
                                                         4096, &payloadDescriptor);
     if (kr != kIOReturnSuccess || !payloadDescriptor) {
         ASFW_LOG(Isoch, "IsochService: Failed to allocate payload slab: 0x%08x", kr);
-        FreeTxIsochResources();
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txPayloadSlab_ = OSSharedPtr<IOBufferMemoryDescriptor>(payloadDescriptor, OSNoRetain);
+    txPayloadSlab_[streamIndex] =
+        OSSharedPtr<IOBufferMemoryDescriptor>(payloadDescriptor, OSNoRetain);
 
     // 2. Allocate metadata ring (cacheline aligned)
     const size_t metadataRingBytes =
@@ -553,10 +584,11 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t numSlots, uint32_t
                                           &metadataDescriptor);
     if (kr != kIOReturnSuccess || !metadataDescriptor) {
         ASFW_LOG(Isoch, "IsochService: Failed to allocate metadata ring: 0x%08x", kr);
-        FreeTxIsochResources();
+        txPayloadSlab_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txMetadataRing_ = OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
+    txMetadataRing_[streamIndex] =
+        OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
 
     // 3. Allocate control block (cacheline aligned)
     const size_t controlBlockBytes = sizeof(ASFW::IsochTransport::TxStreamControl);
@@ -565,32 +597,36 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t numSlots, uint32_t
                                           &controlDescriptor);
     if (kr != kIOReturnSuccess || !controlDescriptor) {
         ASFW_LOG(Isoch, "IsochService: Failed to allocate control block: 0x%08x", kr);
-        FreeTxIsochResources();
+        txPayloadSlab_[streamIndex] = nullptr;
+        txMetadataRing_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txControlBlock_ = OSSharedPtr<IOBufferMemoryDescriptor>(controlDescriptor, OSNoRetain);
+    txControlBlock_[streamIndex] =
+        OSSharedPtr<IOBufferMemoryDescriptor>(controlDescriptor, OSNoRetain);
 
     // Return the descriptors to the caller with retained references
-    *outPayloadSlab = txPayloadSlab_.get();
+    *outPayloadSlab = txPayloadSlab_[streamIndex].get();
     (*outPayloadSlab)->retain();
 
-    *outMetadataRing = txMetadataRing_.get();
+    *outMetadataRing = txMetadataRing_[streamIndex].get();
     (*outMetadataRing)->retain();
 
-    *outControlBlock = txControlBlock_.get();
+    *outControlBlock = txControlBlock_[streamIndex].get();
     (*outControlBlock)->retain();
 
     interruptInterval_ = interruptInterval;
 
-    ASFW_LOG(Isoch, "IsochService: Allocated Tx isoch resources. numSlots=%u slotSize=%u", numSlots,
-             maxPacketBytes);
+    ASFW_LOG(Isoch, "IsochService: Allocated Tx isoch resources stream %u. numSlots=%u slotSize=%u",
+             streamIndex, numSlots, maxPacketBytes);
     return kIOReturnSuccess;
 }
 
 kern_return_t IsochService::FreeTxIsochResources() {
-    txPayloadSlab_ = nullptr;
-    txMetadataRing_ = nullptr;
-    txControlBlock_ = nullptr;
+    for (uint32_t i = 0; i < kMaxStreamsPerDirection; ++i) {
+        txPayloadSlab_[i] = nullptr;
+        txMetadataRing_[i] = nullptr;
+        txControlBlock_[i] = nullptr;
+    }
     ASFW_LOG(Isoch, "IsochService: Freed Tx isoch resources");
     return kIOReturnSuccess;
 }

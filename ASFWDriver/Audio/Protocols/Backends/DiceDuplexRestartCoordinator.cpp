@@ -1181,6 +1181,32 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
                                       DiceRestartFailureCause::kStartTransmit);
     }
 
+    // Prepare each secondary playback stream on its own host IT context. It
+    // transmits on the iso channel that feeds the device's matching RX stream
+    // (PlaybackChannel(i)); the host IT ring stamps that channel into every
+    // packet header. The audio engine maps the secondary's shared slab (already
+    // allocated by StartIO) and writes its 16-ch slice.
+    for (uint32_t i = 1; i < channels.playbackStreamCount; ++i) {
+        if (abortIfTeardown("PreparingHostTransmitStream")) {
+            return kIOReturnAborted;
+        }
+        const kern_return_t status = hostTransport_.PrepareTransmitStream(
+            i,
+            channels.PlaybackChannel(i),
+            hardware_,
+            ReadLocalSid(hardware_));
+        if (status != kIOReturnSuccess) {
+            return rollbackToFailure(status,
+                                     DiceRestartPhase::kStartingHostTransmit,
+                                     DiceRestartFailureCause::kStartTransmit);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DiceRestartPhase::kStartingHostTransmit,
+                                          DiceRestartFailureCause::kStartTransmit);
+        }
+    }
+
     SetSessionPhase(session, DiceRestartPhase::kWaitingGlobalClock);
     StoreSession(session);
     if (abortIfTeardown("WaitingGlobalClock")) {

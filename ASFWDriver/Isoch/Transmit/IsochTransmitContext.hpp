@@ -65,6 +65,11 @@ public:
 
     kern_return_t Configure(uint8_t channel, uint8_t sid) noexcept;
 
+    // Secondary streams enable this so the ring stamps the configured transmit
+    // channel into every packet header (the audio-side producer encodes a
+    // placeholder channel). The master leaves it off (verbatim header copy).
+    void EnableChannelStamping() noexcept { ring_.SetStampChannel(true); }
+
     /**
      * @brief Map the shared memory regions allocated by the host into the Dext address space.
      * Prepares the payload slab for DMA and resolves its physical IOVA for descriptor priming.

@@ -112,14 +112,14 @@ class IsochService {
      * @param outMetadataRing Shared memory descriptor containing packet metadata.
      * @param outControlBlock Shared memory descriptor containing stream control states.
      */
-    kern_return_t AllocateTxIsochResources(uint32_t numSlots, uint32_t maxPacketBytes,
-                                           uint32_t interruptInterval,
+    kern_return_t AllocateTxIsochResources(uint32_t streamIndex, uint32_t numSlots,
+                                           uint32_t maxPacketBytes, uint32_t interruptInterval,
                                            IOMemoryDescriptor** outPayloadSlab,
                                            IOMemoryDescriptor** outMetadataRing,
                                            IOMemoryDescriptor** outControlBlock);
 
     /**
-     * @brief Releases all allocated shared transmit resources.
+     * @brief Releases all allocated shared transmit resources (every stream).
      */
     kern_return_t FreeTxIsochResources();
 
@@ -198,9 +198,13 @@ class IsochService {
     ASFW::Isoch::Rx::DVCaptureSink dvSink_{};
     bool dvCaptureActive_{false};
 
-    OSSharedPtr<IOBufferMemoryDescriptor> txPayloadSlab_{nullptr};
-    OSSharedPtr<IOBufferMemoryDescriptor> txMetadataRing_{nullptr};
-    OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_{nullptr};
+    // Per-stream TX shared resources. Index 0 == master; 1.. are secondary
+    // playback streams (multi-stream DICE, e.g. Venice F32 = 2×16). Each IT
+    // context DMAs its own slab; the audio engine maps each and writes its
+    // de-interleaved 16-ch slice into it.
+    OSSharedPtr<IOBufferMemoryDescriptor> txPayloadSlab_[kMaxStreamsPerDirection]{};
+    OSSharedPtr<IOBufferMemoryDescriptor> txMetadataRing_[kMaxStreamsPerDirection]{};
+    OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_[kMaxStreamsPerDirection]{};
 
     uint64_t activeGuid_{0};
     TimingLossCallback timingLossCallback_{};

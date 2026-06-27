@@ -358,6 +358,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         kFramesPerPacket;
                     (void)ivars.runtime.txStreamEngine
                         .AlignFrameCursorOnce(alignedFrame);
+                    if (ivars.runtime.txSecondaryActive) {
+                        (void)ivars.runtime.txStreamEngineSecondary
+                            .AlignFrameCursorOnce(alignedFrame);
+                    }
                 }
             }
         }
@@ -419,6 +423,15 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             break;
         }
 
+        // Shadow the master's per-packet timing on the secondary stream so both
+        // device RX streams advance in lockstep (same packetIndex/DBC/SYT/
+        // disposition), differing only in payload (channels 17–32). Best-effort:
+        // a secondary hiccup must never stall the master (channels 1–16).
+        if (ivars.runtime.txSecondaryActive) {
+            (void)ivars.runtime.txStreamEngineSecondary.PrepareNextTransmitSlot(
+                static_cast<uint32_t>(nextPacketToPrepare), timing);
+        }
+
         const uint32_t slotIdx =
             static_cast<uint32_t>(
                 nextPacketToPrepare % numSlots);
@@ -472,6 +485,11 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
             ASFW::Protocols::Audio::DICE::TxSlotPrepareResult::
                 kPrepared) {
             break;
+        }
+        // Seed the secondary ring in lockstep with the same NO-DATA packets.
+        if (ivars.runtime.txSecondaryActive) {
+            (void)ivars.runtime.txStreamEngineSecondary.PrepareNextTransmitSlot(
+                static_cast<uint32_t>(packetIndex), timing);
         }
         ++prepared;
     }

@@ -34,10 +34,10 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
     IOMemoryDescriptor* payloadDescriptor = nullptr;
     IOMemoryDescriptor* metadataDescriptor = nullptr;
     IOMemoryDescriptor* controlDescriptor = nullptr;
-    ASSERT_EQ(service.AllocateTxIsochResources(AudioTimingGeometry::kTxSharedSlotPackets, 512,
-                                               AudioTimingGeometry::kTxPacketsPerGroup,
-                                               &payloadDescriptor, &metadataDescriptor,
-                                               &controlDescriptor),
+    ASSERT_EQ(service.AllocateTxIsochResources(
+                  /*streamIndex=*/0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor, &metadataDescriptor,
+                  &controlDescriptor),
               kIOReturnSuccess);
     ASSERT_NE(payloadDescriptor, nullptr);
     ASSERT_NE(metadataDescriptor, nullptr);
@@ -135,6 +135,17 @@ TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext
     IsochService service;
     HardwareInterface hardware;
 
+    // The secondary stream's shared slab must be allocated before its context is
+    // prepared (StartIO allocates, the duplex bringup then wires the context).
+    IOMemoryDescriptor* payloadDescriptor = nullptr;
+    IOMemoryDescriptor* metadataDescriptor = nullptr;
+    IOMemoryDescriptor* controlDescriptor = nullptr;
+    ASSERT_EQ(service.AllocateTxIsochResources(
+                  /*streamIndex=*/1, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor, &metadataDescriptor,
+                  &controlDescriptor),
+              kIOReturnSuccess);
+
     ASSERT_EQ(service.PrepareTransmitStream(/*streamIndex=*/1, /*channel=*/4, hardware,
                                             /*sid=*/0x3f),
               kIOReturnSuccess);
@@ -144,6 +155,13 @@ TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext
     EXPECT_NE(service.TransmitContext(1), service.TransmitContext(0));
 
     service.StopAll();
+
+    if (payloadDescriptor)
+        payloadDescriptor->release();
+    if (metadataDescriptor)
+        metadataDescriptor->release();
+    if (controlDescriptor)
+        controlDescriptor->release();
 }
 
 } // namespace

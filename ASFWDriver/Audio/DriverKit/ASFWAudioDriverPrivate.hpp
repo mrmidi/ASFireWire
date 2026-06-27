@@ -190,6 +190,15 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;
+
+    // Secondary playback stream (multi-stream DICE, e.g. Venice F32 = 2×16). It
+    // shadows the master's per-packet timing in lockstep (same packetIndex/SYT/
+    // disposition) and differs only in payload: it encodes host output channels
+    // [pcmChannels, 2×pcmChannels). Inactive (txSecondaryActive == false) for
+    // single-stream devices, leaving the master path untouched.
+    ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngineSecondary;
+    DextTxSlotProvider txSlotProviderSecondary;
+    bool txSecondaryActive{false};
 };
 
 struct ASFWAudioDriver_IVars {
@@ -210,6 +219,15 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryMap> txPayloadMap;
     OSSharedPtr<IOMemoryMap> txMetadataMap;
     OSSharedPtr<IOMemoryMap> txControlMap;
+
+    // Secondary playback stream shared resources (Venice F32 = 2×16). Mirrors the
+    // master set above; unused for single-stream devices.
+    OSSharedPtr<IOMemoryDescriptor> txPayloadBufferSecondary;
+    OSSharedPtr<IOMemoryDescriptor> txMetadataBufferSecondary;
+    OSSharedPtr<IOMemoryDescriptor> txControlBufferSecondary;
+    OSSharedPtr<IOMemoryMap> txPayloadMapSecondary;
+    OSSharedPtr<IOMemoryMap> txMetadataMapSecondary;
+    OSSharedPtr<IOMemoryMap> txControlMapSecondary;
     OSSharedPtr<OSAction> txPreparationAction;
     OSSharedPtr<IODispatchQueue> txPreparationQueue;
     OSSharedPtr<OSAction> ztsAnchorAction;
