@@ -330,8 +330,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSecondaryActive = true;
 
             ASFW_LOG(Audio,
-                     "ASFWAudioDevice: Allocated & configured SECONDARY TX stream offset=%u dbs=%u slots=%u slotSize=%u",
-                     txConfig2.sourceChannelOffset, txConfig2.dbs, numSlots2, maxPacketBytes2);
+                     "ASFWAudioDevice: Allocated & configured SECONDARY TX stream offset=%u dbs=%u slots=%u slotSize=%u rate=%u",
+                     txConfig2.sourceChannelOffset, txConfig2.dbs, numSlots2, maxPacketBytes2,
+                     txConfig2.sampleRate);
         }
         }
 
