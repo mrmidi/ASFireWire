@@ -53,6 +53,24 @@ public:
         configValid_.store(true, std::memory_order_release);
     }
 
+    // Update only the current sample rate. The DICE clock can change (Audio MIDI
+    // Setup / Logic) without a full config rebuild; the next StartIO seeds the
+    // direct-binding/ZTS clock from config_.currentSampleRate, so this must
+    // reflect the live rate or CoreAudio sees the device clock advancing at the
+    // wrong rate and churns StartIO/StopIO.
+    void SetCurrentSampleRate(uint32_t sampleRateHz) noexcept {
+        if (sampleRateHz == 0) {
+            return;
+        }
+        if (lock_) {
+            IOLockLock(lock_);
+        }
+        config_.currentSampleRate = sampleRateHz;
+        if (lock_) {
+            IOLockUnlock(lock_);
+        }
+    }
+
     [[nodiscard]] bool CopyConfig(Model::ASFWAudioDevice& outConfig) const noexcept {
         if (!configValid_.load(std::memory_order_acquire)) {
             return false;
