@@ -87,15 +87,19 @@ TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
-    // Venice F32 at 48 kHz: single 32-ch stream per direction, 0 MIDI, DBS=32.
-    EXPECT_EQ(profile->TxChannelCount(), 32);
+    // Venice F32 at 48 kHz: 2 streams/direction × 16ch. The TX wire config is
+    // per-stream (DBS=16) with TxStreamCount()==2, so the HAL aggregate stays 32
+    // out. RX is kept as the aggregate (capture geometry comes from device caps).
+    EXPECT_EQ(profile->TxChannelCount(), 32);  // 16 × 2 streams
     EXPECT_EQ(profile->RxChannelCount(), 32);
     EXPECT_EQ(profile->TxMidiSlots(), 0);
     EXPECT_EQ(profile->RxMidiSlots(), 0);
-    EXPECT_EQ(profile->TxDbs(), 32);
+    EXPECT_EQ(profile->TxDbs(), 16);           // per wire stream
     EXPECT_EQ(profile->RxDbs(), 32);
 
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
+    EXPECT_EQ(diceProfile->TxStreamCount(), 2u);
+    EXPECT_EQ(diceProfile->RxStreamCount(), 1u);
     EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
     EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
               ASFW::Encoding::AudioWireFormat::kRawPcm24In32);

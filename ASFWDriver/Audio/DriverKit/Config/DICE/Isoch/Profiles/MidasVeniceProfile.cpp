@@ -18,18 +18,24 @@ constexpr uint32_t kMidasVendorId      = 0x10c73f;
 constexpr uint32_t kMidasVeniceModelId = 0x000001;
 
 // Venice F32 stream geometry verified at runtime from the TCAT TX/RX STREAM
-// FORMAT registers at 48 kHz: a SINGLE isochronous stream per direction carrying
-// 32 PCM channels, 0 MIDI (DBS = 32). The device reports RX_NUMBER/TX_NUMBER = 1
-// with am824Slots = 32 (DICE DUPLEX START: inCh=32 inSlots=32, streams=1). Earlier
-// values (33 = +MIDI, 16 = half) did not match the device's RX format, so the
-// host CIP never locked the device and no hardware ZTS was produced.
-// (At 2x sample rates DICE may split into multiple streams; that path is handled
-// generically by the per-stream bringup/transport but is untested on this device.)
+// FORMAT registers at 48 kHz: TWO isochronous streams per direction, each
+// carrying 16 PCM channels, 0 MIDI (DBS = 16) — 32×32 total (RX_NUMBER/TX_NUMBER
+// = 2, per-stream number_audio = 16).
+//
+// TX (host->device playback): BuildDefaultTxStreamConfig describes ONE wire
+// stream (16ch / DBS=16); TxStreamCount() == 2 makes the HAL aggregate 32. The
+// host transmit engine must match the device's per-stream DBS=16, not the
+// aggregate 32, or the device's 16-slot RX rejects the CIP.
+//
+// RX (device->host capture): kept as the aggregate (32 / DBS=32) here because the
+// capture path derives its real per-stream geometry from the device's runtime
+// caps (deviceToHostStreams), not this profile — only the HAL input channel count
+// is taken from RxChannelCount(). Input is already 2×16 on the wire.
 constexpr uint32_t kRxPcmChannels  = 32;
-constexpr uint32_t kTxPcmChannels  = 32;
+constexpr uint32_t kTxPcmChannels  = 16;  // per wire stream (×2 = 32 HAL out)
 constexpr uint32_t kMidiSlots      = 0;
-constexpr uint32_t kRxDbs          = kRxPcmChannels + kMidiSlots;
-constexpr uint32_t kTxDbs          = kTxPcmChannels + kMidiSlots;
+constexpr uint32_t kRxDbs          = kRxPcmChannels + kMidiSlots;  // 32
+constexpr uint32_t kTxDbs          = kTxPcmChannels + kMidiSlots;  // 16
 
 void FillStreamConfig(DiceStreamConfig& out, DiceStreamDirection direction) noexcept {
     out = DiceStreamConfig{};
