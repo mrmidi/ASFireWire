@@ -65,6 +65,11 @@ public:
 
     kern_return_t Configure(uint8_t channel, uint8_t sid) noexcept;
 
+    // Select which OHCI IT hardware context backs this stream. Defaults to 0
+    // (master); secondary streams must use their own context (== streamIndex) or
+    // they collide with the master on context 0's registers. Set before Start().
+    void SetContextIndex(uint8_t index) noexcept { contextIndex_ = index; }
+
     // Secondary streams enable this so the ring stamps the configured transmit
     // channel into every packet header (the audio-side producer encodes a
     // placeholder channel). The master leaves it off (verbatim header copy).

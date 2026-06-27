@@ -367,6 +367,10 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
         // No TX-preparation callback on secondaries; the master drives refill.
     }
 
+    // Each secondary stream runs on its own OHCI IT context (== streamIndex) so
+    // it does not collide with the master (context 0) on the hardware registers.
+    slot->SetContextIndex(static_cast<uint8_t>(streamIndex));
+
     const kern_return_t kr = slot->Configure(channel, sid);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: secondary IT Configure failed (stream %u): 0x%08x",
