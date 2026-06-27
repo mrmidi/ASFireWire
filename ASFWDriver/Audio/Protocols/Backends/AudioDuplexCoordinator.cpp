@@ -419,14 +419,21 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     }
 
     DuplexRestartSession session = LoadSession(guid);
-    // Honor a clock requested before streaming began (e.g. the user picked a
-    // non-48k rate in Audio MIDI Setup while idle, stored as pendingClock);
-    // otherwise default to 48 kHz.
+    // Honor a clock the user selected before streaming began. A rate pick while
+    // idle runs the idle clock-apply path, which persists the rate into
+    // desiredClock / appliedClock (NOT pendingClock) — so resolve all three,
+    // newest first, mirroring the bus-reset rebind path. Without this the start
+    // drops the selected rate and forces 48 kHz, leaving the device clocked at
+    // 48k while the host runs at the picked rate.
     AudioClockConfig desiredClock{
         .sampleRateHz = 48000U,
     };
     if (IsSupportedAudioClockConfig(session.pendingClock)) {
         desiredClock = session.pendingClock;
+    } else if (IsSupportedAudioClockConfig(session.desiredClock)) {
+        desiredClock = session.desiredClock;
+    } else if (IsSupportedAudioClockConfig(session.appliedClock)) {
+        desiredClock = session.appliedClock;
     }
     const DuplexRestartReason reason = HasRestartIntent(session)
                                          ? DICE::ClassifyRestartReason(&session, desiredClock)

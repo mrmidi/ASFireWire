@@ -607,11 +607,25 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
 
     const uint32_t rateHz = static_cast<uint32_t>(in_sample_rate);
 
+    // Reject a rate change while IO is active. Live (hot) reconfiguration would
+    // restart the duplex transport underneath running IO across the cross-service
+    // seam, which currently desynchronizes the device clock from the host and
+    // leaves audio dead until a full stop/replug. Until hot-swap is supported,
+    // require the device to be stopped: returning an error makes CoreAudio keep
+    // the current rate rather than believe the hardware moved. The rate then
+    // changes cleanly on the next idle pick + StartIO.
+    if (ivars.runtime.isRunning.load(std::memory_order_acquire)) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - IO active "
+                 "(stop playback to change sample rate)",
+                 in_sample_rate);
+        return kIOReturnBusy;
+    }
+
     // Program the device's DICE clock to the new rate via the transport-side
-    // coordinator (CLOCK_SELECT + duplex reconfigure). If streaming, it stops and
-    // re-brings-up at the new rate; if idle, it stores the pending clock for the
-    // next start. Reject the change if the transport can't apply it so CoreAudio
-    // does not believe the hardware moved.
+    // coordinator (CLOCK_SELECT + duplex reconfigure). The device is idle here,
+    // so this stores/applies the clock for the next StartIO. Reject the change if
+    // the transport can't apply it so CoreAudio does not believe the hardware moved.
     if (ivars.device.audioNub) {
         const kern_return_t kr =
             ivars.device.audioNub->RequestSampleRateChange(rateHz);
