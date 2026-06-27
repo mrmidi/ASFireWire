@@ -18,29 +18,39 @@ namespace ASFW::Protocols::Audio::AMDTP {
 
 namespace {
 constexpr uint8_t kFramesPerCycle48k = 6;
-constexpr uint8_t kSytInterval48k = 8;
 } // namespace
 
-void Blocking48kCadence::Reset() noexcept {
-    phase_ = 0;
+void BlockingCadence::Configure(uint32_t sampleRateHz,
+                                uint8_t sytIntervalFrames) noexcept {
+    framesPerCycleNum_ = sampleRateHz; // rate/8000 frames per cycle, scaled by 8000
+    sytIntervalFrames_ = sytIntervalFrames;
+    sytThresholdNum_ =
+        static_cast<uint32_t>(sytIntervalFrames) * kCyclesPerSecond;
+    Reset();
+}
+
+void BlockingCadence::Reset() noexcept {
+    readyNum_ = 0;
     totalCycles_ = 0;
 }
 
-bool Blocking48kCadence::CurrentCycleIsData() const noexcept {
-    return static_cast<uint8_t>(phase_ + kFramesPerCycle48k) >= kSytInterval48k;
+bool BlockingCadence::CurrentCycleIsData() const noexcept {
+    // FFADO cip.c: data iff floor(ready_samples + samples_per_cycle) >=
+    // syt_interval, i.e. (readyNum_ + rate) >= syt_interval * 8000.
+    return (readyNum_ + framesPerCycleNum_) >= sytThresholdNum_;
 }
 
-uint8_t Blocking48kCadence::CurrentCycleDataFrames() const noexcept {
-    return CurrentCycleIsData() ? kSytInterval48k : 0;
+uint8_t BlockingCadence::CurrentCycleDataFrames() const noexcept {
+    return CurrentCycleIsData() ? sytIntervalFrames_ : 0;
 }
 
-uint64_t Blocking48kCadence::TotalCycles() const noexcept {
+uint64_t BlockingCadence::TotalCycles() const noexcept {
     return totalCycles_;
 }
 
-void Blocking48kCadence::AdvanceCycle() noexcept {
-    phase_ = static_cast<uint8_t>(phase_ + kFramesPerCycle48k -
-                                  CurrentCycleDataFrames());
+void BlockingCadence::AdvanceCycle() noexcept {
+    readyNum_ = readyNum_ + framesPerCycleNum_ -
+                (CurrentCycleIsData() ? sytThresholdNum_ : 0u);
     ++totalCycles_;
 }
 
