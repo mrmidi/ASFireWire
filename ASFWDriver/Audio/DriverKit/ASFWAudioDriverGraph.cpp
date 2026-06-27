@@ -293,6 +293,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
     ivars.audioDevice->SetDriverIvars(&ivars);
 
+    // Do not let the host save/restore a stale stream format from a prior
+    // session: the device must come up at the rate this graph selects below,
+    // and we drive rate changes explicitly through HandleChangeSampleRate.
+    // (Default behavior is restore-enabled; see IOUserAudioDevice header.)
+    ivars.audioDevice->SetWantsStreamFormatsRestored(false);
+
     const uint32_t current_period = ivars.audioDevice->GetZeroTimestampPeriod();
     ASFW_LOG(Audio, "ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: %u frames", current_period);
     ASFW_LOG(Audio,
@@ -327,16 +333,23 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     IOUserAudioStreamBasicDescription inputFormats[8] = {};
     IOUserAudioStreamBasicDescription outputFormats[8] = {};
     const uint32_t formatCount = ivars.device.sampleRateCount > 8 ? 8 : ivars.device.sampleRateCount;
+    uint32_t currentFormatIndex = 0;
     for (uint32_t i = 0; i < formatCount; i++) {
         FillFloat32Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
         FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], ivars.device.outputChannelCount);
+        if (ivars.device.sampleRates[i] == ivars.device.currentSampleRate) {
+            currentFormatIndex = i;
+        }
     }
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Created %u stream formats input=float32/%u ch output=float32/%u ch",
+             "ASFWAudioDriver: Created %u stream formats input=float32/%u ch output=float32/%u ch; "
+             "current format index=%u (%.0f Hz)",
              formatCount,
              ivars.device.inputChannelCount,
-             ivars.device.outputChannelCount);
+             ivars.device.outputChannelCount,
+             currentFormatIndex,
+             ivars.device.sampleRates[currentFormatIndex]);
 
     IOMemoryDescriptor* rawOutputMemory = nullptr;
     IOMemoryDescriptor* rawInputMemory = nullptr;
@@ -478,7 +491,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (!requireAdkSuccess(
             "inputStream.SetCurrentStreamFormat",
             ivars.inputStream->SetCurrentStreamFormat(
-                &inputFormats[0]))) {
+                &inputFormats[currentFormatIndex]))) {
         return error;
     }
 
@@ -513,7 +526,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (!requireAdkSuccess(
             "outputStream.SetCurrentStreamFormat",
             ivars.outputStream->SetCurrentStreamFormat(
-                &outputFormats[0]))) {
+                &outputFormats[currentFormatIndex]))) {
         return error;
     }
 

@@ -595,13 +595,17 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
 }
 
 kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
+    ASFW_LOG(Audio, "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz (entry)", in_sample_rate);
     if (!ivars || !ivars->driverIvars) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate NOT READY (ivars=%p driverIvars=%p)",
+                 static_cast<void*>(ivars),
+                 static_cast<void*>(ivars ? ivars->driverIvars : nullptr));
         return kIOReturnNotReady;
     }
     auto& ivars = *this->ivars->driverIvars;
 
     const uint32_t rateHz = static_cast<uint32_t>(in_sample_rate);
-    ASFW_LOG(Audio, "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz", in_sample_rate);
 
     // Program the device's DICE clock to the new rate via the transport-side
     // coordinator (CLOCK_SELECT + duplex reconfigure). If streaming, it stops and
