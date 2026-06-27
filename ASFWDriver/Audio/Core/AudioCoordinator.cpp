@@ -304,6 +304,9 @@ IOReturn AudioCoordinator::RequestClockConfig(
 
     const auto* record = registry_.FindByGuid(guid);
     if (!record) {
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: RequestDiceClockConfig no registry record for GUID=0x%016llx (device not registered yet?)",
+                         guid);
         return kIOReturnNotReady;
     }
 

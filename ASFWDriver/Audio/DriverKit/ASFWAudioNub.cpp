@@ -564,32 +564,43 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
     return ctx->isoch.FreeTxIsochResources();
 }
 
-kern_return_t ASFWAudioNub::RequestSampleRateChange(uint32_t sampleRateHz)
+// Cross-process RPC (AudioDriver -> ASFWDriver process): runs in the nub's own
+// process, so ivars and the parent -> ServiceContext -> AudioCoordinator chain
+// are valid here (a LOCALONLY variant would dereference the audio side's proxy
+// ivars, which are null).
+kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
 {
     if (!ivars) {
+        ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange not ready (ivars=null)");
         return kIOReturnNotReady;
     }
     auto* coordinator = GetAudioCoordinator(ivars);
     if (!coordinator) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: RequestSampleRateChange not ready (no coordinator) guid=0x%016llx",
+                 ivars->guid);
         return kIOReturnNotReady;
     }
 
-    uint32_t clockSelect = 0;
-    if (!ASFW::Audio::DICE::DiceClockSelectForRate(
-            sampleRateHz, ASFW::Audio::DICE::ClockSource::Internal, clockSelect)) {
+    // The seam is protocol-neutral: carry only the rate. The DICE adapter
+    // (MakeDiceClockConfiguration) owns the CLOCK_SELECT register encoding.
+    const ASFW::Audio::AudioClockConfig desired{
+        .sampleRateHz = sampleRateHz,
+    };
+    if (!ASFW::Audio::IsSupportedAudioClockConfig(desired)) {
         ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange unsupported rate %u Hz", sampleRateHz);
         return kIOReturnUnsupported;
     }
 
-    const ASFW::Audio::DICE::DiceDesiredClockConfig desired{
-        .sampleRateHz = sampleRateHz,
-        .clockSelect = clockSelect,
-    };
     ASFW_LOG(Audio,
-             "ASFWAudioNub: RequestSampleRateChange %u Hz clockSelect=0x%08x guid=0x%016llx",
-             sampleRateHz, clockSelect, ivars->guid);
-    return coordinator->RequestDiceClockConfig(
+             "ASFWAudioNub: RequestSampleRateChange %u Hz guid=0x%016llx",
+             sampleRateHz, ivars->guid);
+    const kern_return_t kr = coordinator->RequestClockConfig(
         ivars->guid, desired, ASFW::Audio::DICE::DiceRestartReason::kSampleRateChange);
+    if (kr == kIOReturnSuccess) {
+        ivars->currentSampleRateHz = sampleRateHz;
+    }
+    return kr;
 }
 
 void ASFWAudioNub::SetChannelCount(uint32_t channels)

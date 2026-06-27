@@ -108,15 +108,16 @@ public:
     void SetStreamMode(uint32_t modeRaw) LOCALONLY;
     uint32_t GetStreamMode() const LOCALONLY;
 
-    // Request a device sample-rate change (CoreAudio HandleChangeSampleRate ->
-    // DICE CLOCK_SELECT + duplex reconfigure). Bridges to the transport-side
-    // AudioCoordinator. Returns kIOReturnUnsupported for a rate the device does
-    // not advertise.
-    kern_return_t RequestSampleRateChange(uint32_t sampleRateHz) LOCALONLY;
-
     // Device identity for protocol bridge routing
     void SetGuid(uint64_t guid) LOCALONLY;
     uint64_t GetGuid() const LOCALONLY;
+
+    // Request a device sample-rate change (CoreAudio HandleChangeSampleRate ->
+    // DICE CLOCK_SELECT + duplex reconfigure). Cross-process RPC bridge
+    // (AudioDriver -> ASFWDriver process): it runs in the nub's own process so
+    // the parent -> ServiceContext -> AudioCoordinator chain is valid. Returns
+    // kIOReturnUnsupported for a rate the device does not advertise.
+    virtual kern_return_t RequestSampleRateChange(uint32_t sampleRateHz);
 
     // RPC protocol-backed boolean control bridge (AudioDriver -> ASFWDriver process)
     virtual kern_return_t GetProtocolBooleanControl(
