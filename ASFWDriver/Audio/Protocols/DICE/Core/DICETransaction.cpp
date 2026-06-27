@@ -145,32 +145,9 @@ void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
             state.notification = ReadBE32(data + GlobalOffset::kNotification);
         }
         if (size >= 0x4C) {
-            // Extract nickname (64 bytes = 16 quadlets starting at offset 0x0C)
-            // DICE stores strings as big-endian quadlets, so we need to read each
-            // 4-byte group as a quadlet and extract chars in big-endian order
-            size_t nickIdx = 0;
-            for (size_t q = 0; q < 16 && nickIdx < 63; ++q) {
-                size_t qOffset = 0x0C + q * 4;
-                if (qOffset + 4 > size) break;
-                
-                uint32_t quadlet = ReadBE32(data + qOffset);
-                
-                // Extract chars from quadlet (MSB first = big-endian string order)
-                char c0 = (quadlet >> 24) & 0xFF;
-                char c1 = (quadlet >> 16) & 0xFF;
-                char c2 = (quadlet >> 8) & 0xFF;
-                char c3 = quadlet & 0xFF;
-                
-                if (c0 == '\0') break;
-                state.nickname[nickIdx++] = c0;
-                if (c1 == '\0') break;
-                state.nickname[nickIdx++] = c1;
-                if (c2 == '\0') break;
-                state.nickname[nickIdx++] = c2;
-                if (c3 == '\0') break;
-                state.nickname[nickIdx++] = c3;
-            }
-            state.nickname[nickIdx] = '\0';
+            // Nickname is 64 bytes / 16 quadlets stored little-endian within each
+            // wire quadlet; DecodeDiceNickname handles the byte order.
+            DecodeDiceNickname(data, size, state.nickname);
         }
         if (size >= 0x50) {
             state.clockSelect = ReadBE32(data + GlobalOffset::kClockSelect);

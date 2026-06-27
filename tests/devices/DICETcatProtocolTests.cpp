@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace ASFW::Audio::DICE::TCAT {
@@ -35,6 +36,7 @@ using ASFW::Async::FWAddress;
 using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioStreamRuntimeCaps;
 using ASFW::Audio::DICE::ClockSource;
+using ASFW::Audio::DICE::DecodeDiceNickname;
 using ASFW::Audio::DICE::ExtensionSections;
 using ASFW::Audio::DICE::Focusrite::EffectGeneralParams;
 using ASFW::Audio::DICE::GeneralSections;
@@ -344,6 +346,67 @@ TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     EXPECT_EQ(*callbackStatus, kIOReturnSuccess);
     EXPECT_EQ(bus.extensionReadCount, 1);
     EXPECT_EQ(bus.appQuadReadCount, 1);
+}
+
+// ---------------------------------------------------------------------------
+// DICE nickname decode (little-endian within each big-endian wire quadlet).
+// cross-validated with FFADO dice_avdevice.cpp:696.
+// ---------------------------------------------------------------------------
+
+// Encode a string the way a DICE device stores it: the first character of each
+// quadlet sits in the least-significant byte, and the quadlet is transmitted
+// big-endian on the wire — so the wire bytes are the characters reversed within
+// each 4-byte group. `out` is the global-section payload; nickname starts at
+// GlobalOffset::kNickname (0x0C).
+std::vector<uint8_t> MakeNicknamePayload(const std::string& name) {
+    std::vector<uint8_t> payload(0x0C + 64, 0);
+    for (size_t q = 0; q * 4 < name.size() && q < 16; ++q) {
+        uint8_t chars[4] = {0, 0, 0, 0};
+        for (size_t b = 0; b < 4; ++b) {
+            const size_t idx = q * 4 + b;
+            chars[b] = (idx < name.size()) ? static_cast<uint8_t>(name[idx]) : 0;
+        }
+        const size_t base = 0x0C + q * 4;
+        payload[base + 0] = chars[3];  // MSB on the wire = last char of group
+        payload[base + 1] = chars[2];
+        payload[base + 2] = chars[1];
+        payload[base + 3] = chars[0];  // LSB on the wire = first char of group
+    }
+    return payload;
+}
+
+TEST(DiceNicknameTests, DecodesLittleEndianStringNotByteReversed) {
+    // The Midas Venice regression: "Veni" must not decode as "ineV".
+    const auto payload = MakeNicknamePayload("Venice F32");
+    char out[64]{};
+    DecodeDiceNickname(payload.data(), payload.size(), out);
+    EXPECT_STREQ(out, "Venice F32");
+}
+
+TEST(DiceNicknameTests, ShortNameWithinFirstQuadletTerminates) {
+    const auto payload = MakeNicknamePayload("Hi");
+    char out[64]{};
+    DecodeDiceNickname(payload.data(), payload.size(), out);
+    EXPECT_STREQ(out, "Hi");
+}
+
+TEST(DiceNicknameTests, StopsAtPayloadBoundaryWithoutOverrun) {
+    // Only one full quadlet of nickname present after the 0x0C offset.
+    std::vector<uint8_t> payload(0x0C + 4, 0);
+    payload[0x0C + 0] = 'i';  // wire bytes for "Veni" -> first 4 chars only
+    payload[0x0C + 1] = 'n';
+    payload[0x0C + 2] = 'e';
+    payload[0x0C + 3] = 'V';
+    char out[64]{};
+    DecodeDiceNickname(payload.data(), payload.size(), out);
+    EXPECT_STREQ(out, "Veni");
+}
+
+TEST(DiceNicknameTests, EmptyNicknameYieldsEmptyString) {
+    const std::vector<uint8_t> payload(0x0C + 64, 0);
+    char out[64]{};
+    DecodeDiceNickname(payload.data(), payload.size(), out);
+    EXPECT_STREQ(out, "");
 }
 
 } // namespace
