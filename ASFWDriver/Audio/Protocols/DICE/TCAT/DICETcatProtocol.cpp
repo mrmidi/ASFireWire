@@ -429,7 +429,53 @@ void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
     fillPerStream(tx, caps.deviceToHostStreamCount, caps.deviceToHostStreams);
     fillPerStream(rx, caps.hostToDeviceStreamCount, caps.hostToDeviceStreams);
 
+    // Per-channel device labels from the DICE TX/RX name sections, flattened
+    // across streams in channel order. Written BEFORE CacheRuntimeCaps(caps)'s
+    // release-store so GetChannelLabels readers see a consistent snapshot.
+    // Host input == device TX, host output == device RX (AudioTypes.hpp).
+    auto fillLabels = [](const StreamConfig& sc,
+                         std::atomic<uint32_t>& outCount,
+                         char (&outLabels)[kMaxChannelLabels][64]) noexcept {
+        uint32_t idx = 0;
+        const uint32_t streams = (sc.numStreams < kMaxAudioStreamsPerDirection)
+                                     ? sc.numStreams
+                                     : kMaxAudioStreamsPerDirection;
+        for (uint32_t s = 0; s < streams && idx < kMaxChannelLabels; ++s) {
+            for (const auto& name : SplitDiceLabels(sc.streams[s].labels)) {
+                if (idx >= kMaxChannelLabels) {
+                    break;
+                }
+                strlcpy(outLabels[idx], name.c_str(), sizeof(outLabels[idx]));
+                ++idx;
+            }
+        }
+        for (uint32_t z = idx; z < kMaxChannelLabels; ++z) {
+            outLabels[z][0] = '\0';
+        }
+        outCount.store(idx, std::memory_order_relaxed);
+    };
+    fillLabels(tx, inputChannelLabelCount_, inputChannelLabels_);
+    fillLabels(rx, outputChannelLabelCount_, outputChannelLabels_);
+
     CacheRuntimeCaps(caps);
+}
+
+bool DICETcatProtocol::GetChannelLabels(std::vector<std::string>& inNames,
+                                        std::vector<std::string>& outNames) const {
+    if (!runtimeCapsValid_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    const uint32_t inCount = inputChannelLabelCount_.load(std::memory_order_relaxed);
+    const uint32_t outCount = outputChannelLabelCount_.load(std::memory_order_relaxed);
+    inNames.clear();
+    outNames.clear();
+    for (uint32_t i = 0; i < inCount && i < kMaxChannelLabels; ++i) {
+        inNames.emplace_back(inputChannelLabels_[i]);
+    }
+    for (uint32_t i = 0; i < outCount && i < kMaxChannelLabels; ++i) {
+        outNames.emplace_back(outputChannelLabels_[i]);
+    }
+    return inCount > 0 || outCount > 0;
 }
 
 void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept {
@@ -469,6 +515,12 @@ void DICETcatProtocol::ResetRuntimeCaps() noexcept {
     for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
         deviceToHostStreams_[i] = AudioStreamWireInfo{};
         hostToDeviceStreams_[i] = AudioStreamWireInfo{};
+    }
+    inputChannelLabelCount_.store(0, std::memory_order_relaxed);
+    outputChannelLabelCount_.store(0, std::memory_order_relaxed);
+    for (uint32_t i = 0; i < kMaxChannelLabels; ++i) {
+        inputChannelLabels_[i][0] = '\0';
+        outputChannelLabels_[i][0] = '\0';
     }
 }
 

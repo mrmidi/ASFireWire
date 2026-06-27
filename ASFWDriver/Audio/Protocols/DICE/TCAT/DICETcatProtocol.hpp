@@ -44,6 +44,8 @@ public:
     const Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    bool GetChannelLabels(std::vector<std::string>& inNames,
+                          std::vector<std::string>& outNames) const override;
 
     void PrepareDuplex(const AudioDuplexChannels& channels,
                        const DiceDesiredClockConfig& desiredClock,
@@ -106,6 +108,17 @@ private:
     std::atomic<uint32_t> hostToDeviceStreamCount_{0};
     AudioStreamWireInfo deviceToHostStreams_[kMaxAudioStreamsPerDirection]{};
     AudioStreamWireInfo hostToDeviceStreams_[kMaxAudioStreamsPerDirection]{};
+
+    // Per-channel device labels, flattened across this direction's streams in
+    // channel order (input == device TX, output == device RX). Published
+    // through the runtimeCapsValid_ release/acquire fence like the arrays above;
+    // only the (global, tx, rx) cache path fills them (the caps-only overload
+    // leaves them intact). Covers the widest supported interface (32x32).
+    static constexpr uint32_t kMaxChannelLabels = 32;
+    std::atomic<uint32_t> inputChannelLabelCount_{0};
+    std::atomic<uint32_t> outputChannelLabelCount_{0};
+    char inputChannelLabels_[kMaxChannelLabels][64]{};
+    char outputChannelLabels_[kMaxChannelLabels][64]{};
 
     std::atomic<bool> runtimeCapsValid_{false};
 };

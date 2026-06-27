@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
 #include <string>
@@ -286,6 +287,42 @@ TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
     EXPECT_EQ(caps.deviceToHostIsoChannel, 1U);
     EXPECT_EQ(caps.hostToDeviceIsoChannel, 0U);
+}
+
+TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
+    CountingFireWireBus bus;
+    DICETcatProtocol protocol(bus, bus, 2, nullptr);
+
+    // No labels before caps are cached.
+    std::vector<std::string> inNames;
+    std::vector<std::string> outNames;
+    EXPECT_FALSE(protocol.GetChannelLabels(inNames, outNames));
+
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+
+    // Host input == device TX; two streams, names concatenated in stream order.
+    ASFW::Audio::DICE::StreamConfig tx{};
+    tx.numStreams = 2;
+    strlcpy(tx.streams[0].labels, "Mic 1\\Mic 2\\\\", sizeof(tx.streams[0].labels));
+    strlcpy(tx.streams[1].labels, "Line 3\\Line 4\\\\", sizeof(tx.streams[1].labels));
+
+    // Host output == device RX.
+    ASFW::Audio::DICE::StreamConfig rx{};
+    rx.numStreams = 1;
+    strlcpy(rx.streams[0].labels, "Main L\\Main R\\\\", sizeof(rx.streams[0].labels));
+
+    ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
+
+    ASSERT_TRUE(protocol.GetChannelLabels(inNames, outNames));
+    ASSERT_EQ(inNames.size(), 4u);
+    EXPECT_EQ(inNames[0], "Mic 1");
+    EXPECT_EQ(inNames[1], "Mic 2");
+    EXPECT_EQ(inNames[2], "Line 3");
+    EXPECT_EQ(inNames[3], "Line 4");
+    ASSERT_EQ(outNames.size(), 2u);
+    EXPECT_EQ(outNames[0], "Main L");
+    EXPECT_EQ(outNames[1], "Main R");
 }
 
 TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
