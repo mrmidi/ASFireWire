@@ -142,6 +142,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ASFW_LOG(Audio, "ASFWAudioDriver: Using default device configuration (no nub properties)");
     }
 
+    // Set once a resolved profile supplies its advertised sample-rate set, so the
+    // bring-up single-format policy below is skipped for profiled devices.
+    bool profileProvidedSampleRates = false;
+
     // Resolve audio profile registry on startup
     if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
             parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid)) {
@@ -175,6 +179,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             if (!currentRateInSet) {
                 parsedConfig.currentSampleRate = parsedConfig.sampleRates[0];
             }
+            profileProvidedSampleRates = true;
         }
 
         // Regenerate channel names for the updated channel counts. Prefers the
@@ -184,7 +189,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
 
     ASFW::Isoch::Audio::BuildFallbackBoolControls(parsedConfig);
-    ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
+    // Profiled devices advertise their own validated rate set (DICE: 44.1/48 kHz);
+    // only fall back to the single-format bring-up policy for unprofiled devices
+    // whose multi-rate path is not yet validated end-to-end.
+    if (!profileProvidedSampleRates) {
+        ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
+    }
     ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxPcmChannels);
     CopyParsedConfigToDeviceState(parsedConfig, ivars.device);
 
@@ -236,7 +246,8 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              ? "blocking" : "non-blocking");
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Forcing single advertised format: input=Float32 output=Float32");
+             "ASFWAudioDriver: Advertising %u Float32 format(s) (input/output) across rates",
+             ivars.device.sampleRateCount);
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Effective runtime channels: input=%u output=%u aggregate=%u",
              ivars.device.inputChannelCount,
