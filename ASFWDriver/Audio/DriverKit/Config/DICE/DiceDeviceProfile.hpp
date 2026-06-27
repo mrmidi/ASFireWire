@@ -48,7 +48,7 @@ public:
     /// baseline (44.1/48 kHz); 2x/4x are omitted until their stream geometry is
     /// verified end-to-end (see kDiceMaxSupportedRateHz). Profiles for devices
     /// with a different 1x set may override.
-    [[nodiscard]] virtual std::vector<uint32_t> SupportedSampleRates() const {
+    [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override {
         return {44100u, 48000u};
     }
 

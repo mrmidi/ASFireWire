@@ -154,6 +154,29 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                                             rxChannels,
                                                             txChannels);
 
+        // Sample rates come from the profile (same authoritative source as the
+        // channel counts above), so CoreAudio advertises the full set even if the
+        // nub property dict did not carry kSampleRates. The HAL builds one stream
+        // format per rate (see SetAvailableSampleRates below).
+        const auto profileRates = profile->SupportedSampleRates();
+        if (!profileRates.empty()) {
+            parsedConfig.sampleRateCount = 0;
+            bool currentRateInSet = false;
+            for (uint32_t hz : profileRates) {
+                if (parsedConfig.sampleRateCount >= ASFW::Isoch::Audio::kMaxSampleRates) {
+                    break;
+                }
+                parsedConfig.sampleRates[parsedConfig.sampleRateCount++] =
+                    static_cast<double>(hz);
+                if (static_cast<double>(hz) == parsedConfig.currentSampleRate) {
+                    currentRateInSet = true;
+                }
+            }
+            if (!currentRateInSet) {
+                parsedConfig.currentSampleRate = parsedConfig.sampleRates[0];
+            }
+        }
+
         // Regenerate channel names for the updated channel counts. Prefers the
         // device's per-channel labels (published by the core side) and falls
         // back to synthesized "<plug> N" for any slot without a real label.
