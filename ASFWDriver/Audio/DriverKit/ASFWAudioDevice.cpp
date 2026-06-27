@@ -620,5 +620,15 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
         ivars.device.currentSampleRate = static_cast<double>(rateHz);
     }
 
-    return super::HandleChangeSampleRate(in_sample_rate);
+    // Commit the rate to the ADK device. The validated ADK contract
+    // (ADKVirtualAudioLab) applies the change by calling SetSampleRate here, not
+    // by delegating to super — the base HandleChangeSampleRate does not move the
+    // active format, so without this the HAL reverts to the previous rate.
+    const kern_return_t setKr = SetSampleRate(in_sample_rate);
+    if (setKr != kIOReturnSuccess) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate SetSampleRate(%.0f) failed: 0x%x",
+                 in_sample_rate, setKr);
+    }
+    return setKr;
 }
