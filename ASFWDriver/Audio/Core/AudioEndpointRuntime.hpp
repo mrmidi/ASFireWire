@@ -55,9 +55,20 @@ public:
 
     // Update only the current sample rate. The DICE clock can change (Audio MIDI
     // Setup / Logic) without a full config rebuild; the next StartIO seeds the
-    // direct-binding/ZTS clock from config_.currentSampleRate, so this must
-    // reflect the live rate or CoreAudio sees the device clock advancing at the
-    // wrong rate and churns StartIO/StopIO.
+    // direct-binding/ZTS clock from the live rate, so this must reflect it or
+    // CoreAudio sees the device clock advancing at the wrong rate and churns
+    // StartIO/StopIO.
+    //
+    // The binding the IR actually reads reports directSampleRateHz_, not
+    // config_.currentSampleRate. That field (and directGeneration_) is latched
+    // only when the direct-audio memory is allocated in
+    // EnsureDirectAudioMemoryLocked, which does not re-run on an idle rate change
+    // because the ring buffers are rate-independent (fixed kAudioRingBufferFrames)
+    // and are allocated once at bring-up then reused. So updating config_ alone
+    // leaves the binding (and the ZTS the HAL judges) stuck at the publish-time
+    // 48 kHz. Refresh directSampleRateHz_ and bump the generation here so
+    // CopyDirectAudioBinding reports the new rate and the IR re-arms the RX/ZTS
+    // clock at it.
     void SetCurrentSampleRate(uint32_t sampleRateHz) noexcept {
         if (sampleRateHz == 0) {
             return;
@@ -66,6 +77,10 @@ public:
             IOLockLock(lock_);
         }
         config_.currentSampleRate = sampleRateHz;
+        if (directSampleRateHz_ != 0 && directSampleRateHz_ != sampleRateHz) {
+            directSampleRateHz_ = sampleRateHz;
+            ++directGeneration_;
+        }
         if (lock_) {
             IOLockUnlock(lock_);
         }
