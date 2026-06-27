@@ -165,6 +165,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig");
                 return;
             }
+            // The profile describes the wire geometry at its default (48 kHz);
+            // the live cadence/FDF follow the device's current nominal rate.
+            if (ivars.device.currentSampleRate > 0) {
+                txConfig.sampleRate =
+                    static_cast<uint32_t>(ivars.device.currentSampleRate);
+            }
 
             const uint32_t numSlots =
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
@@ -259,6 +265,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             if (!profile->BuildDefaultTxStreamConfig(txConfig2)) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig2");
                 return;
+            }
+            if (ivars.device.currentSampleRate > 0) {
+                txConfig2.sampleRate =
+                    static_cast<uint32_t>(ivars.device.currentSampleRate);
             }
             txConfig2.sourceChannelOffset = txConfig2.pcmChannels;
 

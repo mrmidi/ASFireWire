@@ -1,5 +1,6 @@
 #include "AmdtpTxPacketizer.hpp"
 
+#include "AmdtpRateGeometry.hpp"
 #include "../IEC61883/Syt.hpp"
 
 namespace ASFW::Protocols::Audio::AMDTP {
@@ -40,11 +41,24 @@ inline void WriteBE32(uint8_t* dest, uint32_t value) noexcept {
 
 bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
                                   const AmdtpTxPolicy& txPolicy) noexcept {
-    if (streamConfig.sampleRate != 48000) {
-        return false; // only 48 kHz cadences exist; reject untested rates
+    // Resolve the rate's AMDTP geometry (SYT interval + AM824 FDF/SFC). Unknown
+    // rates are rejected. Blocking mode handles any rate via the rational
+    // cadence; non-blocking has no fractional form, so it stays integral-rate
+    // (48 kHz) only.
+    const auto geometry =
+        ASFW::Encoding::AmdtpRateGeometryForSampleRate(streamConfig.sampleRate);
+    if (!geometry) {
+        return false;
+    }
+    if (streamConfig.streamMode != StreamMode::Blocking &&
+        streamConfig.sampleRate != 48000) {
+        return false;
     }
 
     AmdtpStreamConfig config = streamConfig;
+    // FDF (AM824 SFC) must match the actual rate, not whatever the profile
+    // defaulted (profiles hardcode the 48 kHz SFC 0x02).
+    config.fdf = geometry->fdf;
     if (config.dbs == 0) {
         config.dbs = static_cast<uint8_t>(config.pcmChannels + config.midiSlots);
     }
@@ -74,9 +88,14 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
         txPolicy.preserveFdfInNoDataPackets ? config.fdf : 0xFF;
     cipBuilder_.Configure(cipConfig);
 
-    cadence_ = (config.streamMode == StreamMode::Blocking)
-                   ? static_cast<IAmdtpCadence*>(&blocking48kCadence_)
-                   : static_cast<IAmdtpCadence*>(&nonBlocking48kCadence_);
+    if (config.streamMode == StreamMode::Blocking) {
+        blocking48kCadence_.Configure(
+            config.sampleRate,
+            static_cast<uint8_t>(geometry->sytIntervalFrames));
+        cadence_ = static_cast<IAmdtpCadence*>(&blocking48kCadence_);
+    } else {
+        cadence_ = static_cast<IAmdtpCadence*>(&nonBlocking48kCadence_);
+    }
 
     Reset(0, 0);
     return true;
