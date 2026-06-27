@@ -433,6 +433,11 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
+    dev.sampleRates = profile->SupportedSampleRates();
+    if (dev.sampleRates.empty()) {
+        dev.sampleRates = {48000u};
+    }
+    dev.currentSampleRate = 48000u;
 
     // Enrich with the device's real per-channel labels (if the protocol has
     // loaded them), update the endpoint runtime, then publish the nub. Host

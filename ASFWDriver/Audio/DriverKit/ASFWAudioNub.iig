@@ -108,6 +108,12 @@ public:
     void SetStreamMode(uint32_t modeRaw) LOCALONLY;
     uint32_t GetStreamMode() const LOCALONLY;
 
+    // Request a device sample-rate change (CoreAudio HandleChangeSampleRate ->
+    // DICE CLOCK_SELECT + duplex reconfigure). Bridges to the transport-side
+    // AudioCoordinator. Returns kIOReturnUnsupported for a rate the device does
+    // not advertise.
+    kern_return_t RequestSampleRateChange(uint32_t sampleRateHz) LOCALONLY;
+
     // Device identity for protocol bridge routing
     void SetGuid(uint64_t guid) LOCALONLY;
     uint64_t GetGuid() const LOCALONLY;

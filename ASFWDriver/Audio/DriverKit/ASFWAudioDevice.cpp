@@ -593,3 +593,32 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
 
     return kr;
 }
+
+kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
+    if (!ivars || !ivars->driverIvars) {
+        return kIOReturnNotReady;
+    }
+    auto& ivars = *this->ivars->driverIvars;
+
+    const uint32_t rateHz = static_cast<uint32_t>(in_sample_rate);
+    ASFW_LOG(Audio, "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz", in_sample_rate);
+
+    // Program the device's DICE clock to the new rate via the transport-side
+    // coordinator (CLOCK_SELECT + duplex reconfigure). If streaming, it stops and
+    // re-brings-up at the new rate; if idle, it stores the pending clock for the
+    // next start. Reject the change if the transport can't apply it so CoreAudio
+    // does not believe the hardware moved.
+    if (ivars.device.audioNub) {
+        const kern_return_t kr =
+            ivars.device.audioNub->RequestSampleRateChange(rateHz);
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: HandleChangeSampleRate transport reconfig failed: 0x%x",
+                     kr);
+            return kr;
+        }
+        ivars.device.currentSampleRate = static_cast<double>(rateHz);
+    }
+
+    return super::HandleChangeSampleRate(in_sample_rate);
+}

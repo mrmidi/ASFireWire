@@ -53,10 +53,16 @@ bool DICETcatProtocol::MakeDiceClockConfiguration(
     }
     // The DICE adapter owns the register encoding: Linux selects the requested
     // rate by updating GLOBAL_CLOCK_SELECT while preserving the source bits
-    // (dice-stream.c:60-85; dice-interface.h:80-95).
+    // (dice-stream.c:60-85; dice-interface.h:80-95). Encode the requested rate
+    // via the standard table; source stays Internal (bring-up policy).
+    uint32_t clockSelect = 0;
+    if (!DiceClockSelectForRate(requested.sampleRateHz, ClockSource::Internal,
+                                clockSelect)) {
+        return false;
+    }
     out = DiceClockConfiguration{
         .sampleRateHz = requested.sampleRateHz,
-        .clockSelect = kDiceClockSelect48kInternal,
+        .clockSelect = clockSelect,
     };
     return true;
 }

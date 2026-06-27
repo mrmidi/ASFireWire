@@ -16,6 +16,8 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
+#include "../Protocols/DICE/Core/DICETypes.hpp"
+#include "../Protocols/DICE/Core/DICERestartSession.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"
@@ -560,6 +562,34 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
     }
 
     return ctx->isoch.FreeTxIsochResources();
+}
+
+kern_return_t ASFWAudioNub::RequestSampleRateChange(uint32_t sampleRateHz)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
+        return kIOReturnNotReady;
+    }
+
+    uint32_t clockSelect = 0;
+    if (!ASFW::Audio::DICE::DiceClockSelectForRate(
+            sampleRateHz, ASFW::Audio::DICE::ClockSource::Internal, clockSelect)) {
+        ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange unsupported rate %u Hz", sampleRateHz);
+        return kIOReturnUnsupported;
+    }
+
+    const ASFW::Audio::DICE::DiceDesiredClockConfig desired{
+        .sampleRateHz = sampleRateHz,
+        .clockSelect = clockSelect,
+    };
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: RequestSampleRateChange %u Hz clockSelect=0x%08x guid=0x%016llx",
+             sampleRateHz, clockSelect, ivars->guid);
+    return coordinator->RequestDiceClockConfig(
+        ivars->guid, desired, ASFW::Audio::DICE::DiceRestartReason::kSampleRateChange);
 }
 
 void ASFWAudioNub::SetChannelCount(uint32_t channels)

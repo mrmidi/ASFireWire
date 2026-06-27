@@ -1126,8 +1126,11 @@ TEST_F(AudioDuplexCoordinatorTests, ProgramRxFailureRollsBackHostAndDeviceInOrde
 }
 
 TEST_F(AudioDuplexCoordinatorTests, UnsupportedClockConfigFailsBeforeHostAllocation) {
+    // 2x/4x rates are not yet validated end-to-end and must be rejected before
+    // any host allocation. (44.1 kHz is a supported 1x rate as of the dynamic
+    // sample-rate work.)
     const AudioClockConfig unsupportedClock{
-        .sampleRateHz = 44100U,
+        .sampleRateHz = 96000U,
     };
 
     EXPECT_EQ(coordinator_.RequestClockConfig(kTestGuid, unsupportedClock,
