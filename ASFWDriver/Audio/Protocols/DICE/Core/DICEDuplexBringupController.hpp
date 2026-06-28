@@ -88,6 +88,10 @@ private:
     void DoWaitClockAccepted(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoConfirmClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, VoidCallback cb);
     void DoReadGlobalAfterClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, IOReturn failureStatus, VoidCallback cb);
+    // Gate between clock-confirm and stream enable: poll until the PLL is stable-locked
+    // at the target rate, so streams are never enabled while the device is still
+    // relocking (which wedges it until a hard reset).
+    void DoAwaitStreamingClockLock(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoDiscoverStreams(AudioDuplexChannels channels, uint32_t step, VoidCallback cb);
     // Per-stream device programming. A multi-stream DICE device (e.g. Venice F32,
     // 2×16 channels) requires every advertised stream's ISOC register written

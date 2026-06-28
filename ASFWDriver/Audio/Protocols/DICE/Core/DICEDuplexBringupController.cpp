@@ -602,7 +602,7 @@ void DICEDuplexBringupController::DoActiveClockCheck(
                                         DoCompleteClockApply(std::move(cb));
                                         return;
                                     }
-                                    DoDiscoverStreams(channels, 0, std::move(cb));
+                                    DoAwaitStreamingClockLock(channels, 0, std::move(cb));
                                     return;
                                 }
 
@@ -739,8 +739,63 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
                                     return;
                                 }
 
-                                DoDiscoverStreams(channels, 0, std::move(cb));
+                                DoAwaitStreamingClockLock(channels, 0, std::move(cb));
                             });
+}
+
+void DICEDuplexBringupController::DoAwaitStreamingClockLock(
+    AudioDuplexChannels channels,
+    uint32_t attempt,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    // The clock "confirm" above can fire on the device's CLOCK_ACCEPTED ack alone,
+    // which only means the device received the CLOCK_SELECT write -- NOT that its PLL
+    // has re-locked at the new rate. Enabling the isoch streams while the PLL is still
+    // relocking (status reports the old rate / locked=0) wedges the device until a hard
+    // reset: a rate change then kills audio permanently, even after switching back to
+    // 48 kHz (HW-observed). So before programming/enabling streams, poll the global
+    // status until it reports a stable lock at the target rate. A same-rate restart is
+    // already locked, so this returns on the first read.
+    diceReader_.ReadGlobalStateFull(
+        sections_,
+        [this, channels, attempt, cb = std::move(cb)](IOReturn status, GlobalState state) mutable {
+            if (status != kIOReturnSuccess) {
+                DoRollback(status, std::move(cb));
+                return;
+            }
+
+            const bool lockedAtTarget =
+                IsSourceLocked(state.status) &&
+                NominalRateHz(state.status) == restartSession_.desiredClock.sampleRateHz &&
+                state.sampleRate == restartSession_.desiredClock.sampleRateHz;
+
+            if (lockedAtTarget) {
+                if (attempt > 0) {
+                    ASFW_LOG(DICE,
+                             "PrepareDuplex48k: streaming clock stable-locked at %u Hz after %u ms; enabling streams",
+                             state.sampleRate, attempt * kPollIntervalMs);
+                }
+                DoDiscoverStreams(channels, 0, std::move(cb));
+                return;
+            }
+
+            if (attempt * kPollIntervalMs >= kAsyncTimeoutMs) {
+                ASFW_LOG(DICE,
+                         "PrepareDuplex48k: clock not stable-locked within %u ms (status=0x%08x rate=%u target=%u); aborting bring-up",
+                         kAsyncTimeoutMs, state.status, state.sampleRate,
+                         restartSession_.desiredClock.sampleRateHz);
+                DoRollback(kIOReturnTimeout, std::move(cb));
+                return;
+            }
+
+            ScheduleRetry(kPollIntervalMs, [this, channels, attempt, cb = std::move(cb)]() mutable {
+                DoAwaitStreamingClockLock(channels, attempt + 1, std::move(cb));
+            });
+        });
 }
 
 void DICEDuplexBringupController::DoDiscoverStreams(
