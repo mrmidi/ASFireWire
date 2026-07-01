@@ -55,6 +55,11 @@ add_device_test(DiceDuplexRestartCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
 )
 
+# FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
+add_device_test(WaitForAsyncResultTests
+    WaitForAsyncResultTests.cpp
+)
+
 # DICE recovery-policy classification kernel tests (FW-66, header-only policy)
 add_device_test(DiceRecoveryPolicyTests
     DiceRecoveryPolicyTests.cpp

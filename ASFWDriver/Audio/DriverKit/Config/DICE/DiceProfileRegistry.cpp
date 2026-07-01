@@ -7,16 +7,19 @@
 #include "DiceProfileRegistry.hpp"
 #include "Isoch/Profiles/FocusriteSaffireProfile.hpp"
 #include "Isoch/Profiles/GenericDiceProfile.hpp"
+#include "Isoch/Profiles/MidasVeniceProfile.hpp"
 
 namespace ASFW::Isoch::Audio::DICE {
 
 namespace {
 Profiles::GenericDiceProfile gGenericProfile{};
 Profiles::FocusriteSaffireProfile gFocusriteProfile{};
+Profiles::MidasVeniceProfile gMidasVeniceProfile{};
 } // namespace
 
 DiceProfileRegistry::DiceProfileRegistry() noexcept {
     (void)RegisterProfile(&gFocusriteProfile);
+    (void)RegisterProfile(&gMidasVeniceProfile);
 }
 
 bool DiceProfileRegistry::RegisterProfile(const IDiceDeviceProfile* profile) noexcept {

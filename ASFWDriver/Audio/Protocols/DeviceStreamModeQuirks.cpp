@@ -16,6 +16,10 @@ constexpr uint32_t kFocusriteVendorId = 0x00130e;
 constexpr uint32_t kSPro14ModelId = 0x000009;
 constexpr uint32_t kSPro24ModelId  = 0x000007;
 constexpr uint32_t kSPro24DspModelId  = 0x000008;
+
+// Midas DICE devices — same rationale as Focusrite above.
+constexpr uint32_t kMidasVendorId      = 0x10c73f;
+constexpr uint32_t kMidasVeniceModelId = 0x000001;
 } // namespace
 
 std::optional<Model::StreamMode> LookupForcedStreamMode(
@@ -36,6 +40,10 @@ std::optional<Model::StreamMode> LookupForcedStreamMode(
         (modelId == kSPro14ModelId ||
          modelId == kSPro24ModelId ||
          modelId == kSPro24DspModelId)) {
+        return Model::StreamMode::kBlocking;
+    }
+
+    if (vendorId == kMidasVendorId && modelId == kMidasVeniceModelId) {
         return Model::StreamMode::kBlocking;
     }
 

@@ -386,10 +386,16 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     if (guid == 0) return;
 
     const auto* record = registry_.FindByGuid(guid);
-    if (!record) return;
+    if (!record) {
+        ASFW_LOG(Audio, "DiceAudioBackend::EnsureNubForGuid: no registry record for GUID=0x%016llx", guid);
+        return;
+    }
 
     const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
     if (integration != DeviceIntegrationMode::kHardcodedNub) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend::EnsureNubForGuid: skipping GUID=0x%016llx vendor=0x%06x model=0x%06x integration=%u (not hardcodedNub)",
+                 guid, record->vendorId, record->modelId, static_cast<unsigned>(integration));
         return;
     }
 
@@ -402,11 +408,15 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     static ASFW::Isoch::Audio::DICE::DiceProfileRegistry diceRegistry{};
     const auto* profile = diceRegistry.FindProfile(identity);
     if (!profile) {
-        // We neither retrieve stream geometry for unknown device nor fail loudly.
-        // Skip the logic of retrieving geometry and stick to only known profiles for now.
-        // TODO: Support dynamic stream geometry retrieval for unknown devices.
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend::EnsureNubForGuid: no isoch profile for GUID=0x%016llx vendor=0x%06x model=0x%06x (profileCount=%u)",
+                 guid, record->vendorId, record->modelId, diceRegistry.ProfileCount());
         return;
     }
+
+    ASFW_LOG(Audio,
+             "DiceAudioBackend::EnsureNubForGuid: matched profile=%{public}s for GUID=0x%016llx",
+             profile->Name(), guid);
 
     auto protocol = runtime_.FindShared(guid);
 

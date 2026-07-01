@@ -59,6 +59,11 @@ TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
                   DeviceProtocolFactory::kAlesisVendorId,
                   DeviceProtocolFactory::kAlesisMultiMixModelId),
               DeviceIntegrationMode::kHardcodedNub);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kMidasVendorId,
+                  DeviceProtocolFactory::kMidasVeniceModelId),
+              DeviceIntegrationMode::kHardcodedNub);
 }
 
 TEST(DeviceProtocolFactoryTests, RejectsUnknownDevices) {
@@ -103,6 +108,10 @@ TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
         DeviceProtocolFactory::kAlesisVendorId,
         DeviceProtocolFactory::kAlesisMultiMixModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kMidasVendorId,
+        DeviceProtocolFactory::kMidasVeniceModelId));
 }
 
 TEST(DeviceProtocolFactoryTests, InfersFocusriteIdentityFromGuid) {
@@ -155,6 +164,15 @@ TEST(DeviceProtocolFactoryTests, RecognizesAlesisMultiMixDiceProfile) {
     EXPECT_EQ(multiMix->integrationMode, DeviceIntegrationMode::kHardcodedNub);
     EXPECT_STREQ(multiMix->vendorName, DeviceProtocolFactory::kAlesisVendorName);
     EXPECT_STREQ(multiMix->modelName, DeviceProtocolFactory::kAlesisMultiMixModelName);
+}
+
+TEST(DeviceProtocolFactoryTests, RecognizesMidasVeniceDiceProfile) {
+    const auto venice = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kMidasVendorId, DeviceProtocolFactory::kMidasVeniceModelId);
+    ASSERT_TRUE(venice.has_value());
+    EXPECT_EQ(venice->integrationMode, DeviceIntegrationMode::kHardcodedNub);
+    EXPECT_STREQ(venice->vendorName, DeviceProtocolFactory::kMidasVendorName);
+    EXPECT_STREQ(venice->modelName, DeviceProtocolFactory::kMidasVeniceModelName);
 }
 
 } // namespace

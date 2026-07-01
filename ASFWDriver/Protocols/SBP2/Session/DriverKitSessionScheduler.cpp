@@ -129,16 +129,23 @@ SchedulerToken DriverKitSessionScheduler::ScheduleAfter(uint64_t delayNs,
         return kInvalidSchedulerToken;
     }
 
-    IOLockGuard guard(lock_);
-    SchedulerToken token = nextToken_++;
-    if (token == kInvalidSchedulerToken) {
+    SchedulerToken token;
+    uint64_t earliest;
+    OSSharedPtr<IOTimerDispatchSource> timer;
+    {
+        IOLockGuard guard(lock_);
         token = nextToken_++;
+        if (token == kInvalidSchedulerToken) {
+            token = nextToken_++;
+        }
+        pending_.emplace(token, PendingCallback{
+                                    .deadlineTicks = DeadlineTicksFromNow(delayNs),
+                                    .fn = std::move(fn),
+                                });
+        earliest = EarliestDeadlineLocked();
+        timer = timer_;
     }
-    pending_.emplace(token, PendingCallback{
-                                .deadlineTicks = DeadlineTicksFromNow(delayNs),
-                                .fn = std::move(fn),
-                            });
-    ArmNextLocked();
+    ArmTimerUnlocked(timer.get(), earliest);
     return token;
 #endif
 }
@@ -148,14 +155,26 @@ void DriverKitSessionScheduler::Cancel(SchedulerToken token) {
         return;
     }
 
-    IOLockGuard guard(lock_);
-    if (pending_.erase(token) > 0) {
-        ArmNextLocked();
+    uint64_t earliest = 0;
+    OSSharedPtr<IOTimerDispatchSource> timer;
+    bool changed = false;
+    {
+        IOLockGuard guard(lock_);
+        if (pending_.erase(token) > 0) {
+            changed = true;
+            earliest = EarliestDeadlineLocked();
+            timer = timer_;
+        }
+    }
+    if (changed) {
+        ArmTimerUnlocked(timer.get(), earliest);
     }
 }
 
 void DriverKitSessionScheduler::HandleTimerFired() noexcept {
     std::vector<std::function<void()>> due;
+    uint64_t earliest = 0;
+    OSSharedPtr<IOTimerDispatchSource> timer;
 
     {
         IOLockGuard guard(lock_);
@@ -168,8 +187,10 @@ void DriverKitSessionScheduler::HandleTimerFired() noexcept {
                 ++it;
             }
         }
-        ArmNextLocked();
+        earliest = EarliestDeadlineLocked();
+        timer = timer_;
     }
+    ArmTimerUnlocked(timer.get(), earliest);
 
     for (auto& fn : due) {
         if (fn) {
@@ -178,24 +199,33 @@ void DriverKitSessionScheduler::HandleTimerFired() noexcept {
     }
 }
 
-void DriverKitSessionScheduler::ArmNextLocked() noexcept {
-#ifdef ASFW_HOST_TEST
-    return;
-#else
-    if (!timer_ || pending_.empty()) {
-        return;
+uint64_t DriverKitSessionScheduler::EarliestDeadlineLocked() const noexcept {
+    if (pending_.empty()) {
+        return 0;
     }
-
     const auto next = std::min_element(
         pending_.begin(), pending_.end(),
         [](const auto& a, const auto& b) {
             return a.second.deadlineTicks < b.second.deadlineTicks;
         });
-    if (next == pending_.end()) {
+    return next == pending_.end() ? 0 : next->second.deadlineTicks;
+}
+
+void DriverKitSessionScheduler::ArmTimerUnlocked(IOTimerDispatchSource* timer,
+                                                 uint64_t deadlineTicks) noexcept {
+#ifdef ASFW_HOST_TEST
+    (void)timer;
+    (void)deadlineTicks;
+#else
+    if (timer == nullptr || deadlineTicks == 0) {
         return;
     }
-
-    (void)timer_->WakeAtTime(kIOTimerClockMachAbsoluteTime, next->second.deadlineTicks, 0);
+    // lock_ MUST NOT be held here. WakeAtTime is RPC-dispatched to the timer's
+    // queue (ASFWDriver-Default); that queue's completion handlers re-enter the
+    // scheduler and take lock_. Holding lock_ across this call deadlocked the
+    // user-client teardown queue against the driver queue and tripped the 60s
+    // IOKit registry busy-timeout kernel panic (2026-06-22).
+    (void)timer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadlineTicks, 0);
 #endif
 }
 

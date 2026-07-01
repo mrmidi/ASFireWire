@@ -3,6 +3,7 @@
 
 #include "DiceDuplexRestartCoordinator.hpp"
 #include "DiceRecoveryPolicy.hpp"
+#include "SyncAsyncBridge.hpp"
 
 #include "../../Core/AudioRuntimeRegistry.hpp"
 #include "../../Model/ASFWAudioDevice.hpp"
@@ -51,7 +52,6 @@ constexpr uint8_t kDefaultItChannel = 0;
 constexpr uint32_t kPlaybackBandwidthUnits = 320;
 constexpr uint32_t kCaptureBandwidthUnits = 576;
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
-constexpr uint32_t kWaitPollMs = 10;
 
 [[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
     mach_timebase_info_data_t timebase{};
@@ -80,15 +80,58 @@ constexpr uint32_t kWaitPollMs = 10;
     AudioStreamRuntimeCaps caps{};
     bool haveCaps = protocol && protocol->GetRuntimeAudioStreamCaps(caps);
 
-    if (haveCaps) {
-        if (IsValidIsoChannel(caps.deviceToHostIsoChannel)) {
-            channels.deviceToHostIsoChannel = caps.deviceToHostIsoChannel;
+    // Stream counts come from the device's TX_NUMBER/RX_NUMBER (includes streams
+    // currently reported with iso=-1 that the host must still arm). Single-stream
+    // devices report 1/1 and take exactly the legacy code path below.
+    auto clampCount = [](uint32_t n) noexcept -> uint32_t {
+        if (n == 0) return 1;
+        return (n > kMaxAudioStreamsPerDirection) ? kMaxAudioStreamsPerDirection : n;
+    };
+    channels.captureStreamCount =
+        haveCaps ? clampCount(caps.deviceToHostStreamCount) : 1;
+    channels.playbackStreamCount =
+        haveCaps ? clampCount(caps.hostToDeviceStreamCount) : 1;
+
+    // Assign distinct iso channels across both directions. stream[0] keeps the
+    // device-reported channel (or the legacy default) so the single-stream host
+    // path is byte-for-byte unchanged; additional streams get the lowest free
+    // channels. The host allocates these (it owns the IRM reservation) and writes
+    // them into the device's per-stream ISOC registers before GLOBAL_ENABLE.
+    uint64_t used = 0; // bitset over channels 0..63
+    auto markUsed = [&](uint8_t ch) noexcept {
+        if (ch <= 0x3F) used |= (uint64_t{1} << ch);
+    };
+    auto nextFree = [&]() noexcept -> uint8_t {
+        for (uint8_t ch = 0; ch <= 0x3F; ++ch) {
+            if ((used & (uint64_t{1} << ch)) == 0) {
+                used |= (uint64_t{1} << ch);
+                return ch;
+            }
         }
-        if (IsValidIsoChannel(caps.hostToDeviceIsoChannel)) {
-            channels.hostToDeviceIsoChannel = caps.hostToDeviceIsoChannel;
-        }
+        return AudioStreamWireInfo::kInvalidIsoChannel;
+    };
+
+    channels.captureIsoChannels[0] =
+        (haveCaps && IsValidIsoChannel(caps.deviceToHostIsoChannel))
+            ? caps.deviceToHostIsoChannel
+            : kDefaultIrChannel;
+    channels.playbackIsoChannels[0] =
+        (haveCaps && IsValidIsoChannel(caps.hostToDeviceIsoChannel))
+            ? caps.hostToDeviceIsoChannel
+            : kDefaultItChannel;
+    markUsed(channels.captureIsoChannels[0]);
+    markUsed(channels.playbackIsoChannels[0]);
+
+    for (uint32_t i = 1; i < channels.captureStreamCount; ++i) {
+        channels.captureIsoChannels[i] = nextFree();
+    }
+    for (uint32_t i = 1; i < channels.playbackStreamCount; ++i) {
+        channels.playbackIsoChannels[i] = nextFree();
     }
 
+    // Legacy single-channel fields mirror stream[0].
+    channels.deviceToHostIsoChannel = channels.captureIsoChannels[0];
+    channels.hostToDeviceIsoChannel = channels.playbackIsoChannels[0];
     return channels;
 }
 
@@ -373,54 +416,6 @@ void LogTerminal(const DiceRestartSession& session) noexcept {
                 session.guid,
                 session.restartId,
                 GenerationValue(session.topologyGeneration));
-}
-
-template <typename T>
-struct SyncResult {
-    IOReturn status{kIOReturnTimeout};
-    T value{};
-};
-
-template <typename T, typename StartFn>
-SyncResult<T> WaitForAsyncResult(StartFn&& fn,
-                                 uint32_t timeoutMs,
-                                 IOReturn timeoutStatus,
-                                 const std::atomic<bool>* cancel = nullptr) noexcept {
-    struct WaitState {
-        std::atomic<bool> done{false};
-        SyncResult<T> result{};
-    };
-
-    auto state = std::make_shared<WaitState>();
-    fn([state](IOReturn status, T value) {
-        state->result.status = status;
-        state->result.value = std::move(value);
-        state->done.store(true, std::memory_order_release);
-    });
-
-    for (uint32_t waited = 0; waited < timeoutMs; waited += kWaitPollMs) {
-        if (state->done.load(std::memory_order_acquire)) {
-            return state->result;
-        }
-        // FW-61: abort the blocking bridge promptly on teardown so the dice queue drains
-        // fast (instead of running to timeout) and the in-flight op issues no more MMIO.
-        // The completion that would set `done` is delivered on the core queue, which is
-        // blocked in DispatchSync during teardown, so cancel, not done, is what unblocks us.
-        if (cancel != nullptr && cancel->load(std::memory_order_acquire)) {
-            SyncResult<T> aborted{};
-            aborted.status = kIOReturnAborted;
-            return aborted;
-        }
-        IOSleep(kWaitPollMs);
-    }
-
-    if (state->done.load(std::memory_order_acquire)) {
-        return state->result;
-    }
-
-    SyncResult<T> timeout{};
-    timeout.status = timeoutStatus;
-    return timeout;
 }
 
 inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
@@ -1086,6 +1081,30 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     }
     const FW::Generation topologyGeneration = record.gen;
     auto runtimeProtocol = runtime_.FindShared(record.guid);
+
+    // Pre-read the device's static stream format (DICE TX_NUMBER/RX_NUMBER +
+    // per-stream channels) so the channel resolution + IRM reservation below see
+    // the real stream count. EnsureRuntimeStreamGeometry publishes the per-stream
+    // caps that ResolveDuplexChannelsForRecord consumes via GetRuntimeAudioStreamCaps.
+    // Non-fatal: on failure we fall back to the legacy single-stream resolution
+    // and PrepareDuplex will surface any genuine device error. A multi-stream
+    // device (Venice F32 = 2×16) needs this to allocate a channel per stream;
+    // cross-validated with FFADO dice_avdevice.cpp prepare() (m_nb_rx/m_nb_tx).
+    const auto geometryLoad = WaitForAsyncResult<bool>(
+        [&](auto callback) {
+            diceProtocol.EnsureRuntimeStreamGeometry(
+                [callback = std::move(callback)](IOReturn st) mutable { callback(st, true); });
+        },
+        kSyncBridgeTimeoutMs,
+        kIOReturnTimeout,
+        cancel_);
+    if (geometryLoad.status != kIOReturnSuccess) {
+        ASFW_LOG(DICE,
+                 "RunDuplexStart: stream-geometry pre-read failed (0x%x); "
+                 "resolving channels with existing caps",
+                 geometryLoad.status);
+    }
+
     const AudioDuplexChannels channels = ResolveDuplexChannelsForRecord(record, runtimeProtocol.get());
     const uint64_t restartId = AllocateRestartId();
 
@@ -1283,45 +1302,53 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     SetSessionPhase(session, DiceRestartPhase::kPrepared);
     StoreSession(session);
 
+    // Reserve IRM bandwidth + channel for EVERY playback (host IT -> device RX)
+    // stream. A multi-stream DICE device (Venice F32) needs all of its RX iso
+    // channels reserved before GLOBAL_ENABLE; single-stream devices loop once.
     if (abortIfTeardown("ReservingPlaybackResources")) {
         return kIOReturnAborted;
     }
-    const kern_return_t reservePlaybackStatus = hostTransport_.ReservePlaybackResources(
-        guid,
-        *irmClient,
-        channels.hostToDeviceIsoChannel,
-        kPlaybackBandwidthUnits);
-    if (reservePlaybackStatus != kIOReturnSuccess) {
-        return rollbackToFailure(reservePlaybackStatus,
-                                 DiceRestartPhase::kReservingPlaybackResources,
-                                 DiceRestartFailureCause::kReservePlayback);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kReservingPlaybackResources,
-                                      DiceRestartFailureCause::kReservePlayback);
+    for (uint32_t i = 0; i < channels.playbackStreamCount; ++i) {
+        const kern_return_t reservePlaybackStatus = hostTransport_.ReservePlaybackResources(
+            guid,
+            *irmClient,
+            channels.PlaybackChannel(i),
+            kPlaybackBandwidthUnits);
+        if (reservePlaybackStatus != kIOReturnSuccess) {
+            return rollbackToFailure(reservePlaybackStatus,
+                                     DiceRestartPhase::kReservingPlaybackResources,
+                                     DiceRestartFailureCause::kReservePlayback);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DiceRestartPhase::kReservingPlaybackResources,
+                                          DiceRestartFailureCause::kReservePlayback);
+        }
     }
     SetSessionPhase(session, DiceRestartPhase::kReservingPlaybackResources);
     session.hostPlaybackReserved = true;
     StoreSession(session);
 
+    // Reserve IRM bandwidth + channel for EVERY capture (device TX -> host IR) stream.
     if (abortIfTeardown("ReservingCaptureResources")) {
         return kIOReturnAborted;
     }
-    const kern_return_t reserveCaptureStatus = hostTransport_.ReserveCaptureResources(
-        guid,
-        *irmClient,
-        channels.deviceToHostIsoChannel,
-        kCaptureBandwidthUnits);
-    if (reserveCaptureStatus != kIOReturnSuccess) {
-        return rollbackToFailure(reserveCaptureStatus,
-                                 DiceRestartPhase::kReservingCaptureResources,
-                                 DiceRestartFailureCause::kReserveCapture);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kReservingCaptureResources,
-                                      DiceRestartFailureCause::kReserveCapture);
+    for (uint32_t i = 0; i < channels.captureStreamCount; ++i) {
+        const kern_return_t reserveCaptureStatus = hostTransport_.ReserveCaptureResources(
+            guid,
+            *irmClient,
+            channels.CaptureChannel(i),
+            kCaptureBandwidthUnits);
+        if (reserveCaptureStatus != kIOReturnSuccess) {
+            return rollbackToFailure(reserveCaptureStatus,
+                                     DiceRestartPhase::kReservingCaptureResources,
+                                     DiceRestartFailureCause::kReserveCapture);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DiceRestartPhase::kReservingCaptureResources,
+                                          DiceRestartFailureCause::kReserveCapture);
+        }
     }
     SetSessionPhase(session, DiceRestartPhase::kReservingCaptureResources);
     session.hostCaptureReserved = true;
@@ -1353,15 +1380,30 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     // Saffire.kext allocates every local/remote isoch port before it reports
     // the assigned channels to DICE. Keep the expensive DMA setup on the
     // disabled side of GLOBAL_ENABLE as well.
+    // Multi-stream capture (e.g. Venice F32 = 2×16): each wire stream carries
+    // its own 16-ch CIP (per-stream DBS), de-interleaved into the single shared
+    // 32-ch input buffer at a channel offset. The master (stream 0) owns the
+    // clock/ZTS/replay; secondary streams write PCM only. Single-stream devices
+    // (captureStreamCount == 1) take the legacy path with streamChannels == 0
+    // (full width) and the aggregate slot count.
+    const bool multiCapture = channels.captureStreamCount > 1;
+    const uint32_t masterCaptureSlots =
+        multiCapture ? session.runtimeCaps.deviceToHostStreams[0].am824Slots
+                     : rxAm824Slots;
+    const uint32_t masterCaptureChannels =
+        multiCapture ? session.runtimeCaps.deviceToHostStreams[0].pcmChannels
+                     : 0;
+
     if (abortIfTeardown("PreparingHostReceive")) {
         return kIOReturnAborted;
     }
     const kern_return_t prepareReceiveStatus = hostTransport_.PrepareReceive(
-        channels.deviceToHostIsoChannel,
+        channels.CaptureChannel(0),
         hardware_,
         bindingSource,
         rxWireFormat,
-        rxAm824Slots);
+        masterCaptureSlots,
+        masterCaptureChannels);
     if (prepareReceiveStatus != kIOReturnSuccess) {
         return rollbackToFailure(prepareReceiveStatus,
                                  DiceRestartPhase::kStartingHostReceive,
@@ -1371,6 +1413,36 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         return rollbackToInvalidation(kIOReturnAborted,
                                       DiceRestartPhase::kStartingHostReceive,
                                       DiceRestartFailureCause::kStartReceive);
+    }
+
+    // Prepare each secondary capture stream on its own OHCI IR context, writing
+    // its slice at the running channel offset.
+    uint32_t captureChannelOffset = masterCaptureChannels;
+    for (uint32_t i = 1; i < channels.captureStreamCount; ++i) {
+        const auto& streamInfo = session.runtimeCaps.deviceToHostStreams[i];
+        if (abortIfTeardown("PreparingHostReceiveStream")) {
+            return kIOReturnAborted;
+        }
+        const kern_return_t status = hostTransport_.PrepareReceiveStream(
+            i,
+            channels.CaptureChannel(i),
+            hardware_,
+            bindingSource,
+            captureChannelOffset,
+            streamInfo.pcmChannels,
+            rxWireFormat,
+            streamInfo.am824Slots);
+        if (status != kIOReturnSuccess) {
+            return rollbackToFailure(status,
+                                     DiceRestartPhase::kStartingHostReceive,
+                                     DiceRestartFailureCause::kStartReceive);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DiceRestartPhase::kStartingHostReceive,
+                                          DiceRestartFailureCause::kStartReceive);
+        }
+        captureChannelOffset += streamInfo.pcmChannels;
     }
 
     if (abortIfTeardown("PreparingHostTransmit")) {

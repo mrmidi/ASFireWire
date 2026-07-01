@@ -36,6 +36,10 @@ inline constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
 inline constexpr uint32_t kAlesisVendorId        = 0x000595;
 inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
 
+// ---- Midas (DICE / TCAT family) ----
+inline constexpr uint32_t kMidasVendorId       = 0x10c73f;
+inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
+
 // ---- Display names ----
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
 inline constexpr const char* kSPro40ModelName         = "Saffire Pro 40";
@@ -49,5 +53,7 @@ inline constexpr const char* kApogeeVendorName        = "Apogee";
 inline constexpr const char* kApogeeDuetModelName     = "Duet";
 inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
+inline constexpr const char* kMidasVendorName         = "Midas";
+inline constexpr const char* kMidasVeniceModelName    = "Venice F32";
 
 } // namespace ASFW::DeviceProfiles::Audio
