@@ -38,6 +38,12 @@ public:
     IsochService() = default;
     ~IsochService() = default;
 
+    // Maximum isochronous streams per direction. Stream 0 is the "master"
+    // (owns the clock/ZTS/replay role); streams 1+ are secondary slices used by
+    // multi-stream DICE devices (e.g. Venice F32 = 2×16 channels). A single OHCI
+    // IR/IT hardware context backs each stream (contextIndex == streamIndex).
+    static constexpr uint32_t kMaxStreamsPerDirection = 4;
+
     kern_return_t StartReceive(uint8_t channel,
                                HardwareInterface& hardware,
                                ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
@@ -49,10 +55,29 @@ public:
                                  ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
                                  ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
                                  uint32_t am824Slots = 0,
-                                 ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
+                                 ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr,
+                                 uint32_t streamChannels = 0);
+    // Prepare a secondary capture stream (streamIndex >= 1) on its own OHCI IR
+    // context. channelOffset is the first host input channel this stream writes
+    // (e.g. 16 for the second 16-ch slice of a 32-ch device); it is recorded for
+    // the audio-engine de-interleave pass and not yet applied to the decoder.
+    kern_return_t PrepareReceiveStream(uint32_t streamIndex,
+                                       uint8_t channel,
+                                       HardwareInterface& hardware,
+                                       ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                                       uint32_t channelOffset,
+                                       uint32_t streamChannels,
+                                       ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+                                       uint32_t am824Slots = 0);
     kern_return_t StartPreparedReceive();
 
     kern_return_t StopReceive();
+
+    [[nodiscard]] uint32_t CaptureStreamChannelOffset(uint32_t streamIndex) const noexcept {
+        return (streamIndex < kMaxStreamsPerDirection)
+                   ? captureChannelOffset_[streamIndex]
+                   : 0;
+    }
 
     // Minimal DV (IEC 61883-2) capture tap: starts IR on the given channel with
     // no audio binding and streams raw DIF chunks into a shared ring the app
@@ -67,6 +92,14 @@ public:
     kern_return_t PrepareTransmit(uint8_t channel,
                                   HardwareInterface& hardware,
                                   uint8_t sid);
+    // Prepare a secondary playback stream (streamIndex >= 1) on its own OHCI IT
+    // context. The shared payload slab for the secondary stream is wired by the
+    // audio-engine pass via SetSecondaryTransmitSharedMemory(); this only
+    // creates and configures the hardware context.
+    kern_return_t PrepareTransmitStream(uint32_t streamIndex,
+                                        uint8_t channel,
+                                        HardwareInterface& hardware,
+                                        uint8_t sid);
     kern_return_t StartPreparedTransmit();
 
     kern_return_t StopTransmit();
@@ -119,14 +152,42 @@ public:
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
+    // Per-stream accessors: index 0 == master, index 1+ == secondary streams.
+    ASFW::Isoch::IsochReceiveContext* ReceiveContext(uint32_t streamIndex) const {
+        if (streamIndex == 0) return isochReceiveContext_.get();
+        if (streamIndex < kMaxStreamsPerDirection)
+            return secondaryReceiveContexts_[streamIndex - 1].get();
+        return nullptr;
+    }
+    ASFW::Isoch::IsochTransmitContext* TransmitContext(uint32_t streamIndex) const {
+        if (streamIndex == 0) return isochTransmitContext_.get();
+        if (streamIndex < kMaxStreamsPerDirection)
+            return secondaryTransmitContexts_[streamIndex - 1].get();
+        return nullptr;
+    }
+
 private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
     void RefreshReceiveTimingLossCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
     void StartDeferredTransmitIfReady() noexcept;
 
+    // Stream 0 (master) capture/playback contexts — own the clock/ZTS/replay
+    // role. Their lifecycle and callbacks are unchanged from the single-stream
+    // design; secondary streams layer on top without touching them.
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
+
+    // Secondary streams [1 .. kMaxStreamsPerDirection). Index i here maps to
+    // stream (i + 1); each runs on its own OHCI context (contextIndex == stream).
+    OSSharedPtr<ASFW::Isoch::IsochReceiveContext>
+        secondaryReceiveContexts_[kMaxStreamsPerDirection - 1];
+    std::unique_ptr<ASFW::Isoch::IsochTransmitContext>
+        secondaryTransmitContexts_[kMaxStreamsPerDirection - 1];
+
+    // First host input channel each capture stream writes (de-interleave offset);
+    // recorded here for the audio-engine pass. Index 0 == master (offset 0).
+    uint32_t captureChannelOffset_[kMaxStreamsPerDirection]{0, 0, 0, 0};
 
     // DV capture shared ring (see Receive/DVCaptureSink.hpp)
     struct DVRingMapping {

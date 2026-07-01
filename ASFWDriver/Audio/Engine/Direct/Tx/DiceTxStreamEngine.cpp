@@ -16,8 +16,11 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.fmt = diceConfig.fmt;
     config.fdf = diceConfig.fdf;
     config.framesPerDataPacket = diceConfig.framesPerDataPacket;
-    // maxPacketBytes keeps the AmdtpStreamConfig default (512), matching the
-    // lab slot capacity and the ASFW IT ring payload budget.
+    // Compute the true max packet size: CIP headers (8 bytes) + frames × DBS × 4 bytes/slot.
+    // Do not use the AmdtpStreamConfig default (512) — it is too small for high-channel
+    // devices (e.g. a 24-channel device with DBS=24 needs 776 bytes at 8 fpd).
+    config.maxPacketBytes = 8u +
+        static_cast<uint32_t>(diceConfig.framesPerDataPacket) * diceConfig.dbs * 4u;
     return config;
 }
 

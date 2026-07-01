@@ -104,7 +104,21 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
         static_cast<uint8_t>(deviceToHostIsoChannel_.load(std::memory_order_relaxed));
     outCaps.hostToDeviceIsoChannel =
         static_cast<uint8_t>(hostToDeviceIsoChannel_.load(std::memory_order_relaxed));
+
+    // Per-stream geometry: the runtimeCapsValid_ acquire-load above establishes
+    // happens-before with the writer's release-store, so the plain arrays are
+    // safe to read here.
+    outCaps.deviceToHostStreamCount = deviceToHostStreamCount_.load(std::memory_order_relaxed);
+    outCaps.hostToDeviceStreamCount = hostToDeviceStreamCount_.load(std::memory_order_relaxed);
+    for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
+        outCaps.deviceToHostStreams[i] = deviceToHostStreams_[i];
+        outCaps.hostToDeviceStreams[i] = hostToDeviceStreams_[i];
+    }
     return true;
+}
+
+void DICETcatProtocol::EnsureRuntimeStreamGeometry(VoidCallback callback) {
+    EnsureRuntimeCapsLoaded(std::move(callback));
 }
 
 void DICETcatProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
@@ -380,7 +394,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
 void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
                                         const StreamConfig& tx,
                                         const StreamConfig& rx) noexcept {
-    CacheRuntimeCaps(AudioStreamRuntimeCaps{
+    AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = tx.TotalPcmChannels(),
         .hostOutputPcmChannels = rx.TotalPcmChannels(),
         .deviceToHostAm824Slots = tx.TotalAm824Slots(),
@@ -388,7 +402,34 @@ void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
         .sampleRateHz = global.sampleRate,
         .deviceToHostIsoChannel = tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
         .hostToDeviceIsoChannel = rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
-    });
+    };
+
+    // Per-stream wire geometry from the DICE TX_NUMBER/RX_NUMBER headers. Stream
+    // count includes streams the device reports with iso=-1 (disabled) that the
+    // host must still arm for a multi-stream device such as the Venice F32
+    // (2×16). Mirrors DICEDuplexBringupController's per-stream fill.
+    auto fillPerStream = [](const StreamConfig& sc,
+                            uint32_t& outCount,
+                            AudioStreamWireInfo* outStreams) noexcept {
+        const uint32_t count = (sc.numStreams < kMaxAudioStreamsPerDirection)
+                                   ? sc.numStreams
+                                   : kMaxAudioStreamsPerDirection;
+        outCount = count;
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto& entry = sc.streams[i];
+            outStreams[i].isoChannel =
+                (entry.isoChannel >= 0 && entry.isoChannel <= 0x3F)
+                    ? static_cast<uint8_t>(entry.isoChannel)
+                    : AudioStreamWireInfo::kInvalidIsoChannel;
+            outStreams[i].pcmChannels = static_cast<uint16_t>(entry.pcmChannels);
+            outStreams[i].am824Slots = static_cast<uint16_t>(entry.Am824Slots());
+            outStreams[i].midiPorts = static_cast<uint16_t>(entry.midiPorts);
+        }
+    };
+    fillPerStream(tx, caps.deviceToHostStreamCount, caps.deviceToHostStreams);
+    fillPerStream(rx, caps.hostToDeviceStreamCount, caps.hostToDeviceStreams);
+
+    CacheRuntimeCaps(caps);
 }
 
 void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept {
@@ -399,6 +440,17 @@ void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noex
     runtimeSampleRateHz_.store(caps.sampleRateHz, std::memory_order_relaxed);
     deviceToHostIsoChannel_.store(caps.deviceToHostIsoChannel, std::memory_order_relaxed);
     hostToDeviceIsoChannel_.store(caps.hostToDeviceIsoChannel, std::memory_order_relaxed);
+
+    // Per-stream geometry: write the plain arrays + counts BEFORE the
+    // release-store of runtimeCapsValid_ so readers that pass the acquire-load
+    // observe a consistent snapshot.
+    deviceToHostStreamCount_.store(caps.deviceToHostStreamCount, std::memory_order_relaxed);
+    hostToDeviceStreamCount_.store(caps.hostToDeviceStreamCount, std::memory_order_relaxed);
+    for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
+        deviceToHostStreams_[i] = caps.deviceToHostStreams[i];
+        hostToDeviceStreams_[i] = caps.hostToDeviceStreams[i];
+    }
+
     runtimeCapsValid_.store(true, std::memory_order_release);
     LogRuntimeCaps("cache", caps);
 }
@@ -412,6 +464,12 @@ void DICETcatProtocol::ResetRuntimeCaps() noexcept {
     hostToDeviceAm824Slots_.store(0, std::memory_order_relaxed);
     deviceToHostIsoChannel_.store(AudioStreamRuntimeCaps::kInvalidIsoChannel, std::memory_order_relaxed);
     hostToDeviceIsoChannel_.store(AudioStreamRuntimeCaps::kInvalidIsoChannel, std::memory_order_relaxed);
+    deviceToHostStreamCount_.store(0, std::memory_order_relaxed);
+    hostToDeviceStreamCount_.store(0, std::memory_order_relaxed);
+    for (uint32_t i = 0; i < kMaxAudioStreamsPerDirection; ++i) {
+        deviceToHostStreams_[i] = AudioStreamWireInfo{};
+        hostToDeviceStreams_[i] = AudioStreamWireInfo{};
+    }
 }
 
 } // namespace ASFW::Audio::DICE::TCAT

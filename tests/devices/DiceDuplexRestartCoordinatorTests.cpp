@@ -204,12 +204,14 @@ public:
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         ASFW::Encoding::AudioWireFormat wireFormat =
             ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0) noexcept override {
+        uint32_t am824Slots = 0,
+        uint32_t streamChannels = 0) noexcept override {
         log_.Add("host.prepare_receive");
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
         lastReceiveWireFormat = wireFormat;
         lastReceiveAm824Slots = am824Slots;
+        lastReceiveStreamChannels = streamChannels;
         ++prepareReceiveCalls;
         return prepareReceiveStatus;
     }
@@ -221,6 +223,40 @@ public:
         lastTransmitChannel = channel;
         lastTransmitSourceId = sourceId;
         ++prepareTransmitCalls;
+        return prepareTransmitStatus;
+    }
+
+    kern_return_t PrepareReceiveStream(
+        uint32_t streamIndex,
+        uint8_t channel,
+        HardwareInterface&,
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        uint32_t channelOffset,
+        uint32_t streamChannels,
+        ASFW::Encoding::AudioWireFormat wireFormat =
+            ASFW::Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0) noexcept override {
+        log_.Add("host.prepare_receive_stream");
+        lastSecondaryReceiveIndex = streamIndex;
+        lastSecondaryReceiveChannel = channel;
+        lastSecondaryReceiveOffset = channelOffset;
+        lastSecondaryReceiveChannels = streamChannels;
+        lastSecondaryReceiveBindingSource = bindingSource;
+        (void)wireFormat;
+        (void)am824Slots;
+        ++prepareReceiveStreamCalls;
+        return prepareReceiveStatus;
+    }
+
+    kern_return_t PrepareTransmitStream(uint32_t streamIndex,
+                                        uint8_t channel,
+                                        HardwareInterface&,
+                                        uint8_t sourceId) noexcept override {
+        log_.Add("host.prepare_transmit_stream");
+        lastSecondaryTransmitIndex = streamIndex;
+        lastSecondaryTransmitChannel = channel;
+        lastSecondaryTransmitSourceId = sourceId;
+        ++prepareTransmitStreamCalls;
         return prepareTransmitStatus;
     }
 
@@ -260,6 +296,7 @@ public:
     ASFW::Audio::Runtime::IDirectAudioBindingSource* lastReceiveBindingSource{nullptr};
     ASFW::Encoding::AudioWireFormat lastReceiveWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
     uint32_t lastReceiveAm824Slots{0};
+    uint32_t lastReceiveStreamChannels{0};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
     uint32_t lastTransmitMode{0};
@@ -274,6 +311,16 @@ public:
     int reserveCaptureCalls{0};
     int prepareReceiveCalls{0};
     int prepareTransmitCalls{0};
+    int prepareReceiveStreamCalls{0};
+    int prepareTransmitStreamCalls{0};
+    uint32_t lastSecondaryReceiveIndex{0};
+    uint8_t lastSecondaryReceiveChannel{0};
+    uint32_t lastSecondaryReceiveOffset{0};
+    uint32_t lastSecondaryReceiveChannels{0};
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* lastSecondaryReceiveBindingSource{nullptr};
+    uint32_t lastSecondaryTransmitIndex{0};
+    uint8_t lastSecondaryTransmitChannel{0};
+    uint8_t lastSecondaryTransmitSourceId{0};
     int startReceiveCalls{0};
     int startTransmitCalls{0};
     int stopCalls{0};
