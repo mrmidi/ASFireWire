@@ -588,13 +588,13 @@ IOReturn DiceDuplexRestartCoordinator::RequestClockConfig(
     }
 
     IOLockLock(lock_);
-    if (stopRequestedGuids_.find(guid) != stopRequestedGuids_.end()) {
+    if (gate_.IsStopRequestedLocked(guid)) {
         IOLockUnlock(lock_);
         return kIOReturnAborted;
     }
 
     request.token = nextClockToken_++;
-    if (activeGuids_.find(guid) != activeGuids_.end()) {
+    if (gate_.IsActiveLocked(guid)) {
         const auto existingIt = pendingClockRequests_.find(guid);
         if (existingIt != pendingClockRequests_.end()) {
             supersededRequest = existingIt->second;
@@ -607,7 +607,7 @@ IOReturn DiceDuplexRestartCoordinator::RequestClockConfig(
             sessionIt->second.hasPendingClockRequest = true;
         }
     } else {
-        activeGuids_.insert(guid);
+        gate_.AcquireLocked(guid);
         shouldLaunchLoop = true;
     }
     IOLockUnlock(lock_);
@@ -713,8 +713,8 @@ void DiceDuplexRestartCoordinator::ClearSession(uint64_t guid) noexcept {
     sessions_.erase(guid);
     pendingClockRequests_.erase(guid);
     completedClockRequests_.erase(guid);
-    activeGuids_.erase(guid);
-    stopRequestedGuids_.erase(guid);
+    gate_.ReleaseLocked(guid);
+    gate_.ClearStopLocked(guid);
     IOLockUnlock(lock_);
 }
 
@@ -1876,56 +1876,27 @@ ASFW::Audio::Runtime::IDirectAudioBindingSource* DiceDuplexRestartCoordinator::G
     return bindingSourceProvider_(guid);
 }
 
+// FW-68: the per-GUID gating state + logic now lives in DuplexOperationGate (gate_). These
+// entry points are thin forwarders to its self-locking API; behaviour is byte-for-byte the
+// former inline bodies (gate_ borrows the same lock_).
 bool DiceDuplexRestartCoordinator::TryAcquireGuid(uint64_t guid) noexcept {
-    if (!lock_) {
-        return false;
-    }
-
-    IOLockLock(lock_);
-    const auto [_, inserted] = activeGuids_.insert(guid);
-    IOLockUnlock(lock_);
-    return inserted;
+    return gate_.Acquire(guid);
 }
 
 void DiceDuplexRestartCoordinator::ReleaseGuid(uint64_t guid) noexcept {
-    if (!lock_) {
-        return;
-    }
-
-    IOLockLock(lock_);
-    activeGuids_.erase(guid);
-    IOLockUnlock(lock_);
+    gate_.Release(guid);
 }
 
 void DiceDuplexRestartCoordinator::RequestStopIntent(uint64_t guid) noexcept {
-    if (!lock_ || guid == 0) {
-        return;
-    }
-
-    IOLockLock(lock_);
-    stopRequestedGuids_.insert(guid);
-    IOLockUnlock(lock_);
+    gate_.RequestStop(guid);
 }
 
 void DiceDuplexRestartCoordinator::ClearStopIntent(uint64_t guid) noexcept {
-    if (!lock_ || guid == 0) {
-        return;
-    }
-
-    IOLockLock(lock_);
-    stopRequestedGuids_.erase(guid);
-    IOLockUnlock(lock_);
+    gate_.ClearStop(guid);
 }
 
 bool DiceDuplexRestartCoordinator::IsStopRequested(uint64_t guid) const noexcept {
-    if (!lock_ || guid == 0) {
-        return false;
-    }
-
-    IOLockLock(lock_);
-    const bool requested = stopRequestedGuids_.find(guid) != stopRequestedGuids_.end();
-    IOLockUnlock(lock_);
-    return requested;
+    return gate_.IsStopRequested(guid);
 }
 
 uint64_t DiceDuplexRestartCoordinator::AllocateRestartId() noexcept {
