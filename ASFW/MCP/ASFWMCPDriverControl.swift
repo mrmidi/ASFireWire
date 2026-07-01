@@ -179,7 +179,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         ]
     }
 
-    static let defaultNodes: [ASFWMCPNodeSummary] = [
+    nonisolated static let defaultNodes: [ASFWMCPNodeSummary] = [
         ASFWMCPNodeSummary(
             nodeId: 0,
             address16: "0xFFC0",
@@ -204,7 +204,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     ]
 
-    static let sbp2Node = ASFWMCPNodeSummary(
+    nonisolated static let sbp2Node = ASFWMCPNodeSummary(
         nodeId: 2,
         address16: "0xFFC2",
         guid: "0x0022334455667788",
@@ -216,7 +216,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         protocolHints: ["sbp2"]
     )
 
-    static let defaultTransactions: [ASFWMCPTransactionEvent] = [
+    nonisolated static let defaultTransactions: [ASFWMCPTransactionEvent] = [
         ASFWMCPTransactionEvent(
             timestampNs: 123_456_780_000,
             generation: 17,
