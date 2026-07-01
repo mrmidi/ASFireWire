@@ -2,6 +2,7 @@
 // ASFW - Isochronous Service (orchestrator for IT/IR contexts)
 
 #include "IsochService.hpp"
+#include "../Common/DriverKitOwnership.hpp"
 #include "../Logging/Logging.hpp"
 #ifndef ASFW_HOST_TEST
 #include <DriverKit/IOBufferMemoryDescriptor.h>
@@ -596,7 +597,7 @@ kern_return_t IsochService::AllocateTxIsochResources(
         FreeTxIsochResources();
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txPayloadSlab_ = OSSharedPtr<IOBufferMemoryDescriptor>(payloadDescriptor, OSNoRetain);
+    txPayloadSlab_ = ASFW::Common::AdoptRetained(payloadDescriptor);
 
     // 2. Allocate metadata ring (cacheline aligned)
     const size_t metadataRingBytes = static_cast<size_t>(numSlots) * sizeof(ASFW::IsochTransport::TxPacketMeta);
@@ -611,7 +612,7 @@ kern_return_t IsochService::AllocateTxIsochResources(
         FreeTxIsochResources();
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txMetadataRing_ = OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
+    txMetadataRing_ = ASFW::Common::AdoptRetained(metadataDescriptor);
 
     // 3. Allocate control block (cacheline aligned)
     const size_t controlBlockBytes = sizeof(ASFW::IsochTransport::TxStreamControl);
@@ -626,7 +627,7 @@ kern_return_t IsochService::AllocateTxIsochResources(
         FreeTxIsochResources();
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txControlBlock_ = OSSharedPtr<IOBufferMemoryDescriptor>(controlDescriptor, OSNoRetain);
+    txControlBlock_ = ASFW::Common::AdoptRetained(controlDescriptor);
 
     // Return the descriptors to the caller with retained references
     *outPayloadSlab = txPayloadSlab_.get();

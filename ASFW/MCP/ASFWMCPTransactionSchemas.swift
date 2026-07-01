@@ -15,7 +15,7 @@ import Foundation
 
 /// A typed 48-bit FireWire target address plus the addressing context required to
 /// issue an async transaction against it.
-struct ASFWMCPAddress: Equatable {
+struct ASFWMCPAddress: Equatable, Sendable {
     /// 16-bit bus/node identifier (`bus_id` << 6 | `phy_id`) of the target node.
     let nodeId: UInt32
     /// Bus generation the request is pinned to. A mismatch against the live
@@ -33,7 +33,7 @@ struct ASFWMCPAddress: Equatable {
 }
 
 /// The async transaction primitives ASFW models for MCP.
-enum ASFWMCPTransactionKind: String, Equatable {
+enum ASFWMCPTransactionKind: String, Equatable, Sendable {
     case readQuadlet
     case readBlock
     case writeQuadlet
@@ -60,13 +60,13 @@ enum ASFWMCPTransactionLimits {
     static let maxBlockBytes: UInt32 = 2048
 }
 
-struct ASFWMCPReadQuadletRequest: Equatable {
+struct ASFWMCPReadQuadletRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
 
     var kind: ASFWMCPTransactionKind { .readQuadlet }
 }
 
-struct ASFWMCPReadBlockRequest: Equatable {
+struct ASFWMCPReadBlockRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Requested length in bytes; must be a non-zero multiple of 4 within bounds.
     let length: UInt32
@@ -81,7 +81,7 @@ struct ASFWMCPReadBlockRequest: Equatable {
     }
 }
 
-struct ASFWMCPWriteQuadletRequest: Equatable {
+struct ASFWMCPWriteQuadletRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Quadlet value in host byte order.
     let value: UInt32
@@ -97,7 +97,7 @@ struct ASFWMCPWriteQuadletRequest: Equatable {
     var kind: ASFWMCPTransactionKind { .writeQuadlet }
 }
 
-struct ASFWMCPWriteBlockRequest: Equatable {
+struct ASFWMCPWriteBlockRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Payload bytes in bus (big-endian) order.
     let payload: [UInt8]
@@ -121,7 +121,7 @@ struct ASFWMCPWriteBlockRequest: Equatable {
 
 /// Quadlet lock / compare-and-swap (taxonomy §5.5 `asfw_cas_quadlet`). Also the
 /// primitive behind IRM and CMP mutations.
-struct ASFWMCPCompareSwapRequest: Equatable {
+struct ASFWMCPCompareSwapRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Expected current quadlet (host byte order).
     let expected: UInt32
@@ -132,7 +132,7 @@ struct ASFWMCPCompareSwapRequest: Equatable {
 }
 
 /// Terminal status of a (possibly refused) async transaction.
-enum ASFWMCPTransactionStatus: String, Equatable {
+enum ASFWMCPTransactionStatus: String, Equatable, Sendable {
     case ok
     case timeout
     case rcodeError
@@ -149,7 +149,7 @@ enum ASFWMCPTransactionStatus: String, Equatable {
 }
 
 /// Stable async transaction result shape (taxonomy §5.3).
-struct ASFWMCPTransactionResult: Equatable {
+struct ASFWMCPTransactionResult: Equatable, Sendable {
     let kind: ASFWMCPTransactionKind
     let ok: Bool
     let status: ASFWMCPTransactionStatus

@@ -101,8 +101,7 @@ TEST_F(IsochDMAMemoryManagerTest, PayloadSlicingAndPageAlignment) {
     // Check alignment of the generic slab base (impl detail: stub uses posix_memalign)
     // The slicing should also respect start logic
     // Implementation uses AlignCursorToIOVA, so it should be aligned relative to IOVA.
-    // In Host Stub, IOVA = Virtual.
-    EXPECT_EQ(reinterpret_cast<uintptr_t>(b1->virtualBase) % 4096, 0);
+    EXPECT_EQ(b1->deviceBase % 4096, 0);
 
     // Allocate Buffer 2
     auto b2 = manager->AllocatePayloadBuffer(4096);

@@ -67,7 +67,7 @@ public:
     static constexpr uint32_t kMagic = 0x41534456;  // 'ASDV'
     static constexpr uint16_t kVersion = 1;
     static constexpr uint32_t kRecordBytes = 480;   // one DV source packet (6 DIF blocks)
-    static constexpr size_t kDriverPrefixBytes = 8; // timestamp + isoch header quadlets
+    static constexpr size_t kDriverPrefixBytes = 4; // 1394 isoch header only
     static constexpr size_t kCipHeaderBytes = 8;
     static constexpr size_t kSphBytes = 4;
     static constexpr size_t kWireBlockBytes = kSphBytes + kRecordBytes; // 484
@@ -136,6 +136,13 @@ public:
             hdr_->lastRejectQ0 = q0;
             hdr_->lastRejectQ1 = q1;
             return;
+        }
+
+        // Hardware appends a 4-byte xferStatus/timestamp trailer in IR packet-per-buffer mode.
+        // It's included in `length` but is not part of the FireWire packet payload.
+        constexpr size_t kOhciTrailerBytes = 4;
+        if (length >= kOhciTrailerBytes) {
+            length -= kOhciTrailerBytes;
         }
 
         const size_t dataBytes = length - kDriverPrefixBytes - kCipHeaderBytes;
