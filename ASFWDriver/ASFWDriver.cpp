@@ -347,6 +347,21 @@ kern_return_t IMPL(ASFWDriver, Start) {
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
 
+    // Publish the SBP-2 nub so the SCSI HBA (ASFWSCSIController) has a provider to
+    // match on — mirrors the ASFWAudioNub pattern. Phase 0: one unconditional
+    // phantom nub to prove the SCSITaskUserClient path on Tahoe. Phase 1 will
+    // publish one per discovered SBP-2 unit carrying login/unit identity.
+    {
+        IOService* sbp2NubService = nullptr;
+        kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
+        if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
+            ASFW_LOG(Controller, "[SCSIHBA] Failed to create ASFWSBP2Nub: 0x%08x", nubKr);
+        } else {
+            // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
+            sbp2NubService->release();
+        }
+    }
+
     RegisterService();
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
 
