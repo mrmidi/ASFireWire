@@ -138,6 +138,13 @@ public:
             return;
         }
 
+        // Hardware appends a 4-byte xferStatus/timestamp trailer in IR packet-per-buffer mode.
+        // It's included in `length` but is not part of the FireWire packet payload.
+        constexpr size_t kOhciTrailerBytes = 4;
+        if (length >= kOhciTrailerBytes) {
+            length -= kOhciTrailerBytes;
+        }
+
         const size_t dataBytes = length - kDriverPrefixBytes - kCipHeaderBytes;
 
         // SD-DVCR carries DBS=120 quadlets (480 bytes per block); the ring
