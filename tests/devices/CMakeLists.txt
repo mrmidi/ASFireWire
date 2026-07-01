@@ -55,6 +55,11 @@ add_device_test(DiceDuplexRestartCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
 )
 
+# FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
+add_device_test(WaitForAsyncResultTests
+    WaitForAsyncResultTests.cpp
+)
+
 # Apogee protocol boolean control mapping tests
 add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp
