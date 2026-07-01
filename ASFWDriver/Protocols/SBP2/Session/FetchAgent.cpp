@@ -295,7 +295,7 @@ void FetchAgent::OnDoorbellComplete(uint16_t expectedGeneration,
 // Status block → ORB matching
 // ---------------------------------------------------------------------------
 
-bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t /*length*/) noexcept {
+bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept {
     const uint64_t orbKey = MakeORBKey(OSSwapBigToHostInt16(block.orbOffsetHi), OSSwapBigToHostInt32(block.orbOffsetLo));
     const auto it = outstandingORBs_.find(orbKey);
     if (it == outstandingORBs_.end()) {
@@ -314,6 +314,14 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t /*length
             chainTailORB_ = nullptr;
         }
         entry.orb->SetAppended(false);
+        // Hand the command-set-dependent status bytes (8+, SBP-2 Annex B: SCSI
+        // status + packed autosense) to the ORB so the executor's completion
+        // can surface CHECK CONDITION + sense instead of masking them.
+        if (length > 8) {
+            const auto* raw = reinterpret_cast<const uint8_t*>(&block);
+            const uint32_t dataLen = length - 8 > 24 ? 24 : length - 8;
+            entry.orb->SetCompletionStatusData(std::span<const uint8_t>{raw + 8, dataLen});
+        }
         auto cb = entry.orb->GetCompletionCallback();
         if (cb) {
             cb(0, block.sbpStatus);

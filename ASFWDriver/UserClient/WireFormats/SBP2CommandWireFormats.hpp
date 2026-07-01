@@ -24,7 +24,14 @@ struct __attribute__((packed)) SBP2CommandRequestWire {
 struct __attribute__((packed)) SBP2CommandResultWire {
     int32_t transportStatus;
     uint8_t sbpStatus;
-    uint8_t _reserved[3];
+    // SAM status from the SBP-2 status block (0x02 = CHECK CONDITION); valid
+    // only when scsiStatusValid != 0 — targets may omit the command-set-
+    // dependent status bytes on GOOD. Decoded autosense (18-byte fixed format)
+    // rides in the sense bytes. Occupies the old _reserved padding, so the
+    // 16-byte layout is unchanged.
+    uint8_t scsiStatusValid;
+    uint8_t scsiStatus;
+    uint8_t _reserved;
     uint32_t payloadLength;
     uint32_t senseLength;
     // Followed by: payload bytes, then sense bytes.
@@ -42,7 +49,8 @@ static_assert(offsetof(SBP2CommandRequestWire, _reserved) == 18);
 static_assert(sizeof(SBP2CommandResultWire) == 16);
 static_assert(offsetof(SBP2CommandResultWire, transportStatus) == 0);
 static_assert(offsetof(SBP2CommandResultWire, sbpStatus) == 4);
-static_assert(offsetof(SBP2CommandResultWire, _reserved) == 5);
+static_assert(offsetof(SBP2CommandResultWire, scsiStatusValid) == 5);
+static_assert(offsetof(SBP2CommandResultWire, scsiStatus) == 6);
 static_assert(offsetof(SBP2CommandResultWire, payloadLength) == 8);
 static_assert(offsetof(SBP2CommandResultWire, senseLength) == 12);
 

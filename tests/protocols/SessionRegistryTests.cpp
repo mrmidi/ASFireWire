@@ -293,6 +293,45 @@ TEST(SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
     EXPECT_EQ(sensePayload, result->senseData);
 }
 
+TEST(SessionRegistryTests, CheckConditionSurfacesSCSIStatusAndAutosense) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    const auto request = SCSI::BuildTestUnitReadyRequest();
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+    const auto& write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t orbAddress = DecodeAddressFromWritePayload(write.data);
+
+    // Status block with command-set-dependent bytes (SBP-2 Annex B): SAM status
+    // CHECK CONDITION + packed autosense 5/26/00 (INVALID FIELD IN PARAM LIST).
+    StatusBlock header{};
+    header.details = 0;
+    header.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    header.orbOffsetHi = OSSwapHostToBigInt16(static_cast<uint16_t>((orbAddress >> 32) & 0xFFFFu));
+    header.orbOffsetLo = OSSwapHostToBigInt32(static_cast<uint32_t>(orbAddress & 0xFFFF'FFFFu));
+    uint8_t blockBytes[32] = {};
+    std::memcpy(blockBytes, &header, 8);
+    blockBytes[8] = 0x02;   // sfmt=0, SAM status = CHECK CONDITION
+    blockBytes[9] = 0x05;   // sense key ILLEGAL REQUEST
+    blockBytes[10] = 0x26;  // ASC
+    blockBytes[11] = 0x00;  // ASCQ
+    rig.addressManager.ApplyRemoteWrite(rig.sessionStatusAddress,
+                                        std::span<const uint8_t>{blockBytes, sizeof(blockBytes)});
+
+    auto result = rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(0, result->transportStatus);
+    EXPECT_EQ(SBPStatus::kNoAdditionalInfo, result->sbpStatus);  // SBP-status alone lies
+    EXPECT_TRUE(result->scsiStatusValid);
+    EXPECT_EQ(0x02, result->scsiStatus);
+    ASSERT_GE(result->senseData.size(), 14u);
+    EXPECT_EQ(0x70, result->senseData[0]);
+    EXPECT_EQ(0x05, result->senseData[2] & 0x0F);   // sense key
+    EXPECT_EQ(0x26, result->senseData[12]);         // ASC
+    EXPECT_EQ(0x00, result->senseData[13]);         // ASCQ
+}
+
 TEST(SessionRegistryTests, InquiryFailureResultPreservesSBPStatus) {
     SessionRegistryRig rig;
     const uint64_t handle = rig.CreateSession();

@@ -19,6 +19,7 @@
 #include <DriverKit/IODispatchQueue.h>
 #endif
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <functional>
@@ -94,6 +95,19 @@ public:
     [[nodiscard]] uint32_t GetFlags() const noexcept { return flags_; }
     [[nodiscard]] CompletionCallback& GetCompletionCallback() noexcept { return completionCallback_; }
 
+    // Command-set-dependent bytes from the solicited status block (bytes 8+,
+    // SBP-2 §5.3 / Annex B) — stashed by FetchAgent::OnStatusBlock before the
+    // completion callback fires so CommandExecutor can surface SCSI status +
+    // autosense. Zero length when the target sent only the 8-byte header.
+    void SetCompletionStatusData(std::span<const uint8_t> data) noexcept {
+        statusDataLength_ = static_cast<uint8_t>(
+            data.size() > statusData_.size() ? statusData_.size() : data.size());
+        std::memcpy(statusData_.data(), data.data(), statusDataLength_);
+    }
+    [[nodiscard]] std::span<const uint8_t> CompletionStatusData() const noexcept {
+        return {statusData_.data(), statusDataLength_};
+    }
+
 private:
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
@@ -120,6 +134,10 @@ private:
     bool isAppended_{false};
     std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
+
+    // Solicited status block command-set-dependent bytes (see accessors above).
+    std::array<uint8_t, 24> statusData_{};
+    uint8_t statusDataLength_{0};
 
     // Timer.
     IODispatchQueue* timerQueue_{nullptr};

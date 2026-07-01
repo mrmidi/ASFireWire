@@ -177,6 +177,25 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request) {
             result.senseData = result.payload;
         }
 
+        // Surface SCSI status + autosense from the status block's
+        // command-set-dependent bytes (stashed on the ORB by
+        // FetchAgent::OnStatusBlock). Without this a CHECK CONDITION is
+        // invisible: sbpStatus stays 0 and the command looks GOOD with zero
+        // data.
+        if (commandORB_) {
+            const auto statusData = commandORB_->CompletionStatusData();
+            if (!statusData.empty()) {
+                result.scsiStatus = statusData[0] & 0x3F;
+                result.scsiStatusValid = true;
+                if (result.scsiStatus == 0x02) {  // CHECK CONDITION → decode autosense
+                    auto sense = SCSI::ConvertSBP2StatusToSenseData(statusData);
+                    if (!sense.empty()) {
+                        result.senseData = std::move(sense);
+                    }
+                }
+            }
+        }
+
         lastError_ = (result.transportStatus == 0 &&
                       result.sbpStatus == Wire::SBPStatus::kNoAdditionalInfo)
                          ? 0

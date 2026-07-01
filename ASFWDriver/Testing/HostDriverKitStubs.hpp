@@ -289,7 +289,9 @@ public:
 class IOMemoryDescriptor : public OSObject {
 public:
     virtual kern_return_t GetAddressRange(IOAddressSegment* range) = 0;
-    virtual void GetLength(uint64_t* length) = 0;
+    // Matches the real SDK signature (kern_return_t, not void) so handler code
+    // can check the return value under host test.
+    virtual kern_return_t GetLength(uint64_t* length) = 0;
     virtual kern_return_t CreateMapping(uint64_t options,
                                         uint64_t address,
                                         uint64_t offset,
@@ -330,10 +332,12 @@ public:
         return kIOReturnSuccess;
     }
 
-    void GetLength(uint64_t* length) override {
-        if (length) {
-            *length = length_;
+    kern_return_t GetLength(uint64_t* length) override {
+        if (!length) {
+            return kIOReturnBadArgument;
         }
+        *length = length_;
+        return kIOReturnSuccess;
     }
     
     kern_return_t SetLength(uint64_t len) {
