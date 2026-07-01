@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "DiceDuplexRestartCoordinator.hpp"
+#include "DiceRecoveryPolicy.hpp"
 
 #include "../../Core/AudioRuntimeRegistry.hpp"
 #include "../../Model/ASFWAudioDevice.hpp"
@@ -17,6 +18,9 @@
 #include <utility>
 
 namespace ASFW::Audio {
+
+// FW-66: the recovery-policy classification vocabulary now lives in DiceRecoveryPolicy.hpp.
+using namespace ASFW::Audio::Backends;
 
 namespace {
 
@@ -63,59 +67,6 @@ constexpr uint32_t kWaitPollMs = 10;
 
 [[nodiscard]] bool IsValidIsoChannel(uint8_t channel) noexcept {
     return channel <= 0x3F;
-}
-
-enum class DiceRecoveryDisposition : uint8_t {
-    kIgnore,
-    kRestart,
-    kFailSession,
-};
-
-enum class DiceRecoveryPolicyReason : uint8_t {
-    kRunningWithFootprint,
-    kRetryableFailure,
-    kIdleWithoutFootprint,
-    kSuppressedByStop,
-    kIdleApplyInvalidated,
-    kMissingDependency,
-    kNonRetryableFailure,
-};
-
-struct DiceRecoveryContext {
-    DiceRestartReason triggerReason{DiceRestartReason::kManualReconfigure};
-    DiceRestartState state{DiceRestartState::kIdle};
-    DiceRestartPhase phase{DiceRestartPhase::kIdle};
-    bool stopRequested{false};
-    bool hasRestartIntent{false};
-    bool hasHostFootprint{false};
-    bool hasDeviceFootprint{false};
-    bool hasDiceRecord{false};
-    bool hasProtocol{false};
-    bool lastFailureRetryable{false};
-};
-
-struct DiceRecoveryDecision {
-    DiceRecoveryDisposition disposition{DiceRecoveryDisposition::kIgnore};
-    DiceRecoveryPolicyReason reason{DiceRecoveryPolicyReason::kIdleWithoutFootprint};
-};
-
-[[nodiscard]] constexpr DiceRestartState RestartStateForStartReason(
-    DiceRestartReason reason) noexcept {
-    switch (reason) {
-        case DiceRestartReason::kBusResetRebind:
-        case DiceRestartReason::kRecoverAfterTimingLoss:
-        case DiceRestartReason::kRecoverAfterCycleInconsistent:
-        case DiceRestartReason::kRecoverAfterLockLoss:
-        case DiceRestartReason::kRecoverAfterTxFault:
-            return DiceRestartState::kRecovering;
-        case DiceRestartReason::kInitialStart:
-        case DiceRestartReason::kSampleRateChange:
-        case DiceRestartReason::kClockSourceChange:
-        case DiceRestartReason::kManualReconfigure:
-            return DiceRestartState::kStarting;
-    }
-
-    return DiceRestartState::kStarting;
 }
 
 [[nodiscard]] AudioDuplexChannels ResolveDuplexChannelsForRecord(
@@ -235,120 +186,8 @@ struct DiceRecoveryDecision {
     return "Unknown";
 }
 
-[[nodiscard]] constexpr const char* ToString(DiceRecoveryDisposition disposition) noexcept {
-    switch (disposition) {
-        case DiceRecoveryDisposition::kIgnore: return "Ignore";
-        case DiceRecoveryDisposition::kRestart: return "Restart";
-        case DiceRecoveryDisposition::kFailSession: return "FailSession";
-    }
-    return "Unknown";
-}
-
-[[nodiscard]] constexpr const char* ToString(DiceRecoveryPolicyReason reason) noexcept {
-    switch (reason) {
-        case DiceRecoveryPolicyReason::kRunningWithFootprint: return "running_with_footprint";
-        case DiceRecoveryPolicyReason::kRetryableFailure: return "retryable_failure";
-        case DiceRecoveryPolicyReason::kIdleWithoutFootprint: return "idle_without_footprint";
-        case DiceRecoveryPolicyReason::kSuppressedByStop: return "suppressed_by_stop";
-        case DiceRecoveryPolicyReason::kIdleApplyInvalidated: return "idle_apply_invalidated";
-        case DiceRecoveryPolicyReason::kMissingDependency: return "missing_dependency";
-        case DiceRecoveryPolicyReason::kNonRetryableFailure: return "non_retryable_failure";
-    }
-    return "unknown";
-}
-
 [[nodiscard]] constexpr uint32_t GenerationValue(FW::Generation generation) noexcept {
     return generation.value;
-}
-
-[[nodiscard]] constexpr bool IsRetryableStatus(IOReturn status) noexcept {
-    return status == kIOReturnTimeout ||
-           status == kIOReturnAborted ||
-           status == kIOReturnNotReady ||
-           status == kIOReturnNoDevice;
-}
-
-[[nodiscard]] constexpr DiceRestartFailureCause FailureCauseForReason(
-    DiceRestartReason reason) noexcept {
-    switch (reason) {
-        case DiceRestartReason::kBusResetRebind: return DiceRestartFailureCause::kBusResetRebind;
-        case DiceRestartReason::kRecoverAfterTimingLoss: return DiceRestartFailureCause::kTimingLoss;
-        case DiceRestartReason::kRecoverAfterCycleInconsistent:
-            return DiceRestartFailureCause::kCycleInconsistent;
-        case DiceRestartReason::kRecoverAfterLockLoss: return DiceRestartFailureCause::kLockLoss;
-        case DiceRestartReason::kRecoverAfterTxFault: return DiceRestartFailureCause::kTxFault;
-        case DiceRestartReason::kInitialStart:
-        case DiceRestartReason::kSampleRateChange:
-        case DiceRestartReason::kClockSourceChange:
-        case DiceRestartReason::kManualReconfigure:
-            return DiceRestartFailureCause::kNone;
-    }
-    return DiceRestartFailureCause::kNone;
-}
-
-[[nodiscard]] constexpr bool IsRecoveryReason(DiceRestartReason reason) noexcept {
-    return FailureCauseForReason(reason) != DiceRestartFailureCause::kNone;
-}
-
-[[nodiscard]] constexpr DiceRecoveryDecision EvaluateRecoveryPolicy(
-    const DiceRecoveryContext& context) noexcept {
-    if (context.stopRequested || context.state == DiceRestartState::kStopping) {
-        return {
-            .disposition = DiceRecoveryDisposition::kIgnore,
-            .reason = DiceRecoveryPolicyReason::kSuppressedByStop,
-        };
-    }
-
-    if (context.state == DiceRestartState::kApplyingIdleClock) {
-        return {
-            .disposition = DiceRecoveryDisposition::kIgnore,
-            .reason = DiceRecoveryPolicyReason::kIdleApplyInvalidated,
-        };
-    }
-
-    const bool hasRestartFootprint =
-        context.hasRestartIntent || context.hasHostFootprint || context.hasDeviceFootprint;
-
-    if (!context.hasDiceRecord || !context.hasProtocol) {
-        const bool activeSession =
-            context.state == DiceRestartState::kStarting ||
-            context.state == DiceRestartState::kRunning ||
-            context.state == DiceRestartState::kRecovering ||
-            context.state == DiceRestartState::kFailed ||
-            hasRestartFootprint;
-        return {
-            .disposition = activeSession ? DiceRecoveryDisposition::kFailSession
-                                         : DiceRecoveryDisposition::kIgnore,
-            .reason = activeSession ? DiceRecoveryPolicyReason::kMissingDependency
-                                    : DiceRecoveryPolicyReason::kIdleWithoutFootprint,
-        };
-    }
-
-    if (context.state == DiceRestartState::kFailed) {
-        return {
-            .disposition = context.lastFailureRetryable
-                ? DiceRecoveryDisposition::kRestart
-                : DiceRecoveryDisposition::kFailSession,
-            .reason = context.lastFailureRetryable
-                ? DiceRecoveryPolicyReason::kRetryableFailure
-                : DiceRecoveryPolicyReason::kNonRetryableFailure,
-        };
-    }
-
-    if (context.state == DiceRestartState::kStarting ||
-        context.state == DiceRestartState::kRunning ||
-        context.state == DiceRestartState::kRecovering ||
-        hasRestartFootprint) {
-        return {
-            .disposition = DiceRecoveryDisposition::kRestart,
-            .reason = DiceRecoveryPolicyReason::kRunningWithFootprint,
-        };
-    }
-
-    return {
-        .disposition = DiceRecoveryDisposition::kIgnore,
-        .reason = DiceRecoveryPolicyReason::kIdleWithoutFootprint,
-    };
 }
 
 void LogFsmEvent(const char* eventName,

@@ -55,6 +55,11 @@ add_device_test(DiceDuplexRestartCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
 )
 
+# DICE recovery-policy classification kernel tests (FW-66, header-only policy)
+add_device_test(DiceRecoveryPolicyTests
+    DiceRecoveryPolicyTests.cpp
+)
+
 # Apogee protocol boolean control mapping tests
 add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp
