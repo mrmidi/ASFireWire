@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "DiceDuplexRestartCoordinator.hpp"
+#include "SyncAsyncBridge.hpp"
 
 #include "../../Core/AudioRuntimeRegistry.hpp"
 #include "../../Model/ASFWAudioDevice.hpp"
@@ -47,7 +48,6 @@ constexpr uint8_t kDefaultItChannel = 0;
 constexpr uint32_t kPlaybackBandwidthUnits = 320;
 constexpr uint32_t kCaptureBandwidthUnits = 576;
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
-constexpr uint32_t kWaitPollMs = 10;
 
 [[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
     mach_timebase_info_data_t timebase{};
@@ -577,54 +577,6 @@ void LogTerminal(const DiceRestartSession& session) noexcept {
                 session.guid,
                 session.restartId,
                 GenerationValue(session.topologyGeneration));
-}
-
-template <typename T>
-struct SyncResult {
-    IOReturn status{kIOReturnTimeout};
-    T value{};
-};
-
-template <typename T, typename StartFn>
-SyncResult<T> WaitForAsyncResult(StartFn&& fn,
-                                 uint32_t timeoutMs,
-                                 IOReturn timeoutStatus,
-                                 const std::atomic<bool>* cancel = nullptr) noexcept {
-    struct WaitState {
-        std::atomic<bool> done{false};
-        SyncResult<T> result{};
-    };
-
-    auto state = std::make_shared<WaitState>();
-    fn([state](IOReturn status, T value) {
-        state->result.status = status;
-        state->result.value = std::move(value);
-        state->done.store(true, std::memory_order_release);
-    });
-
-    for (uint32_t waited = 0; waited < timeoutMs; waited += kWaitPollMs) {
-        if (state->done.load(std::memory_order_acquire)) {
-            return state->result;
-        }
-        // FW-61: abort the blocking bridge promptly on teardown so the dice queue drains
-        // fast (instead of running to timeout) and the in-flight op issues no more MMIO.
-        // The completion that would set `done` is delivered on the core queue, which is
-        // blocked in DispatchSync during teardown, so cancel, not done, is what unblocks us.
-        if (cancel != nullptr && cancel->load(std::memory_order_acquire)) {
-            SyncResult<T> aborted{};
-            aborted.status = kIOReturnAborted;
-            return aborted;
-        }
-        IOSleep(kWaitPollMs);
-    }
-
-    if (state->done.load(std::memory_order_acquire)) {
-        return state->result;
-    }
-
-    SyncResult<T> timeout{};
-    timeout.status = timeoutStatus;
-    return timeout;
 }
 
 inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
