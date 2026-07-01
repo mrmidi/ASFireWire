@@ -65,6 +65,11 @@ add_device_test(DiceRecoveryPolicyTests
     DiceRecoveryPolicyTests.cpp
 )
 
+# DICE duplex operation gate (active/stop-intent) tests (FW-68, header-only gate)
+add_device_test(DuplexOperationGateTests
+    DuplexOperationGateTests.cpp
+)
+
 # Apogee protocol boolean control mapping tests
 add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp
