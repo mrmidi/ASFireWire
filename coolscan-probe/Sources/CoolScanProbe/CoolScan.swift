@@ -708,9 +708,13 @@ enum CoolScan {
         let ride: (SCSIResult?) -> Void = { last in
             let wedged = (last == nil) || (last!.transportStatus < 0)
             if wedged {
-                print("   ⟳ transport-wedge — LOGICAL UNIT RESET før retry")
-                s.resetLogicalUnit()
-                Thread.sleep(forTimeInterval: 2)
+                if ProbeConfig.disableLUR {
+                    print("   ⟳ transport-wedge — LUR deaktivert (--no-lur), bare venter")
+                } else {
+                    print("   ⟳ transport-wedge — LOGICAL UNIT RESET før retry")
+                    s.resetLogicalUnit()
+                    Thread.sleep(forTimeInterval: 2)
+                }
             }
             _ = waitReady(s, timeout: 60)
         }

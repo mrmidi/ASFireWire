@@ -111,6 +111,10 @@ final class SBP2Session {
                   captureSense: Bool = true) throws -> SCSIResult {
         precondition(cdb.count >= 1 && cdb.count <= 16, "CDB må være 1–16 byte")
 
+        // Apply the --orb-timeout-ms A-test ceiling here so it covers every
+        // caller (tuned constants and one-off hardcoded timeouts alike).
+        let timeoutMs = ProbeConfig.cap(timeoutMs)
+
         // Build host-endian SBP2CommandRequestWire (20 bytes) + CDB + outgoing payload.
         var req = Data()
         req.appendLE(UInt32(cdb.count))        // cdbLength

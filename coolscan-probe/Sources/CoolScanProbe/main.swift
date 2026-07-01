@@ -15,7 +15,8 @@ func hexDump(_ d: Data, max: Int = 64) -> String {
 }
 
 func run() -> Int32 {
-    print("=== CoolScanProbe — ASFireWire SBP-2 proof of life ===\n")
+    print("=== CoolScanProbe — ASFireWire SBP-2 proof of life ===")
+    print("    regime: \(ProbeConfig.describe())\n")
 
     // 1) Open the dext user client.
     let conn: ASFWConnection
