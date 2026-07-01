@@ -8,7 +8,7 @@
 
 namespace ASFW::AudioEngine::Direct::Rx {
 
-static constexpr size_t kIsochHeaderSize = 8; // Timestamp + isoch header
+static constexpr size_t kIsochHeaderSize = 4; // 1394 isoch header only
 
 RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t* payload,
                                                                    size_t length,
@@ -43,7 +43,14 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     result.dbs = cip->dataBlockSize;
     result.dbc = cip->dataBlockCounter;
 
-    const size_t payloadBytes = length - kIsochHeaderSize - 8;
+    // Deduct 4-byte OHCI trailer (xferStatus/timestamp) from actual payload length
+    constexpr size_t kOhciTrailerBytes = 4;
+    size_t packetLength = length;
+    if (packetLength >= kOhciTrailerBytes) {
+        packetLength -= kOhciTrailerBytes;
+    }
+
+    const size_t payloadBytes = packetLength - kIsochHeaderSize - 8;
     const size_t dbsBytes = static_cast<size_t>(cip->dataBlockSize) * 4u;
     if (dbsBytes == 0) {
         result.status = DirectRxWriteStatus::kInvalidRange;

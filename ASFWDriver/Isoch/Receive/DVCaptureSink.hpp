@@ -67,7 +67,7 @@ public:
     static constexpr uint32_t kMagic = 0x41534456;  // 'ASDV'
     static constexpr uint16_t kVersion = 1;
     static constexpr uint32_t kRecordBytes = 480;   // one DV source packet (6 DIF blocks)
-    static constexpr size_t kDriverPrefixBytes = 8; // timestamp + isoch header quadlets
+    static constexpr size_t kDriverPrefixBytes = 4; // 1394 isoch header only
     static constexpr size_t kCipHeaderBytes = 8;
     static constexpr size_t kSphBytes = 4;
     static constexpr size_t kWireBlockBytes = kSphBytes + kRecordBytes; // 484

@@ -18,21 +18,15 @@ struct ExpandedReceiveTimestamp final {
 [[nodiscard]] inline bool DecodeReceiveTimestamp(const uint8_t* packet,
                                                  size_t length,
                                                  uint16_t& outTimestamp) noexcept {
-    if (!packet || length < 8) {
+    if (!packet || length < 4) {
         return false;
     }
 
-    uint32_t timestampQuadletLE = 0;
-    std::memcpy(&timestampQuadletLE, packet, sizeof(timestampQuadletLE));
-    const uint32_t timestampQuadlet =
-        OSSwapLittleToHostInt32(timestampQuadletLE);
-    const uint16_t timestamp =
-        static_cast<uint16_t>(timestampQuadlet & 0xFFFFu);
-    if ((timestamp & 0x1FFFu) >= ASFW::Timing::kCyclesPerSecond) {
-        return false;
-    }
-
-    outTimestamp = timestamp;
+    uint32_t trailerLE = 0;
+    std::memcpy(&trailerLE, packet + length - 4, sizeof(trailerLE));
+    const uint32_t trailer = OSSwapLittleToHostInt32(trailerLE);
+    // Trailer: [xferStatus:16] [timestamp:16]
+    outTimestamp = static_cast<uint16_t>(trailer & 0xFFFFu);
     return true;
 }
 
