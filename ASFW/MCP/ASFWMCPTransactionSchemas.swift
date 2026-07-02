@@ -27,7 +27,7 @@ struct ASFWMCPAddress: Equatable, Sendable {
     let addressLow: UInt32
 
     /// Full 48-bit address offset.
-    var offset48: UInt64 {
+    nonisolated var offset48: UInt64 {
         (UInt64(addressHigh) << 32) | UInt64(addressLow)
     }
 }

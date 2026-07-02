@@ -353,6 +353,17 @@ void IsochTransmitContext::Stop() noexcept {
         Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
         hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
 
+        Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+        constexpr uint32_t kPollIntervalMs = 1;
+        constexpr uint32_t kTimeoutMs = 100;
+        for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
+            uint32_t ctl = hardware_->Read(ctrlReg);
+            if ((ctl & Driver::ContextControl::kActive) == 0) {
+                break;
+            }
+            IOSleep(kPollIntervalMs);
+        }
+
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
 
         if (controlBlock_) {
@@ -478,6 +489,20 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
             static_cast<Register32>(
                 DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
         hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+
+        const Register32 ctrlReg =
+            static_cast<Register32>(
+                DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+        constexpr uint32_t kPollIntervalMs = 1;
+        constexpr uint32_t kTimeoutMs = 100;
+        for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
+            uint32_t ctl = hardware_->Read(ctrlReg);
+            if ((ctl & Driver::ContextControl::kActive) == 0) {
+                break;
+            }
+            IOSleep(kPollIntervalMs);
+        }
+
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
     }
     if (controlBlock_) {

@@ -22,7 +22,7 @@
 #include <cstring>
 
 #include "../../Audio/Wire/CIP/CIPHeader.hpp"
-
+#include "../../Logging/Logging.hpp"
 namespace ASFW::Isoch::Rx {
 
 // Shared-memory layout. Offsets are fixed and mirrored in the Swift app
@@ -67,7 +67,7 @@ public:
     static constexpr uint32_t kMagic = 0x41534456;  // 'ASDV'
     static constexpr uint16_t kVersion = 1;
     static constexpr uint32_t kRecordBytes = 480;   // one DV source packet (6 DIF blocks)
-    static constexpr size_t kDriverPrefixBytes = 4; // 1394 isoch header only
+    static constexpr size_t kDriverPrefixBytes = 8; // Timestamp (4) + 1394 isoch header (4)
     static constexpr size_t kCipHeaderBytes = 8;
     static constexpr size_t kSphBytes = 4;
     static constexpr size_t kWireBlockBytes = kSphBytes + kRecordBytes; // 484
@@ -131,6 +131,9 @@ public:
 
         const auto cip = CIPHeader::Decode(q0, q1);
         if (!cip || cip->format != 0x00) {
+            if (hdr_->nonDvPackets < 10) {
+                ASFW_LOG(Isoch, "DV Reject CIP: len=%zu q0=0x%08x q1=0x%08x fmt=%u", length, q0, q1, cip ? cip->format : 999);
+            }
             hdr_->nonDvPackets++;
             hdr_->lastRejectLen = static_cast<uint32_t>(length);
             hdr_->lastRejectQ0 = q0;
@@ -138,12 +141,6 @@ public:
             return;
         }
 
-        // Hardware appends a 4-byte xferStatus/timestamp trailer in IR packet-per-buffer mode.
-        // It's included in `length` but is not part of the FireWire packet payload.
-        constexpr size_t kOhciTrailerBytes = 4;
-        if (length >= kOhciTrailerBytes) {
-            length -= kOhciTrailerBytes;
-        }
 
         const size_t dataBytes = length - kDriverPrefixBytes - kCipHeaderBytes;
 
@@ -152,6 +149,9 @@ public:
         // DVCPRO50) instead of mis-slicing them. Empty (CIP-only) packets
         // pass through with zero blocks regardless.
         if (dataBytes > 0 && cip->dataBlockSize != kRecordBytes / 4) {
+            if (hdr_->nonDvPackets < 10) {
+                ASFW_LOG(Isoch, "DV Reject DBS: len=%zu dataBytes=%zu dbs=%u", length, dataBytes, cip->dataBlockSize);
+            }
             hdr_->nonDvPackets++;
             hdr_->lastRejectLen = static_cast<uint32_t>(length);
             hdr_->lastRejectQ0 = q0;
@@ -169,6 +169,9 @@ public:
         // Sanity: payload must be a whole number of blocks (Apple validates
         // expected packet size the same way; truncated DMA = corrupt packet).
         if (dataBytes % blockBytes != 0) {
+            if (hdr_->nonDvPackets < 10) {
+                ASFW_LOG(Isoch, "DV Reject Align: len=%zu dataBytes=%zu blockBytes=%zu skip=%zu", length, dataBytes, blockBytes, skip);
+            }
             hdr_->nonDvPackets++;
             hdr_->lastRejectLen = static_cast<uint32_t>(length);
             hdr_->lastRejectQ0 = q0;

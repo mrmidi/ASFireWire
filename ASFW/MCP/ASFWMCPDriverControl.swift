@@ -12,10 +12,10 @@ protocol ASFWDriverControlling {
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
-    private let nodes: [ASFWMCPNodeSummary]
-    private let transactions: [ASFWMCPTransactionEvent]
-    private let generation: UInt32
-    private var attemptedWriteCount: Int = 0
+    nonisolated let nodes: [ASFWMCPNodeSummary]
+    nonisolated let transactions: [ASFWMCPTransactionEvent]
+    nonisolated let generation: UInt32
+    nonisolated(unsafe) private var attemptedWriteCount: Int = 0
 
     init(
         generation: UInt32 = 17,
@@ -155,22 +155,22 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     }
 
-    func recordUnexpectedWriteAttempt() {
+    nonisolated func recordUnexpectedWriteAttempt() {
         attemptedWriteCount += 1
     }
 
-    func unexpectedWriteAttemptCount() -> Int {
+    nonisolated func unexpectedWriteAttemptCount() -> Int {
         attemptedWriteCount
     }
 
-    private func mockQuadletValue(for address: ASFWMCPAddress) -> UInt32 {
+    nonisolated private func mockQuadletValue(for address: ASFWMCPAddress) -> UInt32 {
         if address.offset48 == 0xFFFF_F000_0400 {
             return 0x3133_3934
         }
         return address.addressLow
     }
 
-    private func quadletBytes(_ value: UInt32) -> [UInt8] {
+    nonisolated private func quadletBytes(_ value: UInt32) -> [UInt8] {
         [
             UInt8((value >> 24) & 0xFF),
             UInt8((value >> 16) & 0xFF),

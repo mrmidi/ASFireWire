@@ -18,15 +18,17 @@ struct ExpandedReceiveTimestamp final {
 [[nodiscard]] inline bool DecodeReceiveTimestamp(const uint8_t* packet,
                                                  size_t length,
                                                  uint16_t& outTimestamp) noexcept {
-    if (!packet || length < 4) {
+    if (!packet || length < 8) {
         return false;
     }
 
-    uint32_t trailerLE = 0;
-    std::memcpy(&trailerLE, packet + length - 4, sizeof(trailerLE));
-    const uint32_t trailer = OSSwapLittleToHostInt32(trailerLE);
-    // Trailer: [xferStatus:16] [timestamp:16]
-    outTimestamp = static_cast<uint16_t>(trailer & 0xFFFFu);
+    uint32_t cycleTimerLE = 0;
+    std::memcpy(&cycleTimerLE, packet, sizeof(cycleTimerLE));
+    const uint32_t cycleTimer = OSSwapLittleToHostInt32(cycleTimerLE);
+    
+    // Apple Silicon OHCI prepends a 32-bit cycleTimer: [sec:7][cycle:13][offset:12]
+    // ExpandReceiveTimestamp expects a 16-bit [sec:3][cycle:13] format.
+    outTimestamp = static_cast<uint16_t>((cycleTimer >> 12) & 0xFFFFu);
     return true;
 }
 

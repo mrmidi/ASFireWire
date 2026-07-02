@@ -147,6 +147,16 @@ void IsochReceiveContext::Stop() {
 
     hardware_->Write(registers_.ContextControlClear, Driver::ContextControl::kRun);
 
+    constexpr uint32_t kPollIntervalMs = 1;
+    constexpr uint32_t kTimeoutMs = 100;
+    for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
+        uint32_t ctl = hardware_->Read(registers_.ContextControlSet);
+        if ((ctl & Driver::ContextControl::kActive) == 0) {
+            break;
+        }
+        IOSleep(kPollIntervalMs);
+    }
+
     const uint32_t contextMask = 1u << contextIndex_;
     hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskClear, contextMask);
     ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
