@@ -92,6 +92,9 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
         UserDestroyTargetForID(static_cast<SCSITargetIdentifier>(ivars->targetID));
         ivars->targetCreated = false;
     }
+    if (ivars != nullptr) {
+        OSSafeReleaseNULL(ivars->targetCreateQueue);
+    }
     return Stop(provider, SUPERDISPATCH);
 }
 
@@ -118,17 +121,30 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
 
 kern_return_t IMPL(ASFWSCSIController, UserStartController)
 {
-    ASFW_LOG(Controller, "[SCSIHBA] UserStartController — creating phantom target 0");
-    // Publish the single synthetic target. The SAM will INQUIRY it (handled in
-    // UserProcessParallelTask) and, for a type with no built-in driver, publish a
-    // SCSITaskUserClient. QUEUENAME(AuxiliaryQueue) — framework dispatches.
-    kern_return_t ret = UserCreateTargetForID(static_cast<SCSIDeviceIdentifier>(0), nullptr);
-    if (ret == kIOReturnSuccess) {
-        ivars->targetCreated = true;
-        ivars->targetID = 0;
-    } else {
-        ASFW_LOG(Controller, "[SCSIHBA] UserCreateTargetForID(0) failed: 0x%x", ret);
+    // UserCreateTargetForID must NOT be called synchronously from the default
+    // dispatch queue: the kernel's follow-up calls (UserInitializeTargetForID, …)
+    // are dispatched onto that same queue, so a synchronous call deadlocks
+    // controller start (Apple docs, UserCreateTargetForID discussion). Observed
+    // on Tahoe as: target device created but never registered, HBA !registered,
+    // busy count climbing forever, teardown wedged. Defer to a private queue.
+    ASFW_LOG(Controller, "[SCSIHBA] UserStartController — deferring phantom target creation");
+    kern_return_t ret = IODispatchQueue::Create("ASFWSCSIController-TargetCreate", 0, 0,
+                                                &ivars->targetCreateQueue);
+    if (ret != kIOReturnSuccess || ivars->targetCreateQueue == nullptr) {
+        ASFW_LOG(Controller, "[SCSIHBA] target-create queue failed: 0x%x", ret);
+        return kIOReturnSuccess; // controller still starts; no phantom target
     }
+    retain();
+    ivars->targetCreateQueue->DispatchAsync(^{
+        kern_return_t kr = UserCreateTargetForID(static_cast<SCSIDeviceIdentifier>(0), nullptr);
+        if (kr == kIOReturnSuccess) {
+            ivars->targetCreated = true;
+            ivars->targetID = 0;
+        } else {
+            ASFW_LOG(Controller, "[SCSIHBA] UserCreateTargetForID(0) failed: 0x%x", kr);
+        }
+        release();
+    });
     return kIOReturnSuccess;
 }
 

@@ -101,8 +101,10 @@
 		<dict>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleIdentifierKernel</key>
+			<string>com.apple.iokit.IOSCSIParallelFamily</string>
 			<key>IOClass</key>
-			<string>IOUserService</string>
+			<string>IOUserSCSIParallelInterfaceController</string>
 			<key>IOPropertyMatch</key>
 			<dict>
 				<key>ASFWNubType</key>

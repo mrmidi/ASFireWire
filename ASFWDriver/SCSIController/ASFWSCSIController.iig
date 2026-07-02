@@ -102,6 +102,7 @@ public:
 struct ASFWSCSIController_IVars {
     bool targetCreated{false};
     uint64_t targetID{0};   // Phase 0: single synthetic target at ID 0
+    IODispatchQueue* targetCreateQueue{nullptr};
 };
 
 #endif /* ASFWSCSIController_h */
