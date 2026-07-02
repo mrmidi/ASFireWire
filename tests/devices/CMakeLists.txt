@@ -70,6 +70,11 @@ add_device_test(DuplexOperationGateTests
     DuplexOperationGateTests.cpp
 )
 
+# DICE restart-journal FSM mutator tests (FW-69a, header-only journal)
+add_device_test(RestartJournalTests
+    RestartJournalTests.cpp
+)
+
 # Apogee protocol boolean control mapping tests
 add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp
