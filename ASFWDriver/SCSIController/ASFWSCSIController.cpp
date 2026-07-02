@@ -35,8 +35,10 @@ constexpr uint8_t kOpInquiry       = 0x12;
 
 // Minimal standard INQUIRY data (36 bytes) for the phantom device.
 // Peripheral device type 0x06 = scanner (no built-in kernel driver → the SAM
-// should offer a SCSITaskUserClient). Clearly labelled as the ASFW phantom so it
-// is never mistaken for the real scanner during Phase 0.
+// should offer a SCSITaskUserClient). Identity spoofs the real CoolScan 9000:
+// VueScan (like SANE's coolscan3) matches scanners on the exact vendor/product
+// INQUIRY strings, so a neutral "ASFW PHANTOM" identity is invisible to it.
+// Strings from the go/no-go probe INQUIRY against the real scanner.
 constexpr uint8_t kPhantomInquiry[36] = {
     0x06,             // [0] qualifier(0) | device type 0x06 (scanner)
     0x00,             // [1] RMB=0
@@ -44,9 +46,9 @@ constexpr uint8_t kPhantomInquiry[36] = {
     0x02,             // [3] response data format
     0x1F,             // [4] additional length = 31
     0x00, 0x00, 0x00, // [5..7]
-    'A','S','F','W',' ',' ',' ',' ',                         // [8..15]  vendor
-    'S','B','P','2',' ','P','H','A','N','T','O','M',' ',' ',' ',' ', // [16..31] product
-    '0','.','1',' '   // [32..35] revision
+    'N','i','k','o','n',' ',' ',' ',                         // [8..15]  vendor
+    'L','S','-','9','0','0','0',' ','E','D',' ',' ',' ',' ',' ',' ', // [16..31] product
+    '1','.','0','2'   // [32..35] revision
 };
 } // namespace
 
@@ -136,28 +138,17 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
 
 kern_return_t IMPL(ASFWSCSIController, UserStartController)
 {
-    // UserCreateTargetForID must NOT be called synchronously from the default
-    // dispatch queue: the kernel's follow-up calls (UserInitializeTargetForID, …)
-    // are dispatched onto that same queue, so a synchronous call deadlocks
-    // controller start (Apple docs, UserCreateTargetForID discussion). Observed
-    // on Tahoe as: target device created but never registered, HBA !registered,
-    // busy count climbing forever, teardown wedged. Defer to a private queue.
-    ASFW_LOG(Controller, "[SCSIHBA] UserStartController — deferring phantom target creation");
-    if (ivars->auxQueue == nullptr) {
-        ASFW_LOG(Controller, "[SCSIHBA] no AuxiliaryQueue — skipping target creation");
-        return kIOReturnSuccess; // controller still starts; no phantom target
-    }
-    retain();
-    ivars->auxQueue->DispatchAsync(^{
-        kern_return_t kr = UserCreateTargetForID(static_cast<SCSIDeviceIdentifier>(0), nullptr);
-        if (kr == kIOReturnSuccess) {
-            ivars->targetCreated = true;
-            ivars->targetID = 0;
-        } else {
-            ASFW_LOG(Controller, "[SCSIHBA] UserCreateTargetForID(0) failed: 0x%x", kr);
-        }
-        release();
-    });
+    // No explicit UserCreateTargetForID here: the kernel shim scans target IDs
+    // 0..UserReportHighestSupportedDeviceID at bring-up and creates a device for
+    // every ID where UserTargetPresentForID returns true. Calling it ourselves
+    // produced a DUPLICATE IOSCSIParallelInterfaceDevice for target 0 (two
+    // UserInitializeTargetForID + two probe TURs in the same ms), and the orphan
+    // wedged teardown permanently (uninterruptible, reboot-only recovery).
+    // Explicit creation is for hot-plug targets — Phase 1 uses it from SBP-2
+    // login, and must then suppress the presence-scan answer for that ID.
+    ASFW_LOG(Controller, "[SCSIHBA] UserStartController — target 0 published via presence scan");
+    ivars->targetCreated = true;
+    ivars->targetID = 0;
     return kIOReturnSuccess;
 }
 
