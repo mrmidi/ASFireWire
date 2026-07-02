@@ -102,7 +102,8 @@ public:
 struct ASFWSCSIController_IVars {
     bool targetCreated{false};
     uint64_t targetID{0};   // Phase 0: single synthetic target at ID 0
-    IODispatchQueue* targetCreateQueue{nullptr};
+    IODispatchQueue* auxQueue{nullptr}; // the framework's "AuxiliaryQueue" contract
+    uint32_t nextUniqueTaskID{0};       // handed out in UserMapHBAData (must be unique per task)
 };
 
 #endif /* ASFWSCSIController_h */

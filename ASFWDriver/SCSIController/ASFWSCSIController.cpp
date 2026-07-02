@@ -77,7 +77,22 @@ void ASFWSCSIController::free()
 kern_return_t IMPL(ASFWSCSIController, Start)
 {
     ASFW_LOG(Controller, "[SCSIHBA] Start (phase-0 phantom HBA)");
-    kern_return_t ret = Start(provider, SUPERDISPATCH);
+    // UserCreateTargetForID is declared QUEUENAME(AuxiliaryQueue) in the SDK .iig
+    // ("this call to the framework runs on the Auxiliary queue"), but the framework
+    // does not create that queue — the dext must. Without it the call never
+    // dispatches: target device gets created kernel-side but the call never
+    // returns, controller start wedges (!registered, busy climbing, teardown stuck).
+    kern_return_t ret = IODispatchQueue::Create("AuxiliaryQueue", 0, 0, &ivars->auxQueue);
+    if (ret != kIOReturnSuccess || ivars->auxQueue == nullptr) {
+        ASFW_LOG(Controller, "[SCSIHBA] AuxiliaryQueue create failed: 0x%x", ret);
+        return ret;
+    }
+    ret = SetDispatchQueue("AuxiliaryQueue", ivars->auxQueue);
+    if (ret != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "[SCSIHBA] SetDispatchQueue(AuxiliaryQueue) failed: 0x%x", ret);
+        return ret;
+    }
+    ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[SCSIHBA] super::Start failed: 0x%x", ret);
         return ret;
@@ -93,7 +108,7 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
         ivars->targetCreated = false;
     }
     if (ivars != nullptr) {
-        OSSafeReleaseNULL(ivars->targetCreateQueue);
+        OSSafeReleaseNULL(ivars->auxQueue);
     }
     return Stop(provider, SUPERDISPATCH);
 }
@@ -128,14 +143,12 @@ kern_return_t IMPL(ASFWSCSIController, UserStartController)
     // on Tahoe as: target device created but never registered, HBA !registered,
     // busy count climbing forever, teardown wedged. Defer to a private queue.
     ASFW_LOG(Controller, "[SCSIHBA] UserStartController — deferring phantom target creation");
-    kern_return_t ret = IODispatchQueue::Create("ASFWSCSIController-TargetCreate", 0, 0,
-                                                &ivars->targetCreateQueue);
-    if (ret != kIOReturnSuccess || ivars->targetCreateQueue == nullptr) {
-        ASFW_LOG(Controller, "[SCSIHBA] target-create queue failed: 0x%x", ret);
+    if (ivars->auxQueue == nullptr) {
+        ASFW_LOG(Controller, "[SCSIHBA] no AuxiliaryQueue — skipping target creation");
         return kIOReturnSuccess; // controller still starts; no phantom target
     }
     retain();
-    ivars->targetCreateQueue->DispatchAsync(^{
+    ivars->auxQueue->DispatchAsync(^{
         kern_return_t kr = UserCreateTargetForID(static_cast<SCSIDeviceIdentifier>(0), nullptr);
         if (kr == kIOReturnSuccess) {
             ivars->targetCreated = true;
@@ -166,7 +179,11 @@ kern_return_t IMPL(ASFWSCSIController, UserReportHighestSupportedDeviceID)
 
 kern_return_t IMPL(ASFWSCSIController, UserReportMaximumTaskCount)
 {
-    *count = 1; // SBP-2 probe model: one command in flight
+    // 8, not 1: with a single-slot pool a task slot that fails to recycle
+    // starves every later command silently (observed: TUR completes, INQUIRY
+    // never dispatched). SBP-2's one-in-flight constraint is enforced at the
+    // session layer in Phase 1, not here.
+    *count = 8;
     return kIOReturnSuccess;
 }
 
@@ -216,17 +233,27 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeTargetForID)
 
 kern_return_t IMPL(ASFWSCSIController, UserGetDMASpecification)
 {
+    // This spec drives the kernel shim's IODMACommand for the task buffer it
+    // maps before UserProcessParallelTask (fBufferIOVMAddr). Big-endian segment
+    // output byte-swaps those segment addresses — with kDMAOutputSegmentBig32
+    // the first data-carrying command (INQUIRY) died in kernel DMA prep and
+    // never reached the dext ("InitializeDeviceSupport error"). Wire endianness
+    // is irrelevant here; SBP-2 data movement uses our own DMA path anyway.
     *maxTransferSize = 1u * 1024u * 1024u; // 1 MB per task (generous for scans)
-    *alignment = 4;                        // quadlet alignment (1394)
-    *numAddressBits = 32;                  // 32-bit DMA
-    *segmentType = kDMAOutputSegmentBig32; // IEEE 1394 is big-endian on the wire
+    *alignment = 4;
+    *numAddressBits = 64;
+    *segmentType = kDMAOutputSegmentHost64;
     return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(ASFWSCSIController, UserMapHBAData)
 {
-    // No per-task HBA scratch region in Phase 0.
-    (void)uniqueTaskID;
+    // No per-task HBA scratch region in Phase 0, but the unique task ID is
+    // mandatory: the kernel uses it to identify the SCSIParallelTask, and an
+    // unset ID corrupts task accounting (first command completes, its slot is
+    // never freed, and no further commands ever reach the dext).
+    *uniqueTaskID = ++ivars->nextUniqueTaskID;
+    ASFW_LOG(Controller, "[SCSIHBA] UserMapHBAData → taskID %u", *uniqueTaskID);
     return kIOReturnSuccess;
 }
 
@@ -256,6 +283,13 @@ void IMPL(ASFWSCSIController, UserProcessBundledParallelTasks)
 kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
 {
     const uint8_t opcode = parallelRequest.fCommandDescriptorBlock[0];
+
+    // Phase-0 bring-up trace: no real IO flows yet, so log every task to see
+    // whether the SAM's probe (INQUIRY) reaches the dext at all.
+    ASFW_LOG(Controller, "[SCSIHBA] task: opcode=0x%02x target=%llu req=%llu ctid=%llu",
+             opcode, (uint64_t)parallelRequest.fTargetID,
+             (uint64_t)parallelRequest.fRequestedTransferCount,
+             (uint64_t)parallelRequest.fControllerTaskIdentifier);
 
     SCSIUserParallelResponse resp{};
     resp.version = kScsiUserParallelTaskResponseCurrentVersion1;
@@ -298,6 +332,8 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     // Fire the completion OSAction (triggers the framework's kernel-side
     // UserCompleteParallelTask). ParallelTaskCompletion is the dext-callable entry.
     ParallelTaskCompletion(completion, resp);
+    ASFW_LOG(Controller, "[SCSIHBA] task done: opcode=0x%02x status=%u bytes=%llu",
+             opcode, resp.fCompletionStatus, (uint64_t)resp.fBytesTransferred);
 
     if (response != nullptr) {
         *response = kIOReturnSuccess;
