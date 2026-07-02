@@ -93,6 +93,14 @@ private:
     // relocking (which wedges it until a hard reset).
     void DoAwaitStreamingClockLock(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoDiscoverStreams(AudioDuplexChannels channels, uint32_t step, VoidCallback cb);
+    // Per-stream stop-side disables. The stop sequence must clear EVERY stream's
+    // ISOC register (FFADO stopStreamByIndex writes 0xFFFFFFFF per stream); a
+    // stream[0]-only clear leaves the secondary's stale channel in the device,
+    // which the next bring-up's FirstActiveIsoChannel then adopts as stream[0]
+    // (channel-map drift) — and a start over a stale duplicate channel wedges the
+    // device until a power cycle.
+    void DoStopDisableTxStream(uint32_t streamIndex, uint32_t entrySizeBytes, bool releaseOwner, VoidCallback cb);
+    void DoStopDisableRxStream(uint32_t streamIndex, uint32_t entrySizeBytes, bool releaseOwner, VoidCallback cb);
     // Per-stream device programming. A multi-stream DICE device (e.g. Venice F32,
     // 2×16 channels) requires every advertised stream's ISOC register written
     // before the single GLOBAL_ENABLE, so these recurse over the stream index.

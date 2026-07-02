@@ -1536,33 +1536,65 @@ void DICEDuplexBringupController::DoStopDisableTx(
         return;
     }
 
+    // Clear EVERY TX stream's ISOC register, not just stream[0]'s (FFADO
+    // stopStreamByIndex writes 0xFFFFFFFF per stream). Read TX_SIZE for the
+    // per-stream register stride, then walk the streams; if the stride read
+    // fails, fall back to the legacy single-stream clear.
     (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
-                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
+                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t txSize) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
                         if (AbortStopIfTeardown("DisableTxReadComplete", cb)) {
                             return;
                         }
-                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
-                                        kDisabledIsoChannel,
-                                        [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
-                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
-                                             RecordFirstError(stopSequenceError_, isoStatus);
-                                             if (AbortStopIfTeardown("DisableTxIsoComplete", cb)) {
-                                                 return;
-                                             }
-                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
-                                                             kTxSpeedS400,
-                                                             [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
-                                                                  const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
-                                                                  RecordFirstError(stopSequenceError_, speedStatus);
-                                                                  if (AbortStopIfTeardown("DisableTxSpeedComplete", cb)) {
-                                                                      return;
-                                                                  }
-                                                                  DoStopReleaseTx(releaseOwner, std::move(cb));
-                                                              });
-                                         });
+                        const uint32_t stride =
+                            (readStatus == kIOReturnSuccess) ? txSize * 4u : 0u;
+                        DoStopDisableTxStream(0, stride, releaseOwner, std::move(cb));
                     });
+}
+
+void DICEDuplexBringupController::DoStopDisableTxStream(
+    uint32_t streamIndex,
+    uint32_t entrySizeBytes,
+    bool releaseOwner,
+    VoidCallback cb) {
+    uint32_t streamCount = restartSession_.channels.captureStreamCount;
+    if (streamCount == 0) {
+        streamCount = 1;
+    } else if (streamCount > kMaxAudioStreamsPerDirection) {
+        streamCount = kMaxAudioStreamsPerDirection;
+    }
+    // Without a usable stride only stream[0]'s registers are addressable.
+    if (entrySizeBytes == 0) {
+        streamCount = 1;
+    }
+
+    if (streamIndex >= streamCount) {
+        DoStopReleaseTx(releaseOwner, std::move(cb));
+        return;
+    }
+
+    const uint32_t streamBase =
+        sections_.txStreamFormat.offset + streamIndex * entrySizeBytes;
+    (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kIsochronous),
+                    kDisabledIsoChannel,
+                    [this, streamIndex, entrySizeBytes, streamBase, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                         const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                         RecordFirstError(stopSequenceError_, isoStatus);
+                         if (AbortStopIfTeardown("DisableTxIsoComplete", cb)) {
+                             return;
+                         }
+                         (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kSpeed),
+                                         kTxSpeedS400,
+                                         [this, streamIndex, entrySizeBytes, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
+                                              const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
+                                              RecordFirstError(stopSequenceError_, speedStatus);
+                                              if (AbortStopIfTeardown("DisableTxSpeedComplete", cb)) {
+                                                  return;
+                                              }
+                                              DoStopDisableTxStream(streamIndex + 1, entrySizeBytes, releaseOwner, std::move(cb));
+                                          });
+                     });
 }
 
 void DICEDuplexBringupController::DoStopReleaseTx(
@@ -1586,33 +1618,63 @@ void DICEDuplexBringupController::DoStopDisableRx(
         return;
     }
 
+    // Clear EVERY RX stream's ISOC register, not just stream[0]'s (see
+    // DoStopDisableTx). Stride from RX_SIZE; legacy single-stream clear if the
+    // read fails.
     (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
-                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
+                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t rxSize) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
                         if (AbortStopIfTeardown("DisableRxReadComplete", cb)) {
                             return;
                         }
-                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
-                                        kDisabledIsoChannel,
-                                        [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
-                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
-                                             RecordFirstError(stopSequenceError_, isoStatus);
-                                             if (AbortStopIfTeardown("DisableRxIsoComplete", cb)) {
-                                                 return;
-                                             }
-                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
-                                                             kRxSeqStartDefault,
-                                                             [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
-                                                                  const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
-                                                                  RecordFirstError(stopSequenceError_, seqStatus);
-                                                                  if (AbortStopIfTeardown("DisableRxSeqComplete", cb)) {
-                                                                      return;
-                                                                  }
-                                                                  DoStopReleaseRx(releaseOwner, std::move(cb));
-                                                              });
-                                         });
+                        const uint32_t stride =
+                            (readStatus == kIOReturnSuccess) ? rxSize * 4u : 0u;
+                        DoStopDisableRxStream(0, stride, releaseOwner, std::move(cb));
                     });
+}
+
+void DICEDuplexBringupController::DoStopDisableRxStream(
+    uint32_t streamIndex,
+    uint32_t entrySizeBytes,
+    bool releaseOwner,
+    VoidCallback cb) {
+    uint32_t streamCount = restartSession_.channels.playbackStreamCount;
+    if (streamCount == 0) {
+        streamCount = 1;
+    } else if (streamCount > kMaxAudioStreamsPerDirection) {
+        streamCount = kMaxAudioStreamsPerDirection;
+    }
+    if (entrySizeBytes == 0) {
+        streamCount = 1;
+    }
+
+    if (streamIndex >= streamCount) {
+        DoStopReleaseRx(releaseOwner, std::move(cb));
+        return;
+    }
+
+    const uint32_t streamBase =
+        sections_.rxStreamFormat.offset + streamIndex * entrySizeBytes;
+    (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + RxOffset::kIsochronous),
+                    kDisabledIsoChannel,
+                    [this, streamIndex, entrySizeBytes, streamBase, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                         const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                         RecordFirstError(stopSequenceError_, isoStatus);
+                         if (AbortStopIfTeardown("DisableRxIsoComplete", cb)) {
+                             return;
+                         }
+                         (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + RxOffset::kSeqStart),
+                                         kRxSeqStartDefault,
+                                         [this, streamIndex, entrySizeBytes, releaseOwner, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
+                                              const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
+                                              RecordFirstError(stopSequenceError_, seqStatus);
+                                              if (AbortStopIfTeardown("DisableRxSeqComplete", cb)) {
+                                                  return;
+                                              }
+                                              DoStopDisableRxStream(streamIndex + 1, entrySizeBytes, releaseOwner, std::move(cb));
+                                          });
+                     });
 }
 
 void DICEDuplexBringupController::DoStopReleaseRx(
