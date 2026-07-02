@@ -143,6 +143,11 @@ private:
     uint32_t confirmExtStatus_{0};
     IOReturn stopSequenceError_{kIOReturnSuccess};
     bool refreshRuntimeCapsOnPrepare_{true};
+    // CLOCK_SELECT read at the start of the current bring-up (DoReadGlobalBeforeClaim).
+    // Lets DoWriteClockSelect skip a redundant write when the device is already at the
+    // target clock, so the PLL relock happens once (during the idle ApplyClockConfig)
+    // instead of again mid-bring-up where it disrupts the streams being enabled.
+    uint32_t preClaimClockSelect_{0};
     const std::atomic<bool>* teardownCancel_{nullptr};
 };
 

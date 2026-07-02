@@ -440,11 +440,13 @@ void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
                                     return;
                                 }
 
+                                preClaimClockSelect_ = state.clockSelect;
                                 ASFW_LOG(DICE,
-                                         "PrepareDuplex48k: global pre-claim owner=0x%016llx enable=%u notify=0x%08x",
+                                         "PrepareDuplex48k: global pre-claim owner=0x%016llx enable=%u notify=0x%08x clockSelect=0x%08x",
                                          state.owner,
                                          state.enabled ? 1U : 0U,
-                                         state.notification);
+                                         state.notification,
+                                         state.clockSelect);
                                 DoReadOwnerBeforeClaim(channels, std::move(cb));
                             });
 }
@@ -533,6 +535,19 @@ void DICEDuplexBringupController::DoWriteClockSelect(
     VoidCallback cb) {
     if (!EnsureGenerationCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    // Skip a redundant CLOCK_SELECT write when the device is already at the target
+    // clock (e.g. an idle ApplyClockConfig already applied this rate). Rewriting it
+    // re-triggers the PLL relock during the bring-up, right as streams are being
+    // enabled, which wedges the device-side streams. The downstream stable-lock gate
+    // (DoAwaitStreamingClockLock) still waits for the lock to settle before enabling.
+    if (preClaimClockSelect_ == diceClock_.clockSelect) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: device already at target clockSelect=0x%08x; skipping redundant write",
+                 diceClock_.clockSelect);
+        DoActiveClockCheck(channels, NotificationMailbox::Consume(), std::move(cb));
         return;
     }
 

@@ -194,17 +194,24 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.streamMode = ASFW::Audio::Runtime::AudioStreamMode::kUnknown;
                     directInputView_.hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
 
-                    // Master-only: reset the shared clock/replay timeline once
-                    // on (re)bind. A secondary slice must never touch the shared
-                    // control block's cadence/replay — the master owns it.
-                    if (!isSecondary_ &&
-                        !replayResetForStart_ &&
-                        directInputView_.control) {
+                    // Master-only: reset the shared clock/replay timeline on every
+                    // (re)bind. A secondary slice must never touch the shared control
+                    // block's cadence/replay — the master owns it. This block is
+                    // generation-gated (runs once per NEW binding generation), so a
+                    // rate change — which bumps the binding generation while the IR
+                    // context keeps running (no Start(), so replayResetForStart_ stays
+                    // set) — MUST reset here too. Gating on replayResetForStart_ skipped
+                    // it, leaving the master with stale 48k replay/cadence at 44.1k:
+                    // ch1-16 (master) went dead while the secondary (ch17-32) survived.
+                    if (!isSecondary_ && directInputView_.control) {
                         directInputView_.control->rxSytCadence.Reset();
                         directInputView_.control->rxSequenceReplay.Reset();
                         directInputView_.control->rxReplayEpochResets.fetch_add(
                             1, std::memory_order_relaxed);
                         replayResetForStart_ = true;
+                        ASFW_LOG(Isoch,
+                                 "IR: master replay/cadence reset on rebind (gen %llu rate=%u)",
+                                 snapshot.generation, snapshot.sampleRateHz);
                     }
 
                     // Data plane (RX -> input buffer) arms for every stream. The
