@@ -309,6 +309,18 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) 
     if (entry.timeoutToken != kInvalidSchedulerToken) {
         scheduler_.Cancel(entry.timeoutToken);
     }
+
+    // Dead bit set → the target's fetch agent is DEAD and ignores ORB_POINTER
+    // writes until reset. Revive it BEFORE completing the command: the AT
+    // request FIFO then serializes the reset ahead of any ORB_POINTER the
+    // completion path submits next. Mirrors Linux complete_command_orb →
+    // sbp2_agent_reset_no_wait.
+    if (block.DeadBit() != 0) {
+        ASFW_LOG(Async, "FetchAgent::OnStatusBlock: agent DEAD (resp=%u sbp=0x%02x) — reset",
+                 block.Response(), block.sbpStatus);
+        ResetNoWait();
+    }
+
     if (entry.orb != nullptr) {
         if (chainTailORB_ == entry.orb) {
             chainTailORB_ = nullptr;
@@ -371,6 +383,22 @@ void FetchAgent::Reset(std::function<void(int)> callback) noexcept {
     }
 }
 
+void FetchAgent::ResetNoWait() noexcept {
+    if (!bound_) {
+        return;
+    }
+    // Fire-and-forget quadlet to AGENT_RESET — no ORB-tracking teardown, so a
+    // command completing right now (and the next one submitted from its
+    // completion) is untouched. Mirrors Linux sbp2_agent_reset_no_wait.
+    (void)bus_.WriteQuad(
+        FW::Generation{binding_.generation},
+        FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
+        binding_.agentResetAddress,
+        0,
+        TargetSpeed(),
+        [](Async::AsyncStatus, std::span<const uint8_t>) {});
+}
+
 void FetchAgent::OnAgentResetComplete(uint16_t expectedGeneration,
                                       Async::AsyncStatus status) noexcept {
     if (expectedGeneration != binding_.generation) {
@@ -420,6 +448,11 @@ void FetchAgent::StartORBTimeout(SBP2CommandORB* orb) noexcept {
                 return;
             }
             SBP2CommandORB* timedOut = entryIt->second.orb;
+            // The agent is likely wedged mid-fetch (or dead) — revive it so the
+            // NEXT command's ORB_POINTER is honored. Linux aborts timed-out
+            // commands the same way (sbp2_scsi_abort → agent reset).
+            ASFW_LOG(Async, "FetchAgent: ORB timeout — agent reset before failing");
+            ResetNoWait();
             FailORB(timedOut, -1, Wire::SBPStatus::kUnspecifiedError);
         });
 }

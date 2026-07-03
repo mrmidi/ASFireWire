@@ -162,7 +162,7 @@ static_assert(sizeof(PageTableEntry) == PageTableEntry::kSize, "PTE must be 8 by
 // ---------------------------------------------------------------------------
 
 struct StatusBlock {
-    uint8_t  details{0};     // [7] Src, [6:4] Resp, [3:2] D, [1:0] Len
+    uint8_t  details{0};     // [7:6] src, [5:4] resp, [3] d (dead), [2:0] len
     uint8_t  sbpStatus{0};   // SBP-2 specific status code
     uint16_t orbOffsetHi{0};
     uint32_t orbOffsetLo{0};
@@ -170,10 +170,12 @@ struct StatusBlock {
 
     static constexpr uint32_t kMaxSize = 32; // header (8) + max status (24)
 
-    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 7) & 0x1; }
-    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x7; }
-    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 2) & 0x1; }
-    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x3; }
+    // Bit positions cross-validated with Linux sbp2.c STATUS_GET_* macros
+    // (quadlet bits 31:30 src, 29:28 resp, 27 dead, 26:24 len → byte 0 above).
+    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 6) & 0x3; }
+    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x3; }
+    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 3) & 0x1; }
+    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x7; }
 };
 
 static_assert(sizeof(StatusBlock) == 32, "StatusBlock must be 32 bytes");

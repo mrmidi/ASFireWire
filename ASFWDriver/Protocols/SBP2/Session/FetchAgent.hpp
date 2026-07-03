@@ -76,6 +76,12 @@ public:
     // ORB chain is cleared once the reset completes.
     void Reset(std::function<void(int)> callback) noexcept;
 
+    // Fire-and-forget AGENT_RESET write (Linux sbp2_agent_reset_no_wait).
+    // Unlike Reset(), does NOT clear ORB tracking on completion — used to
+    // revive a dead/wedged agent inline (dead bit in a status block, ORB
+    // timeout) without disturbing the command that is being completed.
+    void ResetNoWait() noexcept;
+
     // Cancel timers and drop all ORB tracking (bus reset / logout).
     void Clear(bool cancelTimers) noexcept;
 

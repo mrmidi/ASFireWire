@@ -485,12 +485,17 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
 
             if (asyncResp.fServiceResponse != kSCSIServiceResponse_TASK_COMPLETE ||
                 asyncResp.fCompletionStatus != kSCSITaskStatus_GOOD) {
+                const auto& sense = result.senseData;
+                const uint8_t key = sense.size() > 2 ? (sense[2] & 0x0F) : 0xFF;
+                const uint8_t asc = sense.size() > 12 ? sense[12] : 0xFF;
+                const uint8_t ascq = sense.size() > 13 ? sense[13] : 0xFF;
                 ASFW_LOG(Controller,
                          "[SCSIHBA] task result: opcode=0x%02x svc=%u status=0x%02x "
-                         "transport=0x%x sbp=0x%02x sense=%u bytes=%llu",
+                         "transport=0x%x sbp=0x%02x sense=%u (key=%x asc=%02x ascq=%02x) "
+                         "bytes=%llu",
                          opcode, asyncResp.fServiceResponse, asyncResp.fCompletionStatus,
                          result.transportStatus, result.sbpStatus, asyncResp.fSenseLength,
-                         (uint64_t)asyncResp.fBytesTransferred);
+                         key, asc, ascq, (uint64_t)asyncResp.fBytesTransferred);
             }
 
             ParallelTaskCompletion(completion, asyncResp);
