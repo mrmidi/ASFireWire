@@ -21,9 +21,11 @@ namespace {
 
 constexpr uint8_t kInquiryOpcode = 0x12;
 
+// No kImmediate: commands go through FetchAgent's chained path (next_ORB link +
+// doorbell, Apple model). ORB_POINTER is only used when the agent has no chain
+// tail (after login/agent reset) — see FetchAgent::Submit.
 uint32_t BuildCommandFlags(SCSI::DataDirection direction) {
-    uint32_t flags = SBP2CommandORB::kNotify | SBP2CommandORB::kImmediate |
-                     SBP2CommandORB::kNormalORB;
+    uint32_t flags = SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB;
     if (direction == SCSI::DataDirection::FromTarget) {
         flags |= SBP2CommandORB::kDataFromTarget;
     }
@@ -205,9 +207,16 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
                       result.sbpStatus == Wire::SBPStatus::kNoAdditionalInfo)
                          ? 0
                          : static_cast<int32_t>(result.transportStatus);
+        const bool delivered = (result.transportStatus == 0);
         pendingCommandResult_ = std::move(result);
         activeCommandRequest_.reset();
-        CleanupCommandResources();
+        if (delivered) {
+            // Target saw this ORB — keep it as the doorbell-chain anchor.
+            RetireCommandKeepAnchor();
+        } else {
+            // Transport failure → agent gets reset; no chain to anchor.
+            CleanupCommandResources();
+        }
         NotifyResultCallback();
     });
 
@@ -377,6 +386,22 @@ void CommandExecutor::NotifyResultCallback() {
     }
 }
 
+void CommandExecutor::RetireCommandKeepAnchor() {
+    // Normal completion: free the data buffer and page table, but keep the
+    // completed ORB alive as the chain anchor — FetchAgent links the NEXT
+    // command into its next_ORB field and rings the doorbell, and the target
+    // re-reads that field from our memory (Apple keeps fLastORB the same way).
+    // The previous anchor is safe to drop now: its next_ORB link was consumed
+    // when this command was fetched.
+    if (commandBufferHandle_ != 0) {
+        addrSpaceMgr_.DeallocateAddressRange(owner_, commandBufferHandle_);
+        commandBufferHandle_ = 0;
+    }
+    linkAnchorORB_ = std::move(commandORB_);
+    commandPageTable_.reset();
+    commandInFlight_ = false;
+}
+
 void CommandExecutor::CleanupCommandResources() {
     // Mirror #19: wipe the session's fetch-agent ORB tracking (cancels any
     // in-flight fetch-agent/doorbell write) before dropping our ORB resources.
@@ -386,6 +411,7 @@ void CommandExecutor::CleanupCommandResources() {
         commandBufferHandle_ = 0;
     }
     commandORB_.reset();
+    linkAnchorORB_.reset();
     commandPageTable_.reset();
     commandInFlight_ = false;
 }

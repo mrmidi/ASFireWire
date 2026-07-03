@@ -430,8 +430,13 @@ TEST(SessionRegistryTests, RejectsSessionOperationsFromNonOwningClient) {
     EXPECT_TRUE(rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle).has_value());
 
     ASSERT_TRUE(rig.registry.SubmitInquiry(SessionRegistryRig::Owner(), handle, 36));
-    const auto& inquiryWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
-    const uint64_t inquiryOrbAddress = DecodeAddressFromWritePayload(inquiryWrite.data);
+    // Doorbell model: the 2nd command's ORB address lives in the previous
+    // (anchor) ORB's next_ORB field; the last bus write is the doorbell.
+    const uint64_t inquiryOrbAddress = ComposeAddress(
+        static_cast<uint16_t>(OSSwapBigToHostInt32(
+                                  ReadQuadlet(rig.addressManager, commandOrbAddress)) &
+                              0xFFFFu),
+        OSSwapBigToHostInt32(ReadQuadlet(rig.addressManager, commandOrbAddress + 4)));
     StatusBlock inquiryStatus{};
     inquiryStatus.details = 0;
     inquiryStatus.sbpStatus = SBPStatus::kRequestAborted;

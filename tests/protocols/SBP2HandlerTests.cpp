@@ -348,15 +348,18 @@ TEST(SBP2HandlerTests, HandlerReturnsLargeResultViaOutputDescriptor) {
     EXPECT_EQ(0, std::memcmp(out.data() + sizeof(header), payload.data(), payload.size()));
 
     // A too-small descriptor reports NoSpace instead of writing out of bounds.
-    // Drain the fetch agent's pending bus writes first so the 2nd command's
-    // ORB-pointer write lands immediately (FetchAgent queues immediate ORBs
-    // while its previous fetch-agent write is in flight).
+    // Drain the fetch agent's pending bus writes first (previous fetch-agent
+    // write must complete before the next submit).
     for (int i = 0; i < 8 && rig.bus.PendingWriteCount() > 0; ++i) {
         ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
     }
     ASSERT_TRUE(rig.registry.SubmitCommand(HandlerRig::Owner(), handle, request));
-    const auto& write2 = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
-    const uint64_t orb2 = DecodeAddressFromWritePayload(write2.data);
+    // Doorbell model: the 2nd command is linked into the previous (anchor)
+    // ORB's next_ORB field and announced with a doorbell write — its address
+    // is read from the anchor, not from the last bus write.
+    const uint64_t orb2 = ReadORBAddress(rig.addressManager, commandOrbAddress,
+                                         offsetof(NormalORB, nextORBAddressHi),
+                                         offsetof(NormalORB, nextORBAddressLo));
     StatusBlock status2 = status;
     status2.orbOffsetHi = OSSwapHostToBigInt16(static_cast<uint16_t>((orb2 >> 32) & 0xFFFFu));
     status2.orbOffsetLo = OSSwapHostToBigInt32(static_cast<uint32_t>(orb2 & 0xFFFF'FFFFu));

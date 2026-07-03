@@ -122,10 +122,18 @@ bool FetchAgent::Submit(SBP2CommandORB* orb) noexcept {
         return AppendImmediate(orb);
     }
 
+    // Apple model (IOFireWireSBP2Login::executeORB/appendORB): link the new ORB
+    // into the previous one's next_ORB and ring the doorbell. ORB_POINTER is only
+    // written when there is no chain tail (agent in RESET after login/reset) —
+    // writing ORB_POINTER right after a status block races the target's
+    // ACTIVE→SUSPENDED transition and wedges LS-9000 firmware.
+    const bool viaLink = (chainTailORB_ != nullptr);
     if (!AppendChained(orb)) {
         return false;
     }
-    RingDoorbell();
+    if (viaLink) {
+        RingDoorbell();
+    }
     if (activeFetchAgentORB_ != orb) {
         StartORBTimeout(orb);
     }
@@ -329,9 +337,11 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) 
     }
 
     if (entry.orb != nullptr) {
-        if (chainTailORB_ == entry.orb) {
-            chainTailORB_ = nullptr;
-        }
+        // Keep chainTailORB_ pointing at the completed ORB: it is the link
+        // anchor for the NEXT command's next_ORB + doorbell (Apple keeps
+        // fLastORB across completions). The owner (CommandExecutor) keeps the
+        // ORB's memory alive until the next command completes. Reset paths
+        // clear the anchor so the next submit falls back to ORB_POINTER.
         entry.orb->SetAppended(false);
         // Hand the command-set-dependent status bytes (8+, SBP-2 Annex B: SCSI
         // status + packed autosense) to the ORB so the executor's completion
@@ -394,6 +404,8 @@ void FetchAgent::ResetNoWait() noexcept {
     if (!bound_) {
         return;
     }
+    // Agent leaves the suspended chain — next submit must use ORB_POINTER.
+    chainTailORB_ = nullptr;
     // Fire-and-forget quadlet to AGENT_RESET — no ORB-tracking teardown, so a
     // command completing right now (and the next one submitted from its
     // completion) is untouched. Mirrors Linux sbp2_agent_reset_no_wait.
