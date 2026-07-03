@@ -40,6 +40,10 @@ namespace {
 constexpr uint8_t kOpTestUnitReady = 0x00;
 constexpr uint8_t kOpRequestSense  = 0x03;
 constexpr uint8_t kOpInquiry       = 0x12;
+constexpr uint8_t kOpReserve6      = 0x16;
+constexpr uint8_t kOpRelease6      = 0x17;
+constexpr uint8_t kOpReserve10     = 0x56;
+constexpr uint8_t kOpRelease10     = 0x57;
 
 // Minimal standard INQUIRY data (36 bytes) for the phantom device.
 // Peripheral device type 0x06 = scanner (no built-in kernel driver → the SAM
@@ -341,6 +345,22 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     resp.fCompletionStatus = kSCSITaskStatus_GOOD;
     resp.fBytesTransferred = 0;
     resp.fSenseLength = 0;
+
+    // RESERVE/RELEASE never reach the wire: the working Sequoia stack
+    // (VueScan via IOFireWireSBP2Lib) never sent them, and the LS-9000
+    // firmware wedges on a RESERVE(6) retry after UNIT ATTENTION — no status
+    // block, and the target stays dead until power cycle. The HBA owns the
+    // only initiator on this bus, so reservations are trivially GOOD.
+    if (opcode == kOpReserve6 || opcode == kOpRelease6 ||
+        opcode == kOpReserve10 || opcode == kOpRelease10) {
+        ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x (RESERVE/RELEASE) → synthetic GOOD",
+                 opcode);
+        ParallelTaskCompletion(completion, resp);
+        if (response != nullptr) {
+            *response = kIOReturnSuccess;
+        }
+        return kIOReturnSuccess;
+    }
 
     auto bridge = SBP2::SBP2BridgeHub::Get();
     const bool ready = bridge && bridge->IsReady();
