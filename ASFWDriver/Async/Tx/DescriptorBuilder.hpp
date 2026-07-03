@@ -80,11 +80,18 @@ public:
     DescriptorBuilder(DescriptorRing& ring, DMAMemoryManager& dmaManager);
     ~DescriptorBuilder() = default;
 
+    // atTimeStamp: split-timeout deadline written into the FIRST descriptor's
+    // timeStamp field. The AT response context compares it against cycleTimer
+    // and retires expired packets with evt_timeout WITHOUT transmitting — so
+    // response packets MUST carry a real deadline (Linux ohci.c:1209
+    // d[0].res_count = packet->timestamp). Request contexts ignore the field;
+    // 0 is fine there.
     [[nodiscard]] DescriptorChain BuildTransactionChain(const uint8_t* headerData,
                                                         std::size_t headerSize,
                                                         uint64_t payloadDeviceAddress,
                                                         std::size_t payloadSize,
-                                                        bool needsFlush = false);
+                                                        bool needsFlush = false,
+                                                        uint16_t atTimeStamp = 0);
 
     void LinkChain(DescriptorChain& chainToModify,
                    uint64_t nextChainIOVA,
