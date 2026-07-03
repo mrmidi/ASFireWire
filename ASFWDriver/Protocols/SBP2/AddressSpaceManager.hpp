@@ -329,6 +329,11 @@ public:
         outSlice->payloadLength = length;
 
         IOLockUnlock(lock_);
+        // Bring-up trace (phase 1 HW validation): every remote block read of a
+        // registered range — this is the target FETCHING an ORB / page table /
+        // data-OUT buffer. Low rate (a handful per command).
+        ASFW_LOG(Async, "SBP2 remote read addr=0x%012llx len=%u",
+                 static_cast<unsigned long long>(address), length);
         return Async::ResponseCode::Complete;
     }
 

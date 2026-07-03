@@ -171,6 +171,10 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
         FailORB(orb, -1, Wire::SBPStatus::kUnspecifiedError);
         return false;
     }
+    // Bring-up trace (phase 1 HW validation): one line per command submit.
+    ASFW_LOG(Async, "FetchAgent: ORB_POINTER → %04x:%08x (orb %04x:%08x gen=%u node=0x%04x)",
+             binding_.fetchAgentAddress.addressHi, binding_.fetchAgentAddress.addressLo,
+             orbAddr.addressHi, orbAddr.addressLo, binding_.generation, binding_.nodeID);
     return true;
 }
 
@@ -236,6 +240,9 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
 
     fetchAgentWriteInUse_ = false;
     fetchAgentWriteHandle_ = {};
+
+    // Bring-up trace: ack/response status of the ORB_POINTER write.
+    ASFW_LOG(Async, "FetchAgent: ORB_POINTER write complete status=%d", static_cast<int>(status));
 
     if (status != Async::AsyncStatus::kSuccess) {
         if (activeFetchAgentORB_ != nullptr) {
@@ -390,13 +397,19 @@ void FetchAgent::ResetNoWait() noexcept {
     // Fire-and-forget quadlet to AGENT_RESET — no ORB-tracking teardown, so a
     // command completing right now (and the next one submitted from its
     // completion) is untouched. Mirrors Linux sbp2_agent_reset_no_wait.
-    (void)bus_.WriteQuad(
+    const auto handle = bus_.WriteQuad(
         FW::Generation{binding_.generation},
         FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
         binding_.agentResetAddress,
         0,
         TargetSpeed(),
-        [](Async::AsyncStatus, std::span<const uint8_t>) {});
+        [](Async::AsyncStatus status, std::span<const uint8_t>) {
+            ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) complete status=%d",
+                     static_cast<int>(status));
+        });
+    if (!handle) {
+        ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) WriteQuad submit FAILED");
+    }
 }
 
 void FetchAgent::OnAgentResetComplete(uint16_t expectedGeneration,
