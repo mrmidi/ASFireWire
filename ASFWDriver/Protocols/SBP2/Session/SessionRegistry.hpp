@@ -136,6 +136,11 @@ private:
     // Hidden from registry clients, but retained until async logout finishes/times out.
     std::vector<RetiringSession> retiringSessions_;
     uint64_t nextHandle_{1};
+
+    // Guards deferred login/logout completion bodies (they re-take lock_, so
+    // they are dispatched to workQueue_ — a management write can fail INLINE
+    // while the caller still holds lock_, and os_unfair_lock recursion aborts).
+    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 
 } // namespace ASFW::Protocols::SBP2
