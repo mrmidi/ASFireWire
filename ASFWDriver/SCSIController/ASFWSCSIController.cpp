@@ -2,19 +2,21 @@
 // ASFWSCSIController.cpp
 // ASFWDriver
 //
-// PHASE 0 implementation: a synthetic single-target SCSI HBA with NO FireWire /
-// SBP-2 wiring. It answers a hardcoded INQUIRY (so the SCSI Architecture Model
-// can build a peripheral nub) and completes everything else GOOD. Purpose: prove
-// on a live Tahoe machine that the SAM publishes a SCSITaskUserClient for a
-// DriverKit HBA (verify with `ioreg | grep "SCSITaskUserClient GUID"` and by
-// VueScan enumerating the phantom device). No hardware required.
+// PHASE 1: synthetic single-target SCSI HBA bridged to the real SBP-2 target.
+// SCSI tasks from the SAM (SCSITaskUserClient → VueScan) are handed to
+// SBP2TargetBridge (fetched via the process-global SBP2BridgeHub), which runs
+// them through the SessionRegistry/CommandExecutor command plane — ORB per
+// command, real SCSI status + autosense back in the response.
 //
-// Phase 1 replaces the dummy INQUIRY/command handling with real SBP-2 command
-// submission via main's Protocols/SBP2/Session (CommandExecutor) and drives
-// UserCreateTargetForID from SBP-2 login success. That requires the v14
-// SCSI-status/autosense surfacing (see coolscan transport-state notes) so
-// fCompletionStatus / fSenseBuffer carry real values.
+// Until the SBP-2 login is up (or when the FireWire side is down), a phantom
+// fallback keeps the SAM's probe alive: hardcoded INQUIRY (spoofing the real
+// scanner identity — VueScan matches on the INQUIRY strings), GOOD for
+// TUR/REQUEST SENSE, BUSY for everything else so initiators retry.
 //
+
+// libc++ <new> must precede DriverKit headers: DriverKit.h forward-declares
+// placement new without libc++'s abi_tag, and the reverse order is a hard error.
+#include <new>
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWSCSIController.h>
 
@@ -24,8 +26,14 @@
 #include <DriverKit/OSDictionary.h>
 
 #include "../Logging/Logging.hpp"
+#include "../Protocols/SBP2/SCSICommandSet.hpp"
+#include "SBP2BridgeHub.hpp"
+#include "SBP2TargetBridge.hpp"
 
+#include <algorithm>
 #include <string.h>
+
+namespace SBP2 = ASFW::Protocols::SBP2;
 
 // Standard SCSI opcodes we special-case in Phase 0.
 namespace {
@@ -50,6 +58,56 @@ constexpr uint8_t kPhantomInquiry[36] = {
     'L','S','-','9','0','0','0',' ','E','D',' ',' ',' ',' ',' ',' ', // [16..31] product
     '1','.','0','2'   // [32..35] revision
 };
+
+// Must match UserGetDMASpecification's maxTransferSize: VueScan reads whole
+// line groups per READ(10) (~510 KB observed), well under 1 MB.
+constexpr uint64_t kMaxTransferPerTask = 1u * 1024u * 1024u;
+// SAM timeout 0 = infinite; the SBP-2 ORB timer needs a real bound. Scanner
+// mechanics (SCAN, autofocus) run tens of seconds.
+constexpr uint32_t kDefaultTaskTimeoutMs = 60'000;
+
+// Map an SBP-2 command result onto the SAM response. Synthetic
+// kIOReturnNotReady (bridge accepted the task but the session dropped out
+// before submission) maps to BUSY so the initiator retries; other transport
+// errors are delivery failures.
+void FillResponseFromResult(SCSIUserParallelResponse& resp,
+                            const ASFW::Protocols::SBP2::SCSI::CommandResult& result)
+{
+    resp.fServiceResponse = kSCSIServiceResponse_TASK_COMPLETE;
+    resp.fCompletionStatus = kSCSITaskStatus_GOOD;
+    resp.fBytesTransferred = 0;
+    resp.fSenseLength = 0;
+
+    if (result.transportStatus == kIOReturnNotReady) {
+        resp.fCompletionStatus = kSCSITaskStatus_BUSY;
+        return;
+    }
+    if (result.transportStatus != 0) {
+        resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+        return;
+    }
+
+    if (result.scsiStatusValid) {
+        resp.fCompletionStatus = static_cast<SCSITaskStatus>(result.scsiStatus);
+        if (result.scsiStatus == kSCSITaskStatus_CHECK_CONDITION &&
+            !result.senseData.empty()) {
+            const size_t n = std::min<size_t>(result.senseData.size(),
+                                              sizeof(resp.fSenseBuffer));
+            memcpy(resp.fSenseBuffer, result.senseData.data(), n);
+            resp.fSenseLength = static_cast<uint8_t>(
+                std::min<size_t>(n, UINT8_MAX));
+        }
+        return;
+    }
+
+    // No command-set status in the status block: SBP-2 sbpStatus 0 (no
+    // additional info) on a completed ORB means GOOD; anything else is a
+    // transport-level failure.
+    if (result.sbpStatus !=
+        ASFW::Protocols::SBP2::Wire::SBPStatus::kNoAdditionalInfo) {
+        resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+    }
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -275,13 +333,6 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
 {
     const uint8_t opcode = parallelRequest.fCommandDescriptorBlock[0];
 
-    // Phase-0 bring-up trace: no real IO flows yet, so log every task to see
-    // whether the SAM's probe (INQUIRY) reaches the dext at all.
-    ASFW_LOG(Controller, "[SCSIHBA] task: opcode=0x%02x target=%llu req=%llu ctid=%llu",
-             opcode, (uint64_t)parallelRequest.fTargetID,
-             (uint64_t)parallelRequest.fRequestedTransferCount,
-             (uint64_t)parallelRequest.fControllerTaskIdentifier);
-
     SCSIUserParallelResponse resp{};
     resp.version = kScsiUserParallelTaskResponseCurrentVersion1;
     resp.fTargetID = parallelRequest.fTargetID;
@@ -291,40 +342,161 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     resp.fBytesTransferred = 0;
     resp.fSenseLength = 0;
 
-    if (opcode == kOpInquiry) {
-        // Write the phantom INQUIRY into the task's data buffer.
+    auto bridge = SBP2::SBP2BridgeHub::Get();
+    const bool ready = bridge && bridge->IsReady();
+
+    if (!ready) {
+        // Pre-login / FireWire-down fallback: keep the SAM probe path alive.
+        // INQUIRY answers the spoofed identity, TUR/REQUEST SENSE complete GOOD,
+        // everything else returns BUSY so the initiator retries after login.
+        if (opcode == kOpInquiry) {
+            IOBufferMemoryDescriptor* buffer = nullptr;
+            kern_return_t kr = UserGetDataBuffer(parallelRequest.fTargetID,
+                                                 parallelRequest.fControllerTaskIdentifier,
+                                                 &buffer);
+            if (kr == kIOReturnSuccess && buffer != nullptr) {
+                IOAddressSegment seg{};
+                if (buffer->GetAddressRange(&seg) == kIOReturnSuccess && seg.address != 0) {
+                    uint64_t want = parallelRequest.fRequestedTransferCount;
+                    uint64_t n = sizeof(kPhantomInquiry);
+                    if (want != 0 && want < n) { n = want; }
+                    if (n > seg.length) { n = seg.length; }
+                    memcpy(reinterpret_cast<void*>(seg.address), kPhantomInquiry, n);
+                    resp.fBytesTransferred = n;
+                }
+                // UserGetDataBuffer returns a borrowed reference (framework-owned) —
+                // do NOT release it (static analyzer / Get* ownership convention).
+            } else {
+                ASFW_LOG(Controller, "[SCSIHBA] INQUIRY: UserGetDataBuffer failed 0x%x", kr);
+            }
+        } else if (opcode == kOpTestUnitReady || opcode == kOpRequestSense) {
+            // GOOD, no data.
+        } else {
+            ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x → BUSY (SBP-2 session not ready)",
+                     opcode);
+            resp.fCompletionStatus = kSCSITaskStatus_BUSY;
+        }
+        ParallelTaskCompletion(completion, resp);
+        if (response != nullptr) {
+            *response = kIOReturnSuccess;
+        }
+        return kIOReturnSuccess;
+    }
+
+    // ---- Bridged path: forward the task to the SBP-2 command plane ----
+
+    SBP2::SCSI::CommandRequest request{};
+    const uint8_t cdbLength = parallelRequest.fCommandSize;
+    if (cdbLength == 0 || cdbLength > sizeof(parallelRequest.fCommandDescriptorBlock)) {
+        resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+        ParallelTaskCompletion(completion, resp);
+        if (response != nullptr) {
+            *response = kIOReturnSuccess;
+        }
+        return kIOReturnSuccess;
+    }
+    request.cdb.assign(parallelRequest.fCommandDescriptorBlock,
+                       parallelRequest.fCommandDescriptorBlock + cdbLength);
+
+    const uint32_t transferLength = static_cast<uint32_t>(
+        std::min<uint64_t>(parallelRequest.fRequestedTransferCount, kMaxTransferPerTask));
+    switch (parallelRequest.fTransferDirection) {
+    case kSCSIDataTransfer_FromInitiatorToTarget:
+        request.direction = SBP2::SCSI::DataDirection::ToTarget;
+        request.transferLength = transferLength;
+        break;
+    case kSCSIDataTransfer_FromTargetToInitiator:
+        request.direction = SBP2::SCSI::DataDirection::FromTarget;
+        request.transferLength = transferLength;
+        break;
+    default:
+        request.direction = SBP2::SCSI::DataDirection::None;
+        request.transferLength = 0;
+        break;
+    }
+    // SAM task timeout; 0 means "infinite" — clamp to a generous SBP-2 ORB timer.
+    request.timeoutMs = parallelRequest.fTimeoutInMilliSec != 0
+                            ? parallelRequest.fTimeoutInMilliSec
+                            : kDefaultTaskTimeoutMs;
+
+    // Resolve the task's data buffer HERE — the SDK contract is that
+    // UserGetDataBuffer is called inside UserProcessParallelTask. The mapping
+    // stays valid until the task completes, so the completion lambda may write
+    // through the captured address for data-IN.
+    IOAddressSegment dataSeg{};
+    if (request.transferLength > 0) {
         IOBufferMemoryDescriptor* buffer = nullptr;
         kern_return_t kr = UserGetDataBuffer(parallelRequest.fTargetID,
                                              parallelRequest.fControllerTaskIdentifier,
                                              &buffer);
-        if (kr == kIOReturnSuccess && buffer != nullptr) {
-            IOAddressSegment seg{};
-            if (buffer->GetAddressRange(&seg) == kIOReturnSuccess && seg.address != 0) {
-                uint64_t want = parallelRequest.fRequestedTransferCount;
-                uint64_t n = sizeof(kPhantomInquiry);
-                if (want != 0 && want < n) { n = want; }
-                if (n > seg.length) { n = seg.length; }
-                memcpy(reinterpret_cast<void*>(seg.address), kPhantomInquiry, n);
-                resp.fBytesTransferred = n;
+        if (kr != kIOReturnSuccess || buffer == nullptr ||
+            buffer->GetAddressRange(&dataSeg) != kIOReturnSuccess || dataSeg.address == 0 ||
+            dataSeg.length < request.transferLength) {
+            ASFW_LOG(Controller, "[SCSIHBA] task data buffer unavailable (kr=0x%x len=%llu/%u)",
+                     kr, dataSeg.length, request.transferLength);
+            resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+            ParallelTaskCompletion(completion, resp);
+            if (response != nullptr) {
+                *response = kIOReturnSuccess;
             }
-            // UserGetDataBuffer returns a borrowed reference (framework-owned) —
-            // do NOT release it (static analyzer / Get* ownership convention).
-        } else {
-            ASFW_LOG(Controller, "[SCSIHBA] INQUIRY: UserGetDataBuffer failed 0x%x", kr);
+            return kIOReturnSuccess;
         }
-    } else if (opcode == kOpTestUnitReady || opcode == kOpRequestSense) {
-        // GOOD, no data (phantom is always "ready", no pending sense).
-    } else {
-        // Any other command: succeed with no data in Phase 0. (Phase 1 forwards
-        // to SBP-2 and reports real status/sense.)
-        ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x → GOOD (phase-0 stub)", opcode);
+        // UserGetDataBuffer returns a borrowed reference — do not release.
+        if (request.direction == SBP2::SCSI::DataDirection::ToTarget) {
+            const auto* src = reinterpret_cast<const uint8_t*>(dataSeg.address);
+            request.outgoingPayload.assign(src, src + request.transferLength);
+        }
     }
 
-    // Fire the completion OSAction (triggers the framework's kernel-side
-    // UserCompleteParallelTask). ParallelTaskCompletion is the dext-callable entry.
-    ParallelTaskCompletion(completion, resp);
-    ASFW_LOG(Controller, "[SCSIHBA] task done: opcode=0x%02x status=%u bytes=%llu",
-             opcode, resp.fCompletionStatus, (uint64_t)resp.fBytesTransferred);
+    // The completion fires later, from the FireWire driver's work queue — keep
+    // the OSAction and this service alive across the async gap.
+    completion->retain();
+    this->retain();
+
+    const SCSITargetIdentifier targetID = parallelRequest.fTargetID;
+    const uint64_t taskID = parallelRequest.fControllerTaskIdentifier;
+    const bool dataIn = (request.direction == SBP2::SCSI::DataDirection::FromTarget);
+    const uint32_t requestedLength = request.transferLength;
+    const uint64_t dataAddress = dataSeg.address;
+    const uint64_t dataLength = dataSeg.length;
+
+    bridge->SubmitTask(std::move(request),
+        [this, completion, targetID, taskID, dataIn, requestedLength, dataAddress,
+         dataLength, opcode](const SBP2::SCSI::CommandResult& result) {
+            SCSIUserParallelResponse asyncResp{};
+            asyncResp.version = kScsiUserParallelTaskResponseCurrentVersion1;
+            asyncResp.fTargetID = targetID;
+            asyncResp.fControllerTaskIdentifier = taskID;
+            FillResponseFromResult(asyncResp, result);
+
+            if (dataIn && asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE &&
+                !result.payload.empty() && dataAddress != 0) {
+                uint64_t n = std::min<uint64_t>(result.payload.size(), requestedLength);
+                n = std::min<uint64_t>(n, dataLength);
+                memcpy(reinterpret_cast<void*>(dataAddress), result.payload.data(), n);
+                asyncResp.fBytesTransferred = n;
+            } else if (!dataIn &&
+                       asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE &&
+                       asyncResp.fCompletionStatus == kSCSITaskStatus_GOOD) {
+                // SBP-2 status carries no residual for data-OUT — report the full
+                // transfer on GOOD.
+                asyncResp.fBytesTransferred = requestedLength;
+            }
+
+            if (asyncResp.fServiceResponse != kSCSIServiceResponse_TASK_COMPLETE ||
+                asyncResp.fCompletionStatus != kSCSITaskStatus_GOOD) {
+                ASFW_LOG(Controller,
+                         "[SCSIHBA] task result: opcode=0x%02x svc=%u status=0x%02x "
+                         "transport=0x%x sbp=0x%02x sense=%u bytes=%llu",
+                         opcode, asyncResp.fServiceResponse, asyncResp.fCompletionStatus,
+                         result.transportStatus, result.sbpStatus, asyncResp.fSenseLength,
+                         (uint64_t)asyncResp.fBytesTransferred);
+            }
+
+            ParallelTaskCompletion(completion, asyncResp);
+            completion->release();
+            this->release();
+        });
 
     if (response != nullptr) {
         *response = kIOReturnSuccess;

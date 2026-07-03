@@ -30,6 +30,7 @@
 #endif
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -54,9 +55,19 @@ public:
     CommandExecutor(const CommandExecutor&) = delete;
     CommandExecutor& operator=(const CommandExecutor&) = delete;
 
+    // Push-style completion: fired exactly once per accepted SubmitCommand with a
+    // callback — on ORB completion, on abort (bus reset / task management), or on
+    // release-time Cleanup. It consumes the result (the poll-style Get*Result
+    // readers see nothing). Runs on the Default queue without the registry lock,
+    // except the Cleanup/teardown path, which may hold it — callbacks must not
+    // re-enter the registry synchronously.
+    using ResultCallback = std::function<void(const SCSI::CommandResult&)>;
+
     // Submit a generic SCSI command. Returns false if not logged in, another
     // command is active, the request is malformed, or the ORB cannot be built.
-    [[nodiscard]] bool SubmitCommand(const SCSI::CommandRequest& request);
+    // When rejected, `callback` is dropped without being invoked.
+    [[nodiscard]] bool SubmitCommand(const SCSI::CommandRequest& request,
+                                     ResultCallback callback = {});
 
     // Submit a SCSI INQUIRY (convenience wrapper over SubmitCommand).
     [[nodiscard]] bool SubmitInquiry(uint8_t allocationLength);
@@ -83,6 +94,7 @@ public:
 
 private:
     void FailActiveCommand(int transportStatus, uint8_t sbpStatus) noexcept;
+    void NotifyResultCallback();
     void CleanupCommandResources();
     void CleanupManagementResources();
 
@@ -104,6 +116,7 @@ private:
     std::unique_ptr<SBP2CommandORB> commandORB_;
     std::unique_ptr<SBP2PageTable> commandPageTable_;
     uint64_t commandBufferHandle_{0};
+    ResultCallback resultCallback_;
 
     std::unique_ptr<SBP2ManagementORB> managementORB_;
 

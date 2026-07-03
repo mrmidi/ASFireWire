@@ -49,6 +49,10 @@ CommandExecutor::CommandExecutor(Async::IFireWireBus& bus,
 
 CommandExecutor::~CommandExecutor() {
     lifetimeToken_.reset();
+    if (commandInFlight_ && resultCallback_) {
+        FailActiveCommand(static_cast<int>(kIOReturnAborted),
+                          Wire::SBPStatus::kRequestAborted);
+    }
     CleanupCommandResources();
     CleanupManagementResources();
 }
@@ -69,7 +73,8 @@ bool CommandExecutor::SubmitInquiry(uint8_t allocationLength) {
     return SubmitCommand(SCSI::BuildInquiryRequest(allocationLength));
 }
 
-bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request) {
+bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
+                                    ResultCallback callback) {
     if (request.cdb.empty()) {
         return false;
     }
@@ -203,6 +208,7 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request) {
         pendingCommandResult_ = std::move(result);
         activeCommandRequest_.reset();
         CleanupCommandResources();
+        NotifyResultCallback();
     });
 
     commandInFlight_ = true;
@@ -213,18 +219,21 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request) {
     commandBufferHandle_ = bufferHandle;
     commandORB_ = std::move(orb);
     commandPageTable_ = std::move(pageTable);
+    resultCallback_ = std::move(callback);
 
     if (session_.SubmitORB(commandORB_.get())) {
         return true;
     }
 
-    // Submission rejected synchronously — roll back.
+    // Submission rejected synchronously — roll back. The callback is dropped
+    // unfired (the caller sees `false` and handles the rejection itself).
     if (commandORB_.get() == submittedORB) {
         commandInFlight_ = false;
         commandReady_ = false;
         pendingCommandResult_.reset();
         activeCommandRequest_.reset();
         activeCommandOpcode_.reset();
+        resultCallback_ = {};
         CleanupCommandResources();
     }
     return false;
@@ -280,6 +289,12 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function)
         }
         lastError_ = static_cast<int32_t>(status);
         if (status == 0 && IsSupportedTaskManagementFunction(function)) {
+            // A push-mode command wiped by task management must still complete
+            // (the bridge holds an open SCSI task on it).
+            if (commandInFlight_ && resultCallback_) {
+                FailActiveCommand(static_cast<int>(kIOReturnAborted),
+                                  Wire::SBPStatus::kRequestAborted);
+            }
             CleanupCommandResources();
             pendingCommandResult_.reset();
             activeCommandRequest_.reset();
@@ -306,6 +321,13 @@ void CommandExecutor::OnBusReset() {
 }
 
 void CommandExecutor::Cleanup() {
+    // Release-time teardown: a pending push-mode command must complete (aborted)
+    // so its task is not leaked. May run under the registry lock — the bridge's
+    // callback defers any registry re-entry.
+    if (commandInFlight_ && resultCallback_) {
+        FailActiveCommand(static_cast<int>(kIOReturnAborted),
+                          Wire::SBPStatus::kRequestAborted);
+    }
     CleanupCommandResources();
     CleanupManagementResources();
 }
@@ -338,6 +360,21 @@ void CommandExecutor::FailActiveCommand(int transportStatus, uint8_t sbpStatus) 
     }
 
     CleanupCommandResources();
+    NotifyResultCallback();
+}
+
+void CommandExecutor::NotifyResultCallback() {
+    if (!resultCallback_) {
+        return;
+    }
+    // Move out before invoking: the callback may immediately submit the next
+    // command, which installs a new resultCallback_.
+    ResultCallback cb = std::move(resultCallback_);
+    resultCallback_ = {};
+    auto result = GetCommandResult();
+    if (result.has_value()) {
+        cb(*result);
+    }
 }
 
 void CommandExecutor::CleanupCommandResources() {

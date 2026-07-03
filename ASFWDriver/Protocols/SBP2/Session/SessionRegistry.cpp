@@ -221,13 +221,14 @@ std::optional<SCSI::CommandResult> SessionRegistry::GetInquiryResult(void* owner
 }
 
 bool SessionRegistry::SubmitCommand(void* owner, uint64_t handle,
-                                    const SCSI::CommandRequest& request) {
+                                    const SCSI::CommandRequest& request,
+                                    CommandExecutor::ResultCallback callback) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandleForOwner(owner, handle);
     if (!record || !record->executor) {
         return false;
     }
-    return record->executor->SubmitCommand(request);
+    return record->executor->SubmitCommand(request, std::move(callback));
 }
 
 std::optional<SCSI::CommandResult> SessionRegistry::GetCommandResult(void* owner, uint64_t handle) {

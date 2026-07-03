@@ -33,6 +33,8 @@
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
 #include "../Protocols/SBP2/Session/DriverKitSessionScheduler.hpp"
 #include "../Protocols/SBP2/Session/SessionRegistry.hpp"
+#include "../SCSIController/SBP2BridgeHub.hpp"
+#include "../SCSIController/SBP2TargetBridge.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
 void ServiceContext::DisarmProviderNotifications() {
@@ -51,6 +53,14 @@ void ServiceContext::Reset() {
     stopping.store(true, std::memory_order_release);
     if (audioCoordinator) {
         audioCoordinator->BeginTeardown();
+    }
+    // Unpublish + shut down the HBA bridge while the session registry and bus
+    // are still alive: Shutdown() releases the SBP-2 session (logout on the
+    // wire) and aborts in-flight/queued HBA tasks back to the SCSI layer.
+    ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
+    if (sbp2Bridge) {
+        sbp2Bridge->Shutdown();
+        sbp2Bridge.reset();
     }
     isoch.StopAll();
     controller.reset();
@@ -218,6 +228,16 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
         ctx.controller->SetSbp2SessionRegistry(d.sbp2SessionRegistry);
     }
 
+    // Phase-1 HBA bridge: watches discovery for an SBP-2 unit, logs in, and
+    // executes SCSI tasks handed over by ASFWSCSIController via SBP2BridgeHub.
+    if (!ctx.sbp2Bridge && d.sbp2SessionRegistry && d.deviceManager && ctx.workQueue) {
+        ctx.sbp2Bridge = std::make_shared<ASFW::Protocols::SBP2::SBP2TargetBridge>(
+            *d.sbp2SessionRegistry, *d.deviceManager, ctx.workQueue.get());
+        ctx.sbp2Bridge->Start();
+        ASFW::Protocols::SBP2::SBP2BridgeHub::Set(ctx.sbp2Bridge);
+        ASFW_LOG(Controller, "[Controller] SBP2 target bridge initialized");
+    }
+
     // Inbound local-request routing remains owned centrally by LocalRequestDispatch
     // (see WireLocalRequestDispatch). This helper owns the higher-level SBP-2
     // session dependencies that sit above the address-space manager.
@@ -282,6 +302,11 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     ctx.stopping.store(true, std::memory_order_release);
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->BeginTeardown();
+    }
+    ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
+    if (ctx.sbp2Bridge) {
+        ctx.sbp2Bridge->Shutdown();
+        ctx.sbp2Bridge.reset();
     }
     ctx.isoch.StopAll();
     if (ctx.controller) {

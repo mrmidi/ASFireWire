@@ -87,7 +87,8 @@ public:
     [[nodiscard]] std::optional<SCSI::CommandResult> GetInquiryResult(void* owner, uint64_t handle);
 
     [[nodiscard]] bool SubmitCommand(void* owner, uint64_t handle,
-                                     const SCSI::CommandRequest& request);
+                                     const SCSI::CommandRequest& request,
+                                     CommandExecutor::ResultCallback callback = {});
     [[nodiscard]] std::optional<SCSI::CommandResult> GetCommandResult(void* owner, uint64_t handle);
 
     [[nodiscard]] bool SubmitTaskManagement(void* owner, uint64_t handle,
