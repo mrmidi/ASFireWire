@@ -2,7 +2,6 @@
 
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOLib.h>
-#include <DriverKit/OSObject.h>
 #include <atomic>
 #include <memory>
 #include <new>
@@ -57,23 +56,24 @@ struct IRTag {
     static constexpr const char kContextName[] = "IsochReceiveContext";
 };
 
-class IsochReceiveContext
-    : public OSObject,
-      public ::ASFW::Shared::DmaContextManagerBase<
+// Plain C++ class, deliberately NOT an OSObject: nothing needs OSObject
+// semantics (no OSAction target, no cast, no IIG surface), and an OSObject
+// created with plain `new` instead of OSTypeAlloc is born with refcount 0 —
+// its first release() aborts the dext with an over-release assert at teardown.
+// Owned by std::unique_ptr, matching IsochTransmitContext.
+class IsochReceiveContext final
+    : public ::ASFW::Shared::DmaContextManagerBase<
           IsochReceiveContext, ::ASFW::Shared::DescriptorRing, IRTag, IRPolicy> {
   public:
     IsochReceiveContext()
         : ::ASFW::Shared::DmaContextManagerBase<IsochReceiveContext, ::ASFW::Shared::DescriptorRing,
                                                 IRTag, IRPolicy>(*this, descriptorRing_) {}
+    ~IsochReceiveContext();
 
-    virtual bool init() override;
-    virtual void free() override;
+    IsochReceiveContext(const IsochReceiveContext&) = delete;
+    IsochReceiveContext& operator=(const IsochReceiveContext&) = delete;
 
-    void* operator new(size_t size) { return IOMallocZero(size); }
-    void* operator new(size_t size, std::nothrow_t const&) { return IOMallocZero(size); }
-    void operator delete(void* ptr, size_t size) { IOFree(ptr, size); }
-
-    static OSSharedPtr<IsochReceiveContext>
+    static std::unique_ptr<IsochReceiveContext>
     Create(::ASFW::Driver::HardwareInterface* hw,
            std::shared_ptr<::ASFW::Isoch::Memory::IIsochDMAMemory> dmaMemory);
 

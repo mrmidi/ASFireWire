@@ -162,12 +162,12 @@ class IsochService {
     // Stream 0 (master) capture/playback contexts — own the clock/ZTS/replay
     // role. Their lifecycle and callbacks are unchanged from the single-stream
     // design; secondary streams layer on top without touching them.
-    OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
+    std::unique_ptr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
 
     // Secondary streams [1 .. kMaxStreamsPerDirection). Index i here maps to
     // stream (i + 1); each runs on its own OHCI context (contextIndex == stream).
-    OSSharedPtr<ASFW::Isoch::IsochReceiveContext>
+    std::unique_ptr<ASFW::Isoch::IsochReceiveContext>
         secondaryReceiveContexts_[kMaxStreamsPerDirection - 1];
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext>
         secondaryTransmitContexts_[kMaxStreamsPerDirection - 1];
