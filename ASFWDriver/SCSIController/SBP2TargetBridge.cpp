@@ -53,12 +53,22 @@ SBP2TargetBridge::~SBP2TargetBridge() {
 
 void SBP2TargetBridge::Start() {
     std::weak_ptr<SBP2TargetBridge> weak = weak_from_this();
+    IODispatchQueue* queue = workQueue_;
     unitCallbackHandle_ = deviceManager_.RegisterUnitCallback(
         kSBP2UnitSpecId, kSBP2UnitSwVersion,
-        [weak](std::shared_ptr<Discovery::FWUnit> unit) {
-            if (auto self = weak.lock()) {
-                self->OnUnitPublished(unit);
+        [weak, queue](std::shared_ptr<Discovery::FWUnit> unit) {
+            // DeviceManager fires this callback while holding its own lock;
+            // OnUnitPublished → CreateSession → ResolveUnit → GetAllDevices()
+            // re-enters that lock (os_unfair_lock recursion = abort). Defer one
+            // queue iteration so the lock is released first.
+            if (queue == nullptr) {
+                return;
             }
+            queue->DispatchAsync(^{
+                if (auto self = weak.lock()) {
+                    self->OnUnitPublished(unit);
+                }
+            });
         });
     unitCallbackRegistered_ = true;
     AdoptExistingUnits();
