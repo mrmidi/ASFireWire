@@ -1,7 +1,7 @@
 #include "ARPacketParser.hpp"
 #include "../../Hardware/IEEE1394.hpp"
-#include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
+#include "../../Logging/Logging.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include <libkern/OSByteOrder.h> // OSSwapLittleToHostInt32 for host tests
@@ -18,11 +18,11 @@ namespace ASFW::Async {
 static inline uint32_t le32_at(const uint8_t* p) {
     uint32_t v;
     __builtin_memcpy(&v, p, sizeof(v));
-    return OSSwapLittleToHostInt32(v);  // LE to host (no-op on arm64, documents intent)
+    return OSSwapLittleToHostInt32(v); // LE to host (no-op on arm64, documents intent)
 }
 
-std::optional<std::array<uint32_t, 2>> ARPacketParser::ExtractPhyPacketQuadletsHostOrder(
-    std::span<const uint8_t> header) {
+std::optional<std::array<uint32_t, 2>>
+ARPacketParser::ExtractPhyPacketQuadletsHostOrder(std::span<const uint8_t> header) {
     if (header.size() < 12) {
         return std::nullopt;
     }
@@ -33,10 +33,8 @@ std::optional<std::array<uint32_t, 2>> ARPacketParser::ExtractPhyPacketQuadletsH
     };
 }
 
-std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure> ARPacketParser::ParseNext(
-    std::span<const uint8_t> buffer,
-    size_t offset)
-{
+std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure>
+ARPacketParser::ParseNext(std::span<const uint8_t> buffer, size_t offset) {
     const size_t bufferSize = buffer.size();
 
     if (buffer.empty() || offset + 8 > bufferSize) {
@@ -52,9 +50,10 @@ std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure> ARPacket
     for (size_t i = 0; i < dumpSize; i += 16) {
         const size_t chunkSize = (i + 16 <= dumpSize) ? 16 : (dumpSize - i);
         const uint8_t* bytes = packetStart + i;
-        ASFW_LOG_HEX(Async, "  [%02zu] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                     i,
-                     chunkSize > 0 ? bytes[0] : 0, chunkSize > 1 ? bytes[1] : 0,
+        ASFW_LOG_HEX(Async,
+                     "  [%02zu] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  "
+                     "%02X %02X %02X %02X",
+                     i, chunkSize > 0 ? bytes[0] : 0, chunkSize > 1 ? bytes[1] : 0,
                      chunkSize > 2 ? bytes[2] : 0, chunkSize > 3 ? bytes[3] : 0,
                      chunkSize > 4 ? bytes[4] : 0, chunkSize > 5 ? bytes[5] : 0,
                      chunkSize > 6 ? bytes[6] : 0, chunkSize > 7 ? bytes[7] : 0,
@@ -80,7 +79,8 @@ std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure> ARPacket
 
     const size_t headerLength = GetHeaderLength(tCode);
     if (headerLength == 0) {
-        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu", tCode, offset);
+        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu", tCode,
+                    offset);
         return std::unexpected(ParseFailure::UnknownTCode);
     }
 
@@ -97,8 +97,10 @@ std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure> ARPacket
         // treated as a stitchable fragment — it can never complete.
         // Cross-validated with Linux ohci.c handle_ar_packet:
         // payload_length > MAX_ASYNC_PAYLOAD → ar_context_abort("invalid packet length").
-        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: data_length %zu exceeds max %zu (tCode=0x%X offset=%zu)",
-                    dataLength, kMaxAsyncPayloadBytes, tCode, offset);
+        ASFW_LOG_V0(
+            Async,
+            "❌ ARPacketParser::ParseNext: data_length %zu exceeds max %zu (tCode=0x%X offset=%zu)",
+            dataLength, kMaxAsyncPayloadBytes, tCode, offset);
         return std::unexpected(ParseFailure::OversizedPayload);
     }
     const size_t quadletAlignedLen = ((headerLength + dataLength + 3) & ~size_t(3));
@@ -114,17 +116,14 @@ std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure> ARPacket
     __builtin_memcpy(&trailer_le, packetStart + quadletAlignedLen, 4);
     const uint32_t trailer = OSSwapLittleToHostInt32(trailer_le);
     const uint16_t xferStatus = static_cast<uint16_t>(trailer >> 16);
-    const uint16_t timeStamp  = static_cast<uint16_t>(trailer & 0xFFFF);
+    const uint16_t timeStamp = static_cast<uint16_t>(trailer & 0xFFFF);
 
     // ---- rCode (only for response tCodes): extract from Q1 bits[15:12]
     // Per Linux packet-header-definitions.h: ASYNC_HEADER_Q1_RCODE_SHIFT = 12
     // IEEE 1394 format: Q1 = [source_ID:16][rcode:4][offset_high:12]
     uint8_t rCode = 0xFF; // 0xFF = "not present"
-    if (tCode == kTCodeWriteResponse ||
-        tCode == kTCodeReadQuadletResponse ||
-        tCode == kTCodeReadBlockResponse ||
-        tCode == kTCodeLockResponse)
-    {
+    if (tCode == kTCodeWriteResponse || tCode == kTCodeReadQuadletResponse ||
+        tCode == kTCodeReadBlockResponse || tCode == kTCodeLockResponse) {
         rCode = static_cast<uint8_t>((q1 >> 12) & 0xF);
     }
 
@@ -140,8 +139,8 @@ std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure> ARPacket
     info.totalLength = quadletAlignedLen + 4;
     info.tCode = tCode;
     info.rCode = rCode;
-    info.xferStatus = xferStatus;  // stored in 32-bit field; value range 0..0xFFFF
-    info.timeStamp  = timeStamp;   // stored in 32-bit field; value range 0..0xFFFF
+    info.xferStatus = xferStatus; // stored in 32-bit field; value range 0..0xFFFF
+    info.timeStamp = timeStamp;   // stored in 32-bit field; value range 0..0xFFFF
 
     return info;
 }
@@ -154,52 +153,52 @@ size_t ARPacketParser::GetHeaderLength(uint8_t tCode) {
     size_t length = 0;
 
     switch (tCode) {
-        case kTCodeWriteQuadlet:           // 0x0 TCODE_WRITE_QUADLET_REQUEST
-            length = 16;  // 4 quadlets: header + data quadlet
-            break;
+    case kTCodeWriteQuadlet: // 0x0 TCODE_WRITE_QUADLET_REQUEST
+        length = 16;         // 4 quadlets: header + data quadlet
+        break;
 
-        case kTCodeReadQuadletResponse:    // 0x6 TCODE_READ_QUADLET_RESPONSE
-            // IEEE 1394: Read Quadlet Response has 4 quadlets total (16 bytes)
-            // Quadlet 0: destination/tLabel/tCode
-            // Quadlet 1: source/rCode
-            // Quadlet 2: reserved
-            // Quadlet 3: DATA PAYLOAD (4 bytes) - embedded in header, not separate payload
-            length = 16;  // 4 quadlets including data
-            break;
+    case kTCodeReadQuadletResponse: // 0x6 TCODE_READ_QUADLET_RESPONSE
+        // IEEE 1394: Read Quadlet Response has 4 quadlets total (16 bytes)
+        // Quadlet 0: destination/tLabel/tCode
+        // Quadlet 1: source/rCode
+        // Quadlet 2: reserved
+        // Quadlet 3: DATA PAYLOAD (4 bytes) - embedded in header, not separate payload
+        length = 16; // 4 quadlets including data
+        break;
 
-        case kTCodeReadBlock:              // 0x5 TCODE_READ_BLOCK_REQUEST
-            length = 16;  // 4 quadlets
-            break;
+    case kTCodeReadBlock: // 0x5 TCODE_READ_BLOCK_REQUEST
+        length = 16;      // 4 quadlets
+        break;
 
-        case kTCodeWriteBlock:             // 0x1 TCODE_WRITE_BLOCK_REQUEST
-        case kTCodeReadBlockResponse:      // 0x7 TCODE_READ_BLOCK_RESPONSE
-        case kTCodeLockRequest:            // 0x9 TCODE_LOCK_REQUEST
-        case kTCodeLockResponse:           // 0xB TCODE_LOCK_RESPONSE
-            length = 16;  // 4 quadlets
-            break;
+    case kTCodeWriteBlock:        // 0x1 TCODE_WRITE_BLOCK_REQUEST
+    case kTCodeReadBlockResponse: // 0x7 TCODE_READ_BLOCK_RESPONSE
+    case kTCodeLockRequest:       // 0x9 TCODE_LOCK_REQUEST
+    case kTCodeLockResponse:      // 0xB TCODE_LOCK_RESPONSE
+        length = 16;              // 4 quadlets
+        break;
 
-        case kTCodeWriteResponse:          // 0x2 TCODE_WRITE_RESPONSE
-        case kTCodeReadQuadlet:            // 0x4 TCODE_READ_QUADLET_REQUEST
-            length = 12;  // 3 quadlets (Linux: p.header_length = 12)
-            break;
+    case kTCodeWriteResponse: // 0x2 TCODE_WRITE_RESPONSE
+    case kTCodeReadQuadlet:   // 0x4 TCODE_READ_QUADLET_REQUEST
+        length = 12;          // 3 quadlets (Linux: p.header_length = 12)
+        break;
 
-        case kTCodePhyPacket:              // 0xE TCODE_LINK_INTERNAL/PHY
-            // CRITICAL: Per Linux drivers/firewire/ohci.c handle_ar_packet
-            // TCODE_LINK_INTERNAL (0xe): p.header_length = 12 (3 quadlets)
-            // PHY packet structure per OHCI §8.4.2.3:
-            //   Quadlet 0: tcode[31:28]=0xE, event[3:0]
-            //   Quadlets 1-2: PHY payload; synthetic bus-reset markers reuse
-            //   quadlet 1 for the selfIDGeneration[23:16] field.
-            // Total: 12 bytes header + 4 bytes trailer = 16 bytes
-            length = 12;  // 3 quadlets (matches Linux!)
-            break;
+    case kTCodePhyPacket: // 0xE TCODE_LINK_INTERNAL/PHY
+        // CRITICAL: Per Linux drivers/firewire/ohci.c handle_ar_packet
+        // TCODE_LINK_INTERNAL (0xe): p.header_length = 12 (3 quadlets)
+        // PHY packet structure per OHCI §8.4.2.3:
+        //   Quadlet 0: tcode[31:28]=0xE, event[3:0]
+        //   Quadlets 1-2: PHY payload; synthetic bus-reset markers reuse
+        //   quadlet 1 for the selfIDGeneration[23:16] field.
+        // Total: 12 bytes header + 4 bytes trailer = 16 bytes
+        length = 12; // 3 quadlets (matches Linux!)
+        break;
 
-        default:
-            // Any other tCode (incl. cycle start 0x8, iso 0xA — never delivered
-            // to AR contexts with our LinkControl, same as Linux) is invalid
-            // here; Linux ar_context_abort()s on it ("invalid tcode").
-            ASFW_LOG_V0(Async, "❌ GetHeaderLength: Unknown tCode=0x%X", tCode);
-            return 0;   // Unknown tCode
+    default:
+        // Any other tCode (incl. cycle start 0x8, iso 0xA — never delivered
+        // to AR contexts with our LinkControl, same as Linux) is invalid
+        // here; Linux ar_context_abort()s on it ("invalid tcode").
+        ASFW_LOG_V0(Async, "❌ GetHeaderLength: Unknown tCode=0x%X", tCode);
+        return 0; // Unknown tCode
     }
 
     ASFW_LOG_V3(Async, "GetHeaderLength(tCode=0x%X) → %zu bytes", tCode, length);
@@ -216,63 +215,66 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
     size_t dataLen = 0;
 
     switch (tCode) {
-        case kTCodePhyPacket:              // 0xE TCODE_LINK_INTERNAL
-            // PHY packet structure per Linux & OHCI §8.4.2.3:
-            // - Header: 12 bytes (3 quadlets) - all PHY data is part of header!
-            // - Data: 0 bytes (no separate payload)
-            // - Trailer: 4 bytes (xferStatus + timestamp)
-            // TOTAL: 12 (hdr) + 0 (data) + 4 (trailer) = 16 bytes
-            //
-            // Linux: p.header_length=12, p.payload_length=0
-            // All PHY-specific data is considered part of the header
-            dataLen = 0;  // No separate data payload!
-            ASFW_LOG_V3(Async, "GetDataLength: PHY packet → 0 bytes data (all in 12-byte header)");
-            break;
+    case kTCodePhyPacket: // 0xE TCODE_LINK_INTERNAL
+        // PHY packet structure per Linux & OHCI §8.4.2.3:
+        // - Header: 12 bytes (3 quadlets) - all PHY data is part of header!
+        // - Data: 0 bytes (no separate payload)
+        // - Trailer: 4 bytes (xferStatus + timestamp)
+        // TOTAL: 12 (hdr) + 0 (data) + 4 (trailer) = 16 bytes
+        //
+        // Linux: p.header_length=12, p.payload_length=0
+        // All PHY-specific data is considered part of the header
+        dataLen = 0; // No separate data payload!
+        ASFW_LOG_V3(Async, "GetDataLength: PHY packet → 0 bytes data (all in 12-byte header)");
+        break;
 
-        case kTCodeWriteBlock:             // 0x1 TCODE_WRITE_BLOCK_REQUEST
-        case kTCodeReadBlockResponse:      // 0x7 TCODE_READ_BLOCK_RESPONSE
-        case kTCodeLockRequest:            // 0x9 TCODE_LOCK_REQUEST
-        case kTCodeLockResponse:           // 0xB TCODE_LOCK_RESPONSE
-        {
-            // Extract data_length from quadlet 3, bits[31:16]
-            // Header quadlet 3 is at offset 12 (bytes 12-15)
-            if (header.size() < 16) {
-                ASFW_LOG_V0(Async, "❌ GetDataLength: Header too small (%zu bytes) for block tCode=0x%X",
-                         header.size(), tCode);
-                return 0;
-            }
-
-            // Read q3 from AR DMA buffer (little-endian) and convert to host order
-            const uint32_t q3 = le32_at(header.data() + 12);
-            // Extract data_length from high 16 bits
-            const uint16_t length = static_cast<uint16_t>((q3 >> 16) & 0xFFFF);
-            dataLen = length;
-
-            ASFW_LOG_V3(Async, "GetDataLength: Block tCode=0x%X q3=0x%08X (LE) → data_length=%u bytes",
-                   tCode, q3, length);
-            break;
+    case kTCodeWriteBlock:        // 0x1 TCODE_WRITE_BLOCK_REQUEST
+    case kTCodeReadBlockResponse: // 0x7 TCODE_READ_BLOCK_RESPONSE
+    case kTCodeLockRequest:       // 0x9 TCODE_LOCK_REQUEST
+    case kTCodeLockResponse:      // 0xB TCODE_LOCK_RESPONSE
+    {
+        // Extract data_length from quadlet 3, bits[31:16]
+        // Header quadlet 3 is at offset 12 (bytes 12-15)
+        if (header.size() < 16) {
+            ASFW_LOG_V0(Async,
+                        "❌ GetDataLength: Header too small (%zu bytes) for block tCode=0x%X",
+                        header.size(), tCode);
+            return 0;
         }
 
-        case kTCodeReadQuadletResponse:    // 0x6 TCODE_READ_QUADLET_RESPONSE
-            // IEEE 1394: Data is embedded in header quadlet 3 (offset 12-15), not separate payload
-            // Header length is 16 bytes, and q3 contains the 4-byte data value
-            // Since data is part of header, dataLength is 0 (no separate payload follows)
-            dataLen = 0;
-            ASFW_LOG_V3(Async, "GetDataLength: tCode=0x6 (Read Quadlet Response) → 0 bytes (data in header q3)");
-            break;
+        // Read q3 from AR DMA buffer (little-endian) and convert to host order
+        const uint32_t q3 = le32_at(header.data() + 12);
+        // Extract data_length from high 16 bits
+        const uint16_t length = static_cast<uint16_t>((q3 >> 16) & 0xFFFF);
+        dataLen = length;
 
-        case kTCodeWriteResponse:          // 0x2 TCODE_WRITE_RESPONSE
-            // No separate payload. (Write-compare is LOCK, not a write response.)
-            dataLen = 0;
-            ASFW_LOG_V3(Async, "GetDataLength: tCode=0x2 (Write Response) → 0 bytes");
-            break;
+        ASFW_LOG_V3(Async, "GetDataLength: Block tCode=0x%X q3=0x%08X (LE) → data_length=%u bytes",
+                    tCode, q3, length);
+        break;
+    }
 
-        default:
-            // No separate data (quadlet transactions, simple responses)
-            // Per Linux: p.payload_length = 0 for these tCodes
-            dataLen = 0;
-            ASFW_LOG_V3(Async, "GetDataLength: tCode=0x%X → no payload (0 bytes)", tCode);
-            break;
+    case kTCodeReadQuadletResponse: // 0x6 TCODE_READ_QUADLET_RESPONSE
+        // IEEE 1394: Data is embedded in header quadlet 3 (offset 12-15), not separate payload
+        // Header length is 16 bytes, and q3 contains the 4-byte data value
+        // Since data is part of header, dataLength is 0 (no separate payload follows)
+        dataLen = 0;
+        ASFW_LOG_V3(
+            Async,
+            "GetDataLength: tCode=0x6 (Read Quadlet Response) → 0 bytes (data in header q3)");
+        break;
+
+    case kTCodeWriteResponse: // 0x2 TCODE_WRITE_RESPONSE
+        // No separate payload. (Write-compare is LOCK, not a write response.)
+        dataLen = 0;
+        ASFW_LOG_V3(Async, "GetDataLength: tCode=0x2 (Write Response) → 0 bytes");
+        break;
+
+    default:
+        // No separate data (quadlet transactions, simple responses)
+        // Per Linux: p.payload_length = 0 for these tCodes
+        dataLen = 0;
+        ASFW_LOG_V3(Async, "GetDataLength: tCode=0x%X → no payload (0 bytes)", tCode);
+        break;
     }
 
     return dataLen;

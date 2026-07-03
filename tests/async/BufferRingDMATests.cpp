@@ -434,4 +434,117 @@ TEST_F(LargeBufferRingDMATest, CopyReadableBytesReassemblesSplitReadQuadletRespo
     EXPECT_EQ(parsed->totalLength, packet.size());
 }
 
+// OHCI §8.4.2: AR bufferFill appends a status/timestamp trailer quadlet to
+// every packet. A window holding exactly header+payload but not the trailer is
+// an INCOMPLETE packet. The old parser treated the trailer as optional and
+// completed such packets 4 bytes short; the late trailer then sat at the head
+// of the unread stream, misaligned every subsequent parse, and permanently
+// jammed the AR response path (field failure 2026-07-03: bus-wide async outage
+// until reboot).
+TEST(ARPacketParserTrailerTest, WindowWithoutTrailerIsIncomplete) {
+    const auto packet = MakeARDmaBufferFromHostWords({
+        0xFFC1F160u, // read-quadlet response, tCode=0x6
+        0xFFC00000u,
+        0x00000000u,
+        0x00000046u,
+    });
+    ASSERT_EQ(packet.size(), 20u); // 16-byte header + 4-byte trailer
+
+    // Header fully present, trailer missing: must report incomplete, not a
+    // 16-byte packet.
+    const auto withoutTrailer = ASFW::Async::ARPacketParser::ParseNext(
+        std::span<const uint8_t>(packet.data(), 16), 0);
+    EXPECT_FALSE(withoutTrailer.has_value());
+
+    // Full window: parses, and totalLength covers the trailer.
+    const auto withTrailer = ASFW::Async::ARPacketParser::ParseNext(
+        std::span<const uint8_t>(packet.data(), packet.size()), 0);
+    ASSERT_TRUE(withTrailer.has_value());
+    EXPECT_EQ(withTrailer->totalLength, 20u);
+}
+
+TEST_F(LargeBufferRingDMATest, TrailerOnlyStraddleDoesNotMisalignStream) {
+    // Field-failure reproduction (2026-07-03): a 104-byte read-block response's
+    // header+payload ended exactly at the end of buffer[0]; only its 4-byte
+    // trailer landed in buffer[1], followed by the next response. The stream
+    // must resume, aligned, at buffer[1] offset 4.
+    auto* current = ring_.GetDescriptor(0);
+    auto* next = ring_.GetDescriptor(1);
+    auto* currentBuffer = ring_.GetBufferAddress(0);
+    auto* nextBuffer = ring_.GetBufferAddress(1);
+    ASSERT_NE(current, nullptr);
+    ASSERT_NE(next, nullptr);
+    ASSERT_NE(currentBuffer, nullptr);
+    ASSERT_NE(nextBuffer, nullptr);
+
+    // Read-block response with 104 data bytes: 16 header + 104 payload = 120,
+    // + 4 trailer = 124 total.
+    std::vector<uint8_t> blockResponse;
+    auto pushLE = [&blockResponse](uint32_t word) {
+        blockResponse.push_back(static_cast<uint8_t>(word & 0xFF));
+        blockResponse.push_back(static_cast<uint8_t>((word >> 8) & 0xFF));
+        blockResponse.push_back(static_cast<uint8_t>((word >> 16) & 0xFF));
+        blockResponse.push_back(static_cast<uint8_t>((word >> 24) & 0xFF));
+    };
+    pushLE(0xFFC1F170u); // tCode=0x7 read-block response
+    pushLE(0xFFC00000u);
+    pushLE(0x00000000u);
+    pushLE(0x00680000u); // data_length=104 in q3[31:16]
+    blockResponse.insert(blockResponse.end(), 104, 0xA5);
+    pushLE(0x00110000u); // trailer: xferStatus=0x0011
+    ASSERT_EQ(blockResponse.size(), 124u);
+
+    const auto nextPacket = MakeARDmaBufferFromHostWords({
+        0xFFC1F160u, 0xFFC00000u, 0x00000000u, 0x00000046u,
+    });
+
+    const size_t splitOffset = kBufferSize - 120; // header+payload end flush
+    std::memset(currentBuffer, 0, kBufferSize);
+    std::memcpy(currentBuffer + splitOffset, blockResponse.data(), 120);
+    std::memcpy(nextBuffer, blockResponse.data() + 120, 4); // trailer only
+    std::memcpy(nextBuffer + 4, nextPacket.data(), nextPacket.size());
+    const size_t nextFilled = 4 + nextPacket.size();
+
+    ASFW::Async::HW::AR_init_status(*current, 0);
+    ASFW::Async::HW::AR_init_status(
+        *next, static_cast<uint16_t>(kBufferSize - nextFilled));
+
+    auto first = ring_.Dequeue();
+    ASSERT_TRUE(first.has_value());
+    ASSERT_EQ(ring_.CommitConsumed(first->descriptorIndex, splitOffset), kIOReturnSuccess);
+
+    // In-buffer parse at the packet start must report incomplete (trailer is in
+    // the next buffer) — this is where the old parser returned a 120-byte
+    // "complete" packet and orphaned the trailer.
+    const auto truncated = ASFW::Async::ARPacketParser::ParseNext(
+        std::span<const uint8_t>(currentBuffer, kBufferSize), splitOffset);
+    EXPECT_FALSE(truncated.has_value());
+
+    // Stitched retry sees the full packet across the boundary.
+    alignas(4) std::array<uint8_t, ASFW::Async::ARPacketParser::kMaxPacketBytes> stitched{};
+    const size_t copied = ring_.CopyReadableBytes(stitched);
+    ASSERT_GE(copied, blockResponse.size());
+    const auto parsed = ASFW::Async::ARPacketParser::ParseNext(
+        std::span<const uint8_t>(stitched.data(), copied), 0);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->tCode, 0x7u);
+    EXPECT_EQ(parsed->totalLength, blockResponse.size());
+
+    ASSERT_EQ(ring_.ConsumeReadableBytes(parsed->totalLength), kIOReturnSuccess);
+    EXPECT_EQ(ring_.Head(), 1u);
+
+    // The stream must resume at buffer[1] offset 4 (past the consumed trailer)
+    // and the next packet must parse aligned.
+    auto visible = ring_.Dequeue();
+    ASSERT_TRUE(visible.has_value());
+    EXPECT_EQ(visible->descriptorIndex, 1u);
+    EXPECT_EQ(visible->startOffset, 4u);
+    const auto aligned = ASFW::Async::ARPacketParser::ParseNext(
+        std::span<const uint8_t>(visible->virtualAddress, visible->bytesFilled),
+        visible->startOffset);
+    ASSERT_TRUE(aligned.has_value());
+    EXPECT_EQ(aligned->tCode, 0x6u);
+    EXPECT_EQ(aligned->totalLength, nextPacket.size());
+}
+
 } // namespace ASFW::Testing
