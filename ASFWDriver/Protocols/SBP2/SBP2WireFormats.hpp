@@ -132,14 +132,19 @@ struct NormalORB {
     // Access via CommandBlock() helper.
 
     [[nodiscard]] uint32_t* CommandBlock() noexcept {
-        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + 16);
+        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + kHeaderSize);
     }
     [[nodiscard]] const uint32_t* CommandBlock() const noexcept {
-        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + 16);
+        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + kHeaderSize);
     }
 
-    // Minimum ORB size (no command block)
-    static constexpr uint32_t kHeaderSize = 16;
+    // Minimum ORB size (no command block): next(8) + data_descriptor(8) +
+    // options/dataSize quadlet(4). Command block starts at offset 20 — a
+    // header of 16 puts the CDB under the options quadlet, which then
+    // overwrites CDB bytes 0-3 in PrepareForExecution (target reads the
+    // command block 4 bytes into the CDB). Cross-validated with Linux
+    // sbp2.c struct sbp2_command_orb (next/data_descriptor/misc/command_block).
+    static constexpr uint32_t kHeaderSize = 20;
     // Null next-ORB indicator (bit 31 set in hi address)
     static constexpr uint32_t kNextORBNull = 0x80000000u;
 };

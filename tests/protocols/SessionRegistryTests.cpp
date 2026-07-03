@@ -761,10 +761,10 @@ TEST(SessionRegistryTests, SubmitCommandRejectsCDBLargerThanORBPayloadBudget) {
     const uint64_t handle = rig.CreateSession();
     rig.LoginSuccessfully(handle);
 
-    // maxCommandBlockSize is maxORBSize(32) - NormalORB::kHeaderSize(16) = 16, so a
-    // 17-byte CDB exceeds the budget and must be rejected.
+    // maxCommandBlockSize is maxORBSize(32) - NormalORB::kHeaderSize(20) = 12, so a
+    // 13-byte CDB exceeds the budget and must be rejected.
     SCSI::CommandRequest request{};
-    request.cdb = std::vector<uint8_t>(17, 0x12);
+    request.cdb = std::vector<uint8_t>(13, 0x12);
     request.direction = SCSI::DataDirection::None;
     request.transferLength = 0;
     request.timeoutMs = 100;
@@ -789,7 +789,8 @@ TEST(SessionRegistryTests, UnitCharacteristicsDecodeMinimumORBSize) {
     const auto& targetInfo = session->TargetInfo();
     EXPECT_EQ(2000u, targetInfo.managementTimeoutMs);
     EXPECT_EQ(32u, targetInfo.maxORBSize);
-    // DICE's NormalORB header is 16 bytes (4 quadlets), vs PR #19's 20.
+    // NormalORB header is 20 bytes (next 8 + data_descriptor 8 + misc quadlet 4);
+    // command block starts at offset 20 (Linux sbp2.c struct sbp2_command_orb).
     EXPECT_EQ(32u - NormalORB::kHeaderSize, targetInfo.maxCommandBlockSize);
 }
 
