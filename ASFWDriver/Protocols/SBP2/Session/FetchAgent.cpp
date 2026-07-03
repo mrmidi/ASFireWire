@@ -194,8 +194,12 @@ bool FetchAgent::AppendChained(SBP2CommandORB* orb) noexcept {
 
     if (chainTailORB_ != orb) {
         const Async::FWAddress orbAddr = orb->GetORBAddress();
-        const uint16_t localNode = LocalBusNodeID();
-        const uint32_t nextHi = OSSwapHostToBigInt32(ComposeBusAddressHi(localNode, orbAddr.addressHi));
+        // next_ORB carries ONLY the 48-bit offset — no node ID. Local-bus node
+        // IDs (0xffcX) set bit 31, which is the SBP-2 NULL-pointer flag: the
+        // target would parse the link as "no next ORB" and stay suspended.
+        // Apple writes the bare addressHi the same way (IOFireWireSBP2ORB::
+        // setNextORBAddress, IOFireWireSBP2ORB.cpp:1717).
+        const uint32_t nextHi = OSSwapHostToBigInt32(static_cast<uint32_t>(orbAddr.addressHi));
         const uint32_t nextLo = OSSwapHostToBigInt32(orbAddr.addressLo);
         const kern_return_t linkKr = chainTailORB_->SetNextORBAddress(nextHi, nextLo);
         if (linkKr != kIOReturnSuccess) {
@@ -298,7 +302,8 @@ void FetchAgent::OnDoorbellComplete(uint16_t expectedGeneration,
     }
     doorbellInProgress_ = false;
     doorbellWriteHandle_ = {};
-    (void)status;
+    // Bring-up trace (doorbell chain).
+    ASFW_LOG(Async, "FetchAgent: doorbell write complete status=%d", static_cast<int>(status));
 
     if (doorbellRingAgain_) {
         doorbellRingAgain_ = false;

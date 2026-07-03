@@ -198,7 +198,21 @@ kern_return_t SBP2CommandORB::SetNextORBAddress(uint32_t hi, uint32_t lo) noexce
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
     orb->nextORBAddressHi = hi;
     orb->nextORBAddressLo = lo;
-    return WriteORBToAddressSpace();
+    const kern_return_t kr = WriteORBToAddressSpace();
+    // Bring-up trace (doorbell chain): what the target will see when it
+    // re-reads this ORB's next_ORB field — read back from the address space,
+    // not from orbStorage_, to catch publish failures.
+    uint32_t rbHi = 0;
+    uint32_t rbLo = 0;
+    const uint64_t base = (static_cast<uint64_t>(orbMeta_.addressHi) << 32) | orbMeta_.addressLo;
+    (void)addrMgr_.ReadQuadlet(base, &rbHi);
+    (void)addrMgr_.ReadQuadlet(base + 4, &rbLo);
+    ASFW_LOG(Async,
+             "SBP2CommandORB: next_ORB linked @ %04x:%08x — wrote %08x:%08x readback %08x:%08x kr=0x%x",
+             orbMeta_.addressHi, orbMeta_.addressLo,
+             OSSwapBigToHostInt32(hi), OSSwapBigToHostInt32(lo),
+             OSSwapBigToHostInt32(rbHi), OSSwapBigToHostInt32(rbLo), kr);
+    return kr;
 }
 
 kern_return_t SBP2CommandORB::SetToDummy() noexcept {

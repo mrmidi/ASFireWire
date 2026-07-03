@@ -328,12 +328,33 @@ public:
         outSlice->payloadDeviceAddress = payloadAddress;
         outSlice->payloadLength = length;
 
+        // Bring-up trace (doorbell chain): for small reads (next_ORB polls,
+        // 8 B) also dump the quadlets served FROM THE DMA BACKING — the bytes
+        // the response actually carries. Aligned volatile loads (uncached
+        // mapping — no memcpy/unaligned access).
+        uint32_t served0 = 0;
+        uint32_t served1 = 0;
+        if (length <= 8 && range->mappedBytes != nullptr && (offset & 0x3u) == 0) {
+            const auto* src = reinterpret_cast<const volatile uint32_t*>(
+                range->mappedBytes + static_cast<std::size_t>(offset));
+            served0 = src[0];
+            if (length == 8) {
+                served1 = src[1];
+            }
+        }
+
         IOLockUnlock(lock_);
         // Bring-up trace (phase 1 HW validation): every remote block read of a
         // registered range — this is the target FETCHING an ORB / page table /
         // data-OUT buffer. Low rate (a handful per command).
-        ASFW_LOG(Async, "SBP2 remote read addr=0x%012llx len=%u",
-                 static_cast<unsigned long long>(address), length);
+        if (length <= 8) {
+            ASFW_LOG(Async, "SBP2 remote read addr=0x%012llx len=%u served=%08x %08x",
+                     static_cast<unsigned long long>(address), length,
+                     OSSwapBigToHostInt32(served0), OSSwapBigToHostInt32(served1));
+        } else {
+            ASFW_LOG(Async, "SBP2 remote read addr=0x%012llx len=%u",
+                     static_cast<unsigned long long>(address), length);
+        }
         return Async::ResponseCode::Complete;
     }
 
