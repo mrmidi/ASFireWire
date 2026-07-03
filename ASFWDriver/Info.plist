@@ -34,6 +34,8 @@
 			<string>ASFWAudioDriver</string>
 			<key>IOUserServerName</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOUserServerOneProcess</key>
+			<true/>
 		</dict>
 		<key>ASFWDriverService</key>
 		<dict>
@@ -96,6 +98,8 @@
 			<string>ASFWDriver</string>
 			<key>IOUserServerName</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOUserServerOneProcess</key>
+			<true/>
 		</dict>
 		<key>ASFWSCSIControllerService</key>
 		<dict>
@@ -116,6 +120,8 @@
 			<string>ASFWSCSIController</string>
 			<key>IOUserServerName</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOUserServerOneProcess</key>
+			<true/>
 		</dict>
 	</dict>
 	<key>OSBundleUsageDescription</key>
