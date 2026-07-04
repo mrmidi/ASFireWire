@@ -6,6 +6,7 @@
 #include "ASFWDriver/Protocols/SBP2/SBP2WireFormats.hpp"
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
 #include "tests/mocks/DeferredFireWireBus.hpp"
+#include "FakeSessionScheduler.hpp"
 
 #include <array>
 #include <cstddef>
@@ -76,59 +77,16 @@ public:
 
     void AdvanceMs(uint64_t milliseconds) {
         nowNs += milliseconds * 1'000'000ULL;
+        scheduler.Advance(milliseconds * 1'000'000ULL);
         DrainReady();
     }
 
     ASFW::Async::Testing::DeferredFireWireBus bus;
     AddressSpaceManager addressManager{nullptr};
     IODispatchQueue queue;
+    ASFW::Testing::FakeSessionScheduler scheduler;
     uint64_t nowNs{0};
 };
-
-TEST(SBP2ORBTests, CommandORBTimerFiresOnHostQueue) {
-    ORBTimerRig rig;
-
-    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
-    int completionStatus = 99;
-    orb.SetTimeout(5);
-    orb.SetCompletionCallback([&completionStatus](int status, uint8_t) { completionStatus = status; });
-
-    orb.StartTimer(&rig.queue);
-    rig.AdvanceMs(5);
-
-    EXPECT_EQ(-1, completionStatus);
-}
-
-TEST(SBP2ORBTests, CommandORBCancelSuppressesPendingTimeout) {
-    ORBTimerRig rig;
-
-    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x2), 16);
-    int completionCount = 0;
-    orb.SetTimeout(5);
-    orb.SetCompletionCallback([&completionCount](int, uint8_t) { ++completionCount; });
-
-    orb.StartTimer(&rig.queue);
-    orb.CancelTimer();
-    rig.AdvanceMs(5);
-
-    EXPECT_EQ(0, completionCount);
-}
-
-TEST(SBP2ORBTests, CommandORBDestructionInvalidatesPendingTimeout) {
-    ORBTimerRig rig;
-
-    int completionCount = 0;
-    {
-        auto orb = std::make_unique<SBP2CommandORB>(
-            rig.addressManager, reinterpret_cast<void*>(0x3), 16);
-        orb->SetTimeout(5);
-        orb->SetCompletionCallback([&completionCount](int, uint8_t) { ++completionCount; });
-        orb->StartTimer(&rig.queue);
-    }
-
-    rig.AdvanceMs(5);
-    EXPECT_EQ(0, completionCount);
-}
 
 TEST(SBP2ORBTests, PageTableUsesDirectDescriptorForSingleAlignedSegment) {
     ORBTimerRig rig;
@@ -191,7 +149,7 @@ TEST(SBP2ORBTests, ManagementORBStatusWriteCancelsTimeout) {
     orb.SetManagementAgentOffset(0x80);
     orb.SetTargetNode(1, 0x3F);
     orb.SetTimeout(5);
-    orb.SetWorkQueue(&rig.queue);
+    orb.SetScheduler(&rig.scheduler);
 
     int completionStatus = 99;
     orb.SetCompletionCallback([&completionStatus](int status) { completionStatus = status; });
@@ -277,7 +235,7 @@ TEST(SBP2ORBTests, ManagementORBDestructionInvalidatesPendingTimeout) {
         orb->SetManagementAgentOffset(0x81);
         orb->SetTargetNode(1, 0x3F);
         orb->SetTimeout(5);
-        orb->SetWorkQueue(&rig.queue);
+        orb->SetScheduler(&rig.scheduler);
         orb->SetCompletionCallback([&completionCount](int) { ++completionCount; });
 
         ASSERT_TRUE(orb->Execute());

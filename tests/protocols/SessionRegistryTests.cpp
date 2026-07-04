@@ -871,4 +871,59 @@ TEST(SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey)
     EXPECT_EQ(*unit->GetLUN(), 0x060000u);
 }
 
+// Reproduces the v45 HW sequence: push-mode command → ORB timeout → LUN-reset
+// management ORB → mgmt timeout (target never posts mgmt status). The task must
+// still be delivered to the initiator (otherwise the SCSI task leaks and the
+// host hangs), and the failed LUN reset must escalate to a bus reset.
+TEST(SessionRegistryTests, OrbTimeoutThenLunResetTimeoutEscalatesAndDeliversResult) {
+    SessionRegistryRig rig;
+    int busResets = 0;
+    rig.registry.SetBusResetRequester([&busResets]() { ++busResets; });
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    // Login leaves the BUSY_TIMEOUT CSR write pending — flush it so later
+    // FIFO completions hit the writes this test issues.
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>{0x12, 0x00, 0x00, 0x00, 0x24, 0x00};
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 36;
+    request.timeoutMs = 1000;
+
+    int callbacks = 0;
+    SCSI::CommandResult lastResult{};
+    ASSERT_TRUE(rig.registry.SubmitCommand(
+        SessionRegistryRig::Owner(), handle, request,
+        [&](const SCSI::CommandResult& result) {
+            ++callbacks;
+            lastResult = result;
+        }));
+
+    // ORB_POINTER write ack'd (arms the ORB timeout); the target fetches the
+    // ORB but never posts status.
+    const auto orbPointerWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    ASSERT_EQ(8u, orbPointerWrite.data.size());
+    ASSERT_TRUE(rig.bus.CompleteWrite(orbPointerWrite.handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+
+    rig.AdvanceMs(1001);  // ORB timeout → AGENT_RESET (no-wait) + LUN-reset mgmt write
+    EXPECT_EQ(0, callbacks);  // delivery deferred until the LUN reset resolves
+    EXPECT_EQ(2u, rig.bus.PendingWriteCount());  // AGENT_RESET + mgmt-agent write
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    EXPECT_EQ(0, callbacks);
+
+    // Mgmt status never arrives → mgmt timeout (2000 ms advertised + grace).
+    rig.AdvanceMs(3001);
+
+    EXPECT_EQ(1, callbacks);  // task delivered despite the failed LUN reset
+    EXPECT_NE(0, lastResult.transportStatus);
+    EXPECT_EQ(1, busResets);  // failed LUN reset escalates to a bus reset
+}
+
 } // namespace

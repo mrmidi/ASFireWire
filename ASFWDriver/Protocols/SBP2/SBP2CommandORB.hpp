@@ -77,10 +77,6 @@ public:
     // Set rq_fmt=3 (NOP dummy) so device skips this ORB if already fetched.
     [[nodiscard]] kern_return_t SetToDummy() noexcept;
 
-    // Internal: timer management.
-    void StartTimer(IODispatchQueue* queue) noexcept;
-    void CancelTimer() noexcept;
-
     // State tracking.
     // True once the ORB's address-space backing was allocated successfully.
     // The constructor swallows an allocation failure, so callers must check this
@@ -132,17 +128,11 @@ private:
 
     // State.
     bool isAppended_{false};
-    std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
 
     // Solicited status block command-set-dependent bytes (see accessors above).
     std::array<uint8_t, 24> statusData_{};
     uint8_t statusDataLength_{0};
-
-    // Timer.
-    IODispatchQueue* timerQueue_{nullptr};
-    std::atomic<uint64_t> timerGeneration_{0};
-    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 
 } // namespace ASFW::Protocols::SBP2

@@ -157,7 +157,7 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     // record.lastError lives at a stable address (map node), so the executor may
     // bind a reference to it.
     record.executor = std::make_unique<CommandExecutor>(
-        bus_, busInfo_, addrSpaceMgr_, *record.session, owner, record.lastError, workQueue_);
+        bus_, busInfo_, addrSpaceMgr_, *record.session, scheduler_, owner, record.lastError);
     record.executor->SetBusResetRequester(busResetRequester_);
 
     ASFW_LOG(Async, "SessionRegistry: created session handle=%llu guid=0x%016llx romOffset=%u",

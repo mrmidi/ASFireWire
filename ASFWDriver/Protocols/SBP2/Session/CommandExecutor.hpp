@@ -47,9 +47,9 @@ public:
                     Async::IFireWireBusInfo& busInfo,
                     AddressSpaceManager& addrSpaceMgr,
                     LoginSession& session,
+                    ISessionScheduler& scheduler,
                     void* owner,
-                    int32_t& lastError,
-                    IODispatchQueue* workQueue) noexcept;
+                    int32_t& lastError) noexcept;
     ~CommandExecutor();
 
     CommandExecutor(const CommandExecutor&) = delete;
@@ -113,9 +113,9 @@ private:
     Async::IFireWireBusInfo& busInfo_;
     AddressSpaceManager& addrSpaceMgr_;
     LoginSession& session_;
+    ISessionScheduler& scheduler_;
     void* owner_;
     int32_t& lastError_;
-    IODispatchQueue* workQueue_{nullptr};
 
     // Command god-object state (moved out of #19's SBP2SessionRecord).
     std::optional<SCSI::CommandRequest> activeCommandRequest_;

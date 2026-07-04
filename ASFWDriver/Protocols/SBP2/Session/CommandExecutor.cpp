@@ -39,22 +39,24 @@ uint32_t BuildCommandFlags(SCSI::DataDirection direction) {
     return flags;
 }
 
+constexpr uint32_t kManagementTimeoutGraceMs = 1000;
+
 } // namespace
 
 CommandExecutor::CommandExecutor(Async::IFireWireBus& bus,
                                  Async::IFireWireBusInfo& busInfo,
                                  AddressSpaceManager& addrSpaceMgr,
                                  LoginSession& session,
+                                 ISessionScheduler& scheduler,
                                  void* owner,
-                                 int32_t& lastError,
-                                 IODispatchQueue* workQueue) noexcept
+                                 int32_t& lastError) noexcept
     : bus_(bus)
     , busInfo_(busInfo)
     , addrSpaceMgr_(addrSpaceMgr)
     , session_(session)
+    , scheduler_(scheduler)
     , owner_(owner)
-    , lastError_(lastError)
-    , workQueue_(workQueue) {}
+    , lastError_(lastError) {}
 
 CommandExecutor::~CommandExecutor() {
     lifetimeToken_.reset();
@@ -327,8 +329,13 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
     orb->SetFunction(function);
     orb->SetLoginID(session_.LoginID());
     orb->SetManagementAgentOffset(session_.TargetInfo().managementAgentOffset);
-    orb->SetTimeout(session_.TargetInfo().managementTimeoutMs);
-    orb->SetWorkQueue(workQueue_);
+    // Grace beyond the advertised management timeout: the LS-9000 posted its
+    // LUN-reset status 2 ms past its 2000 ms Unit_Characteristics timeout
+    // (v45 HW trace) and lost the race. Apple tolerates a late status because
+    // its status FIFO outlives the timeout; ours is torn down with the ORB, so
+    // give the target headroom instead.
+    orb->SetTimeout(session_.TargetInfo().managementTimeoutMs + kManagementTimeoutGraceMs);
+    orb->SetScheduler(&scheduler_);
     orb->SetTargetNode(session_.Generation(), session_.TargetInfo().targetNodeId);
 
     const SBP2ManagementORB* submittedORB = orb.get();
