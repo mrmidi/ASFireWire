@@ -88,6 +88,14 @@ public:
     // management ORB. The FetchAgent is unbound by LoginSession separately.
     void OnBusReset();
 
+    // Last-resort recovery hook: invoked when the LUN-reset escalation itself
+    // fails (management ORB never fetched — the target's fetch engine is dead
+    // and only a bus reset can reach it). Wired by the registry; neutral
+    // callback so this layer stays ignorant of Bus/ internals.
+    void SetBusResetRequester(std::function<void()> requester) {
+        busResetRequester_ = std::move(requester);
+    }
+
     // Release-time cleanup: drop command + management resources.
     void Cleanup();
 
@@ -125,6 +133,8 @@ private:
     ResultCallback resultCallback_;
 
     std::unique_ptr<SBP2ManagementORB> managementORB_;
+
+    std::function<void()> busResetRequester_;
 
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };

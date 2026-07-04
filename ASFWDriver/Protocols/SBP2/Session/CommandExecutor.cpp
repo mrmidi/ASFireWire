@@ -232,7 +232,26 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         // retry runs against a freshly reset execution engine. Delivery of the
         // failed result is deferred until the LUN reset completes.
         if (SubmitTaskManagement(SBP2ManagementORB::Function::LogicalUnitReset,
-                                 [this]() { NotifyResultCallback(); })) {
+                                 [this]() {
+                                     // lastError_ carries the management ORB outcome (set by
+                                     // the mgmt completion before onComplete). Nonzero means
+                                     // the target never fetched the LUN-reset ORB — its fetch
+                                     // engine is dead and no management function can reach it.
+                                     // Apple's transport stops here and just fails the task
+                                     // (IOFireWireSerialBusProtocolTransport.cpp:2030 ignores
+                                     // the LUN-reset status), leaving the device wedged until
+                                     // power cycle; its user-client path instead resets the
+                                     // bus (IOFireWireSBP2UserClient.cpp:427). The LS-9000
+                                     // wedges exactly this way, so escalate to a bus reset —
+                                     // reconnect/re-login runs via the normal reset flow.
+                                     if (lastError_ != 0 && busResetRequester_) {
+                                         ASFW_LOG(Async,
+                                                  "CommandExecutor: LUN reset failed (%d) — "
+                                                  "escalating to bus reset", lastError_);
+                                         busResetRequester_();
+                                     }
+                                     NotifyResultCallback();
+                                 })) {
             ASFW_LOG(Async, "CommandExecutor: transport failure — LUN reset before completing task");
             return;
         }

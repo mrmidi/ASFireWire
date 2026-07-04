@@ -100,6 +100,11 @@ public:
     void OnBusReset(uint16_t newGeneration);
     void RefreshTargets(Discovery::Generation gen);
 
+    // Wire the last-resort bus-reset hook handed to every CommandExecutor (see
+    // CommandExecutor::SetBusResetRequester). Set once during driver wiring,
+    // before any session exists.
+    void SetBusResetRequester(std::function<void()> requester);
+
 #ifdef ASFW_HOST_TEST
     LoginSession* GetSessionForTesting(uint64_t handle);
     std::weak_ptr<LoginSession> GetSessionWeakForTesting(uint64_t handle);
@@ -127,6 +132,7 @@ private:
     IODispatchQueue* workQueue_{nullptr};
 
     IOLock* lock_{nullptr};
+    std::function<void()> busResetRequester_;
     std::map<uint64_t, SessionRecord> sessions_;
     struct RetiringSession {
         uint64_t guid{0};

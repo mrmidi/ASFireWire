@@ -220,6 +220,18 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
         d.sbp2SessionRegistry = std::make_shared<ASFW::Protocols::SBP2::SessionRegistry>(
             bus, bus, *d.sbp2AddressSpaceManager, *d.deviceManager, *d.sbp2SessionScheduler,
             ctx.workQueue.get());
+        if (d.busReset) {
+            // Last-resort recovery for targets whose fetch engine wedges so hard
+            // that even the LUN-reset management ORB is never fetched (LS-9000).
+            // Long reset: the conservative flavor every device must honor.
+            std::weak_ptr<BusResetCoordinator> weakReset = d.busReset;
+            d.sbp2SessionRegistry->SetBusResetRequester([weakReset]() {
+                if (auto coordinator = weakReset.lock()) {
+                    coordinator->RequestUserReset(/*shortReset=*/false,
+                                                  "SBP2 LUN-reset escalation");
+                }
+            });
+        }
         ASFW_LOG(Controller, "[Controller] SBP2 SessionRegistry initialized");
     }
 

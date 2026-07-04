@@ -608,12 +608,12 @@ void BusResetCoordinator::MaybeRecoverMissingManualResetIrq(uint32_t manualEpoch
                           "Manual reset watchdog recovery", std::nullopt});
 }
 
-void BusResetCoordinator::RequestUserReset(bool shortReset) {
+void BusResetCoordinator::RequestUserReset(bool shortReset, const char* reason) {
     ++manualResetEpoch_;
     manualRecoveryResetAttempts_ = 0;
     RequestSoftwareReset({ResetRequestKind::ManualBusManager,
                           shortReset ? ResetFlavor::Short : ResetFlavor::Long, std::nullopt,
-                          "UserClient-initiated", std::nullopt});
+                          reason, std::nullopt});
 }
 
 void BusResetCoordinator::RequestRolePolicyReset(uint8_t targetRoot, bool longReset,

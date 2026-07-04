@@ -6,6 +6,7 @@
 #include "LocalRequestDispatch.hpp"
 
 #include "../../Hardware/IEEE1394.hpp"
+#include "../../Logging/Logging.hpp"
 #include "../PacketHelpers.hpp"
 #include "../Tx/ResponseSender.hpp"
 #include "PacketRouter.hpp"
@@ -69,6 +70,24 @@ ResponseCode LocalRequestDispatch::DispatchView(const ARPacketView& view, uint32
 
     const auto result = Route(ctx);
     const ResponseCode rcode = result.claimed ? result.rcode : ResponseCode::AddressError;
+
+    // Blind-spot instrumentation (LS-9000 wedge): a request no handler claims is
+    // answered addr_error and was previously invisible — if the target's ORB
+    // fetch lands here, "ORB fetched, no status" is really "fetch failed".
+    if (!result.claimed) {
+        ASFW_LOG(Async,
+                 "AR request UNCLAIMED tLabel=%u tCode=0x%X src=0x%04X addr=0x%012llx len=%u → addr_error",
+                 view.tLabel, view.tCode, view.sourceID,
+                 static_cast<unsigned long long>(ctx.destOffset), ctx.dataLength);
+    } else if (isReadBlock) {
+        // Ties each ORB/page-table fetch to the tLabel of our response so an
+        // "AT-resp DROPPED: tLabel=N" line identifies exactly which fetch the
+        // target never got an answer to. Low rate (a handful per command).
+        ASFW_LOG(Async, "AR readBlock tLabel=%u src=0x%04X addr=0x%012llx len=%u rc=%u",
+                 view.tLabel, view.sourceID,
+                 static_cast<unsigned long long>(ctx.destOffset), ctx.dataLength,
+                 static_cast<unsigned>(rcode));
+    }
 
     if (isReadQuad) {
         if (sender_ != nullptr) {

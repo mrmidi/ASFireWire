@@ -158,6 +158,7 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     // bind a reference to it.
     record.executor = std::make_unique<CommandExecutor>(
         bus_, busInfo_, addrSpaceMgr_, *record.session, owner, record.lastError, workQueue_);
+    record.executor->SetBusResetRequester(busResetRequester_);
 
     ASFW_LOG(Async, "SessionRegistry: created session handle=%llu guid=0x%016llx romOffset=%u",
              handle, guid, romOffset);
@@ -336,6 +337,16 @@ void SessionRegistry::ReleaseOwner(void* owner) {
         if (!session->Logout()) {
             IOLockGuard lock(lock_);
             EraseRetiredSessionLocked(session);
+        }
+    }
+}
+
+void SessionRegistry::SetBusResetRequester(std::function<void()> requester) {
+    IOLockGuard lock(lock_);
+    busResetRequester_ = std::move(requester);
+    for (auto& [handle, record] : sessions_) {
+        if (record.executor) {
+            record.executor->SetBusResetRequester(busResetRequester_);
         }
     }
 }
