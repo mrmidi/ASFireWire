@@ -80,7 +80,10 @@ public:
     // Unlike Reset(), does NOT clear ORB tracking on completion — used to
     // revive a dead/wedged agent inline (dead bit in a status block, ORB
     // timeout) without disturbing the command that is being completed.
-    void ResetNoWait() noexcept;
+    // onComplete (optional) fires when the reset write completes (or
+    // immediately if the write cannot be issued) — Apple's transport defers
+    // the task completion to that point (FetchAgentResetComplete).
+    void ResetNoWait(std::function<void()> onComplete = {}) noexcept;
 
     // Cancel timers and drop all ORB tracking (bus reset / logout).
     void Clear(bool cancelTimers) noexcept;

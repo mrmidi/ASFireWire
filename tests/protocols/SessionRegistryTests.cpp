@@ -385,11 +385,19 @@ TEST(SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaustion)
     ASSERT_TRUE(stateAfterFailure.has_value());
     EXPECT_EQ(-1, stateAfterFailure->lastError);
 
-    ASSERT_GT(rig.bus.WriteCount(), 0u);
+    ASSERT_GT(rig.bus.WriteCount(), 1u);
     const auto agentResetWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     EXPECT_EQ(4u, agentResetWrite.data.size());
+    // Apple-style recovery: the transport failure also submitted a
+    // LOGICAL_UNIT_RESET management ORB (8-byte agent write) before the
+    // fetch-agent reset quadlet.
+    const auto lunResetWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 2);
+    EXPECT_EQ(8u, lunResetWrite.data.size());
 
     ASSERT_TRUE(rig.bus.CompleteWrite(agentResetWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+    // Fail the management write so the LUN-reset ORB retires and frees its
+    // allocation (it may have reused the command ORB's freed address slot).
+    ASSERT_TRUE(rig.bus.CompleteWrite(lunResetWrite.handle, ASFW::Async::AsyncStatus::kTimeout));
 
     uint32_t ignored = 0;
     EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
@@ -429,14 +437,16 @@ TEST(SessionRegistryTests, RejectsSessionOperationsFromNonOwningClient) {
     EXPECT_FALSE(rig.registry.GetCommandResult(SessionRegistryRig::OtherOwner(), handle).has_value());
     EXPECT_TRUE(rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle).has_value());
 
+    // Drain the first command's pending ORB_POINTER write so the fetch agent
+    // is free before the next submit.
+    for (int i = 0; i < 8 && rig.bus.PendingWriteCount() > 0; ++i) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
     ASSERT_TRUE(rig.registry.SubmitInquiry(SessionRegistryRig::Owner(), handle, 36));
-    // Doorbell model: the 2nd command's ORB address lives in the previous
-    // (anchor) ORB's next_ORB field; the last bus write is the doorbell.
-    const uint64_t inquiryOrbAddress = ComposeAddress(
-        static_cast<uint16_t>(OSSwapBigToHostInt32(
-                                  ReadQuadlet(rig.addressManager, commandOrbAddress)) &
-                              0xFFFFu),
-        OSSwapBigToHostInt32(ReadQuadlet(rig.addressManager, commandOrbAddress + 4)));
+    // Immediate model: the 2nd command is announced with its own ORB_POINTER
+    // write — its address is in the last bus write's payload.
+    const uint64_t inquiryOrbAddress =
+        DecodeAddressFromWritePayload(rig.bus.WriteAt(rig.bus.WriteCount() - 1).data);
     StatusBlock inquiryStatus{};
     inquiryStatus.details = 0;
     inquiryStatus.sbpStatus = SBPStatus::kRequestAborted;

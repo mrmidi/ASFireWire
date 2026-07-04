@@ -354,12 +354,10 @@ TEST(SBP2HandlerTests, HandlerReturnsLargeResultViaOutputDescriptor) {
         ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
     }
     ASSERT_TRUE(rig.registry.SubmitCommand(HandlerRig::Owner(), handle, request));
-    // Doorbell model: the 2nd command is linked into the previous (anchor)
-    // ORB's next_ORB field and announced with a doorbell write — its address
-    // is read from the anchor, not from the last bus write.
-    const uint64_t orb2 = ReadORBAddress(rig.addressManager, commandOrbAddress,
-                                         offsetof(NormalORB, nextORBAddressHi),
-                                         offsetof(NormalORB, nextORBAddressLo));
+    // Immediate model: the 2nd command is announced with its own ORB_POINTER
+    // write — its address is in the last bus write's payload.
+    const uint64_t orb2 =
+        DecodeAddressFromWritePayload(rig.bus.WriteAt(rig.bus.WriteCount() - 1).data);
     StatusBlock status2 = status;
     status2.orbOffsetHi = OSSwapHostToBigInt16(static_cast<uint16_t>((orb2 >> 32) & 0xFFFFu));
     status2.orbOffsetLo = OSSwapHostToBigInt32(static_cast<uint32_t>(orb2 & 0xFFFF'FFFFu));

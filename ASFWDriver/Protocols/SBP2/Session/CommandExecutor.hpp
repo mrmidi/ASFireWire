@@ -79,8 +79,10 @@ public:
 
     // Submit a task-management recovery ORB (abort task set / LU reset / target
     // reset). Returns false if not logged in, one is already in flight, or the
-    // function is unsupported.
-    [[nodiscard]] bool SubmitTaskManagement(SBP2ManagementORB::Function function);
+    // function is unsupported. onComplete (optional) fires when the management
+    // ORB completes, regardless of its outcome.
+    [[nodiscard]] bool SubmitTaskManagement(SBP2ManagementORB::Function function,
+                                            std::function<void()> onComplete = {});
 
     // Bus reset: fail the active command (synthetic aborted result) and drop the
     // management ORB. The FetchAgent is unbound by LoginSession separately.

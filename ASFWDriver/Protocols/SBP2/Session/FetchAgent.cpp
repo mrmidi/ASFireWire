@@ -330,17 +330,7 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) 
         scheduler_.Cancel(entry.timeoutToken);
     }
 
-    // Dead bit set → the target's fetch agent is DEAD and ignores ORB_POINTER
-    // writes until reset. Revive it BEFORE completing the command: the AT
-    // request FIFO then serializes the reset ahead of any ORB_POINTER the
-    // completion path submits next. Mirrors Linux complete_command_orb →
-    // sbp2_agent_reset_no_wait.
-    if (block.DeadBit() != 0) {
-        ASFW_LOG(Async, "FetchAgent::OnStatusBlock: agent DEAD (resp=%u sbp=0x%02x) — reset",
-                 block.Response(), block.sbpStatus);
-        ResetNoWait();
-    }
-
+    SBP2CommandORB::CompletionCallback cb;
     if (entry.orb != nullptr) {
         // Keep chainTailORB_ pointing at the completed ORB: it is the link
         // anchor for the NEXT command's next_ORB + doorbell (Apple keeps
@@ -356,10 +346,33 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) 
             const uint32_t dataLen = length - 8 > 24 ? 24 : length - 8;
             entry.orb->SetCompletionStatusData(std::span<const uint8_t>{raw + 8, dataLen});
         }
-        auto cb = entry.orb->GetCompletionCallback();
-        if (cb) {
-            cb(0, block.sbpStatus);
-        }
+        cb = entry.orb->GetCompletionCallback();
+    }
+
+    // Dead bit set → the target's fetch agent is DEAD and ignores ORB_POINTER
+    // writes until reset. Revive it and complete the command only once the
+    // reset write has completed: Apple's transport waits for
+    // FetchAgentResetComplete before CompleteSCSITask
+    // (IOFireWireSerialBusProtocolTransport.cpp:1455) — completing early lets
+    // the initiator's next command race the firmware's reset processing.
+    // The deferred callback is safe against teardown: CommandExecutor's
+    // completion lambda guards on its own lifetime token and active-ORB match.
+    if (block.DeadBit() != 0) {
+        ASFW_LOG(Async,
+                 "FetchAgent::OnStatusBlock: agent DEAD (resp=%u sbp=0x%02x) — reset, "
+                 "completion deferred",
+                 block.Response(), block.sbpStatus);
+        const uint8_t sbpStatus = block.sbpStatus;
+        ResetNoWait([cb, sbpStatus]() {
+            if (cb) {
+                cb(0, sbpStatus);
+            }
+        });
+        return true;
+    }
+
+    if (cb) {
+        cb(0, block.sbpStatus);
     }
     return true;
 }
@@ -405,8 +418,11 @@ void FetchAgent::Reset(std::function<void(int)> callback) noexcept {
     }
 }
 
-void FetchAgent::ResetNoWait() noexcept {
+void FetchAgent::ResetNoWait(std::function<void()> onComplete) noexcept {
     if (!bound_) {
+        if (onComplete) {
+            onComplete();
+        }
         return;
     }
     // Agent leaves the suspended chain — next submit must use ORB_POINTER.
@@ -420,12 +436,18 @@ void FetchAgent::ResetNoWait() noexcept {
         binding_.agentResetAddress,
         0,
         TargetSpeed(),
-        [](Async::AsyncStatus status, std::span<const uint8_t>) {
+        [onComplete](Async::AsyncStatus status, std::span<const uint8_t>) {
             ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) complete status=%d",
                      static_cast<int>(status));
+            if (onComplete) {
+                onComplete();
+            }
         });
     if (!handle) {
         ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) WriteQuad submit FAILED");
+        if (onComplete) {
+            onComplete();
+        }
     }
 }
 
