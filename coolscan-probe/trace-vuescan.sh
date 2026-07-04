@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fanger SBP-2/HBA-trace mens VueScan kjører. Start før Preview, stopp med Ctrl-C
-# eller `pkill -f "log stream"` etterpå. Kjøres via «!»-prefiks.
+# Captures SBP-2/HBA trace while VueScan runs. Start before Preview, stop with Ctrl-C
+# or `pkill -f "log stream"` afterwards. Run via "!" prefix.
 set -u
 OUT=/tmp/vuescan_trace.log
 exec log stream --info --debug --style compact \

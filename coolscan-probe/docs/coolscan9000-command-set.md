@@ -1,115 +1,115 @@
-# CoolScan 9000 ED — SCSI-kommandosett (kartlagt fra SANE coolscan3)
+# CoolScan 9000 ED — SCSI command set (mapped from SANE coolscan3)
 
-Denne dokumentet kartlegger SCSI-kommandosettet en CoolScan-skanner bruker, basert
-på en gjennomgang av SANE-backenden `coolscan3.c` (3191 linjer, GPL). Alle kommandoer
-sendes som rå CDB-er gjennom `SBP2Session.sendSCSI(...)` i denne proben — det er den
-eneste «limen» som mangler mellom ASFireWires SBP-2-transport og en fungerende skanner.
+This document maps the SCSI command set a CoolScan scanner uses, based
+on a review of the SANE backend `coolscan3.c` (3191 lines, GPL). All commands
+are sent as raw CDBs through `SBP2Session.sendSCSI(...)` in this probe — that is the
+only "glue" missing between ASFireWire's SBP-2 transport and a working scanner.
 
-> **Kilde:** `sane-backends/backend/coolscan3.c`. Backenden bygger CDB-er med
-> `cs3_parse_cmd(s, "hex hex …")` og fyller inn verdier med `cs3_pack_byte/word/long`.
-> **Alle flerbyte-felter er big-endian** (SCSI-konvensjon) — kritisk for vår port.
-
----
-
-## ⚠️ Tre funn som påvirker 9000 spesielt
-
-1. **coolscan3 støtter IKKE LS-9000 eksplisitt.** Type-enumet stopper på `CS3_TYPE_LS8000`,
-   og ukjent produktstreng gir `SANE_STATUS_UNSUPPORTED`. Produktmatchingen er rene
-   strengsammenligninger på 16-tegns strenger (`"LS-8000 ED      "`).
-   **9000 er nær identisk med 8000** (begge mellomformat, samme kommandofamilie), så
-   porten legger til en `LS-9000`-gren som arver 8000-oppførsel. **Go/no-go-probens
-   INQUIRY gir oss den eksakte produktstrengen 9000 rapporterer** — vi matcher på den.
-
-2. **Digital ICE er ikke implementert i SANE.** Backenden leverer kun den rå
-   **infrarøde 4. kanalen** (`n_colors = 4`, fargekode `0x09`). Selve støvfjerningen
-   gjøres ikke her (VueScan gjør det i programvare). Vår MVP leverer IR-kanalen rå;
-   ICE-algoritme er et separat, senere steg.
-
-3. **Multi-sampling snittes host-side.** Ved `samples_per_scan > 1` leser backenden
-   `xfer_len_in *= samples_per_scan` byte (N hele rammer) og **midler dem i programvare**.
-   Skanneren leverer altså N rå pass; vi står for snittingen.
+> **Source:** `sane-backends/backend/coolscan3.c`. The backend builds CDBs with
+> `cs3_parse_cmd(s, "hex hex …")` and fills in values with `cs3_pack_byte/word/long`.
+> **All multi-byte fields are big-endian** (SCSI convention) — critical for our port.
 
 ---
 
-## Opcode-oversikt
+## ⚠️ Three findings that affect the 9000 specifically
 
-| Opcode | CDB-lengde | Kommando | Retning | Bruk |
+1. **coolscan3 does NOT support the LS-9000 explicitly.** The type enum stops at `CS3_TYPE_LS8000`,
+   and an unknown product string yields `SANE_STATUS_UNSUPPORTED`. Product matching is plain
+   string comparison on 16-character strings (`"LS-8000 ED      "`).
+   **The 9000 is nearly identical to the 8000** (both medium format, same command family), so
+   the port adds an `LS-9000` branch inheriting 8000 behavior. **The go/no-go probe's
+   INQUIRY gives us the exact product string the 9000 reports** — we match on that.
+
+2. **Digital ICE is not implemented in SANE.** The backend only delivers the raw
+   **infrared 4th channel** (`n_colors = 4`, color code `0x09`). The actual dust removal
+   is not done here (VueScan does it in software). Our MVP delivers the IR channel raw;
+   the ICE algorithm is a separate, later step.
+
+3. **Multi-sampling is averaged host-side.** With `samples_per_scan > 1` the backend reads
+   `xfer_len_in *= samples_per_scan` bytes (N whole frames) and **averages them in software**.
+   The scanner thus delivers N raw passes; we do the averaging.
+
+---
+
+## Opcode overview
+
+| Opcode | CDB length | Command | Direction | Use |
 |--------|-----------|----------|---------|------|
-| `0x00` | 6 | TEST UNIT READY | none | Status-polling (`scanner_ready`) |
-| `0x03` | 6 | REQUEST SENSE | in | Hente status/feilbits |
-| `0x12` | 6 | INQUIRY (std + EVPD-sider) | in | Identifikasjon + kapabilitetssider |
-| `0x15` | 6 | MODE SELECT(6) | out | Sette base-oppløsningsenhet |
-| `0x16` | 6 | RESERVE UNIT | none | Reservere skanneren |
-| `0x17` | 6 | RELEASE UNIT | none | Frigi skanneren |
-| `0x1a` | 6 | MODE SENSE(6) | in | Lese moduser |
-| `0x1b` | 6 | SCAN | none | Starte skann (lister fargekanaler) |
-| `0x24` | 10 | SET WINDOW | out | Skannevindu (per farge) — **den store** |
-| `0x25` | 10 | GET WINDOW | in | Lese tilbake vindu/eksponering |
-| `0x28` | 10 | READ(10) | in | Hente bildedata |
-| `0x2a` | 10 | WRITE(10) | out | LUT-nedlasting + ramme-grenser |
-| `0xc0` | 6 | (vendor) status/fase | — | Fase-sjekk |
-| `0xc1` | 6 | (vendor) EXECUTE / sideinquiry | varierer | Trigge utførelse; lese Nikon-sider |
-| `0xe0` | 10 | (vendor) SET | out | Fokus, autofokus, load/eject/reset |
-| `0xe1` | 10 | (vendor) GET | in | Lese fokus m.m. |
+| `0x00` | 6 | TEST UNIT READY | none | Status polling (`scanner_ready`) |
+| `0x03` | 6 | REQUEST SENSE | in | Fetch status/error bits |
+| `0x12` | 6 | INQUIRY (std + EVPD pages) | in | Identification + capability pages |
+| `0x15` | 6 | MODE SELECT(6) | out | Set base resolution unit |
+| `0x16` | 6 | RESERVE UNIT | none | Reserve the scanner |
+| `0x17` | 6 | RELEASE UNIT | none | Release the scanner |
+| `0x1a` | 6 | MODE SENSE(6) | in | Read modes |
+| `0x1b` | 6 | SCAN | none | Start scan (lists color channels) |
+| `0x24` | 10 | SET WINDOW | out | Scan window (per color) — **the big one** |
+| `0x25` | 10 | GET WINDOW | in | Read back window/exposure |
+| `0x28` | 10 | READ(10) | in | Fetch image data |
+| `0x2a` | 10 | WRITE(10) | out | LUT download + frame boundaries |
+| `0xc0` | 6 | (vendor) status/phase | — | Phase check |
+| `0xc1` | 6 | (vendor) EXECUTE / page inquiry | varies | Trigger execution; read Nikon pages |
+| `0xe0` | 10 | (vendor) SET | out | Focus, autofocus, load/eject/reset |
+| `0xe1` | 10 | (vendor) GET | in | Read focus etc. |
 
 ---
 
-## Konkrete CDB-er (verifisert mot coolscan3)
+## Concrete CDBs (verified against coolscan3)
 
-Alle eksempler er nøyaktige byte-sekvenser fra backenden. `‹word›`=2 byte BE,
-`‹long›`=4 byte BE.
+All examples are exact byte sequences from the backend. `‹word›`=2 bytes BE,
+`‹long›`=4 bytes BE.
 
-### Status / livssyklus
+### Status / lifecycle
 ```
 TEST UNIT READY   00 00 00 00 00 00                      (none)
 RESERVE UNIT      16 00 00 00 00 00                      (none)
 RELEASE UNIT      17 00 00 00 00 00                      (none)
-EXECUTE (trigger) c1 00 00 00 00 00                      (none)   // etter set-param-kmd
+EXECUTE (trigger) c1 00 00 00 00 00                      (none)   // after set-param cmd
 LOAD medium       e0 00 d1 00 00 00 00 00 0d 00 + 13B    (out)
 EJECT medium      e0 00 d0 00 00 00 00 00 0d 00 + 13B    (out)
 RESET             e0 00 80 00 00 00 00 00 0d 00 + 13B    (out)
 ```
 
-### Identifikasjon
+### Identification
 ```
-INQUIRY (std)     12 00 00 00 ‹len› 00                   (in, len byte)
-INQUIRY (EVPD)    12 01 ‹page› 00 ‹len› 00               (in)   // page 0xC1 = Nikon-kapabiliteter
+INQUIRY (std)     12 00 00 00 ‹len› 00                   (in, len bytes)
+INQUIRY (EVPD)    12 01 ‹page› 00 ‹len› 00               (in)   // page 0xC1 = Nikon capabilities
 ```
-`scanner_ready` = løkke av TEST UNIT READY (med REQUEST SENSE for statusbits) til
-relevante bits er 0, 120 s timeout.
+`scanner_ready` = loop of TEST UNIT READY (with REQUEST SENSE for status bits) until
+the relevant bits are 0, 120 s timeout.
 
-### MODE SELECT — sett base-oppløsningsenhet
-Byte-eksakt fra `cs3_mode_select`. Parameterlisten er en velformet SCSI-liste:
-4-byte header (block-descriptor-length = `0x08` på **offset 3**) + 8-byte block
-descriptor + mode page (kode `0x03`, lengde `0x06`) med `unit_dpi` på offset 16–17.
+### MODE SELECT — set base resolution unit
+Byte-exact from `cs3_mode_select`. The parameter list is a well-formed SCSI list:
+4-byte header (block-descriptor-length = `0x08` at **offset 3**) + 8-byte block
+descriptor + mode page (code `0x03`, length `0x06`) with `unit_dpi` at offset 16–17.
 ```
-CDB (6B):    15 10 00 00 14 00                 (param-lengde 0x14 = 20)
+CDB (6B):    15 10 00 00 14 00                 (param length 0x14 = 20)
 param (20B): 00 00 00 08 | 00 00 00 00 00 00 00 01 | 03 06 00 00 ‹unit_dpi:word› 00 00
              └ header ──┘ └ block descriptor ────┘ └ mode page 0x03/len 0x06 ───────┘
 ```
-⚠️ `0x08` MÅ ligge på offset 3 (block-descriptor-length), ikke offset 4. En tidligere
-håndtranskripsjon skjøv `0x08` til offset 4 og droppet hale-`00 00` → 9000 svarer
-CHECK CONDITION `0x5/0x26` (INVALID FIELD IN PARAMETER LIST). coolscan3 sender RESERVE
-UNIT (`16 …`) i `sane_open()` *før* MODE SELECT.
+⚠️ `0x08` MUST be at offset 3 (block-descriptor-length), not offset 4. An earlier
+hand transcription shifted `0x08` to offset 4 and dropped the trailing `00 00` → the 9000 responds
+CHECK CONDITION `0x5/0x26` (INVALID FIELD IN PARAMETER LIST). coolscan3 sends RESERVE
+UNIT (`16 …`) in `sane_open()` *before* MODE SELECT.
 
-### Fokus
+### Focus
 ```
 SET FOCUS    e0 00 c1 00 00 00 00 00 09 00 00 ‹focus:long› 00 00 00 00   (out)
 READ FOCUS   e1 00 c1 00 00 00 00 00 0d 00                                (in, 13B)
-             // focus = ((b1<<8|b2)<<16) | (b3<<8|b4)  fra svaret
+             // focus = ((b1<<8|b2)<<16) | (b3<<8|b4)  from the response
 AUTOFOCUS    e0 00 a0 00 00 00 00 00 09 00 00 ‹focusx:long› ‹focusy:long› (out)
 ```
 
-### SET WINDOW (0x24) — 58-byte vindusdeskriptor, sendes **per farge**
+### SET WINDOW (0x24) — 58-byte window descriptor, sent **per color**
 CDB (10B): `24 00 00 00 00 00 00 00 3a 00` (byte8 `0x3a`=58 transfer; byte9 `0x80` for
-LS40/4000/50/5000, ellers `0x00`). Deretter 58 byte:
+LS40/4000/50/5000, otherwise `0x00`). Then 58 bytes:
 
-| Offset | Felt | Verdi |
+| Offset | Field | Value |
 |--------|------|-------|
-| 0–7 | header | `00 00 00 00 00 00 00 32` (0x32=50 = deskriptorlengde) |
+| 0–7 | header | `00 00 00 00 00 00 00 32` (0x32=50 = descriptor length) |
 | 8 | color id | `cs3_colors[color]` (R/G/B/IR = 1/2/3/9) |
 | 9 | — | `00` |
-| 10–11 | resx | ‹word› (device-enheter) |
+| 10–11 | resx | ‹word› (device units) |
 | 12–13 | resy | ‹word› |
 | 14–17 | x-offset | ‹long› |
 | 18–21 | y-offset | ‹long› |
@@ -117,7 +117,7 @@ LS40/4000/50/5000, ellers `0x00`). Deretter 58 byte:
 | 26–29 | height | ‹long› |
 | 30–32 | brightness/contrast | `00 00 00` |
 | 33 | image composition | `05` |
-| 34 | bit-dybde | `real_depth` (8/14/16) |
+| 34 | bit depth | `real_depth` (8/14/16) |
 | 35–47 | — | 13× `00` |
 | 48 | multiread/ordering | `(samples_per_scan-1) << 4` |
 | 49 | averaging + pos/neg | `0x80 | (negative ? 0 : 1)` |
@@ -125,114 +125,114 @@ LS40/4000/50/5000, ellers `0x00`). Deretter 58 byte:
 | 51 | scanning mode | `02` single / `10` multi |
 | 52 | color interleaving | `02` |
 | 53 | (AE) | `ff` |
-| 54–57 | eksponering | ‹long› (×10 ns) — eller `00 00 00 00` for IR |
+| 54–57 | exposure | ‹long› (×10 ns) — or `00 00 00 00` for IR |
 
-### SCAN (0x1b) — etter at alle vinduer er satt
+### SCAN (0x1b) — after all windows are set
 ```
-RGB    1b 00 00 00 03 00 01 02 03        (none)   // 3 farger + fargekoder
-RGBI   1b 00 00 00 04 00 01 02 03 09     (none)   // 4 farger inkl. IR (0x09)
+RGB    1b 00 00 00 03 00 01 02 03        (none)   // 3 colors + color codes
+RGBI   1b 00 00 00 04 00 01 02 03 09     (none)   // 4 colors incl. IR (0x09)
 ```
 
-### GET WINDOW (0x25) — les tilbake eksponering, per farge
+### GET WINDOW (0x25) — read back exposure, per color
 ```
 25 01 00 00 00 ‹color› 00 00 3a 00       (in, 58B)
-// eksponering = bytes[54..57] som long
+// exposure = bytes[54..57] as long
 ```
 
-### READ bildedata (0x28)
+### READ image data (0x28)
 ```
-28 00 00 00 00 00 ‹xfer:3B BE› 00        (in, xfer byte)
-// xfer_len_in *= samples_per_scan før lesing (multi-sample = N rammer)
-```
-
-### LUT-nedlasting (0x2a, ved normal-skann) — per farge
-```
-2a 00 03 00 ‹color› 01 ‹2*n_lut:3B BE› 00 + LUT-data(‹word› per punkt)   (out)
+28 00 00 00 00 00 ‹xfer:3B BE› 00        (in, xfer bytes)
+// xfer_len_in *= samples_per_scan before reading (multi-sample = N frames)
 ```
 
-### Ramme-grenser (0x2a, mellomformat multi-ramme — viktig for 8000/9000)
+### LUT download (0x2a, for normal scan) — per color
 ```
-2a 00 88 00 00 03 ‹(4+n_frames*16):3B BE› 00 + grensedata               (out)
+2a 00 03 00 ‹color› 01 ‹2*n_lut:3B BE› 00 + LUT data(‹word› per point)   (out)
+```
+
+### Frame boundaries (0x2a, medium-format multi-frame — important for 8000/9000)
+```
+2a 00 88 00 00 03 ‹(4+n_frames*16):3B BE› 00 + boundary data             (out)
 ```
 
 ---
 
-## Full skannesekvens (`cs3_scan`)
+## Full scan sequence (`cs3_scan`)
 
-> **UTDATERT for 9000:** VueScan-capturen (`capture/DECODED.md`) viser at den
-> ekte sekvensen verken bruker SET BOUNDARY eller MODE SELECT, sender SCAN-listen
-> som data-OUT, og bruker kontrollbyte 0x80 på SET WINDOW/READ. Følg DECODED.md;
-> lista under er coolscan3s (delvis feilaktige) rekonstruksjon.
+> **OUTDATED for the 9000:** The VueScan capture (`capture/DECODED.md`) shows the
+> real sequence uses neither SET BOUNDARY nor MODE SELECT, sends the SCAN list
+> as data-OUT, and uses control byte 0x80 on SET WINDOW/READ. Follow DECODED.md;
+> the list below is coolscan3's (partly incorrect) reconstruction.
 
-1. `scanner_ready` (vent til dokument klart)
-2. **convert_options** — beregn geometri (host-side, ingen kommando)
-3. **SET BOUNDARY** (`2a 00 88 …`) — ramme-grenser (mellomformat)
+1. `scanner_ready` (wait until document ready)
+2. **convert_options** — compute geometry (host-side, no command)
+3. **SET BOUNDARY** (`2a 00 88 …`) — frame boundaries (medium format)
 4. **SET FOCUS** (`e0 00 c1 …`)
 5. `scanner_ready`
-6. **SEND LUT** (`2a 00 03 …`, kun ved normal-skann)
-7. **SET WINDOW** (`24 …`) — én gang per farge (3 eller 4)
-8. **GET WINDOW** (`25 …`) — les eksponering tilbake
+6. **SEND LUT** (`2a 00 03 …`, only for normal scan)
+7. **SET WINDOW** (`24 …`) — once per color (3 or 4)
+8. **GET WINDOW** (`25 …`) — read exposure back
 9. **SCAN** (`1b …`)
-10. Løkke: **READ(10)** (`28 …`) til alle linjer er hentet → sett sammen til bilde
+10. Loop: **READ(10)** (`28 …`) until all lines are fetched → assemble into image
 
-Etterbehandling host-side: multi-sample-snitting, bit-shift (`shift_bits`), evt.
-LUT, og (senere) ICE-støvfjerning fra IR-kanalen → skriv TIFF.
+Host-side post-processing: multi-sample averaging, bit shift (`shift_bits`), optional
+LUT, and (later) ICE dust removal from the IR channel → write TIFF.
 
 ---
 
-## Hvordan dette mapper til vår probe
+## How this maps to our probe
 
-`SBP2Session.sendSCSI(cdb:direction:transferLength:outgoing:)` dekker alle mønstrene:
-- 6/10-byte CDB → `cdb`-array
-- data inn (INQUIRY/READ/GET WINDOW) → `direction: .fromTarget`, `transferLength: N`
-- data ut (SET WINDOW/MODE SELECT/LUT/vendor SET) → `direction: .toTarget`, `outgoing: [...]`
-- ingen data (TUR/SCAN/RESERVE/EXECUTE) → `direction: .none`
+`SBP2Session.sendSCSI(cdb:direction:transferLength:outgoing:)` covers all the patterns:
+- 6/10-byte CDB → `cdb` array
+- data in (INQUIRY/READ/GET WINDOW) → `direction: .fromTarget`, `transferLength: N`
+- data out (SET WINDOW/MODE SELECT/LUT/vendor SET) → `direction: .toTarget`, `outgoing: [...]`
+- no data (TUR/SCAN/RESERVE/EXECUTE) → `direction: .none`
 
-Se `Sources/CoolScanProbe/CoolScan.swift` for kommandobyggerne (skjelett, klart for
-testing når go/no-go er bestått).
+See `Sources/CoolScanProbe/CoolScan.swift` for the command builders (skeleton, ready for
+testing once go/no-go has passed).
 
-## Geometri-modell (fra `cs3_convert_options`, brukt i proben)
+## Geometry model (from `cs3_convert_options`, used in the probe)
 
-SET WINDOW uttrykker **offset/bredde/høyde i device-units (1/`resx_max`″ = 1/4000″)** og
-**oppløsning som absolutt dpi**. coolscan3 setter måleenheten med MODE SELECT
-(`unit_dpi = resx_max`) *før* SET WINDOW. Beregningen:
+SET WINDOW expresses **offset/width/height in device units (1/`resx_max`″ = 1/4000″)** and
+**resolution as absolute dpi**. coolscan3 sets the measurement unit with MODE SELECT
+(`unit_dpi = resx_max`) *before* SET WINDOW. The computation:
 
 ```
-pitchX        = resx_max / real_resx          (heltall → res snapper til divisor av 4000)
-real_resx     = resx_max / pitchX             (f.eks. 500→pitch 8→500; 1500→pitch 2→2000)
-logical_width = (xmax - xmin + 1) / pitchX    (= antall utdata-piksler)
-real_width    = logical_width * pitchX        (= bredde i device-units, sendt i SET WINDOW)
-real_xoffset  = xmin                          (device-units)
+pitchX        = resx_max / real_resx          (integer → res snaps to a divisor of 4000)
+real_resx     = resx_max / pitchX             (e.g. 500→pitch 8→500; 1500→pitch 2→2000)
+logical_width = (xmax - xmin + 1) / pitchX    (= number of output pixels)
+real_width    = logical_width * pitchX        (= width in device units, sent in SET WINDOW)
+real_xoffset  = xmin                          (device units)
 ```
 
-READ(10) leverer en **byte-strøm**; per linje ligger alle fargeplan etter hverandre
-(linje-sekvensiell planar, rekkefølge R,G,B[,IR]):
+READ(10) delivers a **byte stream**; per line all color planes follow one another
+(line-sequential planar, order R,G,B[,IR]):
 
 ```
 bytes_per_line = n_colors * (logical_width * bytes_per_pixel + odd_padding)
 total          = bytes_per_line * logical_height
-bytes_per_pixel = (depth > 8) ? 2 : 1     // 14-bit pakkes i 16-bit container
+bytes_per_pixel = (depth > 8) ? 2 : 1     // 14-bit packed in 16-bit container
 ```
 
-Implementert i `CoolScan.geometry(...)` / `CoolScan.scanFrame(...)`. Probe-modus:
-`CoolScanProbe scan [dpi]` (default 500 dpi) kjører
-**waitReady → MODE SELECT → SET WINDOW×farge → SCAN → READ(10)-løkke** og lagrer rå
-strøm + sidecar (`coolscan-…​.raw` / `.txt`) for offline-inspeksjon før vi binder oss
-til en TIFF-writer.
+Implemented in `CoolScan.geometry(...)` / `CoolScan.scanFrame(...)`. Probe mode:
+`CoolScanProbe scan [dpi]` (default 500 dpi) runs
+**waitReady → MODE SELECT → SET WINDOW×color → SCAN → READ(10) loop** and saves the raw
+stream + sidecar (`coolscan-…​.raw` / `.txt`) for offline inspection before we commit
+to a TIFF writer.
 
-## Åpne spørsmål (krever maskinvare å avklare)
-- ~~Eksakt produktstreng 9000 rapporterer~~ → bekreftet (LS-9000 ED, go/no-go bestått).
-- ~~Innhold i `0xC1` på 9000~~ → kartlagt (se felt-tabell over).
-- Statusbit-tolkning fra REQUEST SENSE på 9000 (når den er «ikke klar»).
-- **Trengs SEND LUT (`2a 00 03`) før READ?** Proben hopper over LUT — hvis skanneren
-  nekter å levere data uten, er det første som må legges til.
-- **Ramme-offset for FH-835S:** proben skanner hele `boundary`-arealet (hele apertur-
-  vinduet) — vi henter ennå ikke ut per-ramme-posisjon. Greit for første proof; en
-  stripe-skann viser rutene og lar oss kalibrere offset.
-- **Faktisk byte/farge-layout** i READ-strømmen (interleave + byte-rekkefølge) —
-  antatt linje-sekvensiell 16-bit BE; bekreftes mot første ekte `.raw` før TIFF.
-- SET FOCUS / autofokus hoppes over i v1 (bildet kan bli mykt, men piksler kommer).
-- Om 9000 trenger ekstra init utover 8000 (f.eks. medium-holder/adapter-deteksjon).
+## Open questions (require hardware to resolve)
+- ~~Exact product string the 9000 reports~~ → confirmed (LS-9000 ED, go/no-go passed).
+- ~~Contents of `0xC1` on the 9000~~ → mapped (see field table above).
+- Status bit interpretation from REQUEST SENSE on the 9000 (when it is "not ready").
+- **Is SEND LUT (`2a 00 03`) needed before READ?** The probe skips the LUT — if the scanner
+  refuses to deliver data without it, that is the first thing to add.
+- **Frame offset for the FH-835S:** the probe scans the whole `boundary` area (the whole
+  aperture window) — we do not yet extract per-frame position. Fine for a first proof; a
+  strip scan shows the frames and lets us calibrate the offset.
+- **Actual byte/color layout** in the READ stream (interleave + byte order) —
+  assumed line-sequential 16-bit BE; to be confirmed against the first real `.raw` before TIFF.
+- SET FOCUS / autofocus is skipped in v1 (the image may be soft, but pixels will arrive).
+- Whether the 9000 needs extra init beyond the 8000 (e.g. medium holder/adapter detection).
 
 ## EVPD 0xC1 — Nikon capability page (hardware capture, LS-9000 ED rev 1.02)
 

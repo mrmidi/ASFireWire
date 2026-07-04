@@ -11,7 +11,7 @@ import Foundation
 func hexDump(_ d: Data, max: Int = 64) -> String {
     let slice = d.prefix(max)
     let hex = slice.map { String(format: "%02x", $0) }.joined(separator: " ")
-    return d.count > max ? "\(hex) … (+\(d.count - max) byte)" : hex
+    return d.count > max ? "\(hex) … (+\(d.count - max) bytes)" : hex
 }
 
 func run() -> Int32 {
@@ -22,7 +22,7 @@ func run() -> Int32 {
     let conn: ASFWConnection
     do {
         conn = try ASFWConnection()
-        print("✅ Koblet til «\(ASFW.serviceName)» user client.")
+        print("✅ Connected to «\(ASFW.serviceName)» user client.")
     } catch {
         print("❌ \(error)")
         return 2
@@ -33,20 +33,20 @@ func run() -> Int32 {
     do {
         devices = try Discovery.enumerate(conn)
     } catch {
-        print("❌ Enumerering feilet: \(error)")
+        print("❌ Enumeration failed: \(error)")
         return 3
     }
 
     guard !devices.isEmpty else {
         print("""
-        ⚠️  Ingen FireWire-enheter funnet.
-            Sjekk: TB→FW-adapter tilkoblet, 9000 påslått, kabel i orden,
-            og at bussen har kommet opp (Self-ID) i ASFireWire-loggen.
+        ⚠️  No FireWire devices found.
+            Check: TB→FW adapter connected, 9000 powered on, cable OK,
+            and that the bus has come up (Self-ID) in the ASFireWire log.
         """)
         return 4
     }
 
-    print("\nFant \(devices.count) enhet(er):")
+    print("\nFound \(devices.count) device(s):")
     for dev in devices {
         print("  • \(dev.guidString)  node=\(dev.nodeId)  «\(dev.vendorName)» / «\(dev.modelName)»  units=\(dev.units.count)")
         for u in dev.units {
@@ -58,10 +58,10 @@ func run() -> Int32 {
     // 3) Pick the first SBP-2 target (the CoolScan).
     guard let device = devices.first(where: { !$0.sbp2Units.isEmpty }),
           let unit = device.sbp2Units.first else {
-        print("\n⚠️  Ingen SBP-2-enhet (skanner/storage) på bussen. CoolScan logger inn som SBP-2 — sjekk at den er påslått.")
+        print("\n⚠️  No SBP-2 device (scanner/storage) on the bus. CoolScan logs in as SBP-2 — check that it is powered on.")
         return 5
     }
-    print("\n→ Bruker SBP-2-target \(device.guidString) (LUN \(unit.lun)).")
+    print("\n→ Using SBP-2 target \(device.guidString) (LUN \(unit.lun)).")
 
     // 4) Log in.
     let session: SBP2Session
@@ -69,7 +69,7 @@ func run() -> Int32 {
         session = try SBP2Session.login(conn, device: device, unit: unit)
         print("✅ SBP-2 login OK (handle=0x\(String(format: "%llx", session.handle))).")
     } catch {
-        print("❌ Login feilet: \(error)")
+        print("❌ Login failed: \(error)")
         return 6
     }
     defer { session.release() }
@@ -86,21 +86,21 @@ func run() -> Int32 {
             print("\n🎉 INQUIRY OK:\n   \(SCSI.describeInquiry(r.payload))")
             print("   raw: \(hexDump(r.payload))")
         } else {
-            print("\n⚠️  INQUIRY kom gjennom, men status ikke OK (transport=\(r.transportStatus) sbp=\(r.sbpStatus)).")
+            print("\n⚠️  INQUIRY went through, but status not OK (transport=\(r.transportStatus) sbp=\(r.sbpStatus)).")
             if !r.sense.isEmpty { print("   sense: \(hexDump(r.sense))") }
         }
     } catch {
-        print("❌ INQUIRY feilet: \(error)")
+        print("❌ INQUIRY failed: \(error)")
         return 7
     }
 
     // 6) TEST UNIT READY — is the scanner spun up / ready?
     do {
         let r = try SCSI.testUnitReady(session)
-        print("\nTEST UNIT READY: transport=\(r.transportStatus) sbp=\(r.sbpStatus) \(r.ok ? "(klar ✅)" : "(ikke klar — sjekk sense)")")
+        print("\nTEST UNIT READY: transport=\(r.transportStatus) sbp=\(r.sbpStatus) \(r.ok ? "(ready ✅)" : "(not ready — check sense)")")
         if !r.ok && !r.sense.isEmpty { print("   sense: \(hexDump(r.sense))") }
     } catch {
-        print("⚠️  TEST UNIT READY feilet: \(error)")
+        print("⚠️  TEST UNIT READY failed: \(error)")
     }
 
     // CHAINTEST mode: isolate WHY command #3 (the 2nd doorbell) fails. Every run
@@ -116,13 +116,13 @@ func run() -> Int32 {
     //   • cmd5/cmd7 (INQUIRY) ok    ⇒ data-IN works in a chain ⇒ the bug is
     //                                  specifically data-OUT inside a doorbell chain.
     if CommandLine.arguments.contains("chaintest") {
-        print("\n=== CHAINTEST: doorbell-chain depth (cmd1=INQUIRY, cmd2=TUR allerede gjort) ===")
-        print("Hver kommando under forlenger doorbell-kjeden med én. Vi vil vite HVOR den knekker.\n")
+        print("\n=== CHAINTEST: doorbell-chain depth (cmd1=INQUIRY, cmd2=TUR already done) ===")
+        print("Each command below extends the doorbell chain by one. We want to know WHERE it breaks.\n")
         func step(_ n: Int, _ label: String, _ body: () throws -> SCSIResult) -> Bool {
             do {
                 let r = try body()
-                let extra = r.payload.count > 0 ? " — \(r.payload.count)B mottatt" : ""
-                print("  cmd\(n) [\(label)]: ✅ fullført (transport=\(r.transportStatus) sbp=\(r.sbpStatus))\(extra)")
+                let extra = r.payload.count > 0 ? " — \(r.payload.count)B received" : ""
+                print("  cmd\(n) [\(label)]: ✅ completed (transport=\(r.transportStatus) sbp=\(r.sbpStatus))\(extra)")
                 if let t = session.lastTransferInfo() {
                     print("       [xfer] \(t.dirLabel) expected=\(t.expectedBytes)B "
                         + "targetWROTE=\(t.targetWroteBytes)B/\(t.targetWroteCalls)x "
@@ -135,17 +135,17 @@ func run() -> Int32 {
             }
         }
         var allOk = true
-        allOk = step(3, "TUR no-data (2. doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
-        allOk = step(4, "TUR no-data (3. doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
-        allOk = step(5, "INQUIRY 96B data-IN i kjede") { try SCSI.inquiry(session, allocation: 96) } && allOk
-        allOk = step(6, "TUR no-data (5. doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
+        allOk = step(3, "TUR no-data (2nd doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
+        allOk = step(4, "TUR no-data (3rd doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
+        allOk = step(5, "INQUIRY 96B data-IN in chain") { try SCSI.inquiry(session, allocation: 96) } && allOk
+        allOk = step(6, "TUR no-data (5th doorbell)")  { try SCSI.testUnitReady(session) }    && allOk
         allOk = step(7, "INQUIRY 36B data-IN")        { try SCSI.inquiry(session, allocation: 36) } && allOk
         print("""
 
-        TOLKNING:
-          • cmd3 (TUR) timeout            ⇒ 2. doorbell knekt for ALLE kommandoer = ren kjede-dybde-bug.
-          • cmd3/cmd4 (TUR) OK            ⇒ no-data-kjeding funker dypt; MODE SELECT-feilen er data-OUT-spesifikk.
-          • cmd5/cmd7 (INQUIRY data-IN) OK ⇒ data-IN funker i kjede ⇒ feilen er spesifikt data-OUT i doorbell-kjede.
+        INTERPRETATION:
+          • cmd3 (TUR) timeout            ⇒ 2nd doorbell broken for ALL commands = pure chain-depth bug.
+          • cmd3/cmd4 (TUR) OK            ⇒ no-data chaining works deep; MODE SELECT failure is data-OUT-specific.
+          • cmd5/cmd7 (INQUIRY data-IN) OK ⇒ data-IN works in chain ⇒ bug is specifically data-OUT in doorbell chain.
         """)
         return allOk ? 0 : 9
     }
@@ -161,12 +161,12 @@ func run() -> Int32 {
         // hiccup doesn't waste a replug. Only retries on THROWN errors, never on a
         // !ok result — the invalid-window probe below MUST keep its CHECK CONDITION.
         func attempt<T>(_ label: String, _ body: () throws -> T) throws -> T {
-            var last: Error = ProbeError("\(label): ingen forsøk")
+            var last: Error = ProbeError("\(label): no attempts")
             for i in 1...4 {
                 do { return try body() }
                 catch {
                     last = error
-                    if i < 4 { print("   ↻ \(label) forsøk \(i) feilet (\(error)); prøver igjen…"); usleep(300_000) }
+                    if i < 4 { print("   ↻ \(label) attempt \(i) failed (\(error)); retrying…"); usleep(300_000) }
                 }
             }
             throw last
@@ -179,7 +179,7 @@ func run() -> Int32 {
                     + "targetWROTE=\(t.targetWroteBytes)B/\(t.targetWroteCalls)x  "
                     + "targetREAD=\(t.targetReadBytes)B/\(t.targetReadCalls)x")
             } else {
-                print("  [xfer \(label)] (ingen dext-info — eldre dext? selector 62 mangler)")
+                print("  [xfer \(label)] (no dext info — older dext? selector 62 missing)")
             }
         }
         do {
@@ -187,14 +187,14 @@ func run() -> Int32 {
             // itself flaky and irrelevant to whether data-OUT lands. Fewer commands
             // before the critical SET WINDOW = fewer chances to derail the test.
             let caps = CoolScan.Capabilities.coolScan9000
-            print("\nBruker fallback-caps: areal \(caps.boundaryX)×\(caps.boundaryY) du, \(caps.maxBits) bit.")
+            print("\nUsing fallback caps: area \(caps.boundaryX)×\(caps.boundaryY) du, \(caps.maxBits) bit.")
             _ = try attempt("MODE SELECT") { try CoolScan.modeSelect(session, unitDpi: caps.resXMax) }
 
             // Distinctive, non-zero, easy-to-spot geometry.
             let g = CoolScan.geometry(caps, resolution: 500, yOffsetDU: 2900)
             let w = CoolScan.window(g, color: .red)
             let sent = CoolScan.windowDescriptor(w)
-            print("\n— SET WINDOW (R) sender \(sent.count) byte —")
+            print("\n— SET WINDOW (R) sending \(sent.count) bytes —")
             print("  hex: \(sent.map { String(format: "%02x", $0) }.joined(separator: " "))")
             print(String(format: "  fields: resX=%d resY=%d xOff=%d yOff=%d w=%d h=%d depth=%d",
                          w.resX, w.resY, w.xOffset, w.yOffset, w.width, w.height, w.depth))
@@ -206,7 +206,7 @@ func run() -> Int32 {
             let gr = try attempt("GET WINDOW") { try CoolScan.getWindowRaw(session, color: .red) }
             xfer("GET WINDOW")   // data-IN → expect targetWROTE≈58 if delivery works
             let b = [UInt8](gr.payload)
-            print("\n— GET WINDOW (R) leste \(b.count) byte —")
+            print("\n— GET WINDOW (R) read \(b.count) bytes —")
             print("  hex: \(b.map { String(format: "%02x", $0) }.joined(separator: " "))")
             func be16(_ o: Int) -> Int { b.count > o+1 ? (Int(b[o])<<8)|Int(b[o+1]) : -1 }
             func be32(_ o: Int) -> Int { b.count > o+3 ? (Int(b[o])<<24)|(Int(b[o+1])<<16)|(Int(b[o+2])<<8)|Int(b[o+3]) : -1 }
@@ -215,8 +215,8 @@ func run() -> Int32 {
                          be16(10), be16(12), be32(14), be32(18), be32(22), be32(26)))
             let match = be16(10) == Int(w.resX) && be32(18) == Int(w.yOffset) && be32(22) == Int(w.width)
             print(match
-                ? "\n✅ Data-OUT VIRKER — SET WINDOW-verdiene overlevde round-trip. Skann-no-op ligger et annet sted (LOAD/fokus/ready-poll)."
-                : "\n⚠️  GET WINDOW matcher ikke det vi skrev — enten landet payloaden ikke, ELLER scanneren forkastet innholdet.")
+                ? "\n✅ Data-OUT WORKS — SET WINDOW values survived the round-trip. Scan no-op lies elsewhere (LOAD/focus/ready-poll)."
+                : "\n⚠️  GET WINDOW does not match what we wrote — either the payload never landed, OR the scanner discarded the contents.")
 
             // DISCRIMINATOR: send a SET WINDOW with an IMPOSSIBLE resolution
             // (0xFFFF dpi). If the scanner READ our bytes it must reject this with
@@ -224,21 +224,21 @@ func run() -> Int32 {
             // (read zeros → empty descriptor) = data-OUT delivery is broken.
             var bad = sent
             bad[10] = 0xFF; bad[11] = 0xFF   // resX = 65535 dpi — impossible
-            print("\n— SET WINDOW (R) med UGYLDIG resX=0xFFFF (skiller levering fra innhold) —")
+            print("\n— SET WINDOW (R) with INVALID resX=0xFFFF (separates delivery from content) —")
             let badCdb: [UInt8] = [0x24, 0, 0, 0, 0, 0, 0, 0, 0x3a, 0x00]
             let br = try attempt("SET WINDOW(bad)") {
                 try session.sendSCSI(cdb: badCdb, direction: .toTarget,
                                      transferLength: UInt32(bad.count), outgoing: bad,
                                      captureSense: true)
             }
-            print("  status: transport=\(br.transportStatus) sbp=\(br.sbpStatus) \(br.ok ? "GOOD" : "CHECK/feil")")
+            print("  status: transport=\(br.transportStatus) sbp=\(br.sbpStatus) \(br.ok ? "GOOD" : "CHECK/error")")
             xfer("SET WINDOW(bad)")   // data-OUT → did the target read these bytes?
             if !br.sense.isEmpty { print("  sense: \(br.sense.map { String(format: "%02x", $0) }.joined(separator: " "))") }
             print(br.ok
-                ? "→ GOOD på umulig verdi ⇒ scanneren leste ALDRI payloaden vår (null-buffer) = DATA-OUT-LEVERING ER ØDELAGT i dext-en."
-                : "→ CHECK CONDITION ⇒ scanneren LESTE bytene våre = data-OUT leverer; SET WINDOW-no-op er et innholds-/protokollproblem.")
+                ? "→ GOOD on impossible value ⇒ scanner NEVER read our payload (zero buffer) = DATA-OUT DELIVERY IS BROKEN in the dext."
+                : "→ CHECK CONDITION ⇒ scanner READ our bytes = data-OUT delivers; SET WINDOW no-op is a content/protocol problem.")
         } catch {
-            print("❌ windowcheck feilet: \(error)")
+            print("❌ windowcheck failed: \(error)")
             return 8
         }
         return 0
@@ -257,7 +257,7 @@ func run() -> Int32 {
             // Every pre-ready command is also one more pull of the transport
             // roulette before the diagnostics get a chance to run.
             let caps = try CoolScan.capabilities(session)
-            print("Kapabiliteter: optisk \(caps.resXOptical) dpi, areal "
+            print("Capabilities: optical \(caps.resXOptical) dpi, area "
                 + "\(caps.boundaryX)×\(caps.boundaryY) du, \(caps.maxBits) bit.")
             var g = CoolScan.geometry(caps, resolution: dpi, depth: nil,
                                       xOffsetDU: CoolScan.captureFrame.x, yOffsetDU: yOff,
@@ -266,9 +266,9 @@ func run() -> Int32 {
             if let rows = rows, rows > 0, UInt32(rows) < g.logicalHeight {
                 g.logicalHeight = UInt32(rows); g.heightDU = UInt32(rows) * g.pitchY
             }
-            print("Skann @ \(g.realResX)×\(g.realResY) dpi → \(g.logicalWidth)×\(g.logicalHeight) px, "
-                + "\(g.nColors) kanaler, \(g.bytesPerPixel)B/px → \(g.totalBytes) byte forventet"
-                + (rows != nil ? " (stripe: \(rows!) rader)" : "")
+            print("Scan @ \(g.realResX)×\(g.realResY) dpi → \(g.logicalWidth)×\(g.logicalHeight) px, "
+                + "\(g.nColors) channels, \(g.bytesPerPixel)B/px → \(g.totalBytes) bytes expected"
+                + (rows != nil ? " (strip: \(rows!) rows)" : "")
                 + " @ offset (\(CoolScan.captureFrame.x),\(yOff)) du.")
             var lastPct = -1
             let skipFocus = CommandLine.arguments.contains("nofocus")
@@ -276,13 +276,13 @@ func run() -> Int32 {
                                                 rows: rows, skipFocus: skipFocus,
                                                 yOffsetDU: yOff) { got, total in
                 let pct = total > 0 ? got * 100 / total : 0
-                if pct != lastPct { lastPct = pct; FileHandle.standardError.write(Data("\r  les \(pct)% (\(got)/\(total) byte)".utf8)) }
+                if pct != lastPct { lastPct = pct; FileHandle.standardError.write(Data("\r  read \(pct)% (\(got)/\(total) bytes)".utf8)) }
             }
             FileHandle.standardError.write(Data("\n".utf8))
             try saveScan(result)
-            print(result.complete ? "✅ Skann komplett." : "⚠️  Kort skann (\(result.raw.count)/\(result.expectedBytes) byte).")
+            print(result.complete ? "✅ Scan complete." : "⚠️  Short scan (\(result.raw.count)/\(result.expectedBytes) bytes).")
         } catch {
-            print("❌ Skann feilet: \(error)")
+            print("❌ Scan failed: \(error)")
             return 8
         }
         return 0
@@ -292,7 +292,7 @@ func run() -> Int32 {
     // command pipeline on some firmware, which then blocks a clean LOGOUT. Run
     // `CoolScanProbe diag` to enable. Default stays a clean login→inquiry→logout.
     guard CommandLine.arguments.contains("diag") else {
-        print("\nFerdig (ren kjøring). Kjør «CoolScanProbe diag» for kapabilitets-dump.")
+        print("\nDone (clean run). Run «CoolScanProbe diag» for a capability dump.")
         return 0
     }
 
@@ -304,9 +304,9 @@ func run() -> Int32 {
         let r = try session.sendSCSI(cdb: [0x12, 0x00, 0x00, 0x00, 96, 0x00],
                                      direction: .fromTarget, transferLength: 96, timeoutMs: 3000)
         print("\nINQUIRY #2 (96B, non-first data-in): "
-            + "\(r.ok ? "OK ✅" : "status \(r.transportStatus)/\(r.sbpStatus)") — \(r.payload.count) byte mottatt")
+            + "\(r.ok ? "OK ✅" : "status \(r.transportStatus)/\(r.sbpStatus)") — \(r.payload.count) bytes received")
     } catch {
-        print("\n⚠️  INQUIRY #2 (96B) feilet: \(error)")
+        print("\n⚠️  INQUIRY #2 (96B) failed: \(error)")
     }
 
     // 7) Nikon capability page 0xC1 FIRST — this is the data we actually want
@@ -319,32 +319,32 @@ func run() -> Int32 {
         let hb = [UInt8](hdr.payload)
         guard hdr.ok, hb.count >= 4 else {
             print("\nEVPD 0xC1 header: status=\(hdr.transportStatus)/\(hdr.sbpStatus) "
-                + "raw=\(hexDump(hdr.payload, max: 8)) — 9000 støtter kanskje ikke siden.")
+                + "raw=\(hexDump(hdr.payload, max: 8)) — 9000 may not support the page.")
             if !hdr.sense.isEmpty { print("   sense: \(hexDump(hdr.sense, max: 32))") }
-            throw ProbeError("0xC1 header ikke brukbar")
+            throw ProbeError("0xC1 header not usable")
         }
         let pageLen = Int(hb[3])
         let total = UInt8(min(4 + pageLen, 255))
-        print("\nEVPD 0xC1: page_len-felt=\(pageLen) → leser \(total) byte")
+        print("\nEVPD 0xC1: page_len field=\(pageLen) → reading \(total) bytes")
         let r = try session.sendSCSI(cdb: [0x12, 0x01, 0xC1, 0x00, total, 0x00],
                                      direction: .fromTarget, transferLength: UInt32(total), timeoutMs: 3000)
-        print("EVPD 0xC1 (Nikon-kapabiliteter): \(r.payload.count) byte")
+        print("EVPD 0xC1 (Nikon capabilities): \(r.payload.count) bytes")
         print("   raw: \(hexDump(r.payload, max: 256))")
         if let caps = CoolScan.parseCapabilities(r.payload) {
             print("""
-               → optisk: \(caps.resXOptical)×\(caps.resYOptical) dpi  \
-            maks: \(caps.resXMax)×\(caps.resYMax)  min: \(caps.resXMin)×\(caps.resYMin)
-               → maks skanneareal: \(caps.boundaryX)×\(caps.boundaryY) px @ optisk  \
+               → optical: \(caps.resXOptical)×\(caps.resYOptical) dpi  \
+            max: \(caps.resXMax)×\(caps.resYMax)  min: \(caps.resXMin)×\(caps.resYMin)
+               → max scan area: \(caps.boundaryX)×\(caps.boundaryY) px @ optical  \
             (\(String(format: "%.2f", Double(caps.boundaryX)/Double(caps.resXOptical)))″×\
             \(String(format: "%.2f", Double(caps.boundaryY)/Double(caps.resYOptical)))″)
-               → fokus: \(caps.focusMin)…\(caps.focusMax)  bit-dybde: \(caps.maxBits)  \
-            rammer: \(caps.nFrames)
+               → focus: \(caps.focusMin)…\(caps.focusMax)  bit depth: \(caps.maxBits)  \
+            frames: \(caps.nFrames)
             """)
         } else {
-            print("   ⚠️  for kort til å parse kapabilitetsfeltene.")
+            print("   ⚠️  too short to parse the capability fields.")
         }
     } catch {
-        print("⚠️  EVPD 0xC1 feilet: \(error)")
+        print("⚠️  EVPD 0xC1 failed: \(error)")
     }
 
     // 8) REQUEST SENSE last — known to hang on this firmware; do it after the
@@ -361,7 +361,7 @@ func run() -> Int32 {
         }
         print("   raw: \(hexDump(r.payload, max: 32))")
     } catch {
-        print("⚠️  REQUEST SENSE feilet: \(error)")
+        print("⚠️  REQUEST SENSE failed: \(error)")
     }
 
     // 9) Bonus: TARGET RESET via task management (function 0x0F). Tests whether
@@ -369,12 +369,12 @@ func run() -> Int32 {
     //    a physical power-cycle (logout alone does not free the login).
     do {
         try conn.call(.submitSBP2TaskManagement, scalarIn: [session.handle, 0x0F])
-        print("\nTARGET RESET (task mgmt 0x0F) sendt OK — sjekk om neste login går uten strømsyklus.")
+        print("\nTARGET RESET (task mgmt 0x0F) sent OK — check whether the next login works without a power cycle.")
     } catch {
-        print("\n⚠️  TARGET RESET feilet: \(error)")
+        print("\n⚠️  TARGET RESET failed: \(error)")
     }
 
-    print("\nFerdig. Hvis INQUIRY viser «Nikon … LS-9000» er transportlaget bevist — neste steg er CoolScan-kommandosettet.")
+    print("\nDone. If INQUIRY shows «Nikon … LS-9000» the transport layer is proven — next step is the CoolScan command set.")
     return 0
 }
 
@@ -430,26 +430,26 @@ func saveScan(_ r: CoolScan.ScanResult) throws {
     """
     try sidecar.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent(base + ".txt"), atomically: true, encoding: .utf8)
-    print("💾 Lagret \(binURL.lastPathComponent) (\(r.raw.count) byte) + sidecar \(base).txt")
+    print("💾 Saved \(binURL.lastPathComponent) (\(r.raw.count) bytes) + sidecar \(base).txt")
 }
 
 /// Minimal SCSI sense key/ASC decode for the messages we expect from the 9000.
 func senseText(key: UInt8, asc: UInt8, ascq: UInt8) -> String {
     switch (key, asc, ascq) {
-    case (0x0, _, _):        return "NO SENSE — klar"
+    case (0x0, _, _):        return "NO SENSE — ready"
     case (0x2, 0x04, _):     return "NOT READY (LOGICAL UNIT)"
-    case (0x2, 0x3a, _):     return "MEDIUM NOT PRESENT — ingen film/holder"
+    case (0x2, 0x3a, _):     return "MEDIUM NOT PRESENT — no film/holder"
     case (0x6, 0x29, _):     return "POWER ON / RESET (UA)"
-    case (0x6, 0x28, _):     return "NOT READY→READY, medium isatt (UA)"
+    case (0x6, 0x28, _):     return "NOT READY→READY, medium inserted (UA)"
     case (0x6, 0x3f, _):     return "TARGET OPERATING CONDITIONS CHANGED (UA)"
-    case (0x6, _, _):        return "UNIT ATTENTION (annen)"
+    case (0x6, _, _):        return "UNIT ATTENTION (other)"
     case (0x5, 0x20, _):     return "INVALID COMMAND OPCODE"
     case (0x5, 0x24, _):     return "INVALID FIELD IN CDB"
     case (0x5, 0x26, _):     return "INVALID FIELD IN PARAMETER LIST"
-    case (0x5, _, _):        return "ILLEGAL REQUEST (annen)"
-    case (_, 0x3e, _):       return "LU IKKE SELV-KONFIGURERT ENNÅ (scanner booter — vent)"
+    case (0x5, _, _):        return "ILLEGAL REQUEST (other)"
+    case (_, 0x3e, _):       return "LU NOT SELF-CONFIGURED YET (scanner booting — wait)"
     case (0xb, _, _):        return "ABORTED COMMAND"
-    default:                 return "ukjent — slå opp i SPC sense-tabell"
+    default:                 return "unknown — look up in the SPC sense table"
     }
 }
 

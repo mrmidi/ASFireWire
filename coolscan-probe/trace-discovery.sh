@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Bred trace: discovery + SBP-2 + HBA. Brukes når scanneren ikke dukker opp:
-# start, replug/power-cycle scanner, se om «Device Discovered»/unit-publish og
-# [SBP2Bridge] session/login kommer. Kjøres via «!»-prefiks.
+# Broad trace: discovery + SBP-2 + HBA. Use when the scanner does not show up:
+# start, replug/power-cycle scanner, check for "Device Discovered"/unit-publish and
+# [SBP2Bridge] session/login. Run via "!" prefix.
 set -u
 OUT=/tmp/discovery_trace.log
 exec log stream --info --debug --style compact \

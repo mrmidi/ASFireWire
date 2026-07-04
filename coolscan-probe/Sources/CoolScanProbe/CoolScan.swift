@@ -427,7 +427,7 @@ enum CoolScan {
     /// the transport clean (HW-run 14).
     static func bisectSetWindow(_ s: SBP2Session, _ g: ScanGeometry) {
         guard let gw = try? getWindowRaw(s, color: .red), gw.payload.count == 58 else {
-            print("  bisect: GET WINDOW utilgjengelig — hopper over")
+            print("  bisect: GET WINDOW unavailable — skipping")
             return
         }
         let defaultDesc = [UInt8](gw.payload.suffix(50))
@@ -443,7 +443,7 @@ enum CoolScan {
         func verdict(_ label: String, _ desc: [UInt8]) {
             do {
                 let r = try setWindowRaw(s, header + desc)
-                print("  bisect \(label): \(r.ok ? "✅ AKSEPTERT" : "❌ \(r.statusText)")")
+                print("  bisect \(label): \(r.ok ? "✅ ACCEPTED" : "❌ \(r.statusText)")")
             } catch {
                 print("  bisect \(label): ❌ \(error)")
             }
@@ -465,12 +465,12 @@ enum CoolScan {
         var dRedZero = full; patch32(&dRedZero, 46, 0)
         var dIR = full; dIR[0] = Color.infrared.rawValue; patch32(&dIR, 46, 0)
 
-        verdict("A IR-vindu (id 09, exp=0, null-hale)", dIR)
-        verdict("B rød m/eksponering=0 (null-hale)   ", dRedZero)
-        verdict("C ekko av default (referanse)       ", defaultDesc)
-        verdict("D vår fulle røde (referanse)        ", dRed)
-        print("  bisect-tolkning: A/B ✅ + C/D ❌ → ikke-quadlet-halen korrumperes i transporten;"
-            + " alle ❌ → halen frikjent, gå til dext-logg")
+        verdict("A IR window (id 09, exp=0, zero tail)", dIR)
+        verdict("B red w/exposure=0 (zero tail)       ", dRedZero)
+        verdict("C echo of default (reference)        ", defaultDesc)
+        verdict("D our full red (reference)           ", dRed)
+        print("  bisect interpretation: A/B ✅ + C/D ❌ → non-quadlet tail corrupted in transport;"
+            + " all ❌ → tail exonerated, check dext log")
     }
 
     /// GET WINDOW → read back the exposure for one color (bytes 54..57).
@@ -541,7 +541,7 @@ enum CoolScan {
                                 diag: (() -> String)? = nil,
                                 recover: ((SCSIResult?) -> Void)? = nil,
                                 _ body: () throws -> SCSIResult) throws -> SCSIResult {
-        var lastInfo = "ingen forsøk"
+        var lastInfo = "no attempts"
         for i in 1...tries {
             var rejected: String? = nil
             // nil = body threw (timeout / submit-fail = transport wedge); non-nil =
@@ -562,11 +562,11 @@ enum CoolScan {
                 }
             } catch { lastInfo = "\(error)" }
             if let rejected {
-                throw ProbeError("\(label) avvist av skanneren: \(rejected)\(diag?() ?? "") — "
-                    + "deterministisk (ILLEGAL REQUEST), ingen retry")
+                throw ProbeError("\(label) rejected by scanner: \(rejected)\(diag?() ?? "") — "
+                    + "deterministic (ILLEGAL REQUEST), no retry")
             }
             if i < tries {
-                print("   ↻ \(label) forsøk \(i)/\(tries): \(lastInfo)")
+                print("   ↻ \(label) attempt \(i)/\(tries): \(lastInfo)")
                 if let recover {
                     recover(lastResult)
                 } else {
@@ -574,7 +574,7 @@ enum CoolScan {
                 }
             }
         }
-        throw ProbeError("\(label) ga opp etter \(tries) forsøk: \(lastInfo)\(diag?() ?? "")")
+        throw ProbeError("\(label) gave up after \(tries) attempts: \(lastInfo)\(diag?() ?? "")")
     }
 
     /// Raw result of a scan: the geometry used plus the unprocessed byte stream
@@ -645,13 +645,13 @@ enum CoolScan {
         //     (HW-run 21: early waitReady wedge right after a power cycle, UA
         //     0x29 power-on still pending → ORB hangs ~44 s, commandInFlight locked).
         if bootSettleSeconds > 0 {
-            step("venter \(bootSettleSeconds)s på at skanneren fullfører boot (unngår tidlig AGENT_RESET-wedge)")
+            step("waiting \(bootSettleSeconds)s for scanner to finish boot (avoids early AGENT_RESET wedge)")
             Thread.sleep(forTimeInterval: TimeInterval(bootSettleSeconds))
         }
 
         // 1) Wait until the scanner reports ready (film loaded, lamp warm).
-        guard waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (sense-timeout)") }
-        step("scanner klar")
+        guard waitReady(s, timeout: 120) else { throw ProbeError("scanner not ready (sense timeout)") }
+        step("scanner ready")
 
         // 1a) Establish the measurement unit + reservation BEFORE any window/read
         //     ops — exactly as Rob Sims' LS-9000 backend does at sane_open
@@ -663,23 +663,23 @@ enum CoolScan {
         //     Done after waitReady so a still-booting device can't wedge it.
         do {
             let mr = try establishUnit(s, unitDpi: max(caps.resXMax, 1))
-            step("MODE SELECT (enhet 1/\(caps.resXMax)″) + RESERVE: \(mr.ok ? "ok ✅" : "❌ \(mr.statusText)")")
+            step("MODE SELECT (unit 1/\(caps.resXMax)″) + RESERVE: \(mr.ok ? "ok ✅" : "❌ \(mr.statusText)")")
         } catch {
-            print("  ⚠️ MODE SELECT/RESERVE feilet: \(error) — fortsetter (SET WINDOW gir uansett sitt eget verdikt)")
+            print("  ⚠️ MODE SELECT/RESERVE failed: \(error) — continuing (SET WINDOW gives its own verdict anyway)")
         }
 
         // 1b) Post-ready state dumps. The boot-time reads in main happen while
         //     the scanner still reports UA/not-ready and return zeros — these
         //     are the trustworthy ones.
         if let c = try? capabilities(s) {
-            step("caps etter klar: nFrames=\(c.nFrames) fokus=\(c.focusMin)–\(c.focusMax)")
+            step("caps after ready: nFrames=\(c.nFrames) focus=\(c.focusMin)–\(c.focusMax)")
             if c.nFrames == 0 {
-                print("  ⚠️ nFrames=0 — skanneren melder INGEN holder/rammer (caps byte 75);"
-                    + " SET WINDOW kan avvises på det")
+                print("  ⚠️ nFrames=0 — scanner reports NO holder/frames (caps byte 75);"
+                    + " SET WINDOW may be rejected on that")
             }
         }
         if let fi = try? readFrameInfo(s) {
-            print("  Frame-info etter klar: \(hexLine([UInt8](fi.payload))) (\(fi.statusText))")
+            print("  Frame info after ready: \(hexLine([UInt8](fi.payload))) (\(fi.statusText))")
         }
         if let c8 = try? readPageC8(s) {
             print("  EVPD C8 (\(c8.payload.count)B, \(c8.statusText)): \(hexLine([UInt8](c8.payload)))")
@@ -709,9 +709,9 @@ enum CoolScan {
             let wedged = (last == nil) || (last!.transportStatus < 0)
             if wedged {
                 if ProbeConfig.disableLUR {
-                    print("   ⟳ transport-wedge — LUR deaktivert (--no-lur), bare venter")
+                    print("   ⟳ transport wedge — LUR disabled (--no-lur), just waiting")
                 } else {
-                    print("   ⟳ transport-wedge — LOGICAL UNIT RESET før retry")
+                    print("   ⟳ transport wedge — LOGICAL UNIT RESET before retry")
                     s.resetLogicalUnit()
                     Thread.sleep(forTimeInterval: 2)
                 }
@@ -723,7 +723,7 @@ enum CoolScan {
         // this window via doorbell-chaining; with reset-per-ORB the only safe
         // wait is a command-free sleep before the first TUR.
         let settle: (TimeInterval, String) -> Void = { secs, what in
-            step("venter passivt \(Int(secs))s etter \(what) (ingen kommandoer mens mekanikken jobber)")
+            step("waiting passively \(Int(secs))s after \(what) (no commands while mechanics move)")
             Thread.sleep(forTimeInterval: secs)
         }
         var appliedFocus = focus
@@ -734,19 +734,19 @@ enum CoolScan {
         // fixed focus value instead of adopting the AF result (capture sent
         // 235 here too).
         if skipFocus {
-            step("nofocus: hopper over AF-syklusen (AF frikjent for 5/26 i HW-run 17, EXECUTE(AF) wedger reset-per-ORB) — fast fokus \(appliedFocus)")
+            step("nofocus: skipping AF cycle (AF exonerated for 5/26 in HW-run 17, EXECUTE(AF) wedges reset-per-ORB) — fixed focus \(appliedFocus)")
         } else { do {
-            _ = try attempt("SET AF-PUNKT", tries: 3, recover: ride) { try autofocus(s, x: 2920, y: 3936) }
+            _ = try attempt("SET AF POINT", tries: 3, recover: ride) { try autofocus(s, x: 2920, y: 3936) }
             _ = try attempt("EXECUTE (AF)", tries: 3, recover: ride) { try execute(s) }
             settle(30, "EXECUTE (AF)")
             let afReady = waitReady(s, timeout: 120)
-            step(afReady ? "autofokus ferdig" : "⚠️ ikke klar etter AF — fortsetter")
+            step(afReady ? "autofocus done" : "⚠️ not ready after AF — continuing")
             if let fi = try? readFrameInfo(s) {
-                print("  Frame-info etter AF: \(hexLine([UInt8](fi.payload)))")
+                print("  Frame info after AF: \(hexLine([UInt8](fi.payload)))")
             }
             if let af = try? readAFResult(s) {
                 let b = [UInt8](af.payload)
-                print("  AF-resultat (9B): \(hexLine(b)) (\(af.statusText))")
+                print("  AF result (9B): \(hexLine(b)) (\(af.statusText))")
                 if !skipFocus, b.count >= 5 {
                     let v = (UInt32(b[1]) << 24) | (UInt32(b[2]) << 16)
                           | (UInt32(b[3]) << 8) | UInt32(b[4])
@@ -757,16 +757,16 @@ enum CoolScan {
             settle(10, "c0 (abort/idle)")
             _ = waitReady(s, timeout: 60)
         } catch {
-            print("  ⚠️ AF-preamble feilet: \(error) — fortsetter med fast fokus")
+            print("  ⚠️ AF preamble failed: \(error) — continuing with fixed focus")
         } }
         if let fi = try? readFrameInfo(s) {
-            print("  Frame-info før setFocus: \(hexLine([UInt8](fi.payload)))")
+            print("  Frame info before setFocus: \(hexLine([UInt8](fi.payload)))")
         }
         _ = try attempt("SET FOCUS", recover: ride) { try setFocus(s, focus: appliedFocus) }
-        _ = try attempt("EXECUTE (fokus)", recover: ride) { try execute(s) }
-        settle(15, "EXECUTE (fokus)")
+        _ = try attempt("EXECUTE (focus)", recover: ride) { try execute(s) }
+        settle(15, "EXECUTE (focus)")
         let fReady = waitReady(s, timeout: 60)
-        step(fReady ? "fokus satt (\(appliedFocus))" : "⚠️ ikke klar etter fokus — fortsetter")
+        step(fReady ? "focus set (\(appliedFocus))" : "⚠️ not ready after focus — continuing")
         // (Post-focus frame-info readback removed: data-OUT integrity is proven
         // twice — byte4 read back 0xeb in runs 16/17 — and the extra read sat as
         // one more wedge-roulette draw right before SET WINDOW; run 18 died on it.)
@@ -775,8 +775,8 @@ enum CoolScan {
         //    order: all four SET WINDOW first, then all four SEND LUT.
         let colors: [Color] = Color.allCases
         let xferDiag: () -> String = {
-            guard let t = s.lastTransferInfo() else { return " [xfer utilgjengelig]" }
-            return " [target leste \(t.targetReadBytes)B/\(t.targetReadCalls)x av \(t.expectedBytes)B forventet]"
+            guard let t = s.lastTransferInfo() else { return " [xfer unavailable]" }
+            return " [target read \(t.targetReadBytes)B/\(t.targetReadCalls)x of \(t.expectedBytes)B expected]"
         }
         print("  SET WINDOW payload (red): "
             + hexLine(windowDescriptor(window(g, color: .red, negative: negative))))
@@ -788,7 +788,7 @@ enum CoolScan {
                 step("SET WINDOW \(c) ok")
             }
         } catch {
-            print("  → SET WINDOW avvist — bisekterer felt mot GET WINDOW-defaulten:")
+            print("  → SET WINDOW rejected — bisecting fields against GET WINDOW default:")
             bisectSetWindow(s, g)
             throw error
         }
@@ -799,7 +799,7 @@ enum CoolScan {
         // and payload — same class of missing-precondition as the SET WINDOW
         // 5/26 wall that MODE SELECT fixed.
         let lutReady = waitReady(s, timeout: 30)
-        step(lutReady ? "scanner klar før SEND LUT" : "⚠️ ikke klar før SEND LUT — fortsetter")
+        step(lutReady ? "scanner ready before SEND LUT" : "⚠️ not ready before SEND LUT — continuing")
         for c in colors {
             // scanner_ready before EVERY colour LUT (coolscan9k cs9k_send_lut
             // loops scanner_ready(READY) per colour, not once). xferDiag on
@@ -815,7 +815,7 @@ enum CoolScan {
 
         // 4) Trigger the scan (window-id list as data-OUT payload).
         let scanResult = try attempt("SCAN", recover: ride) { try scan(s, colors: colors) }
-        step("SCAN akseptert (\(scanResult.statusText)) — leser data")
+        step("SCAN accepted (\(scanResult.statusText)) — reading data")
 
         // 5) Pull the image as a byte stream. Whole-line chunks like VueScan
         //    (~510 KB ≈ 100+ lines per READ); layout is reconstructed offline
@@ -854,7 +854,7 @@ enum CoolScan {
             guard let r = ok else {
                 // Keep what we got — even a few lines is enough to validate the
                 // pixel layout offline. The caller sees complete=false.
-                print("\n  ⚠️ READ(10) ga opp ved \(raw.count)/\(g.totalBytes) byte etter \(attempt) forsøk: \(lastInfo) — lagrer partial")
+                print("\n  ⚠️ READ(10) gave up at \(raw.count)/\(g.totalBytes) bytes after \(attempt) attempts: \(lastInfo) — saving partial")
                 break
             }
             if r.payload.isEmpty { break } // short read — scanner says done
@@ -868,7 +868,7 @@ enum CoolScan {
                 xferNote = " targetWROTE=\(t.targetWroteBytes)B/\(t.targetWroteCalls)x"
             }
             print("  READ \(r.payload.count)B \(r.statusText)\(xferNote) "
-                + (nonZero ? "✅ ekte data" : "⚠️ kun nuller"))
+                + (nonZero ? "✅ real data" : "⚠️ only zeros"))
             raw.append(r.payload)
             progress?(raw.count, g.totalBytes)
         }

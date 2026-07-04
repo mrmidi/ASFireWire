@@ -46,14 +46,14 @@ final class SBP2Session {
     /// accepts the second attempt after the first nudges it to drop/reconnect.
     static func login(_ conn: ASFWConnection, device: FWDevice, unit: FWUnit,
                       timeout: TimeInterval = 8.0, attempts: Int = 2) throws -> SBP2Session {
-        var lastError: Error = ProbeError("login: ingen forsøk")
+        var lastError: Error = ProbeError("login: no attempts")
         for attempt in 1...max(1, attempts) {
             do { return try loginOnce(conn, device: device, unit: unit, timeout: timeout) }
             catch {
                 lastError = error
                 if attempt < attempts {
-                    print("   ↻ login-forsøk \(attempt) feilet (\(error)); prøver igjen…")
-                    usleep(1_500_000) // 1.5 s — la target rydde forrige login
+                    print("   ↻ login attempt \(attempt) failed (\(error)); retrying…")
+                    usleep(1_500_000) // 1.5 s — let target clean up previous login
                 }
             }
         }
@@ -67,7 +67,7 @@ final class SBP2Session {
         let (out, _) = try conn.call(.createSBP2Session,
                                      scalarIn: [guidHi, guidLo, UInt64(unit.romOffset)],
                                      scalarOutCount: 1)
-        guard let handle = out.first else { throw ProbeError("CreateSBP2Session ga ingen handle") }
+        guard let handle = out.first else { throw ProbeError("CreateSBP2Session returned no handle") }
         let session = SBP2Session(conn: conn, handle: handle, device: device)
 
         try conn.call(.startSBP2Login, scalarIn: [handle])
@@ -80,21 +80,21 @@ final class SBP2Session {
                 return session
             case .failed:
                 session.release() // free host-side session before bubbling up
-                throw ProbeError("Login feilet (lastError=0x\(String(format: "%08x", state.lastError)))")
+                throw ProbeError("Login failed (lastError=0x\(String(format: "%08x", state.lastError)))")
             default:
                 usleep(100_000) // 100 ms
             }
         }
-        let lastLabel = (try? session.state())?.login.label ?? "ukjent"
+        let lastLabel = (try? session.state())?.login.label ?? "unknown"
         session.release() // don't leak a half-open session on timeout
-        throw ProbeError("Login timeout — siste state=\(lastLabel)")
+        throw ProbeError("Login timeout — last state=\(lastLabel)")
     }
 
     struct State { let login: ASFW.LoginState; let loginID: UInt64; let generation: UInt64; let lastError: UInt32; let reconnectPending: Bool }
 
     func state() throws -> State {
         let (out, _) = try conn.call(.getSBP2SessionState, scalarIn: [handle], scalarOutCount: 5)
-        guard out.count >= 5 else { throw ProbeError("GetSBP2SessionState ga for få verdier") }
+        guard out.count >= 5 else { throw ProbeError("GetSBP2SessionState returned too few values") }
         return State(login: ASFW.LoginState(raw: out[0]), loginID: out[1],
                      generation: out[2], lastError: UInt32(truncatingIfNeeded: out[3]),
                      reconnectPending: out[4] != 0)
@@ -109,7 +109,7 @@ final class SBP2Session {
                   // against a mechanically-settling scanner and wedged the session.
                   timeoutMs: UInt32 = 15_000,
                   captureSense: Bool = true) throws -> SCSIResult {
-        precondition(cdb.count >= 1 && cdb.count <= 16, "CDB må være 1–16 byte")
+        precondition(cdb.count >= 1 && cdb.count <= 16, "CDB must be 1–16 bytes")
 
         // Apply the --orb-timeout-ms A-test ceiling here so it covers every
         // caller (tuned constants and one-off hardcoded timeouts alike).
@@ -140,14 +140,14 @@ final class SBP2Session {
             } catch let e as ProbeError where e.kr == kIOReturnError {
                 submitTry += 1
                 if let st = try? state(), st.login != .loggedIn {
-                    throw ProbeError("submit avvist og sesjonen er ikke lenger innlogget "
-                        + "(state=\(st.login.label)) — gir opp")
+                    throw ProbeError("submit rejected and session is no longer logged in "
+                        + "(state=\(st.login.label)) — giving up")
                 }
                 guard submitTry < 45 else { throw e }
                 if submitTry == 1 {
-                    print("   ⏳ submit avvist (forrige ORB henger i dext-en) — venter på frigjort slot…")
+                    print("   ⏳ submit rejected (previous ORB stuck in the dext) — waiting for freed slot…")
                 } else if submitTry % 10 == 0 {
-                    print("   ⏳ venter fortsatt (\(submitTry)s)…")
+                    print("   ⏳ still waiting (\(submitTry)s)…")
                 }
                 usleep(1_000_000)
             }
@@ -185,21 +185,21 @@ final class SBP2Session {
                 let (kr2, size2, data2) = conn.callOnceStructOut(
                     .getSBP2CommandResult, scalarIn: [handle], structOutCap: max(reportedSize, cap))
                 if kr2 == KERN_SUCCESS { return parseResult(data2) }
-                throw ProbeError("getResult NoSpace→retry feilet: kr=0x\(String(format: "%08x", UInt32(bitPattern: kr2))) "
-                    + "førsteReportedSize=\(reportedSize) retryReportedSize=\(size2) (struct for stor / out-of-line?)")
+                throw ProbeError("getResult NoSpace→retry failed: kr=0x\(String(format: "%08x", UInt32(bitPattern: kr2))) "
+                    + "firstReportedSize=\(reportedSize) retryReportedSize=\(size2) (struct too large / out-of-line?)")
             }
             // Other error. Probe whether the dext is still alive.
             let alive: String
             do {
                 let (out, _) = try conn.call(.getSBP2SessionState, scalarIn: [handle], scalarOutCount: 5)
-                alive = "dext SVARER (state=\(out.first.map { ASFW.LoginState(raw: $0).label } ?? "?"))"
+                alive = "dext RESPONDS (state=\(out.first.map { ASFW.LoginState(raw: $0).label } ?? "?"))"
             } catch let live {
-                alive = "dext SVARER IKKE (\(live))"
+                alive = "dext NOT RESPONDING (\(live))"
             }
             throw ProbeError("getResult kr=0x\(String(format: "%08x", UInt32(bitPattern: kr))) "
-                + "reportedSize=\(reportedSize) (rått enkelt-kall, ingen retry) — \(alive)")
+                + "reportedSize=\(reportedSize) (raw single call, no retry) — \(alive)")
         }
-        throw ProbeError("SCSI-kommando timeout (ingen resultat)")
+        throw ProbeError("SCSI command timeout (no result)")
     }
 
     /// Diagnostics: how much the target actually transferred against the last
@@ -283,7 +283,7 @@ enum SCSI {
 
     /// Decode the vendor / product / revision fields from standard INQUIRY data.
     static func describeInquiry(_ d: Data) -> String {
-        guard d.count >= 36 else { return "INQUIRY-data for kort (\(d.count) byte)" }
+        guard d.count >= 36 else { return "INQUIRY data too short (\(d.count) bytes)" }
         let pdt = d.u8(0) & 0x1F
         let vendor = d.cString(8, 8).trimmingCharacters(in: .whitespaces)
         let product = d.cString(16, 16).trimmingCharacters(in: .whitespaces)

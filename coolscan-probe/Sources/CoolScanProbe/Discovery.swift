@@ -65,7 +65,7 @@ enum Discovery {
 
         for _ in 0..<deviceCount {
             guard off + deviceWireSize <= data.count else {
-                throw ProbeError("Avkortet device-data fra dext")
+                throw ProbeError("Truncated device data from dext")
             }
             let guid = data.u64(off)
             let vendorId = data.u32(off + 8)
@@ -79,7 +79,7 @@ enum Discovery {
             var units: [FWUnit] = []
             for _ in 0..<unitCount {
                 guard off + unitWireSize <= data.count else {
-                    throw ProbeError("Avkortet unit-data fra dext")
+                    throw ProbeError("Truncated unit data from dext")
                 }
                 units.append(FWUnit(
                     specId: data.u32(off),

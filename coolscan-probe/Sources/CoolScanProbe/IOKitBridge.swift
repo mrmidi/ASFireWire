@@ -79,8 +79,8 @@ final class ASFWConnection {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, matching)
         guard service != 0 else {
             throw ProbeError("""
-                Fant ikke IOService «\(ASFW.serviceName)».
-                Er ASFireWire-dext-en lastet? Sjekk: systemextensionsctl list
+                IOService "\(ASFW.serviceName)" not found.
+                Is the ASFireWire dext loaded? Check: systemextensionsctl list
                 """)
         }
         defer { IOObjectRelease(service) }
@@ -89,11 +89,11 @@ final class ASFWConnection {
         let kr = IOServiceOpen(service, mach_task_self_, 0, &conn)
         guard kr == KERN_SUCCESS else {
             throw ProbeError("""
-                IOServiceOpen feilet: \(Self.decode(kr)).
+                IOServiceOpen failed: \(Self.decode(kr)).
                 (0x\(String(format: "%08x", UInt32(bitPattern: kr))))
-                KERN_PROTECTION_FAILURE her betyr som regel at klienten mangler
-                tilgang til user-client-en — kjør med SIP av + developer mode,
-                eller fold proben inn i ASFW-appen som allerede har tilgang.
+                KERN_PROTECTION_FAILURE here usually means the client lacks
+                access to the user client — run with SIP off + developer mode,
+                or fold the probe into the ASFW app, which already has access.
                 """)
         }
         connection = conn
@@ -142,7 +142,7 @@ final class ASFWConnection {
             (kr, out) = invoke(max(structOutCap * 4, 256 * 1024))
         }
         guard kr == KERN_SUCCESS else {
-            throw ProbeError("\(sel) (selector \(sel.rawValue)) feilet: \(Self.decode(kr))", kr: kr)
+            throw ProbeError("\(sel) (selector \(sel.rawValue)) failed: \(Self.decode(kr))", kr: kr)
         }
         return (Array(scalarOut.prefix(Int(scalarOutCnt))), out)
     }
@@ -179,14 +179,14 @@ final class ASFWConnection {
     static func decode(_ kr: kern_return_t) -> String {
         switch kr {
         case KERN_SUCCESS: return "Success"
-        case kIOReturnNoDevice: return "No Device (driver ikke lastet)"
-        case kIOReturnNotPrivileged: return "Not Privileged (app sandbox / tilgang)"
+        case kIOReturnNoDevice: return "No Device (driver not loaded)"
+        case kIOReturnNotPrivileged: return "Not Privileged (app sandbox / access)"
         case kIOReturnBadArgument: return "Bad Argument"
         case kIOReturnUnsupported: return "Unsupported"
         case kIOReturnNotOpen: return "Not Open"
         case kIOReturnBusy: return "Busy"
         case kIOReturnTimeout: return "Timeout"
-        case kIOReturnNotFound: return "Not Found (ikke klar ennå)"
+        case kIOReturnNotFound: return "Not Found (not ready yet)"
         case kIOReturnNoSpace: return "No Space"
         default: return String(format: "0x%08x (%d)", UInt32(bitPattern: kr), kr)
         }
