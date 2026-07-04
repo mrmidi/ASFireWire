@@ -6,6 +6,7 @@
 #pragma once
 
 #include "DiceHostTransport.hpp"
+#include "DuplexOperationGate.hpp"
 
 #include "../../../Discovery/DeviceRegistry.hpp"
 #include "../../../Hardware/HardwareInterface.hpp"
@@ -133,7 +134,7 @@ private:
     void StoreSession(const DICE::DiceRestartSession& session) noexcept;
 
     // FW-61: global teardown cancel token. Distinct from the per-guid stop intent
-    // (stopRequestedGuids_) - that aborts one stream; this aborts everything for
+    // (gate_, see DuplexOperationGate) - that aborts one stream; this aborts everything for
     // service teardown. Owned by DiceAudioBackend and read on the dice queue.
     [[nodiscard]] bool TeardownRequested() const noexcept {
         return cancel_ != nullptr && cancel_->load(std::memory_order_acquire);
@@ -147,8 +148,9 @@ private:
     DirectAudioBindingSourceProvider bindingSourceProvider_;
 
     IOLock* lock_{nullptr};
-    std::unordered_set<uint64_t> activeGuids_{};
-    std::unordered_set<uint64_t> stopRequestedGuids_{};
+    // FW-68: per-GUID active-session + stop-intent gating. Borrows &lock_ (see
+    // DuplexOperationGate) so its critical sections share the coordinator's single lock.
+    Backends::DuplexOperationGate gate_{&lock_};
     std::unordered_map<uint64_t, DICE::DiceRestartSession> sessions_{};
     std::unordered_map<uint64_t, PendingClockRequest> pendingClockRequests_{};
     std::unordered_map<uint64_t, ClockCompletionStore> completedClockRequests_{};
