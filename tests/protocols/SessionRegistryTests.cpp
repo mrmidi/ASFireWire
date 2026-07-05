@@ -332,6 +332,29 @@ TEST(SessionRegistryTests, CheckConditionSurfacesSCSIStatusAndAutosense) {
     EXPECT_EQ(0x00, result->senseData[13]);         // ASCQ
 }
 
+// Locks the SBP-2 -> fixed-format sense bit transform against a byte1 with the
+// valid bit and a flag set, which the CheckCondition test (byte1=0x05) cannot
+// reach. Guards the Linux sbp2.c:1303-1305 mapping: valid -> sense[0] bit7,
+// mark/eom/ili shifted up into sense[2] [7:5], key kept in [3:0].
+TEST(SessionRegistryTests, SenseDecodePropagatesValidAndFlagBits) {
+    // byte1 = 0xA5: valid(0x80) + eom(0x20) + key MEDIUM ERROR(0x05).
+    const std::array<uint8_t, 14> statusData{
+        0x02,        // sfmt=0 (current), SAM status CHECK CONDITION
+        0xA5,        // valid + eom + key 5
+        0x26, 0x00,  // ASC, ASCQ
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    const auto sense = SCSI::ConvertSBP2StatusToSenseData(statusData);
+    ASSERT_GE(sense.size(), 14u);
+    EXPECT_EQ(0xF0, sense[0]);         // 0x70 | valid bit
+    EXPECT_EQ(0x45, sense[2]);         // eom -> bit6, key 5 in [3:0]
+    EXPECT_EQ(0x05, sense[2] & 0x0F);  // sense key preserved
+    EXPECT_EQ(0x26, sense[12]);        // ASC
+    EXPECT_EQ(0x00, sense[13]);        // ASCQ
+
+    const std::array<uint8_t, 14> deferredVendor{0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    EXPECT_TRUE(SCSI::ConvertSBP2StatusToSenseData(deferredVendor).empty());  // sfmt==2 undecodable
+}
+
 TEST(SessionRegistryTests, InquiryFailureResultPreservesSBPStatus) {
     SessionRegistryRig rig;
     const uint64_t handle = rig.CreateSession();

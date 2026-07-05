@@ -43,26 +43,31 @@ struct CommandResult {
 
 // SBP-2 Annex B packs autosense into the status block's command-set-dependent
 // bytes (status block bytes 8+, here data[0..]). Convert to a standard 18-byte
-// fixed-format sense block. Byte mapping per Linux firewire/sbp2.c
-// sbp2_status_to_sense_data():
-//   data[0]  [7:6] sfmt, [5:0] SAM status
-//   data[1]  sense key byte (valid/FM/EOM/ILI + key)
+// fixed-format sense block, applying the bit transform from Linux
+// firewire/sbp2.c sbp2_status_to_sense_data() (sbp2.c:1295,1303-1305) — the
+// two layouts do not line up byte-for-byte:
+//   data[0]  [7:6] sfmt (0 current, 1 deferred, 2/3 undecodable), [5:0] SAM status
+//   data[1]  [7] valid, [6] mark, [5] eom, [4] ili, [3:0] sense key
 //   data[2]  ASC          data[3]  ASCQ
 //   data[4..7]   information
 //   data[8..11]  command-set-specific information
 //   data[12..13] FRU + sense-key-dependent
-// Returns empty when there is nothing to decode (no data, vendor sfmt).
+// sfmt selects the fixed-format response code (0x70 current / 0x71 deferred),
+// data[1]'s valid bit moves to sense[0] bit7, and its mark/eom/ili bits shift
+// up one into sense[2] [7:5] while the key stays in [3:0].
+// Returns empty when there is nothing to decode (no data, deferred-only or
+// vendor sfmt).
 inline std::vector<uint8_t> ConvertSBP2StatusToSenseData(std::span<const uint8_t> data) {
     if (data.size() < 14) {
         return {};
     }
     const uint8_t sfmt = (data[0] >> 6) & 0x3;
-    if (sfmt == 3) {
-        return {};  // vendor-dependent format — cannot decode
+    if (sfmt == 2 || sfmt == 3) {
+        return {};  // dequeued/vendor-dependent format — cannot decode
     }
     std::vector<uint8_t> sense(18, 0);
-    sense[0] = 0x70;        // current error, fixed format
-    sense[2] = data[1];
+    sense[0] = 0x70 | sfmt | (data[1] & 0x80);
+    sense[2] = ((data[1] << 1) & 0xe0) | (data[1] & 0x0f);
     sense[3] = data[4];
     sense[4] = data[5];
     sense[5] = data[6];
