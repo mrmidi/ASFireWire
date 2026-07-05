@@ -26,6 +26,19 @@ public:
     kern_return_t Start(IOService* provider) override;
     kern_return_t Stop(IOService* provider) override;
 
+    // System sleep/wake. The OHCI controller loses its programmed state across
+    // a power transition; without this the driver survives sleep but the
+    // silicon wakes unprogrammed and deaf (no bus-reset interrupts, so a device
+    // plugged after wake never mounts). Sleep quiesces and resets the runtime;
+    // wake rebuilds it (full re-init + forced bus reset), mirroring Linux
+    // firewire-ohci pci_suspend/pci_resume and Apple IOFireWireController
+    // setPowerState.
+    virtual kern_return_t SetPowerState(uint32_t powerFlags) override;
+
+    // Runtime bring-up/quiesce, shared by Start/Stop and SetPowerState.
+    kern_return_t StartRuntime(IOService* provider) LOCALONLY;
+    void QuiesceRuntime() LOCALONLY;
+
     kern_return_t CopyControllerStatus(OSDictionary** status) LOCALONLY;
     kern_return_t CopyControllerSnapshot(OSDictionary** status,
                                          uint64_t* sequence,
@@ -93,4 +106,7 @@ public:
 
 struct ASFWDriver_IVars {
     ServiceContext* context;
+    IOService* powerProvider;   // borrowed from Start; cleared in Stop
+    bool runtimeSuspended;      // true between sleep quiesce and wake rebuild
+    bool serviceRegistered;     // RegisterService() must run once per instance
 };

@@ -211,6 +211,14 @@ kern_return_t IMPL(ASFWDriver, Start) {
         return kr;
     if (!ivars || !ivars->context)
         return kIOReturnNoMemory;
+    ivars->powerProvider = provider;
+    return StartRuntime(provider);
+}
+
+kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
+    if (!ivars || !ivars->context)
+        return kIOReturnNoMemory;
+    kern_return_t kr = kIOReturnSuccess;
     auto& ctx = *ivars->context;
     ctx.stopping.store(false, std::memory_order_release);
     DriverWiring::EnsureDeps(this, ctx);
@@ -347,11 +355,13 @@ kern_return_t IMPL(ASFWDriver, Start) {
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
 
-    // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
-    // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
-    // this nub yet — it is staged for a future per-unit personality carrying
-    // login/unit identity, and kept published now to reserve the discovery seam.
-    {
+    // Publish once per instance: StartRuntime() is re-entered on wake, and the
+    // SBP-2 nub and RegisterService() must not repeat across sleep/wake cycles.
+    if (!ivars->serviceRegistered) {
+        // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
+        // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
+        // this nub yet — it is staged for a future per-unit personality carrying
+        // login/unit identity, and kept published now to reserve the discovery seam.
         IOService* sbp2NubService = nullptr;
         kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
         if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
@@ -360,15 +370,24 @@ kern_return_t IMPL(ASFWDriver, Start) {
             // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
             sbp2NubService->release();
         }
-    }
 
-    RegisterService();
+        RegisterService();
+        ivars->serviceRegistered = true;
+    }
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
 
     return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(ASFWDriver, Stop) {
+    QuiesceRuntime();
+    if (ivars) {
+        ivars->powerProvider = nullptr;
+    }
+    return Stop(provider, SUPERDISPATCH);
+}
+
+void ASFWDriver::QuiesceRuntime() {
     if (ivars && ivars->context) {
         auto& ctx = *ivars->context;
         ctx.stopping.store(true, std::memory_order_release);
@@ -411,7 +430,44 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         if (ctx.deps.configRomStager && ctx.deps.hardware)
             ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
     }
-    return Stop(provider, SUPERDISPATCH);
+}
+
+kern_return_t IMPL(ASFWDriver, SetPowerState) {
+    const bool poweredOn = (powerFlags & kIOServicePowerCapabilityOn) != 0;
+    ASFW_LOG(Controller, "SetPowerState: powerFlags=0x%08x (%{public}s)", powerFlags,
+             poweredOn ? "on" : "sleep/low");
+
+    if (ivars) {
+        if (!poweredOn) {
+            // Sleep: quiesce everything and reset the runtime while the
+            // controller still answers MMIO. The silicon loses its programmed
+            // state in low power (Linux ohci.c pci_suspend does software_reset;
+            // Apple gates all hardware access while asleep).
+            if (!ivars->runtimeSuspended && ivars->context) {
+                ASFW_LOG(Controller, "SetPowerState: quiescing runtime for sleep");
+                QuiesceRuntime();
+                ivars->context->Reset();
+                ivars->runtimeSuspended = true;
+            }
+        } else if (ivars->runtimeSuspended) {
+            // Wake: rebuild the runtime from scratch — full OHCI re-init ending
+            // in a forced bus reset, after which normal discovery re-publishes
+            // devices (Linux pci_resume runs the same ohci_enable as cold probe).
+            ivars->runtimeSuspended = false;
+            if (ivars->powerProvider) {
+                ASFW_LOG(Controller, "SetPowerState: wake - rebuilding runtime");
+                const kern_return_t kr = StartRuntime(ivars->powerProvider);
+                if (kr != kIOReturnSuccess) {
+                    ASFW_LOG(Controller,
+                             "SetPowerState: ❌ wake runtime rebuild failed: 0x%08x", kr);
+                }
+            } else {
+                ASFW_LOG(Controller, "SetPowerState: wake with no provider; skipping rebuild");
+            }
+        }
+    }
+
+    return SetPowerState(powerFlags, SUPERDISPATCH);
 }
 
 kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
