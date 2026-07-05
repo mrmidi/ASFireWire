@@ -375,20 +375,14 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ivars->serviceRegistered = true;
     }
 
-    // Pin our power desire to full-on. A bus controller must stay powered even
-    // with no devices attached (plug detection needs a programmed, interrupting
-    // controller). The audio driver matched on our nub sits in the PM tree as
-    // our child; when the last nub terminates, the child's power demand vanishes
-    // and the system sends SetPowerState(0) ~1ms later — which tore down the
-    // runtime and nothing ever demanded power again. ChangePowerState(On) alone
-    // did not prevent that (HW-verified 2026-07-05): our state was still governed
-    // by the children. SetPowerOverride makes it governed solely by our own
-    // desire, so capability 0 arrives only for real system sleep, and wake
-    // restores our declared desire via SetPowerState(On).
-    const kern_return_t pmKr = ChangePowerState(kIOServicePowerCapabilityOn);
-    const kern_return_t ovKr = SetPowerOverride(true);
-    ASFW_LOG(Controller, "ASFWDriver: ChangePowerState(On) -> 0x%08x, SetPowerOverride(true) -> 0x%08x",
-             pmKr, ovKr);
+    // NOTE: do NOT call ChangePowerState/SetPowerOverride here. The kernel
+    // joins a dext into the PM tree only after Start() returns
+    // (xnu IOUserServer.cpp serviceStarted -> serviceJoinPMTree), so PM calls
+    // made during Start() are dropped: powerOverrideOnPriv returns
+    // IOPMNotYetInitialized (surfaced as kIOReturnError) and
+    // ChangePowerState_Impl silently discards the same failure. The power
+    // desire is pinned in SetPowerState() on the first On callback instead,
+    // which the kernel delivers right after the PM join.
 
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
 
@@ -465,7 +459,26 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
                 ivars->context->Reset();
                 ivars->runtimeSuspended = true;
             }
-        } else if (ivars->runtimeSuspended) {
+        } else {
+            // Pin our power desire to full-on. A bus controller must stay
+            // powered even with no devices attached (plug detection needs a
+            // programmed, interrupting controller). The audio driver matched on
+            // our nub is a PM-tree child; when the last nub terminates, the
+            // child's demand vanishes and the system sends SetPowerState(0)
+            // ~1ms later — which tore down the runtime, leaving the controller
+            // dead until the PM domain happened to repower minutes later.
+            // SetPowerOverride makes our power state governed solely by our own
+            // desire (children ignored), so capability 0 then means real system
+            // sleep only. These calls only work once the PM join has happened
+            // (after Start() returns) — this callback is the earliest reliable
+            // point. Idempotent, so unconditional on every On is fine.
+            const kern_return_t pmKr = ChangePowerState(kIOServicePowerCapabilityOn);
+            const kern_return_t ovKr = SetPowerOverride(true);
+            ASFW_LOG(Controller,
+                     "SetPowerState: pin desire On -> 0x%08x, override -> 0x%08x",
+                     pmKr, ovKr);
+        }
+        if (poweredOn && ivars->runtimeSuspended) {
             // Wake: rebuild the runtime from scratch — full OHCI re-init ending
             // in a forced bus reset, after which normal discovery re-publishes
             // devices (Linux pci_resume runs the same ohci_enable as cold probe).
