@@ -329,6 +329,10 @@ public:
         outSlice->payloadLength = length;
 
         IOLockUnlock(lock_);
+        // The target fetching an ORB / page table / data-OUT buffer. V2-gated
+        // (off by default) — the happy path is confirmed; this is diagnostic.
+        ASFW_ADDRSPACE_LOG("SBP2 remote read addr=0x%012llx len=%u",
+                           static_cast<unsigned long long>(address), length);
         return Async::ResponseCode::Complete;
     }
 
@@ -628,7 +632,7 @@ private:
             return kIOReturnNoMemory;
         }
 
-        std::memset(mapped, 0, size);
+        ZeroMappedBytes(mapped, size);
         OSSynchronizeIO();
 
         range.descriptor = std::move(dma->descriptor);
@@ -676,6 +680,29 @@ private:
         }
 #endif
         OSSynchronizeIO();
+    }
+
+    // std::memset's large-fill path uses DC ZVA on ARM64, which faults
+    // (EXC_ARM_DA_ALIGN) on the uncached (CacheModeInhibit) DMA mappings —
+    // zero with plain aligned stores like CopyPayloadBytes.
+    static void ZeroMappedBytes(uint8_t* destination, std::size_t size) {
+        if (!destination || size == 0) {
+            return;
+        }
+
+        // volatile stores keep clang's loop-idiom pass from turning this
+        // back into a memset call.
+        std::size_t index = 0;
+        if ((reinterpret_cast<uintptr_t>(destination) & 0x3u) == 0) {
+            auto* dst32 = reinterpret_cast<volatile uint32_t*>(destination);
+            for (; index + sizeof(uint32_t) <= size; index += sizeof(uint32_t)) {
+                dst32[index / sizeof(uint32_t)] = 0;
+            }
+        }
+        auto* dst8 = reinterpret_cast<volatile uint8_t*>(destination);
+        for (; index < size; ++index) {
+            dst8[index] = 0;
+        }
     }
 
     static void CopyPayloadBytes(uint8_t* destination,

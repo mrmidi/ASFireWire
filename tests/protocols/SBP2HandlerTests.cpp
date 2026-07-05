@@ -42,8 +42,10 @@ using ASFW::Discovery::RomEntry;
 using ASFW::Protocols::SBP2::AddressSpaceManager;
 using ASFW::Protocols::SBP2::SessionRegistry;
 using ASFW::Testing::FakeSessionScheduler;
+namespace SCSI = ASFW::Protocols::SBP2::SCSI;
 using ASFW::Protocols::SBP2::Wire::LoginORB;
 using ASFW::Protocols::SBP2::Wire::LoginResponse;
+using ASFW::Protocols::SBP2::Wire::NormalORB;
 using ASFW::Protocols::SBP2::Wire::StatusBlock;
 namespace SBPStatus = ASFW::Protocols::SBP2::Wire::SBPStatus;
 namespace UCWire = ASFW::UserClient::Wire;
@@ -75,6 +77,12 @@ uint64_t ReadORBAddress(AddressSpaceManager& manager, uint64_t orbAddress,
     const uint32_t hi = OSSwapBigToHostInt32(ReadQuadlet(manager, orbAddress + hiOffset));
     const uint32_t lo = OSSwapBigToHostInt32(ReadQuadlet(manager, orbAddress + loOffset));
     return ComposeAddress(static_cast<uint16_t>(hi & 0xFFFFu), lo);
+}
+
+uint64_t ReadDataBufferAddress(AddressSpaceManager& manager, uint64_t orbAddress) {
+    return ReadORBAddress(manager, orbAddress,
+                          offsetof(NormalORB, dataDescriptorHi),
+                          offsetof(NormalORB, dataDescriptorLo));
 }
 
 std::vector<uint8_t> BuildCommandRequestWire(std::vector<uint8_t> cdb,
@@ -248,6 +256,118 @@ TEST(SBP2HandlerTests, HandlerHardensCommandABIInputsBeforeSubmission) {
     EXPECT_EQ(kIOReturnBadArgument, submit(BuildCommandRequestWire({0x2A}, 4, 2, {0x01, 0x02})));
     EXPECT_EQ(kIOReturnBadArgument, submit(BuildCommandRequestWire({0x2A}, 4, 1, {0x01})));
     EXPECT_EQ(kIOReturnSuccess, submit(BuildCommandRequestWire({0x00})));
+}
+
+TEST(SBP2HandlerTests, HandlerAcceptsLargeCommandInputViaMemoryDescriptor) {
+    HandlerRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    ASFW::UserClient::SBP2Handler handler(nullptr, &rig.registry);
+    uint64_t scalarInput[] = {handle};
+
+    auto submitViaDescriptor = [&](const std::vector<uint8_t>& serialized) {
+        HostTestMemoryDescriptor descriptor;
+        descriptor.SetMockBytes(serialized.data(), serialized.size());
+        IOUserClientMethodArguments args{};
+        args.scalarInput = scalarInput;
+        args.scalarInputCount = 1;
+        args.structureInputDescriptor = &descriptor;
+        return handler.SubmitSBP2Command(&args, HandlerRig::Owner());
+    };
+
+    // Too short to hold the wire header → rejected before any parsing.
+    EXPECT_EQ(kIOReturnBadArgument, submitViaDescriptor({0x00, 0x01, 0x02}));
+
+    // SEND LUT-shaped command: 10-byte CDB + 32 KB data-OUT payload — far past
+    // the ~4 KB inband limit that forces the descriptor path in the first place.
+    std::vector<uint8_t> lut(32768);
+    for (size_t i = 0; i < lut.size(); ++i) {
+        lut[i] = static_cast<uint8_t>(i);
+    }
+    const std::vector<uint8_t> cdb{0x2a, 0x00, 0x03, 0x00, 0x01, 0x01, 0x00, 0x80, 0x00, 0x00};
+    EXPECT_EQ(kIOReturnSuccess,
+              submitViaDescriptor(BuildCommandRequestWire(cdb, 32768, 2, lut)));
+}
+
+TEST(SBP2HandlerTests, HandlerReturnsLargeResultViaOutputDescriptor) {
+    HandlerRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    // READ(10)-shaped data-IN command whose result exceeds the inband limit —
+    // the kernel then supplies args.structureOutputDescriptor for the reply.
+    SCSI::CommandRequest request{};
+    request.cdb = {0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x80};
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 8192;
+    ASSERT_TRUE(rig.registry.SubmitCommand(HandlerRig::Owner(), handle, request));
+
+    const auto& write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t commandOrbAddress = DecodeAddressFromWritePayload(write.data);
+    const uint64_t dataBufferAddress =
+        ReadDataBufferAddress(rig.addressManager, commandOrbAddress);
+
+    std::vector<uint8_t> payload(8192);
+    for (size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<uint8_t>(i * 7u);
+    }
+    rig.addressManager.ApplyRemoteWrite(dataBufferAddress, payload);
+
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    status.orbOffsetHi =
+        OSSwapHostToBigInt16(static_cast<uint16_t>((commandOrbAddress >> 32) & 0xFFFFu));
+    status.orbOffsetLo =
+        OSSwapHostToBigInt32(static_cast<uint32_t>(commandOrbAddress & 0xFFFF'FFFFu));
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+
+    ASFW::UserClient::SBP2Handler handler(nullptr, &rig.registry);
+    uint64_t scalarInput[] = {handle};
+    HostTestMemoryDescriptor outputDescriptor;
+    outputDescriptor.ResizeMockBytes(sizeof(UCWire::SBP2CommandResultWire) + payload.size() + 256);
+
+    IOUserClientMethodArguments args{};
+    args.scalarInput = scalarInput;
+    args.scalarInputCount = 1;
+    args.structureOutputDescriptor = &outputDescriptor;
+    ASSERT_EQ(kIOReturnSuccess, handler.GetSBP2CommandResult(&args, HandlerRig::Owner()));
+    // Descriptor path must not also allocate inline output (IOUserClient contract).
+    EXPECT_EQ(nullptr, args.structureOutput);
+
+    const auto& out = outputDescriptor.MockBytes();
+    UCWire::SBP2CommandResultWire header{};
+    std::memcpy(&header, out.data(), sizeof(header));
+    EXPECT_EQ(0, header.transportStatus);
+    EXPECT_EQ(SBPStatus::kNoAdditionalInfo, header.sbpStatus);
+    ASSERT_EQ(payload.size(), header.payloadLength);
+    EXPECT_EQ(0u, header.senseLength);
+    EXPECT_EQ(0, std::memcmp(out.data() + sizeof(header), payload.data(), payload.size()));
+
+    // A too-small descriptor reports NoSpace instead of writing out of bounds.
+    // Drain the fetch agent's pending bus writes first (previous fetch-agent
+    // write must complete before the next submit).
+    for (int i = 0; i < 8 && rig.bus.PendingWriteCount() > 0; ++i) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    ASSERT_TRUE(rig.registry.SubmitCommand(HandlerRig::Owner(), handle, request));
+    // Immediate model: the 2nd command is announced with its own ORB_POINTER
+    // write — its address is in the last bus write's payload.
+    const uint64_t orb2 =
+        DecodeAddressFromWritePayload(rig.bus.WriteAt(rig.bus.WriteCount() - 1).data);
+    StatusBlock status2 = status;
+    status2.orbOffsetHi = OSSwapHostToBigInt16(static_cast<uint16_t>((orb2 >> 32) & 0xFFFFu));
+    status2.orbOffsetLo = OSSwapHostToBigInt32(static_cast<uint32_t>(orb2 & 0xFFFF'FFFFu));
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status2), sizeof(status2)});
+    HostTestMemoryDescriptor smallDescriptor;
+    smallDescriptor.ResizeMockBytes(64);
+    args.structureOutputDescriptor = &smallDescriptor;
+    EXPECT_EQ(kIOReturnNoSpace, handler.GetSBP2CommandResult(&args, HandlerRig::Owner()));
 }
 
 } // namespace

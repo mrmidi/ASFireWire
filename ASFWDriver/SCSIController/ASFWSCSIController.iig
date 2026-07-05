@@ -1,0 +1,109 @@
+//
+// ASFWSCSIController.iig
+// ASFWDriver
+//
+// SCSIControllerDriverKit HBA that presents a FireWire SBP-2 target as a SCSI
+// device in IOSCSIArchitectureModelFamily. The SCSI Architecture Model then
+// publishes a SCSITaskUserClient (SCSITaskDeviceInterface) for the LUN, which
+// userspace apps (e.g. VueScan) open via SCSITaskLib — so the app drives the
+// scanner's SCSI command set and ASFW only carries the transport.
+//
+// This replaces the FireWire→SCSI bridge Apple removed in macOS Tahoe
+// (IOFireWireSerialBusProtocolTransport). That bridge subclassed
+// IOSCSIProtocolServices; DriverKit exposes no equivalent, so we model the
+// FireWire bus as a synthetic single-target parallel HBA instead. The SCSITask
+// surface seen by the app is identical.
+//
+// PHASE 0 (this file): dummy target, NO SBP-2 wiring. UserProcessParallelTask
+// answers a hardcoded INQUIRY and completes everything else GOOD. Purpose: prove
+// on a live Tahoe machine that the SCSI Architecture Model publishes a
+// SCSITaskUserClient for a DriverKit HBA at all (open question), with zero
+// FireWire hardware. Confirmed by `ioreg | grep "SCSITaskUserClient GUID"` and
+// by VueScan enumerating a phantom scanner.
+//
+// Matching: ASFWDriver publishes an ASFWSBP2Nub (ASFWNubType = SBP2); this HBA
+// matches on it (IOPropertyMatch), mirroring the ASFWAudioNub/ASFWAudioDriver
+// pattern.
+//
+
+#ifndef ASFWSCSIController_h
+#define ASFWSCSIController_h
+
+#include <SCSIControllerDriverKit/IOUserSCSIParallelInterfaceController.iig>
+
+class ASFWSCSIController: public IOUserSCSIParallelInterfaceController
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+
+    // --- HBA lifecycle (framework calls these; must be implemented) ---
+    virtual kern_return_t UserInitializeController() override;
+    virtual kern_return_t UserStartController() override;
+
+    // --- HBA identity / capability queries ---
+    virtual kern_return_t UserReportInitiatorIdentifier(uint64_t* id) override;
+    virtual kern_return_t UserReportHighestSupportedDeviceID(uint64_t* id) override;
+    virtual kern_return_t UserReportMaximumTaskCount(uint32_t* count) override;
+    virtual kern_return_t UserReportHBAHighestLogicalUnitNumber(uint64_t* value) override;
+    virtual kern_return_t UserDoesHBAPerformAutoSense(bool* result) override;
+    virtual kern_return_t UserDoesHBASupportMultiPathing(bool* result) override;
+    virtual kern_return_t UserDoesHBAPerformDeviceManagement(bool* result) override;
+    virtual kern_return_t UserDoesHBASupportSCSIParallelFeature(uint32_t theFeature,
+                                                                bool* result) override;
+
+    // --- target presence / init ---
+    virtual kern_return_t UserTargetPresentForID(SCSIDeviceIdentifier targetID,
+                                                 bool* result) override;
+    virtual kern_return_t UserInitializeTargetForID(SCSITargetIdentifier targetID) override;
+
+    // --- DMA constraints ---
+    virtual kern_return_t UserGetDMASpecification(uint64_t* maxTransferSize,
+                                                  uint32_t* alignment,
+                                                  uint8_t* numAddressBits,
+                                                  DMAOutputSegmentType* segmentType) override;
+
+    // --- per-task HBA scratch data (we use none) ---
+    virtual kern_return_t UserMapHBAData(uint32_t* uniqueTaskID) override;
+
+    // --- the core: execute one SCSI task ---
+    virtual kern_return_t UserProcessParallelTask(
+        SCSIUserParallelTask parallelRequest,
+        uint32_t* response,
+        OSAction* completion) override;
+
+    // --- bundled-task path: opt OUT (return failure) so the framework uses the
+    //     single-task UserProcessParallelTask path above. Both are pure-virtual
+    //     so must be declared; UserProcessBundledParallelTasks is never called. ---
+    virtual kern_return_t UserMapBundledParallelTaskCommandAndResponseBuffers(
+        IOBufferMemoryDescriptor* parallelCommandIOMemoryDescriptor,
+        IOBufferMemoryDescriptor* parallelResponseIOMemoryDescriptor) override;
+    virtual void UserProcessBundledParallelTasks(
+        const uint16_t parallelRequestSlotIndices[kMaxBundledParallelTasks],
+        uint16_t parallelRequestSlotIndicesCount,
+        OSAction* completion) override;
+
+    // --- task-management functions (Phase 2 wires these to SBP-2) ---
+    virtual kern_return_t UserAbortTaskRequest(uint64_t theT, uint64_t theL,
+                                               uint64_t theQ, uint32_t* response) override;
+    virtual kern_return_t UserAbortTaskSetRequest(uint64_t theT, uint64_t theL,
+                                                  uint32_t* response) override;
+    virtual kern_return_t UserClearACARequest(uint64_t theT, uint64_t theL,
+                                              uint32_t* response) override;
+    virtual kern_return_t UserClearTaskSetRequest(uint64_t theT, uint64_t theL,
+                                                  uint32_t* response) override;
+    virtual kern_return_t UserLogicalUnitResetRequest(uint64_t theT, uint64_t theL,
+                                                      uint32_t* response) override;
+    virtual kern_return_t UserTargetResetRequest(uint64_t theT, uint32_t* response) override;
+};
+
+struct ASFWSCSIController_IVars {
+    bool targetCreated{false};
+    uint64_t targetID{0};   // Phase 0: single synthetic target at ID 0
+    IODispatchQueue* auxQueue{nullptr}; // the framework's "AuxiliaryQueue" contract
+    uint32_t nextUniqueTaskID{0};       // handed out in UserMapHBAData (must be unique per task)
+};
+
+#endif /* ASFWSCSIController_h */

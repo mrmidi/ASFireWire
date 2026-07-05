@@ -5,11 +5,59 @@
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>42</string>
 	<key>IOKitPersonalities</key>
 	<dict>
+		<key>ASFWAudioDriverService</key>
+		<dict>
+			<key>ASFWDirectAudioVerbosity</key>
+			<integer>1</integer>
+			<key>CFBundleIdentifier</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOClass</key>
+			<string>IOUserService</string>
+			<key>IOPropertyMatch</key>
+			<dict>
+				<key>ASFWNubType</key>
+				<string>Audio</string>
+			</dict>
+			<key>IOProviderClass</key>
+			<string>IOUserService</string>
+			<key>IOUserAudioDriverUserClientProperties</key>
+			<dict>
+				<key>IOClass</key>
+				<string>IOUserUserClient</string>
+				<key>IOUserClass</key>
+				<string>IOUserAudioDriverUserClient</string>
+			</dict>
+			<key>IOUserClass</key>
+			<string>ASFWAudioDriver</string>
+			<key>IOUserServerName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOUserServerOneProcess</key>
+			<true/>
+		</dict>
 		<key>ASFWDriverService</key>
 		<dict>
+			<key>ASFWAsyncVerbosity</key>
+			<integer>1</integer>
+			<key>ASFWAudioNubProperties</key>
+			<dict>
+				<key>ASFWNubType</key>
+				<string>Audio</string>
+				<key>IOClass</key>
+				<string>IOUserService</string>
+				<key>IOUserClass</key>
+				<string>ASFWAudioNub</string>
+			</dict>
+			<key>ASFWAutoStartAudioStreams</key>
+			<true/>
+			<key>ASFWControllerVerbosity</key>
+			<integer>1</integer>
+			<key>ASFWDICEVerbosity</key>
+			<integer>1</integer>
+			<key>ASFWDirectAudioVerbosity</key>
+			<integer>1</integer>
 			<key>ASFWDriverUserClientProperties</key>
 			<dict>
 				<key>IOClass</key>
@@ -17,33 +65,23 @@
 				<key>IOUserClass</key>
 				<string>ASFWDriverUserClient</string>
 			</dict>
-			<key>ASFWAudioNubProperties</key>
+			<key>ASFWEnableHexDumps</key>
+			<false/>
+			<key>ASFWHardwareVerbosity</key>
+			<integer>1</integer>
+			<key>ASFWLogStatistics</key>
+			<true/>
+			<key>ASFWSBP2NubProperties</key>
 			<dict>
+				<key>ASFWNubType</key>
+				<string>SBP2</string>
 				<key>IOClass</key>
 				<string>IOUserService</string>
 				<key>IOUserClass</key>
-				<string>ASFWAudioNub</string>
-				<key>ASFWNubType</key>
-				<string>Audio</string>
+				<string>ASFWSBP2Nub</string>
 			</dict>
 			<key>ASFWTraceDMACoherency</key>
 			<false/>
-			<key>ASFWAsyncVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWControllerVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWHardwareVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWDICEVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWDirectAudioVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWEnableHexDumps</key>
-			<false/>
-			<key>ASFWAutoStartAudioStreams</key>
-			<true/>
-			<key>ASFWLogStatistics</key>
-			<true/>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>
@@ -60,33 +98,31 @@
 			<string>ASFWDriver</string>
 			<key>IOUserServerName</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOUserServerOneProcess</key>
+			<true/>
 		</dict>
-		<key>ASFWAudioDriverService</key>
+		<key>ASFWSCSIControllerService</key>
 		<dict>
-			<key>IOUserAudioDriverUserClientProperties</key>
-			<dict>
-				<key>IOClass</key>
-				<string>IOUserUserClient</string>
-				<key>IOUserClass</key>
-				<string>IOUserAudioDriverUserClient</string>
-			</dict>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-			<key>ASFWDirectAudioVerbosity</key>
-			<integer>1</integer>
+			<key>CFBundleIdentifierKernel</key>
+			<string>com.apple.iokit.IOSCSIParallelFamily</string>
 			<key>IOClass</key>
-			<string>IOUserService</string>
+			<string>IOUserSCSIParallelInterfaceController</string>
+			<key>IOMatchCategory</key>
+			<string>ASFWSCSIController</string>
+			<key>IOPCIMatch</key>
+			<string>0x590111c1</string>
+			<key>IOPCITunnelCompatible</key>
+			<true/>
 			<key>IOProviderClass</key>
-			<string>IOUserService</string>
-			<key>IOPropertyMatch</key>
-			<dict>
-				<key>ASFWNubType</key>
-				<string>Audio</string>
-			</dict>
+			<string>IOPCIDevice</string>
 			<key>IOUserClass</key>
-			<string>ASFWAudioDriver</string>
+			<string>ASFWSCSIController</string>
 			<key>IOUserServerName</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOUserServerOneProcess</key>
+			<true/>
 		</dict>
 	</dict>
 	<key>OSBundleUsageDescription</key>

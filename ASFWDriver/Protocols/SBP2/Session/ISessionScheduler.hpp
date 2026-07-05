@@ -10,7 +10,7 @@
 //
 //   - Production: backed by a single driver-level IOTimerDispatchSource + OSAction
 //     owner (the WatchdogCoordinator precedent), wired in FW-58. This avoids the
-//     SBP2DelayedDispatch IOSleep-on-queue pattern, which blocks the dext's single
+//     old IOSleep-on-queue pattern, which blocked the dext's single
 //     Default queue thread for the whole delay.
 //   - Host tests: a deterministic virtual-clock fake (FakeSessionScheduler).
 //

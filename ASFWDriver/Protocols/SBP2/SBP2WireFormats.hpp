@@ -132,14 +132,19 @@ struct NormalORB {
     // Access via CommandBlock() helper.
 
     [[nodiscard]] uint32_t* CommandBlock() noexcept {
-        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + 16);
+        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + kHeaderSize);
     }
     [[nodiscard]] const uint32_t* CommandBlock() const noexcept {
-        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + 16);
+        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + kHeaderSize);
     }
 
-    // Minimum ORB size (no command block)
-    static constexpr uint32_t kHeaderSize = 16;
+    // Minimum ORB size (no command block): next(8) + data_descriptor(8) +
+    // options/dataSize quadlet(4). Command block starts at offset 20 — a
+    // header of 16 puts the CDB under the options quadlet, which then
+    // overwrites CDB bytes 0-3 in PrepareForExecution (target reads the
+    // command block 4 bytes into the CDB). Cross-validated with Linux
+    // sbp2.c struct sbp2_command_orb (next/data_descriptor/misc/command_block).
+    static constexpr uint32_t kHeaderSize = 20;
     // Null next-ORB indicator (bit 31 set in hi address)
     static constexpr uint32_t kNextORBNull = 0x80000000u;
 };
@@ -162,7 +167,7 @@ static_assert(sizeof(PageTableEntry) == PageTableEntry::kSize, "PTE must be 8 by
 // ---------------------------------------------------------------------------
 
 struct StatusBlock {
-    uint8_t  details{0};     // [7] Src, [6:4] Resp, [3:2] D, [1:0] Len
+    uint8_t  details{0};     // [7:6] src, [5:4] resp, [3] d (dead), [2:0] len
     uint8_t  sbpStatus{0};   // SBP-2 specific status code
     uint16_t orbOffsetHi{0};
     uint32_t orbOffsetLo{0};
@@ -170,10 +175,12 @@ struct StatusBlock {
 
     static constexpr uint32_t kMaxSize = 32; // header (8) + max status (24)
 
-    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 7) & 0x1; }
-    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x7; }
-    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 2) & 0x1; }
-    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x3; }
+    // Bit positions cross-validated with Linux sbp2.c STATUS_GET_* macros
+    // (quadlet bits 31:30 src, 29:28 resp, 27 dead, 26:24 len → byte 0 above).
+    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 6) & 0x3; }
+    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x3; }
+    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 3) & 0x1; }
+    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x7; }
 };
 
 static_assert(sizeof(StatusBlock) == 32, "StatusBlock must be 32 bytes");

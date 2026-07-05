@@ -293,6 +293,45 @@ TEST(SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
     EXPECT_EQ(sensePayload, result->senseData);
 }
 
+TEST(SessionRegistryTests, CheckConditionSurfacesSCSIStatusAndAutosense) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    const auto request = SCSI::BuildTestUnitReadyRequest();
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+    const auto& write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t orbAddress = DecodeAddressFromWritePayload(write.data);
+
+    // Status block with command-set-dependent bytes (SBP-2 Annex B): SAM status
+    // CHECK CONDITION + packed autosense 5/26/00 (INVALID FIELD IN PARAM LIST).
+    StatusBlock header{};
+    header.details = 0;
+    header.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    header.orbOffsetHi = OSSwapHostToBigInt16(static_cast<uint16_t>((orbAddress >> 32) & 0xFFFFu));
+    header.orbOffsetLo = OSSwapHostToBigInt32(static_cast<uint32_t>(orbAddress & 0xFFFF'FFFFu));
+    uint8_t blockBytes[32] = {};
+    std::memcpy(blockBytes, &header, 8);
+    blockBytes[8] = 0x02;   // sfmt=0, SAM status = CHECK CONDITION
+    blockBytes[9] = 0x05;   // sense key ILLEGAL REQUEST
+    blockBytes[10] = 0x26;  // ASC
+    blockBytes[11] = 0x00;  // ASCQ
+    rig.addressManager.ApplyRemoteWrite(rig.sessionStatusAddress,
+                                        std::span<const uint8_t>{blockBytes, sizeof(blockBytes)});
+
+    auto result = rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(0, result->transportStatus);
+    EXPECT_EQ(SBPStatus::kNoAdditionalInfo, result->sbpStatus);  // SBP-status alone lies
+    EXPECT_TRUE(result->scsiStatusValid);
+    EXPECT_EQ(0x02, result->scsiStatus);
+    ASSERT_GE(result->senseData.size(), 14u);
+    EXPECT_EQ(0x70, result->senseData[0]);
+    EXPECT_EQ(0x05, result->senseData[2] & 0x0F);   // sense key
+    EXPECT_EQ(0x26, result->senseData[12]);         // ASC
+    EXPECT_EQ(0x00, result->senseData[13]);         // ASCQ
+}
+
 TEST(SessionRegistryTests, InquiryFailureResultPreservesSBPStatus) {
     SessionRegistryRig rig;
     const uint64_t handle = rig.CreateSession();
@@ -346,11 +385,19 @@ TEST(SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaustion)
     ASSERT_TRUE(stateAfterFailure.has_value());
     EXPECT_EQ(-1, stateAfterFailure->lastError);
 
-    ASSERT_GT(rig.bus.WriteCount(), 0u);
+    ASSERT_GT(rig.bus.WriteCount(), 1u);
     const auto agentResetWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     EXPECT_EQ(4u, agentResetWrite.data.size());
+    // Apple-style recovery: the transport failure also submitted a
+    // LOGICAL_UNIT_RESET management ORB (8-byte agent write) before the
+    // fetch-agent reset quadlet.
+    const auto lunResetWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 2);
+    EXPECT_EQ(8u, lunResetWrite.data.size());
 
     ASSERT_TRUE(rig.bus.CompleteWrite(agentResetWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+    // Fail the management write so the LUN-reset ORB retires and frees its
+    // allocation (it may have reused the command ORB's freed address slot).
+    ASSERT_TRUE(rig.bus.CompleteWrite(lunResetWrite.handle, ASFW::Async::AsyncStatus::kTimeout));
 
     uint32_t ignored = 0;
     EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
@@ -390,9 +437,16 @@ TEST(SessionRegistryTests, RejectsSessionOperationsFromNonOwningClient) {
     EXPECT_FALSE(rig.registry.GetCommandResult(SessionRegistryRig::OtherOwner(), handle).has_value());
     EXPECT_TRUE(rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle).has_value());
 
+    // Drain the first command's pending ORB_POINTER write so the fetch agent
+    // is free before the next submit.
+    for (int i = 0; i < 8 && rig.bus.PendingWriteCount() > 0; ++i) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
     ASSERT_TRUE(rig.registry.SubmitInquiry(SessionRegistryRig::Owner(), handle, 36));
-    const auto& inquiryWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
-    const uint64_t inquiryOrbAddress = DecodeAddressFromWritePayload(inquiryWrite.data);
+    // Immediate model: the 2nd command is announced with its own ORB_POINTER
+    // write — its address is in the last bus write's payload.
+    const uint64_t inquiryOrbAddress =
+        DecodeAddressFromWritePayload(rig.bus.WriteAt(rig.bus.WriteCount() - 1).data);
     StatusBlock inquiryStatus{};
     inquiryStatus.details = 0;
     inquiryStatus.sbpStatus = SBPStatus::kRequestAborted;
@@ -722,10 +776,10 @@ TEST(SessionRegistryTests, SubmitCommandRejectsCDBLargerThanORBPayloadBudget) {
     const uint64_t handle = rig.CreateSession();
     rig.LoginSuccessfully(handle);
 
-    // maxCommandBlockSize is maxORBSize(32) - NormalORB::kHeaderSize(16) = 16, so a
-    // 17-byte CDB exceeds the budget and must be rejected.
+    // maxCommandBlockSize is maxORBSize(32) - NormalORB::kHeaderSize(20) = 12, so a
+    // 13-byte CDB exceeds the budget and must be rejected.
     SCSI::CommandRequest request{};
-    request.cdb = std::vector<uint8_t>(17, 0x12);
+    request.cdb = std::vector<uint8_t>(13, 0x12);
     request.direction = SCSI::DataDirection::None;
     request.transferLength = 0;
     request.timeoutMs = 100;
@@ -750,7 +804,8 @@ TEST(SessionRegistryTests, UnitCharacteristicsDecodeMinimumORBSize) {
     const auto& targetInfo = session->TargetInfo();
     EXPECT_EQ(2000u, targetInfo.managementTimeoutMs);
     EXPECT_EQ(32u, targetInfo.maxORBSize);
-    // DICE's NormalORB header is 16 bytes (4 quadlets), vs PR #19's 20.
+    // NormalORB header is 20 bytes (next 8 + data_descriptor 8 + misc quadlet 4);
+    // command block starts at offset 20 (Linux sbp2.c struct sbp2_command_orb).
     EXPECT_EQ(32u - NormalORB::kHeaderSize, targetInfo.maxCommandBlockSize);
 }
 
@@ -814,6 +869,61 @@ TEST(SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey)
     EXPECT_EQ(*unit->GetManagementAgentOffset(), 0x00C000u);
     ASSERT_TRUE(unit->GetLUN().has_value());
     EXPECT_EQ(*unit->GetLUN(), 0x060000u);
+}
+
+// Reproduces the v45 HW sequence: push-mode command → ORB timeout → LUN-reset
+// management ORB → mgmt timeout (target never posts mgmt status). The task must
+// still be delivered to the initiator (otherwise the SCSI task leaks and the
+// host hangs), and the failed LUN reset must escalate to a bus reset.
+TEST(SessionRegistryTests, OrbTimeoutThenLunResetTimeoutEscalatesAndDeliversResult) {
+    SessionRegistryRig rig;
+    int busResets = 0;
+    rig.registry.SetBusResetRequester([&busResets]() { ++busResets; });
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    // Login leaves the BUSY_TIMEOUT CSR write pending — flush it so later
+    // FIFO completions hit the writes this test issues.
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>{0x12, 0x00, 0x00, 0x00, 0x24, 0x00};
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 36;
+    request.timeoutMs = 1000;
+
+    int callbacks = 0;
+    SCSI::CommandResult lastResult{};
+    ASSERT_TRUE(rig.registry.SubmitCommand(
+        SessionRegistryRig::Owner(), handle, request,
+        [&](const SCSI::CommandResult& result) {
+            ++callbacks;
+            lastResult = result;
+        }));
+
+    // ORB_POINTER write ack'd (arms the ORB timeout); the target fetches the
+    // ORB but never posts status.
+    const auto orbPointerWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    ASSERT_EQ(8u, orbPointerWrite.data.size());
+    ASSERT_TRUE(rig.bus.CompleteWrite(orbPointerWrite.handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+
+    rig.AdvanceMs(1001);  // ORB timeout → AGENT_RESET (no-wait) + LUN-reset mgmt write
+    EXPECT_EQ(0, callbacks);  // delivery deferred until the LUN reset resolves
+    EXPECT_EQ(2u, rig.bus.PendingWriteCount());  // AGENT_RESET + mgmt-agent write
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    EXPECT_EQ(0, callbacks);
+
+    // Mgmt status never arrives → mgmt timeout (2000 ms advertised + grace).
+    rig.AdvanceMs(3001);
+
+    EXPECT_EQ(1, callbacks);  // task delivered despite the failed LUN reset
+    EXPECT_NE(0, lastResult.transportStatus);
+    EXPECT_EQ(1, busResets);  // failed LUN reset escalates to a bus reset
 }
 
 } // namespace

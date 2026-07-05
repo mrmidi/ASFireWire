@@ -51,9 +51,6 @@ void FetchAgent::Clear(bool cancelTimers) noexcept {
     const bool cancelFetchWrite =
         cancelTimers && fetchAgentWriteInUse_ && static_cast<bool>(fetchAgentWriteHandle_);
     const Async::AsyncHandle fetchWrite = fetchAgentWriteHandle_;
-    const bool cancelDoorbell =
-        cancelTimers && doorbellInProgress_ && static_cast<bool>(doorbellWriteHandle_);
-    const Async::AsyncHandle doorbell = doorbellWriteHandle_;
 
     if (cancelTimers) {
         for (auto& [key, entry] : outstandingORBs_) {
@@ -68,19 +65,12 @@ void FetchAgent::Clear(bool cancelTimers) noexcept {
 
     outstandingORBs_.clear();
     pendingImmediateORBs_.clear();
-    chainTailORB_ = nullptr;
     activeFetchAgentORB_ = nullptr;
     fetchAgentWriteHandle_ = {};
     fetchAgentWriteInUse_ = false;
-    doorbellWriteHandle_ = {};
-    doorbellInProgress_ = false;
-    doorbellRingAgain_ = false;
 
     if (cancelFetchWrite) {
         (void)bus_.Cancel(fetchWrite);
-    }
-    if (cancelDoorbell) {
-        (void)bus_.Cancel(doorbell);
     }
 }
 
@@ -112,24 +102,11 @@ bool FetchAgent::Submit(SBP2CommandORB* orb) noexcept {
     orb->SetAppended(true);
     outstandingORBs_[MakeORBKey(orb->GetORBAddress())] = Outstanding{orb, kInvalidSchedulerToken};
 
-    const bool isImmediate = (orb->GetFlags() & SBP2CommandORB::kImmediate) != 0;
-    if (isImmediate) {
-        chainTailORB_ = orb;
-        if (fetchAgentWriteInUse_) {
-            pendingImmediateORBs_.push_back(orb);
-            return true;
-        }
-        return AppendImmediate(orb);
+    if (fetchAgentWriteInUse_) {
+        pendingImmediateORBs_.push_back(orb);
+        return true;
     }
-
-    if (!AppendChained(orb)) {
-        return false;
-    }
-    RingDoorbell();
-    if (activeFetchAgentORB_ != orb) {
-        StartORBTimeout(orb);
-    }
-    return true;
+    return AppendImmediate(orb);
 }
 
 bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
@@ -174,56 +151,6 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
     return true;
 }
 
-bool FetchAgent::AppendChained(SBP2CommandORB* orb) noexcept {
-    if (chainTailORB_ == nullptr) {
-        chainTailORB_ = orb;
-        return AppendImmediate(orb);
-    }
-
-    if (chainTailORB_ != orb) {
-        const Async::FWAddress orbAddr = orb->GetORBAddress();
-        const uint16_t localNode = LocalBusNodeID();
-        const uint32_t nextHi = OSSwapHostToBigInt32(ComposeBusAddressHi(localNode, orbAddr.addressHi));
-        const uint32_t nextLo = OSSwapHostToBigInt32(orbAddr.addressLo);
-        const kern_return_t linkKr = chainTailORB_->SetNextORBAddress(nextHi, nextLo);
-        if (linkKr != kIOReturnSuccess) {
-            ASFW_LOG(Async, "FetchAgent::AppendChained: SetNextORBAddress failed: 0x%08x", linkKr);
-            FailORB(orb, -1, Wire::SBPStatus::kUnspecifiedError);
-            return false;
-        }
-        chainTailORB_ = orb;
-    }
-    return true;
-}
-
-void FetchAgent::RingDoorbell() noexcept {
-    if (doorbellInProgress_) {
-        doorbellRingAgain_ = true;
-        return;
-    }
-    doorbellInProgress_ = true;
-
-    const std::weak_ptr<int> weak = lifetimeToken_;
-    const uint16_t requestGeneration = binding_.generation;
-    doorbellWriteHandle_ = bus_.WriteQuad(
-        FW::Generation{binding_.generation},
-        FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
-        binding_.doorbellAddress,
-        0,
-        TargetSpeed(),
-        [this, weak, requestGeneration](Async::AsyncStatus status, std::span<const uint8_t>) {
-            if (weak.expired()) {
-                return;
-            }
-            OnDoorbellComplete(requestGeneration, status);
-        });
-
-    if (!doorbellWriteHandle_) {
-        ASFW_LOG(Async, "FetchAgent::RingDoorbell: WriteQuad failed");
-        doorbellInProgress_ = false;
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Completions
 // ---------------------------------------------------------------------------
@@ -238,6 +165,8 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
     fetchAgentWriteHandle_ = {};
 
     if (status != Async::AsyncStatus::kSuccess) {
+        ASFW_LOG(Async, "FetchAgent: ORB_POINTER write failed status=%d",
+                 static_cast<int>(status));
         if (activeFetchAgentORB_ != nullptr) {
             uint32_t retries = activeFetchAgentORB_->GetFetchAgentWriteRetries();
             if (retries > 0) {
@@ -276,26 +205,11 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
     }
 }
 
-void FetchAgent::OnDoorbellComplete(uint16_t expectedGeneration,
-                                    Async::AsyncStatus status) noexcept {
-    if (!bound_ || expectedGeneration != binding_.generation) {
-        return;
-    }
-    doorbellInProgress_ = false;
-    doorbellWriteHandle_ = {};
-    (void)status;
-
-    if (doorbellRingAgain_) {
-        doorbellRingAgain_ = false;
-        RingDoorbell();
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Status block → ORB matching
 // ---------------------------------------------------------------------------
 
-bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t /*length*/) noexcept {
+bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept {
     const uint64_t orbKey = MakeORBKey(OSSwapBigToHostInt16(block.orbOffsetHi), OSSwapBigToHostInt32(block.orbOffsetLo));
     const auto it = outstandingORBs_.find(orbKey);
     if (it == outstandingORBs_.end()) {
@@ -309,15 +223,56 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t /*length
     if (entry.timeoutToken != kInvalidSchedulerToken) {
         scheduler_.Cancel(entry.timeoutToken);
     }
+
+    // Status arrived for this ORB. If its ORB_POINTER write completion has not
+    // yet been serviced (activeFetchAgentORB_ still points here — possible when
+    // the target ack_pends the write and its status block is processed before
+    // our write-response), sever the raw pointer now: the completion callback
+    // below runs CommandExecutor::RetireCommand, which frees the ORB, and a late
+    // OnFetchAgentWriteComplete must not dereference it. The command is already
+    // delivered, so suppressing that path's retry/timeout arming is also correct.
+    if (activeFetchAgentORB_ == entry.orb) {
+        activeFetchAgentORB_ = nullptr;
+    }
+
+    SBP2CommandORB::CompletionCallback cb;
     if (entry.orb != nullptr) {
-        if (chainTailORB_ == entry.orb) {
-            chainTailORB_ = nullptr;
-        }
         entry.orb->SetAppended(false);
-        auto cb = entry.orb->GetCompletionCallback();
-        if (cb) {
-            cb(0, block.sbpStatus);
+        // Hand the command-set-dependent status bytes (8+, SBP-2 Annex B: SCSI
+        // status + packed autosense) to the ORB so the executor's completion
+        // can surface CHECK CONDITION + sense instead of masking them.
+        if (length > 8) {
+            const auto* raw = reinterpret_cast<const uint8_t*>(&block);
+            const uint32_t dataLen = length - 8 > 24 ? 24 : length - 8;
+            entry.orb->SetCompletionStatusData(std::span<const uint8_t>{raw + 8, dataLen});
         }
+        cb = entry.orb->GetCompletionCallback();
+    }
+
+    // Dead bit set → the target's fetch agent is DEAD and ignores ORB_POINTER
+    // writes until reset. Revive it and complete the command only once the
+    // reset write has completed: Apple's transport waits for
+    // FetchAgentResetComplete before CompleteSCSITask
+    // (IOFireWireSerialBusProtocolTransport.cpp:1455) — completing early lets
+    // the initiator's next command race the firmware's reset processing.
+    // The deferred callback is safe against teardown: CommandExecutor's
+    // completion lambda guards on its own lifetime token and active-ORB match.
+    if (block.DeadBit() != 0) {
+        ASFW_LOG(Async,
+                 "FetchAgent::OnStatusBlock: agent DEAD (resp=%u sbp=0x%02x) — reset, "
+                 "completion deferred",
+                 block.Response(), block.sbpStatus);
+        const uint8_t sbpStatus = block.sbpStatus;
+        ResetNoWait([cb, sbpStatus]() {
+            if (cb) {
+                cb(0, sbpStatus);
+            }
+        });
+        return true;
+    }
+
+    if (cb) {
+        cb(0, block.sbpStatus);
     }
     return true;
 }
@@ -359,6 +314,37 @@ void FetchAgent::Reset(std::function<void(int)> callback) noexcept {
             auto cb = std::move(agentResetCallback_);
             agentResetCallback_ = nullptr;
             cb(-1);
+        }
+    }
+}
+
+void FetchAgent::ResetNoWait(std::function<void()> onComplete) noexcept {
+    if (!bound_) {
+        if (onComplete) {
+            onComplete();
+        }
+        return;
+    }
+    // Fire-and-forget quadlet to AGENT_RESET — no ORB-tracking teardown, so a
+    // command completing right now (and the next one submitted from its
+    // completion) is untouched. Mirrors Linux sbp2_agent_reset_no_wait.
+    const auto handle = bus_.WriteQuad(
+        FW::Generation{binding_.generation},
+        FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
+        binding_.agentResetAddress,
+        0,
+        TargetSpeed(),
+        [onComplete](Async::AsyncStatus status, std::span<const uint8_t>) {
+            ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) complete status=%d",
+                     static_cast<int>(status));
+            if (onComplete) {
+                onComplete();
+            }
+        });
+    if (!handle) {
+        ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) WriteQuad submit FAILED");
+        if (onComplete) {
+            onComplete();
         }
     }
 }
@@ -412,6 +398,11 @@ void FetchAgent::StartORBTimeout(SBP2CommandORB* orb) noexcept {
                 return;
             }
             SBP2CommandORB* timedOut = entryIt->second.orb;
+            // The agent is likely wedged mid-fetch (or dead) — revive it so the
+            // NEXT command's ORB_POINTER is honored. Linux aborts timed-out
+            // commands the same way (sbp2_scsi_abort → agent reset).
+            ASFW_LOG(Async, "FetchAgent: ORB timeout — agent reset before failing");
+            ResetNoWait();
             FailORB(timedOut, -1, Wire::SBPStatus::kUnspecifiedError);
         });
 }
@@ -433,9 +424,6 @@ void FetchAgent::FailORB(SBP2CommandORB* orb, int transportStatus, uint8_t sbpSt
     if (activeFetchAgentORB_ == orb) {
         activeFetchAgentORB_ = nullptr;
     }
-    if (chainTailORB_ == orb) {
-        chainTailORB_ = nullptr;
-    }
     orb->SetAppended(false);
 
     auto cb = orb->GetCompletionCallback();
@@ -448,16 +436,6 @@ void FetchAgent::FailPendingImmediate(int transportStatus, uint8_t sbpStatus) no
     auto pending = pendingImmediateORBs_;
     for (auto* orb : pending) {
         FailORB(orb, transportStatus, sbpStatus);
-    }
-}
-
-void FetchAgent::CompleteORB(SBP2CommandORB* orb, int transportStatus, uint8_t sbpStatus) noexcept {
-    if (orb == nullptr) {
-        return;
-    }
-    auto cb = orb->GetCompletionCallback();
-    if (cb) {
-        cb(transportStatus, sbpStatus);
     }
 }
 
