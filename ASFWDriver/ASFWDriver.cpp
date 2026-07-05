@@ -377,13 +377,18 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
     // Pin our power desire to full-on. A bus controller must stay powered even
     // with no devices attached (plug detection needs a programmed, interrupting
-    // controller). Without this, terminating the last audio nub drops the PM
-    // subtree's demand and the system sends SetPowerState(0) — which tore down
-    // the runtime and nothing ever demanded power again. With the desire pinned,
-    // capability 0 arrives only for real system sleep, and wake restores our
-    // declared desire via SetPowerState(On).
+    // controller). The audio driver matched on our nub sits in the PM tree as
+    // our child; when the last nub terminates, the child's power demand vanishes
+    // and the system sends SetPowerState(0) ~1ms later — which tore down the
+    // runtime and nothing ever demanded power again. ChangePowerState(On) alone
+    // did not prevent that (HW-verified 2026-07-05): our state was still governed
+    // by the children. SetPowerOverride makes it governed solely by our own
+    // desire, so capability 0 arrives only for real system sleep, and wake
+    // restores our declared desire via SetPowerState(On).
     const kern_return_t pmKr = ChangePowerState(kIOServicePowerCapabilityOn);
-    ASFW_LOG(Controller, "ASFWDriver: ChangePowerState(On) -> 0x%08x", pmKr);
+    const kern_return_t ovKr = SetPowerOverride(true);
+    ASFW_LOG(Controller, "ASFWDriver: ChangePowerState(On) -> 0x%08x, SetPowerOverride(true) -> 0x%08x",
+             pmKr, ovKr);
 
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
 
