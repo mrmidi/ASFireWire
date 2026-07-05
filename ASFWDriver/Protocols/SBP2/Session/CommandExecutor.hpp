@@ -105,7 +105,7 @@ public:
 private:
     void FailActiveCommand(int transportStatus, uint8_t sbpStatus) noexcept;
     void NotifyResultCallback();
-    void RetireCommandKeepAnchor();
+    void RetireCommand();
     void CleanupCommandResources();
     void CleanupManagementResources();
 
@@ -125,9 +125,6 @@ private:
     bool commandReady_{false};
     bool commandInFlight_{false};
     std::unique_ptr<SBP2CommandORB> commandORB_;
-    // Last completed ORB, kept alive as the doorbell-chain link anchor (the
-    // target re-reads its next_ORB field). Dropped on reset/teardown.
-    std::unique_ptr<SBP2CommandORB> linkAnchorORB_;
     std::unique_ptr<SBP2PageTable> commandPageTable_;
     uint64_t commandBufferHandle_{0};
     ResultCallback resultCallback_;

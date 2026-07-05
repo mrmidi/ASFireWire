@@ -21,18 +21,8 @@ namespace {
 
 constexpr uint8_t kInquiryOpcode = 0x12;
 
-// kImmediate on every command: one ORB_POINTER write per command. Both
-// references drive SCSI targets exactly this way — Linux sbp2_send_orb
-// (sbp2.c:1486, doorbell never written) and Apple's SCSI transport
-// (IOFireWireSerialBusProtocolTransport.cpp:944 sets kFWSBP2CommandImmediate
-// unconditionally; IOFireWireSBP2Login's doorbell/appendORB path is only
-// reachable from the userspace SBP2Lib API). The doorbell+next_ORB chain
-// (v39–v41) deviated from both references and wedged the LS-9000 after ~92
-// commands (2026-07-04 log: ORB fetched, status never posted; AGENT_RESET
-// ACKed but execution stayed dead).
 uint32_t BuildCommandFlags(SCSI::DataDirection direction) {
-    uint32_t flags = SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB |
-                     SBP2CommandORB::kImmediate;
+    uint32_t flags = SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB;
     if (direction == SCSI::DataDirection::FromTarget) {
         flags |= SBP2CommandORB::kDataFromTarget;
     }
@@ -220,12 +210,11 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         pendingCommandResult_ = std::move(result);
         activeCommandRequest_.reset();
         if (delivered) {
-            // Target saw this ORB — keep it as the doorbell-chain anchor.
-            RetireCommandKeepAnchor();
+            RetireCommand();
             NotifyResultCallback();
             return;
         }
-        // Transport failure → agent gets reset; no chain to anchor.
+        // Transport failure → agent gets reset before retry.
         CleanupCommandResources();
         // ORB timeout means the target may be wedged beyond what AGENT_RESET
         // revives (fetches ORBs, never executes). Apple's transport resets the
@@ -270,11 +259,6 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
     commandPageTable_ = std::move(pageTable);
     resultCallback_ = std::move(callback);
 
-    // Bring-up trace: identifies the wedging command if the target stops
-    // posting status mid-sequence.
-    ASFW_LOG(Async, "CommandExecutor: submit opcode=0x%02x dir=%d xfer=%u timeout=%ums",
-             request.cdb.front(), static_cast<int>(request.direction),
-             request.transferLength, request.timeoutMs);
     if (session_.SubmitORB(commandORB_.get())) {
         return true;
     }
@@ -448,32 +432,28 @@ void CommandExecutor::NotifyResultCallback() {
     }
 }
 
-void CommandExecutor::RetireCommandKeepAnchor() {
-    // Normal completion: free the data buffer and page table, but keep the
-    // completed ORB alive as the chain anchor — FetchAgent links the NEXT
-    // command into its next_ORB field and rings the doorbell, and the target
-    // re-reads that field from our memory (Apple keeps fLastORB the same way).
-    // The previous anchor is safe to drop now: its next_ORB link was consumed
-    // when this command was fetched.
+void CommandExecutor::RetireCommand() {
+    // Normal completion: the target has posted status and is done with the ORB
+    // (one ORB_POINTER write per command — no chain to keep alive). Free the
+    // data buffer, page table and ORB.
     if (commandBufferHandle_ != 0) {
         addrSpaceMgr_.DeallocateAddressRange(owner_, commandBufferHandle_);
         commandBufferHandle_ = 0;
     }
-    linkAnchorORB_ = std::move(commandORB_);
+    commandORB_.reset();
     commandPageTable_.reset();
     commandInFlight_ = false;
 }
 
 void CommandExecutor::CleanupCommandResources() {
     // Mirror #19: wipe the session's fetch-agent ORB tracking (cancels any
-    // in-flight fetch-agent/doorbell write) before dropping our ORB resources.
+    // in-flight fetch-agent write) before dropping our ORB resources.
     session_.ClearCommandTracking();
     if (commandBufferHandle_ != 0) {
         addrSpaceMgr_.DeallocateAddressRange(owner_, commandBufferHandle_);
         commandBufferHandle_ = 0;
     }
     commandORB_.reset();
-    linkAnchorORB_.reset();
     commandPageTable_.reset();
     commandInFlight_ = false;
 }

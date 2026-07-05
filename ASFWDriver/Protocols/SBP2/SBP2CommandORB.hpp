@@ -33,7 +33,6 @@ public:
     enum Flags : uint32_t {
         kNotify         = (1 << 0),
         kDataFromTarget = (1 << 1),
-        kImmediate      = (1 << 2),
         kNormalORB      = (1 << 5),
         kReservedORB    = (1 << 6),
         kVendorORB      = (1 << 7),
@@ -68,11 +67,8 @@ public:
     [[nodiscard]] kern_return_t PrepareForExecution(uint16_t localNodeID, FW::FwSpeed speed,
                                                     uint16_t maxPayloadLog) noexcept;
 
-    // Internal: ORB address for fetch agent / chaining.
+    // Internal: ORB address for the fetch agent.
     [[nodiscard]] Async::FWAddress GetORBAddress() const noexcept;
-
-    // Internal: set the next ORB pointer (big-endian values). Re-flushes the ORB.
-    [[nodiscard]] kern_return_t SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
 
     // Set rq_fmt=3 (NOP dummy) so device skips this ORB if already fetched.
     [[nodiscard]] kern_return_t SetToDummy() noexcept;

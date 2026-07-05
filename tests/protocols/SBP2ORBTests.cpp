@@ -269,12 +269,11 @@ TEST(SBP2ORBTests, SetCommandBlockRejectsOversizedCdb) {
     EXPECT_FALSE(orb.SetCommandBlock(std::span<const uint8_t>(oversized.data(), oversized.size())));
 }
 
-TEST(SBP2ORBTests, ChainAndDummyOpsReturnSuccessOnValidORB) {
+TEST(SBP2ORBTests, DummyOpAndPrepareReturnSuccessOnValidORB) {
     AddressSpaceManager manager{nullptr};
     SBP2CommandORB orb(manager, reinterpret_cast<void*>(0x72), 16);
     ASSERT_TRUE(orb.IsValid());
 
-    EXPECT_EQ(kIOReturnSuccess, orb.SetNextORBAddress(0x8000'0000u, 0x0000'0000u));
     EXPECT_EQ(kIOReturnSuccess, orb.SetToDummy());
     EXPECT_EQ(kIOReturnSuccess,
               orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 6));

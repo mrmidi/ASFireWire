@@ -51,9 +51,6 @@ void FetchAgent::Clear(bool cancelTimers) noexcept {
     const bool cancelFetchWrite =
         cancelTimers && fetchAgentWriteInUse_ && static_cast<bool>(fetchAgentWriteHandle_);
     const Async::AsyncHandle fetchWrite = fetchAgentWriteHandle_;
-    const bool cancelDoorbell =
-        cancelTimers && doorbellInProgress_ && static_cast<bool>(doorbellWriteHandle_);
-    const Async::AsyncHandle doorbell = doorbellWriteHandle_;
 
     if (cancelTimers) {
         for (auto& [key, entry] : outstandingORBs_) {
@@ -68,19 +65,12 @@ void FetchAgent::Clear(bool cancelTimers) noexcept {
 
     outstandingORBs_.clear();
     pendingImmediateORBs_.clear();
-    chainTailORB_ = nullptr;
     activeFetchAgentORB_ = nullptr;
     fetchAgentWriteHandle_ = {};
     fetchAgentWriteInUse_ = false;
-    doorbellWriteHandle_ = {};
-    doorbellInProgress_ = false;
-    doorbellRingAgain_ = false;
 
     if (cancelFetchWrite) {
         (void)bus_.Cancel(fetchWrite);
-    }
-    if (cancelDoorbell) {
-        (void)bus_.Cancel(doorbell);
     }
 }
 
@@ -112,32 +102,11 @@ bool FetchAgent::Submit(SBP2CommandORB* orb) noexcept {
     orb->SetAppended(true);
     outstandingORBs_[MakeORBKey(orb->GetORBAddress())] = Outstanding{orb, kInvalidSchedulerToken};
 
-    const bool isImmediate = (orb->GetFlags() & SBP2CommandORB::kImmediate) != 0;
-    if (isImmediate) {
-        chainTailORB_ = orb;
-        if (fetchAgentWriteInUse_) {
-            pendingImmediateORBs_.push_back(orb);
-            return true;
-        }
-        return AppendImmediate(orb);
+    if (fetchAgentWriteInUse_) {
+        pendingImmediateORBs_.push_back(orb);
+        return true;
     }
-
-    // Apple model (IOFireWireSBP2Login::executeORB/appendORB): link the new ORB
-    // into the previous one's next_ORB and ring the doorbell. ORB_POINTER is only
-    // written when there is no chain tail (agent in RESET after login/reset) —
-    // writing ORB_POINTER right after a status block races the target's
-    // ACTIVE→SUSPENDED transition and wedges LS-9000 firmware.
-    const bool viaLink = (chainTailORB_ != nullptr);
-    if (!AppendChained(orb)) {
-        return false;
-    }
-    if (viaLink) {
-        RingDoorbell();
-    }
-    if (activeFetchAgentORB_ != orb) {
-        StartORBTimeout(orb);
-    }
-    return true;
+    return AppendImmediate(orb);
 }
 
 bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
@@ -179,65 +148,7 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
         FailORB(orb, -1, Wire::SBPStatus::kUnspecifiedError);
         return false;
     }
-    // Bring-up trace (phase 1 HW validation): one line per command submit.
-    ASFW_LOG(Async, "FetchAgent: ORB_POINTER → %04x:%08x (orb %04x:%08x gen=%u node=0x%04x)",
-             binding_.fetchAgentAddress.addressHi, binding_.fetchAgentAddress.addressLo,
-             orbAddr.addressHi, orbAddr.addressLo, binding_.generation, binding_.nodeID);
     return true;
-}
-
-bool FetchAgent::AppendChained(SBP2CommandORB* orb) noexcept {
-    if (chainTailORB_ == nullptr) {
-        chainTailORB_ = orb;
-        return AppendImmediate(orb);
-    }
-
-    if (chainTailORB_ != orb) {
-        const Async::FWAddress orbAddr = orb->GetORBAddress();
-        // next_ORB carries ONLY the 48-bit offset — no node ID. Local-bus node
-        // IDs (0xffcX) set bit 31, which is the SBP-2 NULL-pointer flag: the
-        // target would parse the link as "no next ORB" and stay suspended.
-        // Apple writes the bare addressHi the same way (IOFireWireSBP2ORB::
-        // setNextORBAddress, IOFireWireSBP2ORB.cpp:1717).
-        const uint32_t nextHi = OSSwapHostToBigInt32(static_cast<uint32_t>(orbAddr.addressHi));
-        const uint32_t nextLo = OSSwapHostToBigInt32(orbAddr.addressLo);
-        const kern_return_t linkKr = chainTailORB_->SetNextORBAddress(nextHi, nextLo);
-        if (linkKr != kIOReturnSuccess) {
-            ASFW_LOG(Async, "FetchAgent::AppendChained: SetNextORBAddress failed: 0x%08x", linkKr);
-            FailORB(orb, -1, Wire::SBPStatus::kUnspecifiedError);
-            return false;
-        }
-        chainTailORB_ = orb;
-    }
-    return true;
-}
-
-void FetchAgent::RingDoorbell() noexcept {
-    if (doorbellInProgress_) {
-        doorbellRingAgain_ = true;
-        return;
-    }
-    doorbellInProgress_ = true;
-
-    const std::weak_ptr<int> weak = lifetimeToken_;
-    const uint16_t requestGeneration = binding_.generation;
-    doorbellWriteHandle_ = bus_.WriteQuad(
-        FW::Generation{binding_.generation},
-        FW::NodeId{static_cast<uint8_t>(binding_.nodeID & 0x3Fu)},
-        binding_.doorbellAddress,
-        0,
-        TargetSpeed(),
-        [this, weak, requestGeneration](Async::AsyncStatus status, std::span<const uint8_t>) {
-            if (weak.expired()) {
-                return;
-            }
-            OnDoorbellComplete(requestGeneration, status);
-        });
-
-    if (!doorbellWriteHandle_) {
-        ASFW_LOG(Async, "FetchAgent::RingDoorbell: WriteQuad failed");
-        doorbellInProgress_ = false;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +164,9 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
     fetchAgentWriteInUse_ = false;
     fetchAgentWriteHandle_ = {};
 
-    // Bring-up trace: ack/response status of the ORB_POINTER write.
-    ASFW_LOG(Async, "FetchAgent: ORB_POINTER write complete status=%d", static_cast<int>(status));
-
     if (status != Async::AsyncStatus::kSuccess) {
+        ASFW_LOG(Async, "FetchAgent: ORB_POINTER write failed status=%d",
+                 static_cast<int>(status));
         if (activeFetchAgentORB_ != nullptr) {
             uint32_t retries = activeFetchAgentORB_->GetFetchAgentWriteRetries();
             if (retries > 0) {
@@ -295,22 +205,6 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
     }
 }
 
-void FetchAgent::OnDoorbellComplete(uint16_t expectedGeneration,
-                                    Async::AsyncStatus status) noexcept {
-    if (!bound_ || expectedGeneration != binding_.generation) {
-        return;
-    }
-    doorbellInProgress_ = false;
-    doorbellWriteHandle_ = {};
-    // Bring-up trace (doorbell chain).
-    ASFW_LOG(Async, "FetchAgent: doorbell write complete status=%d", static_cast<int>(status));
-
-    if (doorbellRingAgain_) {
-        doorbellRingAgain_ = false;
-        RingDoorbell();
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Status block → ORB matching
 // ---------------------------------------------------------------------------
@@ -330,13 +224,19 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) 
         scheduler_.Cancel(entry.timeoutToken);
     }
 
+    // Status arrived for this ORB. If its ORB_POINTER write completion has not
+    // yet been serviced (activeFetchAgentORB_ still points here — possible when
+    // the target ack_pends the write and its status block is processed before
+    // our write-response), sever the raw pointer now: the completion callback
+    // below runs CommandExecutor::RetireCommand, which frees the ORB, and a late
+    // OnFetchAgentWriteComplete must not dereference it. The command is already
+    // delivered, so suppressing that path's retry/timeout arming is also correct.
+    if (activeFetchAgentORB_ == entry.orb) {
+        activeFetchAgentORB_ = nullptr;
+    }
+
     SBP2CommandORB::CompletionCallback cb;
     if (entry.orb != nullptr) {
-        // Keep chainTailORB_ pointing at the completed ORB: it is the link
-        // anchor for the NEXT command's next_ORB + doorbell (Apple keeps
-        // fLastORB across completions). The owner (CommandExecutor) keeps the
-        // ORB's memory alive until the next command completes. Reset paths
-        // clear the anchor so the next submit falls back to ORB_POINTER.
         entry.orb->SetAppended(false);
         // Hand the command-set-dependent status bytes (8+, SBP-2 Annex B: SCSI
         // status + packed autosense) to the ORB so the executor's completion
@@ -425,8 +325,6 @@ void FetchAgent::ResetNoWait(std::function<void()> onComplete) noexcept {
         }
         return;
     }
-    // Agent leaves the suspended chain — next submit must use ORB_POINTER.
-    chainTailORB_ = nullptr;
     // Fire-and-forget quadlet to AGENT_RESET — no ORB-tracking teardown, so a
     // command completing right now (and the next one submitted from its
     // completion) is untouched. Mirrors Linux sbp2_agent_reset_no_wait.
@@ -526,9 +424,6 @@ void FetchAgent::FailORB(SBP2CommandORB* orb, int transportStatus, uint8_t sbpSt
     if (activeFetchAgentORB_ == orb) {
         activeFetchAgentORB_ = nullptr;
     }
-    if (chainTailORB_ == orb) {
-        chainTailORB_ = nullptr;
-    }
     orb->SetAppended(false);
 
     auto cb = orb->GetCompletionCallback();
@@ -541,16 +436,6 @@ void FetchAgent::FailPendingImmediate(int transportStatus, uint8_t sbpStatus) no
     auto pending = pendingImmediateORBs_;
     for (auto* orb : pending) {
         FailORB(orb, transportStatus, sbpStatus);
-    }
-}
-
-void FetchAgent::CompleteORB(SBP2CommandORB* orb, int transportStatus, uint8_t sbpStatus) noexcept {
-    if (orb == nullptr) {
-        return;
-    }
-    auto cb = orb->GetCompletionCallback();
-    if (cb) {
-        cb(transportStatus, sbpStatus);
     }
 }
 

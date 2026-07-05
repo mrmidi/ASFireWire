@@ -396,11 +396,11 @@ TEST(LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNextImm
     rig.LoginSuccessfully();
 
     SBP2CommandORB first(rig.addressManager, &rig.session, 16);
-    first.SetFlags(SBP2CommandORB::kImmediate);
+    first.SetFlags(SBP2CommandORB::kNormalORB);
     first.SetTimeout(50);
 
     SBP2CommandORB second(rig.addressManager, &rig.session, 16);
-    second.SetFlags(SBP2CommandORB::kImmediate);
+    second.SetFlags(SBP2CommandORB::kNormalORB);
 
     ASSERT_TRUE(rig.session.SubmitORB(&first));
     ASSERT_EQ(1u, rig.bus.PendingWriteCount());
@@ -428,7 +428,7 @@ TEST(LoginSessionTests, SubmittedImmediateORBStartsTimeoutAfterFetchAgentWriteSu
     rig.LoginSuccessfully();
 
     SBP2CommandORB orb(rig.addressManager, &rig.session, 16);
-    orb.SetFlags(SBP2CommandORB::kImmediate);
+    orb.SetFlags(SBP2CommandORB::kNormalORB);
     orb.SetTimeout(25);
 
     int callbackStatus = 99;
@@ -491,41 +491,12 @@ TEST(LoginSessionTests, SolicitedStatusCompletesORBMatchingByORBAddress) {
     EXPECT_EQ(99, secondStatus);
 }
 
-TEST(LoginSessionTests, ChainedORBLinkFailureReturnsFalseWithoutDoorbellWrite) {
-    SessionRig rig;
-    rig.LoginSuccessfully();
-
-    auto* firstOwner = reinterpret_cast<void*>(0x101);
-    auto* secondOwner = reinterpret_cast<void*>(0x102);
-
-    SBP2CommandORB first(rig.addressManager, firstOwner, 16);
-    first.SetFlags(0);
-    ASSERT_TRUE(rig.session.SubmitORB(&first));
-    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
-
-    rig.addressManager.ReleaseOwner(firstOwner);
-
-    SBP2CommandORB second(rig.addressManager, secondOwner, 16);
-    second.SetFlags(0);
-
-    int secondTransportStatus = 99;
-    second.SetCompletionCallback([&secondTransportStatus](int status, uint8_t) {
-        secondTransportStatus = status;
-    });
-
-    const size_t writeCountBeforeSubmit = rig.bus.WriteCount();
-    EXPECT_FALSE(rig.session.SubmitORB(&second));
-    EXPECT_EQ(writeCountBeforeSubmit, rig.bus.WriteCount());
-    EXPECT_EQ(-1, secondTransportStatus);
-    EXPECT_FALSE(second.IsAppended());
-}
-
 TEST(LoginSessionTests, ImmediateORBWriteRetryExhaustionFailsActiveCommandAndResetsFetchAgent) {
     SessionRig rig;
     rig.LoginSuccessfully();
 
     SBP2CommandORB orb(rig.addressManager, &rig.session, 16);
-    orb.SetFlags(SBP2CommandORB::kImmediate);
+    orb.SetFlags(SBP2CommandORB::kNormalORB);
 
     int callbackStatus = 99;
     int callbackCount = 0;
@@ -558,7 +529,7 @@ TEST(LoginSessionTests,
     rig.LoginSuccessfully();
 
     SBP2CommandORB first(rig.addressManager, &rig.session, 16);
-    first.SetFlags(SBP2CommandORB::kImmediate);
+    first.SetFlags(SBP2CommandORB::kNormalORB);
     int firstCallbackStatus = 99;
     int firstCallbackCount = 0;
     first.SetCompletionCallback([&](int status, uint8_t) {
@@ -567,7 +538,7 @@ TEST(LoginSessionTests,
     });
 
     SBP2CommandORB second(rig.addressManager, &rig.session, 16);
-    second.SetFlags(SBP2CommandORB::kImmediate);
+    second.SetFlags(SBP2CommandORB::kNormalORB);
     int secondCallbackStatus = 99;
     int secondCallbackCount = 0;
     second.SetCompletionCallback([&](int status, uint8_t) {

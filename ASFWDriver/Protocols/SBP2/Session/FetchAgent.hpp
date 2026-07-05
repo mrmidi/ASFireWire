@@ -2,11 +2,13 @@
 
 // FetchAgent — SBP-2 command-plane engine.
 //
-// Submits Normal Command ORBs to a logged-in target: writes the first immediate
-// ORB to the fetch-agent register, chains subsequent ORBs via their next-ORB
-// pointer, rings the doorbell, retries failed fetch-agent writes, tracks
-// outstanding ORBs, times them out, and matches incoming status blocks back to
-// the ORB that produced them.
+// Submits Normal Command ORBs to a logged-in target: one ORB_POINTER write per
+// command (both references drive SCSI targets exactly this way — Linux
+// sbp2_send_orb never writes the doorbell, and Apple's shipping SCSI transport
+// sets kFWSBP2CommandImmediate unconditionally,
+// IOFireWireSerialBusProtocolTransport.cpp:944). Retries failed fetch-agent
+// writes, tracks outstanding ORBs, times them out, and matches incoming status
+// blocks back to the ORB that produced them.
 //
 // Owned by SBP2LoginSession (composition). The login *state* (LoginState,
 // loginID, generation) stays in LoginSession; FetchAgent holds only the ORB
@@ -36,12 +38,11 @@ namespace ASFW::Protocols::SBP2 {
 class FetchAgent {
 public:
     // Supplied by LoginSession when a login/reconnect succeeds. Holds the target
-    // node + generation and the three command-block-agent register addresses.
+    // node + generation and the command-block-agent register addresses.
     struct Binding {
         uint16_t generation{0};
         uint16_t nodeID{0xFFFF};
         Async::FWAddress fetchAgentAddress{};
-        Async::FWAddress doorbellAddress{};
         Async::FWAddress agentResetAddress{};
         uint16_t maxPayloadSize{4096};
     };
@@ -72,8 +73,8 @@ public:
     [[nodiscard]] bool OnStatusBlock(const Wire::StatusBlock& block,
                                      uint32_t length) noexcept;
 
-    // Issue a fetch-agent reset. callback(0)=success, callback(-1)=failure. The
-    // ORB chain is cleared once the reset completes.
+    // Issue a fetch-agent reset. callback(0)=success, callback(-1)=failure.
+    // Outstanding-ORB tracking is cleared once the reset completes.
     void Reset(std::function<void(int)> callback) noexcept;
 
     // Fire-and-forget AGENT_RESET write (Linux sbp2_agent_reset_no_wait).
@@ -98,20 +99,15 @@ private:
     };
 
     [[nodiscard]] bool AppendImmediate(SBP2CommandORB* orb) noexcept;
-    [[nodiscard]] bool AppendChained(SBP2CommandORB* orb) noexcept;
-    void RingDoorbell() noexcept;
 
     void OnFetchAgentWriteComplete(uint16_t expectedGeneration,
                                    Async::AsyncStatus status) noexcept;
-    void OnDoorbellComplete(uint16_t expectedGeneration,
-                            Async::AsyncStatus status) noexcept;
     void OnAgentResetComplete(uint16_t expectedGeneration,
                               Async::AsyncStatus status) noexcept;
 
     void StartORBTimeout(SBP2CommandORB* orb) noexcept;
     void FailORB(SBP2CommandORB* orb, int transportStatus, uint8_t sbpStatus) noexcept;
     void FailPendingImmediate(int transportStatus, uint8_t sbpStatus) noexcept;
-    void CompleteORB(SBP2CommandORB* orb, int transportStatus, uint8_t sbpStatus) noexcept;
 
     [[nodiscard]] uint16_t LocalBusNodeID() const noexcept;
     [[nodiscard]] FW::FwSpeed TargetSpeed() const noexcept;
@@ -128,16 +124,11 @@ private:
 
     std::unordered_map<uint64_t, Outstanding> outstandingORBs_;
     std::deque<SBP2CommandORB*> pendingImmediateORBs_;
-    SBP2CommandORB* chainTailORB_{nullptr};
     SBP2CommandORB* activeFetchAgentORB_{nullptr};
 
     std::array<uint8_t, 8> fetchAgentWriteData_{};
     Async::AsyncHandle fetchAgentWriteHandle_{};
     bool fetchAgentWriteInUse_{false};
-
-    Async::AsyncHandle doorbellWriteHandle_{};
-    bool doorbellInProgress_{false};
-    bool doorbellRingAgain_{false};
 
     Async::AsyncHandle agentResetWriteHandle_{};
     bool agentResetInProgress_{false};
