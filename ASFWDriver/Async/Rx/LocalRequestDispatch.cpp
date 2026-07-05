@@ -82,8 +82,9 @@ ResponseCode LocalRequestDispatch::DispatchView(const ARPacketView& view, uint32
     } else if (isReadBlock) {
         // Ties each ORB/page-table fetch to the tLabel of our response so an
         // "AT-resp DROPPED: tLabel=N" line identifies exactly which fetch the
-        // target never got an answer to. Low rate (a handful per command).
-        ASFW_LOG(Async, "AR readBlock tLabel=%u src=0x%04X addr=0x%012llx len=%u rc=%u",
+        // target never got an answer to. Happy-path correlation, so V2-gated;
+        // the UNCLAIMED branch above stays at default level (real anomaly).
+        ASFW_LOG_V2(Async, "AR readBlock tLabel=%u src=0x%04X addr=0x%012llx len=%u rc=%u",
                  view.tLabel, view.sourceID,
                  static_cast<unsigned long long>(ctx.destOffset), ctx.dataLength,
                  static_cast<unsigned>(rcode));

@@ -148,11 +148,12 @@ ARStreamStats ProcessARStream(Ctx& ctx,
                                      "[%{public}s] failed to consume stitched packet (%zu bytes, kr=0x%08x)",
                                      ctxLabel, stitched->totalLength, consumeKr);
                         }
-                        // Anomaly-visible on purpose: stitches are rare (one per
-                        // ~bufferSize of inbound traffic at most), and any stitch
-                        // line near a fault is a lead.
-                        ASFW_LOG(Async, "[%{public}s] stitched tCode=0x%x len=%zu across buffer boundary",
-                                 ctxLabel, stitched->tCode, stitched->totalLength);
+                        // Normal boundary mechanism, not an anomaly: recurs
+                        // per-buffer during sustained inbound transfer, so
+                        // V2-gated to keep a clean run silent. The consume-failure
+                        // line above stays at default level (that is the fault).
+                        ASFW_LOG_V2(Async, "[%{public}s] stitched tCode=0x%x len=%zu across buffer boundary",
+                                    ctxLabel, stitched->tCode, stitched->totalLength);
                         bufferHandled = true;
                     } else if (stitched.error() != ParseFailure::NeedMoreBytes) {
                         // The fragment head itself is garbage — it will never parse.
