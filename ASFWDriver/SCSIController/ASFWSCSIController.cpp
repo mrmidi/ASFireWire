@@ -320,25 +320,25 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
     SBP2::SBP2BridgeHub::ClearTargetObserver();
     if (ivars != nullptr && ivars->auxQueue != nullptr) {
         // Barrier on auxQueue: runs after any queued drain block, so a held
-        // INQUIRY is either already replayed or still ours to flush here. Destroy
-        // the target in the same barrier to keep all auxQueue work serialized.
-        // A replayed INQUIRY's SubmitTask completion runs on the bridge queue
-        // (not auxQueue), so it may fire after this destroy — same in-flight-task
-        // teardown characteristic as the general bridged path; the submit lambda
-        // holds a controller retain, and the bridge's own Shutdown aborts the
-        // command so the completion still fires exactly once.
+        // INQUIRY is either already replayed or still ours to flush here (backstop
+        // against a leaked OSAction if the SAM tears down without aborting it).
         IODispatchQueue* aux = ivars->auxQueue;
         aux->DispatchSync(^{
             HeldInquiry held{};
             if (ExtractHeldInquiry(static_cast<PendingState*>(ivars->pendingState), &held)) {
                 CompleteHeldInquiryBusy(this, held);
             }
-            if (ivars->targetCreated) {
-                UserDestroyTargetForID(static_cast<SCSITargetIdentifier>(ivars->targetID));
-                ivars->targetCreated = false;
-            }
         });
         OSSafeReleaseNULL(ivars->auxQueue);
+    }
+    // No UserDestroyTargetForID: target 0 is framework-auto-created (presence
+    // scan, see UserStartController). On HBA teardown the framework terminates it
+    // as a child of the stopping controller. An explicit destroy here re-enters
+    // that in-flight termination on the aux queue, target 0 never quiesces, and
+    // the registry busy-times out at 60s → panic (IOSCSITargetDevice (1,1) +
+    // IOThunderboltPort, IOService.cpp:5986). Same auto-target-0 rule as create.
+    if (ivars != nullptr) {
+        ivars->targetCreated = false;
     }
     return Stop(provider, SUPERDISPATCH);
 }
