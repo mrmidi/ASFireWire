@@ -235,7 +235,7 @@ static_assert(sizeof(TaskManagementORB) == TaskManagementORB::kSize);
 struct CommandBlockAgentOffsets {
     static constexpr uint32_t kAgentReset               = 0x04; // Fetch agent reset (quadlet write)
     static constexpr uint32_t kFetchAgent               = 0x08; // ORB pointer write (fetch agent, non-fast-start)
-    static constexpr uint32_t kDoorbell                  = 0x10; // Doorbell ring (quadlet write)
+    static constexpr uint32_t kDoorbell                  = 0x10; // Doorbell ring — intentionally unwritten (ORB_POINTER-immediate model)
     static constexpr uint32_t kUnsolicitedStatusEnable   = 0x14; // Re-enable unsolicited status
 };
 

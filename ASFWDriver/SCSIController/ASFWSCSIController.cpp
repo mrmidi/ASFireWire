@@ -142,7 +142,7 @@ void ASFWSCSIController::free()
 
 kern_return_t IMPL(ASFWSCSIController, Start)
 {
-    ASFW_LOG(Controller, "[SCSIHBA] Start (phase-0 phantom HBA)");
+    ASFW_LOG(Controller, "[SCSIHBA] Start (SBP-2 bridge + phantom fallback)");
     // UserCreateTargetForID is declared QUEUENAME(AuxiliaryQueue) in the SDK .iig
     // ("this call to the framework runs on the Auxiliary queue"), but the framework
     // does not create that queue — the dext must. Without it the call never

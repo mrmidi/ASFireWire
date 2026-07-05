@@ -427,9 +427,10 @@ void CommandExecutor::NotifyResultCallback() {
     ResultCallback cb = std::move(resultCallback_);
     resultCallback_ = {};
     auto result = GetCommandResult();
-    if (result.has_value()) {
-        cb(*result);
-    }
+    // Exactly-once contract: fire even if the result was already consumed, so
+    // the caller's retained resources (OSAction/service across the async gap)
+    // always release. Fall back to an aborted result rather than dropping cb.
+    cb(result.value_or(SCSI::CommandResult{.transportStatus = kIOReturnAborted}));
 }
 
 void CommandExecutor::RetireCommand() {

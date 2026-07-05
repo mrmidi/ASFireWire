@@ -14,16 +14,17 @@
 // FireWire bus as a synthetic single-target parallel HBA instead. The SCSITask
 // surface seen by the app is identical.
 //
-// PHASE 0 (this file): dummy target, NO SBP-2 wiring. UserProcessParallelTask
-// answers a hardcoded INQUIRY and completes everything else GOOD. Purpose: prove
-// on a live Tahoe machine that the SCSI Architecture Model publishes a
-// SCSITaskUserClient for a DriverKit HBA at all (open question), with zero
-// FireWire hardware. Confirmed by `ioreg | grep "SCSITaskUserClient GUID"` and
-// by VueScan enumerating a phantom scanner.
+// UserProcessParallelTask forwards SCSI tasks to the real SBP-2 target via
+// SBP2TargetBridge/SessionRegistry (see the .cpp). Until the SBP-2 login is up
+// (or when the FireWire side is down) it falls back to a hardcoded phantom
+// INQUIRY so the SAM's probe stays alive and the SCSITaskUserClient path holds.
+// The phantom identity is currently CoolScan-9000-specific (see the .cpp).
 //
-// Matching: ASFWDriver publishes an ASFWSBP2Nub (ASFWNubType = SBP2); this HBA
-// matches on it (IOPropertyMatch), mirroring the ASFWAudioNub/ASFWAudioDriver
-// pattern.
+// Matching: this HBA co-matches the OHCI PCI device directly (IOProviderClass
+// IOPCIDevice + IOPCIMatch, distinct IOMatchCategory), alongside the main
+// ASFWDriver. ASFWDriver also publishes an ASFWSBP2Nub, but nothing matches on
+// it yet — it is staged for a future per-unit personality, not the current
+// match path.
 //
 
 #ifndef ASFWSCSIController_h

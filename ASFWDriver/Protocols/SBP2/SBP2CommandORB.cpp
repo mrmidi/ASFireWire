@@ -177,7 +177,7 @@ kern_return_t SBP2CommandORB::WriteORBToAddressSpace() noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// ORB address / chaining
+// ORB address
 // ---------------------------------------------------------------------------
 
 Async::FWAddress SBP2CommandORB::GetORBAddress() const noexcept {

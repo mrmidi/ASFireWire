@@ -347,10 +347,10 @@ kern_return_t IMPL(ASFWDriver, Start) {
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
 
-    // Publish the SBP-2 nub so the SCSI HBA (ASFWSCSIController) has a provider to
-    // match on — mirrors the ASFWAudioNub pattern. Phase 0: one unconditional
-    // phantom nub to prove the SCSITaskUserClient path on Tahoe. Phase 1 will
-    // publish one per discovered SBP-2 unit carrying login/unit identity.
+    // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
+    // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
+    // this nub yet — it is staged for a future per-unit personality carrying
+    // login/unit identity, and kept published now to reserve the discovery seam.
     {
         IOService* sbp2NubService = nullptr;
         kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
