@@ -76,6 +76,14 @@ add_async_test(BufferRingDMATests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
+# AR Stream Processor Tests (bufferFill walker: boundary stitching, garbage policy)
+add_async_test(ARStreamProcessorTests
+    ARStreamProcessorTests.cpp
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Rx/ARPacketParser.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
 # Label Allocator Tests
 add_async_test(LabelAllocatorTests
     LabelAllocatorTests.cpp

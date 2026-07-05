@@ -217,6 +217,35 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     // for the next interrupt without letting the receive path hot-spin on a
     // parser stall inside the same buffer.
     if (total_bytes_in_buffer <= last_observed_total_bytes_) {
+        // Exception: a FULL head buffer can never grow, so a preserved tail here
+        // is a cross-buffer straddle whose continuation lands in the NEXT buffer.
+        // OHCI may complete the two descriptors of a straddling packet in either
+        // order across interrupts (Linux ar_search_last_active_buffer makes the
+        // same allowance), so once the successor shows data, re-present the tail
+        // to let the caller retry the stitch. The caller must stop dequeuing when
+        // it cannot make progress, or this would spin within one pass.
+        if (total_bytes_in_buffer == reqCount) {
+            const size_t successor_index = (index + 1) % bufferCount_;
+            auto& successor_desc = descriptors_[successor_index];
+            if (dma_) {
+                dma_->FetchFromDevice(&successor_desc, sizeof(successor_desc));
+            }
+            if (DescriptorBytesFilled(successor_desc) > 0) {
+                uint8_t* fullBufferAddr = GetBufferAddress(index);
+                if (fullBufferAddr) {
+                    if (dma_) {
+                        dma_->FetchFromDevice(fullBufferAddr + last_dequeued_bytes_,
+                                              total_bytes_in_buffer - last_dequeued_bytes_);
+                    }
+                    return FilledBufferInfo{
+                        .virtualAddress = fullBufferAddr,
+                        .startOffset = last_dequeued_bytes_,
+                        .bytesFilled = total_bytes_in_buffer,
+                        .descriptorIndex = index
+                    };
+                }
+            }
+        }
         return std::nullopt;
     }
 

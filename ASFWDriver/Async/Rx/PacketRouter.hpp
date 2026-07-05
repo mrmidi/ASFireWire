@@ -6,6 +6,7 @@
 #include <functional>
 #include <span>
 
+#include "ARPacketParser.hpp"
 #include "../ResponseCode.hpp"
 
 namespace ASFW::Debug {
@@ -21,7 +22,7 @@ class ResponseSender;
 /**
  * \brief Dispatch view of an AR packet for handler callbacks.
  *
- * Provides read-only access to packet header and payload during RoutePacket().
+ * Provides read-only access to packet header and payload during RouteParsedPacket().
  * Header bytes are in OHCI AR DMA memory order; decoded scalar fields are in
  * host order. Payload may point at an aligned scratch copy for handlers that
  * need stable byte access.
@@ -119,11 +120,11 @@ using PacketHandler = std::function<ResponseCode(const ARPacketView&, uint32_t g
  *     // Complete transaction...
  * });
  *
- * // Route packet from AR Request buffer
- * router.RoutePacket(ARContextType::Request, std::span<const uint8_t>(bufferData, bufferSize));
+ * // Route a packet already framed by the AR stream walker
+ * router.RouteParsedPacket(ARContextType::Request, packetInfo, generation);
  * \endcode
  *
- * \warning Handlers are invoked synchronously from RoutePacket(). They must
+ * \warning Handlers are invoked synchronously from RouteParsedPacket(). They must
  *          complete quickly to avoid blocking AR interrupt processing.
  */
 class PacketRouter {
@@ -166,38 +167,24 @@ public:
     void RegisterResponseHandler(uint8_t tCode, PacketHandler handler);
 
     /**
-     * \brief Route packet from AR buffer to registered handler.
+     * \brief Dispatch one already-parsed packet to its registered handler.
      *
-     * Parses packet buffer, extracts packets one-by-one, and dispatches each
-     * packet to its registered handler based on tCode and context type.
+     * Stream framing (multi-packet walking, boundary stitching) is owned by
+     * the AR stream walker in ARStreamProcessor.hpp; this method only builds
+     * the ARPacketView (header span + payload copied into aligned scratch),
+     * captures diagnostics, invokes the tCode handler, and emits the write
+     * response for request contexts.
      *
      * \param contextType AR Request or AR Response context
-     * \param packetData Buffer containing packet stream (may have multiple packets)
-     *
-     * **Implementation**
-     * 1. Use ARPacketParser::ParseNext() to extract packets from buffer
-     * 2. For each packet:
-     *    a. Extract tCode from header first byte (bits[7:4])
-     *    b. Build ARPacketView from header span and aligned payload bytes
-     *    c. Lookup handler in requestHandlers_ or responseHandlers_
-     *    d. Invoke handler(view) if registered, else log warning
-     * 3. Continue until buffer exhausted
-     *
-     * **OHCI §8.4.2**
-     * "AR buffers contain a stream of packets. Each packet consists of:
-     *  - Packet header (variable length based on tCode)
-     *  - Packet data (optional, based on tCode and data_length)
-     *  - 4-byte trailer (xferStatus | timeStamp)
-     * Software must parse the stream to extract individual packets."
+     * \param packetInfo Parsed packet from ARPacketParser::ParseNext()
      *
      * **Thread Safety**
-     * Not thread-safe. Caller must serialize RoutePacket() calls (typically
-     * invoked from single interrupt handler thread).
-     *
-     * **Phase 2.2**
-     * Signature updated to use std::span for type-safe buffer access.
+     * Not thread-safe. Caller must serialize calls (typically invoked from
+     * the single interrupt handler thread).
      */
-    void RoutePacket(ARContextType contextType, std::span<const uint8_t> packetData, uint32_t generation);
+    void RouteParsedPacket(ARContextType contextType,
+                           const ARPacketParser::PacketInfo& packetInfo,
+                           uint32_t generation);
 
     /**
      * \brief Clear all registered handlers.

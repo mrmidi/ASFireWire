@@ -236,7 +236,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
         EXPECT_EQ(view.payload.size(), 0u);
         return ResponseCode::NoResponse;
     });
-    router.RoutePacket(ARContextType::Response, buffer, /*generation=*/0);
+    router.RouteParsedPacket(ARContextType::Response, *info, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
@@ -271,16 +271,19 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadBlockResponseComputesPayloadLength) 
         EXPECT_EQ(view.payload.size(), 0x20u);
         return ResponseCode::NoResponse;
     });
-    router.RoutePacket(ARContextType::Response, buffer, /*generation=*/0);
+    router.RouteParsedPacket(ARContextType::Response, *info, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
 TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength) {
+    // Q3 declares data_length=4, so the 4-byte lock old-value payload must be
+    // present before the trailer (the parser requires the full packet unit).
     const auto packet = MakeARBufferFromOHCIWords({
         0xFFC12DB0u,
         0xFFC00000u,
         0x00000000u,
         0x00040002u,
+        0x00000001u,
     });
     const auto buffer = std::span<const uint8_t>(packet.data(), packet.size());
     const auto info = ARPacketParser::ParseNext(buffer, 0);
@@ -302,7 +305,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength
         EXPECT_EQ(view.payload.size(), 0x4u);
         return ResponseCode::NoResponse;
     });
-    router.RoutePacket(ARContextType::Response, buffer, /*generation=*/0);
+    router.RouteParsedPacket(ARContextType::Response, *info, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
@@ -341,18 +344,22 @@ TEST(AsyncPacketSerDesLinuxCompat, RequestPayloadIsCopiedIntoAlignedScratchBefor
         return ResponseCode::Complete;
     });
 
-    router.RoutePacket(ARContextType::Request, buffer, /*generation=*/0);
+    const auto info = ARPacketParser::ParseNext(buffer, 0);
+    ASSERT_TRUE(info.has_value());
+    router.RouteParsedPacket(ARContextType::Request, *info, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
 TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
     // Read quadlet response packet as OHCI AR DMA memory: tLabel=48, tCode=6, rCode=0.
     // After the little-endian quadlet write, memory byte1 holds [tLabel:6][rt:2].
-    const std::array<uint8_t, 16> responseBytes{
+    // 16-byte header + mandatory 4-byte OHCI trailer.
+    const std::array<uint8_t, 20> responseBytes{
         0x60, 0xC2, 0x01, 0x60,
         0x00, 0x00, 0xC0, 0xFF,
         0x00, 0x00, 0x00, 0x00,
         0x04, 0x20, 0x8F, 0xE2,
+        0x00, 0x00, 0x11, 0x00,
     };
 
     PacketRouter router;
@@ -363,6 +370,8 @@ TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
         return ResponseCode::NoResponse;
     });
     const auto responseBuffer = std::span<const uint8_t>(responseBytes.data(), responseBytes.size());
-    router.RoutePacket(ARContextType::Response, responseBuffer, /*generation=*/0);
+    const auto info = ARPacketParser::ParseNext(responseBuffer, 0);
+    ASSERT_TRUE(info.has_value());
+    router.RouteParsedPacket(ARContextType::Response, *info, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
