@@ -109,13 +109,14 @@
 			<string>com.apple.iokit.IOSCSIParallelFamily</string>
 			<key>IOClass</key>
 			<string>IOUserSCSIParallelInterfaceController</string>
-			<key>IOPropertyMatch</key>
-			<dict>
-				<key>ASFWNubType</key>
-				<string>SBP2</string>
-			</dict>
+			<key>IOMatchCategory</key>
+			<string>ASFWSCSIController</string>
+			<key>IOPCIMatch</key>
+			<string>0x590111c1</string>
+			<key>IOPCITunnelCompatible</key>
+			<true/>
 			<key>IOProviderClass</key>
-			<string>IOUserService</string>
+			<string>IOPCIDevice</string>
 			<key>IOUserClass</key>
 			<string>ASFWSCSIController</string>
 			<key>IOUserServerName</key>
