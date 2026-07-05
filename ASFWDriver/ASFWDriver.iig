@@ -39,6 +39,15 @@ public:
     kern_return_t StartRuntime(IOService* provider) LOCALONLY;
     void QuiesceRuntime() LOCALONLY;
 
+    // Post-wake health check. The SetPowerState(On) callback can arrive during
+    // dark wake, before the PCIe/Thunderbolt path is fully restored: the rebuild
+    // then completes cleanly over MMIO but the forced bus reset never delivers
+    // an interrupt (observed on HW 2026-07-05 — interrupt/bus-mastering state
+    // lost between dark wake and full wake). Every wake rebuild ends in a forced
+    // bus reset, so a completed reset must be observed shortly after; if not,
+    // the runtime is rebuilt again (bounded retries).
+    void VerifyWakeRuntime(uint64_t attempt) LOCALONLY;
+
     kern_return_t CopyControllerStatus(OSDictionary** status) LOCALONLY;
     kern_return_t CopyControllerSnapshot(OSDictionary** status,
                                          uint64_t* sequence,

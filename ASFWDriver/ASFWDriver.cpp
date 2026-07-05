@@ -41,6 +41,7 @@
 #include "Audio/Core/AudioCoordinator.hpp"
 #include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
+#include "Bus/BusResetCoordinator.hpp"
 #include "Bus/SelfIDCapture.hpp"
 #include "Common/DriverKitOwnership.hpp"
 #include "ConfigROM/ConfigROMStager.hpp"
@@ -442,6 +443,12 @@ void ASFWDriver::QuiesceRuntime() {
     }
 }
 
+// Wake verification cadence. 3s puts the first check well past the dark-wake →
+// full-wake transition (~2s observed) while staying invisible to the user; 5
+// attempts bound the self-heal at ~15s.
+static constexpr uint64_t kWakeVerifyDelayNs = 3'000'000'000ull;
+static constexpr uint64_t kWakeVerifyMaxAttempts = 5;
+
 kern_return_t IMPL(ASFWDriver, SetPowerState) {
     const bool poweredOn = (powerFlags & kIOServicePowerCapabilityOn) != 0;
     ASFW_LOG(Controller, "SetPowerState: powerFlags=0x%08x (%{public}s)", powerFlags,
@@ -489,6 +496,11 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
                 if (kr != kIOReturnSuccess) {
                     ASFW_LOG(Controller,
                              "SetPowerState: ❌ wake runtime rebuild failed: 0x%08x", kr);
+                } else if (ivars->context && ivars->context->deps.scheduler) {
+                    // The On callback can arrive during dark wake; verify the
+                    // rebuild actually took once the platform has settled.
+                    ivars->context->deps.scheduler->DispatchAsyncAfter(
+                        kWakeVerifyDelayNs, [this] { VerifyWakeRuntime(1); });
                 }
             } else {
                 ASFW_LOG(Controller, "SetPowerState: wake with no provider; skipping rebuild");
@@ -497,6 +509,62 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
     }
 
     return SetPowerState(powerFlags, SUPERDISPATCH);
+}
+
+void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
+    if (!ivars || !ivars->context || ivars->runtimeSuspended) {
+        return; // slept again (or tearing down) before the check fired
+    }
+    auto& ctx = *ivars->context;
+    if (ctx.stopping.load(std::memory_order_acquire) || !ctx.deps.hardware ||
+        !ctx.deps.busReset) {
+        return;
+    }
+
+    // The wake rebuild always ends in a forced bus reset, and resetCount only
+    // advances via the full interrupt path (IRQ → Self-ID → coordinator). A
+    // completed reset therefore proves interrupt delivery end to end.
+    const uint32_t resets = ctx.deps.busReset->Metrics().resetCount;
+    const uint32_t hcControl = ctx.deps.hardware->Read(Register32::kHCControl);
+    const bool mmioAlive = (hcControl != 0xFFFFFFFFu);
+    const bool linkEnabled = mmioAlive && (hcControl & HCControlBits::kLinkEnable);
+
+    if (resets > 0 && linkEnabled) {
+        ASFW_LOG(Controller, "Wake verify: ✅ alive (resets=%u HCControl=0x%08x attempt=%llu)",
+                 resets, hcControl, attempt);
+        return;
+    }
+
+    // Distinguish the failure mode for the log: busReset pending in IntEvent
+    // with resetCount==0 means the reset happened but the IRQ never arrived
+    // (interrupt path dead); linkEnable clear means the controller was reset
+    // under us after the rebuild; 0xFFFFFFFF means MMIO itself is gone.
+    const uint32_t intEvent = mmioAlive ? ctx.deps.hardware->Read(Register32::kIntEvent) : 0;
+    ASFW_LOG(Controller,
+             "Wake verify: ❌ dead controller (resets=%u HCControl=0x%08x IntEvent=0x%08x "
+             "attempt=%llu/%llu) - rebuilding",
+             resets, hcControl, intEvent, attempt, kWakeVerifyMaxAttempts);
+
+    if (attempt >= kWakeVerifyMaxAttempts) {
+        ASFW_LOG(Controller, "Wake verify: ❌ giving up after %llu attempts", attempt);
+        return;
+    }
+    if (!ivars->powerProvider) {
+        ASFW_LOG(Controller, "Wake verify: no provider; cannot rebuild");
+        return;
+    }
+
+    QuiesceRuntime();
+    ctx.Reset();
+    const kern_return_t kr = StartRuntime(ivars->powerProvider);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "Wake verify: ❌ rebuild failed: 0x%08x", kr);
+    }
+    if (ivars->context && ivars->context->deps.scheduler) {
+        const uint64_t next = attempt + 1;
+        ivars->context->deps.scheduler->DispatchAsyncAfter(
+            kWakeVerifyDelayNs, [this, next] { VerifyWakeRuntime(next); });
+    }
 }
 
 kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
