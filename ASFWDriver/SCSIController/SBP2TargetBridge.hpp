@@ -75,6 +75,7 @@ private:
 
     // Default-queue context only.
     void OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>& unit);
+    void OnLoginStateChanged(uint64_t guid, bool loggedIn);
     void AdoptExistingUnits();
     void Pump();
 

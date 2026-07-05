@@ -10,6 +10,8 @@
 // HBA fetches a shared_ptr per task (so a concurrent teardown cannot free the
 // bridge under it — Shutdown() flips the bridge to fail-fast instead).
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 
 namespace ASFW::Protocols::SBP2 {
@@ -21,6 +23,16 @@ public:
     static void Set(std::shared_ptr<SBP2TargetBridge> bridge);
     static void Clear();
     [[nodiscard]] static std::shared_ptr<SBP2TargetBridge> Get();
+
+    // Reverse channel: the HBA (a separate IOService, unreachable via the
+    // provider chain) registers a target-state observer so the FireWire side can
+    // drive SCSI target create/destroy on SBP-2 login/logout. loggedIn=true on
+    // login up, false on logout/failure. The HBA registers on Start and clears
+    // on Stop; NotifyTargetState fires the observer outside the hub lock.
+    using TargetStateCallback = std::function<void(uint64_t guid, bool loggedIn)>;
+    static void SetTargetObserver(TargetStateCallback observer);
+    static void ClearTargetObserver();
+    static void NotifyTargetState(uint64_t guid, bool loggedIn);
 };
 
 } // namespace ASFW::Protocols::SBP2

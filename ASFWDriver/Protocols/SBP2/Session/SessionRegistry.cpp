@@ -189,6 +189,9 @@ bool SessionRegistry::StartLogin(void* owner, uint64_t handle) {
                     return;
                 }
                 rec->lastError = params.status;
+                // status==0 is LoggedIn (fresh login or reconnect, which re-fires
+                // this callback); non-zero is a terminal login failure.
+                EmitLoginStateLocked(rec->guid, params.status == 0);
             });
         session = record->session;
     }
@@ -280,12 +283,12 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
         const LoginState state = record.session ? record.session->State() : LoginState::Idle;
         if (record.session &&
             (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
-            SetReleaseLogoutCallbackLocked(handle, record.session);
+            SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
             // Retire optimistically; un-retired below if Logout() is rejected.
             RetireSessionLocked(record);
             toLogout = record.session;
         } else if (record.session && state == LoginState::LoggingOut) {
-            SetReleaseLogoutCallbackLocked(handle, record.session);
+            SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
             RetireSessionLocked(record);
         }
         sessions_.erase(it);
@@ -316,12 +319,12 @@ void SessionRegistry::ReleaseOwner(void* owner) {
 
             if (record.session &&
                 (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
-                SetReleaseLogoutCallbackLocked(record.handle, record.session);
+                SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
                 // Retire optimistically; un-retired below if Logout() is rejected.
                 RetireSessionLocked(record);
                 toLogout.push_back(record.session);
             } else if (record.session && state == LoginState::LoggingOut) {
-                SetReleaseLogoutCallbackLocked(record.handle, record.session);
+                SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
                 RetireSessionLocked(record);
             }
 
@@ -348,6 +351,30 @@ void SessionRegistry::SetBusResetRequester(std::function<void()> requester) {
         if (record.executor) {
             record.executor->SetBusResetRequester(busResetRequester_);
         }
+    }
+}
+
+void SessionRegistry::SetLoginStateObserver(
+    std::function<void(uint64_t guid, bool loggedIn)> observer) {
+    IOLockGuard lock(lock_);
+    loginStateObserver_ = std::move(observer);
+}
+
+void SessionRegistry::EmitLoginStateLocked(uint64_t guid, bool loggedIn) {
+    // Called with lock_ held (reads loginStateObserver_ under it). The observer
+    // itself runs off lock_: on workQueue_ in production (which also defers the
+    // inline management-write failure path off the caller's stack), or inline on
+    // the host-test path (workQueue_ == nullptr, observer must not re-enter).
+    if (!loginStateObserver_) {
+        return;
+    }
+    auto observer = loginStateObserver_;
+    if (workQueue_ != nullptr) {
+        workQueue_->DispatchAsync(^{
+            observer(guid, loggedIn);
+        });
+    } else {
+        observer(guid, loggedIn);
     }
 }
 
@@ -487,7 +514,7 @@ void SessionRegistry::EraseRetiredSessionLocked(const std::shared_ptr<LoginSessi
 }
 
 void SessionRegistry::SetReleaseLogoutCallbackLocked(
-    uint64_t handle, const std::shared_ptr<LoginSession>& session) {
+    uint64_t handle, uint64_t guid, const std::shared_ptr<LoginSession>& session) {
     if (session == nullptr) {
         return;
     }
@@ -496,24 +523,26 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
     // lock_. The token guards against the session outliving the registry.
     std::weak_ptr<LoginSession> weakSession = session;
     std::weak_ptr<int> alive = lifetimeToken_;
-    session->SetLogoutCallback([this, handle, weakSession, alive](const LogoutCompleteParams&) {
-        if (alive.expired()) {
-            return;  // registry destroyed; session outlived it
-        }
-        IOLockGuard cbLock(lock_);
-        std::shared_ptr<LoginSession> completedSession = weakSession.lock();
-
-        auto it = sessions_.find(handle);
-        if (it != sessions_.end() &&
-            (completedSession == nullptr || it->second.session == completedSession)) {
-            if (it->second.executor) {
-                it->second.executor->Cleanup();
+    session->SetLogoutCallback(
+        [this, handle, guid, weakSession, alive](const LogoutCompleteParams&) {
+            if (alive.expired()) {
+                return;  // registry destroyed; session outlived it
             }
-            sessions_.erase(it);
-        }
+            IOLockGuard cbLock(lock_);
+            std::shared_ptr<LoginSession> completedSession = weakSession.lock();
 
-        EraseRetiredSessionLocked(completedSession);
-    });
+            auto it = sessions_.find(handle);
+            if (it != sessions_.end() &&
+                (completedSession == nullptr || it->second.session == completedSession)) {
+                if (it->second.executor) {
+                    it->second.executor->Cleanup();
+                }
+                sessions_.erase(it);
+            }
+
+            EraseRetiredSessionLocked(completedSession);
+            EmitLoginStateLocked(guid, false);
+        });
 }
 
 } // namespace ASFW::Protocols::SBP2

@@ -105,6 +105,13 @@ public:
     // before any session exists.
     void SetBusResetRequester(std::function<void()> requester);
 
+    // Push channel for login state. Fires observer(guid, true) when a session
+    // reaches LoggedIn (fresh login or reconnect) and observer(guid, false) on
+    // terminal login failure or logout completion. NOT fired on Suspended (bus
+    // reset) — reconnect re-fires up. The observer runs on workQueue_ (off
+    // lock_). Set once during wiring, before any session exists.
+    void SetLoginStateObserver(std::function<void(uint64_t guid, bool loggedIn)> observer);
+
 #ifdef ASFW_HOST_TEST
     LoginSession* GetSessionForTesting(uint64_t handle);
     std::weak_ptr<LoginSession> GetSessionWeakForTesting(uint64_t handle);
@@ -121,8 +128,12 @@ private:
     [[nodiscard]] bool HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const;
     void RetireSessionLocked(const SessionRecord& record);
     void EraseRetiredSessionLocked(const std::shared_ptr<LoginSession>& session);
-    void SetReleaseLogoutCallbackLocked(uint64_t handle,
+    void SetReleaseLogoutCallbackLocked(uint64_t handle, uint64_t guid,
                                         const std::shared_ptr<LoginSession>& session);
+
+    // Dispatches loginStateObserver_ onto workQueue_ (off lock_). MUST be called
+    // with lock_ held (reads the observer under it).
+    void EmitLoginStateLocked(uint64_t guid, bool loggedIn);
 
     Async::IFireWireBus& bus_;
     Async::IFireWireBusInfo& busInfo_;
@@ -133,6 +144,7 @@ private:
 
     IOLock* lock_{nullptr};
     std::function<void()> busResetRequester_;
+    std::function<void(uint64_t, bool)> loginStateObserver_;
     std::map<uint64_t, SessionRecord> sessions_;
     struct RetiringSession {
         uint64_t guid{0};

@@ -2,6 +2,7 @@
 
 #include "SBP2TargetBridge.hpp"
 
+#include "SBP2BridgeHub.hpp"
 #include "../Discovery/FWDevice.hpp"
 #include "../Discovery/FWUnit.hpp"
 #include "../Logging/Logging.hpp"
@@ -71,6 +72,16 @@ void SBP2TargetBridge::Start() {
             });
         });
     unitCallbackRegistered_ = true;
+
+    // Push channel: the registry fires this (on our work queue) when a session
+    // logs in/out. Forward to the HBA via the hub. Registered before adopting
+    // existing units so a login that completes during adoption is not missed.
+    registry_.SetLoginStateObserver([weak](uint64_t guid, bool loggedIn) {
+        if (auto self = weak.lock()) {
+            self->OnLoginStateChanged(guid, loggedIn);
+        }
+    });
+
     AdoptExistingUnits();
     ASFW_LOG(Controller, "[SBP2Bridge] started (watching for SBP-2 units)");
 }
@@ -92,6 +103,7 @@ void SBP2TargetBridge::Shutdown() {
     if (unitCallbackRegistered_) {
         deviceManager_.UnregisterCallback(unitCallbackHandle_);
         unitCallbackRegistered_ = false;
+        registry_.SetLoginStateObserver(nullptr);
     }
 
     // Releases the session; an in-flight command is aborted through our
@@ -208,6 +220,16 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
     if (!registry_.StartLogin(this, *handle)) {
         ASFW_LOG(Controller, "[SBP2Bridge] StartLogin failed for session %llu", *handle);
     }
+}
+
+void SBP2TargetBridge::OnLoginStateChanged(uint64_t guid, bool loggedIn) {
+    // Phase 1: the guid->targetID map (WI-3) and the actual
+    // UserCreateTargetForID/UserDestroyTargetForID (WI-4) are not wired yet.
+    // Forward the raw event to the HBA, which logs it inertly — the static
+    // phantom target still serves SCSI probes unchanged.
+    ASFW_LOG(Controller, "[SBP2Bridge] login %s guid=0x%016llx",
+             loggedIn ? "up" : "down", guid);
+    SBP2BridgeHub::NotifyTargetState(guid, loggedIn);
 }
 
 void SBP2TargetBridge::AdoptExistingUnits() {

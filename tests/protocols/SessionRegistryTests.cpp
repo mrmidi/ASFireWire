@@ -949,4 +949,72 @@ TEST(SessionRegistryTests, OrbTimeoutThenLunResetTimeoutEscalatesAndDeliversResu
     EXPECT_EQ(1, busResets);  // failed LUN reset escalates to a bus reset
 }
 
+// --- WI-1: login-state push channel (SetLoginStateObserver) -----------------
+
+TEST(SessionRegistryTests, LoginStateObserverFiresUpOnSuccessfulLogin) {
+    SessionRegistryRig rig;
+    std::vector<std::pair<uint64_t, bool>> events;
+    rig.registry.SetLoginStateObserver(
+        [&events](uint64_t guid, bool loggedIn) { events.push_back({guid, loggedIn}); });
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    rig.AdvanceMs(0);  // drain the dispatched observer call
+
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ(SessionRegistryRig::kGuid, events[0].first);
+    EXPECT_TRUE(events[0].second);
+}
+
+TEST(SessionRegistryTests, LoginStateObserverFiresDownOnLogout) {
+    SessionRegistryRig rig;
+    std::vector<std::pair<uint64_t, bool>> events;
+    rig.registry.SetLoginStateObserver(
+        [&events](uint64_t guid, bool loggedIn) { events.push_back({guid, loggedIn}); });
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    rig.AdvanceMs(0);
+    events.clear();  // drop the login-up event
+
+    const size_t writesBeforeRelease = rig.bus.WriteCount();
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
+    const auto& logoutWrite = rig.bus.WriteAt(writesBeforeRelease);
+    ASSERT_TRUE(rig.bus.CompleteWrite(logoutWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+    rig.AdvanceMs(0);  // drain the dispatched observer call
+
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ(SessionRegistryRig::kGuid, events[0].first);
+    EXPECT_FALSE(events[0].second);
+}
+
+TEST(SessionRegistryTests, LoginStateObserverStaysSilentOnBusResetSuspend) {
+    SessionRegistryRig rig;
+    std::vector<std::pair<uint64_t, bool>> events;
+    rig.registry.SetLoginStateObserver(
+        [&events](uint64_t guid, bool loggedIn) { events.push_back({guid, loggedIn}); });
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    rig.AdvanceMs(0);
+    events.clear();  // drop the login-up event
+
+    // Bus reset suspends the session (LoggedIn -> Suspended). A hot-plug target
+    // must NOT be torn down here (reconnect restores it), so no down is emitted.
+    rig.registry.OnBusReset(2);
+    const auto suspended = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(suspended.has_value());
+    ASSERT_EQ(ASFW::Protocols::SBP2::LoginState::Suspended, suspended->loginState);
+    rig.AdvanceMs(0);
+
+    EXPECT_TRUE(events.empty());
+}
+
 } // namespace

@@ -163,12 +163,25 @@ kern_return_t IMPL(ASFWSCSIController, Start)
         ASFW_LOG(Controller, "[SCSIHBA] super::Start failed: 0x%x", ret);
         return ret;
     }
+
+    // Reverse channel from the FireWire side (a separate IOService, unreachable
+    // via the provider chain): fires on SBP-2 login up/down. PHASE 1 IS INERT —
+    // it only logs; the static phantom target still serves the SCSI probe. Phase
+    // 2 will hop onto auxQueue here and call
+    // UserCreateTargetForID/UserDestroyTargetForID (login-gated hot-plug).
+    SBP2::SBP2BridgeHub::SetTargetObserver([this](uint64_t guid, bool loggedIn) {
+        ASFW_LOG(Controller, "[SCSIHBA] SBP-2 target %s guid=0x%016llx (phase-1 inert)",
+                 loggedIn ? "up" : "down", guid);
+    });
     return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(ASFWSCSIController, Stop)
 {
     ASFW_LOG(Controller, "[SCSIHBA] Stop");
+    // Drop the reverse-channel observer before teardown so a login event cannot
+    // fire into a half-stopped HBA (the observer captures raw `this`).
+    SBP2::SBP2BridgeHub::ClearTargetObserver();
     if (ivars != nullptr && ivars->targetCreated) {
         UserDestroyTargetForID(static_cast<SCSITargetIdentifier>(ivars->targetID));
         ivars->targetCreated = false;
