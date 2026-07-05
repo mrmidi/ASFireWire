@@ -374,6 +374,17 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         RegisterService();
         ivars->serviceRegistered = true;
     }
+
+    // Pin our power desire to full-on. A bus controller must stay powered even
+    // with no devices attached (plug detection needs a programmed, interrupting
+    // controller). Without this, terminating the last audio nub drops the PM
+    // subtree's demand and the system sends SetPowerState(0) — which tore down
+    // the runtime and nothing ever demanded power again. With the desire pinned,
+    // capability 0 arrives only for real system sleep, and wake restores our
+    // declared desire via SetPowerState(On).
+    const kern_return_t pmKr = ChangePowerState(kIOServicePowerCapabilityOn);
+    ASFW_LOG(Controller, "ASFWDriver: ChangePowerState(On) -> 0x%08x", pmKr);
+
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
 
     return kIOReturnSuccess;
