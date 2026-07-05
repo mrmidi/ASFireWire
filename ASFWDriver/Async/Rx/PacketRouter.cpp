@@ -58,13 +58,9 @@ void PacketRouter::RegisterResponseHandler(uint8_t tCode, PacketHandler handler)
     responseHandlers_[tCode] = std::move(handler);
 }
 
-void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_t> packetData, uint32_t generation) {
-    // Phase 2.2: Use std::span for type-safe buffer access
-    if (packetData.empty()) {
-        return;
-    }
-
-    // Select handler table based on context type
+void PacketRouter::RouteParsedPacket(ARContextType contextType,
+                                     const ARPacketParser::PacketInfo& packetInfo,
+                                     uint32_t generation) {
     const auto& handlers = (contextType == ARContextType::Request)
                                ? requestHandlers_
                                : responseHandlers_;
@@ -73,77 +69,60 @@ void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_
                                   ? "Request"
                                   : "Response";
 
-    // Parse packet stream - buffer may contain multiple packets
-    // Per OHCI §8.4.2: AR buffers are packet streams, not single packets
-    size_t offset = 0;
-    const size_t bufferSize = packetData.size();
+    const uint8_t* packetStart = packetInfo.packetStart;
+    const size_t headerLen = packetInfo.headerLength;
+    const size_t dataLen = packetInfo.dataLength;
+    const uint8_t tCode = packetInfo.tCode;
+    alignas(8) std::array<uint8_t, ASFW::FW::MaxPayload::kS800> payloadScratch{};
 
-    while (offset < bufferSize) {
-        auto packetInfoOpt = ARPacketParser::ParseNext(packetData, offset);
-        if (!packetInfoOpt) {
-            break;
+    // Build a dispatch view over the header and aligned payload bytes.
+    ARPacketView view;
+    view.tCode = tCode;
+    view.header = std::span<const uint8_t>(packetStart, headerLen);
+    if (dataLen > 0) {
+        const auto payloadBytes = std::span<const uint8_t>(packetStart + headerLen, dataLen);
+        view.payload = CopyAlignedPayload(payloadBytes, payloadScratch);
+        if (view.payload.empty()) {
+            ASFW_LOG(Async,
+                     "PacketRouter: payload %zu exceeds aligned scratch buffer for tCode=0x%x",
+                     dataLen,
+                     tCode);
+            return;
         }
+    } else {
+        view.payload = {};
+    }
 
-        const auto& packetInfo = *packetInfoOpt;
+    // Trailer fields – use low 16 bits for xferStatus/timeStamp
+    view.xferStatus = static_cast<uint16_t>(packetInfo.xferStatus & 0xFFFF);
+    view.timeStamp  = static_cast<uint16_t>(packetInfo.timeStamp  & 0xFFFF);
 
-        const uint8_t* packetStart = packetInfo.packetStart;
-        const size_t headerLen = packetInfo.headerLength;
-        const size_t dataLen = packetInfo.dataLength;
-        const uint8_t tCode = packetInfo.tCode;
-        alignas(8) std::array<uint8_t, ASFW::FW::MaxPayload::kS800> payloadScratch{};
+    if (headerLen >= 6) {
+        // We can safely use the header span we already built
+        view.destID   = ExtractDestID(view.header);
+        view.sourceID = ExtractSourceID(view.header);
+        view.tLabel   = ExtractTLabel(view.header);
+    } else {
+        // PHY or malformed packet – leave IDs/label at 0
+        view.destID   = 0;
+        view.sourceID = 0;
+        view.tLabel   = 0;
+    }
 
-        // Build a dispatch view over the header and aligned payload bytes.
-        ARPacketView view;
-        view.tCode = tCode;
-        view.header = std::span<const uint8_t>(packetStart, headerLen);
-        if (dataLen > 0) {
-            const auto payloadBytes = std::span<const uint8_t>(packetStart + headerLen, dataLen);
-            view.payload = CopyAlignedPayload(payloadBytes, payloadScratch);
-            if (view.payload.empty()) {
-                ASFW_LOG(Async,
-                         "PacketRouter: payload %zu exceeds aligned scratch buffer for tCode=0x%x",
-                         dataLen,
-                         tCode);
-                offset += packetInfo.totalLength;
-                continue;
-            }
-        } else {
-            view.payload = {};
+    // Capture incoming transaction
+    CaptureIncomingEvent(contextType, view, generation);
+
+    if (tCode < 16 && handlers[tCode]) {
+        const ResponseCode rcode = handlers[tCode](view, generation);
+
+        if (contextType == ARContextType::Request &&
+            responseSender_ &&
+            rcode != ResponseCode::NoResponse) {
+            responseSender_->SendWriteResponse(view, rcode);
         }
-
-        // Trailer fields – use low 16 bits for xferStatus/timeStamp
-        view.xferStatus = static_cast<uint16_t>(packetInfo.xferStatus & 0xFFFF);
-        view.timeStamp  = static_cast<uint16_t>(packetInfo.timeStamp  & 0xFFFF);
-
-        if (headerLen >= 6) {
-            // We can safely use the header span we already built
-            view.destID   = ExtractDestID(view.header);
-            view.sourceID = ExtractSourceID(view.header);
-            view.tLabel   = ExtractTLabel(view.header);
-        } else {
-            // PHY or malformed packet – leave IDs/label at 0
-            view.destID   = 0;
-            view.sourceID = 0;
-            view.tLabel   = 0;
-        }
-
-        // Capture incoming transaction
-        CaptureIncomingEvent(contextType, view, generation);
-
-        if (tCode < 16 && handlers[tCode]) {
-            const ResponseCode rcode = handlers[tCode](view, generation);
-
-            if (contextType == ARContextType::Request &&
-                responseSender_ &&
-                rcode != ResponseCode::NoResponse) {
-                responseSender_->SendWriteResponse(view, rcode);
-            }
-        } else {
-            ASFW_LOG(Async, "PacketRouter: unhandled AR %{public}s packet tCode=0x%x",
-                     contextName, tCode);
-        }
-
-        offset += packetInfo.totalLength;
+    } else {
+        ASFW_LOG(Async, "PacketRouter: unhandled AR %{public}s packet tCode=0x%x",
+                 contextName, tCode);
     }
 }
 

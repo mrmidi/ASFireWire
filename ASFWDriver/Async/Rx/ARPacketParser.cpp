@@ -33,15 +33,14 @@ std::optional<std::array<uint32_t, 2>> ARPacketParser::ExtractPhyPacketQuadletsH
     };
 }
 
-std::optional<ARPacketParser::PacketInfo> ARPacketParser::ParseNext(
+std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure> ARPacketParser::ParseNext(
     std::span<const uint8_t> buffer,
     size_t offset)
 {
-    // Phase 2.2: Use std::span for type-safe buffer access
     const size_t bufferSize = buffer.size();
 
     if (buffer.empty() || offset + 8 > bufferSize) {
-        return std::nullopt;
+        return std::unexpected(ParseFailure::NeedMoreBytes);
     }
 
     const uint8_t* packetStart = buffer.data() + offset;
@@ -81,43 +80,41 @@ std::optional<ARPacketParser::PacketInfo> ARPacketParser::ParseNext(
 
     const size_t headerLength = GetHeaderLength(tCode);
     if (headerLength == 0) {
-        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu, dropping buffer", tCode, offset);
-        return std::nullopt;
+        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu", tCode, offset);
+        return std::unexpected(ParseFailure::UnknownTCode);
     }
 
     // 1) Enough for header?
     if (offset + headerLength > bufferSize) {
-        // Incomplete packet in this buffer; stop without error (buffer exhausted)
-        return std::nullopt;
+        return std::unexpected(ParseFailure::NeedMoreBytes);
     }
 
-    // 2) Find dataLength (Phase 2.2: pass subspan for bounds checking)
-    // Create subspan for header (from offset to end of buffer)
-    const size_t headerSize = (headerLength < bufferSize - offset) ? headerLength : (bufferSize - offset);
-    auto headerSpan = buffer.subspan(offset, headerSize);
+    // 2) Find dataLength
+    auto headerSpan = buffer.subspan(offset, headerLength);
     const size_t dataLength = GetDataLength(headerSpan, tCode);
+    if (dataLength > kMaxAsyncPayloadBytes) {
+        // A corrupt block header declaring a huge data_length must never be
+        // treated as a stitchable fragment — it can never complete.
+        // Cross-validated with Linux ohci.c handle_ar_packet:
+        // payload_length > MAX_ASYNC_PAYLOAD → ar_context_abort("invalid packet length").
+        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: data_length %zu exceeds max %zu (tCode=0x%X offset=%zu)",
+                    dataLength, kMaxAsyncPayloadBytes, tCode, offset);
+        return std::unexpected(ParseFailure::OversizedPayload);
+    }
     const size_t quadletAlignedLen = ((headerLength + dataLength + 3) & ~size_t(3));
 
-    // 3) Enough for header+data?
-    if (offset + quadletAlignedLen > bufferSize) {
-        // Incomplete payload in this buffer; stop without error (buffer exhausted)
-        return std::nullopt;
+    // 3) Enough for header+data+trailer? The trailer is part of the DMA'd packet
+    // unit, so its absence within the filled bytes means boundary fragment.
+    if (offset + quadletAlignedLen + 4 > bufferSize) {
+        return std::unexpected(ParseFailure::NeedMoreBytes);
     }
 
-    // 4) Trailer (prefer it, but don't scream if missing)
-    bool haveTrailer = (offset + quadletAlignedLen + 4) <= bufferSize;
-    size_t totalLengthWithTrailer = quadletAlignedLen + (haveTrailer ? 4 : 0);
-
-    // ---- Trailer (LE in memory) - only read if present
-    uint16_t xferStatus = 0;
-    uint16_t timeStamp = 0;
-    if (haveTrailer) {
-        uint32_t trailer_le;
-        __builtin_memcpy(&trailer_le, packetStart + quadletAlignedLen, 4);
-        const uint32_t trailer = OSSwapLittleToHostInt32(trailer_le);
-        xferStatus = static_cast<uint16_t>(trailer >> 16);
-        timeStamp  = static_cast<uint16_t>(trailer & 0xFFFF);
-    }
+    // ---- Trailer (LE in memory)
+    uint32_t trailer_le;
+    __builtin_memcpy(&trailer_le, packetStart + quadletAlignedLen, 4);
+    const uint32_t trailer = OSSwapLittleToHostInt32(trailer_le);
+    const uint16_t xferStatus = static_cast<uint16_t>(trailer >> 16);
+    const uint16_t timeStamp  = static_cast<uint16_t>(trailer & 0xFFFF);
 
     // ---- rCode (only for response tCodes): extract from Q1 bits[15:12]
     // Per Linux packet-header-definitions.h: ASYNC_HEADER_Q1_RCODE_SHIFT = 12
@@ -128,23 +125,19 @@ std::optional<ARPacketParser::PacketInfo> ARPacketParser::ParseNext(
         tCode == kTCodeReadBlockResponse ||
         tCode == kTCodeLockResponse)
     {
-        if (offset + 8 <= bufferSize) {
-            rCode = static_cast<uint8_t>((q1 >> 12) & 0xF);  // rCode in Q1 bits[15:12]
-        }
+        rCode = static_cast<uint8_t>((q1 >> 12) & 0xF);
     }
 
-    // Optional guard against garbage (all-zero header + zero trailer)
-    if (offset + 8 <= bufferSize) {
-        if (q0 == 0 && q1 == 0 && (!haveTrailer || (xferStatus == 0 && timeStamp == 0))) {
-            return std::nullopt;
-        }
+    // Guard against garbage (all-zero header + zero trailer)
+    if (q0 == 0 && q1 == 0 && xferStatus == 0 && timeStamp == 0) {
+        return std::unexpected(ParseFailure::ZeroGarbage);
     }
 
     PacketInfo info{};
     info.packetStart = packetStart;
     info.headerLength = headerLength;
     info.dataLength = dataLength;
-    info.totalLength = totalLengthWithTrailer;
+    info.totalLength = quadletAlignedLen + 4;
     info.tCode = tCode;
     info.rCode = rCode;
     info.xferStatus = xferStatus;  // stored in 32-bit field; value range 0..0xFFFF
@@ -187,13 +180,12 @@ size_t ARPacketParser::GetHeaderLength(uint8_t tCode) {
 
         case kTCodeWriteResponse:          // 0x2 TCODE_WRITE_RESPONSE
         case kTCodeReadQuadlet:            // 0x4 TCODE_READ_QUADLET_REQUEST
-        case 0xD:                          // TCODE_LINK_INTERNAL (Linux uses this)
             length = 12;  // 3 quadlets (Linux: p.header_length = 12)
             break;
 
         case kTCodePhyPacket:              // 0xE TCODE_LINK_INTERNAL/PHY
-            // CRITICAL: Per Linux drivers/firewire/ohci.c:943-948
-            // TCODE_LINK_INTERNAL: p.header_length = 12 (3 quadlets)
+            // CRITICAL: Per Linux drivers/firewire/ohci.c handle_ar_packet
+            // TCODE_LINK_INTERNAL (0xe): p.header_length = 12 (3 quadlets)
             // PHY packet structure per OHCI §8.4.2.3:
             //   Quadlet 0: tcode[31:28]=0xE, event[3:0]
             //   Quadlets 1-2: PHY payload; synthetic bus-reset markers reuse
@@ -202,15 +194,10 @@ size_t ARPacketParser::GetHeaderLength(uint8_t tCode) {
             length = 12;  // 3 quadlets (matches Linux!)
             break;
 
-        case kTCodeCycleStart:             // 0x8
-            length = 16;  // 4 quadlets
-            break;
-
-        case kTCodeIsochronousBlock:       // 0xA
-            length = 8;   // 2 quadlets (iso has different format)
-            break;
-
         default:
+            // Any other tCode (incl. cycle start 0x8, iso 0xA — never delivered
+            // to AR contexts with our LinkControl, same as Linux) is invalid
+            // here; Linux ar_context_abort()s on it ("invalid tcode").
             ASFW_LOG_V0(Async, "❌ GetHeaderLength: Unknown tCode=0x%X", tCode);
             return 0;   // Unknown tCode
     }
@@ -279,27 +266,6 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
             dataLen = 0;
             ASFW_LOG_V3(Async, "GetDataLength: tCode=0x2 (Write Response) → 0 bytes");
             break;
-
-        case kTCodeIsochronousBlock:       // 0xA
-        {
-            // Isochronous: data_length in quadlet 1, bits[31:16]
-            if (header.size() < 8) {
-                ASFW_LOG_V0(Async, "❌ GetDataLength: Header too small (%zu bytes) for iso tCode=0x%X",
-                         header.size(), tCode);
-                return 0;
-            }
-
-            uint32_t quadlet1;
-            std::memcpy(&quadlet1, header.data() + 4, sizeof(quadlet1));
-            quadlet1 = OSSwapBigToHostInt32(quadlet1);
-
-            const uint16_t length = static_cast<uint16_t>((quadlet1 >> 16) & 0xFFFF);
-            dataLen = length;
-
-            ASFW_LOG_V3(Async, "GetDataLength: Iso quadlet1=0x%08X → data_length=%u bytes",
-                   quadlet1, length);
-            break;
-        }
 
         default:
             // No separate data (quadlet transactions, simple responses)
