@@ -15,10 +15,10 @@
 // surface seen by the app is identical.
 //
 // UserProcessParallelTask forwards SCSI tasks to the real SBP-2 target via
-// SBP2TargetBridge/SessionRegistry (see the .cpp). Until the SBP-2 login is up
-// (or when the FireWire side is down) it falls back to a hardcoded phantom
-// INQUIRY so the SAM's probe stays alive and the SCSITaskUserClient path holds.
-// The phantom identity is currently CoolScan-9000-specific (see the .cpp).
+// SBP2TargetBridge/SessionRegistry (see the .cpp). The framework auto-creates
+// target 0 and probes it before the SBP-2 login completes; rather than spoof an
+// identity, the pre-login probe INQUIRY is deferred and replayed with the
+// device's real INQUIRY once login is up (generic, no per-device identity).
 //
 // Matching: this HBA co-matches the OHCI PCI device directly (IOProviderClass
 // IOPCIDevice + IOPCIMatch, distinct IOMatchCategory), alongside the main
@@ -102,9 +102,10 @@ public:
 
 struct ASFWSCSIController_IVars {
     bool targetCreated{false};
-    uint64_t targetID{0};   // Phase 0: single synthetic target at ID 0
+    uint64_t targetID{0};   // single target at ID 0
     IODispatchQueue* auxQueue{nullptr}; // the framework's "AuxiliaryQueue" contract
     uint32_t nextUniqueTaskID{0};       // handed out in UserMapHBAData (must be unique per task)
+    void* pendingState{nullptr};        // PendingState* (deferred pre-login INQUIRY), defined in .cpp
 };
 
 #endif /* ASFWSCSIController_h */

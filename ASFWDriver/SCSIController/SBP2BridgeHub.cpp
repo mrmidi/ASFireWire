@@ -70,16 +70,18 @@ void SBP2BridgeHub::ClearTargetObserver() {
 }
 
 void SBP2BridgeHub::NotifyTargetState(uint64_t guid, bool loggedIn) {
-    // Copy under the lock, invoke outside it: the observer hops onto the HBA's
-    // own queue and must not run under the hub lock.
-    TargetStateCallback observer;
+    // Invoke UNDER the lock so ClearTargetObserver() is synchronous with respect
+    // to an in-flight notification: once ClearTargetObserver returns, no observer
+    // call is running or can start, so the HBA's Stop can safely tear down after.
+    // The observer contract is therefore strict: it may only schedule
+    // non-blocking work (retain + DispatchAsync onto its own queue) and must never
+    // re-enter the hub or block.
     auto& s = State();
     IOLockLock(s.lock);
-    observer = s.targetObserver;
-    IOLockUnlock(s.lock);
-    if (observer) {
-        observer(guid, loggedIn);
+    if (s.targetObserver) {
+        s.targetObserver(guid, loggedIn);
     }
+    IOLockUnlock(s.lock);
 }
 
 } // namespace ASFW::Protocols::SBP2
