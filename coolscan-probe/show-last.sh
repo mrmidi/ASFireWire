@@ -6,6 +6,6 @@ set -u
 MIN="${1:-5}"
 OUT=/tmp/sbp2_show.log
 /usr/bin/log show --last "${MIN}m" --info --debug --style compact \
-  --predicate 'eventMessage CONTAINS "[SCSIHBA]" OR eventMessage CONTAINS "SBP2" OR eventMessage CONTAINS "FetchAgent" OR eventMessage CONTAINS "AddressSpaceManager" OR eventMessage CONTAINS "LoginSession" OR eventMessage CONTAINS "CommandExecutor" OR eventMessage CONTAINS "AT-resp" OR eventMessage CONTAINS "P2_FALLBACK" OR eventMessage CONTAINS "P1_ARM while" OR eventMessage CONTAINS "ResponseSender" OR eventMessage CONTAINS "UNCLAIMED" OR eventMessage CONTAINS "AR readBlock" OR eventMessage CONTAINS "SessionRegistry" OR eventMessage CONTAINS "escalating to bus reset" OR eventMessage CONTAINS "Bus reset" OR eventMessage CONTAINS "software reset"' \
+  --predicate 'eventMessage CONTAINS "[SCSIHBA]" OR eventMessage CONTAINS "SBP2" OR eventMessage CONTAINS "FetchAgent" OR eventMessage CONTAINS "AddressSpaceManager" OR eventMessage CONTAINS "LoginSession" OR eventMessage CONTAINS "CommandExecutor" OR eventMessage CONTAINS "AT-resp" OR eventMessage CONTAINS "P2_FALLBACK" OR eventMessage CONTAINS "P1_ARM while" OR eventMessage CONTAINS "ResponseSender" OR eventMessage CONTAINS "UNCLAIMED" OR eventMessage CONTAINS "AR readBlock" OR eventMessage CONTAINS "SessionRegistry" OR eventMessage CONTAINS "escalating to bus reset" OR eventMessage CONTAINS "Bus reset" OR eventMessage CONTAINS "software reset" OR eventMessage CONTAINS "[ARReq]" OR eventMessage CONTAINS "[ARRsp]"' \
   > "$OUT" 2>&1
 echo "wrote $(wc -l < "$OUT") lines to $OUT"

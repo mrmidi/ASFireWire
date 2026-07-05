@@ -23,7 +23,9 @@
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
+#include <DriverKit/IOKitKeys.h>
 #include <DriverKit/OSDictionary.h>
+#include <DriverKit/OSNumber.h>
 
 #include "../Logging/Logging.hpp"
 #include "../Protocols/SBP2/SCSICommandSet.hpp"
@@ -194,6 +196,45 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
         if (location != nullptr)     { props->setObject("Physical Interconnect Location", location); location->release(); }
         UserSetHBAProperties(props);
         props->release();
+    }
+
+    // All seven keys are required and must be reported before this method
+    // returns (IOUserSCSIParallelInterfaceController.h contract). Without this
+    // call the kernel shim publishes no segment count/byte-count constraints
+    // and rejects any task larger than a small threshold before it reaches the
+    // dext: VueScan's SEND LUT (32 KB out) and image READ (~510 KB in) failed
+    // instantly while everything ≤197 B went through. The dext never touches
+    // fBufferIOVMAddr segments (data is copied via UserGetDataBuffer), so the
+    // values only need to be permissive and consistent with
+    // UserGetDMASpecification (1 MB max transfer, 64-bit, 4-byte alignment).
+    OSDictionary* constraints = OSDictionary::withCapacity(7);
+    if (constraints == nullptr) {
+        return kIOReturnNoMemory;
+    }
+    struct { const char* key; uint64_t value; } entries[] = {
+        { kIOMaximumSegmentCountReadKey,           256 },
+        { kIOMaximumSegmentCountWriteKey,          256 },
+        { kIOMaximumSegmentByteCountReadKey,       kMaxTransferPerTask },
+        { kIOMaximumSegmentByteCountWriteKey,      kMaxTransferPerTask },
+        { kIOMinimumSegmentAlignmentByteCountKey,  4 },
+        { kIOMaximumSegmentAddressableBitCountKey, 64 },
+        // 64-bit addressable, 4-byte minimum alignment (header's mask encoding).
+        { kIOMinimumHBADataAlignmentMaskKey,       0xFFFFFFFFFFFFFFFCULL },
+    };
+    for (const auto& e : entries) {
+        OSNumber* num = OSNumber::withNumber(e.value, 64);
+        if (num == nullptr) {
+            constraints->release();
+            return kIOReturnNoMemory;
+        }
+        constraints->setObject(e.key, num);
+        num->release();
+    }
+    kern_return_t ret = UserReportHBAConstraints(constraints);
+    constraints->release();
+    if (ret != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "[SCSIHBA] UserReportHBAConstraints failed: 0x%x", ret);
+        return ret;
     }
     return kIOReturnSuccess;
 }
