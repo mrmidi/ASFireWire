@@ -75,6 +75,11 @@ add_device_test(RestartJournalTests
     RestartJournalTests.cpp
 )
 
+# DICE restart-session store tests (FW-69b, header-only lock-borrowing store)
+add_device_test(RestartSessionStoreTests
+    RestartSessionStoreTests.cpp
+)
+
 # Apogee protocol boolean control mapping tests
 add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp

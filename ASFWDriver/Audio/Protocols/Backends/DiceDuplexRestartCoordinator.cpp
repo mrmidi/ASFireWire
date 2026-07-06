@@ -318,11 +318,11 @@ IOReturn DiceDuplexRestartCoordinator::RequestClockConfig(
             supersededRequest = existingIt->second;
         }
         pendingClockRequests_[guid] = request;
-        const auto sessionIt = sessions_.find(guid);
-        if (sessionIt != sessions_.end()) {
-            sessionIt->second.pendingClock = request.desiredClock;
-            sessionIt->second.pendingReason = request.reason;
-            sessionIt->second.hasPendingClockRequest = true;
+        auto* sessionPtr = store_.FindSessionLocked(guid);
+        if (sessionPtr != nullptr) {
+            sessionPtr->pendingClock = request.desiredClock;
+            sessionPtr->pendingReason = request.reason;
+            sessionPtr->hasPendingClockRequest = true;
         }
     } else {
         gate_.AcquireLocked(guid);
@@ -428,7 +428,7 @@ void DiceDuplexRestartCoordinator::ClearSession(uint64_t guid) noexcept {
     }
 
     IOLockLock(lock_);
-    sessions_.erase(guid);
+    store_.EraseSessionLocked(guid);
     pendingClockRequests_.erase(guid);
     completedClockRequests_.erase(guid);
     gate_.ReleaseLocked(guid);
@@ -437,17 +437,7 @@ void DiceDuplexRestartCoordinator::ClearSession(uint64_t guid) noexcept {
 }
 
 std::optional<DiceRestartSession> DiceDuplexRestartCoordinator::GetSession(uint64_t guid) const noexcept {
-    if (!lock_ || guid == 0) {
-        return std::nullopt;
-    }
-
-    IOLockLock(lock_);
-    const auto it = sessions_.find(guid);
-    const auto session = (it != sessions_.end())
-        ? std::optional<DiceRestartSession>(it->second)
-        : std::nullopt;
-    IOLockUnlock(lock_);
-    return session;
+    return store_.GetSession(guid);
 }
 
 IOReturn DiceDuplexRestartCoordinator::RunStartStreaming(uint64_t guid) noexcept {
@@ -1618,14 +1608,7 @@ bool DiceDuplexRestartCoordinator::IsStopRequested(uint64_t guid) const noexcept
 }
 
 uint64_t DiceDuplexRestartCoordinator::AllocateRestartId() noexcept {
-    if (!lock_) {
-        return 0;
-    }
-
-    IOLockLock(lock_);
-    const uint64_t restartId = nextRestartId_++;
-    IOLockUnlock(lock_);
-    return restartId;
+    return store_.AllocateRestartId();
 }
 
 bool DiceDuplexRestartCoordinator::IsRestartEpochCurrent(uint64_t guid,
@@ -1643,10 +1626,10 @@ bool DiceDuplexRestartCoordinator::IsRestartEpochCurrent(uint64_t guid,
     }
 
     IOLockLock(lock_);
-    const auto sessionIt = sessions_.find(guid);
-    const bool sessionMatches = (sessionIt != sessions_.end()) &&
-        sessionIt->second.restartId == restartId &&
-        sessionIt->second.topologyGeneration == topologyGeneration;
+    const auto* sessionPtr = store_.FindSessionLocked(guid);
+    const bool sessionMatches = (sessionPtr != nullptr) &&
+        sessionPtr->restartId == restartId &&
+        sessionPtr->topologyGeneration == topologyGeneration;
     IOLockUnlock(lock_);
     if (!sessionMatches) {
         return false;
@@ -1675,11 +1658,11 @@ bool DiceDuplexRestartCoordinator::TryConsumePendingClockRequest(uint64_t guid,
 
     outRequest = it->second;
     pendingClockRequests_.erase(it);
-    const auto sessionIt = sessions_.find(guid);
-    if (sessionIt != sessions_.end()) {
-        sessionIt->second.pendingClock = {};
-        sessionIt->second.pendingReason = DiceRestartReason::kInitialStart;
-        sessionIt->second.hasPendingClockRequest = false;
+    auto* sessionPtr = store_.FindSessionLocked(guid);
+    if (sessionPtr != nullptr) {
+        sessionPtr->pendingClock = {};
+        sessionPtr->pendingReason = DiceRestartReason::kInitialStart;
+        sessionPtr->hasPendingClockRequest = false;
     }
     IOLockUnlock(lock_);
     return true;
@@ -1735,9 +1718,9 @@ void DiceDuplexRestartCoordinator::CompleteClockRequest(const DiceClockRequestCo
         store.byToken.erase(evictedToken);
     }
 
-    auto sessionIt = sessions_.find(guid);
-    if (sessionIt != sessions_.end()) {
-        sessionIt->second.lastClockCompletion = completion;
+    auto* sessionPtr = store_.FindSessionLocked(guid);
+    if (sessionPtr != nullptr) {
+        sessionPtr->lastClockCompletion = completion;
     }
     IOLockUnlock(lock_);
 
@@ -1781,28 +1764,15 @@ void DiceDuplexRestartCoordinator::RecordTeardownAbort(const char* stage,
              kIOReturnAborted);
 }
 
+// FW-69b: session persistence + the restart-id allocator now live in RestartSessionStore
+// (store_). These entry points are thin forwarders to its self-locking API; behaviour is
+// byte-for-byte the former inline bodies (store_ borrows the same lock_).
 DiceRestartSession DiceDuplexRestartCoordinator::LoadSession(uint64_t guid) const noexcept {
-    if (!lock_ || guid == 0) {
-        return DiceRestartSession{.guid = guid};
-    }
-
-    IOLockLock(lock_);
-    const auto it = sessions_.find(guid);
-    DiceRestartSession session = (it != sessions_.end())
-        ? it->second
-        : DiceRestartSession{.guid = guid};
-    IOLockUnlock(lock_);
-    return session;
+    return store_.LoadSession(guid);
 }
 
 void DiceDuplexRestartCoordinator::StoreSession(const DiceRestartSession& session) noexcept {
-    if (!lock_ || session.guid == 0) {
-        return;
-    }
-
-    IOLockLock(lock_);
-    sessions_[session.guid] = session;
-    IOLockUnlock(lock_);
+    store_.StoreSession(session);
 }
 
 } // namespace ASFW::Audio

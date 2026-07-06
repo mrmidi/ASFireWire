@@ -7,6 +7,7 @@
 
 #include "DiceHostTransport.hpp"
 #include "DuplexOperationGate.hpp"
+#include "RestartSessionStore.hpp"
 
 #include "../../../Discovery/DeviceRegistry.hpp"
 #include "../../../Hardware/HardwareInterface.hpp"
@@ -151,11 +152,12 @@ private:
     // FW-68: per-GUID active-session + stop-intent gating. Borrows &lock_ (see
     // DuplexOperationGate) so its critical sections share the coordinator's single lock.
     Backends::DuplexOperationGate gate_{&lock_};
-    std::unordered_map<uint64_t, DICE::DiceRestartSession> sessions_{};
+    // FW-69b: per-GUID session persistence + restart-id allocator. Borrows &lock_ (see
+    // RestartSessionStore) so its critical sections share the coordinator's single lock.
+    Backends::RestartSessionStore store_{&lock_};
     std::unordered_map<uint64_t, PendingClockRequest> pendingClockRequests_{};
     std::unordered_map<uint64_t, ClockCompletionStore> completedClockRequests_{};
     uint64_t nextClockToken_{1};
-    uint64_t nextRestartId_{1};
     std::atomic<uint64_t> teardownAbortCount_{0};
 
     static constexpr uint32_t kSyncBridgeTimeoutMs = 12000;
