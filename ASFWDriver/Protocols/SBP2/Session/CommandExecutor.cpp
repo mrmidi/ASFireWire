@@ -56,6 +56,11 @@ CommandExecutor::~CommandExecutor() {
     }
     CleanupCommandResources();
     CleanupManagementResources();
+    // Flush a result deferred behind a (now-dropped) management ORB; see
+    // OnBusReset. Idempotent — a no-op if FailActiveCommand already fired.
+    if (resultCallback_) {
+        NotifyResultCallback();
+    }
 }
 
 bool CommandExecutor::IsSupportedTaskManagementFunction(
@@ -263,9 +268,14 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         return true;
     }
 
-    // Submission rejected synchronously — roll back. The callback is dropped
-    // unfired (the caller sees `false` and handles the rejection itself).
+    // SubmitORB returned false. Two distinct cases, told apart by whether the
+    // ORB completion callback ran synchronously during the call — it resets
+    // commandORB_ via CleanupCommandResources when it does.
     if (commandORB_.get() == submittedORB) {
+        // Completion did NOT run: a genuine synchronous rejection (e.g. the
+        // session rejected on state before touching the fetch agent). Roll back
+        // and report false; the callback is dropped unfired, so the caller
+        // completes the task itself, exactly once.
         commandInFlight_ = false;
         commandReady_ = false;
         pendingCommandResult_.reset();
@@ -273,8 +283,16 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         activeCommandOpcode_.reset();
         resultCallback_ = {};
         CleanupCommandResources();
+        return false;
     }
-    return false;
+
+    // commandORB_ was reset, so FetchAgent::AppendImmediate fired the ORB
+    // completion synchronously (WriteBlock failed on submit). The result was
+    // already delivered, or deferred behind a LUN-reset ORB — either way the
+    // executor now owns resultCallback_. Report success so the caller does NOT
+    // fire its own fallback completion: doing so would complete the SCSI task
+    // twice (double ParallelTaskCompletion + OSAction/controller over-release).
+    return true;
 }
 
 std::optional<SCSI::CommandResult> CommandExecutor::GetCommandResult() {
@@ -373,6 +391,15 @@ void CommandExecutor::OnBusReset() {
     if (commandInFlight_ || commandORB_) {
         FailActiveCommand(static_cast<int>(kIOReturnAborted), Wire::SBPStatus::kRequestAborted);
     }
+    // A result deferred behind a management ORB (the timeout→LUN-reset
+    // escalation) clears commandInFlight_/commandORB_ before deferring delivery
+    // to that ORB's onComplete. CleanupManagementResources above dropped the
+    // ORB without firing onComplete, so the guard misses it — flush any
+    // still-armed result now. NotifyResultCallback moves the callback out, so
+    // this is a no-op when FailActiveCommand already fired it.
+    if (resultCallback_) {
+        NotifyResultCallback();
+    }
 }
 
 void CommandExecutor::Cleanup() {
@@ -385,6 +412,11 @@ void CommandExecutor::Cleanup() {
     }
     CleanupCommandResources();
     CleanupManagementResources();
+    // Flush a result deferred behind a (now-dropped) management ORB; see
+    // OnBusReset. Idempotent — a no-op if FailActiveCommand already fired.
+    if (resultCallback_) {
+        NotifyResultCallback();
+    }
 }
 
 void CommandExecutor::FailActiveCommand(int transportStatus, uint8_t sbpStatus) noexcept {

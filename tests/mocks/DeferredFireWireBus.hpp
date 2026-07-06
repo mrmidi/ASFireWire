@@ -27,6 +27,12 @@ public:
     void SetLocalNodeID(FW::NodeId nodeId) noexcept { localNodeId_ = nodeId; }
     void SetDefaultSpeed(FW::FwSpeed speed) noexcept { defaultSpeed_ = speed; }
 
+    // Force the next WriteBlock to fail synchronously (return a null handle),
+    // modelling AT ring-full / async-label-pool exhaustion / a bus-reset
+    // generation edge — the trigger for FetchAgent::AppendImmediate's
+    // synchronous FailORB path. Auto-clears after one WriteBlock.
+    void FailNextWriteBlock() noexcept { failNextWriteBlock_ = true; }
+
     [[nodiscard]] size_t WriteCount() const noexcept { return writeHistory_.size(); }
     [[nodiscard]] const WriteSummary& WriteAt(size_t index) const noexcept { return writeHistory_.at(index); }
     [[nodiscard]] size_t PendingWriteCount() const noexcept { return pendingWrites_.size(); }
@@ -81,6 +87,10 @@ public:
                            std::span<const uint8_t> data,
                            FW::FwSpeed speed,
                            InterfaceCompletionCallback callback) override {
+        if (failNextWriteBlock_) {
+            failNextWriteBlock_ = false;
+            return AsyncHandle{0};  // synchronous submit failure — no callback ever fires
+        }
         const AsyncHandle handle = NextHandle();
 
         WriteSummary summary{};
@@ -164,6 +174,7 @@ private:
     FW::Generation generation_{1};
     FW::NodeId localNodeId_{0};
     FW::FwSpeed defaultSpeed_{FW::FwSpeed::S400};
+    bool failNextWriteBlock_{false};
     AsyncHandle nextHandle_{1};
     std::vector<WriteSummary> writeHistory_;
     std::deque<PendingWrite> pendingWrites_;

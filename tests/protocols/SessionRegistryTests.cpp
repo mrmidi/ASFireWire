@@ -949,6 +949,105 @@ TEST(SessionRegistryTests, OrbTimeoutThenLunResetTimeoutEscalatesAndDeliversResu
     EXPECT_EQ(1, busResets);  // failed LUN reset escalates to a bus reset
 }
 
+// FW-review H1: a command result deferred behind the timeout→LUN-reset ORB
+// clears commandInFlight_/commandORB_ before deferring delivery to that ORB's
+// onComplete. If a bus reset (or Stop/unplug) drops the management ORB in that
+// window, its onComplete never runs — the executor must still complete the SCSI
+// task exactly once, or SBP2TargetBridge's command pump wedges and the task
+// leaks (VueScan hangs until the device is power-cycled).
+TEST(SessionRegistryTests, DeferredResultFlushedWhenBusResetDropsLunResetORB) {
+    SessionRegistryRig rig;
+    rig.registry.SetBusResetRequester([]() {});
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>{0x12, 0x00, 0x00, 0x00, 0x24, 0x00};
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 36;
+    request.timeoutMs = 1000;
+
+    int callbacks = 0;
+    SCSI::CommandResult lastResult{};
+    ASSERT_TRUE(rig.registry.SubmitCommand(
+        SessionRegistryRig::Owner(), handle, request,
+        [&](const SCSI::CommandResult& result) {
+            ++callbacks;
+            lastResult = result;
+        }));
+
+    const auto orbPointerWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    ASSERT_TRUE(rig.bus.CompleteWrite(orbPointerWrite.handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+
+    rig.AdvanceMs(1001);  // ORB timeout → result deferred behind the LUN-reset ORB
+    ASSERT_EQ(0, callbacks);
+
+    // A bus reset lands while the LUN-reset management ORB is still in flight;
+    // it is dropped (onComplete never fires). The deferred result must still be
+    // flushed, not stranded.
+    rig.registry.OnBusReset(2);
+    EXPECT_EQ(1, callbacks) << "deferred result must be flushed on bus reset";
+    EXPECT_NE(0, lastResult.transportStatus);
+
+    // The dropped management path must not deliver a second time.
+    rig.AdvanceMs(4000);
+    EXPECT_EQ(1, callbacks);
+}
+
+// FW-review B1: when the fetch-agent write fails synchronously (AT ring-full /
+// label-pool exhaustion / bus-reset generation edge), FetchAgent::AppendImmediate
+// fires the ORB completion inline. That completion nulls commandORB_ and defers
+// delivery behind a LUN-reset ORB while leaving resultCallback_ armed, yet
+// SubmitORB returns false. SubmitCommand must report the task ACCEPTED (true) so
+// the bridge does NOT fire its own fallback completion — a false return here is
+// what double-completes the SCSI task in production (double ParallelTaskCompletion
+// + OSAction/controller over-release).
+TEST(SessionRegistryTests, SynchronousWriteFailureDoesNotDoubleCompleteTask) {
+    SessionRegistryRig rig;
+    rig.registry.SetBusResetRequester([]() {});
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>{0x12, 0x00, 0x00, 0x00, 0x24, 0x00};
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 36;
+    request.timeoutMs = 1000;
+
+    int callbacks = 0;
+    rig.bus.FailNextWriteBlock();  // the ORB_POINTER write fails synchronously
+    const bool accepted = rig.registry.SubmitCommand(
+        SessionRegistryRig::Owner(), handle, request,
+        [&](const SCSI::CommandResult&) { ++callbacks; });
+
+    // The completion ran inline (FailORB) and deferred delivery, so the executor
+    // owns the task — SubmitCommand must report acceptance, not rejection.
+    EXPECT_TRUE(accepted);
+
+    // Model SBP2TargetBridge::Pump's contract: it fires its own fallback
+    // completion iff SubmitCommand returned false. A false return is precisely
+    // what produces the second completion in production.
+    if (!accepted) {
+        ++callbacks;
+    }
+
+    // Drive the deferred LUN-reset to completion; the result is delivered once.
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    rig.AdvanceMs(4000);
+    EXPECT_EQ(1, callbacks) << "SCSI task must complete exactly once";
+}
+
 // --- WI-1: login-state push channel (SetLoginStateObserver) -----------------
 
 TEST(SessionRegistryTests, LoginStateObserverFiresUpOnSuccessfulLogin) {
