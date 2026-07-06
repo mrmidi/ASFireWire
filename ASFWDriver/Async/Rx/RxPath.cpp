@@ -1,5 +1,6 @@
 #include "RxPath.hpp"
 #include "ARPacketParser.hpp"
+#include "ARStreamProcessor.hpp"
 #include "../../Hardware/OHCIEventCodes.hpp"
 #include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Hardware/IEEE1394.hpp"
@@ -27,8 +28,6 @@ RxPath::RxPath(ARRequestContext& arReqContext,
     , generationTracker_(generationTracker)
     , packetRouter_(packetRouter)
 {
-    packetParser_ = std::make_unique<ARPacketParser>();
-
     // Route PHY packets (tCode=0xE) in AR Request context through RxPath
     packetRouter_.RegisterRequestHandler(
         HW::AsyncRequestHeader::kTcodePhyPacket,
@@ -59,214 +58,55 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
 }
 
 void RxPath::ProcessRequestInterrupts() {
-    auto* ctx = &arRequestContext_;
-    constexpr const char* ctxLabel = "AR Request";
-
-    auto recycle = [&](size_t descriptorIndex) {
-        const kern_return_t recycleKr = ctx->Recycle(descriptorIndex);
-        if (recycleKr != kIOReturnSuccess) {
-            ASFW_LOG(Async,
-                     "RxPath: Failed to recycle descriptor %zu for %{public}s (kr=0x%08x)",
-                     descriptorIndex,
-                     ctxLabel,
-                     recycleKr);
-        }
-    };
-    auto commitConsumed = [&](size_t descriptorIndex, size_t consumedBytes) {
-        const kern_return_t kr = ctx->CommitConsumed(descriptorIndex, consumedBytes);
-        if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Async,
-                     "RxPath: Failed to commit %zu bytes for descriptor %zu in %{public}s (kr=0x%08x)",
-                     consumedBytes,
-                     descriptorIndex,
-                     ctxLabel,
-                     kr);
-        }
-    };
-
-    uint32_t buffersProcessed = 0;
-    while (auto bufferInfo = ctx->Dequeue()) {
-        const auto& info = *bufferInfo;
-        ++buffersProcessed;
-
-        ASFW_LOG_HEX(Async,
-                     "RxPath AR Request Buffer #%u: vaddr=%p startOffset=%zu size=%zu index=%zu",
-                     buffersProcessed,
-                     info.virtualAddress,
-                     info.startOffset,
-                     info.bytesFilled,
-                     info.descriptorIndex);
-
-        if (!info.virtualAddress) {
+    const auto stats = ProcessARStream(
+        arRequestContext_,
+        "ARReq",
+        &requestBuffersSeen_,
+        [this](uint32_t bufferNo, const Shared::FilledBufferInfo& info) {
             ASFW_LOG_HEX(Async,
-                         "RxPath AR Request Buffer #%u: NULL virtual address, recycling",
-                         buffersProcessed);
-            recycle(info.descriptorIndex);
-            continue;
-        }
+                         "RxPath AR Request Buffer #%u: vaddr=%p startOffset=%zu size=%zu index=%zu",
+                         bufferNo,
+                         info.virtualAddress,
+                         info.startOffset,
+                         info.bytesFilled,
+                         info.descriptorIndex);
+            DumpRequestBuffer(bufferNo, info.virtualAddress, info.bytesFilled);
+        },
+        [this](const ARPacketParser::PacketInfo& packet) {
+            const uint32_t currentGen = generationTracker_.GetCurrentState().generation16;
+            packetRouter_.RouteParsedPacket(ARContextType::Request, packet, currentGen);
+        });
 
-        const uint8_t* bufferStart = info.virtualAddress;
-        const std::size_t bufferSize = info.bytesFilled;
-        if (bufferSize == 0 || bufferSize <= info.startOffset) {
-            recycle(info.descriptorIndex);
-            continue;
-        }
-
-        DumpRequestBuffer(buffersProcessed, bufferStart, bufferSize);
-
-        const uint8_t* newDataStart = bufferStart + info.startOffset;
-        const std::size_t newDataSize = bufferSize - info.startOffset;
-        ASFW_LOG_HEX(Async,
-                     "RxPath AR Request Buffer #%u: routing %zu NEW bytes from offset %zu",
-                     buffersProcessed,
-                     newDataSize,
-                     info.startOffset);
-        const uint32_t currentGen = generationTracker_.GetCurrentState().generation16;
-        packetRouter_.RoutePacket(
-            ARContextType::Request,
-            std::span<const uint8_t>(newDataStart, newDataSize),
-            currentGen);
-        commitConsumed(info.descriptorIndex, bufferSize);
-    }
-
-    ASFW_LOG_V2(Async, "RxPath: Processed %u buffers from %{public}s",
-                buffersProcessed, ctxLabel);
+    ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from AR Request",
+                stats.packetsFound, stats.buffersProcessed);
 }
 
 void RxPath::ProcessResponseInterrupts(Debug::BusResetPacketCapture* busResetCapture) {
-    auto* ctx = &arResponseContext_;
-    constexpr const char* ctxLabel = "AR Response";
-    constexpr ARContextType ctxType = ARContextType::Response;
-    alignas(4) std::array<uint8_t, ARPacketParser::kMaxPacketBytes> stitchedPacket{};
+    DumpResponseInterruptState(arResponseContext_);
 
-    DumpResponseInterruptState(*ctx);
+    // Note: the walker keeps descriptors live and relies on BufferRing::Dequeue()
+    // to auto-advance once the next buffer gains data. Eager recycling after each
+    // response packet caused `no9` to regress into global Config ROM read timeouts
+    // even though QRresp packets were still present on the wire.
+    const auto stats = ProcessARStream(
+        arResponseContext_,
+        "ARRsp",
+        nullptr,
+        [this](uint32_t, const Shared::FilledBufferInfo& info) {
+            LogResponseNewData(info.virtualAddress + info.startOffset,
+                               info.startOffset,
+                               info.bytesFilled);
+        },
+        [this, busResetCapture](const ARPacketParser::PacketInfo& packet) {
+            ProcessReceivedPacket(ARContextType::Response, packet, busResetCapture);
+        });
 
-    auto recycle = [&](size_t descriptorIndex) {
-        const kern_return_t recycleKr = ctx->Recycle(descriptorIndex);
-        if (recycleKr != kIOReturnSuccess) {
-            ASFW_LOG(Async,
-                     "RxPath: Failed to recycle descriptor %zu for %{public}s (kr=0x%08x)",
-                     descriptorIndex,
-                     ctxLabel,
-                     recycleKr);
-        }
-    };
-    auto commitConsumed = [&](size_t descriptorIndex, size_t consumedBytes) {
-        const kern_return_t kr = ctx->CommitConsumed(descriptorIndex, consumedBytes);
-        if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Async,
-                     "RxPath: Failed to commit %zu bytes for descriptor %zu in %{public}s (kr=0x%08x)",
-                     consumedBytes,
-                     descriptorIndex,
-                     ctxLabel,
-                     kr);
-        }
-    };
+    ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from AR Response",
+                stats.packetsFound, stats.buffersProcessed);
 
-    uint32_t buffersProcessed = 0;
-    uint32_t packetsFound = 0;
-    while (auto bufferInfo = ctx->Dequeue()) {
-        const auto& info = *bufferInfo;
-        ++buffersProcessed;
-
-        if (!info.virtualAddress) {
-            recycle(info.descriptorIndex);
-            continue;
-        }
-
-        const uint8_t* bufferStart = info.virtualAddress;
-        const std::size_t bufferSize = info.bytesFilled;
-        const std::size_t startOffset = info.startOffset;
-        if (bufferSize == 0 || bufferSize <= startOffset) {
-            recycle(info.descriptorIndex);
-            continue;
-        }
-
-        const uint8_t* newDataStart = bufferStart + startOffset;
-        const std::size_t newDataSize = bufferSize - startOffset;
-        LogResponseNewData(newDataStart, startOffset, bufferSize);
-
-        std::size_t offset = startOffset;
-        bool consumedStitchedPacket = false;
-        bool committedBeforeBoundaryRetry = false;
-        while (offset < bufferSize) {
-            auto packetInfo =
-                ARPacketParser::ParseNext(std::span<const uint8_t>(bufferStart, bufferSize), offset);
-            if (!packetInfo.has_value()) {
-                if (offset > startOffset) {
-                    commitConsumed(info.descriptorIndex, offset);
-                    committedBeforeBoundaryRetry = true;
-                }
-
-                const size_t stitchedBytes = ctx->CopyReadableBytes(stitchedPacket);
-                if (stitchedBytes > 0) {
-                    auto stitchedInfo = ARPacketParser::ParseNext(
-                        std::span<const uint8_t>(stitchedPacket.data(), stitchedBytes), 0);
-                    if (stitchedInfo.has_value() &&
-                        stitchedInfo->totalLength <= stitchedBytes &&
-                        stitchedInfo->totalLength > 0) {
-                        ++packetsFound;
-                        ProcessReceivedPacket(ctxType, *stitchedInfo, busResetCapture);
-                        const kern_return_t consumeKr =
-                            ctx->ConsumeReadableBytes(stitchedInfo->totalLength);
-                        if (consumeKr != kIOReturnSuccess) {
-                            ASFW_LOG(Async,
-                                     "RxPath: Failed to consume stitched %{public}s packet (%zu bytes, kr=0x%08x)",
-                                     ctxLabel,
-                                     stitchedInfo->totalLength,
-                                     consumeKr);
-                        } else {
-                            ASFW_LOG_V2(Async,
-                                        "AR Response: stitched packet across buffer boundary (%zu bytes)",
-                                        stitchedInfo->totalLength);
-                            consumedStitchedPacket = true;
-                        }
-                    }
-                }
-                break;
-            }
-
-            ++packetsFound;
-            ProcessReceivedPacket(ctxType, *packetInfo, busResetCapture);
-            offset += packetInfo->totalLength;
-        }
-
-        if (consumedStitchedPacket) {
-            continue;
-        }
-
-        ASFW_LOG_V2(Async,
-                    "✅ RxPath AR/RSP: Processed %zu NEW bytes from buffer[%zu] "
-                    "(offset %zu→%zu, total=%zu) - leaving descriptor owned by hardware",
-                    newDataSize,
-                    info.descriptorIndex,
-                    startOffset,
-                    offset,
-                    bufferSize);
-        if (!committedBeforeBoundaryRetry) {
-            commitConsumed(info.descriptorIndex, offset);
-        }
-        if (offset == startOffset && startOffset < bufferSize) {
-            ASFW_LOG_V1(Async,
-                        "AR Response: parser made no progress in buffer[%zu] at offset %zu/%zu; "
-                        "preserving tail until hardware appends more bytes",
-                        info.descriptorIndex,
-                        startOffset,
-                        bufferSize);
-        }
-        // AR response traffic has proven to be stable when we keep the descriptor live
-        // and rely on BufferRing::Dequeue() to auto-advance once the next buffer gains
-        // data. Recycling here immediately after each response packet caused `no9` to
-        // regress into global Config ROM read timeouts even though QRresp packets were
-        // still present on the wire.
-    }
-
-    ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from %{public}s",
-                packetsFound, buffersProcessed, ctxLabel);
-
-    if (buffersProcessed == 0 && packetsFound == 0) {
+    if (stats.buffersProcessed == 0 && stats.packetsFound == 0) {
         ASFW_LOG_V3(Async, "AR Response: No packets read for this interrupt");
-        DumpEmptyResponseBuffer(*ctx);
+        DumpEmptyResponseBuffer(arResponseContext_);
     }
 }
 

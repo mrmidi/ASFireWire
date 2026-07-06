@@ -80,9 +80,22 @@ public:
         }
 
         // AT Response context completions correspond to WrResp acks we send back
-        // to devices. They are not tracked as transactions; skip quietly.
+        // to devices. They are not tracked as transactions; skip quietly — but a
+        // response the device never received (evt_timeout = expired before
+        // transmit, busy = device didn't take it) leaves the requester's split
+        // transaction dangling. LS-9000 firmware wedges its execution engine on
+        // exactly that, so surface it at default level.
         if (comp.isResponseContext) {
-            ASFW_LOG_V3(Async, "OnATCompletion: Ignoring AT Response completion (tLabel=%u)", comp.tLabel);
+            if (comp.eventCode != OHCIEventCode::kAckComplete &&
+                comp.eventCode != OHCIEventCode::kAckPending) {
+                ASFW_LOG(Async,
+                         "AT-resp DROPPED: tLabel=%u event=0x%02X (%{public}s) ts=%u",
+                         comp.tLabel, static_cast<uint8_t>(comp.eventCode),
+                         ToString(comp.eventCode), comp.timeStamp);
+            } else {
+                ASFW_LOG_V3(Async, "OnATCompletion: Ignoring AT Response completion (tLabel=%u)",
+                            comp.tLabel);
+            }
             return;
         }
 
