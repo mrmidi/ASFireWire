@@ -244,7 +244,7 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
     // executes SCSI tasks handed over by ASFWSCSIController via SBP2BridgeHub.
     if (!ctx.sbp2Bridge && d.sbp2SessionRegistry && d.deviceManager && ctx.workQueue) {
         ctx.sbp2Bridge = std::make_shared<ASFW::Protocols::SBP2::SBP2TargetBridge>(
-            *d.sbp2SessionRegistry, *d.deviceManager, ctx.workQueue.get());
+            d.sbp2SessionRegistry, *d.deviceManager, ctx.workQueue.get());
         ctx.sbp2Bridge->Start();
         ASFW::Protocols::SBP2::SBP2BridgeHub::Set(ctx.sbp2Bridge);
         ASFW_LOG(Controller, "[Controller] SBP2 target bridge initialized");

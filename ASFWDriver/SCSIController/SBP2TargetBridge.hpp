@@ -43,7 +43,7 @@ class SBP2TargetBridge : public std::enable_shared_from_this<SBP2TargetBridge> {
 public:
     using TaskCallback = std::function<void(const SCSI::CommandResult&)>;
 
-    SBP2TargetBridge(SessionRegistry& registry,
+    SBP2TargetBridge(const std::shared_ptr<SessionRegistry>& registry,
                      Discovery::IDeviceManager& deviceManager,
                      IODispatchQueue* workQueue);
     ~SBP2TargetBridge();
@@ -82,7 +82,15 @@ private:
     void SchedulePump();
     [[nodiscard]] static SCSI::CommandResult SyntheticFailure(int transportStatus);
 
-    SessionRegistry& registry_;
+    // Weak, not a bare reference: the HBA reaches IsReady()/SubmitTask() from a
+    // separate IOService on a separate queue holding only a shared_ptr to THIS
+    // bridge (via SBP2BridgeHub), which does not keep the registry alive. The
+    // registry can be freed by ServiceContext::Reset() on the driver's teardown
+    // queue concurrently. lock() before every deref: a live strong ref keeps the
+    // registry alive for that call, or a null lock is treated as not-ready. This
+    // does not extend the registry's lifetime (in-flight commands are still
+    // force-completed by the registry's own Cleanup on teardown).
+    std::weak_ptr<SessionRegistry> registry_;
     Discovery::IDeviceManager& deviceManager_;
     IODispatchQueue* workQueue_{nullptr};
 
