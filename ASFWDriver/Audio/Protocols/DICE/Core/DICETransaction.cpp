@@ -63,6 +63,57 @@ void LogSectionPreview(const char* label, const uint8_t* data, size_t size) {
              HexPreview(data, size).c_str());
 }
 
+// A single async block read is bounded by the device's max_rec (512 bytes for
+// typical DICE firmware), but a multi-stream stream-format section is larger:
+// the Venice F32 needs 8 + 2*280 = 568 bytes, and stream 1's 256-byte label
+// blob starts at byte 304 — past a single 512-byte read. Chain fixed-size
+// chunk reads into one buffer so ParseStreamConfig sees every stream's labels.
+// A failure after the first chunk delivers the partial buffer (the parser
+// guards each stream's core/label region against the buffer size), matching
+// the old best-effort behavior; only a failed first chunk is a hard error.
+constexpr size_t kSectionReadChunkBytes = 512;
+constexpr size_t kMaxSectionReadBytes = 4096;
+
+void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
+                        uint32_t sectionOffsetBytes,
+                        size_t totalBytes,
+                        std::shared_ptr<std::vector<uint8_t>> accumulated,
+                        std::function<void(IOReturn)> done) {
+    const size_t have = accumulated->size();
+    if (have >= totalBytes) {
+        done(kIOReturnSuccess);
+        return;
+    }
+
+    const uint32_t chunk = static_cast<uint32_t>(
+        std::min(kSectionReadChunkBytes, totalBytes - have));
+    (void)io.ReadBlock(
+        MakeDICEAddress(sectionOffsetBytes + static_cast<uint32_t>(have)),
+        chunk,
+        [&io, sectionOffsetBytes, totalBytes, accumulated,
+         done = std::move(done)](Async::AsyncStatus status,
+                                 std::span<const uint8_t> payload) mutable {
+            if (status != Async::AsyncStatus::kSuccess || payload.empty()) {
+                if (accumulated->empty()) {
+                    done(MapReadStatus(status));
+                    return;
+                }
+                ASFW_LOG(DICE,
+                         "ReadSectionChunked: chunk at +%zu failed (status=%u); using %zu/%zu bytes",
+                         accumulated->size(),
+                         static_cast<unsigned>(status),
+                         accumulated->size(),
+                         totalBytes);
+                done(kIOReturnSuccess);
+                return;
+            }
+
+            accumulated->insert(accumulated->end(), payload.begin(), payload.end());
+            ReadSectionChunked(io, sectionOffsetBytes, totalBytes, accumulated,
+                               std::move(done));
+        });
+}
+
 } // anonymous namespace
 
 DICETransaction::DICETransaction(Protocols::Ports::ProtocolRegisterIO& io)
@@ -388,55 +439,50 @@ std::vector<std::string> SplitDiceLabels(const char* labels) {
 void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
                                         std::function<void(IOReturn, StreamConfig)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const size_t readSize = (sections.rxStreamFormat.size > 512) ? 512 : sections.rxStreamFormat.size;
-    if (sections.rxStreamFormat.size > 512) {
-        ASFW_LOG(DICE, "RX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
-                 sections.rxStreamFormat.size, readSize);
-    }
-    
-    (void)io_.ReadBlock(MakeDICEAddress(sections.rxStreamFormat.offset),
-                  static_cast<uint32_t>(readSize),
-                  [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-        if (status != Async::AsyncStatus::kSuccess) {
-            Common::InvokeSharedCallback(callbackState, MapReadStatus(status), StreamConfig{});
-            return;
-        }
+    // Chunked read: cover the whole section (bounded) so every stream's label
+    // blob is parsed, not just stream 0's (see ReadSectionChunked).
+    const size_t readSize =
+        std::min<size_t>(sections.rxStreamFormat.size, kMaxSectionReadBytes);
+    auto accumulated = std::make_shared<std::vector<uint8_t>>();
+    accumulated->reserve(readSize);
+    ReadSectionChunked(
+        io_, sections.rxStreamFormat.offset, readSize, accumulated,
+        [callbackState, accumulated](IOReturn status) {
+            if (status != kIOReturnSuccess) {
+                Common::InvokeSharedCallback(callbackState, status, StreamConfig{});
+                return;
+            }
 
-        const uint8_t* data = payload.data();
-        const size_t size = payload.size();
-        LogSectionPreview("ReadRxStreamConfig", data, size);
-        StreamConfig config = ParseStreamConfig(data, size, true);
-        LogStreamConfigDetails("RX", config);
-        
-        Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
-    });
+            LogSectionPreview("ReadRxStreamConfig", accumulated->data(), accumulated->size());
+            StreamConfig config = ParseStreamConfig(accumulated->data(), accumulated->size(), true);
+            LogStreamConfigDetails("RX", config);
+
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
+        });
 }
 
 void DICETransaction::ReadTxStreamConfig(const GeneralSections& sections,
                                         std::function<void(IOReturn, StreamConfig)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const size_t readSize = (sections.txStreamFormat.size > 512) ? 512 : sections.txStreamFormat.size;
-    if (sections.txStreamFormat.size > 512) {
-        ASFW_LOG(DICE, "TX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
-                 sections.txStreamFormat.size, readSize);
-    }
+    // Chunked read: see ReadRxStreamConfig.
+    const size_t readSize =
+        std::min<size_t>(sections.txStreamFormat.size, kMaxSectionReadBytes);
+    auto accumulated = std::make_shared<std::vector<uint8_t>>();
+    accumulated->reserve(readSize);
+    ReadSectionChunked(
+        io_, sections.txStreamFormat.offset, readSize, accumulated,
+        [callbackState, accumulated](IOReturn status) {
+            if (status != kIOReturnSuccess) {
+                Common::InvokeSharedCallback(callbackState, status, StreamConfig{});
+                return;
+            }
 
-    (void)io_.ReadBlock(MakeDICEAddress(sections.txStreamFormat.offset),
-              static_cast<uint32_t>(readSize),
-              [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-                  if (status != Async::AsyncStatus::kSuccess) {
-                      Common::InvokeSharedCallback(callbackState, MapReadStatus(status), StreamConfig{});
-                      return;
-                  }
+            LogSectionPreview("ReadTxStreamConfig", accumulated->data(), accumulated->size());
+            StreamConfig config = ParseStreamConfig(accumulated->data(), accumulated->size(), false);
+            LogStreamConfigDetails("TX", config);
 
-                  const uint8_t* data = payload.data();
-                  const size_t size = payload.size();
-                  LogSectionPreview("ReadTxStreamConfig", data, size);
-                  StreamConfig config = ParseStreamConfig(data, size, false);
-                  LogStreamConfigDetails("TX", config);
-
-                  Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
-              });
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
+        });
 }
 
 void DICETransaction::ReadCapabilities(std::function<void(IOReturn, DICECapabilities)> callback) {
