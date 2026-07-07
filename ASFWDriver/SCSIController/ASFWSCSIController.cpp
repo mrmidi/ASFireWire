@@ -73,11 +73,14 @@ struct PendingState {
     HeldInquiry inquiry;
 };
 
-// Must match UserGetDMASpecification's maxTransferSize: VueScan reads whole
-// line groups per READ(10) (~510 KB observed), well under 1 MB.
+// Must match UserGetDMASpecification's maxTransferSize. Sized as a permissive
+// ceiling for any single-LUN SBP-2 scanner, not a per-model value: the LS-9000's
+// largest observed READ(10) (VueScan reads whole line groups, ~510 KB) sits well
+// under 1 MB, and no scanner in this class is expected to exceed it.
 constexpr uint64_t kMaxTransferPerTask = 1u * 1024u * 1024u;
-// SAM timeout 0 = infinite; the SBP-2 ORB timer needs a real bound. Scanner
-// mechanics (SCAN, autofocus) run tens of seconds.
+// SAM timeout 0 = infinite; the SBP-2 ORB timer needs a real bound. Sized for
+// scanner mechanics in general (SCAN, autofocus run tens of seconds) — not tuned
+// to a specific model.
 constexpr uint32_t kDefaultTaskTimeoutMs = 60'000;
 
 // Map an SBP-2 command result onto the SAM response. Synthetic
@@ -367,7 +370,8 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
     // call the kernel shim publishes no segment count/byte-count constraints
     // and rejects any task larger than a small threshold before it reaches the
     // dext: VueScan's SEND LUT (32 KB out) and image READ (~510 KB in) failed
-    // instantly while everything ≤197 B went through. The dext never touches
+    // instantly while everything ≤197 B went through (LS-9000 traffic, but the
+    // constraint applies to any scanner in this class). The dext never touches
     // fBufferIOVMAddr segments (data is copied via UserGetDataBuffer), so the
     // values only need to be permissive and consistent with
     // UserGetDMASpecification (1 MB max transfer, 64-bit, 4-byte alignment).
@@ -551,11 +555,12 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     resp.fBytesTransferred = 0;
     resp.fSenseLength = 0;
 
-    // RESERVE/RELEASE never reach the wire: the working Sequoia stack
-    // (VueScan via IOFireWireSBP2Lib) never sent them, and the LS-9000
-    // firmware wedges on a RESERVE(6) retry after UNIT ATTENTION — no status
-    // block, and the target stays dead until power cycle. The HBA owns the
-    // only initiator on this bus, so reservations are trivially GOOD.
+    // RESERVE/RELEASE never reach the wire. The justification is generic: this
+    // HBA owns the only initiator on the bus, so a reservation is uncontended
+    // and trivially GOOD for any single-initiator SBP-2 target. (Motivating
+    // observation: the working Sequoia stack — VueScan via IOFireWireSBP2Lib —
+    // never sent them, and LS-9000 firmware wedges on a RESERVE(6) retry after
+    // UNIT ATTENTION: no status block, target dead until power cycle.)
     if (opcode == kOpReserve6 || opcode == kOpRelease6 ||
         opcode == kOpReserve10 || opcode == kOpRelease10) {
         ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x (RESERVE/RELEASE) → synthetic GOOD",

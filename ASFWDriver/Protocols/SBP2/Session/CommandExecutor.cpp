@@ -237,9 +237,11 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
                                      // (IOFireWireSerialBusProtocolTransport.cpp:2030 ignores
                                      // the LUN-reset status), leaving the device wedged until
                                      // power cycle; its user-client path instead resets the
-                                     // bus (IOFireWireSBP2UserClient.cpp:427). The LS-9000
-                                     // wedges exactly this way, so escalate to a bus reset —
-                                     // reconnect/re-login runs via the normal reset flow.
+                                     // bus (IOFireWireSBP2UserClient.cpp:427). A target
+                                     // whose fetch engine is this dead (observed on the
+                                     // LS-9000, but not a model-specific behavior) is only
+                                     // recoverable via a bus reset, so escalate — reconnect/
+                                     // re-login runs via the normal reset flow.
                                      if (lastError_ != 0 && busResetRequester_) {
                                          ASFW_LOG(Async,
                                                   "CommandExecutor: LUN reset failed (%d) — "
@@ -331,11 +333,12 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
     orb->SetFunction(function);
     orb->SetLoginID(session_.LoginID());
     orb->SetManagementAgentOffset(session_.TargetInfo().managementAgentOffset);
-    // Grace beyond the advertised management timeout: the LS-9000 posted its
-    // LUN-reset status 2 ms past its 2000 ms Unit_Characteristics timeout
-    // (v45 HW trace) and lost the race. Apple tolerates a late status because
-    // its status FIFO outlives the timeout; ours is torn down with the ORB, so
-    // give the target headroom instead.
+    // Grace beyond the advertised management timeout: a target can post status
+    // a hair past its own Unit_Characteristics timeout (observed on the LS-9000,
+    // which posted LUN-reset status 2 ms past its 2000 ms limit in a v45 HW trace,
+    // and lost the race). Apple tolerates a late status because its status FIFO
+    // outlives the timeout; ours is torn down with the ORB, so give any target
+    // headroom instead. Not a model-specific value.
     orb->SetTimeout(session_.TargetInfo().managementTimeoutMs + kManagementTimeoutGraceMs);
     orb->SetScheduler(&scheduler_);
     orb->SetTargetNode(session_.Generation(), session_.TargetInfo().targetNodeId);
