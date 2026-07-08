@@ -12,6 +12,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
 
 namespace {
 
@@ -124,6 +125,54 @@ TEST(DiceProfileTests, MidasVendorWithWrongModelDoesNotMatchVeniceProfile) {
     // Should fall through to generic profile, not Venice.
     if (profile != nullptr) {
         EXPECT_STRNE(profile->Name(), "Midas Venice F32 (DICE)");
+    }
+}
+
+TEST(DiceProfileTests, ResolvesPreSonusStudioLive1602ProfileByVendorAndModel) {
+    // Identity captured live from the hardware (2026-07-08): GUID 0x000A920404FE2011,
+    // vendor 0x000A92, model 0x000013.
+    const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, 0x000013, 0x000A920404FE2011ULL);
+
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+
+    // DICE TX/RX sections at 48 kHz: single stream per direction, NB_AUDIO=16,
+    // NB_MIDI=1, so DBS = 17 both ways.
+    EXPECT_EQ(profile->TxChannelCount(), 16);
+    EXPECT_EQ(profile->RxChannelCount(), 16);
+    EXPECT_EQ(profile->TxMidiSlots(), 1);
+    EXPECT_EQ(profile->RxMidiSlots(), 1);
+    EXPECT_EQ(profile->TxDbs(), 17);
+    EXPECT_EQ(profile->RxDbs(), 17);
+
+    const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
+    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+    EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
+              ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+}
+
+TEST(DiceProfileTests, PreSonusStudioLiveSafetyOffsetsAndLatencies) {
+    const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, 0x000013, 0x000A920404FE2011ULL);
+    ASSERT_NE(profile, nullptr);
+
+    // Device clock caps are 44.1/48 kHz only; both rates sit in the DICE low rate
+    // mode (8 frames per packet). Tx = 6 * 8 = 48, Rx = 16 * 8 = 128.
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(44100.0), 48);
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(44100.0), 128);
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
+    EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
+}
+
+TEST(DiceProfileTests, PreSonusVendorWithWrongModelDoesNotMatchStudioLiveProfile) {
+    // PreSonus also shipped BeBoB-era devices (FireBox/FP10/Inspire) and the DICE
+    // FireStudio (model 0x000008); none of them may match the StudioLive profile.
+    const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, 0x000008, 0x0ULL);
+    if (profile != nullptr) {
+        EXPECT_STRNE(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
     }
 }
 

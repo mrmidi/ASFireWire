@@ -51,6 +51,8 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
               AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(ModeFor(ids::kMidasVendorId, ids::kMidasVeniceModelId),
               AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(ModeFor(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId),
+              AudioIntegrationMode::kHardcodedNub);
 }
 
 TEST(AudioProfileRegistryTests, RejectsUnknownDevices) {
@@ -91,6 +93,9 @@ TEST(AudioProfileRegistryTests, RecognizesKnownVendorModelPairs) {
                     .has_value());
     EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
                     ByVendorModel(ids::kMidasVendorId, ids::kMidasVeniceModelId))
+                    .has_value());
+    EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                    ByVendorModel(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId))
                     .has_value());
 }
 
@@ -135,6 +140,31 @@ TEST(AudioProfileRegistryTests, RecognizesAlesisMultiMixDiceProfile) {
     ASSERT_TRUE(profile.has_value());
     EXPECT_EQ(profile->mode, AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
+}
+
+TEST(AudioProfileRegistryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
+    const auto identity = AudioProfileRegistry::LookupIdentity(
+        ByVendorModel(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId));
+    ASSERT_TRUE(identity.has_value());
+    EXPECT_STREQ(identity->vendorName, ids::kPreSonusVendorName);
+    EXPECT_STREQ(identity->modelName, ids::kStudioLive1602ModelName);
+
+    const auto profile = AudioProfileRegistry::LookupBestAudioProfile(
+        ByVendorModel(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId));
+    ASSERT_TRUE(profile.has_value());
+    EXPECT_EQ(profile->mode, AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
+}
+
+TEST(AudioProfileRegistryTests, RejectsOtherPreSonusModels) {
+    // PreSonus BeBoB devices (FireBox/FP10/Inspire) and the DICE FireStudio share
+    // the OUI but must not resolve to the StudioLive profile.
+    EXPECT_FALSE(AudioProfileRegistry::LookupIdentity(
+                     ByVendorModel(ids::kPreSonusVendorId, 0x000008))
+                     .has_value());
+    EXPECT_FALSE(AudioProfileRegistry::LookupBestAudioProfile(
+                     ByVendorModel(ids::kPreSonusVendorId, 0x000008))
+                     .has_value());
 }
 
 TEST(AudioProfileRegistryTests, RecognizesMidasVeniceDiceProfile) {

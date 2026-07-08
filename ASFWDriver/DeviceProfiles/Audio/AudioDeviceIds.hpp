@@ -40,6 +40,12 @@ inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
 inline constexpr uint32_t kMidasVendorId       = 0x10c73f;
 inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 
+// ---- PreSonus (DICE / TCAT family) ----
+// The OUI is shared with PreSonus BeBoB-era devices (FireBox/FP10/Inspire) and the
+// DICE FireStudio (model 0x000008); only exact vendor+model pairs may match.
+inline constexpr uint32_t kPreSonusVendorId      = 0x000a92;
+inline constexpr uint32_t kStudioLive1602ModelId = 0x000013;
+
 // ---- Display names ----
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
 inline constexpr const char* kSPro40ModelName         = "Saffire Pro 40";
@@ -55,5 +61,7 @@ inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
 inline constexpr const char* kMidasVendorName         = "Midas";
 inline constexpr const char* kMidasVeniceModelName    = "Venice F32";
+inline constexpr const char* kPreSonusVendorName      = "PreSonus";
+inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
 
 } // namespace ASFW::DeviceProfiles::Audio
