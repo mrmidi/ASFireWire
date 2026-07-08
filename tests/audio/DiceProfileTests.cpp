@@ -168,11 +168,15 @@ TEST(DiceProfileTests, PreSonusStudioLiveSafetyOffsetsAndLatencies) {
 }
 
 TEST(DiceProfileTests, PreSonusVendorWithWrongModelDoesNotMatchStudioLiveProfile) {
-    // PreSonus also shipped BeBoB-era devices (FireBox/FP10/Inspire) and the DICE
-    // FireStudio (model 0x000008); none of them may match the StudioLive profile.
-    const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, 0x000008, 0x0ULL);
-    if (profile != nullptr) {
-        EXPECT_STRNE(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
+    // PreSonus also shipped BeBoB-era devices (FireBox/FP10/Inspire), the DICE
+    // FireStudio (0x000008), and the StudioLive siblings 16.4.2/24.4.2/32.4.2
+    // (0x000010/0x000012/0x000014) whose channel counts are uncaptured; none of
+    // them may inherit the 16.0.2 stream geometry.
+    for (const uint32_t modelId : {0x000008u, 0x000010u, 0x000012u, 0x000014u}) {
+        const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, modelId, 0x0ULL);
+        if (profile != nullptr) {
+            EXPECT_STRNE(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
+        }
     }
 }
 

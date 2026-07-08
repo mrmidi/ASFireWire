@@ -167,6 +167,30 @@ TEST(AudioProfileRegistryTests, RejectsOtherPreSonusModels) {
                      .has_value());
 }
 
+TEST(AudioProfileRegistryTests, KeepsStudioLiveSiblingsRecognizedButDisabled) {
+    // 16.4.2 / 24.4.2 / 32.4.2 share the StudioLive series but their stream
+    // geometry (channel counts) has not been captured from hardware, so they are
+    // recognized by name only — same pattern as the multistream Focusrite models.
+    struct Sibling {
+        uint32_t modelId;
+        const char* modelName;
+    };
+    const Sibling siblings[] = {
+        {ids::kStudioLive1642ModelId, ids::kStudioLive1642ModelName},
+        {ids::kStudioLive2442ModelId, ids::kStudioLive2442ModelName},
+        {ids::kStudioLive3242ModelId, ids::kStudioLive3242ModelName},
+    };
+    for (const auto& sibling : siblings) {
+        const auto identity = AudioProfileRegistry::LookupIdentity(
+            ByVendorModel(ids::kPreSonusVendorId, sibling.modelId));
+        ASSERT_TRUE(identity.has_value());
+        EXPECT_STREQ(identity->vendorName, ids::kPreSonusVendorName);
+        EXPECT_STREQ(identity->modelName, sibling.modelName);
+        EXPECT_EQ(ModeFor(ids::kPreSonusVendorId, sibling.modelId),
+                  AudioIntegrationMode::kNone);
+    }
+}
+
 TEST(AudioProfileRegistryTests, RecognizesMidasVeniceDiceProfile) {
     const auto identity = AudioProfileRegistry::LookupIdentity(
         ByVendorModel(ids::kMidasVendorId, ids::kMidasVeniceModelId));

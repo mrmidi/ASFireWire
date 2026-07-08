@@ -43,8 +43,14 @@ inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 // ---- PreSonus (DICE / TCAT family) ----
 // The OUI is shared with PreSonus BeBoB-era devices (FireBox/FP10/Inspire) and the
 // DICE FireStudio (model 0x000008); only exact vendor+model pairs may match.
+// Sibling StudioLive model IDs from libffado 2.5.0; only the 16.0.2 is
+// hardware-verified — the siblings are recognized by name but not audio-enabled
+// until their stream geometry is captured from real hardware.
 inline constexpr uint32_t kPreSonusVendorId      = 0x000a92;
 inline constexpr uint32_t kStudioLive1602ModelId = 0x000013;
+inline constexpr uint32_t kStudioLive1642ModelId = 0x000010;
+inline constexpr uint32_t kStudioLive2442ModelId = 0x000012;
+inline constexpr uint32_t kStudioLive3242ModelId = 0x000014;
 
 // ---- Display names ----
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
@@ -63,5 +69,8 @@ inline constexpr const char* kMidasVendorName         = "Midas";
 inline constexpr const char* kMidasVeniceModelName    = "Venice F32";
 inline constexpr const char* kPreSonusVendorName      = "PreSonus";
 inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
+inline constexpr const char* kStudioLive1642ModelName = "StudioLive 16.4.2";
+inline constexpr const char* kStudioLive2442ModelName = "StudioLive 24.4.2";
+inline constexpr const char* kStudioLive3242ModelName = "StudioLive 32.4.2";
 
 } // namespace ASFW::DeviceProfiles::Audio
