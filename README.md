@@ -140,11 +140,13 @@ Audio-device support in tree today:
 - Focusrite Saffire Pro 14
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
+- PreSonus StudioLive 16.0.2
 
 Personally tested with working audio:
 
 - Apogee Duet FireWire
 - Focusrite Saffire Pro 24 DSP
+- PreSonus StudioLive 16.0.2
 
 Recognized but not enabled yet:
 
@@ -152,6 +154,7 @@ Recognized but not enabled yet:
 - Focusrite Saffire Pro 40
 - Focusrite Saffire Pro 40 TCD3070
 - Focusrite Liquid Saffire 56
+- PreSonus StudioLive 16.4.2 / 24.4.2 / 32.4.2 (stream layout not yet captured from hardware)
 
 In theory the driver can be extended to other OHCI controllers and many more FireWire devices, but hardware access is still the limiting factor. Host-controller matching and audio-device enablement are intentionally conservative until more real machines are tested.
 
