@@ -368,7 +368,10 @@ for experimental testing only — not general use.
    ```bash
    xattr -dr com.apple.quarantine ASFW.app
    ```
-3. **Disable SIP.** Shut down, then boot into Recovery (hold the power button until
+3. **Disable SIP** (see Apple's guide on
+   [disabling and enabling System Integrity Protection](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection)).
+   Shut down, then boot into
+   [Recovery](https://support.apple.com/en-us/102518) (hold the power button until
    "Loading startup options" appears → **Options** → open **Terminal**), and run:
    ```bash
    csrutil disable
