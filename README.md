@@ -20,6 +20,7 @@
 - [General pitfalls and gotchas](#general-pitfalls-and-gotchas)
 - [Project structure](#project-structure)
 - [Building](#building)
+- [Installing a prebuilt build (testers)](#installing-a-prebuilt-build-testers)
 - [Contributing](#contributing)
 - [Contacts](#contacts)
 - [References](#references)
@@ -346,6 +347,54 @@ Build scripts or CMakeLists are for quick testing and creating compile_commands.
 NOTE: You need an Apple Developer account (paid) and appropriate entitlements — or a free account plus SIP disabled — to build/load the driver on your machine. See Apple's documentation for details: https://developer.apple.com/documentation/driverkit/debugging-and-testing-system-extensions
 
 Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build
+
+## Installing a prebuilt build (testers)
+
+If you want to test ASFireWire without building it yourself, tagged releases attach a
+prebuilt `ASFW.app`. This build is **ad-hoc signed and NOT notarized**, so it can only
+be loaded on a machine with System Integrity Protection (SIP) disabled. It is intended
+for experimental testing only — not general use.
+
+> **Warning:** These steps disable SIP, which lowers your Mac's security system-wide.
+> Only do this on a machine you are comfortable using for testing, and re-enable SIP
+> (`csrutil enable`) when you are done. The build is unsigned/un-notarized and provided
+> as-is; run it only if you understand and accept that.
+
+**Requirements:** an Apple Silicon Mac running macOS 26 (Tahoe), and FireWire hardware
+(a PCIe FireWire/OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
+
+1. **Download** the `ASFW-<version>.zip` from the [Releases](../../releases) page and unzip it.
+2. **Remove the quarantine flag** (Gatekeeper quarantines downloaded apps):
+   ```bash
+   xattr -dr com.apple.quarantine ASFW.app
+   ```
+3. **Disable SIP.** Shut down, then boot into Recovery (hold the power button until
+   "Loading startup options" appears → **Options** → open **Terminal**), and run:
+   ```bash
+   csrutil disable
+   ```
+   Reboot back into macOS. Confirm with `csrutil status` (should report disabled).
+4. **Enable system-extension developer mode** (runtime toggle, no reboot; requires SIP
+   already off):
+   ```bash
+   systemextensionsctl developer on
+   ```
+5. **Install the driver.** Move `ASFW.app` to `/Applications`, open it, and use its
+   **Install** button. Approve the extension in **System Settings → General → Login Items
+   & Extensions** if prompted (the prompt may not appear in developer mode).
+6. **Verify** the driver is active:
+   ```bash
+   systemextensionsctl list
+   ```
+   You should see `net.mrmidi.ASFW.ASFWDriver` marked `[activated enabled]`.
+
+**Uninstall / revert:** remove the extension via the app (or
+`systemextensionsctl uninstall`), then re-enable SIP from Recovery with `csrutil enable`.
+
+**Troubleshooting:** if installation fails with `Missing entitlement
+com.apple.developer.system-extension.install`, the build was not signed with its
+entitlements embedded — that is a packaging bug in the release, not something to fix on
+your machine; please open an issue rather than changing boot-args.
 
 ## Contributing
 

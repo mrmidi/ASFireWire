@@ -1,0 +1,80 @@
+name: Release (prebuilt tester build)
+
+# Produces an ad-hoc-signed, ready-to-install ASFW.app for eager testers.
+#   - Push a tag matching v*        -> builds, signs, and attaches the zip to a GitHub Release.
+#   - Run manually (workflow_dispatch) -> builds, signs, and uploads the zip as a workflow artifact
+#     (useful for testing this pipeline on a fork before tagging).
+#
+# The build is UNSIGNED by design (build.sh forces CODE_SIGNING_ALLOWED=NO); sign.sh then
+# ad-hoc re-signs the dext + app with their entitlements so the extension can load with
+# SIP off + `systemextensionsctl developer on`. Ad-hoc has no team/profile, so one zip
+# installs on any Mac. This is NOT notarized and requires SIP disabled — testers only.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to attach assets to a Release on tag pushes
+
+jobs:
+  release:
+    name: Build & ad-hoc sign
+    runs-on: macos-26
+    env:
+      CONFIGURATION: Release
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Show toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+
+      - name: Build (Release, unsigned by design)
+        run: |
+          chmod +x build.sh bump.sh sign.sh
+          ./build.sh --no-bump --config Release
+
+      - name: Ad-hoc sign (embed entitlements)
+        run: ./sign.sh
+
+      - name: Package
+        id: package
+        run: |
+          APP="build/DerivedData/Build/Products/Release/ASFW.app"
+          [ -d "$APP" ] || { echo "::error::App not found at $APP"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="dev-${GITHUB_SHA:0:8}"
+          fi
+          ZIP="ASFW-${VERSION}.zip"
+          ditto -c -k --keepParent "$APP" "$ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          shasum -a 256 "$ZIP"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.zip }}
+          path: ${{ steps.package.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Attach to Release (tag pushes only)
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${{ steps.package.outputs.zip }}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Experimental prebuilt tester build (ad-hoc signed, NOT notarized). Requires SIP off + \`systemextensionsctl developer on\`. See the README install section." \
+            --prerelease \
+          || gh release upload "${GITHUB_REF_NAME}" "${{ steps.package.outputs.zip }}" --clobber
