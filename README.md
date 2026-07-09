@@ -363,7 +363,7 @@ for experimental testing only — not general use.
 **Requirements:** an Apple Silicon Mac running macOS 26 (Tahoe), and FireWire hardware
 (a PCIe FireWire/OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
 
-1. **Download** the `ASFW-<version>.zip` from the [Releases](../../releases) page and unzip it.
+1. **Download** the `ASFW-<version>-adhoc.zip` from the [Releases](../../releases) page and unzip it.
 2. **Remove the quarantine flag** (Gatekeeper quarantines downloaded apps):
    ```bash
    xattr -dr com.apple.quarantine ASFW.app

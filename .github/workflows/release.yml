@@ -58,7 +58,9 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "v${APP_VERSION}" != "${VERSION}" ]; then
             echo "::warning::Tag ${VERSION} != app CFBundleShortVersionString ${APP_VERSION} (built with --no-bump)"
           fi
-          ZIP="ASFW-${VERSION}.zip"
+          # "-adhoc" suffix keeps ASFW-<version>.zip free for a future
+          # properly signed/notarized asset on the same release.
+          ZIP="ASFW-${VERSION}-adhoc.zip"
           ditto -c -k --keepParent "$APP" "$ZIP"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -69,7 +71,7 @@ jobs:
         with:
           # No .zip suffix: artifact downloads are zip containers themselves,
           # so a .zip name would yield ASFW-x.zip.zip.
-          name: ASFW-${{ steps.package.outputs.version }}
+          name: ASFW-${{ steps.package.outputs.version }}-adhoc
           path: ${{ steps.package.outputs.zip }}
           if-no-files-found: error
 
