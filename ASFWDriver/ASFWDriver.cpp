@@ -347,6 +347,21 @@ kern_return_t IMPL(ASFWDriver, Start) {
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
 
+    // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
+    // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
+    // this nub yet — it is staged for a future per-unit personality carrying
+    // login/unit identity, and kept published now to reserve the discovery seam.
+    {
+        IOService* sbp2NubService = nullptr;
+        kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
+        if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
+            ASFW_LOG(Controller, "[SCSIHBA] Failed to create ASFWSBP2Nub: 0x%08x", nubKr);
+        } else {
+            // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
+            sbp2NubService->release();
+        }
+    }
+
     RegisterService();
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
 

@@ -24,6 +24,10 @@ namespace ASFW::Audio {
 class AudioCoordinator;
 }
 
+namespace ASFW::Protocols::SBP2 {
+class SBP2TargetBridge;
+}
+
 struct ServiceContext {
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // immutable identity/static config
@@ -45,6 +49,7 @@ struct ServiceContext {
     ASFW::Driver::IsochService isoch;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
+    std::shared_ptr<ASFW::Protocols::SBP2::SBP2TargetBridge> sbp2Bridge;
 
     void DisarmProviderNotifications();
     void Reset();

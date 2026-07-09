@@ -87,7 +87,8 @@ public:
     [[nodiscard]] std::optional<SCSI::CommandResult> GetInquiryResult(void* owner, uint64_t handle);
 
     [[nodiscard]] bool SubmitCommand(void* owner, uint64_t handle,
-                                     const SCSI::CommandRequest& request);
+                                     const SCSI::CommandRequest& request,
+                                     CommandExecutor::ResultCallback callback = {});
     [[nodiscard]] std::optional<SCSI::CommandResult> GetCommandResult(void* owner, uint64_t handle);
 
     [[nodiscard]] bool SubmitTaskManagement(void* owner, uint64_t handle,
@@ -98,6 +99,18 @@ public:
 
     void OnBusReset(uint16_t newGeneration);
     void RefreshTargets(Discovery::Generation gen);
+
+    // Wire the last-resort bus-reset hook handed to every CommandExecutor (see
+    // CommandExecutor::SetBusResetRequester). Set once during driver wiring,
+    // before any session exists.
+    void SetBusResetRequester(std::function<void()> requester);
+
+    // Push channel for login state. Fires observer(guid, true) when a session
+    // reaches LoggedIn (fresh login or reconnect) and observer(guid, false) on
+    // terminal login failure or logout completion. NOT fired on Suspended (bus
+    // reset) — reconnect re-fires up. The observer runs on workQueue_ (off
+    // lock_). Set once during wiring, before any session exists.
+    void SetLoginStateObserver(std::function<void(uint64_t guid, bool loggedIn)> observer);
 
 #ifdef ASFW_HOST_TEST
     LoginSession* GetSessionForTesting(uint64_t handle);
@@ -115,8 +128,12 @@ private:
     [[nodiscard]] bool HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const;
     void RetireSessionLocked(const SessionRecord& record);
     void EraseRetiredSessionLocked(const std::shared_ptr<LoginSession>& session);
-    void SetReleaseLogoutCallbackLocked(uint64_t handle,
+    void SetReleaseLogoutCallbackLocked(uint64_t handle, uint64_t guid,
                                         const std::shared_ptr<LoginSession>& session);
+
+    // Dispatches loginStateObserver_ onto workQueue_ (off lock_). MUST be called
+    // with lock_ held (reads the observer under it).
+    void EmitLoginStateLocked(uint64_t guid, bool loggedIn);
 
     Async::IFireWireBus& bus_;
     Async::IFireWireBusInfo& busInfo_;
@@ -126,6 +143,8 @@ private:
     IODispatchQueue* workQueue_{nullptr};
 
     IOLock* lock_{nullptr};
+    std::function<void()> busResetRequester_;
+    std::function<void(uint64_t, bool)> loginStateObserver_;
     std::map<uint64_t, SessionRecord> sessions_;
     struct RetiringSession {
         uint64_t guid{0};
@@ -135,6 +154,11 @@ private:
     // Hidden from registry clients, but retained until async logout finishes/times out.
     std::vector<RetiringSession> retiringSessions_;
     uint64_t nextHandle_{1};
+
+    // Guards deferred login/logout completion bodies (they re-take lock_, so
+    // they are dispatched to workQueue_ — a management write can fail INLINE
+    // while the caller still holds lock_, and os_unfair_lock recursion aborts).
+    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 
 } // namespace ASFW::Protocols::SBP2

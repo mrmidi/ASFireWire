@@ -540,7 +540,6 @@ void LoginSession::BindFetchAgent() noexcept {
     binding.generation = loginGeneration_;
     binding.nodeID = loginNodeID_;
     binding.fetchAgentAddress = cbaAddr(Wire::CommandBlockAgentOffsets::kFetchAgent);
-    binding.doorbellAddress = cbaAddr(Wire::CommandBlockAgentOffsets::kDoorbell);
     binding.agentResetAddress = cbaAddr(Wire::CommandBlockAgentOffsets::kAgentReset);
     binding.maxPayloadSize = maxPayloadSize_;
     fetchAgent_.Bind(binding);

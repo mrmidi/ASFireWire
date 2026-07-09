@@ -3,7 +3,6 @@
 
 #include "SBP2ManagementORB.hpp"
 #include <DriverKit/IOLib.h>
-#include "SBP2DelayedDispatch.hpp"
 
 #include "../../Async/Interfaces/IFireWireBus.hpp"
 #include "../../Async/Interfaces/IFireWireBusInfo.hpp"
@@ -26,7 +25,10 @@ SBP2ManagementORB::SBP2ManagementORB(Async::IFireWireBus& bus,
     , owner_(owner) {}
 
 SBP2ManagementORB::~SBP2ManagementORB() {
-    timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    if (scheduler_ != nullptr && timeoutToken_ != kInvalidSchedulerToken) {
+        scheduler_->Cancel(timeoutToken_);
+        timeoutToken_ = kInvalidSchedulerToken;
+    }
     lifetimeToken_.reset();
     DeallocateResources();
 }
@@ -192,26 +194,18 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
     }
 
     // Management agent write ACK'd. Start timeout, wait for status block.
-    timerActive_.store(true, std::memory_order_relaxed);
     ASFW_LOG(Async, "SBP2ManagementORB: mgmt agent ACK'd, waiting for status block (timeout=%ums)",
              timeoutMs_);
 
-    if (workQueue_ && timeoutMs_ > 0) {
-        const uint32_t timeout = timeoutMs_;
-        const uint64_t expectedGeneration =
-            timerGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
+    if (scheduler_ != nullptr && timeoutMs_ > 0) {
         const std::weak_ptr<int> weakLifetime = lifetimeToken_;
-        const uint64_t delayNs = static_cast<uint64_t>(timeout) * 1'000'000ULL;
+        const uint64_t delayNs = static_cast<uint64_t>(timeoutMs_) * 1'000'000ULL;
 
-        DispatchAfterCompat(workQueue_, delayNs, [this, weakLifetime, expectedGeneration]() {
+        timeoutToken_ = scheduler_->ScheduleAfter(delayNs, [this, weakLifetime]() {
             if (weakLifetime.expired()) {
                 return;
             }
-            if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-                !timerActive_.load(std::memory_order_relaxed) ||
-                !inProgress_.load(std::memory_order_relaxed)) {
-                return;
-            }
+            timeoutToken_ = kInvalidSchedulerToken;
             OnTimeout();
         });
     }
@@ -239,11 +233,19 @@ void SBP2ManagementORB::OnTimeout() noexcept {
 
 void SBP2ManagementORB::Complete(int status) noexcept {
     inProgress_.store(false, std::memory_order_relaxed);
-    timerActive_.store(false, std::memory_order_relaxed);
-    timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    if (scheduler_ != nullptr && timeoutToken_ != kInvalidSchedulerToken) {
+        scheduler_->Cancel(timeoutToken_);
+        timeoutToken_ = kInvalidSchedulerToken;
+    }
 
-    if (completionCallback_) {
-        completionCallback_(status);
+    // Move out before invoking: the callback may destroy this ORB
+    // (CommandExecutor resets managementORB_ from inside it). Invoking the
+    // member directly would destroy the executing std::function and free its
+    // captures mid-call.
+    auto callback = std::move(completionCallback_);
+    completionCallback_ = nullptr;
+    if (callback) {
+        callback(status);
     }
 }
 

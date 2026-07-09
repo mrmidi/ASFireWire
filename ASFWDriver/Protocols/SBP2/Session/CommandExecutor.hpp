@@ -30,6 +30,7 @@
 #endif
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -46,17 +47,27 @@ public:
                     Async::IFireWireBusInfo& busInfo,
                     AddressSpaceManager& addrSpaceMgr,
                     LoginSession& session,
+                    ISessionScheduler& scheduler,
                     void* owner,
-                    int32_t& lastError,
-                    IODispatchQueue* workQueue) noexcept;
+                    int32_t& lastError) noexcept;
     ~CommandExecutor();
 
     CommandExecutor(const CommandExecutor&) = delete;
     CommandExecutor& operator=(const CommandExecutor&) = delete;
 
+    // Push-style completion: fired exactly once per accepted SubmitCommand with a
+    // callback — on ORB completion, on abort (bus reset / task management), or on
+    // release-time Cleanup. It consumes the result (the poll-style Get*Result
+    // readers see nothing). Runs on the Default queue without the registry lock,
+    // except the Cleanup/teardown path, which may hold it — callbacks must not
+    // re-enter the registry synchronously.
+    using ResultCallback = std::function<void(const SCSI::CommandResult&)>;
+
     // Submit a generic SCSI command. Returns false if not logged in, another
     // command is active, the request is malformed, or the ORB cannot be built.
-    [[nodiscard]] bool SubmitCommand(const SCSI::CommandRequest& request);
+    // When rejected, `callback` is dropped without being invoked.
+    [[nodiscard]] bool SubmitCommand(const SCSI::CommandRequest& request,
+                                     ResultCallback callback = {});
 
     // Submit a SCSI INQUIRY (convenience wrapper over SubmitCommand).
     [[nodiscard]] bool SubmitInquiry(uint8_t allocationLength);
@@ -68,12 +79,22 @@ public:
 
     // Submit a task-management recovery ORB (abort task set / LU reset / target
     // reset). Returns false if not logged in, one is already in flight, or the
-    // function is unsupported.
-    [[nodiscard]] bool SubmitTaskManagement(SBP2ManagementORB::Function function);
+    // function is unsupported. onComplete (optional) fires when the management
+    // ORB completes, regardless of its outcome.
+    [[nodiscard]] bool SubmitTaskManagement(SBP2ManagementORB::Function function,
+                                            std::function<void()> onComplete = {});
 
     // Bus reset: fail the active command (synthetic aborted result) and drop the
     // management ORB. The FetchAgent is unbound by LoginSession separately.
     void OnBusReset();
+
+    // Last-resort recovery hook: invoked when the LUN-reset escalation itself
+    // fails (management ORB never fetched — the target's fetch engine is dead
+    // and only a bus reset can reach it). Wired by the registry; neutral
+    // callback so this layer stays ignorant of Bus/ internals.
+    void SetBusResetRequester(std::function<void()> requester) {
+        busResetRequester_ = std::move(requester);
+    }
 
     // Release-time cleanup: drop command + management resources.
     void Cleanup();
@@ -83,6 +104,8 @@ public:
 
 private:
     void FailActiveCommand(int transportStatus, uint8_t sbpStatus) noexcept;
+    void NotifyResultCallback();
+    void RetireCommand();
     void CleanupCommandResources();
     void CleanupManagementResources();
 
@@ -90,9 +113,9 @@ private:
     Async::IFireWireBusInfo& busInfo_;
     AddressSpaceManager& addrSpaceMgr_;
     LoginSession& session_;
+    ISessionScheduler& scheduler_;
     void* owner_;
     int32_t& lastError_;
-    IODispatchQueue* workQueue_{nullptr};
 
     // Command god-object state (moved out of #19's SBP2SessionRecord).
     std::optional<SCSI::CommandRequest> activeCommandRequest_;
@@ -104,8 +127,11 @@ private:
     std::unique_ptr<SBP2CommandORB> commandORB_;
     std::unique_ptr<SBP2PageTable> commandPageTable_;
     uint64_t commandBufferHandle_{0};
+    ResultCallback resultCallback_;
 
     std::unique_ptr<SBP2ManagementORB> managementORB_;
+
+    std::function<void()> busResetRequester_;
 
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
