@@ -24,15 +24,25 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         // Clear the per-context event bits to acknowledge
         hardware.Write(Register32::kIsoRecvIntEventClear, snap.isoRecvEvent);
 
-        // Context 0 is our single IR context for now
-        if ((snap.isoRecvEvent & 0x01) && isoch.ReceiveContext()) {
-            // Dispatch descriptor processing to workqueue (deferred from ISR)
-            workQueue.DispatchAsync(^{
-              if (isoch.ReceiveContext()) {
-                  isoch.ReceiveContext()->Poll();
+        // One OHCI IR context backs each capture stream (contextIndex ==
+        // streamIndex). A multi-stream DICE device (Venice F32 = 2×16) runs a
+        // master (context 0) plus secondary contexts whose event bits are
+        // (1 << contextIndex). Drain every signalled context, not just context 0;
+        // the secondary's ring would otherwise fill without ever being polled and
+        // its channel slice (e.g. 17–32) would never reach the input buffer.
+        // Poll the master first so the producer timeline is published before the
+        // secondary slices anchor to it.
+        const uint32_t recvEvent = snap.isoRecvEvent;
+        workQueue.DispatchAsync(^{
+          for (uint32_t ctxIdx = 0; ctxIdx < IsochService::kMaxStreamsPerDirection; ++ctxIdx) {
+              if ((recvEvent & (1u << ctxIdx)) == 0) {
+                  continue;
               }
-            });
-        }
+              if (auto* rx = isoch.ReceiveContext(ctxIdx)) {
+                  rx->Poll();
+              }
+          }
+        });
     }
 
     // ===== ISOCHRONOUS TRANSMIT INTERRUPT =====
@@ -49,12 +59,18 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         // Clear event bits to acknowledge
         hardware.Write(Register32::kIsoXmitIntEventClear, snap.isoXmitEvent);
 
-        // Context 0 is our single IT context
-        if ((snap.isoXmitEvent & 0x01) && isoch.TransmitContext()) {
-            // Process IT directly in ISR context for lowest latency.
-            // IT RefillRing is fast (atomic assemble + mem writes).
-            // DispatchAsync adds latency which might cause underruns if buffers are small.
-            isoch.TransmitContext()->HandleInterrupt();
+        // One OHCI IT context backs each playback stream (contextIndex ==
+        // streamIndex). A multi-stream DICE device (Venice F32 = 2×16) runs a
+        // master (context 0) plus secondary contexts (event bit 1 << contextIndex).
+        // Process every signalled context directly in ISR for lowest latency
+        // (IT RefillRing is fast; DispatchAsync would add underrun-prone latency).
+        for (uint32_t ctxIdx = 0; ctxIdx < IsochService::kMaxStreamsPerDirection; ++ctxIdx) {
+            if ((snap.isoXmitEvent & (1u << ctxIdx)) == 0) {
+                continue;
+            }
+            if (auto* tx = isoch.TransmitContext(ctxIdx)) {
+                tx->HandleInterrupt();
+            }
         }
     }
 

@@ -63,6 +63,7 @@ public:
      * @param outControlBlock Shared memory descriptor containing stream control states.
      */
     virtual kern_return_t AllocateTxIsochResources(
+        uint32_t streamIndex,
         uint32_t numSlots,
         uint32_t maxPacketBytes,
         uint32_t interruptInterval,

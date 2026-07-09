@@ -82,6 +82,20 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.controlBlock = nullptr;
             ivars.runtime.txSlotProvider.numSlots = 0;
             ivars.runtime.txExecutionTimeline.controlBlock = nullptr;
+
+            // Secondary playback stream resources.
+            ivars.txPayloadMapSecondary = nullptr;
+            ivars.txMetadataMapSecondary = nullptr;
+            ivars.txControlMapSecondary = nullptr;
+            ivars.txPayloadBufferSecondary = nullptr;
+            ivars.txMetadataBufferSecondary = nullptr;
+            ivars.txControlBufferSecondary = nullptr;
+            ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
+            ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
+            ivars.runtime.txSlotProviderSecondary.controlBlock = nullptr;
+            ivars.runtime.txSlotProviderSecondary.numSlots = 0;
+            ivars.runtime.txSecondaryActive = false;
+
             if (txResourcesAllocated && ivars.device.audioNub) {
                 ivars.device.audioNub->FreeTxIsochResources();
             }
@@ -164,7 +178,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             IOMemoryDescriptor* rawControl = nullptr;
 
             kern_return_t allocKr = ivars.device.audioNub->AllocateTxIsochResources(
-                numSlots, maxPacketBytes, interruptInterval,
+                0, numSlots, maxPacketBytes, interruptInterval,
                 &rawPayload, &rawMetadata, &rawControl
             );
             if (allocKr != kIOReturnSuccess) {
@@ -233,6 +247,74 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                      control->rxTransferDelayTicks.load(std::memory_order_relaxed),
                      control->txTransferDelayTicks.load(std::memory_order_relaxed),
                      timingRateHz);
+
+        // --- Secondary playback stream (multi-stream DICE, e.g. Venice F32 = 2×16) ---
+        // Allocate/map/configure the second host IT pipeline. It shadows the
+        // master's per-packet timing in lockstep and encodes host output channels
+        // [pcmChannels, 2×pcmChannels). The matching secondary IT hardware context
+        // is created + wired to this slab by the duplex bringup
+        // (PrepareTransmitStream), which runs after this allocation.
+        if (profile->TxStreamCount() > 1) {
+            ASFW::Isoch::Audio::DICE::DiceStreamConfig txConfig2{};
+            if (!profile->BuildDefaultTxStreamConfig(txConfig2)) {
+                kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig2");
+                return;
+            }
+            txConfig2.sourceChannelOffset = txConfig2.pcmChannels;
+
+            const uint32_t numSlots2 =
+                ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
+            const uint32_t maxPacketBytes2 =
+                8u + static_cast<uint32_t>(txConfig2.framesPerDataPacket) * txConfig2.dbs * 4u;
+            const uint32_t interruptInterval2 =
+                ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
+
+            IOMemoryDescriptor* rawPayload2 = nullptr;
+            IOMemoryDescriptor* rawMetadata2 = nullptr;
+            IOMemoryDescriptor* rawControl2 = nullptr;
+            kern_return_t allocKr2 = ivars.device.audioNub->AllocateTxIsochResources(
+                1, numSlots2, maxPacketBytes2, interruptInterval2,
+                &rawPayload2, &rawMetadata2, &rawControl2);
+            if (allocKr2 != kIOReturnSuccess) {
+                kr = failStart(allocKr2, "AllocateTxIsochResources2");
+                return;
+            }
+            ivars.txPayloadBufferSecondary = ASFW::Common::AdoptRetained(rawPayload2);
+            ivars.txMetadataBufferSecondary = ASFW::Common::AdoptRetained(rawMetadata2);
+            ivars.txControlBufferSecondary = ASFW::Common::AdoptRetained(rawControl2);
+
+            allocKr2 = ASFW::Common::CreateSharedMapping(ivars.txPayloadBufferSecondary, ivars.txPayloadMapSecondary);
+            if (allocKr2 != kIOReturnSuccess) { kr = failStart(allocKr2, "MapTxPayload2"); return; }
+            allocKr2 = ASFW::Common::CreateSharedMapping(ivars.txMetadataBufferSecondary, ivars.txMetadataMapSecondary);
+            if (allocKr2 != kIOReturnSuccess) { kr = failStart(allocKr2, "MapTxMetadata2"); return; }
+            allocKr2 = ASFW::Common::CreateSharedMapping(ivars.txControlBufferSecondary, ivars.txControlMapSecondary);
+            if (allocKr2 != kIOReturnSuccess) { kr = failStart(allocKr2, "MapTxControl2"); return; }
+
+            uint8_t* payloadBase2 = reinterpret_cast<uint8_t*>(ivars.txPayloadMapSecondary->GetAddress());
+            auto* metadataRing2 = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars.txMetadataMapSecondary->GetAddress());
+            auto* controlBlock2 = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars.txControlMapSecondary->GetAddress());
+
+            ivars.runtime.txSlotProviderSecondary.payloadBase = payloadBase2;
+            ivars.runtime.txSlotProviderSecondary.metadataRing = metadataRing2;
+            ivars.runtime.txSlotProviderSecondary.controlBlock = controlBlock2;
+            ivars.runtime.txSlotProviderSecondary.numSlots = numSlots2;
+            ivars.runtime.txSlotProviderSecondary.slotStrideBytes = maxPacketBytes2;
+            // isoChannel here is only a fallback; the host IT ring stamps the real
+            // transmit channel (PlaybackChannel(1)) from its Configure() value.
+            ivars.runtime.txSlotProviderSecondary.isoChannel = txConfig2.sid;
+
+            if (!ivars.runtime.txStreamEngineSecondary.Configure(*profile, txConfig2)) {
+                kr = failStart(kIOReturnError, "ConfigureTxStreamEngine2");
+                return;
+            }
+            ivars.runtime.txStreamEngineSecondary.BindSlotProvider(&ivars.runtime.txSlotProviderSecondary);
+            ivars.runtime.txStreamEngineSecondary.ResetForStart(0, 0);
+            ivars.runtime.txSecondaryActive = true;
+
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: Allocated & configured SECONDARY TX stream offset=%u dbs=%u slots=%u slotSize=%u",
+                     txConfig2.sourceChannelOffset, txConfig2.dbs, numSlots2, maxPacketBytes2);
+        }
         }
 
         // --- Prefill TX ring ---
@@ -486,6 +568,22 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.txSlotProvider.controlBlock = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
         ivars.runtime.txExecutionTimeline.controlBlock = nullptr;
+
+        // Secondary playback stream teardown. Drop txSecondaryActive first so the
+        // RT pump/IO paths stop touching the secondary engine before its mapped
+        // slab is released.
+        ivars.runtime.txSecondaryActive = false;
+        ivars.txPayloadMapSecondary = nullptr;
+        ivars.txMetadataMapSecondary = nullptr;
+        ivars.txControlMapSecondary = nullptr;
+        ivars.txPayloadBufferSecondary = nullptr;
+        ivars.txMetadataBufferSecondary = nullptr;
+        ivars.txControlBufferSecondary = nullptr;
+        ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
+        ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
+        ivars.runtime.txSlotProviderSecondary.controlBlock = nullptr;
+        ivars.runtime.txSlotProviderSecondary.numSlots = 0;
+
         if (ivars.device.audioNub) {
             ivars.device.audioNub->FreeTxIsochResources();
         }

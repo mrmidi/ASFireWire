@@ -34,6 +34,12 @@ struct AmdtpStreamConfig final {
 
     uint8_t framesPerDataPacket{8};
     uint32_t maxPacketBytes{512};
+
+    // First host buffer channel this stream encodes. For a multi-stream device
+    // (Venice F32 = 2×16) the 32-ch host output buffer is split across streams:
+    // stream 0 reads channels [0, pcmChannels), stream 1 reads [16, 16+pcmChannels),
+    // etc. Single-stream devices keep 0.
+    uint8_t sourceChannelOffset{0};
 };
 
 struct AmdtpTxPolicy final {

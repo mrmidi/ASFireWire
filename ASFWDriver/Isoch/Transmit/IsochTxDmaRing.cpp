@@ -12,6 +12,24 @@ namespace ASFW::Isoch::Tx {
 using namespace ASFW::Async::HW;
 using namespace ASFW::Driver;
 
+namespace {
+// Replace the channel field [13:8] of a little-endian OHCI isoch transmit header
+// quadlet with `channel`. The producer (slot provider) encodes a channel; this
+// lets the owning ring override it with its configured transmit channel so a
+// secondary stream rides its own iso channel.
+[[nodiscard]] inline uint32_t StampHeaderChannel(uint32_t leHeader, uint8_t channel) noexcept {
+    // An all-zero header is the "no packet" sentinel (e.g. underrun): leave it
+    // untouched so the ring never invents packet state.
+    if (leHeader == 0) {
+        return 0;
+    }
+    uint32_t h = OSSwapLittleToHostInt32(leHeader);
+    h = (h & ~(static_cast<uint32_t>(0x3F) << 8)) |
+        (static_cast<uint32_t>(channel & 0x3F) << 8);
+    return OSSwapHostToLittleInt32(h);
+}
+} // namespace
+
 void IsochTxDmaRing::ResetForStart() noexcept {
     softwareFillAbsIdx_ = 0;
     lastHwPacketIndex_ = 0;
@@ -293,8 +311,13 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
             .branchBits = OHCIDescriptor::kBranchNever,
         });
 
-        // Set the immediate isochronous headers from metadata.
-        immDesc->immediateData[0] = meta.immediateHeader[0];
+        // Set the immediate isochronous headers from metadata. Secondary streams
+        // opt into restamping the transmit channel ([13:8]) from this ring's
+        // channel_ (set by Configure), so they ride their own iso channel without
+        // the audio-side slot provider knowing it. The master copies verbatim.
+        immDesc->immediateData[0] = stampChannel_
+            ? StampHeaderChannel(meta.immediateHeader[0], channel_)
+            : meta.immediateHeader[0];
         immDesc->immediateData[1] = meta.immediateHeader[1];
 
         // Linux queue_iso_transmit() self-links the skip address so a lost
@@ -691,7 +714,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint32_t descBase = hwSlot * Layout::kBlocksPerPacket;
         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
             slab_.GetDescriptorPtr(descBase));
-        immDesc->immediateData[0] = meta.immediateHeader[0];
+        immDesc->immediateData[0] = stampChannel_
+            ? StampHeaderChannel(meta.immediateHeader[0], channel_)
+            : meta.immediateHeader[0];
         immDesc->immediateData[1] = meta.immediateHeader[1];
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),

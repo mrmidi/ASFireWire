@@ -36,6 +36,13 @@ public:
     /// Builds the default receive (device-to-host) stream configuration.
     [[nodiscard]] virtual bool BuildDefaultRxStreamConfig(DiceStreamConfig& outConfig) const noexcept = 0;
 
+    /// Number of isochronous streams per direction (DICE TX_NUMBER/RX_NUMBER).
+    /// BuildDefault*StreamConfig describes ONE wire stream; the HAL aggregate
+    /// channel count is per-stream PCM × stream count. A multi-stream device
+    /// (Venice F32 = 2×16) overrides these; single-stream devices keep 1.
+    [[nodiscard]] virtual uint32_t TxStreamCount() const noexcept { return 1; }
+    [[nodiscard]] virtual uint32_t RxStreamCount() const noexcept { return 1; }
+
     // Default implementations mapping DICE structures to the unified IAudioDeviceProfile:
     [[nodiscard]] Encoding::AudioWireFormat TxWireFormat() const noexcept override {
         return Quirks().tx.hostToDevicePcmEncoding;
@@ -45,10 +52,12 @@ public:
         return Quirks().rx.deviceToHostPcmEncoding;
     }
 
+    // HAL aggregate = per-stream PCM × stream count. Single-stream profiles
+    // (TxStreamCount/RxStreamCount == 1) are unchanged.
     [[nodiscard]] uint32_t TxChannelCount() const noexcept override {
         DiceStreamConfig config{};
         if (BuildDefaultTxStreamConfig(config)) {
-            return config.pcmChannels;
+            return config.pcmChannels * TxStreamCount();
         }
         return 0;
     }
@@ -56,7 +65,7 @@ public:
     [[nodiscard]] uint32_t RxChannelCount() const noexcept override {
         DiceStreamConfig config{};
         if (BuildDefaultRxStreamConfig(config)) {
-            return config.pcmChannels;
+            return config.pcmChannels * RxStreamCount();
         }
         return 0;
     }

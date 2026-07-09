@@ -7,40 +7,32 @@
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
 #endif
-#include "Memory/IsochDMAMemoryManager.hpp"
 #include "../Shared/Isoch/IsochAudioTransport.hpp"
+#include "Memory/IsochDMAMemoryManager.hpp"
 
 namespace ASFW::Driver {
 
 using namespace ASFW::Isoch;
 
-kern_return_t IsochService::StartReceive(uint8_t channel,
-                                         HardwareInterface& hardware,
-                                         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                                         ASFW::Encoding::AudioWireFormat wireFormat,
-                                         uint32_t am824Slots,
-                                         ASFW::Isoch::IsochReceiveCallback packetCallback) {
-    const kern_return_t prepareKr =
-        PrepareReceive(channel,
-                       hardware,
-                       bindingSource,
-                       wireFormat,
-                       am824Slots,
-                       std::move(packetCallback));
+kern_return_t
+IsochService::StartReceive(uint8_t channel, HardwareInterface& hardware,
+                           ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                           ASFW::Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
+                           ASFW::Isoch::IsochReceiveCallback packetCallback) {
+    const kern_return_t prepareKr = PrepareReceive(channel, hardware, bindingSource, wireFormat,
+                                                   am824Slots, std::move(packetCallback));
     if (prepareKr != kIOReturnSuccess) {
         return prepareKr;
     }
     return StartPreparedReceive();
 }
 
-kern_return_t IsochService::PrepareReceive(
-    uint8_t channel,
-    HardwareInterface& hardware,
-    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-    ASFW::Encoding::AudioWireFormat wireFormat,
-    uint32_t am824Slots,
-    ASFW::Isoch::IsochReceiveCallback packetCallback,
-    uint32_t streamChannels) {
+kern_return_t
+IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
+                             ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                             ASFW::Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
+                             ASFW::Isoch::IsochReceiveCallback packetCallback,
+                             uint32_t streamChannels) {
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -65,11 +57,8 @@ kern_return_t IsochService::PrepareReceive(
             return kIOReturnNoMemory;
         }
         RefreshReceiveTimingLossCallback();
-        isochReceiveContext_->SetZtsAnchorReadyCallback(
-            ztsAnchorReadyCallback_);
-        isochReceiveContext_->SetReplayReadyCallback([this]() {
-            StartDeferredTransmitIfReady();
-        });
+        isochReceiveContext_->SetZtsAnchorReadyCallback(ztsAnchorReadyCallback_);
+        isochReceiveContext_->SetReplayReadyCallback([this]() { StartDeferredTransmitIfReady(); });
     }
 
     isochReceiveContext_->SetDirectAudioBindingSource(bindingSource);
@@ -77,9 +66,9 @@ kern_return_t IsochService::PrepareReceive(
     // Master stream: contextIndex 0, channelOffset 0, isSecondary false.
     // streamChannels 0 == full binding width (single-stream back-compat);
     // multi-stream devices pass their first slice's PCM count.
-    const kern_return_t kr = isochReceiveContext_->Configure(
-        channel, 0, wireFormat, am824Slots,
-        /*channelOffset=*/0, streamChannels, /*isSecondary=*/false);
+    const kern_return_t kr =
+        isochReceiveContext_->Configure(channel, 0, wireFormat, am824Slots,
+                                        /*channelOffset=*/0, streamChannels, /*isSecondary=*/false);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: IR Configure failed: 0x%08x", kr);
         return kr;
@@ -94,14 +83,9 @@ kern_return_t IsochService::PrepareReceive(
 }
 
 kern_return_t IsochService::PrepareReceiveStream(
-    uint32_t streamIndex,
-    uint8_t channel,
-    HardwareInterface& hardware,
-    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-    uint32_t channelOffset,
-    uint32_t streamChannels,
-    ASFW::Encoding::AudioWireFormat wireFormat,
-    uint32_t am824Slots) {
+    uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
+    uint32_t streamChannels, ASFW::Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) {
     // Stream 0 is the master; callers use PrepareReceive() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -117,16 +101,14 @@ kern_return_t IsochService::PrepareReceiveStream(
 
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem || !isochMem->Initialize(hardware)) {
-            ASFW_LOG(Isoch,
-                     "IsochService: secondary RX DMA memory init failed (stream %u)",
+            ASFW_LOG(Isoch, "IsochService: secondary RX DMA memory init failed (stream %u)",
                      streamIndex);
             return kIOReturnNoMemory;
         }
 
         slot = IsochReceiveContext::Create(&hardware, isochMem);
         if (!slot) {
-            ASFW_LOG(Isoch,
-                     "IsochService: Failed to create secondary IR context (stream %u)",
+            ASFW_LOG(Isoch, "IsochService: Failed to create secondary IR context (stream %u)",
                      streamIndex);
             return kIOReturnNoMemory;
         }
@@ -140,12 +122,11 @@ kern_return_t IsochService::PrepareReceiveStream(
 
     // contextIndex == streamIndex routes this stream to its own OHCI IR context.
     // isSecondary=true makes it write PCM only (no clock/replay/ZTS).
-    const kern_return_t kr = slot->Configure(
-        channel, static_cast<uint8_t>(streamIndex), wireFormat, am824Slots,
-        channelOffset, streamChannels, /*isSecondary=*/true);
+    const kern_return_t kr =
+        slot->Configure(channel, static_cast<uint8_t>(streamIndex), wireFormat, am824Slots,
+                        channelOffset, streamChannels, /*isSecondary=*/true);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Isoch,
-                 "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
+        ASFW_LOG(Isoch, "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
                  streamIndex, kr);
         return kr;
     }
@@ -170,8 +151,7 @@ kern_return_t IsochService::StartPreparedReceive() {
         if (ctx) {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
-                ASFW_LOG(Isoch,
-                         "IsochService: secondary IR start failed: 0x%08x", skr);
+                ASFW_LOG(Isoch, "IsochService: secondary IR start failed: 0x%08x", skr);
                 return skr;
             }
         }
@@ -216,7 +196,8 @@ kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& h
 
     if (isochReceiveContext_ &&
         isochReceiveContext_->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
-        ASFW_LOG(Isoch, "IsochService: StartDVCapture blocked: IR context busy (audio receive running)");
+        ASFW_LOG(Isoch,
+                 "IsochService: StartDVCapture blocked: IR context busy (audio receive running)");
         return kIOReturnBusy;
     }
 
@@ -225,8 +206,8 @@ kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& h
     const uint64_t ringBytes = ASFW::Isoch::Rx::DVCaptureSink::RequiredBytes(kDVRingRecords);
 
     IOBufferMemoryDescriptor* memRaw = nullptr;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionOutIn,
-                                                        ringBytes, 64, &memRaw);
+    kern_return_t kr =
+        IOBufferMemoryDescriptor::Create(kIOMemoryDirectionOutIn, ringBytes, 64, &memRaw);
     if (kr != kIOReturnSuccess || !memRaw) {
         ASFW_LOG(Isoch, "IsochService: StartDVCapture ring allocation failed: 0x%x", kr);
         return kr ? kr : kIOReturnNoMemory;
@@ -254,12 +235,12 @@ kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& h
     }
 
     auto* sink = &dvSink_;
-    kr = StartReceive(channel, hardware, /*bindingSource=*/nullptr,
-                      ASFW::Encoding::AudioWireFormat::kAM824, /*am824Slots=*/0,
-                      [sink](std::span<const uint8_t> data, uint32_t status,
-                             uint64_t /*timestamp*/) {
-                          sink->OnPacket(data.data(), data.size(), status);
-                      });
+    kr = StartReceive(
+        channel, hardware, /*bindingSource=*/nullptr, ASFW::Encoding::AudioWireFormat::kAM824,
+        /*am824Slots=*/0,
+        [sink](std::span<const uint8_t> data, uint32_t status, uint64_t /*timestamp*/) {
+            sink->OnPacket(data.data(), data.size(), status);
+        });
     if (kr != kIOReturnSuccess) {
         dvSink_.Detach();
         dvRing_.Reset();
@@ -267,8 +248,8 @@ kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& h
     }
 
     dvCaptureActive_ = true;
-    ASFW_LOG(Isoch, "IsochService: DV capture started on channel %u (ring=%llu bytes)",
-             channel, ringBytes);
+    ASFW_LOG(Isoch, "IsochService: DV capture started on channel %u (ring=%llu bytes)", channel,
+             ringBytes);
     return kIOReturnSuccess;
 }
 
@@ -279,7 +260,8 @@ kern_return_t IsochService::StopDVCapture() {
     return StopReceive();
 }
 
-kern_return_t IsochService::CopyDVCaptureMemory(uint64_t* options, IOMemoryDescriptor** memory) const {
+kern_return_t IsochService::CopyDVCaptureMemory(uint64_t* options,
+                                                IOMemoryDescriptor** memory) const {
     if (!memory) {
         return kIOReturnBadArgument;
     }
@@ -294,8 +276,7 @@ kern_return_t IsochService::CopyDVCaptureMemory(uint64_t* options, IOMemoryDescr
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::StartTransmit(uint8_t channel,
-                                          HardwareInterface& hardware,
+kern_return_t IsochService::StartTransmit(uint8_t channel, HardwareInterface& hardware,
                                           uint8_t sid) {
     const kern_return_t prepareKr = PrepareTransmit(channel, hardware, sid);
     if (prepareKr != kIOReturnSuccess) {
@@ -304,8 +285,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     return StartPreparedTransmit();
 }
 
-kern_return_t IsochService::PrepareTransmit(uint8_t channel,
-                                            HardwareInterface& hardware,
+kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& hardware,
                                             uint8_t sid) {
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
@@ -331,8 +311,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel,
             ASFW_LOG(Isoch, "IsochService: Failed to create IT context");
             return kIOReturnNoMemory;
         }
-        isochTransmitContext_->SetTxPreparationCallback(
-            txPreparationCallback_);
+        isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
     }
 
     const kern_return_t kr = isochTransmitContext_->Configure(channel, sid);
@@ -341,17 +320,13 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel,
         return kr;
     }
 
-    if (txPayloadSlab_ && txMetadataRing_ && txControlBlock_) {
+    if (txPayloadSlab_[0] && txMetadataRing_[0] && txControlBlock_[0]) {
         const kern_return_t memKr = isochTransmitContext_->SetSharedMemoryDescriptors(
-            txPayloadSlab_.get(),
-            txMetadataRing_.get(),
-            txControlBlock_.get(),
+            txPayloadSlab_[0].get(), txMetadataRing_[0].get(), txControlBlock_[0].get(),
             interruptInterval_,
             ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
         if (memKr != kIOReturnSuccess) {
-            ASFW_LOG(Isoch,
-                     "IsochService: IT shared-memory setup failed: 0x%08x",
-                     memKr);
+            ASFW_LOG(Isoch, "IsochService: IT shared-memory setup failed: 0x%08x", memKr);
             return memKr;
         }
     }
@@ -360,10 +335,8 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel,
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex,
-                                                  uint8_t channel,
-                                                  HardwareInterface& hardware,
-                                                  uint8_t sid) {
+kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+                                                  HardwareInterface& hardware, uint8_t sid) {
     // Stream 0 is the master; callers use PrepareTransmit() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -380,34 +353,57 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex,
 
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem || !isochMem->Initialize(hardware)) {
-            ASFW_LOG(Isoch,
-                     "IsochService: secondary TX DMA memory init failed (stream %u)",
+            ASFW_LOG(Isoch, "IsochService: secondary TX DMA memory init failed (stream %u)",
                      streamIndex);
             return kIOReturnNoMemory;
         }
 
         slot = IsochTransmitContext::Create(&hardware, isochMem);
         if (!slot) {
-            ASFW_LOG(Isoch,
-                     "IsochService: Failed to create secondary IT context (stream %u)",
+            ASFW_LOG(Isoch, "IsochService: Failed to create secondary IT context (stream %u)",
                      streamIndex);
             return kIOReturnNoMemory;
         }
         // No TX-preparation callback on secondaries; the master drives refill.
     }
 
+    // Each secondary stream runs on its own OHCI IT context (== streamIndex) so
+    // it does not collide with the master (context 0) on the hardware registers.
+    slot->SetContextIndex(static_cast<uint8_t>(streamIndex));
+
     const kern_return_t kr = slot->Configure(channel, sid);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Isoch,
-                 "IsochService: secondary IT Configure failed (stream %u): 0x%08x",
+        ASFW_LOG(Isoch, "IsochService: secondary IT Configure failed (stream %u): 0x%08x",
                  streamIndex, kr);
         return kr;
     }
-    // The secondary stream's shared payload slab is wired by the audio-engine
-    // pass; without it the context is configured but not yet startable.
-    ASFW_LOG(Isoch,
-             "IsochService: Prepared secondary IT stream %u on channel %u",
-             streamIndex, channel);
+    // The audio-side slot provider encodes a placeholder channel; have the ring
+    // stamp this context's real transmit channel (from Configure above) instead.
+    slot->EnableChannelStamping();
+
+    // Wire this stream's own shared payload slab (allocated via
+    // AllocateTxIsochResources(streamIndex)) so the context can DMA it. The
+    // audio engine maps the same descriptors and writes the de-interleaved slice.
+    if (txPayloadSlab_[streamIndex] && txMetadataRing_[streamIndex] &&
+        txControlBlock_[streamIndex]) {
+        const kern_return_t memKr = slot->SetSharedMemoryDescriptors(
+            txPayloadSlab_[streamIndex].get(), txMetadataRing_[streamIndex].get(),
+            txControlBlock_[streamIndex].get(), interruptInterval_,
+            ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
+        if (memKr != kIOReturnSuccess) {
+            ASFW_LOG(Isoch,
+                     "IsochService: secondary IT shared-memory setup failed (stream %u): 0x%08x",
+                     streamIndex, memKr);
+            return memKr;
+        }
+    } else {
+        ASFW_LOG(Isoch, "IsochService: secondary IT stream %u has no shared slab — not startable",
+                 streamIndex);
+        return kIOReturnNotReady;
+    }
+
+    ASFW_LOG(Isoch, "IsochService: Prepared secondary IT stream %u on channel %u", streamIndex,
+             channel);
     return kIOReturnSuccess;
 }
 
@@ -438,8 +434,7 @@ kern_return_t IsochService::StartPreparedTransmit() {
         if (ctx) {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
-                ASFW_LOG(Isoch,
-                         "IsochService: secondary IT start failed: 0x%08x", skr);
+                ASFW_LOG(Isoch, "IsochService: secondary IT start failed: 0x%08x", skr);
                 return skr;
             }
         }
@@ -462,30 +457,29 @@ kern_return_t IsochService::StopTransmit() {
 
 kern_return_t IsochService::BeginSplitDuplex(uint64_t guid) {
     const kern_return_t kr = ClaimDuplexGuid(guid);
-    if (kr != kIOReturnSuccess) return kr;
-    
+    if (kr != kIOReturnSuccess)
+        return kr;
+
     reserved_.Reset();
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::ReservePlaybackResources(uint64_t guid,
-                                                     IRM::IRMClient& irmClient,
-                                                     uint8_t channel,
-                                                     uint32_t bandwidthUnits) {
-    if (activeGuid_ != guid) return kIOReturnNotPrivileged;
-    
+kern_return_t IsochService::ReservePlaybackResources(uint64_t guid, IRM::IRMClient& irmClient,
+                                                     uint8_t channel, uint32_t bandwidthUnits) {
+    if (activeGuid_ != guid)
+        return kIOReturnNotPrivileged;
+
     reserved_.playbackActive = true;
     reserved_.playbackChannel = channel;
     reserved_.playbackBandwidthUnits = bandwidthUnits;
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::ReserveCaptureResources(uint64_t guid,
-                                                    IRM::IRMClient& irmClient,
-                                                    uint8_t channel,
-                                                    uint32_t bandwidthUnits) {
-    if (activeGuid_ != guid) return kIOReturnNotPrivileged;
-    
+kern_return_t IsochService::ReserveCaptureResources(uint64_t guid, IRM::IRMClient& irmClient,
+                                                    uint8_t channel, uint32_t bandwidthUnits) {
+    if (activeGuid_ != guid)
+        return kIOReturnNotPrivileged;
+
     reserved_.captureActive = true;
     reserved_.captureChannel = channel;
     reserved_.captureBandwidthUnits = bandwidthUnits;
@@ -503,28 +497,23 @@ void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
 }
 
-void IsochService::SetTxPreparationCallback(
-    TxPreparationCallback callback) noexcept {
+void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noexcept {
     txPreparationCallback_ = std::move(callback);
     if (isochTransmitContext_) {
-        isochTransmitContext_->SetTxPreparationCallback(
-            txPreparationCallback_);
+        isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
     }
 }
 
-void IsochService::SetZtsAnchorReadyCallback(
-    ZtsAnchorReadyCallback callback) noexcept {
+void IsochService::SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept {
     ztsAnchorReadyCallback_ = std::move(callback);
     if (isochReceiveContext_) {
-        isochReceiveContext_->SetZtsAnchorReadyCallback(
-            ztsAnchorReadyCallback_);
+        isochReceiveContext_->SetZtsAnchorReadyCallback(ztsAnchorReadyCallback_);
     }
 }
 
 kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
     if (activeGuid_ != 0 && activeGuid_ != guid) {
-        ASFW_LOG(Isoch, "IsochService: GUID conflict 0x%llx (active: 0x%llx)",
-                 guid, activeGuid_);
+        ASFW_LOG(Isoch, "IsochService: GUID conflict 0x%llx (active: 0x%llx)", guid, activeGuid_);
         return kIOReturnBusy;
     }
     activeGuid_ = guid;
@@ -533,9 +522,7 @@ kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
 
 void IsochService::RefreshReceiveTimingLossCallback() noexcept {
     if (isochReceiveContext_) {
-        isochReceiveContext_->SetTimingLossCallback([this]() {
-            OnReceiveTimingLossDetected();
-        });
+        isochReceiveContext_->SetTimingLossCallback([this]() { OnReceiveTimingLossDetected(); });
     }
 }
 
@@ -546,114 +533,110 @@ void IsochService::OnReceiveTimingLossDetected() noexcept {
 }
 
 void IsochService::StartDeferredTransmitIfReady() noexcept {
-    if (!txStartPending_ || !isochTransmitContext_ ||
-        !isochReceiveContext_ ||
+    if (!txStartPending_ || !isochTransmitContext_ || !isochReceiveContext_ ||
         !isochReceiveContext_->IsReplayEstablished()) {
         return;
     }
 
     txStartPending_ = false;
-    ASFW_LOG(
-        Isoch,
-        "IsochService: IR replay established; starting deferred IT");
+    ASFW_LOG(Isoch, "IsochService: IR replay established; starting deferred IT");
     const kern_return_t status = isochTransmitContext_->Start();
     if (status != kIOReturnSuccess) {
-        ASFW_LOG(
-            Isoch,
-            "IsochService: deferred IT start failed: 0x%08x",
-            status);
+        ASFW_LOG(Isoch, "IsochService: deferred IT start failed: 0x%08x", status);
         OnReceiveTimingLossDetected();
     }
 }
 
-kern_return_t IsochService::AllocateTxIsochResources(
-    uint32_t numSlots,
-    uint32_t maxPacketBytes,
-    uint32_t interruptInterval,
-    IOMemoryDescriptor** outPayloadSlab,
-    IOMemoryDescriptor** outMetadataRing,
-    IOMemoryDescriptor** outControlBlock)
-{
+kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint32_t numSlots,
+                                                     uint32_t maxPacketBytes,
+                                                     uint32_t interruptInterval,
+                                                     IOMemoryDescriptor** outPayloadSlab,
+                                                     IOMemoryDescriptor** outMetadataRing,
+                                                     IOMemoryDescriptor** outControlBlock) {
     if (!outPayloadSlab || !outMetadataRing || !outControlBlock) {
+        return kIOReturnBadArgument;
+    }
+    if (streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
     }
     *outPayloadSlab = nullptr;
     *outMetadataRing = nullptr;
     *outControlBlock = nullptr;
 
-    FreeTxIsochResources();
+    // Free only this stream's prior resources; other streams keep theirs.
+    txPayloadSlab_[streamIndex] = nullptr;
+    txMetadataRing_[streamIndex] = nullptr;
+    txControlBlock_[streamIndex] = nullptr;
 
     // 1. Allocate payload slab (page-aligned)
     const size_t payloadSlabBytes = static_cast<size_t>(numSlots) * maxPacketBytes;
     IOBufferMemoryDescriptor* payloadDescriptor = nullptr;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(
-        kIOMemoryDirectionInOut,
-        payloadSlabBytes,
-        4096,
-        &payloadDescriptor);
+    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, payloadSlabBytes,
+                                                        4096, &payloadDescriptor);
     if (kr != kIOReturnSuccess || !payloadDescriptor) {
         ASFW_LOG(Isoch, "IsochService: Failed to allocate payload slab: 0x%08x", kr);
-        FreeTxIsochResources();
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txPayloadSlab_ = OSSharedPtr<IOBufferMemoryDescriptor>(payloadDescriptor, OSNoRetain);
+    txPayloadSlab_[streamIndex] =
+        OSSharedPtr<IOBufferMemoryDescriptor>(payloadDescriptor, OSNoRetain);
 
     // 2. Allocate metadata ring (cacheline aligned)
-    const size_t metadataRingBytes = static_cast<size_t>(numSlots) * sizeof(ASFW::IsochTransport::TxPacketMeta);
+    const size_t metadataRingBytes =
+        static_cast<size_t>(numSlots) * sizeof(ASFW::IsochTransport::TxPacketMeta);
     IOBufferMemoryDescriptor* metadataDescriptor = nullptr;
-    kr = IOBufferMemoryDescriptor::Create(
-        kIOMemoryDirectionInOut,
-        metadataRingBytes,
-        64,
-        &metadataDescriptor);
+    kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, metadataRingBytes, 64,
+                                          &metadataDescriptor);
     if (kr != kIOReturnSuccess || !metadataDescriptor) {
         ASFW_LOG(Isoch, "IsochService: Failed to allocate metadata ring: 0x%08x", kr);
-        FreeTxIsochResources();
+        txPayloadSlab_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txMetadataRing_ = OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
+    txMetadataRing_[streamIndex] =
+        OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
 
     // 3. Allocate control block (cacheline aligned)
     const size_t controlBlockBytes = sizeof(ASFW::IsochTransport::TxStreamControl);
     IOBufferMemoryDescriptor* controlDescriptor = nullptr;
-    kr = IOBufferMemoryDescriptor::Create(
-        kIOMemoryDirectionInOut,
-        controlBlockBytes,
-        64,
-        &controlDescriptor);
+    kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, controlBlockBytes, 64,
+                                          &controlDescriptor);
     if (kr != kIOReturnSuccess || !controlDescriptor) {
         ASFW_LOG(Isoch, "IsochService: Failed to allocate control block: 0x%08x", kr);
-        FreeTxIsochResources();
+        txPayloadSlab_[streamIndex] = nullptr;
+        txMetadataRing_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txControlBlock_ = OSSharedPtr<IOBufferMemoryDescriptor>(controlDescriptor, OSNoRetain);
+    txControlBlock_[streamIndex] =
+        OSSharedPtr<IOBufferMemoryDescriptor>(controlDescriptor, OSNoRetain);
 
     // Return the descriptors to the caller with retained references
-    *outPayloadSlab = txPayloadSlab_.get();
+    *outPayloadSlab = txPayloadSlab_[streamIndex].get();
     (*outPayloadSlab)->retain();
 
-    *outMetadataRing = txMetadataRing_.get();
+    *outMetadataRing = txMetadataRing_[streamIndex].get();
     (*outMetadataRing)->retain();
 
-    *outControlBlock = txControlBlock_.get();
+    *outControlBlock = txControlBlock_[streamIndex].get();
     (*outControlBlock)->retain();
 
     interruptInterval_ = interruptInterval;
 
-    ASFW_LOG(Isoch, "IsochService: Allocated Tx isoch resources. numSlots=%u slotSize=%u", numSlots, maxPacketBytes);
+    ASFW_LOG(Isoch, "IsochService: Allocated Tx isoch resources stream %u. numSlots=%u slotSize=%u",
+             streamIndex, numSlots, maxPacketBytes);
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::FreeTxIsochResources()
-{
-    txPayloadSlab_ = nullptr;
-    txMetadataRing_ = nullptr;
-    txControlBlock_ = nullptr;
+kern_return_t IsochService::FreeTxIsochResources() {
+    for (uint32_t i = 0; i < kMaxStreamsPerDirection; ++i) {
+        txPayloadSlab_[i] = nullptr;
+        txMetadataRing_[i] = nullptr;
+        txControlBlock_[i] = nullptr;
+    }
     ASFW_LOG(Isoch, "IsochService: Freed Tx isoch resources");
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware) {
+kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer,
+                                             HardwareInterface& hardware) {
     if (!outHostTimeMid || !outCycleTimer) {
         return kIOReturnBadArgument;
     }

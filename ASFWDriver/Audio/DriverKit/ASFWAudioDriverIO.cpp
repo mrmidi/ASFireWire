@@ -210,6 +210,19 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         hostBuffer,
                         completionCursor);
 
+                    // Fan out the same host buffer to the secondary stream; its
+                    // payload writer reads channels [16, 32) via sourceChannelOffset.
+                    if (driverIvars->runtime.txSecondaryActive) {
+                        const uint64_t secondaryCompletion =
+                            driverIvars->runtime.txSlotProviderSecondary.controlBlock
+                                ? driverIvars->runtime.txSlotProviderSecondary.controlBlock
+                                      ->completionCursor.load(std::memory_order_acquire)
+                                : 0;
+                        driverIvars->runtime.txStreamEngineSecondary.WriteHostOutputFloat32(
+                            hostBuffer,
+                            secondaryCompletion);
+                    }
+
                     const auto& cw = driverIvars->runtime.txStreamEngine.PayloadWriterCounters();
                     ASFW::Audio::Runtime::PayloadWriterTelemetryRecord rec{};
                     rec.sampleTime = sampleTime;

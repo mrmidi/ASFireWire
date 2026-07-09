@@ -543,7 +543,7 @@ kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
 
     // Delegate allocation to the core IsochService
     return ctx->isoch.AllocateTxIsochResources(
-        numSlots, maxPacketBytes, interruptInterval,
+        streamIndex, numSlots, maxPacketBytes, interruptInterval,
         outPayloadSlab, outMetadataRing, outControlBlock);
 }
 
