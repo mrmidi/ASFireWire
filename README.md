@@ -388,8 +388,12 @@ for experimental testing only — not general use.
    ```
    You should see `net.mrmidi.ASFW.ASFWDriver` marked `[activated enabled]`.
 
-**Uninstall / revert:** remove the extension via the app (or
-`systemextensionsctl uninstall`), then re-enable SIP from Recovery with `csrutil enable`.
+**Uninstall / revert:** remove the extension via the app, or manually (ad-hoc builds
+have no team ID, hence the `-`):
+```bash
+systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver
+```
+Then re-enable SIP from Recovery with `csrutil enable`.
 
 **Troubleshooting:** if installation fails with `Missing entitlement
 com.apple.developer.system-extension.install`, the build was not signed with its
