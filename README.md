@@ -44,9 +44,10 @@ What is real today:
 - Async FireWire transactions are in place and used by discovery and protocol code.
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
-- Personally tested audio hardware now includes the Apogee Duet FireWire path and Focusrite Saffire Pro 24 DSP.
-- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, and Saffire Pro 24 DSP.
+- Personally tested audio hardware now includes the Apogee Duet FireWire path, Focusrite Saffire Pro 24 DSP, and PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming).
+- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, and PreSonus StudioLive 16.0.2.
 - Focusrite Saffire Pro 26, Saffire Pro 40, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet because the current generic DICE backend is still effectively single-stream.
+- PreSonus StudioLive 16.4.2, 24.4.2, and 32.4.2 are recognized by name but not audio-enabled yet: their FireWire channel counts differ from the 16.0.2 and must be captured from real hardware first (a wrong channel count means the device never locks to the stream). If you own one, see the call for testing below.
 - The project is still not stable enough to recommend as a drop-in replacement for Apple's old FireWire stack.
 
 ## Call for testing
@@ -58,6 +59,9 @@ Please test these currently enabled DICE devices:
 - Focusrite Saffire Pro 14
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
+- PreSonus StudioLive 16.0.2 (personally tested on one unit; broader validation welcome)
+
+StudioLive 16.4.2 / 24.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
 
 If you try ASFireWire on one of them, please open a GitHub issue or reach out with:
 
@@ -136,11 +140,13 @@ Audio-device support in tree today:
 - Focusrite Saffire Pro 14
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
+- PreSonus StudioLive 16.0.2
 
 Personally tested with working audio:
 
 - Apogee Duet FireWire
 - Focusrite Saffire Pro 24 DSP
+- PreSonus StudioLive 16.0.2
 
 Recognized but not enabled yet:
 
@@ -148,6 +154,7 @@ Recognized but not enabled yet:
 - Focusrite Saffire Pro 40
 - Focusrite Saffire Pro 40 TCD3070
 - Focusrite Liquid Saffire 56
+- PreSonus StudioLive 16.4.2 / 24.4.2 / 32.4.2 (stream layout not yet captured from hardware)
 
 In theory the driver can be extended to other OHCI controllers and many more FireWire devices, but hardware access is still the limiting factor. Host-controller matching and audio-device enablement are intentionally conservative until more real machines are tested.
 
