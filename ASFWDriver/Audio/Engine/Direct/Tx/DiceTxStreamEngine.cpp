@@ -118,6 +118,10 @@ const AMDTP::AmdtpPacketTimeline& DiceTxStreamEngine::Timeline() const noexcept 
     return timeline_;
 }
 
+const AMDTP::AmdtpStreamConfig& DiceTxStreamEngine::StreamConfig() const noexcept {
+    return packetizer_.StreamConfig();
+}
+
 const DiceTxEngineCounters& DiceTxStreamEngine::Counters() const noexcept {
     return counters_;
 }

@@ -58,6 +58,8 @@ public:
     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
 
+    [[nodiscard]] const AMDTP::AmdtpStreamConfig& StreamConfig() const noexcept;
+
     [[nodiscard]] const DiceTxEngineCounters& Counters() const noexcept;
 
     [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters&

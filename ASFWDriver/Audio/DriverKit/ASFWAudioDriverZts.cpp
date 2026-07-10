@@ -343,16 +343,19 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         outputPresentationTicks,
                         sourcePresentationTicks);
                 if (presentationDeltaTicks >= 0) {
-                    constexpr uint32_t kFramesPerPacket =
-                        ASFW::IsochTransport::
-                            AudioTimingGeometry::
-                                kFramesPerDataPacket;
+                    // ticks -> frames at the live rate. 44.1k has no integer
+                    // ticks/sample (24576000/44100 ~= 557.28), so divide the
+                    // tick*rate product instead of dividing by a per-sample
+                    // constant (the old /512 overshot ~8.8% at 44.1k).
+                    const auto& txConfig =
+                        ivars.runtime.txStreamEngine.StreamConfig();
+                    const uint32_t kFramesPerPacket =
+                        txConfig.framesPerDataPacket;
                     const uint64_t projectedFrame =
                         replay.firstAudioFrame +
-                        static_cast<uint64_t>(
-                            presentationDeltaTicks /
-                            ASFW::Timing::
-                                kTicksPerSample48k);
+                        (static_cast<uint64_t>(presentationDeltaTicks) *
+                         txConfig.sampleRate) /
+                            ASFW::Timing::kTicksPerSecond;
                     const uint64_t alignedFrame =
                         (projectedFrame / kFramesPerPacket) *
                         kFramesPerPacket;
