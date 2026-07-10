@@ -393,6 +393,18 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 kern_return_t IMPL(ASFWDriver, Stop) {
     QuiesceRuntime();
     if (ivars) {
+        if (ivars->wakeVerifyTimer) {
+            // Disable only, then release — Cancel() dispatches async and can
+            // run after the source is freed (see WatchdogCoordinator::Stop).
+            // Releasing the action breaks the OSAction→service retain cycle.
+            ivars->wakeVerifyTimer->SetEnableWithCompletion(false, nullptr);
+            ivars->wakeVerifyTimer->release();
+            ivars->wakeVerifyTimer = nullptr;
+        }
+        if (ivars->wakeVerifyAction) {
+            ivars->wakeVerifyAction->release();
+            ivars->wakeVerifyAction = nullptr;
+        }
         ivars->powerProvider = nullptr;
     }
     return Stop(provider, SUPERDISPATCH);
@@ -496,11 +508,10 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
                 if (kr != kIOReturnSuccess) {
                     ASFW_LOG(Controller,
                              "SetPowerState: ❌ wake runtime rebuild failed: 0x%08x", kr);
-                } else if (ivars->context && ivars->context->deps.scheduler) {
+                } else {
                     // The On callback can arrive during dark wake; verify the
                     // rebuild actually took once the platform has settled.
-                    ivars->context->deps.scheduler->DispatchAsyncAfter(
-                        kWakeVerifyDelayNs, [this] { VerifyWakeRuntime(1); });
+                    ScheduleWakeVerify(1);
                 }
             } else {
                 ASFW_LOG(Controller, "SetPowerState: wake with no provider; skipping rebuild");
@@ -560,11 +571,58 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Controller, "Wake verify: ❌ rebuild failed: 0x%08x", kr);
     }
-    if (ivars->context && ivars->context->deps.scheduler) {
-        const uint64_t next = attempt + 1;
-        ivars->context->deps.scheduler->DispatchAsyncAfter(
-            kWakeVerifyDelayNs, [this, next] { VerifyWakeRuntime(next); });
+    ScheduleWakeVerify(attempt + 1);
+}
+
+void ASFWDriver::ScheduleWakeVerify(uint64_t attempt) {
+    if (!ivars || !ivars->context) {
+        return;
     }
+    if (!ivars->wakeVerifyTimer) {
+        // ctx.workQueue is the service's default queue (DriverWiring::
+        // PrepareQueue), so the timer stays valid across runtime rebuilds and
+        // the verify serializes with Start/Stop/SetPowerState.
+        auto& queue = ivars->context->workQueue;
+        if (!queue) {
+            return;
+        }
+        IOTimerDispatchSource* timer = nullptr;
+        kern_return_t kr = IOTimerDispatchSource::Create(queue.get(), &timer);
+        if (kr != kIOReturnSuccess || !timer) {
+            ASFW_LOG(Controller, "Wake verify: ❌ timer create failed: 0x%08x", kr);
+            return;
+        }
+        OSAction* action = nullptr;
+        kr = CreateActionWakeVerifyTimerFired(0, &action);
+        if (kr != kIOReturnSuccess || !action) {
+            ASFW_LOG(Controller, "Wake verify: ❌ timer action create failed: 0x%08x", kr);
+            timer->release();
+            return;
+        }
+        kr = timer->SetHandler(action);
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Controller, "Wake verify: ❌ timer SetHandler failed: 0x%08x", kr);
+            action->release();
+            timer->release();
+            return;
+        }
+        (void)timer->SetEnableWithCompletion(true, nullptr);
+        ivars->wakeVerifyTimer = timer;
+        ivars->wakeVerifyAction = action;
+    }
+
+    ivars->wakeVerifyAttempt = attempt;
+    (void)ASFW::Timing::initializeHostTimebase();
+    const uint64_t deadline =
+        mach_absolute_time() + ASFW::Timing::nanosToHostTicks(kWakeVerifyDelayNs);
+    (void)ivars->wakeVerifyTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadline, 0);
+}
+
+void ASFWDriver::WakeVerifyTimerFired_Impl(ASFWDriver_WakeVerifyTimerFired_Args) {
+    if (!ivars) {
+        return;
+    }
+    VerifyWakeRuntime(ivars->wakeVerifyAttempt);
 }
 
 kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {

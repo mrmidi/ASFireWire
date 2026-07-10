@@ -48,6 +48,13 @@ public:
     // the runtime is rebuilt again (bounded retries).
     void VerifyWakeRuntime(uint64_t attempt) LOCALONLY;
 
+    // Arms the wake-verify timer for `attempt`. A hardware timer keeps the
+    // settle delay off the dispatch queue — Scheduler::DispatchAsyncAfter
+    // sleeps *on* the bound queue, which would stall interrupt and discovery
+    // work for the whole verification window. The timer's OSAction retains
+    // this service, so a pending callback cannot outlive the driver.
+    void ScheduleWakeVerify(uint64_t attempt) LOCALONLY;
+
     kern_return_t CopyControllerStatus(OSDictionary** status) LOCALONLY;
     kern_return_t CopyControllerSnapshot(OSDictionary** status,
                                          uint64_t* sequence,
@@ -75,6 +82,10 @@ public:
 
     virtual void SBP2SessionTimerFired(OSAction* action,
                                        uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    virtual void WakeVerifyTimerFired(OSAction* action,
+                                      uint64_t time)
         TYPE(IOTimerDispatchSource::TimerOccurred);
 
     virtual void ProviderNotificationReady(OSAction* action)
@@ -118,4 +129,11 @@ struct ASFWDriver_IVars {
     IOService* powerProvider;   // borrowed from Start; cleared in Stop
     bool runtimeSuspended;      // true between sleep quiesce and wake rebuild
     bool serviceRegistered;     // RegisterService() must run once per instance
+
+    // Wake-verify timer. Lives on the default queue (stable for the service
+    // lifetime, unlike per-rebuild runtime state); released in Stop, which also
+    // breaks the OSAction→service retain cycle.
+    IOTimerDispatchSource* wakeVerifyTimer; // retained
+    OSAction* wakeVerifyAction;             // retained
+    uint64_t wakeVerifyAttempt;             // attempt carried to the armed timer
 };
