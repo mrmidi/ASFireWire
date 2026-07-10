@@ -46,6 +46,22 @@ ok()  { echo "[OK] $*"; }
 DEXT_PATH="$(find "${APP_PATH}/Contents/Library/SystemExtensions" -maxdepth 1 -name '*.dext' -print -quit 2>/dev/null || true)"
 [[ -n "${DEXT_PATH}" ]] || { err "No .dext found under ${APP_PATH}/Contents/Library/SystemExtensions"; exit 1; }
 
+# The entitlement set must match what the build put in Info.plist: a dext whose
+# signature carries the restricted scsicontroller entitlement is killed by AMFI
+# on enforcing machines, and the orphaned kernel-side SCSI stub then panics the
+# kernel at boot. Detect the SCSI personality (present only when the app was
+# built with ASFW_ENABLE_SCSI=YES / ./build.sh --scsi) and pick the matching file
+# — never sign the SCSI entitlement onto a build without the personality, or
+# vice versa.
+if /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:ASFWSCSIControllerService" \
+     "${DEXT_PATH}/Info.plist" >/dev/null 2>&1; then
+  DEXT_ENTITLEMENTS="ASFWDriver/ASFWDriver+SCSI.entitlements"
+  log "SCSI HBA personality detected — signing with ${DEXT_ENTITLEMENTS}"
+  [[ -f "${DEXT_ENTITLEMENTS}" ]] || { err "Missing ${DEXT_ENTITLEMENTS}"; exit 1; }
+else
+  log "No SCSI HBA personality — signing with ${DEXT_ENTITLEMENTS} (audio only)"
+fi
+
 # Sign inner-first: the dext, then the enclosing app.
 log "Signing dext: ${DEXT_PATH}"
 codesign --force --sign - --timestamp=none \

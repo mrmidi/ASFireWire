@@ -49,6 +49,12 @@ SWIFT_TEST_ONLY=false
 # When true, generate Swift code coverage
 SWIFT_COVERAGE=false
 SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
+# When true, include the SCSI HBA: the ASFWSCSIControllerService personality in
+# Info.plist and the restricted scsicontroller entitlement in the dext signature.
+# Default OFF: an ad-hoc-signed dext carrying that entitlement is killed by AMFI
+# on machines that enforce it, and the orphaned kernel-side
+# IOUserSCSIParallelInterfaceController stub then panics the kernel at boot.
+ENABLE_SCSI=false
 
 usage() {
   cat <<EOF
@@ -61,6 +67,8 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --swift-coverage   Run Swift tests with coverage and export to LCOV
   --commands         Generate compile_commands.json via xcpretty
   --analyze          Run PVS-Studio static analyzer after build
+  --scsi             Include the SCSI HBA (personality + restricted entitlement);
+                     requires SIP disabled on the target machine — see README
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})
@@ -79,6 +87,7 @@ while [[ $# -gt 0 ]]; do
     --test-filter) SELECTED_TESTS_PATTERN="$2"; shift 2;;
     --commands) GENERATE_COMMANDS=true; shift;;
     --analyze) RUN_ANALYZER=true; shift;;
+    --scsi) ENABLE_SCSI=true; shift;;
     --scheme) SCHEME_NAME="$2"; shift 2;;
     --config) CONFIGURATION="$2"; shift 2;;
     --arch) ARCH_NAME="$2"; shift 2;;
@@ -290,6 +299,11 @@ run_build() {
   log "Building ${PROJECT_NAME} (scheme=${SCHEME_NAME}, config=${CONFIGURATION})…"
   local QUIET_FLAG=()
   $VERBOSE || QUIET_FLAG=(-quiet)
+  local SCSI_FLAG=()
+  if $ENABLE_SCSI; then
+    SCSI_FLAG=(ASFW_ENABLE_SCSI=YES)
+    log "SCSI HBA enabled (ASFW_ENABLE_SCSI=YES): personality + scsicontroller entitlement included"
+  fi
 
   # Run xcodebuild. We capture everything to RAW_LOG.
   set +e
@@ -303,6 +317,7 @@ run_build() {
 	    CODE_SIGNING_ALLOWED=NO \
 	    CODE_SIGNING_REQUIRED=NO \
 	    CODE_SIGN_IDENTITY="" \
+    ${SCSI_FLAG[@]+"${SCSI_FLAG[@]}"} \
     ${QUIET_FLAG[@]+"${QUIET_FLAG[@]}"} \
     build \
     2>&1 | tee "${RAW_LOG}"

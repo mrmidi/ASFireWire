@@ -355,6 +355,29 @@ NOTE: You need an Apple Developer account (paid) and appropriate entitlements �
 
 Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build
 
+### SCSI HBA (SBP-2 scanners/disks) — opt-in
+
+The SCSI HBA (`ASFWSCSIControllerService`, for SBP-2 devices such as FireWire film
+scanners and disks) is **excluded from the default build**. It requires the restricted
+`com.apple.developer.driverkit.family.scsicontroller` entitlement, and its Info.plist
+personality instantiates a kernel-side `IOUserSCSIParallelInterfaceController` as soon
+as the FireWire card is matched at boot. On a machine where AMFI enforces entitlements
+(SIP enabled, or partially enabled), the dext is killed at launch and the orphaned
+kernel stub **panics the kernel about a minute after boot** — a boot loop, with no
+device attached. The default build therefore carries neither the personality nor the
+entitlement and cannot trigger this.
+
+To include the HBA, opt in explicitly (only on a machine that runs with SIP disabled):
+
+```bash
+./build.sh --scsi          # or: xcodebuild … ASFW_ENABLE_SCSI=YES
+./sign.sh                  # picks the +SCSI entitlements automatically
+```
+
+If a machine ever ends up in this panic loop: boot into Recovery, `csrutil disable`,
+boot normally, uninstall the extension
+(`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver`), then re-enable SIP.
+
 ## Installing a prebuilt build (testers)
 
 If you want to test ASFireWire without building it yourself, tagged releases attach a
@@ -366,6 +389,12 @@ for experimental testing only — not general use.
 > Only do this on a machine you are comfortable using for testing, and re-enable SIP
 > (`csrutil enable`) when you are done. The build is unsigned/un-notarized and provided
 > as-is; run it only if you understand and accept that.
+>
+> **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI refuses
+> to launch the ad-hoc-signed dext; an installed build that includes the SCSI HBA then
+> leaves an orphaned kernel-side SCSI stub behind at every boot, which can panic the
+> machine into a boot loop (recovery: Recovery → `csrutil disable` → boot → uninstall
+> → `csrutil enable`).
 
 **Requirements:** an Apple Silicon Mac running macOS 26 (Tahoe), and FireWire hardware
 (a PCIe FireWire/OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
