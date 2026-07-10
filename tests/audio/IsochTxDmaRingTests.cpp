@@ -695,10 +695,14 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
     std::memcpy(sharedPayload_.data(), payloadBefore.data(),
                 payloadBefore.size());
 
+    // Hardware descriptor index of the first group past the shared-ring wrap.
+    // The shared ring need not be a whole number of 48-packet hardware laps,
+    // so derive it instead of assuming the wrap lands on descriptor 0.
     const auto firstSecondLapRefill =
-        refillTo(
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kTxPacketsPerGroup);
+        refillTo(((kGroupsToSharedRingWrap + 1) *
+                  ASFW::IsochTransport::AudioTimingGeometry::
+                      kTxPacketsPerGroup) %
+                 Layout::kNumPackets);
     EXPECT_FALSE(firstSecondLapRefill.ok);
     EXPECT_EQ(firstSecondLapRefill.packetsFilled, 0U);
     EXPECT_EQ(metadataRing[0].commitGen.load(std::memory_order_acquire),
@@ -791,10 +795,13 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
             std::memory_order_release);
     }
 
+    // See RefillRejectsStaleGenerationAtFirstSharedRingWrap: the wrap does not
+    // necessarily land on hardware descriptor 0, so derive the index.
     const auto firstSecondLapRefill =
-        refillTo(
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kTxPacketsPerGroup);
+        refillTo(((kGroupsToSharedRingWrap + 1) *
+                  ASFW::IsochTransport::AudioTimingGeometry::
+                      kTxPacketsPerGroup) %
+                 Layout::kNumPackets);
     EXPECT_TRUE(firstSecondLapRefill.ok);
     EXPECT_EQ(
         firstSecondLapRefill.packetsFilled,
