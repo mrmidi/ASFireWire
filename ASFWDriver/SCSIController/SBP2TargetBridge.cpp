@@ -248,10 +248,11 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
 }
 
 void SBP2TargetBridge::OnLoginStateChanged(uint64_t guid, bool loggedIn) {
-    // Phase 1: the guid->targetID map (WI-3) and the actual
-    // UserCreateTargetForID/UserDestroyTargetForID (WI-4) are not wired yet.
-    // Forward the raw event to the HBA, which logs it inertly — the static
-    // phantom target still serves SCSI probes unchanged.
+    // The registry emits this on TERMINAL edges only: login-up (fresh login or
+    // reconnect re-assert) and logout/login-failure. A transient bus-reset
+    // suspension emits nothing. The HBA drives target 0 create/destroy off
+    // these edges (ASFWSCSIController::HandleLoginEdge); a multi-target
+    // guid→targetID map remains future work.
     ASFW_LOG(Controller, "[SBP2Bridge] login %{public}s guid=0x%016llx",
              loggedIn ? "up" : "down", guid);
     SBP2BridgeHub::NotifyTargetState(guid, loggedIn);

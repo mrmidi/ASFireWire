@@ -453,13 +453,12 @@ To include the HBA, opt in explicitly:
 ./sign.sh                  # picks the +SCSI entitlements automatically
 ```
 
-> **Warning:** `--scsi` builds are currently **not cold-boot-safe**: cold-booting
-> with the FireWire controller attached and no powered-on SBP-2 device on the bus
-> can hit the 60 s boot panic even with SIP fully disabled. Power the SBP-2 device
-> on before booting. A stalled probe on a running system does not panic
-> immediately, but can panic later when the adapter is unplugged or the extension
-> is torn down. The HBA-side fix (create the target at SBP-2 login instead of
-> boot) will follow in a separate PR.
+> **Warning:** this branch moves SCSI target creation to SBP-2 login (the HBA
+> reports no target until a device is actually logged in), which removes the
+> cold-boot panic path — **pending hardware validation**. Until that validation
+> lands, keep the old precautions when running `--scsi` builds: power the SBP-2
+> device on before booting, and avoid restarting or unplugging the adapter while
+> it is attached with no powered-on SBP-2 device on the bus.
 
 If a machine ever ends up in a panic loop: boot into Recovery, `csrutil disable`,
 boot normally, uninstall the extension

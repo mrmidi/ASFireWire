@@ -15,10 +15,15 @@
 // surface seen by the app is identical.
 //
 // UserProcessParallelTask forwards SCSI tasks to the real SBP-2 target via
-// SBP2TargetBridge/SessionRegistry (see the .cpp). The framework auto-creates
-// target 0 and probes it before the SBP-2 login completes; rather than spoof an
-// identity, the pre-login probe INQUIRY is deferred and replayed with the
-// device's real INQUIRY once login is up (generic, no per-device identity).
+// SBP2TargetBridge/SessionRegistry (see the .cpp). Target 0 is created at SBP-2
+// login and destroyed at logout (framework hotplug model): UserTargetPresentForID
+// answers false until a device is actually logged in, so the bring-up presence
+// scan creates nothing and a machine booting with no SBP-2 device on the bus has
+// no target to strand (the pre-fix unconditional presence answer held the boot
+// probe INQUIRY forever and tripped watchdogd's 60 s registry busy-timeout —
+// IOService.cpp:5986, issue #54). A probe INQUIRY arriving while the session is
+// suspended (bus reset) is deferred and replayed with the device's real INQUIRY
+// once login is back (generic, no per-device identity).
 //
 // Matching: this HBA co-matches the OHCI PCI device directly (IOProviderClass
 // IOPCIDevice + IOPCIMatch, distinct IOMatchCategory), alongside the main
@@ -30,7 +35,6 @@
 #ifndef ASFWSCSIController_h
 #define ASFWSCSIController_h
 
-#include <DriverKit/IOTimerDispatchSource.iig>
 #include <SCSIControllerDriverKit/IOUserSCSIParallelInterfaceController.iig>
 
 class ASFWSCSIController: public IOUserSCSIParallelInterfaceController
@@ -76,15 +80,6 @@ public:
         uint32_t* response,
         OSAction* completion) override;
 
-    // Bounds the pre-login held INQUIRY. The kernel probe (IOSCSITargetDevice →
-    // RetrieveDefaultINQUIRYData → WaitForTask) blocks the nub's IOConfigThread
-    // with no timeout of its own; if SBP-2 login never arrives, the registry
-    // busy-timeout panics the machine at 60 s (IOService.cpp:5986 — the
-    // 2026-07-10 boot loop). Fires on the AuxiliaryQueue and flushes the hold
-    // with BUSY.
-    virtual void HeldInquiryTimerFired(OSAction* action, uint64_t time)
-        TYPE(IOTimerDispatchSource::TimerOccurred);
-
     // --- bundled-task path: opt OUT (return failure) so the framework uses the
     //     single-task UserProcessParallelTask path above. Both are pure-virtual
     //     so must be declared; UserProcessBundledParallelTasks is never called. ---
@@ -111,13 +106,14 @@ public:
 };
 
 struct ASFWSCSIController_IVars {
-    bool targetCreated{false};
-    uint64_t targetID{0};   // single target at ID 0
     IODispatchQueue* auxQueue{nullptr}; // the framework's "AuxiliaryQueue" contract
+    // Serializes UserCreateTargetForID/UserDestroyTargetForID (login/logout
+    // edges). Deliberately NOT auxQueue (the create call is routed through
+    // AuxiliaryQueue by the framework — calling it from there wedges) and NOT
+    // the Default queue (which services the framework's target-init upcalls).
+    IODispatchQueue* lifecycleQueue{nullptr};
     uint32_t nextUniqueTaskID{0};       // handed out in UserMapHBAData (must be unique per task)
-    void* pendingState{nullptr};        // PendingState* (deferred pre-login INQUIRY), defined in .cpp
-    IOTimerDispatchSource* holdTimer{nullptr}; // bounds the held INQUIRY (AuxiliaryQueue)
-    OSAction* holdTimerAction{nullptr};
+    void* pendingState{nullptr};        // PendingState* (held INQUIRY + target/stop flags), defined in .cpp
 };
 
 #endif /* ASFWSCSIController_h */
