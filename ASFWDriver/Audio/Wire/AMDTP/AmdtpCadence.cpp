@@ -1,5 +1,7 @@
 #include "AmdtpCadence.hpp"
 
+#include "AmdtpTiming.hpp"
+
 namespace ASFW::Protocols::Audio::AMDTP {
 
 // Blocking mode at 48 kHz (IEC 61883-6): 6 audio frames arrive per 125 µs bus
@@ -62,6 +64,79 @@ uint64_t NonBlocking48kCadence::TotalCycles() const noexcept {
 }
 
 void NonBlocking48kCadence::AdvanceCycle() noexcept {
+    ++totalCycles_;
+}
+
+bool RationalBlockingCadence::Configure(uint32_t sampleRateHz,
+                                        uint8_t sytInterval,
+                                        uint64_t initialDeadlineSubticks) noexcept {
+    if (sampleRateHz == 0 || sytInterval == 0) {
+        denominator_ = 0;
+        sytInterval_ = 0;
+        cycleSpanSubticks_ = 0;
+        stepSubticks_ = 0;
+        initialDeadlineSubticks_ = 0;
+        deadlineSubticks_ = 0;
+        totalCycles_ = 0;
+        return false;
+    }
+
+    const uint64_t cycleSpan = uint64_t(Timing::kTicksPerCycle) * sampleRateHz;
+    const uint64_t step = Timing::kTicksPerSecond * sytInterval;
+    if (step < cycleSpan) {
+        denominator_ = 0;
+        sytInterval_ = 0;
+        cycleSpanSubticks_ = 0;
+        stepSubticks_ = 0;
+        initialDeadlineSubticks_ = 0;
+        deadlineSubticks_ = 0;
+        totalCycles_ = 0;
+        return false;
+    }
+
+    denominator_ = sampleRateHz;
+    sytInterval_ = sytInterval;
+    cycleSpanSubticks_ = cycleSpan;
+    stepSubticks_ = step;
+    initialDeadlineSubticks_ = initialDeadlineSubticks;
+    Reset();
+    return true;
+}
+
+void RationalBlockingCadence::Reset() noexcept {
+    deadlineSubticks_ = initialDeadlineSubticks_;
+    totalCycles_ = 0;
+}
+
+bool RationalBlockingCadence::IsConfigured() const noexcept {
+    return denominator_ != 0;
+}
+
+RationalBlockingDecision RationalBlockingCadence::CurrentDecision() const noexcept {
+    if (!IsConfigured() || deadlineSubticks_ >= cycleSpanSubticks_) {
+        return {};
+    }
+
+    return {
+        .isData = true,
+        .dataBlocks = sytInterval_,
+        .sytOffsetTicks = static_cast<uint16_t>(deadlineSubticks_ / denominator_),
+    };
+}
+
+uint64_t RationalBlockingCadence::TotalCycles() const noexcept {
+    return totalCycles_;
+}
+
+void RationalBlockingCadence::AdvanceCycle() noexcept {
+    if (!IsConfigured()) {
+        return;
+    }
+
+    if (deadlineSubticks_ < cycleSpanSubticks_) {
+        deadlineSubticks_ += stepSubticks_;
+    }
+    deadlineSubticks_ -= cycleSpanSubticks_;
     ++totalCycles_;
 }
 
