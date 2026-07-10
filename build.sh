@@ -51,9 +51,13 @@ SWIFT_COVERAGE=false
 SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
 # When true, include the SCSI HBA: the ASFWSCSIControllerService personality in
 # Info.plist and the restricted scsicontroller entitlement in the dext signature.
-# Default OFF: an ad-hoc-signed dext carrying that entitlement is killed by AMFI
-# on machines that enforce it, and the orphaned kernel-side
-# IOUserSCSIParallelInterfaceController stub then panics the kernel at boot.
+# Default OFF: the personality matches the FireWire card at boot, and with no
+# powered SBP-2 device on the bus the HBA's probe INQUIRY stalls target-0
+# registration past watchdogd's 60 s boot quiesce (registry busy-timeout panic,
+# IOService.cpp:5986) — regardless of SIP state. On AMFI-enforcing machines the
+# ad-hoc signature carrying the restricted entitlement additionally gets the dext
+# killed at launch, stranding the orphaned kernel stub in the same panic.
+# See README "SCSI HBA — opt-in".
 ENABLE_SCSI=false
 
 usage() {
@@ -68,7 +72,8 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --commands         Generate compile_commands.json via xcpretty
   --analyze          Run PVS-Studio static analyzer after build
   --scsi             Include the SCSI HBA (personality + restricted entitlement);
-                     requires SIP disabled on the target machine — see README
+                     requires SIP disabled, and is NOT cold-boot-safe without a
+                     powered-on SBP-2 device attached — see README
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})
