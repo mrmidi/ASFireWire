@@ -89,9 +89,11 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     cipBuilder_.Configure(cipConfig);
 
     if (config.streamMode == StreamMode::Blocking) {
-        blocking48kCadence_.Configure(
-            config.sampleRate,
-            static_cast<uint8_t>(geometry->sytIntervalFrames));
+        if (!blocking48kCadence_.Configure(
+                config.sampleRate,
+                static_cast<uint8_t>(geometry->sytIntervalFrames))) {
+            return false;
+        }
         cadence_ = static_cast<IAmdtpCadence*>(&blocking48kCadence_);
     } else {
         cadence_ = static_cast<IAmdtpCadence*>(&nonBlocking48kCadence_);

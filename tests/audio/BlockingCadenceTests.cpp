@@ -149,7 +149,7 @@ TEST(BlockingCadenceTests, ResetClearsState) {
 
 TEST(BlockingCadenceTests, ConfigureFortyEightKMatchesDefaultPattern) {
     BlockingCadence cadence;
-    cadence.Configure(48000, 8);
+    ASSERT_TRUE(cadence.Configure(48000, 8));
 
     bool expected[] = {false, true, true, true, false, true, true, true};
     for (int i = 0; i < 8; i++) {
@@ -161,7 +161,7 @@ TEST(BlockingCadenceTests, ConfigureFortyEightKMatchesDefaultPattern) {
 
 TEST(BlockingCadenceTests, FortyFourKFirstCycleIsNoData) {
     BlockingCadence cadence;
-    cadence.Configure(44100, 8);
+    ASSERT_TRUE(cadence.Configure(44100, 8));
     // 44100/8000 = 5.5125 frames pending after cycle 0 -> < syt_interval(8).
     EXPECT_FALSE(cadence.CurrentCycleIsData());
     EXPECT_EQ(cadence.CurrentCycleDataFrames(), 0);
@@ -169,7 +169,7 @@ TEST(BlockingCadenceTests, FortyFourKFirstCycleIsNoData) {
 
 TEST(BlockingCadenceTests, FortyFourKDataPacketsCarryEightFrames) {
     BlockingCadence cadence;
-    cadence.Configure(44100, 8);
+    ASSERT_TRUE(cadence.Configure(44100, 8));
     for (int i = 0; i < 64; ++i) {
         if (cadence.CurrentCycleIsData()) {
             EXPECT_EQ(cadence.CurrentCycleDataFrames(), 8);
@@ -182,7 +182,7 @@ TEST(BlockingCadenceTests, FortyFourKDataPacketsCarryEightFrames) {
 
 TEST(BlockingCadenceTests, FortyFourKExactOverTwoSeconds) {
     BlockingCadence cadence;
-    cadence.Configure(44100, 8);
+    ASSERT_TRUE(cadence.Configure(44100, 8));
     uint64_t totalSamples = 0;
     // 44100 * 16000 / 64000 = 11025 data cycles exactly -> 88200 frames, with
     // the fractional accumulator returning to zero residual every 2 seconds.
@@ -195,13 +195,48 @@ TEST(BlockingCadenceTests, FortyFourKExactOverTwoSeconds) {
 
 TEST(BlockingCadenceTests, FortyFourKNoDriftAcrossTenSeconds) {
     BlockingCadence cadence;
-    cadence.Configure(44100, 8);
+    ASSERT_TRUE(cadence.Configure(44100, 8));
     uint64_t totalSamples = 0;
     for (int i = 0; i < 80000; ++i) { // 10 s
         totalSamples += cadence.CurrentCycleDataFrames();
         cadence.AdvanceCycle();
     }
     EXPECT_EQ(totalSamples, 441000u);
+}
+
+// The adapter is a seeded RationalBlockingCadence; it must reproduce the
+// FFADO accumulate-then-test rule (cip.c: data iff pending + rate/8000 frames
+// >= syt_interval) exactly, cycle for cycle, at every supported rate. The
+// reference accumulator lives only in this test; production runs the deadline
+// engine with the accumulator-equivalent seed.
+TEST(BlockingCadenceTests, AdapterMatchesAccumulatorSemanticsAtEveryRate) {
+    struct RateCase {
+        uint32_t rate;
+        uint8_t interval;
+    };
+    constexpr RateCase kCases[] = {{32000, 8},  {44100, 8},   {48000, 8},
+                                   {88200, 16}, {96000, 16},  {176400, 32},
+                                   {192000, 32}};
+    for (const auto& c : kCases) {
+        SCOPED_TRACE("rate " + std::to_string(c.rate));
+        BlockingCadence cadence;
+        ASSERT_TRUE(cadence.Configure(c.rate, c.interval));
+        const uint32_t threshold = uint32_t(c.interval) * 8000u;
+        uint64_t ready = 0; // pending frames scaled by 8000
+        for (uint32_t cycle = 0; cycle < 16000; ++cycle) { // 2 s of bus time
+            const bool refData = (ready + c.rate) >= threshold;
+            ASSERT_EQ(cadence.CurrentCycleIsData(), refData)
+                << "cycle " << cycle;
+            ASSERT_EQ(cadence.CurrentCycleDataFrames(),
+                      refData ? c.interval : 0)
+                << "cycle " << cycle;
+            ready += c.rate;
+            if (refData) {
+                ready -= threshold;
+            }
+            cadence.AdvanceCycle();
+        }
+    }
 }
 
 TEST(BlockingCadenceTests, MatchesFireBugPattern) {

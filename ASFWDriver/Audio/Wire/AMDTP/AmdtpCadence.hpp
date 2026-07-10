@@ -29,69 +29,15 @@ public:
     virtual void AdvanceCycle() noexcept = 0;
 };
 
-// Blocking-mode AMDTP cadence for any 1x/2x/4x rate. Defaults to 48 kHz so
-// existing default-constructed callers are byte-identical to the old
-// Blocking48kCadence. Configure() switches the rate.
-//
-// Cross-validated with FFADO iec61883_cip_fill_header (libffado-2.4.9
-// src/libstreaming/util/cip.c:130-160): the blocking cadence is a rational
-// accumulator of rate/8000 frames per 125 us bus cycle that emits a
-// syt_interval-frame data block whenever at least syt_interval frames are
-// pending; otherwise a NO-DATA packet. The previous 48 kHz integer form
-// (6 frames/cycle, emit 8) is exactly the rate==48000 special case.
-class BlockingCadence final : public IAmdtpCadence {
-public:
-    // sytIntervalFrames is the blocking frames-per-data-packet: 8 @1x
-    // (32/44.1/48 k), 16 @2x, 32 @4x (FFADO getSytInterval()).
-    void Configure(uint32_t sampleRateHz, uint8_t sytIntervalFrames) noexcept;
-
-    void Reset() noexcept override;
-
-    bool CurrentCycleIsData() const noexcept override;
-    uint8_t CurrentCycleDataFrames() const noexcept override;
-    uint64_t TotalCycles() const noexcept override;
-
-    void AdvanceCycle() noexcept override;
-
-private:
-    // Rational accumulator over an 8000 cycles/s denominator: readyNum_ counts
-    // pending frames * 8000. Each cycle adds framesPerCycleNum_ (== sampleRateHz,
-    // i.e. rate/8000 frames scaled by 8000) and emits a block of
-    // sytIntervalFrames_ when readyNum_ + framesPerCycleNum_ reaches
-    // sytThresholdNum_ (== sytIntervalFrames_ * 8000). Exact, drift-free for
-    // fractional rates such as 44.1 kHz (5.5125 frames/cycle).
-    static constexpr uint32_t kCyclesPerSecond = 8000;
-    uint32_t framesPerCycleNum_{48000};
-    uint32_t sytThresholdNum_{8u * kCyclesPerSecond};
-    uint8_t sytIntervalFrames_{8};
-    uint32_t readyNum_{0};
-    uint64_t totalCycles_{0};
-};
-
-// Transitional alias: existing callers default-construct this for 48 kHz.
-using Blocking48kCadence = BlockingCadence;
-
-class NonBlocking48kCadence final : public IAmdtpCadence {
-public:
-    void Reset() noexcept override;
-
-    bool CurrentCycleIsData() const noexcept override;
-    uint8_t CurrentCycleDataFrames() const noexcept override;
-    uint64_t TotalCycles() const noexcept override;
-
-    void AdvanceCycle() noexcept override;
-
-private:
-    uint64_t totalCycles_{0};
-};
-
 /// Exact rational blocking-mode cadence, kept in FireWire ticks x sample rate.
 ///
-/// This is deliberately a standalone Phase 2 primitive. The production
-/// packetizer remains 48 kHz-only until its rate-selection and presentation
-/// timing paths are converted together. `initialDeadlineSubticks` is relative
-/// to the start of the first cycle; wire-visible seed/lead policy belongs to
-/// that later integration, not to this arithmetic engine.
+/// The single blocking-cadence arithmetic engine: one integer deadline DDA
+/// parameterized by (sampleRate, sytInterval), validated against the golden
+/// vectors from tools/amdtp_blocking_cadence_sim.py. Production reaches it
+/// through the BlockingCadence adapter below; `initialDeadlineSubticks` is
+/// relative to the start of the first cycle and is a wire-visible seed policy
+/// owned by the adapter (or a future capture-derived policy), not by this
+/// arithmetic.
 class RationalBlockingCadence final {
 public:
     /// Configures a schedule with at most one data packet per bus cycle.
@@ -115,6 +61,65 @@ private:
     uint64_t stepSubticks_{0};
     uint64_t initialDeadlineSubticks_{0};
     uint64_t deadlineSubticks_{0};
+    uint64_t totalCycles_{0};
+};
+
+// Blocking-mode AMDTP cadence for any 1x/2x/4x rate: the IAmdtpCadence
+// adapter over RationalBlockingCadence used by the production packetizer.
+// Defaults to 48 kHz so default-constructed callers behave like the old
+// Blocking48kCadence; Configure() switches the rate.
+//
+// SEED POLICY (wire-visible): the engine is seeded one subtick-cycle short of
+// one full data block,
+//     seed = sytInterval * kTicksPerSecond - kTicksPerCycle,
+// which makes the deadline DDA emit a block exactly when a full block of
+// frames is pending -- provably identical, cycle for cycle at every rate, to
+// the FFADO-style rational accumulator this class previously implemented
+// (cross-validated with libffado-2.4.9 src/libstreaming/util/cip.c:130-160:
+// data iff ready_samples + samples_per_cycle >= syt_interval). That is the
+// hardware-verified startup phase (48/44.1k duplex), so the adapter preserves
+// it. Apple's captured AppleFWAudio seed differs (opens N,N,N,D --
+// documentation/44100.md section 7); adopting a different wire-visible seed
+// is capture-gated (SAMPLE_RATE_EXPANSION.md section 8). In live duplex the
+// free-running cadence is superseded by RX sequence replay after RX locks,
+// so the seed governs only the pre-replay window.
+class BlockingCadence final : public IAmdtpCadence {
+public:
+    BlockingCadence() noexcept { (void)Configure(48000, 8); }
+
+    // sytIntervalFrames is the blocking frames-per-data-packet: 8 @1x
+    // (32/44.1/48 k), 16 @2x, 32 @4x (FFADO getSytInterval()). Returns false
+    // (and goes inert: every cycle no-data) for an invalid rate/interval
+    // combination, e.g. more than sytInterval frames per cycle.
+    [[nodiscard]] bool Configure(uint32_t sampleRateHz,
+                                 uint8_t sytIntervalFrames) noexcept;
+
+    void Reset() noexcept override;
+
+    bool CurrentCycleIsData() const noexcept override;
+    uint8_t CurrentCycleDataFrames() const noexcept override;
+    uint64_t TotalCycles() const noexcept override;
+
+    void AdvanceCycle() noexcept override;
+
+private:
+    RationalBlockingCadence engine_{};
+};
+
+// Transitional alias: existing callers default-construct this for 48 kHz.
+using Blocking48kCadence = BlockingCadence;
+
+class NonBlocking48kCadence final : public IAmdtpCadence {
+public:
+    void Reset() noexcept override;
+
+    bool CurrentCycleIsData() const noexcept override;
+    uint8_t CurrentCycleDataFrames() const noexcept override;
+    uint64_t TotalCycles() const noexcept override;
+
+    void AdvanceCycle() noexcept override;
+
+private:
     uint64_t totalCycles_{0};
 };
 

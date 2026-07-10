@@ -4,54 +4,55 @@
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
-// Blocking mode at 48 kHz (IEC 61883-6): 6 audio frames arrive per 125 µs bus
-// cycle (48000 / 8000), a data packet always carries SYT_INTERVAL = 8 frames.
-// Accumulate 6 frames per cycle, emit 8 whenever ≥ 8 are pending:
+// Blocking mode (IEC 61883-6): at 48 kHz, 6 audio frames arrive per 125 µs bus
+// cycle (48000 / 8000) and a data packet always carries SYT_INTERVAL = 8
+// frames, yielding N,D,D,D (6000 data packets per 8000 cycles); at 44.1 kHz
+// the same rule yields 441 data packets per 640 cycles.
 //
-//   pending: 0 → no-data → 6 → data → 4 → data → 2 → data → 0 → ...
-//
-// yielding the N,D,D,D pattern: exactly 6000 data packets per 8000 cycles.
-// phase_ holds the pending (not yet emitted) frame count {0, 6, 4, 2}.
+// The adapter seeds the deadline engine one subtick-cycle short of one full
+// block: the k-th block's deadline lands in cycle c exactly when
+// (c+1)*rate >= (k+1)*sytInterval*8000, i.e. "emit as soon as one full block
+// of frames is pending" -- the FFADO accumulate-then-test rule (cip.c) this
+// class previously implemented directly. See the header for the seed policy.
 //
 // Note: this is cadence only. Alignment of the no-data slot relative to SYT
-// is owned by the timing model (Milestone 2), not the cadence.
+// is owned by the timing model, not the cadence.
 
 namespace {
 constexpr uint8_t kFramesPerCycle48k = 6;
+
+constexpr uint64_t AccumulatorEquivalentSeedSubticks(
+    uint8_t sytIntervalFrames) noexcept {
+    return Timing::kTicksPerSecond * sytIntervalFrames -
+           Timing::kTicksPerCycle;
+}
 } // namespace
 
-void BlockingCadence::Configure(uint32_t sampleRateHz,
+bool BlockingCadence::Configure(uint32_t sampleRateHz,
                                 uint8_t sytIntervalFrames) noexcept {
-    framesPerCycleNum_ = sampleRateHz; // rate/8000 frames per cycle, scaled by 8000
-    sytIntervalFrames_ = sytIntervalFrames;
-    sytThresholdNum_ =
-        static_cast<uint32_t>(sytIntervalFrames) * kCyclesPerSecond;
-    Reset();
+    return engine_.Configure(sampleRateHz, sytIntervalFrames,
+                             AccumulatorEquivalentSeedSubticks(
+                                 sytIntervalFrames));
 }
 
 void BlockingCadence::Reset() noexcept {
-    readyNum_ = 0;
-    totalCycles_ = 0;
+    engine_.Reset();
 }
 
 bool BlockingCadence::CurrentCycleIsData() const noexcept {
-    // FFADO cip.c: data iff floor(ready_samples + samples_per_cycle) >=
-    // syt_interval, i.e. (readyNum_ + rate) >= syt_interval * 8000.
-    return (readyNum_ + framesPerCycleNum_) >= sytThresholdNum_;
+    return engine_.CurrentDecision().isData;
 }
 
 uint8_t BlockingCadence::CurrentCycleDataFrames() const noexcept {
-    return CurrentCycleIsData() ? sytIntervalFrames_ : 0;
+    return engine_.CurrentDecision().dataBlocks;
 }
 
 uint64_t BlockingCadence::TotalCycles() const noexcept {
-    return totalCycles_;
+    return engine_.TotalCycles();
 }
 
 void BlockingCadence::AdvanceCycle() noexcept {
-    readyNum_ = readyNum_ + framesPerCycleNum_ -
-                (CurrentCycleIsData() ? sytThresholdNum_ : 0u);
-    ++totalCycles_;
+    engine_.AdvanceCycle();
 }
 
 // Non-blocking mode at 48 kHz: the per-cycle frame count is integral (6), so
