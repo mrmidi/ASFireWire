@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 ASFW Project
 //
 // Host tests for the Milestone 2 post-reset timing core. Pure logic: the clock

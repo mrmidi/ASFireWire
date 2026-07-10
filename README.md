@@ -368,6 +368,19 @@ Contributions are VERY welcome! If you want to contribute to the project, please
 
 Literally any help is appreciated, from fixing typos in documentation to implementing new features or fixing bugs. Writing tests, improving code quality, testing on hardware, and reporting regressions are all valuable. Hardware reports for supported Saffire devices are especially useful right now. If you have any experience with FireWire protocol, just opening an issue or emailing me is invaluable. If you have any experience with Swift, the ASFW app could use some love too.
 
+## License
+
+ASFireWire is licensed under the [Apache License, Version 2.0](LICENSE).
+
+The in-tree reference stacks used for behavioral validation (Linux
+`drivers/firewire`, Apple IOFireWireFamily, libffado, and others) are **not**
+part of this repository and are never distributed with it; they are consulted
+as read-only behavioral references and no code from them is copied. See
+[NOTICE](NOTICE) for attribution details.
+
+Contributions are accepted under the terms of the Apache License 2.0
+(inbound = outbound, per section 5 of the license).
+
 ## Contacts
 
 You can reach me via:

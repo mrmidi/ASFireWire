@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // TopologyMapBuilder.hpp — pure helper to construct IEEE 1394 topology map (FW-20).

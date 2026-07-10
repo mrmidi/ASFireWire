@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 //
 // Pins the metadata behavior of the DeviceProfiles audio layer: identity enrichment,
 // Focusrite GUID inference (including the Pro 40 / TCD3070 quirk), and the integration
