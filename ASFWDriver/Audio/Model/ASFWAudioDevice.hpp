@@ -46,6 +46,9 @@ struct ASFWAudioDevice {
     uint32_t currentSampleRate{48000};
     std::string inputPlugName{"Input"};
     std::string outputPlugName{"Output"};
+    // Per-channel device labels in channel order (empty = synthesize names).
+    std::vector<std::string> inputChannelNames{};
+    std::vector<std::string> outputChannelNames{};
     StreamMode streamMode{StreamMode::kNonBlocking};
     bool hasPhantomOverride{false};
     uint32_t phantomSupportedMask{0};
@@ -73,7 +76,35 @@ struct ASFWAudioDevice {
         properties->setObject(PropertyKeys::kVendorId, vendorIdNum.get());
         properties->setObject(PropertyKeys::kModelId, modelIdNum.get());
 
+        // Per-channel device labels (optional). The audio side reads these in
+        // channel order and prefers them over synthesized names.
+        PublishChannelNames(properties, PropertyKeys::kInputChannelNames, inputChannelNames);
+        PublishChannelNames(properties, PropertyKeys::kOutputChannelNames, outputChannelNames);
+
         return true;
+    }
+
+private:
+    static void PublishChannelNames(OSDictionary* properties,
+                                    const char* key,
+                                    const std::vector<std::string>& names) {
+        if (names.empty()) {
+            return;
+        }
+        auto array = OSSharedPtr(OSArray::withCapacity(
+            static_cast<uint32_t>(names.size())), OSNoRetain);
+        if (!array) {
+            return;
+        }
+        for (const auto& name : names) {
+            auto str = OSSharedPtr(OSString::withCString(name.c_str()), OSNoRetain);
+            // Keep the index aligned with the channel index even for empty
+            // labels; the audio side falls back to a synthesized name per slot.
+            if (str) {
+                array->setObject(str.get());
+            }
+        }
+        properties->setObject(key, array.get());
     }
 };
 

@@ -158,21 +158,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         }
         parsedConfig.channelCount = std::max(parsedConfig.inputChannelCount, parsedConfig.outputChannelCount);
 
-        // Regenerate channel names for the updated channel counts
-        for (uint32_t index = 0; index < parsedConfig.inputChannelCount && index < ASFW::Isoch::Audio::kMaxNamedChannels; ++index) {
-            snprintf(parsedConfig.inputChannelNames[index],
-                     sizeof(parsedConfig.inputChannelNames[index]),
-                     "%s %u",
-                     parsedConfig.inputPlugName,
-                     index + 1);
-        }
-        for (uint32_t index = 0; index < parsedConfig.outputChannelCount && index < ASFW::Isoch::Audio::kMaxNamedChannels; ++index) {
-            snprintf(parsedConfig.outputChannelNames[index],
-                     sizeof(parsedConfig.outputChannelNames[index]),
-                     "%s %u",
-                     parsedConfig.outputPlugName,
-                     index + 1);
-        }
+        // Regenerate channel names for the updated channel counts. Prefers the
+        // device's per-channel labels (published by the core side) and falls
+        // back to synthesized "<plug> N" for any slot without a real label.
+        ASFW::Isoch::Audio::BuildChannelNamesFromPlugs(parsedConfig);
     }
 
     ASFW::Isoch::Audio::BuildFallbackBoolControls(parsedConfig);
@@ -544,7 +533,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
     ASFW_LOG(Audio, "ASFWAudioDriver: IO operation handler installed");
 
-    for (uint32_t ch = 1; ch <= ivars.device.outputChannelCount && ch <= 8; ch++) {
+    for (uint32_t ch = 1; ch <= ivars.device.outputChannelCount && ch <= ASFW::Isoch::Audio::kMaxNamedChannels; ch++) {
         auto outChName = OSSharedPtr(OSString::withCString(ivars.device.outputChannelNames[ch - 1]), OSNoRetain);
         if (outChName) {
             const kern_return_t status =
@@ -561,7 +550,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             }
         }
     }
-    for (uint32_t ch = 1; ch <= ivars.device.inputChannelCount && ch <= 8; ch++) {
+    for (uint32_t ch = 1; ch <= ivars.device.inputChannelCount && ch <= ASFW::Isoch::Audio::kMaxNamedChannels; ch++) {
         auto inChName = OSSharedPtr(OSString::withCString(ivars.device.inputChannelNames[ch - 1]), OSNoRetain);
         if (inChName) {
             const kern_return_t status =

@@ -49,8 +49,8 @@ struct AudioDriverDeviceState {
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
-    char inputChannelNames[8][64]{};
-    char outputChannelNames[8][64]{};
+    char inputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
+    char outputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
 };
 
 class DextTxExecutionTimeline final {

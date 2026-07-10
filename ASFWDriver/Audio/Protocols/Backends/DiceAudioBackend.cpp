@@ -7,6 +7,8 @@
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../DICE/Core/DICENotificationMailbox.hpp"
+#include "../DICE/Core/IDICEDuplexProtocol.hpp"
+#include "../IDeviceProtocol.hpp"
 #include "../DeviceProtocolFactory.hpp"
 #include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
 
@@ -431,11 +433,49 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
 
-    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
-        endpoint->UpdateConfig(dev);
-    }
+    // Enrich with the device's real per-channel labels (if the protocol has
+    // loaded them), update the endpoint runtime, then publish the nub. Host
+    // input == device TX, host output == device RX (see AudioTypes.hpp), which
+    // is exactly how GetChannelLabels reports them.
+    auto finish = [this, guid](Model::ASFWAudioDevice dev,
+                               const std::shared_ptr<IDeviceProtocol>& protocol) {
+        if (stopping_.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (protocol) {
+            std::vector<std::string> inNames;
+            std::vector<std::string> outNames;
+            if (protocol->GetChannelLabels(inNames, outNames)) {
+                if (!inNames.empty()) {
+                    dev.inputChannelNames = std::move(inNames);
+                }
+                if (!outNames.empty()) {
+                    dev.outputChannelNames = std::move(outNames);
+                }
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend::EnsureNubForGuid: applied device channel labels in=%zu out=%zu (GUID=0x%016llx)",
+                         dev.inputChannelNames.size(), dev.outputChannelNames.size(), guid);
+            }
+        }
+        if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+            endpoint->UpdateConfig(dev);
+        }
+        (void)publisher_.EnsureNub(guid, dev, "DICE");
+    };
 
-    (void)publisher_.EnsureNub(guid, dev, "DICE");
+    // Channel labels live in the TCAT stream-format name sections, cached only
+    // once runtime caps load (during the first stream discovery). Load them
+    // once before the first publish so CoreAudio shows the real names from the
+    // start. The load early-returns if caps are already cached; publish happens
+    // regardless of outcome (names fall back to synthesized "<plug> N").
+    if (auto* dice = protocol ? protocol->AsDiceDuplexProtocol() : nullptr) {
+        dice->EnsureRuntimeStreamGeometry(
+            [finish, dev, protocol](IOReturn /*status*/) mutable {
+                finish(std::move(dev), protocol);
+            });
+        return;
+    }
+    finish(std::move(dev), protocol);
 }
 
 IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {

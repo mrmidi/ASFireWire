@@ -13,8 +13,18 @@
 #include <cstdint>
 #include <cstddef>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace ASFW::Audio::DICE {
+
+/// Split a decoded DICE channel-name blob (e.g. StreamFormatEntry::labels) into
+/// per-channel names. The device lists names separated by a single backslash and
+/// terminates the list with a double backslash. Empty tokens between separators
+/// are preserved so the returned index aligns with the channel index.
+/// Mirrors FFADO Device::splitNameString.
+/// cross-validated with FFADO dice_avdevice.cpp (splitNameString) + ffadotypes.h.
+std::vector<std::string> SplitDiceLabels(const char* labels);
 
 /// Maximum frame size for a single DICE transaction (512 bytes per spec)
 constexpr size_t kMaxFrameSize = 512;

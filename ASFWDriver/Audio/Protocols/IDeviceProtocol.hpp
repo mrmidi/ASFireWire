@@ -10,6 +10,8 @@
 #include <DriverKit/IOReturn.h>
 #include <cstdint>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace ASFW::Protocols::AVC {
     class FCPTransport;
@@ -55,6 +57,19 @@ public:
     /// Returns true when the protocol has authoritative stream caps (e.g. DICE TX/RX stream formats).
     virtual bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
         (void)outCaps;
+        return false;
+    }
+
+    /// Query per-channel device labels discovered from the protocol's stream
+    /// format (e.g. DICE TX/RX name sections). `inNames` is host input/capture,
+    /// `outNames` is host output/playback, both in channel order; an empty entry
+    /// means "no label for that channel". Returns true only when authoritative
+    /// labels are available (caps loaded); callers fall back to synthesized
+    /// names otherwise.
+    virtual bool GetChannelLabels(std::vector<std::string>& inNames,
+                                  std::vector<std::string>& outNames) const {
+        (void)inNames;
+        (void)outNames;
         return false;
     }
 

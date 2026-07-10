@@ -500,6 +500,48 @@ struct GlobalState {
     const char* SupportedRatesDescription() const;
 };
 
+/// Decode the DICE global-section nickname (64 bytes / 16 quadlets at
+/// GlobalOffset::kNickname) from a raw big-endian wire payload into `out`.
+///
+/// DICE stores strings little-endian: the first character of each quadlet lives
+/// in the LEAST-significant byte. The wire transmits quadlets big-endian, so the
+/// characters within a quadlet must be emitted LSB-first, otherwise "Veni"
+/// decodes as the byte-reversed "ineV".
+/// cross-validated with FFADO dice_avdevice.cpp:696
+/// ("Strings from the device are always little-endian").
+inline void DecodeDiceNickname(const uint8_t* data, size_t size, char (&out)[64]) {
+    size_t nickIdx = 0;
+    for (size_t q = 0; q < 16 && nickIdx < 63; ++q) {
+        const size_t qOffset = static_cast<size_t>(GlobalOffset::kNickname) + q * 4;
+        if (qOffset + 4 > size) {
+            break;
+        }
+        // Big-endian wire quadlet, then read characters LSB-first.
+        const uint32_t quadlet = (static_cast<uint32_t>(data[qOffset]) << 24) |
+                                 (static_cast<uint32_t>(data[qOffset + 1]) << 16) |
+                                 (static_cast<uint32_t>(data[qOffset + 2]) << 8) |
+                                 static_cast<uint32_t>(data[qOffset + 3]);
+        const char chars[4] = {
+            static_cast<char>(quadlet & 0xFF),
+            static_cast<char>((quadlet >> 8) & 0xFF),
+            static_cast<char>((quadlet >> 16) & 0xFF),
+            static_cast<char>((quadlet >> 24) & 0xFF),
+        };
+        bool done = false;
+        for (char c : chars) {
+            if (c == '\0' || nickIdx >= 63) {
+                done = true;
+                break;
+            }
+            out[nickIdx++] = c;
+        }
+        if (done) {
+            break;
+        }
+    }
+    out[nickIdx] = '\0';
+}
+
 // ============================================================================
 // TX/RX Stream Format
 // ============================================================================

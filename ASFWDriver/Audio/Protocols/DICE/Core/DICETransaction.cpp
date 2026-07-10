@@ -6,10 +6,12 @@
 #include "DICETransaction.hpp"
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace ASFW::Audio::DICE {
 
@@ -59,6 +61,57 @@ void LogSectionPreview(const char* label, const uint8_t* data, size_t size) {
              label,
              size,
              HexPreview(data, size).c_str());
+}
+
+// A single async block read is bounded by the device's max_rec (512 bytes for
+// typical DICE firmware), but a multi-stream stream-format section is larger:
+// the Venice F32 needs 8 + 2*280 = 568 bytes, and stream 1's 256-byte label
+// blob starts at byte 304 — past a single 512-byte read. Chain fixed-size
+// chunk reads into one buffer so ParseStreamConfig sees every stream's labels.
+// A failure after the first chunk delivers the partial buffer (the parser
+// guards each stream's core/label region against the buffer size), matching
+// the old best-effort behavior; only a failed first chunk is a hard error.
+constexpr size_t kSectionReadChunkBytes = 512;
+constexpr size_t kMaxSectionReadBytes = 4096;
+
+void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
+                        uint32_t sectionOffsetBytes,
+                        size_t totalBytes,
+                        std::shared_ptr<std::vector<uint8_t>> accumulated,
+                        std::function<void(IOReturn)> done) {
+    const size_t have = accumulated->size();
+    if (have >= totalBytes) {
+        done(kIOReturnSuccess);
+        return;
+    }
+
+    const uint32_t chunk = static_cast<uint32_t>(
+        std::min(kSectionReadChunkBytes, totalBytes - have));
+    (void)io.ReadBlock(
+        MakeDICEAddress(sectionOffsetBytes + static_cast<uint32_t>(have)),
+        chunk,
+        [&io, sectionOffsetBytes, totalBytes, accumulated,
+         done = std::move(done)](Async::AsyncStatus status,
+                                 std::span<const uint8_t> payload) mutable {
+            if (status != Async::AsyncStatus::kSuccess || payload.empty()) {
+                if (accumulated->empty()) {
+                    done(MapReadStatus(status));
+                    return;
+                }
+                ASFW_LOG(DICE,
+                         "ReadSectionChunked: chunk at +%zu failed (status=%u); using %zu/%zu bytes",
+                         accumulated->size(),
+                         static_cast<unsigned>(status),
+                         accumulated->size(),
+                         totalBytes);
+                done(kIOReturnSuccess);
+                return;
+            }
+
+            accumulated->insert(accumulated->end(), payload.begin(), payload.end());
+            ReadSectionChunked(io, sectionOffsetBytes, totalBytes, accumulated,
+                               std::move(done));
+        });
 }
 
 } // anonymous namespace
@@ -145,32 +198,9 @@ void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
             state.notification = ReadBE32(data + GlobalOffset::kNotification);
         }
         if (size >= 0x4C) {
-            // Extract nickname (64 bytes = 16 quadlets starting at offset 0x0C)
-            // DICE stores strings as big-endian quadlets, so we need to read each
-            // 4-byte group as a quadlet and extract chars in big-endian order
-            size_t nickIdx = 0;
-            for (size_t q = 0; q < 16 && nickIdx < 63; ++q) {
-                size_t qOffset = 0x0C + q * 4;
-                if (qOffset + 4 > size) break;
-                
-                uint32_t quadlet = ReadBE32(data + qOffset);
-                
-                // Extract chars from quadlet (MSB first = big-endian string order)
-                char c0 = (quadlet >> 24) & 0xFF;
-                char c1 = (quadlet >> 16) & 0xFF;
-                char c2 = (quadlet >> 8) & 0xFF;
-                char c3 = quadlet & 0xFF;
-                
-                if (c0 == '\0') break;
-                state.nickname[nickIdx++] = c0;
-                if (c1 == '\0') break;
-                state.nickname[nickIdx++] = c1;
-                if (c2 == '\0') break;
-                state.nickname[nickIdx++] = c2;
-                if (c3 == '\0') break;
-                state.nickname[nickIdx++] = c3;
-            }
-            state.nickname[nickIdx] = '\0';
+            // Nickname is 64 bytes / 16 quadlets stored little-endian within each
+            // wire quadlet; DecodeDiceNickname handles the byte order.
+            DecodeDiceNickname(data, size, state.nickname);
         }
         if (size >= 0x50) {
             state.clockSelect = ReadBE32(data + GlobalOffset::kClockSelect);
@@ -240,15 +270,19 @@ void CopyLabelBlob(char (&dst)[256], const uint8_t* src, size_t bytesAvailable) 
     const size_t copyBytes = (bytesAvailable < (sizeof(dst) - 1)) ? bytesAvailable : (sizeof(dst) - 1);
     size_t out = 0;
 
-    // DICE stores text fields as big-endian quadlets. Decode quadlet-wise into
-    // host-order bytes instead of using memcpy; this avoids alignment-sensitive
-    // vectorized memmove paths on DriverKit RX payload buffers.
+    // DICE stores text fields little-endian: the first character of each quadlet
+    // lives in the least-significant byte. The wire transmits quadlets big-endian,
+    // so characters must be emitted LSB-first (same byte order as the nickname;
+    // emitting MSB-first byte-reverses each quadlet). Decoding quadlet-wise also
+    // avoids alignment-sensitive vectorized memmove paths on DriverKit RX buffers.
+    // cross-validated with FFADO dice_avdevice.cpp:1527,1547
+    // ("Strings from the device are always little-endian").
     while (out + 4 <= copyBytes) {
         const uint32_t q = ReadBE32(src + out);
-        dst[out + 0] = static_cast<char>((q >> 24) & 0xFF);
-        dst[out + 1] = static_cast<char>((q >> 16) & 0xFF);
-        dst[out + 2] = static_cast<char>((q >>  8) & 0xFF);
-        dst[out + 3] = static_cast<char>( q        & 0xFF);
+        dst[out + 0] = static_cast<char>( q        & 0xFF);
+        dst[out + 1] = static_cast<char>((q >>  8) & 0xFF);
+        dst[out + 2] = static_cast<char>((q >> 16) & 0xFF);
+        dst[out + 3] = static_cast<char>((q >> 24) & 0xFF);
         out += 4;
     }
 
@@ -376,58 +410,79 @@ void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
 }
 } // anonymous namespace
 
+std::vector<std::string> SplitDiceLabels(const char* labels) {
+    std::vector<std::string> names;
+    if (!labels) {
+        return names;
+    }
+    // CopyLabelBlob NUL-terminates the decoded blob.
+    std::string in(labels);
+
+    // The device terminates the channel-name list with a double backslash;
+    // anything past it is padding. (FFADO splitNameString.)
+    if (const auto term = in.find("\\\\"); term != std::string::npos) {
+        in.resize(term);
+    }
+
+    // Split on single-backslash separators, preserving empty tokens so the
+    // result index stays aligned with the channel index (FFADO splitString).
+    const std::string delim = "\\";
+    size_t start = 0;
+    while (start < in.size()) {
+        const size_t end = std::min(in.size(), in.find(delim, start));
+        names.push_back(in.substr(start, end - start));
+        start = end + delim.size();
+    }
+    return names;
+}
+
 void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
                                         std::function<void(IOReturn, StreamConfig)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const size_t readSize = (sections.rxStreamFormat.size > 512) ? 512 : sections.rxStreamFormat.size;
-    if (sections.rxStreamFormat.size > 512) {
-        ASFW_LOG(DICE, "RX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
-                 sections.rxStreamFormat.size, readSize);
-    }
-    
-    (void)io_.ReadBlock(MakeDICEAddress(sections.rxStreamFormat.offset),
-                  static_cast<uint32_t>(readSize),
-                  [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-        if (status != Async::AsyncStatus::kSuccess) {
-            Common::InvokeSharedCallback(callbackState, MapReadStatus(status), StreamConfig{});
-            return;
-        }
+    // Chunked read: cover the whole section (bounded) so every stream's label
+    // blob is parsed, not just stream 0's (see ReadSectionChunked).
+    const size_t readSize =
+        std::min<size_t>(sections.rxStreamFormat.size, kMaxSectionReadBytes);
+    auto accumulated = std::make_shared<std::vector<uint8_t>>();
+    accumulated->reserve(readSize);
+    ReadSectionChunked(
+        io_, sections.rxStreamFormat.offset, readSize, accumulated,
+        [callbackState, accumulated](IOReturn status) {
+            if (status != kIOReturnSuccess) {
+                Common::InvokeSharedCallback(callbackState, status, StreamConfig{});
+                return;
+            }
 
-        const uint8_t* data = payload.data();
-        const size_t size = payload.size();
-        LogSectionPreview("ReadRxStreamConfig", data, size);
-        StreamConfig config = ParseStreamConfig(data, size, true);
-        LogStreamConfigDetails("RX", config);
-        
-        Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
-    });
+            LogSectionPreview("ReadRxStreamConfig", accumulated->data(), accumulated->size());
+            StreamConfig config = ParseStreamConfig(accumulated->data(), accumulated->size(), true);
+            LogStreamConfigDetails("RX", config);
+
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
+        });
 }
 
 void DICETransaction::ReadTxStreamConfig(const GeneralSections& sections,
                                         std::function<void(IOReturn, StreamConfig)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const size_t readSize = (sections.txStreamFormat.size > 512) ? 512 : sections.txStreamFormat.size;
-    if (sections.txStreamFormat.size > 512) {
-        ASFW_LOG(DICE, "TX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
-                 sections.txStreamFormat.size, readSize);
-    }
+    // Chunked read: see ReadRxStreamConfig.
+    const size_t readSize =
+        std::min<size_t>(sections.txStreamFormat.size, kMaxSectionReadBytes);
+    auto accumulated = std::make_shared<std::vector<uint8_t>>();
+    accumulated->reserve(readSize);
+    ReadSectionChunked(
+        io_, sections.txStreamFormat.offset, readSize, accumulated,
+        [callbackState, accumulated](IOReturn status) {
+            if (status != kIOReturnSuccess) {
+                Common::InvokeSharedCallback(callbackState, status, StreamConfig{});
+                return;
+            }
 
-    (void)io_.ReadBlock(MakeDICEAddress(sections.txStreamFormat.offset),
-              static_cast<uint32_t>(readSize),
-              [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-                  if (status != Async::AsyncStatus::kSuccess) {
-                      Common::InvokeSharedCallback(callbackState, MapReadStatus(status), StreamConfig{});
-                      return;
-                  }
+            LogSectionPreview("ReadTxStreamConfig", accumulated->data(), accumulated->size());
+            StreamConfig config = ParseStreamConfig(accumulated->data(), accumulated->size(), false);
+            LogStreamConfigDetails("TX", config);
 
-                  const uint8_t* data = payload.data();
-                  const size_t size = payload.size();
-                  LogSectionPreview("ReadTxStreamConfig", data, size);
-                  StreamConfig config = ParseStreamConfig(data, size, false);
-                  LogStreamConfigDetails("TX", config);
-
-                  Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
-              });
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, config);
+        });
 }
 
 void DICETransaction::ReadCapabilities(std::function<void(IOReturn, DICECapabilities)> callback) {
