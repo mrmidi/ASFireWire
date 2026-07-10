@@ -18,17 +18,16 @@
 #include <vector>
 
 #include "ASFWDriver/Async/AsyncTypes.hpp"
-#include "ASFWDriver/Hardware/IEEE1394.hpp"
 #include "ASFWDriver/Async/Rx/ARPacketParser.hpp"
 #include "ASFWDriver/Async/Rx/PacketRouter.hpp"
 #include "ASFWDriver/Async/Tx/PacketBuilder.hpp"
+#include "ASFWDriver/Hardware/IEEE1394.hpp"
 
 using namespace ASFW::Async;
 
 namespace {
 
-template <std::size_t N>
-constexpr std::array<uint32_t, N> LoadHostQuadlets(const uint8_t* base) {
+template <std::size_t N> constexpr std::array<uint32_t, N> LoadHostQuadlets(const uint8_t* base) {
     std::array<uint32_t, N> words{};
     std::memcpy(words.data(), base, N * sizeof(uint32_t));
     return words;
@@ -97,11 +96,12 @@ TEST(AsyncPacketSerDesLinuxCompat, ReadQuadletRequestMatchesLinuxVector) {
     const auto hostWords = LoadHostQuadlets<3>(buffer.data());
 
     // Verify Linux OHCI format
-    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);  // tLabel at bits[15:10]
-    EXPECT_EQ((hostWords[0] >> 16) & 0x7u, context.speedCode & 0x7u);  // speed at bits[18:16]
-    EXPECT_EQ((hostWords[0] >> 8) & 0x3u, 0x01u);  // retry at bits[9:8]
-    EXPECT_EQ((hostWords[0] >> 4) & 0xFu, HW::AsyncRequestHeader::kTcodeReadQuad);  // tCode at bits[7:4]
-    const uint16_t destID = static_cast<uint16_t>(hostWords[1] >> 16);  // destID in Q1[31:16]
+    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);                  // tLabel at bits[15:10]
+    EXPECT_EQ((hostWords[0] >> 16) & 0x7u, context.speedCode & 0x7u); // speed at bits[18:16]
+    EXPECT_EQ((hostWords[0] >> 8) & 0x3u, 0x01u);                     // retry at bits[9:8]
+    EXPECT_EQ((hostWords[0] >> 4) & 0xFu,
+              HW::AsyncRequestHeader::kTcodeReadQuad);                 // tCode at bits[7:4]
+    const uint16_t destID = static_cast<uint16_t>(hostWords[1] >> 16); // destID in Q1[31:16]
     EXPECT_EQ(destID, MakeDestinationID(context.sourceNodeID, params.destinationID));
     EXPECT_EQ(static_cast<uint16_t>(hostWords[1] & 0xFFFFu),
               static_cast<uint16_t>(params.addressHigh));
@@ -131,10 +131,11 @@ TEST(AsyncPacketSerDesLinuxCompat, WriteQuadletRequestMatchesLinuxVector) {
     const auto hostWords = LoadHostQuadlets<4>(buffer.data());
 
     // Verify Linux OHCI format
-    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);  // tLabel at bits[15:10]
-    EXPECT_EQ((hostWords[0] >> 16) & 0x7u, context.speedCode & 0x7u);  // speed at bits[18:16]
-    EXPECT_EQ((hostWords[0] >> 8) & 0x3u, 0x01u);  // retry at bits[9:8]
-    EXPECT_EQ((hostWords[0] >> 4) & 0xFu, HW::AsyncRequestHeader::kTcodeWriteQuad);  // tCode at bits[7:4]
+    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);                  // tLabel at bits[15:10]
+    EXPECT_EQ((hostWords[0] >> 16) & 0x7u, context.speedCode & 0x7u); // speed at bits[18:16]
+    EXPECT_EQ((hostWords[0] >> 8) & 0x3u, 0x01u);                     // retry at bits[9:8]
+    EXPECT_EQ((hostWords[0] >> 4) & 0xFu,
+              HW::AsyncRequestHeader::kTcodeWriteQuad); // tCode at bits[7:4]
     EXPECT_EQ(hostWords[3], payloadQuadlet);
 }
 
@@ -158,8 +159,9 @@ TEST(AsyncPacketSerDesLinuxCompat, WriteBlockRequestMatchesLinuxVector) {
 
     const auto hostWords = LoadHostQuadlets<4>(buffer.data());
 
-    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);  // tLabel at bits[15:10]
-    EXPECT_EQ((hostWords[0] >> 4) & 0xFu, HW::AsyncRequestHeader::kTcodeWriteBlock);  // tCode at bits[7:4]
+    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel); // tLabel at bits[15:10]
+    EXPECT_EQ((hostWords[0] >> 4) & 0xFu,
+              HW::AsyncRequestHeader::kTcodeWriteBlock); // tCode at bits[7:4]
     EXPECT_EQ(hostWords[3], static_cast<uint32_t>(params.length) << 16);
 
     EXPECT_EQ(static_cast<uint16_t>((hostWords[1] >> 16) & 0xFFFFu),
@@ -191,11 +193,11 @@ TEST(AsyncPacketSerDesLinuxCompat, LockRequestMatchesLinuxVector) {
 
     const auto hostWords = LoadHostQuadlets<4>(buffer.data());
 
-    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);  // tLabel at bits[15:10]
-    EXPECT_EQ((hostWords[0] >> 4) & 0xFu, HW::AsyncRequestHeader::kTcodeLockRequest);  // tCode at bits[7:4]
-    EXPECT_EQ(hostWords[3],
-              (static_cast<uint32_t>(params.operandLength) << 16) |
-                  static_cast<uint32_t>(kExtendedTCode));
+    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel); // tLabel at bits[15:10]
+    EXPECT_EQ((hostWords[0] >> 4) & 0xFu,
+              HW::AsyncRequestHeader::kTcodeLockRequest); // tCode at bits[7:4]
+    EXPECT_EQ(hostWords[3], (static_cast<uint32_t>(params.operandLength) << 16) |
+                                static_cast<uint32_t>(kExtendedTCode));
 
     EXPECT_EQ(static_cast<uint16_t>((hostWords[1] >> 16) & 0xFFFFu),
               MakeDestinationID(context.sourceNodeID, params.destinationID));
@@ -218,12 +220,13 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
     const auto buffer = std::span<const uint8_t>(packet.data(), packet.size());
     const auto info = ARPacketParser::ParseNext(buffer, 0);
     if (!info.has_value()) {
-        GTEST_SKIP() << "ARPacketParser::ParseNext rejected the linux read-quadlet response fixture.";
+        GTEST_SKIP()
+            << "ARPacketParser::ParseNext rejected the linux read-quadlet response fixture.";
     }
     EXPECT_EQ(info->headerLength, 16u);
     EXPECT_EQ(info->dataLength, 0u);
     EXPECT_EQ(info->tCode, 0x6);
-    EXPECT_EQ(info->rCode, 0u);  // RCODE_COMPLETE
+    EXPECT_EQ(info->rCode, 0u);        // RCODE_COMPLETE
     EXPECT_EQ(info->totalLength, 20u); // 16-byte header + 4-byte trailer
 
     PacketRouter router;
@@ -243,13 +246,19 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
 TEST(AsyncPacketSerDesLinuxCompat, ParseReadBlockResponseComputesPayloadLength) {
     // Q3 specifies data_length = 0x20 (32 bytes), so we need to include 32 bytes of payload
     const auto packet = MakeARBufferFromOHCIWords({
-        0xFFC1E170u,  // Q0: header
-        0xFFC00000u,  // Q1: source ID
-        0x00000000u,  // Q2: reserved
-        0x00200000u,  // Q3: data_length=0x20 (32 bytes)
+        0xFFC1E170u, // Q0: header
+        0xFFC00000u, // Q1: source ID
+        0x00000000u, // Q2: reserved
+        0x00200000u, // Q3: data_length=0x20 (32 bytes)
         // Payload: 32 bytes = 8 quadlets of dummy data
-        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
-        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+        0x00000000u,
+        0x00000000u,
+        0x00000000u,
+        0x00000000u,
+        0x00000000u,
+        0x00000000u,
+        0x00000000u,
+        0x00000000u,
     });
     const auto buffer = std::span<const uint8_t>(packet.data(), packet.size());
     const auto info = ARPacketParser::ParseNext(buffer, 0);
@@ -311,12 +320,12 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength
 
 TEST(AsyncPacketSerDesLinuxCompat, RequestPayloadIsCopiedIntoAlignedScratchBeforeHandler) {
     const auto packet = MakeARBufferFromOHCIWords({
-        0xFFC16510u,  // Q0: tCode=0x1 (write block), tLabel arbitrary
-        0xFFC0ECC0u,  // Q1: src=0xFFC0, addrHi=0xECC0
-        0x00000000u,  // Q2: addrLo
-        0x00080000u,  // Q3: data_length=8
-        0x11223344u,  // payload q0
-        0x55667788u,  // payload q1
+        0xFFC16510u, // Q0: tCode=0x1 (write block), tLabel arbitrary
+        0xFFC0ECC0u, // Q1: src=0xFFC0, addrHi=0xECC0
+        0x00000000u, // Q2: addrLo
+        0x00080000u, // Q3: data_length=8
+        0x11223344u, // payload q0
+        0x55667788u, // payload q1
     });
 
     std::vector<uint8_t> misaligned;
@@ -337,8 +346,14 @@ TEST(AsyncPacketSerDesLinuxCompat, RequestPayloadIsCopiedIntoAlignedScratchBefor
         if (view.payload.size() == 8u) {
             EXPECT_EQ((std::array<uint8_t, 8>{0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55}),
                       (std::array<uint8_t, 8>{
-                          view.payload[0], view.payload[1], view.payload[2], view.payload[3],
-                          view.payload[4], view.payload[5], view.payload[6], view.payload[7],
+                          view.payload[0],
+                          view.payload[1],
+                          view.payload[2],
+                          view.payload[3],
+                          view.payload[4],
+                          view.payload[5],
+                          view.payload[6],
+                          view.payload[7],
                       }));
         }
         return ResponseCode::Complete;
@@ -353,13 +368,11 @@ TEST(AsyncPacketSerDesLinuxCompat, RequestPayloadIsCopiedIntoAlignedScratchBefor
 TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
     // Read quadlet response packet as OHCI AR DMA memory: tLabel=48, tCode=6, rCode=0.
     // After the little-endian quadlet write, memory byte1 holds [tLabel:6][rt:2].
-    // 16-byte header + mandatory 4-byte OHCI trailer.
+    // The final quadlet is the AR bufferFill trailer (xferStatus/timeStamp),
+    // which hardware appends to every packet (OHCI §8.4.2).
     const std::array<uint8_t, 20> responseBytes{
-        0x60, 0xC2, 0x01, 0x60,
-        0x00, 0x00, 0xC0, 0xFF,
-        0x00, 0x00, 0x00, 0x00,
-        0x04, 0x20, 0x8F, 0xE2,
-        0x00, 0x00, 0x11, 0x00,
+        0x60, 0xC2, 0x01, 0x60, 0x00, 0x00, 0xC0, 0xFF, 0x00, 0x00,
+        0x00, 0x00, 0x04, 0x20, 0x8F, 0xE2, 0x00, 0x00, 0x11, 0x00,
     };
 
     PacketRouter router;
@@ -369,7 +382,8 @@ TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
         EXPECT_EQ(view.tLabel, 48u);
         return ResponseCode::NoResponse;
     });
-    const auto responseBuffer = std::span<const uint8_t>(responseBytes.data(), responseBytes.size());
+    const auto responseBuffer =
+        std::span<const uint8_t>(responseBytes.data(), responseBytes.size());
     const auto info = ARPacketParser::ParseNext(responseBuffer, 0);
     ASSERT_TRUE(info.has_value());
     router.RouteParsedPacket(ARContextType::Response, *info, /*generation=*/0);

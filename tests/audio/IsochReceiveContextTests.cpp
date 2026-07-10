@@ -42,8 +42,6 @@ protected:
     void TearDown() override {
         if (context_) {
             context_->Stop();
-            // context_->release(); // OSSharedPtr manages refcount? No, it's a smart pointer wrapper.
-            // If Create returns OSSharedPtr, we should just let it destruct or reset.
             context_.reset();
         }
         if (hardware_) {
@@ -54,7 +52,7 @@ protected:
 
     ::ASFW::Driver::HardwareInterface* hardware_{nullptr};
     std::shared_ptr<IIsochDMAMemory> dmaMemory_;
-    OSSharedPtr<IsochReceiveContext> context_;
+    std::unique_ptr<IsochReceiveContext> context_;
 };
 
 TEST_F(IsochReceiveContextTest, Initialization) {
