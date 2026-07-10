@@ -16,14 +16,16 @@
 //
 // UserProcessParallelTask forwards SCSI tasks to the real SBP-2 target via
 // SBP2TargetBridge/SessionRegistry (see the .cpp). Target 0 is created at SBP-2
-// login and destroyed at logout (framework hotplug model): UserTargetPresentForID
-// answers false until a device is actually logged in, so the bring-up presence
-// scan creates nothing and a machine booting with no SBP-2 device on the bus has
-// no target to strand (the pre-fix unconditional presence answer held the boot
-// probe INQUIRY forever and tripped watchdogd's 60 s registry busy-timeout —
-// IOService.cpp:5986, issue #54). A probe INQUIRY arriving while the session is
-// suspended (bus reset) is deferred and replayed with the device's real INQUIRY
-// once login is back (generic, no per-device identity).
+// login and destroyed at terminal logout (pure framework hotplug model):
+// UserTargetPresentForID answers false unconditionally, so the bring-up
+// presence scan never creates a target — a machine booting with no SBP-2
+// device on the bus has no target to strand (the pre-fix unconditional true
+// held the boot probe INQUIRY forever and tripped watchdogd's 60 s registry
+// busy-timeout — IOService.cpp:5986, issue #54), and a login-driven create can
+// never be duplicated by the scan. The SAM probes the target right after the
+// login-edge create, while the session is up, so the probe INQUIRY returns the
+// device's real identity; in the suspended window (bus reset) commands answer
+// BUSY — nothing is ever held without a deadline.
 //
 // Matching: this HBA co-matches the OHCI PCI device directly (IOProviderClass
 // IOPCIDevice + IOPCIMatch, distinct IOMatchCategory), alongside the main
@@ -113,7 +115,7 @@ struct ASFWSCSIController_IVars {
     // the Default queue (which services the framework's target-init upcalls).
     IODispatchQueue* lifecycleQueue{nullptr};
     uint32_t nextUniqueTaskID{0};       // handed out in UserMapHBAData (must be unique per task)
-    void* pendingState{nullptr};        // PendingState* (held INQUIRY + target/stop flags), defined in .cpp
+    void* pendingState{nullptr};        // PendingState* (target/stop flags), defined in .cpp
 };
 
 #endif /* ASFWSCSIController_h */
