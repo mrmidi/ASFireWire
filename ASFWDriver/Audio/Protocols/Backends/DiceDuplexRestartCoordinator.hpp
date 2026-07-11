@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "ClockRequestBroker.hpp"
 #include "DiceHostTransport.hpp"
 #include "DuplexOperationGate.hpp"
 #include "RestartSessionStore.hpp"
@@ -15,12 +16,9 @@
 #include "../DICE/Core/DICERestartSession.hpp"
 
 #include <atomic>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace ASFW::Audio {
 
@@ -63,16 +61,7 @@ public:
     }
 
 private:
-    struct PendingClockRequest {
-        DICE::DiceDesiredClockConfig desiredClock{};
-        DICE::DiceRestartReason reason{DICE::DiceRestartReason::kManualReconfigure};
-        uint64_t token{0};
-    };
-
-    struct ClockCompletionStore {
-        std::unordered_map<uint64_t, DICE::DiceClockRequestCompletion> byToken{};
-        std::deque<uint64_t> insertionOrder{};
-    };
+    using PendingClockRequest = Backends::ClockRequestBroker::PendingClockRequest;
 
     [[nodiscard]] IOReturn RunStartStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn RunStopStreaming(uint64_t guid) noexcept;
@@ -155,9 +144,9 @@ private:
     // FW-69b: per-GUID session persistence + restart-id allocator. Borrows &lock_ (see
     // RestartSessionStore) so its critical sections share the coordinator's single lock.
     Backends::RestartSessionStore store_{&lock_};
-    std::unordered_map<uint64_t, PendingClockRequest> pendingClockRequests_{};
-    std::unordered_map<uint64_t, ClockCompletionStore> completedClockRequests_{};
-    uint64_t nextClockToken_{1};
+    // FW-67: clock token + pending/completion delivery. Borrows &lock_ and shares the store so
+    // pending/completion state remains atomic with the restart-session snapshot.
+    Backends::ClockRequestBroker clockRequests_{&lock_, store_};
     std::atomic<uint64_t> teardownAbortCount_{0};
 
     static constexpr uint32_t kSyncBridgeTimeoutMs = 12000;
@@ -165,7 +154,6 @@ private:
     static constexpr uint32_t kGlobalClockLockTimeoutMs = 1000;
     static constexpr uint32_t kGlobalClockLockPollMs = 10;
     static constexpr uint32_t kGlobalClockStableReads = 3;
-    static constexpr size_t kMaxCompletedClockRequestsPerGuid = 32;
 };
 
 } // namespace ASFW::Audio

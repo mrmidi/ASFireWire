@@ -80,6 +80,11 @@ add_device_test(RestartSessionStoreTests
     RestartSessionStoreTests.cpp
 )
 
+# DICE clock-request broker tests (FW-67, header-only lock-borrowing broker)
+add_device_test(ClockRequestBrokerTests
+    ClockRequestBrokerTests.cpp
+)
+
 # Apogee protocol boolean control mapping tests
 add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp
@@ -90,5 +95,4 @@ add_device_test(ApogeeDuetVendorCmdTests
     ApogeeDuetVendorCmdTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
 )
-
 
