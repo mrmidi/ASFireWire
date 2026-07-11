@@ -40,7 +40,7 @@ AudioCoordinator::~AudioCoordinator() noexcept {
 }
 
 void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
-    avc_.SetCMPClient(client);
+    runtime_.SetCMPClient(client);
 }
 
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
@@ -332,6 +332,7 @@ IOReturn AudioCoordinator::RequestClockConfig(
 void AudioCoordinator::BeginTeardown() noexcept {
     ASFW_LOG(Audio, "AudioCoordinator: BeginTeardown");
     dice_.BeginTeardown();
+    avc_.BeginTeardown();
 
     if (lock_) {
         IOLockLock(lock_);

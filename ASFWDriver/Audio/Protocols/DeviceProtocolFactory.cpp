@@ -17,7 +17,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,
     uint16_t nodeId,
-    IRM::IRMClient* irmClient
+    IRM::IRMClient* irmClient,
+    CMP::CMPClient* cmpClient
 ) {
     if (vendorId == kFocusriteVendorId) {
         if (modelId == kSPro24DspModelId) {
@@ -72,7 +73,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId, modelId, nodeId);
         // Factory path intentionally does not bind FCP transport yet.
         // AVCDiscovery wires transport for live command execution.
-        return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(busOps, busInfo, nodeId, nullptr);
+        return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
+            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient);
     }
     
     // Unknown device

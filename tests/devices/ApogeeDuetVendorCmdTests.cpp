@@ -4,9 +4,13 @@
 // ApogeeDuetVendorCmdTests.cpp - Unit tests for Apogee Duet vendor command encoding/decoding
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <span>
+#include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
+#include "Bus/IRM/IRMClient.hpp"
+#include "Protocols/AVC/CMP/CMPClient.hpp"
 #include "Protocols/AVC/FCPTransport.hpp"
 
 using namespace ASFW::Audio::Oxford::Apogee;
@@ -19,6 +23,59 @@ using DuetOutputMuteMode = OutputMuteMode;
 // Constants from ApogeeDuetProtocol
 constexpr uint8_t kBoolOn = 0x70;
 constexpr uint8_t kBoolOff = 0x60;
+
+namespace {
+
+std::vector<ASFW::Protocols::AVC::FCPFrame> gSubmittedFCPFrames;
+
+class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
+  public:
+    ASFW::Async::AsyncHandle ReadBlock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress, uint32_t,
+        ASFW::FW::FwSpeed, ASFW::Async::InterfaceCompletionCallback callback) override {
+        const uint32_t pcrBE = OSSwapHostToBigInt32(0x80000000U);
+        std::array<uint8_t, 4> payload{};
+        std::memcpy(payload.data(), &pcrBE, sizeof(pcrBE));
+        callback(ASFW::Async::AsyncStatus::kSuccess, payload);
+        return {.value = ++handle_};
+    }
+
+    ASFW::Async::AsyncHandle WriteBlock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress,
+        std::span<const uint8_t>, ASFW::FW::FwSpeed,
+        ASFW::Async::InterfaceCompletionCallback callback) override {
+        callback(ASFW::Async::AsyncStatus::kSuccess, {});
+        return {.value = ++handle_};
+    }
+
+    ASFW::Async::AsyncHandle Lock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress,
+        ASFW::FW::LockOp, std::span<const uint8_t> operand, uint32_t,
+        ASFW::FW::FwSpeed, ASFW::Async::InterfaceCompletionCallback callback) override {
+        std::array<uint8_t, 4> oldValue{};
+        std::copy_n(operand.begin(), oldValue.size(), oldValue.begin());
+        if (failCompareSwap) {
+            oldValue[3] ^= 0x01U;
+        }
+        callback(ASFW::Async::AsyncStatus::kSuccess, oldValue);
+        return {.value = ++handle_};
+    }
+
+    bool Cancel(ASFW::Async::AsyncHandle) override { return false; }
+    ASFW::FW::FwSpeed GetSpeed(ASFW::FW::NodeId) const override {
+        return ASFW::FW::FwSpeed::S400;
+    }
+    uint32_t HopCount(ASFW::FW::NodeId, ASFW::FW::NodeId) const override { return 0; }
+    ASFW::FW::Generation GetGeneration() const override { return ASFW::FW::Generation{1}; }
+    ASFW::FW::NodeId GetLocalNodeID() const override { return ASFW::FW::NodeId{0}; }
+
+    bool failCompareSwap{false};
+
+  private:
+    uint32_t handle_{0};
+};
+
+} // namespace
 
 // Helper to match old BuildOperands API
 inline std::vector<uint8_t> BuildOperands(const VendorCmd& cmd) {
@@ -381,11 +438,66 @@ TEST(ApogeeDuetVendorCmd, BuildDisplayParamsQuery) {
     EXPECT_EQ(cmds.size(), 3u);  // isInput, followKnob, overhold
 }
 
+TEST(ApogeeDuetDuplexAdapter, Applies48kToOutputThenInputUnitPlugs) {
+    using namespace ASFW::Protocols::AVC;
+    RecordingAVCBus bus;
+    FCPTransport transport;
+    ApogeeDuetProtocol protocol(bus, bus, 2, &transport);
+    gSubmittedFCPFrames.clear();
+
+    IOReturn completionStatus = kIOReturnNotReady;
+    protocol.ApplyClockConfig(
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
+        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+            completionStatus = status;
+        });
+
+    ASSERT_EQ(completionStatus, kIOReturnSuccess);
+    ASSERT_EQ(gSubmittedFCPFrames.size(), 2U);
+    constexpr std::array<uint8_t, 8> expectedOutput{
+        0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF};
+    constexpr std::array<uint8_t, 8> expectedInput{
+        0x00, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF};
+    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[0].Payload(), expectedOutput));
+    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[1].Payload(), expectedInput));
+}
+
+TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
+    RecordingAVCBus bus;
+    ASFW::IRM::IRMClient irm(bus);
+    ASFW::CMP::CMPClient cmp(bus);
+    cmp.SetDeviceNode(2, ASFW::IRM::Generation{1});
+    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp);
+
+    IOReturn rxStatus = kIOReturnNotReady;
+    protocol.ProgramRx([&rxStatus](IOReturn status, ASFW::Audio::DuplexStageResult) {
+        rxStatus = status;
+    });
+    EXPECT_EQ(rxStatus, kIOReturnSuccess);
+
+    bus.failCompareSwap = true;
+    IOReturn txStatus = kIOReturnNotReady;
+    protocol.ProgramTxAndEnableDuplex(
+        [&txStatus](IOReturn status, ASFW::Audio::DuplexStageResult) { txStatus = status; });
+    EXPECT_EQ(txStatus, kIOReturnError);
+}
+
 // Linker stub for FCPTransport::SubmitCommand (not invoked by tests)
 namespace ASFW::Protocols::AVC {
+bool FCPTransport::init(Protocols::Ports::FireWireBusOps*,
+                        Protocols::Ports::FireWireBusInfo*,
+                        Discovery::FWDevice*,
+                        const FCPTransportConfig&) {
+    return true;
+}
+
+void FCPTransport::free() {}
+
 FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command, FCPCompletion completion) {
-    (void)command;
-    (void)completion;
-    return FCPHandle{};
+    gSubmittedFCPFrames.push_back(command);
+    FCPFrame response = command;
+    response.data[0] = static_cast<uint8_t>(AVCResponseType::kAccepted);
+    completion(FCPStatus::kOk, response);
+    return FCPHandle{.transactionID = static_cast<uint32_t>(gSubmittedFCPFrames.size())};
 }
 }

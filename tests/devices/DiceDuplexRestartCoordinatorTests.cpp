@@ -70,6 +70,8 @@ constexpr uint64_t kTestGuid = 0x00130E0402004713ULL;
 constexpr uint32_t kQueueBytes = 4096;
 constexpr uint32_t kFocusriteVendorId = ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId;
 constexpr uint32_t kSPro24DspModelId = ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId;
+constexpr uint32_t kApogeeVendorId = ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId;
+constexpr uint32_t kApogeeDuetModelId = ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
 constexpr AudioClockConfig kSupportedClock{
     .sampleRateHz = 48000U,
 };
@@ -244,6 +246,18 @@ class FakeDiceHostTransport final : public IIsochDuplexHostTransport {
         return startTransmitStatus;
     }
 
+    kern_return_t StopPreparedReceive() noexcept override {
+        log_.Add("host.stop_receive");
+        ++stopReceiveCalls;
+        return stopReceiveStatus;
+    }
+
+    kern_return_t StopPreparedTransmit() noexcept override {
+        log_.Add("host.stop_transmit");
+        ++stopTransmitCalls;
+        return stopTransmitStatus;
+    }
+
     kern_return_t StopAll() noexcept override {
         log_.Add("host.stop");
         ++stopCalls;
@@ -258,6 +272,8 @@ class FakeDiceHostTransport final : public IIsochDuplexHostTransport {
     kern_return_t startReceiveStatus{kIOReturnSuccess};
     kern_return_t startTransmitStatus{kIOReturnSuccess};
     kern_return_t stopStatus{kIOReturnSuccess};
+    kern_return_t stopReceiveStatus{kIOReturnSuccess};
+    kern_return_t stopTransmitStatus{kIOReturnSuccess};
 
     uint64_t lastGuid{0};
     uint8_t lastPlaybackChannel{0};
@@ -295,6 +311,8 @@ class FakeDiceHostTransport final : public IIsochDuplexHostTransport {
     int startReceiveCalls{0};
     int startTransmitCalls{0};
     int stopCalls{0};
+    int stopReceiveCalls{0};
+    int stopTransmitCalls{0};
 
   private:
     SharedCallLog& log_;
@@ -438,6 +456,18 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
                                });
     }
 
+    void DisconnectPlayback(VoidCallback callback) override {
+        log_.Add("device.disconnect_playback");
+        ++disconnectPlaybackCalls;
+        callback(disconnectPlaybackStatus);
+    }
+
+    void DisconnectCapture(VoidCallback callback) override {
+        log_.Add("device.disconnect_capture");
+        ++disconnectCaptureCalls;
+        callback(disconnectCaptureStatus);
+    }
+
     IOReturn StopDuplex() override {
         log_.Add("device.stop");
         ++stopCalls;
@@ -488,6 +518,8 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     IOReturn applyClockStatus{kIOReturnSuccess};
     IOReturn healthStatus{kIOReturnSuccess};
     IOReturn stopStatus{kIOReturnSuccess};
+    IOReturn disconnectPlaybackStatus{kIOReturnSuccess};
+    IOReturn disconnectCaptureStatus{kIOReturnSuccess};
 
     uint32_t healthNotification{0x20};
     uint32_t healthStatusValue{0x201};
@@ -502,6 +534,8 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
     int applyClockCalls{0};
     int healthReadCalls{0};
     int stopCalls{0};
+    int disconnectPlaybackCalls{0};
+    int disconnectCaptureCalls{0};
 
   private:
     SharedCallLog& log_;
@@ -641,6 +675,51 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
                                  "host.start_transmit",
                                  "device.confirm",
                              }));
+}
+
+TEST_F(DiceDuplexRestartCoordinatorTests,
+       AvcProfileReservesBothDirectionsAndInterleavesHostStartsWithDeviceStages) {
+    registry_.UpsertFromROM(
+        MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
+    ClearLog();
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+
+    EXPECT_EQ(hostTransport_.reservePlaybackCalls, 1);
+    EXPECT_EQ(hostTransport_.reserveCaptureCalls, 1);
+    EXPECT_EQ(hostTransport_.lastPlaybackChannel, 1U);
+    EXPECT_EQ(hostTransport_.lastCaptureChannel, 0U);
+    EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{
+                                 "host.begin",
+                                 "device.prepare",
+                                 "host.reserve_playback",
+                                 "host.reserve_capture",
+                                 "host.prepare_receive",
+                                 "host.prepare_transmit",
+                                 "device.health",
+                                 "device.health",
+                                 "device.health",
+                                 "host.start_receive",
+                                 "device.program_rx",
+                                 "host.start_transmit",
+                                 "device.program_tx",
+                                 "device.confirm",
+                             }));
+
+    ClearLog();
+    protocol_->disconnectPlaybackStatus = kIOReturnTimeout;
+    protocol_->disconnectCaptureStatus = kIOReturnError;
+    hostTransport_.stopTransmitStatus = kIOReturnError;
+    hostTransport_.stopReceiveStatus = kIOReturnTimeout;
+    ASSERT_EQ(coordinator_.StopStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{
+                                 "device.disconnect_playback",
+                                 "host.stop_transmit",
+                                 "device.disconnect_capture",
+                                 "host.stop_receive",
+                                 "host.stop",
+                             }));
+    EXPECT_EQ(protocol_->stopCalls, 0);
 }
 
 TEST_F(DiceDuplexRestartCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {

@@ -113,6 +113,11 @@ void DiceAudioBackend::BeginTeardown() noexcept {
 #endif
     }
 
+    // Releases every generic-runner IRM reservation while the IRM client is
+    // still alive. IsochService::StopAll remains idempotent when the outer
+    // service teardown invokes it again.
+    (void)hostTransport_.StopAll();
+
     const uint64_t endMs = UptimeMilliseconds();
     const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;
     const uint64_t coordinatorAborted =

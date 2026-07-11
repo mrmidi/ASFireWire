@@ -8,6 +8,7 @@
 
 #include "ApogeeTypes.hpp"
 #include "../../IDeviceProtocol.hpp"
+#include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
 #include <DriverKit/IOReturn.h>
 #include <vector>
@@ -19,9 +20,18 @@ namespace ASFW::Protocols::AVC {
     class FCPTransport;
 }
 
+namespace ASFW::IRM {
+class IRMClient;
+}
+
+namespace ASFW::CMP {
+class CMPClient;
+}
+
 namespace ASFW::Audio::Oxford::Apogee {
 
-class ApogeeDuetProtocol : public IDeviceProtocol {
+class ApogeeDuetProtocol final : public IDeviceProtocol,
+                                 public IDuplexDeviceControl {
 public:
     struct VendorCommand {
         enum class Code : uint8_t {
@@ -95,7 +105,9 @@ public:
     ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                        Protocols::Ports::FireWireBusInfo& busInfo,
                        uint16_t nodeId,
-                       Protocols::AVC::FCPTransport* fcpTransport = nullptr);
+                       Protocols::AVC::FCPTransport* fcpTransport = nullptr,
+                       IRM::IRMClient* irmClient = nullptr,
+                       CMP::CMPClient* cmpClient = nullptr);
     virtual ~ApogeeDuetProtocol() = default;
 
     // IDeviceProtocol implementation
@@ -104,6 +116,25 @@ public:
     const char* GetName() const override { return "Apogee Duet FireWire"; }
     bool HasDsp() const override { return true; } // Has mixer/DSP features
     bool HasMixer() const override { return true; }
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
+    const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
+
+    // IDuplexDeviceControl: the generic lifecycle owns IRM + host isoch;
+    // this adapter owns only AV/C signal-format and CMP/PCR operations.
+    void PrepareDuplex(const AudioDuplexChannels& channels,
+                       const AudioClockConfig& desiredClock,
+                       PrepareCallback callback) override;
+    void ProgramRx(StageCallback callback) override;
+    void ProgramTxAndEnableDuplex(StageCallback callback) override;
+    void ConfirmDuplexStart(ConfirmCallback callback) override;
+    void ApplyClockConfig(const AudioClockConfig& desiredClock,
+                          ClockApplyCallback callback) override;
+    void ReadDuplexHealth(HealthCallback callback) override;
+    void DisconnectPlayback(VoidCallback callback) override;
+    void DisconnectCapture(VoidCallback callback) override;
+    [[nodiscard]] IOReturn StopDuplex() override;
+    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
     // ========================================================================
     // Parameter Access (Async)
@@ -192,6 +223,12 @@ private:
     Protocols::Ports::FireWireBusInfo& busInfo_;
     uint16_t nodeId_;
     Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
+    IRM::IRMClient* irmClient_{nullptr};
+    CMP::CMPClient* cmpClient_{nullptr};
+    AudioDuplexChannels duplexChannels_{};
+    AudioClockConfig appliedClock_{};
+    bool outputConnected_{false};
+    bool inputConnected_{false};
 
     // Helpers
     using VendorResultCallback = std::function<void(IOReturn, const VendorCommand&)>;

@@ -15,6 +15,10 @@
 #include <memory>
 #include <optional>
 
+namespace ASFW::CMP {
+class CMPClient;
+}
+
 namespace ASFW::IRM {
 class IRMClient;
 }
@@ -148,7 +152,8 @@ public:
         Protocols::Ports::FireWireBusOps& busOps,
         Protocols::Ports::FireWireBusInfo& busInfo,
         uint16_t nodeId,
-        ::ASFW::IRM::IRMClient* irmClient = nullptr
+        ::ASFW::IRM::IRMClient* irmClient = nullptr,
+        ::ASFW::CMP::CMPClient* cmpClient = nullptr
     );
 
 private:
