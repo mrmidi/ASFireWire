@@ -28,6 +28,7 @@ class IDirectAudioBindingSource;
 
 class AudioRuntimeRegistry;
 class IDeviceProtocol;
+class DuplexStartTransaction;
 
 class DiceDuplexRestartCoordinator final {
 public:
@@ -61,6 +62,8 @@ public:
     }
 
 private:
+    friend class DuplexStartTransaction;
+
     using PendingClockRequest = Backends::ClockRequestBroker::PendingClockRequest;
 
     [[nodiscard]] IOReturn RunStartStreaming(uint64_t guid) noexcept;
@@ -86,12 +89,6 @@ private:
                                              FW::Generation topologyGeneration,
                                              const DICE::DiceDesiredClockConfig& desiredClock,
                                              DICE::DiceRestartReason reason) noexcept;
-    [[nodiscard]] IOReturn WaitForStableGlobalClock(
-        uint64_t guid,
-        DICE::IDICEDuplexProtocol& diceProtocol,
-        FW::Generation topologyGeneration,
-        const DICE::DiceDesiredClockConfig& desiredClock) noexcept;
-
     // Resolves the record + its DICE duplex surface for `guid`. `outHold` receives a
     // shared_ptr to the owning IDeviceProtocol; callers must keep it alive for as long as
     // they use `outDiceProtocol` (it is a view into the held protocol).
