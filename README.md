@@ -355,6 +355,48 @@ NOTE: You need an Apple Developer account (paid) and appropriate entitlements �
 
 Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build
 
+### SCSI HBA (SBP-2 scanners/disks) — opt-in
+
+The SCSI HBA (`ASFWSCSIControllerService`, for SBP-2 devices such as FireWire film
+scanners and disks) is **excluded from the default build**, because shipping it by
+default can **panic the machine into a boot loop** (~60 s registry busy-timeout,
+`IOService.cpp:5986`, no device attached) through two independent paths:
+
+- Its Info.plist personality instantiates a kernel-side
+  `IOUserSCSIParallelInterfaceController` as soon as the FireWire card matches at
+  boot. The HBA currently reports SCSI target 0 as present unconditionally, and the
+  probe INQUIRY is then held with no deadline waiting for an SBP-2 login that never
+  arrives when no SBP-2 device is on the bus (audio interfaces are not SBP-2). The
+  stalled target registration keeps the PCI nub busy past watchdogd's 60 s boot
+  quiesce. This happens **regardless of SIP/AMFI state**.
+- It requires the restricted
+  `com.apple.developer.driverkit.family.scsicontroller` entitlement. On a machine
+  where AMFI enforces entitlements, the ad-hoc-signed dext carrying it is killed at
+  launch (taking the audio driver down with it, since everything runs in one
+  process), and the orphaned kernel stub strands the same busy chain.
+
+The default build carries neither the personality nor the entitlement and cannot
+trigger either path.
+
+To include the HBA, opt in explicitly:
+
+```bash
+./build.sh --scsi          # or: xcodebuild … ASFW_ENABLE_SCSI=YES
+./sign.sh                  # picks the +SCSI entitlements automatically
+```
+
+> **Warning:** `--scsi` builds are currently **not cold-boot-safe**: cold-booting
+> with the FireWire controller attached and no powered-on SBP-2 device on the bus
+> can hit the 60 s boot panic even with SIP fully disabled. Power the SBP-2 device
+> on before booting. A stalled probe on a running system does not panic
+> immediately, but can panic later when the adapter is unplugged or the extension
+> is torn down. The HBA-side fix (create the target at SBP-2 login instead of
+> boot) will follow in a separate PR.
+
+If a machine ever ends up in a panic loop: boot into Recovery, `csrutil disable`,
+boot normally, uninstall the extension
+(`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver`), then re-enable SIP.
+
 ## Installing a prebuilt build (testers)
 
 If you want to test ASFireWire without building it yourself, tagged releases attach a
@@ -366,6 +408,12 @@ for experimental testing only — not general use.
 > Only do this on a machine you are comfortable using for testing, and re-enable SIP
 > (`csrutil enable`) when you are done. The build is unsigned/un-notarized and provided
 > as-is; run it only if you understand and accept that.
+>
+> **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI refuses
+> to launch the ad-hoc-signed dext; an installed build that includes the SCSI HBA then
+> leaves an orphaned kernel-side SCSI stub behind at every boot, which can panic the
+> machine into a boot loop (recovery: Recovery → `csrutil disable` → boot → uninstall
+> → `csrutil enable`).
 
 **Requirements:** an Apple Silicon Mac running macOS 26 (Tahoe), and FireWire hardware
 (a PCIe FireWire/OHCI card, or an Apple Thunderbolt-to-FireWire adapter).

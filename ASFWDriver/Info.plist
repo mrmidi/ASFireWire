@@ -101,6 +101,7 @@
 			<key>IOUserServerOneProcess</key>
 			<true/>
 		</dict>
+#if ASFW_ENABLE_SCSI
 		<key>ASFWSCSIControllerService</key>
 		<dict>
 			<key>CFBundleIdentifier</key>
@@ -124,6 +125,7 @@
 			<key>IOUserServerOneProcess</key>
 			<true/>
 		</dict>
+#endif
 	</dict>
 	<key>OSBundleUsageDescription</key>
 	<string>AS FireWire Driver</string>

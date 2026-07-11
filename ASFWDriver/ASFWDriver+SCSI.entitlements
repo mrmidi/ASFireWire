@@ -10,6 +10,7 @@
   <true/>
   <key>com.apple.developer.driverkit.family.audio</key>
   <true/>
+  <key>com.apple.developer.driverkit.family.scsicontroller</key>
+  <true/>
 </dict>
 </plist>
-    
