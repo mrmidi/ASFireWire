@@ -26,6 +26,35 @@ public:
     kern_return_t Start(IOService* provider) override;
     kern_return_t Stop(IOService* provider) override;
 
+    // System sleep/wake. The OHCI controller loses its programmed state across
+    // a power transition; without this the driver survives sleep but the
+    // silicon wakes unprogrammed and deaf (no bus-reset interrupts, so a device
+    // plugged after wake never mounts). Sleep quiesces and resets the runtime;
+    // wake rebuilds it (full re-init + forced bus reset), mirroring Linux
+    // firewire-ohci pci_suspend/pci_resume and Apple IOFireWireController
+    // setPowerState.
+    virtual kern_return_t SetPowerState(uint32_t powerFlags) override;
+
+    // Runtime bring-up/quiesce, shared by Start/Stop and SetPowerState.
+    kern_return_t StartRuntime(IOService* provider) LOCALONLY;
+    void QuiesceRuntime() LOCALONLY;
+
+    // Post-wake health check. The SetPowerState(On) callback can arrive during
+    // dark wake, before the PCIe/Thunderbolt path is fully restored: the rebuild
+    // then completes cleanly over MMIO but the forced bus reset never delivers
+    // an interrupt (observed on HW 2026-07-05 — interrupt/bus-mastering state
+    // lost between dark wake and full wake). Every wake rebuild ends in a forced
+    // bus reset, so a completed reset must be observed shortly after; if not,
+    // the runtime is rebuilt again (bounded retries).
+    void VerifyWakeRuntime(uint64_t attempt) LOCALONLY;
+
+    // Arms the wake-verify timer for `attempt`. A hardware timer keeps the
+    // settle delay off the dispatch queue — Scheduler::DispatchAsyncAfter
+    // sleeps *on* the bound queue, which would stall interrupt and discovery
+    // work for the whole verification window. The timer's OSAction retains
+    // this service, so a pending callback cannot outlive the driver.
+    void ScheduleWakeVerify(uint64_t attempt) LOCALONLY;
+
     kern_return_t CopyControllerStatus(OSDictionary** status) LOCALONLY;
     kern_return_t CopyControllerSnapshot(OSDictionary** status,
                                          uint64_t* sequence,
@@ -53,6 +82,10 @@ public:
 
     virtual void SBP2SessionTimerFired(OSAction* action,
                                        uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    virtual void WakeVerifyTimerFired(OSAction* action,
+                                      uint64_t time)
         TYPE(IOTimerDispatchSource::TimerOccurred);
 
     virtual void ProviderNotificationReady(OSAction* action)
@@ -93,4 +126,14 @@ public:
 
 struct ASFWDriver_IVars {
     ServiceContext* context;
+    IOService* powerProvider;   // borrowed from Start; cleared in Stop
+    bool runtimeSuspended;      // true between sleep quiesce and wake rebuild
+    bool serviceRegistered;     // RegisterService() must run once per instance
+
+    // Wake-verify timer. Lives on the default queue (stable for the service
+    // lifetime, unlike per-rebuild runtime state); released in Stop, which also
+    // breaks the OSAction→service retain cycle.
+    IOTimerDispatchSource* wakeVerifyTimer; // retained
+    OSAction* wakeVerifyAction;             // retained
+    uint64_t wakeVerifyAttempt;             // attempt carried to the armed timer
 };

@@ -41,6 +41,7 @@
 #include "Audio/Core/AudioCoordinator.hpp"
 #include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
+#include "Bus/BusResetCoordinator.hpp"
 #include "Bus/SelfIDCapture.hpp"
 #include "Common/DriverKitOwnership.hpp"
 #include "ConfigROM/ConfigROMStager.hpp"
@@ -211,6 +212,14 @@ kern_return_t IMPL(ASFWDriver, Start) {
         return kr;
     if (!ivars || !ivars->context)
         return kIOReturnNoMemory;
+    ivars->powerProvider = provider;
+    return StartRuntime(provider);
+}
+
+kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
+    if (!ivars || !ivars->context)
+        return kIOReturnNoMemory;
+    kern_return_t kr = kIOReturnSuccess;
     auto& ctx = *ivars->context;
     ctx.stopping.store(false, std::memory_order_release);
     DriverWiring::EnsureDeps(this, ctx);
@@ -347,11 +356,13 @@ kern_return_t IMPL(ASFWDriver, Start) {
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
 
-    // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
-    // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
-    // this nub yet — it is staged for a future per-unit personality carrying
-    // login/unit identity, and kept published now to reserve the discovery seam.
-    {
+    // Publish once per instance: StartRuntime() is re-entered on wake, and the
+    // SBP-2 nub and RegisterService() must not repeat across sleep/wake cycles.
+    if (!ivars->serviceRegistered) {
+        // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
+        // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
+        // this nub yet — it is staged for a future per-unit personality carrying
+        // login/unit identity, and kept published now to reserve the discovery seam.
         IOService* sbp2NubService = nullptr;
         kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
         if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
@@ -360,15 +371,46 @@ kern_return_t IMPL(ASFWDriver, Start) {
             // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
             sbp2NubService->release();
         }
+
+        RegisterService();
+        ivars->serviceRegistered = true;
     }
 
-    RegisterService();
+    // NOTE: do NOT call ChangePowerState/SetPowerOverride here. The kernel
+    // joins a dext into the PM tree only after Start() returns
+    // (xnu IOUserServer.cpp serviceStarted -> serviceJoinPMTree), so PM calls
+    // made during Start() are dropped: powerOverrideOnPriv returns
+    // IOPMNotYetInitialized (surfaced as kIOReturnError) and
+    // ChangePowerState_Impl silently discards the same failure. The power
+    // desire is pinned in SetPowerState() on the first On callback instead,
+    // which the kernel delivers right after the PM join.
+
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
 
     return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(ASFWDriver, Stop) {
+    QuiesceRuntime();
+    if (ivars) {
+        if (ivars->wakeVerifyTimer) {
+            // Disable only, then release — Cancel() dispatches async and can
+            // run after the source is freed (see WatchdogCoordinator::Stop).
+            // Releasing the action breaks the OSAction→service retain cycle.
+            ivars->wakeVerifyTimer->SetEnableWithCompletion(false, nullptr);
+            ivars->wakeVerifyTimer->release();
+            ivars->wakeVerifyTimer = nullptr;
+        }
+        if (ivars->wakeVerifyAction) {
+            ivars->wakeVerifyAction->release();
+            ivars->wakeVerifyAction = nullptr;
+        }
+        ivars->powerProvider = nullptr;
+    }
+    return Stop(provider, SUPERDISPATCH);
+}
+
+void ASFWDriver::QuiesceRuntime() {
     if (ivars && ivars->context) {
         auto& ctx = *ivars->context;
         ctx.stopping.store(true, std::memory_order_release);
@@ -411,7 +453,176 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         if (ctx.deps.configRomStager && ctx.deps.hardware)
             ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
     }
-    return Stop(provider, SUPERDISPATCH);
+}
+
+// Wake verification cadence. 3s puts the first check well past the dark-wake →
+// full-wake transition (~2s observed) while staying invisible to the user; 5
+// attempts bound the self-heal at ~15s.
+static constexpr uint64_t kWakeVerifyDelayNs = 3'000'000'000ull;
+static constexpr uint64_t kWakeVerifyMaxAttempts = 5;
+
+kern_return_t IMPL(ASFWDriver, SetPowerState) {
+    const bool poweredOn = (powerFlags & kIOServicePowerCapabilityOn) != 0;
+    ASFW_LOG(Controller, "SetPowerState: powerFlags=0x%08x (%{public}s)", powerFlags,
+             poweredOn ? "on" : "sleep/low");
+
+    if (ivars) {
+        if (!poweredOn) {
+            // Sleep: quiesce everything and reset the runtime while the
+            // controller still answers MMIO. The silicon loses its programmed
+            // state in low power (Linux ohci.c pci_suspend does software_reset;
+            // Apple gates all hardware access while asleep).
+            if (!ivars->runtimeSuspended && ivars->context) {
+                ASFW_LOG(Controller, "SetPowerState: quiescing runtime for sleep");
+                QuiesceRuntime();
+                ivars->context->Reset();
+                ivars->runtimeSuspended = true;
+            }
+        } else {
+            // Pin our power desire to full-on. A bus controller must stay
+            // powered even with no devices attached (plug detection needs a
+            // programmed, interrupting controller). The audio driver matched on
+            // our nub is a PM-tree child; when the last nub terminates, the
+            // child's demand vanishes and the system sends SetPowerState(0)
+            // ~1ms later — which tore down the runtime, leaving the controller
+            // dead until the PM domain happened to repower minutes later.
+            // SetPowerOverride makes our power state governed solely by our own
+            // desire (children ignored), so capability 0 then means real system
+            // sleep only. These calls only work once the PM join has happened
+            // (after Start() returns) — this callback is the earliest reliable
+            // point. Idempotent, so unconditional on every On is fine.
+            const kern_return_t pmKr = ChangePowerState(kIOServicePowerCapabilityOn);
+            const kern_return_t ovKr = SetPowerOverride(true);
+            ASFW_LOG(Controller,
+                     "SetPowerState: pin desire On -> 0x%08x, override -> 0x%08x",
+                     pmKr, ovKr);
+        }
+        if (poweredOn && ivars->runtimeSuspended) {
+            // Wake: rebuild the runtime from scratch — full OHCI re-init ending
+            // in a forced bus reset, after which normal discovery re-publishes
+            // devices (Linux pci_resume runs the same ohci_enable as cold probe).
+            ivars->runtimeSuspended = false;
+            if (ivars->powerProvider) {
+                ASFW_LOG(Controller, "SetPowerState: wake - rebuilding runtime");
+                const kern_return_t kr = StartRuntime(ivars->powerProvider);
+                if (kr != kIOReturnSuccess) {
+                    ASFW_LOG(Controller,
+                             "SetPowerState: ❌ wake runtime rebuild failed: 0x%08x", kr);
+                } else {
+                    // The On callback can arrive during dark wake; verify the
+                    // rebuild actually took once the platform has settled.
+                    ScheduleWakeVerify(1);
+                }
+            } else {
+                ASFW_LOG(Controller, "SetPowerState: wake with no provider; skipping rebuild");
+            }
+        }
+    }
+
+    return SetPowerState(powerFlags, SUPERDISPATCH);
+}
+
+void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
+    if (!ivars || !ivars->context || ivars->runtimeSuspended) {
+        return; // slept again (or tearing down) before the check fired
+    }
+    auto& ctx = *ivars->context;
+    if (ctx.stopping.load(std::memory_order_acquire) || !ctx.deps.hardware ||
+        !ctx.deps.busReset) {
+        return;
+    }
+
+    // The wake rebuild always ends in a forced bus reset, and resetCount only
+    // advances via the full interrupt path (IRQ → Self-ID → coordinator). A
+    // completed reset therefore proves interrupt delivery end to end.
+    const uint32_t resets = ctx.deps.busReset->Metrics().resetCount;
+    const uint32_t hcControl = ctx.deps.hardware->Read(Register32::kHCControl);
+    const bool mmioAlive = (hcControl != 0xFFFFFFFFu);
+    const bool linkEnabled = mmioAlive && (hcControl & HCControlBits::kLinkEnable);
+
+    if (resets > 0 && linkEnabled) {
+        ASFW_LOG(Controller, "Wake verify: ✅ alive (resets=%u HCControl=0x%08x attempt=%llu)",
+                 resets, hcControl, attempt);
+        return;
+    }
+
+    // Distinguish the failure mode for the log: busReset pending in IntEvent
+    // with resetCount==0 means the reset happened but the IRQ never arrived
+    // (interrupt path dead); linkEnable clear means the controller was reset
+    // under us after the rebuild; 0xFFFFFFFF means MMIO itself is gone.
+    const uint32_t intEvent = mmioAlive ? ctx.deps.hardware->Read(Register32::kIntEvent) : 0;
+    ASFW_LOG(Controller,
+             "Wake verify: ❌ dead controller (resets=%u HCControl=0x%08x IntEvent=0x%08x "
+             "attempt=%llu/%llu) - rebuilding",
+             resets, hcControl, intEvent, attempt, kWakeVerifyMaxAttempts);
+
+    if (attempt >= kWakeVerifyMaxAttempts) {
+        ASFW_LOG(Controller, "Wake verify: ❌ giving up after %llu attempts", attempt);
+        return;
+    }
+    if (!ivars->powerProvider) {
+        ASFW_LOG(Controller, "Wake verify: no provider; cannot rebuild");
+        return;
+    }
+
+    QuiesceRuntime();
+    ctx.Reset();
+    const kern_return_t kr = StartRuntime(ivars->powerProvider);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "Wake verify: ❌ rebuild failed: 0x%08x", kr);
+    }
+    ScheduleWakeVerify(attempt + 1);
+}
+
+void ASFWDriver::ScheduleWakeVerify(uint64_t attempt) {
+    if (!ivars || !ivars->context) {
+        return;
+    }
+    if (!ivars->wakeVerifyTimer) {
+        // ctx.workQueue is the service's default queue (DriverWiring::
+        // PrepareQueue), so the timer stays valid across runtime rebuilds and
+        // the verify serializes with Start/Stop/SetPowerState.
+        auto& queue = ivars->context->workQueue;
+        if (!queue) {
+            return;
+        }
+        IOTimerDispatchSource* timer = nullptr;
+        kern_return_t kr = IOTimerDispatchSource::Create(queue.get(), &timer);
+        if (kr != kIOReturnSuccess || !timer) {
+            ASFW_LOG(Controller, "Wake verify: ❌ timer create failed: 0x%08x", kr);
+            return;
+        }
+        OSAction* action = nullptr;
+        kr = CreateActionWakeVerifyTimerFired(0, &action);
+        if (kr != kIOReturnSuccess || !action) {
+            ASFW_LOG(Controller, "Wake verify: ❌ timer action create failed: 0x%08x", kr);
+            timer->release();
+            return;
+        }
+        kr = timer->SetHandler(action);
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Controller, "Wake verify: ❌ timer SetHandler failed: 0x%08x", kr);
+            action->release();
+            timer->release();
+            return;
+        }
+        (void)timer->SetEnableWithCompletion(true, nullptr);
+        ivars->wakeVerifyTimer = timer;
+        ivars->wakeVerifyAction = action;
+    }
+
+    ivars->wakeVerifyAttempt = attempt;
+    (void)ASFW::Timing::initializeHostTimebase();
+    const uint64_t deadline =
+        mach_absolute_time() + ASFW::Timing::nanosToHostTicks(kWakeVerifyDelayNs);
+    (void)ivars->wakeVerifyTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadline, 0);
+}
+
+void ASFWDriver::WakeVerifyTimerFired_Impl(ASFWDriver_WakeVerifyTimerFired_Args) {
+    if (!ivars) {
+        return;
+    }
+    VerifyWakeRuntime(ivars->wakeVerifyAttempt);
 }
 
 kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
