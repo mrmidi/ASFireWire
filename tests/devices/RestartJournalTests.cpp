@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // FW-69a characterization tests for RestartJournal — the FSM-journal state mutators extracted
-// from DiceDuplexRestartCoordinator into RestartJournal.hpp. These pin the state-mutating half
+// from AudioDuplexCoordinator into RestartJournal.hpp. These pin the state-mutating half
 // by EFFECT on DiceRestartSession. The Log* emitters are void and observable only via the field
 // trace, which is a no-op in host tests (os_log stubbed), so their byte-identical strings are
 // preserved by the verbatim whole-body move and exercised by the coordinator integration suite.

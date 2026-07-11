@@ -3,7 +3,7 @@
 //
 // FW-67 characterization tests for ClockRequestBroker. These pin the clock-token, latest-wins
 // pending queue, completion mailbox, eviction, and restart-session mirror behaviour extracted
-// from DiceDuplexRestartCoordinator. Host tests, no hardware.
+// from AudioDuplexCoordinator. Host tests, no hardware.
 
 #include <gtest/gtest.h>
 

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // FW-66 characterization tests for the recovery-policy decision kernel extracted from
-// DiceDuplexRestartCoordinator.cpp into DiceRecoveryPolicy.hpp.
+// AudioDuplexCoordinator.cpp into DiceRecoveryPolicy.hpp.
 //
 // The kernel was previously trapped in an anonymous namespace with no direct coverage (only
 // transitive coverage via the coordinator's RecoverStreaming integration tests). These tests

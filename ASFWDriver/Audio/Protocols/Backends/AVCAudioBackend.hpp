@@ -7,8 +7,8 @@
 #pragma once
 
 #include "IAudioBackend.hpp"
-#include "DiceDuplexRestartCoordinator.hpp"
-#include "DiceHostTransport.hpp"
+#include "AudioDuplexCoordinator.hpp"
+#include "IsochDuplexHostTransport.hpp"
 
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 
@@ -50,7 +50,7 @@ private:
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
-    DiceIsochHostTransport hostTransport_;
+    IsochDuplexHostTransport hostTransport_;
     std::atomic<bool> stopping_{false};
     AudioDuplexCoordinator duplexCoordinator_;
 

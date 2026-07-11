@@ -7,7 +7,7 @@
 // kernel plus the reason classifiers (`RestartStateForStartReason`, `FailureCauseForReason`,
 // `IsRecoveryReason`), the retryability predicate (`IsRetryableStatus`), the enums,
 // context/decision structs and ToString overloads they depend on. Extracted from
-// DiceDuplexRestartCoordinator.cpp so classification is a standalone, directly-testable unit
+// AudioDuplexCoordinator.cpp so classification is a standalone, directly-testable unit
 // with no dependency on the session store or logging (per FW-66). Classification returns
 // facts; recording/logging them stays in the coordinator (FW-69 journal).
 //

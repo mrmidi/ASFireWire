@@ -4,7 +4,7 @@
 // RestartJournal.hpp
 //
 // FW-69a (Step 5 of FW-64, journal half): the DICE restart FSM journal — the stateless
-// transition/logging free functions extracted from DiceDuplexRestartCoordinator.cpp. Each
+// transition/logging free functions extracted from AudioDuplexCoordinator.cpp. Each
 // operates only on a passed DiceRestartSession& (or value params) and emits the [FSM] field
 // trace via ASFW_LOG_V*; none touch the coordinator, the session store (sessions_), lock_, or
 // any member. Also carries the DICE-enum ToString formatters + GenerationValue they depend on
@@ -12,7 +12,7 @@
 //
 // Behaviour-preserving: bodies copied byte-for-byte, so every log format string, the DICE
 // verbosity gate, and the anomaly-only no-op guards are textually unchanged (identical field
-// trace). Names keep their Dice* prefix (neutral rename is FW-73). The session STORE (sessions_
+// trace). Names keep their Dice* prefix (neutral rename is FW-73b). The session STORE (sessions_
 // + Load/Store/Get/Clear + epoch/restartId) is a separate component (FW-69b).
 
 #pragma once

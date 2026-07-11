@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// DuplexControlTypes.hpp - Neutral names for the pre-FW-73 restart vocabulary
+// DuplexControlTypes.hpp - Neutral names for the DICE-origin restart vocabulary
 
 #pragma once
 
@@ -9,8 +9,11 @@
 
 namespace ASFW::Audio {
 
-// FW-71 exposes these neutral names at the duplex seam. FW-73 will mechanically
-// rename the underlying restart/session declarations and move their files.
+// FW-71 exposes these neutral names at the duplex seam; FW-73 renamed the
+// transport + coordinator files/types. The underlying restart/session
+// declarations still carry their DICE::Dice* spelling and are renamed/moved by
+// a follow-up sweep (FW-73b) — these aliases keep every seam reading neutral in
+// the meantime.
 using DuplexRestartReason = DICE::DiceRestartReason;
 using DuplexRestartPhase = DICE::DiceRestartPhase;
 using DuplexRestartState = DICE::DiceRestartState;

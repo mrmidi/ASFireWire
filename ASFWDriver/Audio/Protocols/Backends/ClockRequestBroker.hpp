@@ -4,7 +4,7 @@
 // ClockRequestBroker.hpp
 //
 // FW-67: clock-request token allocation, pending-request coalescing, and
-// completion delivery extracted from DiceDuplexRestartCoordinator. The broker owns the pending
+// completion delivery extracted from AudioDuplexCoordinator. The broker owns the pending
 // and completed per-GUID maps plus the monotonic token allocator; it deliberately BORROWS the
 // coordinator's existing IOLock* rather than creating a lock or queue of its own.
 //
@@ -16,8 +16,8 @@
 //   * self-locking operations for ordinary producer/consumer/completion paths; and
 //   * *Locked operations for the coordinator's existing multi-domain critical sections.
 //
-// The DICE names are intentional for now; FW-73 performs the mechanical neutral rename after
-// the protocol-neutral coordinator path is complete.
+// The restart/session Dice* names are intentional for now; a follow-up sweep (FW-73b) performs
+// the mechanical neutral rename of that vocabulary.
 
 #pragma once
 

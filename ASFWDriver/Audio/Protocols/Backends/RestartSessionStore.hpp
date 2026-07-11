@@ -4,7 +4,7 @@
 // RestartSessionStore.hpp
 //
 // FW-69b (Step 5 of FW-64, store half): the per-GUID restart-session persistence + restart-id
-// allocator extracted from DiceDuplexRestartCoordinator. Owns the sessions_ map and
+// allocator extracted from AudioDuplexCoordinator. Owns the sessions_ map and
 // nextRestartId_.
 //
 // Behaviour-preserving extraction, same shape as the FW-68 DuplexOperationGate: the store
@@ -18,7 +18,7 @@
 //   * *Locked accessors (FindSessionLocked/EraseSessionLocked) that assume the caller already
 //     holds the lock, for the multi-domain sections that must stay one uninterrupted hold.
 //
-// Names keep their Dice* prefix for now (neutral rename is FW-73). The FSM journal is the
+// Names keep their Dice* prefix for now (neutral rename is FW-73b). The FSM journal is the
 // separate FW-69a component (RestartJournal.hpp).
 
 #pragma once

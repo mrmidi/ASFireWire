@@ -117,7 +117,7 @@ class DuplexIRMReservations final {
     }
 
     // One instance owns one direction, so the bound is independently enforced
-    // for playback and capture by DiceIsochHostTransport's two instances.
+    // for playback and capture by IsochDuplexHostTransport's two instances.
     std::array<Entry, kMaxAudioStreamsPerDirection> entries_{};
     size_t count_{0};
 };
