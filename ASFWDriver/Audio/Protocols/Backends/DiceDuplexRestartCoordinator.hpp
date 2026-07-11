@@ -28,7 +28,6 @@ class IDirectAudioBindingSource;
 
 class AudioRuntimeRegistry;
 class IDeviceProtocol;
-class DuplexStartTransaction;
 
 class DiceDuplexRestartCoordinator final {
 public:
@@ -62,8 +61,6 @@ public:
     }
 
 private:
-    friend class DuplexStartTransaction;
-
     using PendingClockRequest = Backends::ClockRequestBroker::PendingClockRequest;
 
     [[nodiscard]] IOReturn RunStartStreaming(uint64_t guid) noexcept;

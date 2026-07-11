@@ -73,6 +73,22 @@ inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
 // dice-stream.c:326-374 and dice-interface.h:120-125; no source code is copied.
 class DuplexStartTransaction final {
 public:
+    struct Dependencies {
+        Discovery::DeviceRegistry& registry;
+        AudioRuntimeRegistry& runtime;
+        IDiceHostTransport& hostTransport;
+        Driver::HardwareInterface& hardware;
+        const std::atomic<bool>* cancel;
+        const DiceDuplexRestartCoordinator::DirectAudioBindingSourceProvider& bindingSourceProvider;
+        Backends::DuplexOperationGate& gate;
+        Backends::RestartSessionStore& sessionStore;
+        std::atomic<uint64_t>& teardownAbortCount;
+        uint32_t syncBridgeTimeoutMs;
+        uint32_t globalClockLockTimeoutMs;
+        uint32_t globalClockLockPollMs;
+        uint32_t globalClockStableReads;
+    };
+
     struct StartRequest {
         uint64_t guid;
         Discovery::DeviceRecord& record;
@@ -98,22 +114,65 @@ public:
         DiceRestartReason reason;
     };
 
-    explicit DuplexStartTransaction(DiceDuplexRestartCoordinator& coordinator) noexcept
-        : coordinator_(coordinator) {}
+    explicit DuplexStartTransaction(Dependencies dependencies) noexcept : dependencies_(dependencies) {}
 
     [[nodiscard]] IOReturn Run(const StartRequest& request) noexcept;
     [[nodiscard]] IOReturn Stop(const StopRequest& request) noexcept;
     [[nodiscard]] IOReturn ApplyIdleClock(const IdleClockApplyRequest& request) noexcept;
 
 private:
+    [[nodiscard]] bool TeardownRequested() const noexcept;
+    void RecordTeardownAbort(const char* stage, uint64_t guid) noexcept;
+    [[nodiscard]] bool IsStopRequested(uint64_t guid) const noexcept;
+    [[nodiscard]] bool IsRestartEpochCurrent(uint64_t guid, uint64_t restartId,
+                                             FW::Generation topologyGeneration) const noexcept;
+    [[nodiscard]] Runtime::IDirectAudioBindingSource* GetDirectAudioBindingSource(
+        uint64_t guid) const noexcept;
     [[nodiscard]] IOReturn WaitForStableGlobalClock(
         uint64_t guid,
         DICE::IDICEDuplexProtocol& deviceControl,
         FW::Generation topologyGeneration,
         const DiceDesiredClockConfig& desiredClock) noexcept;
 
-    DiceDuplexRestartCoordinator& coordinator_;
+    Dependencies dependencies_;
 };
+
+bool DuplexStartTransaction::TeardownRequested() const noexcept {
+    return dependencies_.cancel != nullptr &&
+           dependencies_.cancel->load(std::memory_order_acquire);
+}
+
+void DuplexStartTransaction::RecordTeardownAbort(const char* stage, uint64_t guid) noexcept {
+    dependencies_.teardownAbortCount.fetch_add(1, std::memory_order_acq_rel);
+    ASFW_LOG(Audio,
+             "DiceDuplexRestartCoordinator: recovery aborted by teardown stage=%{public}s "
+             "GUID=%llx kr=0x%x",
+             stage ? stage : "unknown", guid, kIOReturnAborted);
+}
+
+bool DuplexStartTransaction::IsStopRequested(uint64_t guid) const noexcept {
+    return dependencies_.gate.IsStopRequested(guid);
+}
+
+bool DuplexStartTransaction::IsRestartEpochCurrent(
+    uint64_t guid, uint64_t restartId, FW::Generation topologyGeneration) const noexcept {
+    if (guid == 0 || restartId == 0 || IsStopRequested(guid)) {
+        return false;
+    }
+
+    const DiceRestartSession session = dependencies_.sessionStore.LoadSession(guid);
+    if (session.restartId != restartId || session.topologyGeneration != topologyGeneration) {
+        return false;
+    }
+
+    const auto* liveRecord = dependencies_.registry.FindByGuid(guid);
+    return liveRecord != nullptr && liveRecord->gen == topologyGeneration;
+}
+
+Runtime::IDirectAudioBindingSource* DuplexStartTransaction::GetDirectAudioBindingSource(
+    uint64_t guid) const noexcept {
+    return dependencies_.bindingSourceProvider ? dependencies_.bindingSourceProvider(guid) : nullptr;
+}
 
 DiceDuplexRestartCoordinator::DiceDuplexRestartCoordinator(
     Discovery::DeviceRegistry& registry, AudioRuntimeRegistry& runtime,
@@ -682,29 +741,29 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     DiceRestartSession& session = request.session;
     const DiceDesiredClockConfig& desiredClock = request.desiredClock;
     const DiceRestartReason reason = request.reason;
-    auto& runtime_ = coordinator_.runtime_;
-    auto& hostTransport_ = coordinator_.hostTransport_;
-    auto& hardware_ = coordinator_.hardware_;
-    const std::atomic<bool>* const cancel_ = coordinator_.cancel_;
-    constexpr uint32_t kSyncBridgeTimeoutMs = DiceDuplexRestartCoordinator::kSyncBridgeTimeoutMs;
+    auto& runtime_ = dependencies_.runtime;
+    auto& hostTransport_ = dependencies_.hostTransport;
+    auto& hardware_ = dependencies_.hardware;
+    const std::atomic<bool>* const cancel_ = dependencies_.cancel;
+    const uint32_t kSyncBridgeTimeoutMs = dependencies_.syncBridgeTimeoutMs;
 
-    auto TeardownRequested = [this]() noexcept { return coordinator_.TeardownRequested(); };
+    auto TeardownRequested = [this]() noexcept { return this->TeardownRequested(); };
     auto RecordTeardownAbort = [this](const char* stage, uint64_t abortGuid) noexcept {
-        coordinator_.RecordTeardownAbort(stage, abortGuid);
+        this->RecordTeardownAbort(stage, abortGuid);
     };
-    auto AllocateRestartId = [this]() noexcept { return coordinator_.AllocateRestartId(); };
+    auto AllocateRestartId = [this]() noexcept { return dependencies_.sessionStore.AllocateRestartId(); };
     auto StoreSession = [this](const DiceRestartSession& updatedSession) noexcept {
-        coordinator_.StoreSession(updatedSession);
+        dependencies_.sessionStore.StoreSession(updatedSession);
     };
     auto IsStopRequested = [this](uint64_t requestGuid) noexcept {
-        return coordinator_.IsStopRequested(requestGuid);
+        return this->IsStopRequested(requestGuid);
     };
     auto IsRestartEpochCurrent = [this](uint64_t requestGuid, uint64_t restartId,
                                         FW::Generation generation) noexcept {
-        return coordinator_.IsRestartEpochCurrent(requestGuid, restartId, generation);
+        return this->IsRestartEpochCurrent(requestGuid, restartId, generation);
     };
     auto GetDirectAudioBindingSource = [this](uint64_t requestGuid) noexcept {
-        return coordinator_.GetDirectAudioBindingSource(requestGuid);
+        return this->GetDirectAudioBindingSource(requestGuid);
     };
     auto RunDuplexStop = [this](uint64_t stopGuid, Discovery::DeviceRecord& stopRecord,
                                 DICE::IDICEDuplexProtocol& stopDevice,
@@ -1191,16 +1250,13 @@ return kIOReturnSuccess;
 IOReturn DuplexStartTransaction::WaitForStableGlobalClock(
     uint64_t guid, DICE::IDICEDuplexProtocol& diceProtocol, const FW::Generation topologyGeneration,
     const DiceDesiredClockConfig& desiredClock) noexcept {
-    const std::atomic<bool>* const cancel_ = coordinator_.cancel_;
-    constexpr uint32_t kGlobalClockLockTimeoutMs =
-        DiceDuplexRestartCoordinator::kGlobalClockLockTimeoutMs;
-    constexpr uint32_t kGlobalClockLockPollMs =
-        DiceDuplexRestartCoordinator::kGlobalClockLockPollMs;
-    constexpr uint32_t kGlobalClockStableReads =
-        DiceDuplexRestartCoordinator::kGlobalClockStableReads;
-    auto TeardownRequested = [this]() noexcept { return coordinator_.TeardownRequested(); };
+    const std::atomic<bool>* const cancel_ = dependencies_.cancel;
+    const uint32_t kGlobalClockLockTimeoutMs = dependencies_.globalClockLockTimeoutMs;
+    const uint32_t kGlobalClockLockPollMs = dependencies_.globalClockLockPollMs;
+    const uint32_t kGlobalClockStableReads = dependencies_.globalClockStableReads;
+    auto TeardownRequested = [this]() noexcept { return this->TeardownRequested(); };
     auto RecordTeardownAbort = [this](const char* stage, uint64_t abortGuid) noexcept {
-        coordinator_.RecordTeardownAbort(stage, abortGuid);
+        this->RecordTeardownAbort(stage, abortGuid);
     };
 
     uint32_t consecutiveLockedReads = 0;
@@ -1271,13 +1327,13 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
     Discovery::DeviceRecord& record = request.record;
     DICE::IDICEDuplexProtocol& diceProtocol = request.deviceControl;
     DiceRestartSession& session = request.session;
-    auto& hostTransport_ = coordinator_.hostTransport_;
-    auto TeardownRequested = [this]() noexcept { return coordinator_.TeardownRequested(); };
+    auto& hostTransport_ = dependencies_.hostTransport;
+    auto TeardownRequested = [this]() noexcept { return this->TeardownRequested(); };
     auto RecordTeardownAbort = [this](const char* stage, uint64_t abortGuid) noexcept {
-        coordinator_.RecordTeardownAbort(stage, abortGuid);
+        this->RecordTeardownAbort(stage, abortGuid);
     };
     auto StoreSession = [this](const DiceRestartSession& updatedSession) noexcept {
-        coordinator_.StoreSession(updatedSession);
+        dependencies_.sessionStore.StoreSession(updatedSession);
     };
 
     (void)record;
@@ -1330,22 +1386,22 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
     const FW::Generation topologyGeneration = request.topologyGeneration;
     const DiceDesiredClockConfig& desiredClock = request.desiredClock;
     const DiceRestartReason reason = request.reason;
-    const std::atomic<bool>* const cancel_ = coordinator_.cancel_;
-    constexpr uint32_t kSyncBridgeTimeoutMs = DiceDuplexRestartCoordinator::kSyncBridgeTimeoutMs;
-    auto TeardownRequested = [this]() noexcept { return coordinator_.TeardownRequested(); };
+    const std::atomic<bool>* const cancel_ = dependencies_.cancel;
+    const uint32_t kSyncBridgeTimeoutMs = dependencies_.syncBridgeTimeoutMs;
+    auto TeardownRequested = [this]() noexcept { return this->TeardownRequested(); };
     auto RecordTeardownAbort = [this](const char* stage, uint64_t abortGuid) noexcept {
-        coordinator_.RecordTeardownAbort(stage, abortGuid);
+        this->RecordTeardownAbort(stage, abortGuid);
     };
-    auto AllocateRestartId = [this]() noexcept { return coordinator_.AllocateRestartId(); };
+    auto AllocateRestartId = [this]() noexcept { return dependencies_.sessionStore.AllocateRestartId(); };
     auto StoreSession = [this](const DiceRestartSession& updatedSession) noexcept {
-        coordinator_.StoreSession(updatedSession);
+        dependencies_.sessionStore.StoreSession(updatedSession);
     };
     auto IsStopRequested = [this](uint64_t requestGuid) noexcept {
-        return coordinator_.IsStopRequested(requestGuid);
+        return this->IsStopRequested(requestGuid);
     };
     auto IsRestartEpochCurrent = [this](uint64_t requestGuid, uint64_t restartId,
                                         FW::Generation generation) noexcept {
-        return coordinator_.IsRestartEpochCurrent(requestGuid, restartId, generation);
+        return this->IsRestartEpochCurrent(requestGuid, restartId, generation);
     };
 
     if (TeardownRequested()) {
@@ -1413,7 +1469,11 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     uint64_t guid, Discovery::DeviceRecord& record, DICE::IDICEDuplexProtocol& diceProtocol,
     DiceRestartSession& session, const DiceDesiredClockConfig& desiredClock,
     DiceRestartReason reason) noexcept {
-    return DuplexStartTransaction{*this}.Run(
+    DuplexStartTransaction transaction{DuplexStartTransaction::Dependencies{
+        registry_, runtime_, hostTransport_, hardware_, cancel_, bindingSourceProvider_, gate_, store_,
+        teardownAbortCount_, kSyncBridgeTimeoutMs, kGlobalClockLockTimeoutMs,
+        kGlobalClockLockPollMs, kGlobalClockStableReads}};
+    return transaction.Run(
         DuplexStartTransaction::StartRequest{guid, record, diceProtocol, session, desiredClock,
                                              reason});
 }
@@ -1421,7 +1481,11 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
 IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(
     uint64_t guid, Discovery::DeviceRecord& record, DICE::IDICEDuplexProtocol& diceProtocol,
     DiceRestartSession& session) noexcept {
-    return DuplexStartTransaction{*this}.Stop(
+    DuplexStartTransaction transaction{DuplexStartTransaction::Dependencies{
+        registry_, runtime_, hostTransport_, hardware_, cancel_, bindingSourceProvider_, gate_, store_,
+        teardownAbortCount_, kSyncBridgeTimeoutMs, kGlobalClockLockTimeoutMs,
+        kGlobalClockLockPollMs, kGlobalClockStableReads}};
+    return transaction.Stop(
         DuplexStartTransaction::StopRequest{guid, record, diceProtocol, session});
 }
 
@@ -1429,7 +1493,11 @@ IOReturn DiceDuplexRestartCoordinator::RunIdleClockApply(
     uint64_t guid, DICE::IDICEDuplexProtocol& diceProtocol, DiceRestartSession& session,
     FW::Generation topologyGeneration, const DiceDesiredClockConfig& desiredClock,
     DiceRestartReason reason) noexcept {
-    return DuplexStartTransaction{*this}.ApplyIdleClock(
+    DuplexStartTransaction transaction{DuplexStartTransaction::Dependencies{
+        registry_, runtime_, hostTransport_, hardware_, cancel_, bindingSourceProvider_, gate_, store_,
+        teardownAbortCount_, kSyncBridgeTimeoutMs, kGlobalClockLockTimeoutMs,
+        kGlobalClockLockPollMs, kGlobalClockStableReads}};
+    return transaction.ApplyIdleClock(
         DuplexStartTransaction::IdleClockApplyRequest{guid, diceProtocol, session,
                                                        topologyGeneration, desiredClock, reason});
 }
