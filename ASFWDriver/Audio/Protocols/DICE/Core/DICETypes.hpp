@@ -483,6 +483,23 @@ namespace ClockRateIndex {
     constexpr uint32_t k192000 = 0x06;
 }
 
+// DICE GLOBAL_CLOCK_SELECT encoding. This stays inside the DICE adapter; the
+// protocol-neutral duplex seam carries only AudioClockConfig::sampleRateHz.
+struct DiceClockConfiguration {
+    uint32_t sampleRateHz{0};
+    uint32_t clockSelect{0};
+};
+
+constexpr uint32_t kDiceClockSelect48kInternal =
+    (ClockRateIndex::k48000 << ClockSelect::kRateShift) |
+    static_cast<uint32_t>(ClockSource::Internal);
+
+[[nodiscard]] constexpr bool IsSupportedDiceClockConfiguration(
+    const DiceClockConfiguration& clock) noexcept {
+    return clock.sampleRateHz == 48000U &&
+           clock.clockSelect == kDiceClockSelect48kInternal;
+}
+
 /// Parsed global section state
 struct GlobalState {
     uint64_t owner{0};           ///< Owner node ID

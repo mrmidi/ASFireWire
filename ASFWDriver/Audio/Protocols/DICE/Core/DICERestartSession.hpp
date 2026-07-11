@@ -5,8 +5,9 @@
 
 #pragma once
 
-#include "DICETypes.hpp"
 #include "../../AudioTypes.hpp"
+#include "../../Duplex/AudioClockConfig.hpp"
+#include "../../../../Async/AsyncTypes.hpp"
 
 #include <DriverKit/IOReturn.h>
 
@@ -14,10 +15,6 @@
 #include <optional>
 
 namespace ASFW::Audio::DICE {
-
-constexpr uint32_t kDiceClockSelect48kInternal =
-    (ClockRateIndex::k48000 << ClockSelect::kRateShift) |
-    static_cast<uint32_t>(ClockSource::Internal);
 
 enum class DiceRestartReason : uint8_t {
     kInitialStart,
@@ -95,14 +92,9 @@ enum class DiceRestartFailureCause : uint8_t {
     kTxFault,
 };
 
-struct DiceDesiredClockConfig {
-    uint32_t sampleRateHz{0};
-    uint32_t clockSelect{0};
-};
-
 struct DiceClockRequestCompletion {
     uint64_t token{0};
-    DiceDesiredClockConfig desiredClock{};
+    AudioClockConfig desiredClock{};
     DiceRestartReason reason{DiceRestartReason::kManualReconfigure};
     DiceClockRequestOutcome outcome{DiceClockRequestOutcome::kFailed};
     IOReturn status{kIOReturnSuccess};
@@ -127,7 +119,7 @@ struct DiceRestartIssueInfo {
 struct DiceDuplexPrepareResult {
     FW::Generation generation{0};
     AudioDuplexChannels channels{};
-    DiceDesiredClockConfig appliedClock{};
+    AudioClockConfig appliedClock{};
     AudioStreamRuntimeCaps runtimeCaps{};
 };
 
@@ -141,7 +133,7 @@ struct DiceDuplexStageResult {
 struct DiceDuplexConfirmResult {
     FW::Generation generation{0};
     AudioDuplexChannels channels{};
-    DiceDesiredClockConfig appliedClock{};
+    AudioClockConfig appliedClock{};
     AudioStreamRuntimeCaps runtimeCaps{};
     uint32_t notification{0};
     uint32_t status{0};
@@ -150,14 +142,17 @@ struct DiceDuplexConfirmResult {
 
 struct DiceClockApplyResult {
     FW::Generation generation{0};
-    DiceDesiredClockConfig appliedClock{};
+    AudioClockConfig appliedClock{};
     AudioStreamRuntimeCaps runtimeCaps{};
 };
 
 struct DiceDuplexHealthResult {
     FW::Generation generation{0};
-    DiceDesiredClockConfig appliedClock{};
+    AudioClockConfig appliedClock{};
     AudioStreamRuntimeCaps runtimeCaps{};
+    bool sourceLocked{false};
+    bool clockReferenceHealthy{true};
+    uint32_t nominalRateHz{0};
     uint32_t notification{0};
     uint32_t status{0};
     uint32_t extStatus{0};
@@ -170,9 +165,9 @@ struct DiceRestartSession {
     FW::Generation topologyGeneration{0};
     AudioDuplexChannels channels{};
     DiceRestartReason reason{DiceRestartReason::kInitialStart};
-    DiceDesiredClockConfig desiredClock{};
-    DiceDesiredClockConfig appliedClock{};
-    DiceDesiredClockConfig pendingClock{};
+    AudioClockConfig desiredClock{};
+    AudioClockConfig appliedClock{};
+    AudioClockConfig pendingClock{};
     DiceRestartReason pendingReason{DiceRestartReason::kInitialStart};
     AudioStreamRuntimeCaps runtimeCaps{};
     DiceRestartPhase phase{DiceRestartPhase::kIdle};
@@ -197,9 +192,7 @@ struct DiceRestartSession {
 };
 
 [[nodiscard]] constexpr bool HasRestartIntent(const DiceRestartSession& session) noexcept {
-    return session.desiredClock.sampleRateHz != 0 ||
-           session.desiredClock.clockSelect != 0 ||
-           session.hasPendingClockRequest;
+    return session.desiredClock.sampleRateHz != 0 || session.hasPendingClockRequest;
 }
 
 [[nodiscard]] constexpr bool HasDeviceRestartState(const DiceRestartSession& session) noexcept {
@@ -247,15 +240,9 @@ constexpr void ClearRestartProgress(DiceRestartSession& session,
     session.hostTransmitStarted = false;
 }
 
-[[nodiscard]] constexpr bool IsSupportedClockConfig(
-    const DiceDesiredClockConfig& desiredClock) noexcept {
-    return desiredClock.sampleRateHz == 48000U &&
-           desiredClock.clockSelect == kDiceClockSelect48kInternal;
-}
-
 [[nodiscard]] constexpr DiceRestartReason ClassifyRestartReason(
     const DiceRestartSession* previousSession,
-    const DiceDesiredClockConfig& desiredClock) noexcept {
+    const AudioClockConfig& desiredClock) noexcept {
     if (previousSession == nullptr || !HasRestartIntent(*previousSession)) {
         return DiceRestartReason::kInitialStart;
     }
@@ -263,11 +250,6 @@ constexpr void ClearRestartProgress(DiceRestartSession& session,
     if (previousSession->desiredClock.sampleRateHz != 0 &&
         previousSession->desiredClock.sampleRateHz != desiredClock.sampleRateHz) {
         return DiceRestartReason::kSampleRateChange;
-    }
-
-    if (previousSession->desiredClock.clockSelect != 0 &&
-        previousSession->desiredClock.clockSelect != desiredClock.clockSelect) {
-        return DiceRestartReason::kClockSourceChange;
     }
 
     if (previousSession->phase == DiceRestartPhase::kFailed) {

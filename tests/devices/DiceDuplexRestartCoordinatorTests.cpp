@@ -4,7 +4,8 @@
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Audio/Protocols/Backends/DiceDuplexRestartCoordinator.hpp"
-#include "Audio/Protocols/DICE/Core/IDICEDuplexProtocol.hpp"
+#include "Audio/Protocols/DICE/Core/DICETypes.hpp"
+#include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
 #include "Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/IRM/IRMClient.hpp"
@@ -35,12 +36,13 @@ using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioDuplexChannels;
 using ASFW::Audio::AudioRuntimeRegistry;
 using ASFW::Audio::AudioStreamRuntimeCaps;
-using ASFW::Audio::DiceDuplexRestartCoordinator;
+using ASFW::Audio::AudioDuplexCoordinator;
 using ASFW::Audio::IDeviceProtocol;
-using ASFW::Audio::IDiceHostTransport;
+using ASFW::Audio::IDuplexDeviceControl;
+using ASFW::Audio::IIsochDuplexHostTransport;
+using ASFW::Audio::AudioClockConfig;
 using ASFW::Audio::DICE::DiceClockApplyResult;
 using ASFW::Audio::DICE::DiceClockRequestOutcome;
-using ASFW::Audio::DICE::DiceDesiredClockConfig;
 using ASFW::Audio::DICE::DiceDuplexConfirmResult;
 using ASFW::Audio::DICE::DiceDuplexHealthResult;
 using ASFW::Audio::DICE::DiceDuplexPrepareResult;
@@ -51,7 +53,6 @@ using ASFW::Audio::DICE::DiceRestartPhase;
 using ASFW::Audio::DICE::DiceRestartReason;
 using ASFW::Audio::DICE::DiceRestartSession;
 using ASFW::Audio::DICE::DiceRestartState;
-using ASFW::Audio::DICE::IDICEDuplexProtocol;
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceRegistry;
@@ -69,9 +70,8 @@ constexpr uint64_t kTestGuid = 0x00130E0402004713ULL;
 constexpr uint32_t kQueueBytes = 4096;
 constexpr uint32_t kFocusriteVendorId = ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId;
 constexpr uint32_t kSPro24DspModelId = ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId;
-constexpr DiceDesiredClockConfig kSupportedClock{
+constexpr AudioClockConfig kSupportedClock{
     .sampleRateHz = 48000U,
-    .clockSelect = ASFW::Audio::DICE::kDiceClockSelect48kInternal,
 };
 constexpr AudioStreamRuntimeCaps kDefaultRuntimeCaps{
     .hostInputPcmChannels = 8,
@@ -149,7 +149,7 @@ class FakeDirectAudioBindingSource final : public ASFW::Audio::Runtime::IDirectA
     }
 };
 
-class FakeDiceHostTransport final : public IDiceHostTransport {
+class FakeDiceHostTransport final : public IIsochDuplexHostTransport {
   public:
     explicit FakeDiceHostTransport(SharedCallLog& log) noexcept : log_(log) {}
 
@@ -300,7 +300,7 @@ class FakeDiceHostTransport final : public IDiceHostTransport {
     SharedCallLog& log_;
 };
 
-class FakeDiceProtocol final : public IDeviceProtocol, public IDICEDuplexProtocol {
+class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceControl {
   public:
     FakeDiceProtocol(SharedCallLog& log, IRMClient& irmClient) noexcept
         : log_(log), irmClient_(irmClient) {}
@@ -314,11 +314,11 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDICEDuplexProtoco
         return true;
     }
 
-    IDICEDuplexProtocol* AsDiceDuplexProtocol() noexcept override { return this; }
-    const IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept override { return this; }
+    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
+    const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
 
     void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const DiceDesiredClockConfig& desiredClock,
+                       const AudioClockConfig& desiredClock,
                        PrepareCallback callback) override {
         log_.Add("device.prepare");
         {
@@ -392,7 +392,7 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDICEDuplexProtoco
                                 });
     }
 
-    void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
+    void ApplyClockConfig(const AudioClockConfig& desiredClock,
                           ClockApplyCallback callback) override {
         log_.Add("device.apply_clock");
         {
@@ -430,6 +430,8 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDICEDuplexProtoco
                                    .generation = healthGeneration,
                                    .appliedClock = currentClock_,
                                    .runtimeCaps = currentCaps_,
+                                   .sourceLocked = ASFW::Audio::DICE::IsSourceLocked(statusValue),
+                                   .nominalRateHz = ASFW::Audio::DICE::NominalRateHz(statusValue),
                                    .notification = healthNotification,
                                    .status = statusValue,
                                    .extStatus = healthExtStatusValue,
@@ -473,7 +475,7 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDICEDuplexProtoco
         });
     }
 
-    DiceDesiredClockConfig currentClock_{kSupportedClock};
+    AudioClockConfig currentClock_{kSupportedClock};
     AudioStreamRuntimeCaps currentCaps_{kDefaultRuntimeCaps};
     AudioStreamRuntimeCaps prepareCaps_{kDefaultRuntimeCaps};
     AudioStreamRuntimeCaps confirmCaps_{kDefaultRuntimeCaps};
@@ -505,7 +507,7 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDICEDuplexProtoco
     SharedCallLog& log_;
     IRMClient& irmClient_;
     AudioDuplexChannels lastChannels_{};
-    DiceDesiredClockConfig lastDesiredClock_{};
+    AudioClockConfig lastDesiredClock_{};
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
@@ -595,7 +597,7 @@ class DiceDuplexRestartCoordinatorTests : public ::testing::Test {
     std::shared_ptr<FakeDiceProtocol> protocol_;
     FakeDirectAudioBindingSource bindingSource_{};
     std::atomic<bool> cancel_{false};
-    DiceDuplexRestartCoordinator coordinator_;
+    AudioDuplexCoordinator coordinator_;
 };
 
 TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
@@ -1045,9 +1047,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ProgramRxFailureRollsBackHostAndDevice
 }
 
 TEST_F(DiceDuplexRestartCoordinatorTests, UnsupportedClockConfigFailsBeforeHostAllocation) {
-    const DiceDesiredClockConfig unsupportedClock{
+    const AudioClockConfig unsupportedClock{
         .sampleRateHz = 44100U,
-        .clockSelect = kSupportedClock.clockSelect,
     };
 
     EXPECT_EQ(coordinator_.RequestClockConfig(kTestGuid, unsupportedClock,

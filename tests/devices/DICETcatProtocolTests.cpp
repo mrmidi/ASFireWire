@@ -26,6 +26,11 @@ public:
                                  const StreamConfig& rx) {
         protocol.CacheRuntimeCaps(global, tx, rx);
     }
+
+    static bool MakeDiceClockConfiguration(const AudioClockConfig& requested,
+                                           DiceClockConfiguration& out) {
+        return DICETcatProtocol::MakeDiceClockConfiguration(requested, out);
+    }
 };
 
 } // namespace ASFW::Audio::DICE::TCAT
@@ -37,12 +42,14 @@ using ASFW::Async::AsyncStatus;
 using ASFW::Async::FWAddress;
 using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioStreamRuntimeCaps;
+using ASFW::Audio::AudioClockConfig;
 using ASFW::Audio::DICE::ClockSource;
 using ASFW::Audio::DICE::DecodeDiceNickname;
 using ASFW::Audio::DICE::SplitDiceLabels;
 using ASFW::Audio::DICE::ExtensionSections;
 using ASFW::Audio::DICE::Focusrite::EffectGeneralParams;
 using ASFW::Audio::DICE::GeneralSections;
+using ASFW::Audio::DICE::DiceClockConfiguration;
 using ASFW::Audio::DICE::Focusrite::SPro24DspProtocol;
 using ASFW::Audio::DICE::Focusrite::kEffectGeneralOffset;
 using ASFW::Audio::DICE::TCAT::DICETcatProtocol;
@@ -253,6 +260,17 @@ TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     EXPECT_EQ(bus.lockCount, 0);
 }
 
+TEST(DICETcatProtocolTests, Neutral48kClockRequestMapsToDiceClockSelectInsideAdapter) {
+    DiceClockConfiguration mapped{};
+    EXPECT_TRUE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::MakeDiceClockConfiguration(
+        AudioClockConfig{.sampleRateHz = 48000U}, mapped));
+    EXPECT_EQ(mapped.sampleRateHz, 48000U);
+    EXPECT_EQ(mapped.clockSelect, kClockSelect48kInternal);
+
+    EXPECT_FALSE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::MakeDiceClockConfiguration(
+        AudioClockConfig{.sampleRateHz = 44100U}, mapped));
+}
+
 TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     CountingFireWireBus bus;
     DICETcatProtocol protocol(bus, bus, 2, nullptr);
@@ -359,7 +377,8 @@ TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
     ASSERT_EQ(healthStatus, kIOReturnSuccess);
     ASSERT_TRUE(health.has_value());
     EXPECT_EQ(health->appliedClock.sampleRateHz, 48000U);
-    EXPECT_EQ(health->appliedClock.clockSelect, kClockSelect48kInternal);
+    EXPECT_TRUE(health->sourceLocked);
+    EXPECT_EQ(health->nominalRateHz, 48000U);
     EXPECT_EQ(health->notification, ASFW::Audio::DICE::Notify::kLockChange);
     EXPECT_EQ(health->status, kLocked48kStatus);
     EXPECT_EQ(health->extStatus, 0x40U);

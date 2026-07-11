@@ -46,6 +46,21 @@ void LogStreamConfigSummary(const char* label, const StreamConfig& config) {
 
 } // namespace
 
+bool DICETcatProtocol::MakeDiceClockConfiguration(
+    const AudioClockConfig& requested, DiceClockConfiguration& out) noexcept {
+    if (!IsSupportedAudioClockConfig(requested)) {
+        return false;
+    }
+    // The DICE adapter owns the register encoding: Linux selects the requested
+    // rate by updating GLOBAL_CLOCK_SELECT while preserving the source bits
+    // (dice-stream.c:60-85; dice-interface.h:80-95).
+    out = DiceClockConfiguration{
+        .sampleRateHz = requested.sampleRateHz,
+        .clockSelect = kDiceClockSelect48kInternal,
+    };
+    return true;
+}
+
 DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                    Protocols::Ports::FireWireBusInfo& busInfo,
                                    uint16_t nodeId,
@@ -129,16 +144,22 @@ void DICETcatProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) n
 }
 
 void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
-                                     const DiceDesiredClockConfig& desiredClock,
+                                     const AudioClockConfig& desiredClock,
                                      PrepareCallback callback) {
     if (!initialized_ || !duplexCtrl_) {
         callback(kIOReturnNotReady, {});
         return;
     }
 
+    DiceClockConfiguration diceClock{};
+    if (!MakeDiceClockConfiguration(desiredClock, diceClock)) {
+        callback(kIOReturnUnsupported, {});
+        return;
+    }
+
     duplexCtrl_->PrepareDuplex(
         channels,
-        desiredClock,
+        diceClock,
         [this, callback = std::move(callback)](IOReturn status, DiceDuplexPrepareResult result) mutable {
             if (status == kIOReturnSuccess) {
                 CacheRuntimeCaps(result.runtimeCaps);
@@ -180,15 +201,21 @@ void DICETcatProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
         });
 }
 
-void DICETcatProtocol::ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
+void DICETcatProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                                         ClockApplyCallback callback) {
     if (!initialized_ || !duplexCtrl_) {
         callback(kIOReturnNotReady, {});
         return;
     }
 
+    DiceClockConfiguration diceClock{};
+    if (!MakeDiceClockConfiguration(desiredClock, diceClock)) {
+        callback(kIOReturnUnsupported, {});
+        return;
+    }
+
     duplexCtrl_->ApplyClockConfig(
-        desiredClock,
+        diceClock,
         [this, callback = std::move(callback)](IOReturn status, DiceClockApplyResult result) mutable {
             if (status == kIOReturnSuccess) {
                 CacheRuntimeCaps(result.runtimeCaps);
@@ -219,16 +246,23 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
 
                 AudioStreamRuntimeCaps caps{};
                 (void)GetRuntimeAudioStreamCaps(caps);
+                const uint32_t clockSource =
+                    global.clockSelect & ClockSelect::kSourceMask;
+                const bool clockReferenceHealthy =
+                    clockSource != static_cast<uint32_t>(ClockSource::ARX1) ||
+                    (IsArx1Locked(global.extStatus) && !HasArx1Slip(global.extStatus));
 
                 callback(status,
                          DiceDuplexHealthResult{
                              .generation = busInfo_.GetGeneration(),
                              .appliedClock =
-                                 DiceDesiredClockConfig{
+                                 AudioClockConfig{
                                      .sampleRateHz = global.sampleRate,
-                                     .clockSelect = global.clockSelect,
                                  },
                              .runtimeCaps = caps,
+                             .sourceLocked = IsSourceLocked(global.status),
+                             .clockReferenceHealthy = clockReferenceHealthy,
+                             .nominalRateHz = NominalRateHz(global.status),
                              .notification = global.notification,
                              .status = global.status,
                              .extStatus = global.extStatus,
@@ -239,9 +273,8 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
 
 void DICETcatProtocol::PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) {
     PrepareDuplex(channels,
-                  DiceDesiredClockConfig{
+                  AudioClockConfig{
                       .sampleRateHz = 48000U,
-                      .clockSelect = kDiceClockSelect48kInternal,
                   },
                   [callback = std::move(callback)](IOReturn status, DiceDuplexPrepareResult) mutable {
                       callback(status);

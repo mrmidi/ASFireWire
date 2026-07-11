@@ -36,7 +36,7 @@ protected:
         DiceRestartReason reason = DiceRestartReason::kManualReconfigure) {
         IOLockLock(lock_);
         ClockRequestBroker::PendingClockRequest request{
-            .desiredClock = {.sampleRateHz = sampleRateHz, .clockSelect = sampleRateHz / 1000U},
+            .desiredClock = {.sampleRateHz = sampleRateHz},
             .reason = reason,
             .token = broker_.AllocateTokenLocked(),
         };
@@ -67,14 +67,14 @@ TEST_F(ClockRequestBrokerTest, QueuePendingLatestWinsAndMirrorsRestartSession) {
 
     IOLockLock(lock_);
     const ClockRequestBroker::PendingClockRequest first{
-        .desiredClock = {.sampleRateHz = 44100, .clockSelect = 44},
+        .desiredClock = {.sampleRateHz = 44100},
         .reason = DiceRestartReason::kSampleRateChange,
         .token = broker_.AllocateTokenLocked(),
     };
     EXPECT_FALSE(broker_.QueuePendingLocked(kGuid, first).has_value());
 
     const ClockRequestBroker::PendingClockRequest replacement{
-        .desiredClock = {.sampleRateHz = 48000, .clockSelect = 48},
+        .desiredClock = {.sampleRateHz = 48000},
         .reason = DiceRestartReason::kClockSourceChange,
         .token = broker_.AllocateTokenLocked(),
     };
@@ -122,7 +122,7 @@ TEST_F(ClockRequestBrokerTest, CompleteDeliversOnceAndUpdatesLastClockCompletion
 
     const DiceClockRequestCompletion completion{
         .token = 17,
-        .desiredClock = {.sampleRateHz = 96000, .clockSelect = 96},
+        .desiredClock = {.sampleRateHz = 96000},
         .reason = DiceRestartReason::kManualReconfigure,
         .outcome = DiceClockRequestOutcome::kApplied,
         .status = kIOReturnSuccess,

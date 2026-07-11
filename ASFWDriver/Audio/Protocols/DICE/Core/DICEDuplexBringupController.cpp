@@ -157,9 +157,9 @@ void DICEDuplexBringupController::ConfirmDuplexStart(ConfirmCallback callback) {
         });
 }
 
-void DICEDuplexBringupController::ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
-                                                   ClockApplyCallback callback) {
-    if (!IsSupportedClockConfig(desiredClock)) {
+void DICEDuplexBringupController::ApplyClockConfig(
+    const DiceClockConfiguration& desiredClock, ClockApplyCallback callback) {
+    if (!IsSupportedDiceClockConfiguration(desiredClock)) {
         callback(kIOReturnUnsupported, {});
         return;
     }
@@ -177,10 +177,11 @@ void DICEDuplexBringupController::ApplyClockConfig(const DiceDesiredClockConfig&
     flowMode_ = FlowMode::kClockApply;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
+    diceClock_ = desiredClock;
     restartSession_ = DiceRestartSession{
         .generation = busInfo_.GetGeneration(),
         .reason = DiceRestartReason::kManualReconfigure,
-        .desiredClock = desiredClock,
+        .desiredClock = AudioClockConfig{.sampleRateHz = desiredClock.sampleRateHz},
         .phase = DiceRestartPhase::kPreparingDevice,
     };
     runtimeCaps_ = {};
@@ -297,13 +298,16 @@ void DICEDuplexBringupController::PrepareDuplex48k(
     flowMode_ = FlowMode::kPrepareDuplex;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
+    diceClock_ = DiceClockConfiguration{
+        .sampleRateHz = 48000U,
+        .clockSelect = kDiceClockSelect48kInternal,
+    };
     restartSession_ = DiceRestartSession{
         .generation = busInfo_.GetGeneration(),
         .channels = channels,
         .reason = DiceRestartReason::kInitialStart,
-        .desiredClock = DiceDesiredClockConfig{
+        .desiredClock = AudioClockConfig{
             .sampleRateHz = 48000U,
-            .clockSelect = kDiceClockSelect48kInternal,
         },
         .phase = DiceRestartPhase::kPreparingDevice,
     };
@@ -324,7 +328,7 @@ void DICEDuplexBringupController::PrepareDuplex48k(
 
 void DICEDuplexBringupController::PrepareDuplex(
     const AudioDuplexChannels& channels,
-    const DiceDesiredClockConfig& desiredClock,
+    const DiceClockConfiguration& desiredClock,
     PrepareCallback callback) {
     if (channels.deviceToHostIsoChannel > 63 || channels.hostToDeviceIsoChannel > 63) {
         callback(kIOReturnBadArgument, {});
@@ -334,7 +338,7 @@ void DICEDuplexBringupController::PrepareDuplex(
         callback(kIOReturnNotReady, {});
         return;
     }
-    if (!IsSupportedClockConfig(desiredClock)) {
+    if (!IsSupportedDiceClockConfiguration(desiredClock)) {
         callback(kIOReturnUnsupported, {});
         return;
     }
@@ -350,11 +354,12 @@ void DICEDuplexBringupController::PrepareDuplex(
     refreshRuntimeCapsOnPrepare_ = true;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
+    diceClock_ = desiredClock;
     restartSession_ = DiceRestartSession{
         .generation = busInfo_.GetGeneration(),
         .channels = channels,
         .reason = DiceRestartReason::kInitialStart,
-        .desiredClock = desiredClock,
+        .desiredClock = AudioClockConfig{.sampleRateHz = desiredClock.sampleRateHz},
         .phase = DiceRestartPhase::kPreparingDevice,
     };
     runtimeCaps_ = {};
@@ -533,7 +538,7 @@ void DICEDuplexBringupController::DoWriteClockSelect(
 
     NotificationMailbox::Reset();
     (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kClockSelect),
-                    restartSession_.desiredClock.clockSelect,
+                    diceClock_.clockSelect,
                     [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus) mutable {
                          const IOReturn status = MapTransportStatus(transportStatus);
                          if (status != kIOReturnSuccess) {
@@ -701,7 +706,7 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
                                 const bool sampleRateAtTarget =
                                     state.sampleRate == restartSession_.desiredClock.sampleRateHz;
 
-                                if (state.clockSelect != restartSession_.desiredClock.clockSelect) {
+                                if (state.clockSelect != diceClock_.clockSelect) {
                                     ASFW_LOG(DICE,
                                              "PrepareDuplex48k: clock confirm failed, clockSelect=0x%08x notify=0x%08x status=0x%08x sampleRate=%u",
                                              state.clockSelect,
@@ -1159,9 +1164,8 @@ void DICEDuplexBringupController::RefreshRuntimeCaps(VoidCallback cb) {
                             state->rx = rx;
                             CacheRuntimeCaps(runtimeCaps_, state->global, state->tx, state->rx);
                             restartSession_.runtimeCaps = runtimeCaps_;
-                            restartSession_.appliedClock = DiceDesiredClockConfig{
+                            restartSession_.appliedClock = AudioClockConfig{
                                 .sampleRateHz = state->global.sampleRate,
-                                .clockSelect = state->global.clockSelect,
                             };
                             cb(kIOReturnSuccess);
                         });

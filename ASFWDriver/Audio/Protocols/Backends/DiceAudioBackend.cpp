@@ -7,7 +7,8 @@
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../DICE/Core/DICENotificationMailbox.hpp"
-#include "../DICE/Core/IDICEDuplexProtocol.hpp"
+#include "../DICE/Core/DICETypes.hpp"
+#include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../DeviceProtocolFactory.hpp"
 #include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
@@ -263,7 +264,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     // Hold a shared_ptr for the duration of the (blocking) health probe so the
     // protocol cannot be torn down underneath us by a concurrent device removal.
     auto protocol = runtime_.FindShared(guid);
-    auto* diceProtocol = protocol ? protocol->AsDiceDuplexProtocol() : nullptr;
+    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
     if (!diceProtocol) {
         return;
     }
@@ -322,14 +323,8 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    const bool sourceLocked = DICE::IsSourceLocked(waitState->result.status);
-    bool extClockHealthy = true;
-    const uint32_t clockSource = waitState->result.appliedClock.clockSelect & DICE::ClockSelect::kSourceMask;
-    if (clockSource == static_cast<uint32_t>(DICE::ClockSource::ARX1)) {
-        extClockHealthy =
-            DICE::IsArx1Locked(waitState->result.extStatus) &&
-            !DICE::HasArx1Slip(waitState->result.extStatus);
-    }
+    const bool sourceLocked = waitState->result.sourceLocked;
+    const bool extClockHealthy = waitState->result.clockReferenceHealthy;
 
     char notifyStr[96];
     char clockStr[40];
@@ -468,7 +463,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // once before the first publish so CoreAudio shows the real names from the
     // start. The load early-returns if caps are already cached; publish happens
     // regardless of outcome (names fall back to synthesized "<plug> N").
-    if (auto* dice = protocol ? protocol->AsDiceDuplexProtocol() : nullptr) {
+    if (auto* dice = protocol ? protocol->AsDuplexDeviceControl() : nullptr) {
         dice->EnsureRuntimeStreamGeometry(
             [finish, dev, protocol](IOReturn /*status*/) mutable {
                 finish(std::move(dev), protocol);
@@ -544,8 +539,8 @@ IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
 }
 
 IOReturn DiceAudioBackend::RequestClockConfig(uint64_t guid,
-                                              const DICE::DiceDesiredClockConfig& desiredClock,
-                                              DICE::DiceRestartReason reason) noexcept {
+                                              const AudioClockConfig& desiredClock,
+                                              DuplexRestartReason reason) noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
         ASFW_LOG(Audio,
                  "DiceAudioBackend: RequestClockConfig refused by teardown GUID=0x%016llx",

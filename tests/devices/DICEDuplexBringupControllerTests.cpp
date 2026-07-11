@@ -1147,7 +1147,6 @@ TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBri
     ASSERT_TRUE(prepareResult.has_value());
     EXPECT_EQ(prepareResult->generation.value, 1U);
     EXPECT_EQ(prepareResult->appliedClock.sampleRateHz, 48000U);
-    EXPECT_EQ(prepareResult->appliedClock.clockSelect, kClockSelect48kInternal);
     EXPECT_EQ(prepareResult->channels.deviceToHostIsoChannel, channels.deviceToHostIsoChannel);
     EXPECT_EQ(prepareResult->channels.hostToDeviceIsoChannel, channels.hostToDeviceIsoChannel);
     EXPECT_EQ(prepareResult->runtimeCaps.sampleRateHz, 48000U);

@@ -21,8 +21,8 @@ namespace ASFW::IRM {
     class IRMClient;
 }
 
-namespace ASFW::Audio::DICE {
-    class IDICEDuplexProtocol;
+namespace ASFW::Audio {
+class IDuplexDeviceControl;
 }
 
 namespace ASFW::Audio {
@@ -109,12 +109,12 @@ public:
         return nullptr;
     }
 
-    /// Optional typed DICE duplex control interface used by the restart coordinator.
-    virtual DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() noexcept {
+    /// Optional protocol-neutral duplex control interface used by the audio lifecycle.
+    virtual IDuplexDeviceControl* AsDuplexDeviceControl() noexcept {
         return nullptr;
     }
 
-    virtual const DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept {
+    virtual const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept {
         return nullptr;
     }
 

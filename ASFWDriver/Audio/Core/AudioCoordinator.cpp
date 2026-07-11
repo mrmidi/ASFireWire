@@ -280,10 +280,10 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
     return kIOReturnSuccess;
 }
 
-IOReturn AudioCoordinator::RequestDiceClockConfig(
+IOReturn AudioCoordinator::RequestClockConfig(
     uint64_t guid,
-    const DICE::DiceDesiredClockConfig& desiredClock,
-    DICE::DiceRestartReason reason) noexcept {
+    const AudioClockConfig& desiredClock,
+    DuplexRestartReason reason) noexcept {
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -294,7 +294,7 @@ IOReturn AudioCoordinator::RequestDiceClockConfig(
             const uint64_t active = activeGuid_;
             IOLockUnlock(lock_);
             ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: RequestDiceClockConfig busy requested=0x%016llx active=0x%016llx",
+                             "AudioCoordinator: RequestClockConfig busy requested=0x%016llx active=0x%016llx",
                              guid,
                              active);
             return kIOReturnBusy;
@@ -315,17 +315,16 @@ IOReturn AudioCoordinator::RequestDiceClockConfig(
     const IOReturn kr = dice_.RequestClockConfig(guid, desiredClock, reason);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: RequestDiceClockConfig failed GUID=0x%016llx kr=0x%x",
+                       "AudioCoordinator: RequestClockConfig failed GUID=0x%016llx kr=0x%x",
                        guid,
                        kr);
         return kr;
     }
 
     ASFW_LOG(Audio,
-             "AudioCoordinator: RequestDiceClockConfig ok GUID=0x%016llx rate=%uHz clock=0x%08x reason=%u",
+             "AudioCoordinator: RequestClockConfig ok GUID=0x%016llx rate=%uHz reason=%u",
              guid,
              desiredClock.sampleRateHz,
-             desiredClock.clockSelect,
              static_cast<unsigned>(reason));
     return kIOReturnSuccess;
 }
