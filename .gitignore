@@ -77,6 +77,7 @@ ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
 # Local scratch / tool artifacts
 /Testing/
 /tmp/
+/fw-tests/am-config-roms/
 /CMakeLists.txt.bak
 /validation_data.json
 __pycache__/
