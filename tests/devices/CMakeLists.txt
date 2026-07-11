@@ -55,6 +55,11 @@ add_device_test(DiceDuplexRestartCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
 )
 
+# FW-74: resolver-owned duplex stream geometry, wire-format quirks, and host recipe.
+add_device_test(DuplexStreamProfileTests
+    DuplexStreamProfileTests.cpp
+)
+
 # FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
 add_device_test(WaitForAsyncResultTests
     WaitForAsyncResultTests.cpp

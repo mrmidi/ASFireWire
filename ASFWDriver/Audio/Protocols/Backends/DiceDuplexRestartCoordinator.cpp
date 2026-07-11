@@ -3,14 +3,14 @@
 
 #include "DiceDuplexRestartCoordinator.hpp"
 #include "DiceRecoveryPolicy.hpp"
+#include "DuplexStreamProfile.hpp"
 #include "RestartJournal.hpp"
 #include "SyncAsyncBridge.hpp"
 
+#include "../../../Logging/Logging.hpp"
 #include "../../Core/AudioRuntimeRegistry.hpp"
 #include "../../Model/ASFWAudioDevice.hpp"
-#include "../../../Logging/Logging.hpp"
 #include "../DICE/Core/IDICEDuplexProtocol.hpp"
-#include "../DeviceProtocolFactory.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -35,11 +35,11 @@ using ASFW::Audio::DICE::DiceDuplexPrepareResult;
 using ASFW::Audio::DICE::DiceDuplexStageResult;
 using ASFW::Audio::DICE::DiceRestartErrorClass;
 using ASFW::Audio::DICE::DiceRestartFailureCause;
+using ASFW::Audio::DICE::DiceRestartIssueInfo;
 using ASFW::Audio::DICE::DiceRestartPhase;
 using ASFW::Audio::DICE::DiceRestartReason;
-using ASFW::Audio::DICE::DiceRestartIssueInfo;
-using ASFW::Audio::DICE::DiceRestartState;
 using ASFW::Audio::DICE::DiceRestartSession;
+using ASFW::Audio::DICE::DiceRestartState;
 using ASFW::Audio::DICE::HasAnyRestartState;
 using ASFW::Audio::DICE::HasDeviceRestartState;
 using ASFW::Audio::DICE::HasHostRestartState;
@@ -47,125 +47,31 @@ using ASFW::Audio::DICE::HasRestartIntent;
 using ASFW::Audio::DICE::IsSupportedClockConfig;
 using ASFW::Audio::DICE::kDiceClockSelect48kInternal;
 
-constexpr uint8_t kDefaultIrChannel = 1;
-constexpr uint8_t kDefaultItChannel = 0;
-constexpr uint32_t kPlaybackBandwidthUnits = 320;
-constexpr uint32_t kCaptureBandwidthUnits = 576;
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 
 [[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
     mach_timebase_info_data_t timebase{};
-    if (mach_timebase_info(&timebase) != KERN_SUCCESS ||
-        timebase.denom == 0) {
+    if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0) {
         return 0;
     }
     const unsigned __int128 nanos =
-        static_cast<unsigned __int128>(mach_absolute_time()) *
-        timebase.numer / timebase.denom;
+        static_cast<unsigned __int128>(mach_absolute_time()) * timebase.numer / timebase.denom;
     return static_cast<uint64_t>(nanos / 1'000'000U);
-}
-
-[[nodiscard]] bool IsValidIsoChannel(uint8_t channel) noexcept {
-    return channel <= 0x3F;
-}
-
-[[nodiscard]] AudioDuplexChannels ResolveDuplexChannelsForRecord(
-    const Discovery::DeviceRecord& record,
-    const IDeviceProtocol* protocol) noexcept {
-    AudioDuplexChannels channels{
-        .deviceToHostIsoChannel = kDefaultIrChannel,
-        .hostToDeviceIsoChannel = kDefaultItChannel,
-    };
-
-    AudioStreamRuntimeCaps caps{};
-    bool haveCaps = protocol && protocol->GetRuntimeAudioStreamCaps(caps);
-
-    // Stream counts come from the device's TX_NUMBER/RX_NUMBER (includes streams
-    // currently reported with iso=-1 that the host must still arm). Single-stream
-    // devices report 1/1 and take exactly the legacy code path below.
-    auto clampCount = [](uint32_t n) noexcept -> uint32_t {
-        if (n == 0) return 1;
-        return (n > kMaxAudioStreamsPerDirection) ? kMaxAudioStreamsPerDirection : n;
-    };
-    channels.captureStreamCount =
-        haveCaps ? clampCount(caps.deviceToHostStreamCount) : 1;
-    channels.playbackStreamCount =
-        haveCaps ? clampCount(caps.hostToDeviceStreamCount) : 1;
-
-    // Assign distinct iso channels across both directions. stream[0] keeps the
-    // device-reported channel (or the legacy default) so the single-stream host
-    // path is byte-for-byte unchanged; additional streams get the lowest free
-    // channels. The host allocates these (it owns the IRM reservation) and writes
-    // them into the device's per-stream ISOC registers before GLOBAL_ENABLE.
-    uint64_t used = 0; // bitset over channels 0..63
-    auto markUsed = [&](uint8_t ch) noexcept {
-        if (ch <= 0x3F) used |= (uint64_t{1} << ch);
-    };
-    auto nextFree = [&]() noexcept -> uint8_t {
-        for (uint8_t ch = 0; ch <= 0x3F; ++ch) {
-            if ((used & (uint64_t{1} << ch)) == 0) {
-                used |= (uint64_t{1} << ch);
-                return ch;
-            }
-        }
-        return AudioStreamWireInfo::kInvalidIsoChannel;
-    };
-
-    channels.captureIsoChannels[0] =
-        (haveCaps && IsValidIsoChannel(caps.deviceToHostIsoChannel))
-            ? caps.deviceToHostIsoChannel
-            : kDefaultIrChannel;
-    channels.playbackIsoChannels[0] =
-        (haveCaps && IsValidIsoChannel(caps.hostToDeviceIsoChannel))
-            ? caps.hostToDeviceIsoChannel
-            : kDefaultItChannel;
-    markUsed(channels.captureIsoChannels[0]);
-    markUsed(channels.playbackIsoChannels[0]);
-
-    for (uint32_t i = 1; i < channels.captureStreamCount; ++i) {
-        channels.captureIsoChannels[i] = nextFree();
-    }
-    for (uint32_t i = 1; i < channels.playbackStreamCount; ++i) {
-        channels.playbackIsoChannels[i] = nextFree();
-    }
-
-    // Legacy single-channel fields mirror stream[0].
-    channels.deviceToHostIsoChannel = channels.captureIsoChannels[0];
-    channels.hostToDeviceIsoChannel = channels.playbackIsoChannels[0];
-    return channels;
 }
 
 inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
     return static_cast<uint8_t>(hw.ReadNodeID() & 0x3Fu);
 }
 
-[[nodiscard]] constexpr Encoding::AudioWireFormat ResolveDicePlaybackWireFormat(
-    const Discovery::DeviceRecord& record,
-    const AudioStreamRuntimeCaps& caps) noexcept {
-    if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
-        record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
-        caps.hostOutputPcmChannels == 8 &&
-        caps.hostToDeviceAm824Slots == 9) {
-        return Encoding::AudioWireFormat::kRawPcm24In32;
-    }
-    return Encoding::AudioWireFormat::kAM824;
-}
-
 } // namespace
 
 DiceDuplexRestartCoordinator::DiceDuplexRestartCoordinator(
-    Discovery::DeviceRegistry& registry,
-    AudioRuntimeRegistry& runtime,
-    IDiceHostTransport& hostTransport,
-    Driver::HardwareInterface& hardware,
+    Discovery::DeviceRegistry& registry, AudioRuntimeRegistry& runtime,
+    IDiceHostTransport& hostTransport, Driver::HardwareInterface& hardware,
     const std::atomic<bool>* cancel,
     DirectAudioBindingSourceProvider bindingSourceProvider) noexcept
-    : registry_(registry)
-    , runtime_(runtime)
-    , hostTransport_(hostTransport)
-    , hardware_(hardware)
-    , cancel_(cancel)
-    , bindingSourceProvider_(std::move(bindingSourceProvider)) {
+    : registry_(registry), runtime_(runtime), hostTransport_(hostTransport), hardware_(hardware),
+      cancel_(cancel), bindingSourceProvider_(std::move(bindingSourceProvider)) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceDuplexRestartCoordinator: failed to allocate lock");
@@ -192,13 +98,8 @@ IOReturn DiceDuplexRestartCoordinator::StartStreaming(uint64_t guid) noexcept {
     }
 
     const DiceRestartSession session = LoadSession(guid);
-    LogFsmEvent("start",
-                guid,
-                session.restartId,
-                session.topologyGeneration,
-                session.state,
-                session.phase,
-                session.reason);
+    LogFsmEvent("start", guid, session.restartId, session.topologyGeneration, session.state,
+                session.phase, session.reason);
 
     bool acquired = false;
     for (uint32_t waited = 0; waited < kSyncBridgeTimeoutMs; waited += kSyncBridgePollMs) {
@@ -213,9 +114,9 @@ IOReturn DiceDuplexRestartCoordinator::StartStreaming(uint64_t guid) noexcept {
     }
     if (!acquired) {
         ASFW_LOG_ERROR(Audio,
-                       "DiceDuplexRestartCoordinator: StartStreaming timed out waiting for GUID claim GUID=%llx timeoutMs=%u",
-                       guid,
-                       kSyncBridgeTimeoutMs);
+                       "DiceDuplexRestartCoordinator: StartStreaming timed out waiting for GUID "
+                       "claim GUID=%llx timeoutMs=%u",
+                       guid, kSyncBridgeTimeoutMs);
         return kIOReturnTimeout;
     }
 
@@ -229,20 +130,14 @@ IOReturn DiceDuplexRestartCoordinator::StopStreaming(uint64_t guid) noexcept {
         return kIOReturnBadArgument;
     }
     if (TeardownRequested()) {
-        ASFW_LOG(Audio,
-                 "DiceDuplexRestartCoordinator: StopStreaming refused by teardown GUID=%llx",
+        ASFW_LOG(Audio, "DiceDuplexRestartCoordinator: StopStreaming refused by teardown GUID=%llx",
                  guid);
         return kIOReturnAborted;
     }
 
     const DiceRestartSession session = LoadSession(guid);
-    LogFsmEvent("stop",
-                guid,
-                session.restartId,
-                session.topologyGeneration,
-                session.state,
-                session.phase,
-                session.reason);
+    LogFsmEvent("stop", guid, session.restartId, session.topologyGeneration, session.state,
+                session.phase, session.reason);
 
     RequestStopIntent(guid);
     FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
@@ -261,9 +156,9 @@ IOReturn DiceDuplexRestartCoordinator::StopStreaming(uint64_t guid) noexcept {
     }
     if (!acquired) {
         ASFW_LOG_ERROR(Audio,
-                       "DiceDuplexRestartCoordinator: StopStreaming timed out waiting for GUID claim GUID=%llx timeoutMs=%u",
-                       guid,
-                       kSyncBridgeTimeoutMs);
+                       "DiceDuplexRestartCoordinator: StopStreaming timed out waiting for GUID "
+                       "claim GUID=%llx timeoutMs=%u",
+                       guid, kSyncBridgeTimeoutMs);
         ClearStopIntent(guid);
         return kIOReturnTimeout;
     }
@@ -276,9 +171,7 @@ IOReturn DiceDuplexRestartCoordinator::StopStreaming(uint64_t guid) noexcept {
 }
 
 IOReturn DiceDuplexRestartCoordinator::RequestClockConfig(
-    uint64_t guid,
-    const DiceDesiredClockConfig& desiredClock,
-    DiceRestartReason reason) noexcept {
+    uint64_t guid, const DiceDesiredClockConfig& desiredClock, DiceRestartReason reason) noexcept {
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -321,14 +214,8 @@ IOReturn DiceDuplexRestartCoordinator::RequestClockConfig(
 
     session.pendingClock = request.desiredClock;
     session.pendingReason = request.reason;
-    LogFsmEvent("clock",
-                guid,
-                session.restartId,
-                session.topologyGeneration,
-                session.state,
-                session.phase,
-                reason,
-                request.token);
+    LogFsmEvent("clock", guid, session.restartId, session.topologyGeneration, session.state,
+                session.phase, reason, request.token);
 
     if (supersededRequest.has_value()) {
         CompleteClockRequest(
@@ -377,13 +264,8 @@ IOReturn DiceDuplexRestartCoordinator::RecoverStreaming(uint64_t guid,
     }
 
     const DiceRestartSession session = LoadSession(guid);
-    LogFsmEvent("recover",
-                guid,
-                session.restartId,
-                session.topologyGeneration,
-                session.state,
-                session.phase,
-                reason);
+    LogFsmEvent("recover", guid, session.restartId, session.topologyGeneration, session.state,
+                session.phase, reason);
 
     FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
 
@@ -400,9 +282,9 @@ IOReturn DiceDuplexRestartCoordinator::RecoverStreaming(uint64_t guid,
     }
     if (!acquired) {
         ASFW_LOG_ERROR(Audio,
-                       "DiceDuplexRestartCoordinator: RecoverStreaming timed out waiting for GUID claim GUID=%llx timeoutMs=%u",
-                       guid,
-                       kSyncBridgeTimeoutMs);
+                       "DiceDuplexRestartCoordinator: RecoverStreaming timed out waiting for GUID "
+                       "claim GUID=%llx timeoutMs=%u",
+                       guid, kSyncBridgeTimeoutMs);
         return kIOReturnTimeout;
     }
 
@@ -424,7 +306,8 @@ void DiceDuplexRestartCoordinator::ClearSession(uint64_t guid) noexcept {
     IOLockUnlock(lock_);
 }
 
-std::optional<DiceRestartSession> DiceDuplexRestartCoordinator::GetSession(uint64_t guid) const noexcept {
+std::optional<DiceRestartSession>
+DiceDuplexRestartCoordinator::GetSession(uint64_t guid) const noexcept {
     return store_.GetSession(guid);
 }
 
@@ -446,12 +329,12 @@ IOReturn DiceDuplexRestartCoordinator::RunStartStreaming(uint64_t guid) noexcept
         .sampleRateHz = 48000U,
         .clockSelect = kDiceClockSelect48kInternal,
     };
-    const DiceRestartReason reason =
-        DICE::HasRestartIntent(session)
-            ? DICE::ClassifyRestartReason(&session, desiredClock)
-            : DiceRestartReason::kInitialStart;
+    const DiceRestartReason reason = DICE::HasRestartIntent(session)
+                                         ? DICE::ClassifyRestartReason(&session, desiredClock)
+                                         : DiceRestartReason::kInitialStart;
 
-    const IOReturn status = RunDuplexStart(guid, *record, *diceProtocol, session, desiredClock, reason);
+    const IOReturn status =
+        RunDuplexStart(guid, *record, *diceProtocol, session, desiredClock, reason);
     if (status != kIOReturnSuccess) {
         FailPendingClockRequest(guid, DiceClockRequestOutcome::kFailed, status);
         return status;
@@ -477,7 +360,8 @@ IOReturn DiceDuplexRestartCoordinator::RunStartStreaming(uint64_t guid) noexcept
                     .generation = completionSession.topologyGeneration,
                 },
                 guid);
-            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop,
+                                    kIOReturnAborted);
             break;
         }
 
@@ -495,7 +379,8 @@ IOReturn DiceDuplexRestartCoordinator::RunStartStreaming(uint64_t guid) noexcept
                     .generation = completionSession.topologyGeneration,
                 },
                 guid);
-            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop,
+                                    kIOReturnAborted);
             break;
         }
 
@@ -505,9 +390,8 @@ IOReturn DiceDuplexRestartCoordinator::RunStartStreaming(uint64_t guid) noexcept
                 .token = pending.token,
                 .desiredClock = pending.desiredClock,
                 .reason = pending.reason,
-                .outcome = (pendingStatus == kIOReturnSuccess)
-                    ? DiceClockRequestOutcome::kApplied
-                    : DiceClockRequestOutcome::kFailed,
+                .outcome = (pendingStatus == kIOReturnSuccess) ? DiceClockRequestOutcome::kApplied
+                                                               : DiceClockRequestOutcome::kFailed,
                 .status = pendingStatus,
                 .restartId = completionSession.restartId,
                 .generation = completionSession.topologyGeneration,
@@ -551,17 +435,9 @@ IOReturn DiceDuplexRestartCoordinator::RunRecoveryStreaming(uint64_t guid,
     DiceRestartSession session = LoadSession(guid);
     session.guid = guid;
     if (IsRecoveryReason(reason)) {
-        RecordIssue(session,
-                    session.lastInvalidation,
-                    session.phase,
-                    DiceRestartErrorClass::kEpochInvalidated,
-                    FailureCauseForReason(reason),
-                    kIOReturnAborted,
-                    true,
-                    false,
-                    kIOReturnSuccess,
-                    true,
-                    true);
+        RecordIssue(session, session.lastInvalidation, session.phase,
+                    DiceRestartErrorClass::kEpochInvalidated, FailureCauseForReason(reason),
+                    kIOReturnAborted, true, false, kIOReturnSuccess, true, true);
         StoreSession(session);
         LogInvalidation(session);
     }
@@ -584,27 +460,20 @@ IOReturn DiceDuplexRestartCoordinator::RunRecoveryStreaming(uint64_t guid,
     if (decision.disposition == DiceRecoveryDisposition::kIgnore) {
         return (decision.reason == DiceRecoveryPolicyReason::kSuppressedByStop ||
                 decision.reason == DiceRecoveryPolicyReason::kIdleApplyInvalidated)
-            ? kIOReturnAborted
-            : kIOReturnSuccess;
+                   ? kIOReturnAborted
+                   : kIOReturnSuccess;
     }
 
     if (decision.disposition == DiceRecoveryDisposition::kFailSession) {
         const bool missingDependency = (!record || !diceProtocol);
         session.terminalError = missingDependency
-            ? kIOReturnNotReady
-            : (session.lastFailure.has_value() ? session.lastFailure->status : kIOReturnUnsupported);
+                                    ? kIOReturnNotReady
+                                    : (session.lastFailure.has_value() ? session.lastFailure->status
+                                                                       : kIOReturnUnsupported);
         if (missingDependency) {
-            RecordIssue(session,
-                        session.lastFailure,
-                        session.phase,
-                        DiceRestartErrorClass::kMissingDependency,
-                        FailureCauseForReason(reason),
-                        session.terminalError,
-                        false,
-                        false,
-                        kIOReturnSuccess,
-                        false,
-                        false);
+            RecordIssue(session, session.lastFailure, session.phase,
+                        DiceRestartErrorClass::kMissingDependency, FailureCauseForReason(reason),
+                        session.terminalError, false, false, kIOReturnSuccess, false, false);
         }
         ApplyTerminalPhase(session, DiceRestartPhase::kFailed, ToString(decision.reason));
         StoreSession(session);
@@ -643,8 +512,9 @@ IOReturn DiceDuplexRestartCoordinator::RunRecoveryStreaming(uint64_t guid,
     return RunDuplexStart(guid, *record, *diceProtocol, session, desiredClock, reason);
 }
 
-IOReturn DiceDuplexRestartCoordinator::RunClockRequestLoop(uint64_t guid,
-                                                           PendingClockRequest initialRequest) noexcept {
+IOReturn
+DiceDuplexRestartCoordinator::RunClockRequestLoop(uint64_t guid,
+                                                  PendingClockRequest initialRequest) noexcept {
     PendingClockRequest current = initialRequest;
     IOReturn lastStatus = kIOReturnSuccess;
 
@@ -662,7 +532,8 @@ IOReturn DiceDuplexRestartCoordinator::RunClockRequestLoop(uint64_t guid,
                     .generation = completionSession.topologyGeneration,
                 },
                 guid);
-            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop,
+                                    kIOReturnAborted);
             break;
         }
 
@@ -681,7 +552,8 @@ IOReturn DiceDuplexRestartCoordinator::RunClockRequestLoop(uint64_t guid,
                     .generation = completionSession.topologyGeneration,
                 },
                 guid);
-            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+            FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop,
+                                    kIOReturnAborted);
             break;
         }
 
@@ -691,9 +563,8 @@ IOReturn DiceDuplexRestartCoordinator::RunClockRequestLoop(uint64_t guid,
                 .token = current.token,
                 .desiredClock = current.desiredClock,
                 .reason = current.reason,
-                .outcome = (lastStatus == kIOReturnSuccess)
-                    ? DiceClockRequestOutcome::kApplied
-                    : DiceClockRequestOutcome::kFailed,
+                .outcome = (lastStatus == kIOReturnSuccess) ? DiceClockRequestOutcome::kApplied
+                                                            : DiceClockRequestOutcome::kFailed,
                 .status = lastStatus,
                 .restartId = completionSession.restartId,
                 .generation = completionSession.topologyGeneration,
@@ -710,8 +581,9 @@ IOReturn DiceDuplexRestartCoordinator::RunClockRequestLoop(uint64_t guid,
     return lastStatus;
 }
 
-IOReturn DiceDuplexRestartCoordinator::ApplyClockRequest(uint64_t guid,
-                                                         const PendingClockRequest& request) noexcept {
+IOReturn
+DiceDuplexRestartCoordinator::ApplyClockRequest(uint64_t guid,
+                                                const PendingClockRequest& request) noexcept {
     if (IsStopRequested(guid) || TeardownRequested()) {
         return kIOReturnAborted;
     }
@@ -727,8 +599,7 @@ IOReturn DiceDuplexRestartCoordinator::ApplyClockRequest(uint64_t guid,
     }
 
     DiceRestartSession session = LoadSession(guid);
-    if (HasAnyRestartState(session) ||
-        session.phase == DiceRestartPhase::kRunning ||
+    if (HasAnyRestartState(session) || session.phase == DiceRestartPhase::kRunning ||
         session.state == DiceRestartState::kRunning ||
         session.state == DiceRestartState::kRecovering ||
         session.state == DiceRestartState::kFailed) {
@@ -742,28 +613,24 @@ IOReturn DiceDuplexRestartCoordinator::ApplyClockRequest(uint64_t guid,
         if (TeardownRequested()) {
             return kIOReturnAborted;
         }
-        return RunDuplexStart(guid, *record, *diceProtocol, session, request.desiredClock, request.reason);
+        return RunDuplexStart(guid, *record, *diceProtocol, session, request.desiredClock,
+                              request.reason);
     }
 
     if (TeardownRequested()) {
         return kIOReturnAborted;
     }
 
-    return RunIdleClockApply(guid,
-                             *diceProtocol,
-                             session,
-                             record->gen,
-                             request.desiredClock,
+    return RunIdleClockApply(guid, *diceProtocol, session, record->gen, request.desiredClock,
                              request.reason);
 }
 
-IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
-    uint64_t guid,
-    Discovery::DeviceRecord& record,
-    DICE::IDICEDuplexProtocol& diceProtocol,
-    DiceRestartSession& session,
-    const DiceDesiredClockConfig& desiredClock,
-    DiceRestartReason reason) noexcept {
+IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(uint64_t guid,
+                                                      Discovery::DeviceRecord& record,
+                                                      DICE::IDICEDuplexProtocol& diceProtocol,
+                                                      DiceRestartSession& session,
+                                                      const DiceDesiredClockConfig& desiredClock,
+                                                      DiceRestartReason reason) noexcept {
     auto abortIfTeardown = [&](const char* stage) noexcept -> bool {
         if (!TeardownRequested()) {
             return false;
@@ -781,7 +648,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     // Pre-read the device's static stream format (DICE TX_NUMBER/RX_NUMBER +
     // per-stream channels) so the channel resolution + IRM reservation below see
     // the real stream count. EnsureRuntimeStreamGeometry publishes the per-stream
-    // caps that ResolveDuplexChannelsForRecord consumes via GetRuntimeAudioStreamCaps.
+    // caps that DuplexStreamProfileResolver consumes via GetRuntimeAudioStreamCaps.
     // Non-fatal: on failure we fall back to the legacy single-stream resolution
     // and PrepareDuplex will surface any genuine device error. A multi-stream
     // device (Venice F32 = 2×16) needs this to allocate a channel per stream;
@@ -791,9 +658,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
             diceProtocol.EnsureRuntimeStreamGeometry(
                 [callback = std::move(callback)](IOReturn st) mutable { callback(st, true); });
         },
-        kSyncBridgeTimeoutMs,
-        kIOReturnTimeout,
-        cancel_);
+        kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (geometryLoad.status != kIOReturnSuccess) {
         ASFW_LOG(DICE,
                  "RunDuplexStart: stream-geometry pre-read failed (0x%x); "
@@ -801,16 +666,14 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
                  geometryLoad.status);
     }
 
-    const AudioDuplexChannels channels = ResolveDuplexChannelsForRecord(record, runtimeProtocol.get());
+    const DuplexStreamProfile initialProfile =
+        DuplexStreamProfileResolver::Resolve(record, runtimeProtocol.get());
+    const AudioDuplexChannels channels = initialProfile.channels;
     const uint64_t restartId = AllocateRestartId();
 
-    auto finalizeFailure = [&](IOReturn failureStatus,
-                               DiceRestartPhase failedPhase,
-                               DiceRestartFailureCause cause,
-                               DiceRestartErrorClass errorClass,
-                               bool rollbackAttempted,
-                               IOReturn rollbackStatus,
-                               bool hostStateKnown,
+    auto finalizeFailure = [&](IOReturn failureStatus, DiceRestartPhase failedPhase,
+                               DiceRestartFailureCause cause, DiceRestartErrorClass errorClass,
+                               bool rollbackAttempted, IOReturn rollbackStatus, bool hostStateKnown,
                                bool deviceStateKnown) noexcept {
         session.guid = guid;
         session.restartId = restartId;
@@ -820,56 +683,36 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         session.reason = reason;
         session.desiredClock = desiredClock;
         session.terminalError = failureStatus;
-        RecordIssue(session,
-                    session.lastFailure,
-                    failedPhase,
-                    errorClass,
-                    cause,
-                    failureStatus,
-                    IsRetryableStatus(failureStatus),
-                    rollbackAttempted,
-                    rollbackStatus,
-                    hostStateKnown,
-                    deviceStateKnown);
+        RecordIssue(session, session.lastFailure, failedPhase, errorClass, cause, failureStatus,
+                    IsRetryableStatus(failureStatus), rollbackAttempted, rollbackStatus,
+                    hostStateKnown, deviceStateKnown);
         ApplyTerminalPhase(session, DiceRestartPhase::kFailed, ToString(errorClass));
         StoreSession(session);
         LogTerminal(session);
         return failureStatus;
     };
 
-    auto rollbackToFailure = [&](IOReturn failureStatus,
-                                 DiceRestartPhase failedPhase,
+    auto rollbackToFailure = [&](IOReturn failureStatus, DiceRestartPhase failedPhase,
                                  DiceRestartFailureCause cause) noexcept {
         if (failureStatus == kIOReturnAborted && TeardownRequested()) {
             return failureStatus;
         }
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, diceProtocol, session);
-        return finalizeFailure(failureStatus,
-                               failedPhase,
-                               cause,
-                               DiceRestartErrorClass::kStageFailure,
-                               true,
-                               rollbackStatus,
-                               true,
+        return finalizeFailure(failureStatus, failedPhase, cause,
+                               DiceRestartErrorClass::kStageFailure, true, rollbackStatus, true,
                                true);
     };
 
-    auto rollbackToInvalidation = [&](IOReturn invalidationStatus,
-                                      DiceRestartPhase failedPhase,
+    auto rollbackToInvalidation = [&](IOReturn invalidationStatus, DiceRestartPhase failedPhase,
                                       DiceRestartFailureCause cause) noexcept {
         if (invalidationStatus == kIOReturnAborted && TeardownRequested()) {
             return invalidationStatus;
         }
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, diceProtocol, session);
         if (rollbackStatus != kIOReturnSuccess) {
-            return finalizeFailure(rollbackStatus,
-                                   DiceRestartPhase::kStopping,
-                                   DiceRestartFailureCause::kStop,
-                                   DiceRestartErrorClass::kStageFailure,
-                                   true,
-                                   rollbackStatus,
-                                   true,
-                                   true);
+            return finalizeFailure(
+                rollbackStatus, DiceRestartPhase::kStopping, DiceRestartFailureCause::kStop,
+                DiceRestartErrorClass::kStageFailure, true, rollbackStatus, true, true);
         }
 
         session.guid = guid;
@@ -880,20 +723,13 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         session.reason = reason;
         session.desiredClock = desiredClock;
         session.terminalError = kIOReturnSuccess;
-        RecordIssue(session,
-                    session.lastInvalidation,
-                    failedPhase,
+        RecordIssue(session, session.lastInvalidation, failedPhase,
                     IsStopRequested(guid) ? DiceRestartErrorClass::kStopIntent
                                           : DiceRestartErrorClass::kEpochInvalidated,
-                    cause,
-                    invalidationStatus,
-                    true,
-                    true,
-                    rollbackStatus,
-                    true,
-                    true);
+                    cause, invalidationStatus, true, true, rollbackStatus, true, true);
         ClearFailureSnapshot(session);
-        ApplyTerminalPhase(session, DiceRestartPhase::kIdle, ToString(session.lastInvalidation->errorClass));
+        ApplyTerminalPhase(session, DiceRestartPhase::kIdle,
+                           ToString(session.lastInvalidation->errorClass));
         StoreSession(session);
         LogInvalidation(session);
         LogTerminal(session);
@@ -902,27 +738,20 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
 
     auto* irmClient = diceProtocol.GetIRMClient();
     if (irmClient == nullptr) {
-        ASFW_LOG_ERROR(Audio, "DiceDuplexRestartCoordinator: protocol missing IRM client GUID=%llx", guid);
-        return finalizeFailure(kIOReturnNotReady,
-                               DiceRestartPhase::kPreparingDevice,
+        ASFW_LOG_ERROR(Audio, "DiceDuplexRestartCoordinator: protocol missing IRM client GUID=%llx",
+                       guid);
+        return finalizeFailure(kIOReturnNotReady, DiceRestartPhase::kPreparingDevice,
                                DiceRestartFailureCause::kPrepare,
-                               DiceRestartErrorClass::kMissingDependency,
-                               false,
-                               kIOReturnSuccess,
-                               false,
-                               false);
+                               DiceRestartErrorClass::kMissingDependency, false, kIOReturnSuccess,
+                               false, false);
     }
 
     auto* bindingSource = GetDirectAudioBindingSource(guid);
     if (!bindingSource) {
-        return finalizeFailure(kIOReturnNotReady,
-                               DiceRestartPhase::kPreparingDevice,
+        return finalizeFailure(kIOReturnNotReady, DiceRestartPhase::kPreparingDevice,
                                DiceRestartFailureCause::kPrepare,
-                               DiceRestartErrorClass::kMissingDependency,
-                               false,
-                               kIOReturnSuccess,
-                               false,
-                               true);
+                               DiceRestartErrorClass::kMissingDependency, false, kIOReturnSuccess,
+                               false, true);
     }
 
     session.guid = guid;
@@ -937,32 +766,18 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     SetSessionState(session, RestartStateForStartReason(reason), ToString(reason));
     SetSessionPhase(session, DiceRestartPhase::kPreparingDevice);
     StoreSession(session);
-    LogFsmEvent("start",
-                guid,
-                restartId,
-                topologyGeneration,
-                session.state,
-                session.phase,
-                reason);
-    ASFW_LOG(Audio,
-             "DiceDuplexRestartCoordinator: using DICE iso channels d2h=%u h2d=%u GUID=%llx",
-             channels.deviceToHostIsoChannel,
-             channels.hostToDeviceIsoChannel,
-             guid);
+    LogFsmEvent("start", guid, restartId, topologyGeneration, session.state, session.phase, reason);
+    ASFW_LOG(Audio, "DiceDuplexRestartCoordinator: using DICE iso channels d2h=%u h2d=%u GUID=%llx",
+             channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, guid);
 
     if (abortIfTeardown("BeginSplitDuplex")) {
         return kIOReturnAborted;
     }
     const kern_return_t claimStatus = hostTransport_.BeginSplitDuplex(guid);
     if (claimStatus != kIOReturnSuccess) {
-        return finalizeFailure(claimStatus,
-                               DiceRestartPhase::kPreparingDevice,
-                               DiceRestartFailureCause::kPrepare,
-                               DiceRestartErrorClass::kStageFailure,
-                               false,
-                               kIOReturnSuccess,
-                               true,
-                               true);
+        return finalizeFailure(
+            claimStatus, DiceRestartPhase::kPreparingDevice, DiceRestartFailureCause::kPrepare,
+            DiceRestartErrorClass::kStageFailure, false, kIOReturnSuccess, true, true);
     }
     session.hostDuplexClaimed = true;
     StoreSession(session);
@@ -974,20 +789,16 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         [&](auto callback) {
             diceProtocol.PrepareDuplex(channels, desiredClock, std::move(callback));
         },
-        kSyncBridgeTimeoutMs,
-        kIOReturnTimeout,
-        cancel_);
+        kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (prepare.status != kIOReturnSuccess) {
         if (prepare.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("PreparingDevice", guid);
         }
-        return rollbackToFailure(prepare.status,
-                                 DiceRestartPhase::kPreparingDevice,
+        return rollbackToFailure(prepare.status, DiceRestartPhase::kPreparingDevice,
                                  DiceRestartFailureCause::kPrepare);
     }
     if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kPreparingDevice,
+        return rollbackToInvalidation(kIOReturnAborted, DiceRestartPhase::kPreparingDevice,
                                       DiceRestartFailureCause::kPrepare);
     }
     session.ownerClaimed = true;
@@ -995,6 +806,8 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     session.generation = prepare.value.generation;
     session.appliedClock = prepare.value.appliedClock;
     session.runtimeCaps = prepare.value.runtimeCaps;
+    const DuplexStreamProfile streamProfile =
+        DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, channels);
     SetSessionPhase(session, DiceRestartPhase::kPrepared);
     StoreSession(session);
 
@@ -1006,10 +819,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     }
     for (uint32_t i = 0; i < channels.playbackStreamCount; ++i) {
         const kern_return_t reservePlaybackStatus = hostTransport_.ReservePlaybackResources(
-            guid,
-            *irmClient,
-            channels.PlaybackChannel(i),
-            kPlaybackBandwidthUnits);
+            guid, *irmClient, channels.PlaybackChannel(i), streamProfile.playbackBandwidthUnits);
         if (reservePlaybackStatus != kIOReturnSuccess) {
             return rollbackToFailure(reservePlaybackStatus,
                                      DiceRestartPhase::kReservingPlaybackResources,
@@ -1031,10 +841,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     }
     for (uint32_t i = 0; i < channels.captureStreamCount; ++i) {
         const kern_return_t reserveCaptureStatus = hostTransport_.ReserveCaptureResources(
-            guid,
-            *irmClient,
-            channels.CaptureChannel(i),
-            kCaptureBandwidthUnits);
+            guid, *irmClient, channels.CaptureChannel(i), streamProfile.captureBandwidthUnits);
         if (reserveCaptureStatus != kIOReturnSuccess) {
             return rollbackToFailure(reserveCaptureStatus,
                                      DiceRestartPhase::kReservingCaptureResources,
@@ -1050,138 +857,103 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     session.hostCaptureReserved = true;
     StoreSession(session);
 
-    Encoding::AudioWireFormat rxWireFormat = Encoding::AudioWireFormat::kAM824;
-    if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
-        record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
-        session.runtimeCaps.hostInputPcmChannels == 8 &&
-        session.runtimeCaps.deviceToHostAm824Slots == 9) {
-        rxWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
-    }
-    const uint32_t rxAm824Slots = session.runtimeCaps.deviceToHostAm824Slots;
-    const Encoding::AudioWireFormat wireFormat =
-        ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
-
     ASFW_LOG(Audio,
-             "DICE DUPLEX START guid=0x%016llx ir=%u it=%u inCh=%u outCh=%u inSlots=%u outSlots=%u mode=blocking rxFmt=%u txFmt=%u",
-             guid,
-             channels.deviceToHostIsoChannel,
-             channels.hostToDeviceIsoChannel,
-             session.runtimeCaps.hostInputPcmChannels,
-             session.runtimeCaps.hostOutputPcmChannels,
-             session.runtimeCaps.deviceToHostAm824Slots,
-             session.runtimeCaps.hostToDeviceAm824Slots,
-             static_cast<uint32_t>(rxWireFormat),
-             static_cast<uint32_t>(wireFormat));
+             "DICE DUPLEX START guid=0x%016llx ir=%u it=%u inCh=%u outCh=%u inSlots=%u outSlots=%u "
+             "mode=blocking rxFmt=%u txFmt=%u",
+             guid, channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel,
+             session.runtimeCaps.hostInputPcmChannels, session.runtimeCaps.hostOutputPcmChannels,
+             session.runtimeCaps.deviceToHostAm824Slots, session.runtimeCaps.hostToDeviceAm824Slots,
+             static_cast<uint32_t>(streamProfile.captureWireFormat),
+             static_cast<uint32_t>(streamProfile.playbackWireFormat));
 
     // Saffire.kext allocates every local/remote isoch port before it reports
     // the assigned channels to DICE. Keep the expensive DMA setup on the
     // disabled side of GLOBAL_ENABLE as well.
-    // Multi-stream capture (e.g. Venice F32 = 2×16): each wire stream carries
-    // its own 16-ch CIP (per-stream DBS), de-interleaved into the single shared
-    // 32-ch input buffer at a channel offset. The master (stream 0) owns the
-    // clock/ZTS/replay; secondary streams write PCM only. Single-stream devices
-    // (captureStreamCount == 1) take the legacy path with streamChannels == 0
-    // (full width) and the aggregate slot count.
-    const bool multiCapture = channels.captureStreamCount > 1;
-    const uint32_t masterCaptureSlots =
-        multiCapture ? session.runtimeCaps.deviceToHostStreams[0].am824Slots
-                     : rxAm824Slots;
-    const uint32_t masterCaptureChannels =
-        multiCapture ? session.runtimeCaps.deviceToHostStreams[0].pcmChannels
-                     : 0;
+    // Multi-stream capture (e.g. Venice F32 = 2×16) is described by the
+    // profile's per-stream AM824/PCM geometry. The master owns clock/ZTS/replay;
+    // secondaries write their PCM slice only. A single stream retains the legacy
+    // full-width (streamChannels == 0) host receive path.
+    const DuplexCaptureStreamGeometry& masterCapture = streamProfile.captureStreams[0];
 
-    if (abortIfTeardown("PreparingHostReceive")) {
-        return kIOReturnAborted;
-    }
-    const kern_return_t prepareReceiveStatus = hostTransport_.PrepareReceive(
-        channels.CaptureChannel(0),
-        hardware_,
-        bindingSource,
-        rxWireFormat,
-        masterCaptureSlots,
-        masterCaptureChannels);
-    if (prepareReceiveStatus != kIOReturnSuccess) {
-        return rollbackToFailure(prepareReceiveStatus,
-                                 DiceRestartPhase::kStartingHostReceive,
-                                 DiceRestartFailureCause::kStartReceive);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostReceive,
-                                      DiceRestartFailureCause::kStartReceive);
-    }
+    for (const DuplexHostDirection direction : streamProfile.startOrder.prepareOrder) {
+        if (direction == DuplexHostDirection::kReceive) {
+            if (abortIfTeardown("PreparingHostReceive")) {
+                return kIOReturnAborted;
+            }
+            const kern_return_t prepareReceiveStatus =
+                hostTransport_.PrepareReceive(channels.CaptureChannel(0), hardware_, bindingSource,
+                                              streamProfile.captureWireFormat,
+                                              masterCapture.am824Slots, masterCapture.pcmChannels);
+            if (prepareReceiveStatus != kIOReturnSuccess) {
+                return rollbackToFailure(prepareReceiveStatus,
+                                         DiceRestartPhase::kStartingHostReceive,
+                                         DiceRestartFailureCause::kStartReceive);
+            }
+            if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+                return rollbackToInvalidation(kIOReturnAborted,
+                                              DiceRestartPhase::kStartingHostReceive,
+                                              DiceRestartFailureCause::kStartReceive);
+            }
 
-    // Prepare each secondary capture stream on its own OHCI IR context, writing
-    // its slice at the running channel offset.
-    uint32_t captureChannelOffset = masterCaptureChannels;
-    for (uint32_t i = 1; i < channels.captureStreamCount; ++i) {
-        const auto& streamInfo = session.runtimeCaps.deviceToHostStreams[i];
-        if (abortIfTeardown("PreparingHostReceiveStream")) {
+            // Prepare each secondary capture stream on its own OHCI IR context, writing
+            // its slice at the running channel offset.
+            for (uint32_t i = 1; i < channels.captureStreamCount; ++i) {
+                const DuplexCaptureStreamGeometry& captureStream = streamProfile.captureStreams[i];
+                if (abortIfTeardown("PreparingHostReceiveStream")) {
+                    return kIOReturnAborted;
+                }
+                const kern_return_t status = hostTransport_.PrepareReceiveStream(
+                    i, channels.CaptureChannel(i), hardware_, bindingSource,
+                    captureStream.pcmChannelOffset, captureStream.pcmChannels,
+                    streamProfile.captureWireFormat, captureStream.am824Slots);
+                if (status != kIOReturnSuccess) {
+                    return rollbackToFailure(status, DiceRestartPhase::kStartingHostReceive,
+                                             DiceRestartFailureCause::kStartReceive);
+                }
+                if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+                    return rollbackToInvalidation(kIOReturnAborted,
+                                                  DiceRestartPhase::kStartingHostReceive,
+                                                  DiceRestartFailureCause::kStartReceive);
+                }
+            }
+
+            continue;
+        }
+
+        if (abortIfTeardown("PreparingHostTransmit")) {
             return kIOReturnAborted;
         }
-        const kern_return_t status = hostTransport_.PrepareReceiveStream(
-            i,
-            channels.CaptureChannel(i),
-            hardware_,
-            bindingSource,
-            captureChannelOffset,
-            streamInfo.pcmChannels,
-            rxWireFormat,
-            streamInfo.am824Slots);
-        if (status != kIOReturnSuccess) {
-            return rollbackToFailure(status,
-                                     DiceRestartPhase::kStartingHostReceive,
-                                     DiceRestartFailureCause::kStartReceive);
-        }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-            return rollbackToInvalidation(kIOReturnAborted,
-                                          DiceRestartPhase::kStartingHostReceive,
-                                          DiceRestartFailureCause::kStartReceive);
-        }
-        captureChannelOffset += streamInfo.pcmChannels;
-    }
-
-    if (abortIfTeardown("PreparingHostTransmit")) {
-        return kIOReturnAborted;
-    }
-    const kern_return_t prepareTransmitStatus = hostTransport_.PrepareTransmit(
-        channels.hostToDeviceIsoChannel,
-        hardware_,
-        ReadLocalSid(hardware_));
-    if (prepareTransmitStatus != kIOReturnSuccess) {
-        return rollbackToFailure(prepareTransmitStatus,
-                                 DiceRestartPhase::kStartingHostTransmit,
-                                 DiceRestartFailureCause::kStartTransmit);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostTransmit,
-                                      DiceRestartFailureCause::kStartTransmit);
-    }
-
-    // Prepare each secondary playback stream on its own host IT context. It
-    // transmits on the iso channel that feeds the device's matching RX stream
-    // (PlaybackChannel(i)); the host IT ring stamps that channel into every
-    // packet header. The audio engine maps the secondary's shared slab (already
-    // allocated by StartIO) and writes its 16-ch slice.
-    for (uint32_t i = 1; i < channels.playbackStreamCount; ++i) {
-        if (abortIfTeardown("PreparingHostTransmitStream")) {
-            return kIOReturnAborted;
-        }
-        const kern_return_t status = hostTransport_.PrepareTransmitStream(
-            i,
-            channels.PlaybackChannel(i),
-            hardware_,
-            ReadLocalSid(hardware_));
-        if (status != kIOReturnSuccess) {
-            return rollbackToFailure(status,
-                                     DiceRestartPhase::kStartingHostTransmit,
+        const kern_return_t prepareTransmitStatus = hostTransport_.PrepareTransmit(
+            channels.hostToDeviceIsoChannel, hardware_, ReadLocalSid(hardware_));
+        if (prepareTransmitStatus != kIOReturnSuccess) {
+            return rollbackToFailure(prepareTransmitStatus, DiceRestartPhase::kStartingHostTransmit,
                                      DiceRestartFailureCause::kStartTransmit);
         }
         if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-            return rollbackToInvalidation(kIOReturnAborted,
-                                          DiceRestartPhase::kStartingHostTransmit,
+            return rollbackToInvalidation(kIOReturnAborted, DiceRestartPhase::kStartingHostTransmit,
                                           DiceRestartFailureCause::kStartTransmit);
+        }
+
+        // Prepare each secondary playback stream on its own host IT context. It
+        // transmits on the iso channel that feeds the device's matching RX stream
+        // (PlaybackChannel(i)); the host IT ring stamps that channel into every
+        // packet header. The audio engine maps the secondary's shared slab (already
+        // allocated by StartIO) and writes its 16-ch slice.
+        for (uint32_t i = 1; i < channels.playbackStreamCount; ++i) {
+            if (abortIfTeardown("PreparingHostTransmitStream")) {
+                return kIOReturnAborted;
+            }
+            const kern_return_t status = hostTransport_.PrepareTransmitStream(
+                i, channels.PlaybackChannel(i), hardware_, ReadLocalSid(hardware_));
+            if (status != kIOReturnSuccess) {
+                return rollbackToFailure(status, DiceRestartPhase::kStartingHostTransmit,
+                                         DiceRestartFailureCause::kStartTransmit);
+            }
+            if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+                return rollbackToInvalidation(kIOReturnAborted,
+                                              DiceRestartPhase::kStartingHostTransmit,
+                                              DiceRestartFailureCause::kStartTransmit);
+            }
         }
     }
 
@@ -1193,13 +965,11 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     const IOReturn clockLockStatus =
         WaitForStableGlobalClock(guid, diceProtocol, topologyGeneration, desiredClock);
     if (clockLockStatus != kIOReturnSuccess) {
-        return rollbackToFailure(clockLockStatus,
-                                 DiceRestartPhase::kWaitingGlobalClock,
+        return rollbackToFailure(clockLockStatus, DiceRestartPhase::kWaitingGlobalClock,
                                  DiceRestartFailureCause::kGlobalClockLock);
     }
     if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kWaitingGlobalClock,
+        return rollbackToInvalidation(kIOReturnAborted, DiceRestartPhase::kWaitingGlobalClock,
                                       DiceRestartFailureCause::kGlobalClockLock);
     }
 
@@ -1207,29 +977,25 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         return kIOReturnAborted;
     }
     const auto programRx = WaitForAsyncResult<DiceDuplexStageResult>(
-        [&](auto callback) { diceProtocol.ProgramRx(std::move(callback)); },
-        kSyncBridgeTimeoutMs,
-        kIOReturnTimeout,
-        cancel_);
+        [&](auto callback) { diceProtocol.ProgramRx(std::move(callback)); }, kSyncBridgeTimeoutMs,
+        kIOReturnTimeout, cancel_);
     if (programRx.status != kIOReturnSuccess) {
         if (programRx.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("ProgrammingDeviceRx", guid);
         }
-        return rollbackToFailure(programRx.status,
-                                 DiceRestartPhase::kProgrammingDeviceRx,
+        return rollbackToFailure(programRx.status, DiceRestartPhase::kProgrammingDeviceRx,
                                  DiceRestartFailureCause::kProgramRx);
     }
     if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kProgrammingDeviceRx,
+        return rollbackToInvalidation(kIOReturnAborted, DiceRestartPhase::kProgrammingDeviceRx,
                                       DiceRestartFailureCause::kProgramRx);
     }
     session.generation = programRx.value.generation;
     SetSessionPhase(session, DiceRestartPhase::kProgrammingDeviceRx);
     session.deviceRxProgrammed = true;
     session.runtimeCaps = programRx.value.runtimeCaps.hostInputPcmChannels != 0
-        ? programRx.value.runtimeCaps
-        : session.runtimeCaps;
+                              ? programRx.value.runtimeCaps
+                              : session.runtimeCaps;
     SetSessionPhase(session, DiceRestartPhase::kDeviceRxProgrammed);
     StoreSession(session);
 
@@ -1238,119 +1004,111 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     }
     const auto programTx = WaitForAsyncResult<DiceDuplexStageResult>(
         [&](auto callback) { diceProtocol.ProgramTxAndEnableDuplex(std::move(callback)); },
-        kSyncBridgeTimeoutMs,
-        kIOReturnTimeout,
-        cancel_);
+        kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (programTx.status != kIOReturnSuccess) {
         if (programTx.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("ProgrammingDeviceTx", guid);
         }
-        return rollbackToFailure(programTx.status,
-                                 DiceRestartPhase::kProgrammingDeviceTx,
+        return rollbackToFailure(programTx.status, DiceRestartPhase::kProgrammingDeviceTx,
                                  DiceRestartFailureCause::kProgramTx);
     }
     if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kProgrammingDeviceTx,
+        return rollbackToInvalidation(kIOReturnAborted, DiceRestartPhase::kProgrammingDeviceTx,
                                       DiceRestartFailureCause::kProgramTx);
     }
     session.generation = programTx.value.generation;
     SetSessionPhase(session, DiceRestartPhase::kProgrammingDeviceTx);
     session.deviceTxArmed = true;
     session.runtimeCaps = programTx.value.runtimeCaps.hostInputPcmChannels != 0
-        ? programTx.value.runtimeCaps
-        : session.runtimeCaps;
+                              ? programTx.value.runtimeCaps
+                              : session.runtimeCaps;
     SetSessionPhase(session, DiceRestartPhase::kDeviceTxArmed);
     StoreSession(session);
 
-    // Saffire::StartStreams waits 2 ms after GLOBAL_ENABLE before starting
+    // The DICE recipe waits after GLOBAL_ENABLE before starting
     // the already-allocated host isoch channels.
-    IOSleep(2);
+    IOSleep(streamProfile.startOrder.postDeviceEnableDelayMs);
     if (abortIfTeardown("PostGlobalEnableDelay")) {
         return kIOReturnAborted;
     }
 
-    // RX first: the device needs to be receiving before it can lock its TX
-    // clock. Starting IT before IR causes the DICE PLL to see TX without
-    // a valid RX reference, leading to timing instability.
-    if (abortIfTeardown("StartingHostReceive")) {
-        return kIOReturnAborted;
-    }
-    const kern_return_t startReceiveStatus =
-        hostTransport_.StartPreparedReceive();
-    if (startReceiveStatus != kIOReturnSuccess) {
-        return rollbackToFailure(startReceiveStatus,
-                                 DiceRestartPhase::kStartingHostReceive,
-                                 DiceRestartFailureCause::kStartReceive);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostReceive,
-                                      DiceRestartFailureCause::kStartReceive);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
-    session.hostReceiveStarted = true;
-    StoreSession(session);
+    // The profile's DICE recipe starts RX first: the device needs to be
+    // receiving before it can lock its TX clock. Starting IT before IR causes
+    // the DICE PLL to see TX without a valid RX reference, leading to timing
+    // instability.
+    for (const DuplexHostDirection direction : streamProfile.startOrder.startOrder) {
+        if (direction == DuplexHostDirection::kReceive) {
+            if (abortIfTeardown("StartingHostReceive")) {
+                return kIOReturnAborted;
+            }
+            const kern_return_t startReceiveStatus = hostTransport_.StartPreparedReceive();
+            if (startReceiveStatus != kIOReturnSuccess) {
+                return rollbackToFailure(startReceiveStatus, DiceRestartPhase::kStartingHostReceive,
+                                         DiceRestartFailureCause::kStartReceive);
+            }
+            if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+                return rollbackToInvalidation(kIOReturnAborted,
+                                              DiceRestartPhase::kStartingHostReceive,
+                                              DiceRestartFailureCause::kStartReceive);
+            }
+            SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
+            session.hostReceiveStarted = true;
+            StoreSession(session);
 
-    if (abortIfTeardown("StartingHostTransmit")) {
-        return kIOReturnAborted;
+            continue;
+        }
+
+        if (abortIfTeardown("StartingHostTransmit")) {
+            return kIOReturnAborted;
+        }
+        const kern_return_t startTransmitStatus = hostTransport_.StartPreparedTransmit();
+        if (startTransmitStatus != kIOReturnSuccess) {
+            return rollbackToFailure(startTransmitStatus, DiceRestartPhase::kStartingHostTransmit,
+                                     DiceRestartFailureCause::kStartTransmit);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted, DiceRestartPhase::kStartingHostTransmit,
+                                          DiceRestartFailureCause::kStartTransmit);
+        }
+        SetSessionPhase(session, DiceRestartPhase::kStartingHostTransmit);
+        session.hostTransmitStarted = true;
+        StoreSession(session);
     }
-    const kern_return_t startTransmitStatus =
-        hostTransport_.StartPreparedTransmit();
-    if (startTransmitStatus != kIOReturnSuccess) {
-        return rollbackToFailure(startTransmitStatus,
-                                 DiceRestartPhase::kStartingHostTransmit,
-                                 DiceRestartFailureCause::kStartTransmit);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostTransmit,
-                                      DiceRestartFailureCause::kStartTransmit);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kStartingHostTransmit);
-    session.hostTransmitStarted = true;
-    StoreSession(session);
 
     if (abortIfTeardown("ConfirmingDeviceStart")) {
-        return kIOReturnAborted;
+    return kIOReturnAborted;
+}
+const auto confirm = WaitForAsyncResult<DiceDuplexConfirmResult>(
+    [&](auto callback) { diceProtocol.ConfirmDuplexStart(std::move(callback)); },
+    kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
+if (confirm.status != kIOReturnSuccess) {
+    if (confirm.status == kIOReturnAborted && TeardownRequested()) {
+        RecordTeardownAbort("ConfirmingDeviceStart", guid);
     }
-    const auto confirm = WaitForAsyncResult<DiceDuplexConfirmResult>(
-        [&](auto callback) { diceProtocol.ConfirmDuplexStart(std::move(callback)); },
-        kSyncBridgeTimeoutMs,
-        kIOReturnTimeout,
-        cancel_);
-    if (confirm.status != kIOReturnSuccess) {
-        if (confirm.status == kIOReturnAborted && TeardownRequested()) {
-            RecordTeardownAbort("ConfirmingDeviceStart", guid);
-        }
-        return rollbackToFailure(confirm.status,
-                                 DiceRestartPhase::kConfirmingDeviceStart,
-                                 DiceRestartFailureCause::kConfirmStart);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kConfirmingDeviceStart,
-                                      DiceRestartFailureCause::kConfirmStart);
-    }
+    return rollbackToFailure(confirm.status, DiceRestartPhase::kConfirmingDeviceStart,
+                             DiceRestartFailureCause::kConfirmStart);
+}
+if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+    return rollbackToInvalidation(kIOReturnAborted, DiceRestartPhase::kConfirmingDeviceStart,
+                                  DiceRestartFailureCause::kConfirmStart);
+}
 
-    SetSessionPhase(session, DiceRestartPhase::kConfirmingDeviceStart);
-    SetSessionPhase(session, DiceRestartPhase::kRunning);
-    SetSessionState(session, DiceRestartState::kRunning, "confirmed_running");
-    session.generation = confirm.value.generation;
-    session.deviceRunning = true;
-    session.appliedClock = confirm.value.appliedClock;
-    session.runtimeCaps = confirm.value.runtimeCaps;
-    session.terminalError = kIOReturnSuccess;
-    ClearFailureSnapshot(session);
-    StoreSession(session);
-    LogTerminal(session);
-    return kIOReturnSuccess;
+SetSessionPhase(session, DiceRestartPhase::kConfirmingDeviceStart);
+SetSessionPhase(session, DiceRestartPhase::kRunning);
+SetSessionState(session, DiceRestartState::kRunning, "confirmed_running");
+session.generation = confirm.value.generation;
+session.deviceRunning = true;
+session.appliedClock = confirm.value.appliedClock;
+session.runtimeCaps = confirm.value.runtimeCaps;
+session.terminalError = kIOReturnSuccess;
+ClearFailureSnapshot(session);
+StoreSession(session);
+LogTerminal(session);
+return kIOReturnSuccess;
 }
 
 IOReturn DiceDuplexRestartCoordinator::WaitForStableGlobalClock(
-    uint64_t guid,
-    DICE::IDICEDuplexProtocol& diceProtocol,
-    const FW::Generation topologyGeneration,
+    uint64_t guid, DICE::IDICEDuplexProtocol& diceProtocol, const FW::Generation topologyGeneration,
     const DiceDesiredClockConfig& desiredClock) noexcept {
     uint32_t consecutiveLockedReads = 0;
     const uint64_t startMs = UptimeMilliseconds();
@@ -1366,26 +1124,21 @@ IOReturn DiceDuplexRestartCoordinator::WaitForStableGlobalClock(
         const uint32_t remainingMs = static_cast<uint32_t>(deadlineMs - nowMs);
         const auto health = WaitForAsyncResult<DiceDuplexHealthResult>(
             [&](auto callback) { diceProtocol.ReadDuplexHealth(std::move(callback)); },
-            std::max(remainingMs, 1U),
-            kIOReturnTimeout,
-            cancel_);
+            std::max(remainingMs, 1U), kIOReturnTimeout, cancel_);
         if (health.status != kIOReturnSuccess) {
             if (health.status == kIOReturnAborted && TeardownRequested()) {
                 RecordTeardownAbort("WaitingGlobalClock", guid);
                 return health.status;
             }
-            ASFW_LOG_ERROR(
-                Audio,
-                "DICE global clock health read failed before isoch start kr=0x%x",
-                health.status);
+            ASFW_LOG_ERROR(Audio, "DICE global clock health read failed before isoch start kr=0x%x",
+                           health.status);
             return health.status;
         }
         if (health.value.generation != topologyGeneration) {
             ASFW_LOG_ERROR(
                 Audio,
                 "DICE global clock generation changed before isoch start expected=%u actual=%u",
-                GenerationValue(topologyGeneration),
-                GenerationValue(health.value.generation));
+                GenerationValue(topologyGeneration), GenerationValue(health.value.generation));
             return kIOReturnOffline;
         }
 
@@ -1397,12 +1150,9 @@ IOReturn DiceDuplexRestartCoordinator::WaitForStableGlobalClock(
         consecutiveLockedReads = lockedAtTarget ? consecutiveLockedReads + 1 : 0;
 
         if (consecutiveLockedReads >= kGlobalClockStableReads) {
-            ASFW_LOG(
-                Audio,
-                "DICE global clock stable before isoch start rate=%u status=0x%08x reads=%u",
-                desiredClock.sampleRateHz,
-                health.value.status,
-                consecutiveLockedReads);
+            ASFW_LOG(Audio,
+                     "DICE global clock stable before isoch start rate=%u status=0x%08x reads=%u",
+                     desiredClock.sampleRateHz, health.value.status, consecutiveLockedReads);
             return kIOReturnSuccess;
         }
 
@@ -1414,23 +1164,18 @@ IOReturn DiceDuplexRestartCoordinator::WaitForStableGlobalClock(
             RecordTeardownAbort("WaitingGlobalClock", guid);
             return kIOReturnAborted;
         }
-        IOSleep(std::min<uint64_t>(
-            kGlobalClockLockPollMs, deadlineMs - afterReadMs));
+        IOSleep(std::min<uint64_t>(kGlobalClockLockPollMs, deadlineMs - afterReadMs));
     }
 
-    ASFW_LOG_ERROR(
-        Audio,
-        "DICE global clock failed to stabilize before isoch start rate=%u timeoutMs=%u",
-        desiredClock.sampleRateHz,
-        kGlobalClockLockTimeoutMs);
+    ASFW_LOG_ERROR(Audio,
+                   "DICE global clock failed to stabilize before isoch start rate=%u timeoutMs=%u",
+                   desiredClock.sampleRateHz, kGlobalClockLockTimeoutMs);
     return kIOReturnTimeout;
 }
 
-IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(
-    uint64_t guid,
-    Discovery::DeviceRecord& record,
-    DICE::IDICEDuplexProtocol& diceProtocol,
-    DiceRestartSession& session) noexcept {
+IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(uint64_t guid, Discovery::DeviceRecord& record,
+                                                     DICE::IDICEDuplexProtocol& diceProtocol,
+                                                     DiceRestartSession& session) noexcept {
     (void)record;
 
     if (TeardownRequested()) {
@@ -1453,7 +1198,8 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(
         RecordTeardownAbort("DeviceStop", guid);
         return kIOReturnAborted;
     }
-    if (deviceStatus != kIOReturnSuccess && deviceStatus != kIOReturnUnsupported && result == kIOReturnSuccess) {
+    if (deviceStatus != kIOReturnSuccess && deviceStatus != kIOReturnUnsupported &&
+        result == kIOReturnSuccess) {
         result = deviceStatus;
     }
 
@@ -1463,17 +1209,9 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(
         ApplyTerminalPhase(session, DiceRestartPhase::kIdle, "stop_complete");
     } else {
         session.terminalError = result;
-        RecordIssue(session,
-                    session.lastFailure,
-                    DiceRestartPhase::kStopping,
-                    DiceRestartErrorClass::kStageFailure,
-                    DiceRestartFailureCause::kStop,
-                    result,
-                    IsRetryableStatus(result),
-                    false,
-                    kIOReturnSuccess,
-                    true,
-                    true);
+        RecordIssue(session, session.lastFailure, DiceRestartPhase::kStopping,
+                    DiceRestartErrorClass::kStageFailure, DiceRestartFailureCause::kStop, result,
+                    IsRetryableStatus(result), false, kIOReturnSuccess, true, true);
         ApplyTerminalPhase(session, DiceRestartPhase::kFailed, "stop_failed");
     }
     StoreSession(session);
@@ -1481,13 +1219,12 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(
     return result;
 }
 
-IOReturn DiceDuplexRestartCoordinator::RunIdleClockApply(
-    uint64_t guid,
-    DICE::IDICEDuplexProtocol& diceProtocol,
-    DiceRestartSession& session,
-    FW::Generation topologyGeneration,
-    const DiceDesiredClockConfig& desiredClock,
-    DiceRestartReason reason) noexcept {
+IOReturn DiceDuplexRestartCoordinator::RunIdleClockApply(uint64_t guid,
+                                                         DICE::IDICEDuplexProtocol& diceProtocol,
+                                                         DiceRestartSession& session,
+                                                         FW::Generation topologyGeneration,
+                                                         const DiceDesiredClockConfig& desiredClock,
+                                                         DiceRestartReason reason) noexcept {
     if (TeardownRequested()) {
         RecordTeardownAbort("IdleClockApply", guid);
         return kIOReturnAborted;
@@ -1508,24 +1245,15 @@ IOReturn DiceDuplexRestartCoordinator::RunIdleClockApply(
 
     const auto apply = WaitForAsyncResult<DICE::DiceClockApplyResult>(
         [&](auto callback) { diceProtocol.ApplyClockConfig(desiredClock, std::move(callback)); },
-        kSyncBridgeTimeoutMs,
-        kIOReturnTimeout,
-        cancel_);
+        kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (apply.status != kIOReturnSuccess) {
         if (apply.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("IdleClockApply", guid);
         }
         session.terminalError = apply.status;
-        RecordIssue(session,
-                    session.lastFailure,
-                    DiceRestartPhase::kPreparingDevice,
-                    DiceRestartErrorClass::kStageFailure,
-                    DiceRestartFailureCause::kIdleClockApply,
-                    apply.status,
-                    IsRetryableStatus(apply.status),
-                    false,
-                    kIOReturnSuccess,
-                    true,
+        RecordIssue(session, session.lastFailure, DiceRestartPhase::kPreparingDevice,
+                    DiceRestartErrorClass::kStageFailure, DiceRestartFailureCause::kIdleClockApply,
+                    apply.status, IsRetryableStatus(apply.status), false, kIOReturnSuccess, true,
                     true);
         ApplyTerminalPhase(session, DiceRestartPhase::kFailed, "idle_apply_failed");
         StoreSession(session);
@@ -1534,18 +1262,11 @@ IOReturn DiceDuplexRestartCoordinator::RunIdleClockApply(
     }
     if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
         session.terminalError = kIOReturnSuccess;
-        RecordIssue(session,
-                    session.lastInvalidation,
-                    DiceRestartPhase::kPreparingDevice,
+        RecordIssue(session, session.lastInvalidation, DiceRestartPhase::kPreparingDevice,
                     IsStopRequested(guid) ? DiceRestartErrorClass::kStopIntent
                                           : DiceRestartErrorClass::kEpochInvalidated,
-                    DiceRestartFailureCause::kIdleClockApply,
-                    kIOReturnAborted,
-                    true,
-                    false,
-                    kIOReturnSuccess,
-                    true,
-                    true);
+                    DiceRestartFailureCause::kIdleClockApply, kIOReturnAborted, true, false,
+                    kIOReturnSuccess, true, true);
         ClearFailureSnapshot(session);
         ApplyTerminalPhase(session, DiceRestartPhase::kIdle, "idle_apply_invalidated");
         StoreSession(session);
@@ -1566,8 +1287,7 @@ IOReturn DiceDuplexRestartCoordinator::RunIdleClockApply(
 }
 
 Discovery::DeviceRecord* DiceDuplexRestartCoordinator::RequireDiceRecord(
-    uint64_t guid,
-    DICE::IDICEDuplexProtocol*& outDiceProtocol,
+    uint64_t guid, DICE::IDICEDuplexProtocol*& outDiceProtocol,
     std::shared_ptr<IDeviceProtocol>& outHold) noexcept {
     outDiceProtocol = nullptr;
     outHold.reset();
@@ -1591,7 +1311,8 @@ Discovery::DeviceRecord* DiceDuplexRestartCoordinator::RequireDiceRecord(
     return record;
 }
 
-ASFW::Audio::Runtime::IDirectAudioBindingSource* DiceDuplexRestartCoordinator::GetDirectAudioBindingSource(uint64_t guid) const noexcept {
+ASFW::Audio::Runtime::IDirectAudioBindingSource*
+DiceDuplexRestartCoordinator::GetDirectAudioBindingSource(uint64_t guid) const noexcept {
     if (!bindingSourceProvider_) {
         return nullptr;
     }
@@ -1605,9 +1326,7 @@ bool DiceDuplexRestartCoordinator::TryAcquireGuid(uint64_t guid) noexcept {
     return gate_.Acquire(guid);
 }
 
-void DiceDuplexRestartCoordinator::ReleaseGuid(uint64_t guid) noexcept {
-    gate_.Release(guid);
-}
+void DiceDuplexRestartCoordinator::ReleaseGuid(uint64_t guid) noexcept { gate_.Release(guid); }
 
 void DiceDuplexRestartCoordinator::RequestStopIntent(uint64_t guid) noexcept {
     gate_.RequestStop(guid);
@@ -1625,9 +1344,8 @@ uint64_t DiceDuplexRestartCoordinator::AllocateRestartId() noexcept {
     return store_.AllocateRestartId();
 }
 
-bool DiceDuplexRestartCoordinator::IsRestartEpochCurrent(uint64_t guid,
-                                                         uint64_t restartId,
-                                                         FW::Generation topologyGeneration) const noexcept {
+bool DiceDuplexRestartCoordinator::IsRestartEpochCurrent(
+    uint64_t guid, uint64_t restartId, FW::Generation topologyGeneration) const noexcept {
     if (guid == 0 || restartId == 0) {
         return false;
     }
@@ -1641,9 +1359,8 @@ bool DiceDuplexRestartCoordinator::IsRestartEpochCurrent(uint64_t guid,
 
     IOLockLock(lock_);
     const auto* sessionPtr = store_.FindSessionLocked(guid);
-    const bool sessionMatches = (sessionPtr != nullptr) &&
-        sessionPtr->restartId == restartId &&
-        sessionPtr->topologyGeneration == topologyGeneration;
+    const bool sessionMatches = (sessionPtr != nullptr) && sessionPtr->restartId == restartId &&
+                                sessionPtr->topologyGeneration == topologyGeneration;
     IOLockUnlock(lock_);
     if (!sessionMatches) {
         return false;
@@ -1680,14 +1397,12 @@ void DiceDuplexRestartCoordinator::FailPendingClockRequest(uint64_t guid,
     clockRequests_.FailPending(guid, outcome, status);
 }
 
-void DiceDuplexRestartCoordinator::RecordTeardownAbort(const char* stage,
-                                                       uint64_t guid) noexcept {
+void DiceDuplexRestartCoordinator::RecordTeardownAbort(const char* stage, uint64_t guid) noexcept {
     teardownAbortCount_.fetch_add(1, std::memory_order_acq_rel);
     ASFW_LOG(Audio,
-             "DiceDuplexRestartCoordinator: recovery aborted by teardown stage=%{public}s GUID=%llx kr=0x%x",
-             stage ? stage : "unknown",
-             guid,
-             kIOReturnAborted);
+             "DiceDuplexRestartCoordinator: recovery aborted by teardown stage=%{public}s "
+             "GUID=%llx kr=0x%x",
+             stage ? stage : "unknown", guid, kIOReturnAborted);
 }
 
 // FW-69b: session persistence + the restart-id allocator now live in RestartSessionStore
