@@ -5,11 +5,11 @@
 namespace {
 
 using ASFW::Audio::AudioDuplexChannels;
+using ASFW::Audio::AudioClockConfig;
 using ASFW::Audio::DICE::ClassifyRestartReason;
 using ASFW::Audio::DICE::ClearRestartProgress;
 using ASFW::Audio::DICE::DiceClockRequestCompletion;
 using ASFW::Audio::DICE::DiceClockRequestOutcome;
-using ASFW::Audio::DICE::DiceDesiredClockConfig;
 using ASFW::Audio::DICE::DiceRestartErrorClass;
 using ASFW::Audio::DICE::DiceRestartFailureCause;
 using ASFW::Audio::DICE::DiceRestartIssueInfo;
@@ -18,19 +18,12 @@ using ASFW::Audio::DICE::DiceRestartReason;
 using ASFW::Audio::DICE::DiceRestartState;
 using ASFW::Audio::DICE::DiceRestartSession;
 
-constexpr DiceDesiredClockConfig k48kInternal{
+constexpr AudioClockConfig k48kInternal{
     .sampleRateHz = 48000U,
-    .clockSelect = 0x10010U,
 };
 
-constexpr DiceDesiredClockConfig k96kInternal{
+constexpr AudioClockConfig k96kInternal{
     .sampleRateHz = 96000U,
-    .clockSelect = 0x20010U,
-};
-
-constexpr DiceDesiredClockConfig k48kAdat{
-    .sampleRateHz = 48000U,
-    .clockSelect = 0x10040U,
 };
 
 TEST(DICERestartSessionTests, ClassifyRestartReasonReturnsInitialStartWithoutPriorIntent) {
@@ -47,7 +40,7 @@ TEST(DICERestartSessionTests, ClassifyRestartReasonReturnsInitialStartWithoutPri
     EXPECT_EQ(ClassifyRestartReason(&guidOnlySession, k48kInternal), DiceRestartReason::kInitialStart);
 }
 
-TEST(DICERestartSessionTests, ClassifyRestartReasonDetectsClockIntentChangesBeforeRecovery) {
+TEST(DICERestartSessionTests, ClassifyRestartReasonDetectsRateChangesBeforeRecovery) {
     DiceRestartSession prior{
         .guid = 0x130e0402004713ULL,
         .channels = AudioDuplexChannels{.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
@@ -57,7 +50,6 @@ TEST(DICERestartSessionTests, ClassifyRestartReasonDetectsClockIntentChangesBefo
     };
 
     EXPECT_EQ(ClassifyRestartReason(&prior, k96kInternal), DiceRestartReason::kSampleRateChange);
-    EXPECT_EQ(ClassifyRestartReason(&prior, k48kAdat), DiceRestartReason::kClockSourceChange);
 }
 
 TEST(DICERestartSessionTests, ClassifyRestartReasonReturnsRecoveryForFailedSameConfigRestart) {
@@ -130,7 +122,6 @@ TEST(DICERestartSessionTests, ClearRestartProgressPreservesIntentButClearsExecut
     EXPECT_EQ(session.guid, 0x130e0402004713ULL);
     EXPECT_EQ(session.reason, DiceRestartReason::kManualReconfigure);
     EXPECT_EQ(session.desiredClock.sampleRateHz, k48kInternal.sampleRateHz);
-    EXPECT_EQ(session.desiredClock.clockSelect, k48kInternal.clockSelect);
     EXPECT_EQ(session.phase, DiceRestartPhase::kIdle);
     EXPECT_EQ(session.state, DiceRestartState::kIdle);
     EXPECT_FALSE(session.ownerClaimed);

@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "IDICEDuplexProtocol.hpp"
+#include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "DICERestartSession.hpp"
 #include "DICETypes.hpp"
 #include "DICETransaction.hpp"
@@ -28,10 +28,10 @@ namespace ASFW::Audio::DICE {
 class DICEDuplexBringupController {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
-    using PrepareCallback = IDICEDuplexProtocol::PrepareCallback;
-    using StageCallback = IDICEDuplexProtocol::StageCallback;
-    using ConfirmCallback = IDICEDuplexProtocol::ConfirmCallback;
-    using ClockApplyCallback = IDICEDuplexProtocol::ClockApplyCallback;
+    using PrepareCallback = IDuplexDeviceControl::PrepareCallback;
+    using StageCallback = IDuplexDeviceControl::StageCallback;
+    using ConfirmCallback = IDuplexDeviceControl::ConfirmCallback;
+    using ClockApplyCallback = IDuplexDeviceControl::ClockApplyCallback;
 
     DICEDuplexBringupController(
         DICETransaction& diceReader,
@@ -45,12 +45,13 @@ public:
 
     // Async duplex methods (were IOReturn, now void + callback)
     void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const DiceDesiredClockConfig& desiredClock,
+                       const DiceClockConfiguration& desiredClock,
                        PrepareCallback callback);
     void ProgramRx(StageCallback callback);
     void ProgramTxAndEnableDuplex(StageCallback callback);
     void ConfirmDuplexStart(ConfirmCallback callback);
-    void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock, ClockApplyCallback callback);
+    void ApplyClockConfig(const DiceClockConfiguration& desiredClock,
+                          ClockApplyCallback callback);
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
         teardownCancel_ = cancel;
     }
@@ -130,6 +131,7 @@ private:
     GeneralSections sections_;
 
     DiceRestartSession restartSession_{};
+    DiceClockConfiguration diceClock_{};
     FlowMode flowMode_{FlowMode::kNone};
     AudioStreamRuntimeCaps runtimeCaps_{};
     uint32_t confirmNotification_{0};

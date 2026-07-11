@@ -23,6 +23,7 @@
 
 #include "RestartJournal.hpp"
 #include "RestartSessionStore.hpp"
+#include "../Duplex/DuplexControlTypes.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -35,16 +36,16 @@
 
 namespace ASFW::Audio::Backends {
 
-using ASFW::Audio::DICE::DiceClockRequestCompletion;
-using ASFW::Audio::DICE::DiceClockRequestOutcome;
-using ASFW::Audio::DICE::DiceDesiredClockConfig;
-using ASFW::Audio::DICE::DiceRestartReason;
+using ASFW::Audio::AudioClockConfig;
+using ASFW::Audio::DuplexClockRequestCompletion;
+using ASFW::Audio::DuplexClockRequestOutcome;
+using ASFW::Audio::DuplexRestartReason;
 
 class ClockRequestBroker {
 public:
     struct PendingClockRequest {
-        DiceDesiredClockConfig desiredClock{};
-        DiceRestartReason reason{DiceRestartReason::kManualReconfigure};
+        AudioClockConfig desiredClock{};
+        DuplexRestartReason reason{DuplexRestartReason::kManualReconfigure};
         uint64_t token{0};
     };
 
@@ -106,7 +107,7 @@ public:
     [[nodiscard]] bool TryTakeCompleted(
         uint64_t guid,
         uint64_t token,
-        DiceClockRequestCompletion& outCompletion) noexcept {
+        DuplexClockRequestCompletion& outCompletion) noexcept {
         IOLock* const lock = *lockRef_;
         if (!lock) {
             return false;
@@ -136,7 +137,7 @@ public:
         return true;
     }
 
-    void Complete(const DiceClockRequestCompletion& completion, uint64_t guid) noexcept {
+    void Complete(const DuplexClockRequestCompletion& completion, uint64_t guid) noexcept {
         IOLock* const lock = *lockRef_;
         if (!lock) {
             return;
@@ -174,7 +175,7 @@ public:
 
     void FailPending(
         uint64_t guid,
-        DiceClockRequestOutcome outcome,
+        DuplexClockRequestOutcome outcome,
         IOReturn status) noexcept {
         PendingClockRequest request{};
         if (!TryConsumePending(guid, request)) {
@@ -186,7 +187,7 @@ public:
         // do not fold this into one new critical section; stop/recovery races intentionally see
         // the same interleavings as before the extraction.
         const auto session = sessionStore_.LoadSession(guid);
-        Complete(DiceClockRequestCompletion{
+        Complete(DuplexClockRequestCompletion{
                      .token = request.token,
                      .desiredClock = request.desiredClock,
                      .reason = request.reason,
@@ -200,7 +201,7 @@ public:
 
 private:
     struct ClockCompletionStore {
-        std::unordered_map<uint64_t, DiceClockRequestCompletion> byToken{};
+        std::unordered_map<uint64_t, DuplexClockRequestCompletion> byToken{};
         std::deque<uint64_t> insertionOrder{};
     };
 
@@ -217,7 +218,7 @@ private:
         auto* session = sessionStore_.FindSessionLocked(guid);
         if (session != nullptr) {
             session->pendingClock = {};
-            session->pendingReason = DiceRestartReason::kInitialStart;
+            session->pendingReason = DuplexRestartReason::kInitialStart;
             session->hasPendingClockRequest = false;
         }
         return true;

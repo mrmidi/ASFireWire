@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// DiceHostTransport.hpp - Host-side isoch orchestration seam for DICE restart FSM
+// DiceHostTransport.hpp - Host-side isoch orchestration seam
 
 #pragma once
 
@@ -21,9 +21,9 @@ class ASFWAudioNub;
 
 namespace ASFW::Audio {
 
-class IDiceHostTransport {
+class IIsochDuplexHostTransport {
   public:
-    virtual ~IDiceHostTransport() = default;
+    virtual ~IIsochDuplexHostTransport() = default;
 
     [[nodiscard]] virtual kern_return_t BeginSplitDuplex(uint64_t guid) noexcept = 0;
     [[nodiscard]] virtual kern_return_t
@@ -56,7 +56,7 @@ class IDiceHostTransport {
     [[nodiscard]] virtual kern_return_t StopAll() noexcept = 0;
 };
 
-class DiceIsochHostTransport final : public IDiceHostTransport {
+class DiceIsochHostTransport final : public IIsochDuplexHostTransport {
   public:
     explicit DiceIsochHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
 
@@ -95,5 +95,9 @@ class DiceIsochHostTransport final : public IDiceHostTransport {
   private:
     Driver::IsochService& isoch_;
 };
+
+// FW-71 leaves the file move to FW-73. No production caller should use this
+// compatibility spelling after the neutral seam promotion.
+using IDiceHostTransport = IIsochDuplexHostTransport;
 
 } // namespace ASFW::Audio

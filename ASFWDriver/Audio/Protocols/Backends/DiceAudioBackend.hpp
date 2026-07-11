@@ -48,8 +48,8 @@ public:
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn RequestClockConfig(uint64_t guid,
-                                              const DICE::DiceDesiredClockConfig& desiredClock,
-                                              DICE::DiceRestartReason reason) noexcept;
+                                              const AudioClockConfig& desiredClock,
+                                              DuplexRestartReason reason) noexcept;
 
     // FW-61: quiesce the dice queue before the core detaches hardware. Sets the stop flag,
     // cancels in-flight recovery (coordinator), then drains the work queue (synchronous
@@ -72,7 +72,7 @@ private:
     Driver::HardwareInterface& hardware_;
     DiceIsochHostTransport hostTransport_;
     std::atomic<bool> stopping_{false}; // FW-61 teardown latch
-    DiceDuplexRestartCoordinator restartCoordinator_;
+    AudioDuplexCoordinator restartCoordinator_;
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};

@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "../Core/IDICEDuplexProtocol.hpp"
+#include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../Core/DICEDuplexBringupController.hpp"
 #include "../Core/DICETransaction.hpp"
 #include "../Core/DICETypes.hpp"
@@ -23,14 +23,14 @@ class IRMClient;
 namespace ASFW::Audio::DICE::TCAT {
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
-                               public Audio::DICE::IDICEDuplexProtocol {
+                               public Audio::IDuplexDeviceControl {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
-    using PrepareCallback = IDICEDuplexProtocol::PrepareCallback;
-    using StageCallback = IDICEDuplexProtocol::StageCallback;
-    using ConfirmCallback = IDICEDuplexProtocol::ConfirmCallback;
-    using ClockApplyCallback = IDICEDuplexProtocol::ClockApplyCallback;
-    using HealthCallback = IDICEDuplexProtocol::HealthCallback;
+    using PrepareCallback = IDuplexDeviceControl::PrepareCallback;
+    using StageCallback = IDuplexDeviceControl::StageCallback;
+    using ConfirmCallback = IDuplexDeviceControl::ConfirmCallback;
+    using ClockApplyCallback = IDuplexDeviceControl::ClockApplyCallback;
+    using HealthCallback = IDuplexDeviceControl::HealthCallback;
 
     DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                      Protocols::Ports::FireWireBusInfo& busInfo,
@@ -40,20 +40,20 @@ public:
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
     const char* GetName() const override { return "TCAT DICE"; }
-    Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() noexcept override { return this; }
-    const Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept override { return this; }
+    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
+    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     bool GetChannelLabels(std::vector<std::string>& inNames,
                           std::vector<std::string>& outNames) const override;
 
     void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const DiceDesiredClockConfig& desiredClock,
+                       const AudioClockConfig& desiredClock,
                        PrepareCallback callback) override;
     void ProgramRx(StageCallback callback) override;
     void ProgramTxAndEnableDuplex(StageCallback callback) override;
     void ConfirmDuplexStart(ConfirmCallback callback) override;
-    void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
+    void ApplyClockConfig(const AudioClockConfig& desiredClock,
                           ClockApplyCallback callback) override;
     void ReadDuplexHealth(HealthCallback callback) override;
     void EnsureRuntimeStreamGeometry(VoidCallback callback) override;
@@ -74,6 +74,9 @@ public:
 private:
     friend class DICETcatProtocolTestPeer;
 
+    [[nodiscard]] static bool MakeDiceClockConfiguration(
+        const AudioClockConfig& requested,
+        DiceClockConfiguration& out) noexcept;
     void EnsureSectionsLoaded(VoidCallback callback);
     void EnsureRuntimeCapsLoaded(VoidCallback callback);
     void CacheRuntimeCaps(const GlobalState& global,
