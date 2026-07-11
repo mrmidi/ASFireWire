@@ -8,6 +8,7 @@
 #include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
+#include "Audio/Protocols/Backends/DuplexIRMReservations.hpp"
 #include "Protocols/Ports/ProtocolRegisterIO.hpp"
 
 #include <algorithm>
@@ -1514,6 +1515,77 @@ TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesReturnsGenerationMism
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::GenerationMismatch);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsAllocatesAndReleasesBothDirections) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    ASSERT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnSuccess);
+    ASSERT_EQ(reservations.Reserve(irm, 1, 576U), kIOReturnSuccess);
+    EXPECT_EQ(reservations.Count(), 2U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4019U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
+
+    reservations.ReleaseAll();
+    EXPECT_EQ(reservations.Count(), 0U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsTracksAndReleasesEveryMultistreamAllocation) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    for (uint8_t channel = 0; channel < 4; ++channel) {
+        ASSERT_EQ(reservations.Reserve(irm, channel, 100U), kIOReturnSuccess);
+    }
+    EXPECT_EQ(reservations.Count(), 4U);
+    EXPECT_EQ(reservations.Reserve(irm, 4, 100U), kIOReturnNoResources);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4515U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x0FFFFFFFU);
+
+    reservations.ReleaseAll();
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsRollsBackPriorSuccessAfterLaterFailure) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(500U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservationPair reservations;
+
+    ASSERT_EQ(reservations.ReservePlayback(irm, 0, 320U), kIOReturnSuccess);
+    EXPECT_EQ(reservations.ReserveCapture(irm, 1, 320U), kIOReturnNoResources);
+    EXPECT_EQ(reservations.PlaybackCount(), 0U);
+    EXPECT_EQ(reservations.CaptureCount(), 0U);
+
+    reservations.ReleaseAll();
+    EXPECT_EQ(bus.BandwidthAvailable(), 500U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsPropagatesGenerationMismatchWithoutTrackingEntry) {
+    RecordingFireWireBus bus;
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    bus.SetGeneration(Generation{2});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    EXPECT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnOffline);
+    EXPECT_EQ(reservations.Count(), 0U);
 }
 
 // AudioDuplexChannels invariant: stream[0] resolves to the legacy scalar field so

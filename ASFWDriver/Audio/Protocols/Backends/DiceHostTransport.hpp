@@ -8,10 +8,12 @@
 #include "../../../Common/WireFormat.hpp"
 #include "../../../Hardware/HardwareInterface.hpp"
 #include "../../../Isoch/IsochService.hpp"
+#include "DuplexIRMReservations.hpp"
 
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/OSSharedPtr.h>
+
 
 namespace ASFW::IRM {
 class IRMClient;
@@ -53,6 +55,12 @@ class IIsochDuplexHostTransport {
                                                               uint8_t sourceId) noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedReceive() noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedTransmit() noexcept = 0;
+    [[nodiscard]] virtual kern_return_t StopPreparedReceive() noexcept {
+        return kIOReturnUnsupported;
+    }
+    [[nodiscard]] virtual kern_return_t StopPreparedTransmit() noexcept {
+        return kIOReturnUnsupported;
+    }
     [[nodiscard]] virtual kern_return_t StopAll() noexcept = 0;
 };
 
@@ -90,10 +98,13 @@ class DiceIsochHostTransport final : public IIsochDuplexHostTransport {
                                                       uint8_t sourceId) noexcept override;
     [[nodiscard]] kern_return_t StartPreparedReceive() noexcept override;
     [[nodiscard]] kern_return_t StartPreparedTransmit() noexcept override;
+    [[nodiscard]] kern_return_t StopPreparedReceive() noexcept override;
+    [[nodiscard]] kern_return_t StopPreparedTransmit() noexcept override;
     [[nodiscard]] kern_return_t StopAll() noexcept override;
 
   private:
     Driver::IsochService& isoch_;
+    Backends::DuplexIRMReservationPair reservations_{};
 };
 
 // FW-71 leaves the file move to FW-73. No production caller should use this

@@ -40,6 +40,12 @@ struct DuplexStartOrderRecipe {
     uint32_t postDeviceEnableDelayMs{2};
 };
 
+struct DuplexStopOrderRecipe {
+    // Preserve AV/C's PCR/host-context interleave. DICE leaves this false and
+    // retains its existing StopAll -> StopDuplex sequence.
+    bool disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive{false};
+};
+
 // Host receive geometry for one DICE TX stream. `pcmChannels == 0` preserves
 // the legacy single-stream full-width receive path.
 struct DuplexCaptureStreamGeometry {
@@ -67,6 +73,7 @@ struct DuplexStreamProfile {
     uint32_t playbackBandwidthUnits{320};
     uint32_t captureBandwidthUnits{576};
     DuplexStartOrderRecipe startOrder{};
+    DuplexStopOrderRecipe stopOrder{};
 };
 
 // The coordinator deliberately delegates all device identity checks and stream
@@ -125,12 +132,18 @@ class DuplexStreamProfileResolver final {
                record.modelId == DeviceProfiles::Audio::kSPro24DspModelId;
     }
 
+    [[nodiscard]] static constexpr bool
+    IsApogeeDuet(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
+               record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId;
+    }
+
     [[nodiscard]] static AudioDuplexChannels
     ResolveChannels(const Discovery::DeviceRecord& record,
                     const AudioStreamRuntimeCaps& caps) noexcept {
         AudioDuplexChannels channels{
-            .deviceToHostIsoChannel = kDefaultCaptureIsoChannel,
-            .hostToDeviceIsoChannel = kDefaultPlaybackIsoChannel,
+            .deviceToHostIsoChannel = IsApogeeDuet(record) ? uint8_t{0} : kDefaultCaptureIsoChannel,
+            .hostToDeviceIsoChannel = IsApogeeDuet(record) ? uint8_t{1} : kDefaultPlaybackIsoChannel,
         };
 
         channels.captureStreamCount = ClampStreamCount(caps.deviceToHostStreamCount);
@@ -159,10 +172,10 @@ class DuplexStreamProfileResolver final {
 
         channels.captureIsoChannels[0] = IsValidIsoChannel(caps.deviceToHostIsoChannel)
                                              ? caps.deviceToHostIsoChannel
-                                             : kDefaultCaptureIsoChannel;
+                                             : channels.deviceToHostIsoChannel;
         channels.playbackIsoChannels[0] = IsValidIsoChannel(caps.hostToDeviceIsoChannel)
                                               ? caps.hostToDeviceIsoChannel
-                                              : kDefaultPlaybackIsoChannel;
+                                              : channels.hostToDeviceIsoChannel;
         markUsed(channels.captureIsoChannels[0]);
         markUsed(channels.playbackIsoChannels[0]);
 
@@ -216,6 +229,17 @@ class DuplexStreamProfileResolver final {
         if (IsSPro24Dsp(record) && caps.hostOutputPcmChannels == 8 &&
             caps.hostToDeviceAm824Slots == 9) {
             profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
+        }
+        if (IsApogeeDuet(record)) {
+            // Preserve the prior AVCAudioBackend ordering:
+            // host IR -> CMP oPCR -> host IT -> CMP iPCR. The runner uses these
+            // profile flags to interleave host starts with the neutral device
+            // stages. CMP operations retain their adapter-owned 250 ms timeout.
+            profile.startOrder.startReceiveBeforeDeviceRx = true;
+            profile.startOrder.startTransmitBeforeDeviceTx = true;
+            profile.startOrder.postDeviceEnableDelayMs = 0;
+            profile.stopOrder
+                .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
         }
         return profile;
     }

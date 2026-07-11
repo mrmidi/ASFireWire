@@ -1094,6 +1094,27 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                       DuplexRestartFailureCause::kGlobalClockLock);
     }
 
+    // AV/C/CMP profiles retain the historical interleave in which the host
+    // context is running before the matching PCR connection is established.
+    if (streamProfile.startOrder.startReceiveBeforeDeviceRx) {
+        if (abortIfTeardown("StartingHostReceiveBeforeDeviceRx")) {
+            return kIOReturnAborted;
+        }
+        const kern_return_t status = hostTransport_.StartPreparedReceive();
+        if (status != kIOReturnSuccess) {
+            return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
+                                     DuplexRestartFailureCause::kStartReceive);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DuplexRestartPhase::kStartingHostReceive,
+                                          DuplexRestartFailureCause::kStartReceive);
+        }
+        SetSessionPhase(session, DuplexRestartPhase::kStartingHostReceive);
+        session.hostReceiveStarted = true;
+        StoreSession(session);
+    }
+
     if (abortIfTeardown("ProgrammingDeviceRx")) {
         return kIOReturnAborted;
     }
@@ -1119,6 +1140,25 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                               : session.runtimeCaps;
     SetSessionPhase(session, DuplexRestartPhase::kDeviceRxProgrammed);
     StoreSession(session);
+
+    if (streamProfile.startOrder.startTransmitBeforeDeviceTx) {
+        if (abortIfTeardown("StartingHostTransmitBeforeDeviceTx")) {
+            return kIOReturnAborted;
+        }
+        const kern_return_t status = hostTransport_.StartPreparedTransmit();
+        if (status != kIOReturnSuccess) {
+            return rollbackToFailure(status, DuplexRestartPhase::kStartingHostTransmit,
+                                     DuplexRestartFailureCause::kStartTransmit);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DuplexRestartPhase::kStartingHostTransmit,
+                                          DuplexRestartFailureCause::kStartTransmit);
+        }
+        SetSessionPhase(session, DuplexRestartPhase::kStartingHostTransmit);
+        session.hostTransmitStarted = true;
+        StoreSession(session);
+    }
 
     if (abortIfTeardown("ProgrammingDeviceTx")) {
         return kIOReturnAborted;
@@ -1157,6 +1197,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     // transmit begins, avoiding a window without the expected clock reference.
     for (const DuplexHostDirection direction : streamProfile.startOrder.startOrder) {
         if (direction == DuplexHostDirection::kReceive) {
+            if (streamProfile.startOrder.startReceiveBeforeDeviceRx) {
+                continue;
+            }
             if (abortIfTeardown("StartingHostReceive")) {
                 return kIOReturnAborted;
             }
@@ -1177,6 +1220,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             continue;
         }
 
+        if (streamProfile.startOrder.startTransmitBeforeDeviceTx) {
+            continue;
+        }
         if (abortIfTeardown("StartingHostTransmit")) {
             return kIOReturnAborted;
         }
@@ -1314,8 +1360,6 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
         dependencies_.sessionStore.StoreSession(updatedSession);
     };
 
-    (void)record;
-
     if (TeardownRequested()) {
         RecordTeardownAbort("RunDuplexStop", guid);
         return kIOReturnAborted;
@@ -1326,19 +1370,51 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
     SetSessionState(session, DuplexRestartState::kStopping, "stop_requested");
     StoreSession(session);
 
-    const kern_return_t hostStatus = hostTransport_.StopAll();
-    if (hostStatus != kIOReturnSuccess) {
-        result = hostStatus;
-    }
+    const DuplexStreamProfile profile =
+        DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, session.channels);
+    if (profile.stopOrder
+            .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive) {
+        const auto disconnectPlayback = WaitForAsyncResult<bool>(
+            [&](auto callback) {
+                deviceControl.DisconnectPlayback(
+                    [callback = std::move(callback)](IOReturn status) mutable {
+                        callback(status, true);
+                    });
+            },
+            dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
+        (void)disconnectPlayback;
+        (void)hostTransport_.StopPreparedTransmit();
 
-    const IOReturn deviceStatus = deviceControl.StopDuplex();
-    if (deviceStatus == kIOReturnAborted && TeardownRequested()) {
-        RecordTeardownAbort("DeviceStop", guid);
-        return kIOReturnAborted;
-    }
-    if (deviceStatus != kIOReturnSuccess && deviceStatus != kIOReturnUnsupported &&
-        result == kIOReturnSuccess) {
-        result = deviceStatus;
+        const auto disconnectCapture = WaitForAsyncResult<bool>(
+            [&](auto callback) {
+                deviceControl.DisconnectCapture(
+                    [callback = std::move(callback)](IOReturn status) mutable {
+                        callback(status, true);
+                    });
+            },
+            dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
+        (void)disconnectCapture;
+        (void)hostTransport_.StopPreparedReceive();
+
+        // Contexts are already stopped. StopAll performs the neutral ownership
+        // cleanup (reserved profile + active GUID) without another wire action.
+        (void)hostTransport_.StopAll();
+    } else {
+        // DICE retains its original teardown contract unchanged.
+        const kern_return_t hostStatus = hostTransport_.StopAll();
+        if (hostStatus != kIOReturnSuccess) {
+            result = hostStatus;
+        }
+
+        const IOReturn deviceStatus = deviceControl.StopDuplex();
+        if (deviceStatus == kIOReturnAborted && TeardownRequested()) {
+            RecordTeardownAbort("DeviceStop", guid);
+            return kIOReturnAborted;
+        }
+        if (deviceStatus != kIOReturnSuccess && deviceStatus != kIOReturnUnsupported &&
+            result == kIOReturnSuccess) {
+            result = deviceStatus;
+        }
     }
 
     if (result == kIOReturnSuccess) {

@@ -99,5 +99,6 @@ add_device_test(ApogeeBooleanControlMappingTests
 add_device_test(ApogeeDuetVendorCmdTests
     ApogeeDuetVendorCmdTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
 )
-

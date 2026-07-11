@@ -28,6 +28,10 @@ namespace ASFW::IRM {
 class IRMClient;
 }
 
+namespace ASFW::CMP {
+class CMPClient;
+}
+
 namespace ASFW::Discovery {
 struct DeviceRecord;
 }
@@ -52,6 +56,10 @@ public:
     [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> FindEndpointRuntime(uint64_t guid) noexcept;
     [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> EnsureEndpointRuntime(uint64_t guid) noexcept;
 
+    // Set before discovery creates AV/C protocol instances. The registry does not
+    // own the client; DriverContext owns it for the service lifetime.
+    void SetCMPClient(CMP::CMPClient* cmpClient) noexcept { cmpClient_ = cmpClient; }
+
     // Create-on-demand for a known device. Idempotent: an existing instance is
     // returned without re-creating (covers re-scan on device resume). Mirrors the
     // former DeviceRegistry::MaybeCreateKnownProtocol gate + DeviceProtocolFactory
@@ -75,6 +83,7 @@ private:
     IOLock* lock_{nullptr};
     std::unordered_map<uint64_t, std::shared_ptr<IDeviceProtocol>> protocolsByGuid_;
     std::unordered_map<uint64_t, std::shared_ptr<AudioEndpointRuntime>> endpointsByGuid_;
+    CMP::CMPClient* cmpClient_{nullptr};
 };
 
 } // namespace ASFW::Audio

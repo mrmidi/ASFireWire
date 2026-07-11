@@ -43,6 +43,17 @@ public:
                                   ClockApplyCallback callback) = 0;
     virtual void ReadDuplexHealth(HealthCallback callback) = 0;
 
+    // Optional protocol-neutral staged teardown. Profiles which opt into the
+    // interleaved stop recipe call playback disconnect before host IT stop,
+    // then capture disconnect before host IR stop. Other protocols continue to
+    // use StopDuplex() as one atomic device-side stage.
+    virtual void DisconnectPlayback(VoidCallback callback) {
+        callback(kIOReturnUnsupported);
+    }
+    virtual void DisconnectCapture(VoidCallback callback) {
+        callback(kIOReturnUnsupported);
+    }
+
     virtual void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
         (void)cancel;
     }

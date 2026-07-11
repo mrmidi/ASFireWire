@@ -10,6 +10,9 @@
 #include "../../../../Logging/Logging.hpp"
 #include "../../../../Protocols/AVC/AVCDefs.hpp"
 #include "../../../../Protocols/AVC/FCPTransport.hpp"
+#include "../../../../Protocols/AVC/CMP/CMPClient.hpp"
+#include "../../../../Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
+#include "../../../../Bus/IRM/IRMClient.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <algorithm>
@@ -38,6 +41,8 @@ constexpr uint8_t kCTypeStatus = 0x01;
 constexpr uint8_t kSubunitUnit = 0xFF;
 constexpr uint8_t kOpcodeVendorDependent = 0x00;
 constexpr uint32_t kControlSyncTimeoutMs = 1500;
+constexpr uint32_t kCMPTimeoutMs = 250;
+constexpr uint32_t kCMPPollMs = 5;
 constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
 
 constexpr size_t kVendorHeaderSize = 9; // OUI(3) + Prefix(3) + Code + Arg1 + Arg2.
@@ -354,11 +359,15 @@ bool ApogeeDuetProtocol::VendorCommand::ParseStatusPayload(std::span<const uint8
 ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        Protocols::Ports::FireWireBusInfo& busInfo,
                                        uint16_t nodeId,
-                                       Protocols::AVC::FCPTransport* fcpTransport)
+                                       Protocols::AVC::FCPTransport* fcpTransport,
+                                       IRM::IRMClient* irmClient,
+                                       CMP::CMPClient* cmpClient)
     : busOps_(busOps)
     , busInfo_(busInfo)
     , nodeId_(nodeId)
-    , fcpTransport_(fcpTransport) {
+    , fcpTransport_(fcpTransport)
+    , irmClient_(irmClient)
+    , cmpClient_(cmpClient) {
 }
 
 IOReturn ApogeeDuetProtocol::Initialize() {
@@ -373,6 +382,259 @@ void ApogeeDuetProtocol::UpdateRuntimeContext(uint16_t nodeId,
                                               Protocols::AVC::FCPTransport* transport) {
     nodeId_ = nodeId;
     fcpTransport_ = transport;
+}
+
+bool ApogeeDuetProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
+    outCaps = AudioStreamRuntimeCaps{
+        .hostInputPcmChannels = 2,
+        .hostOutputPcmChannels = 2,
+        .deviceToHostAm824Slots = 2,
+        .hostToDeviceAm824Slots = 2,
+        .sampleRateHz = appliedClock_.sampleRateHz != 0 ? appliedClock_.sampleRateHz : 48000U,
+        .deviceToHostIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel,
+        .hostToDeviceIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+    return true;
+}
+
+void ApogeeDuetProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
+                                       const AudioClockConfig& desiredClock,
+                                       PrepareCallback callback) {
+    if (!cmpClient_ || !irmClient_ || !fcpTransport_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+    if (!IsSupportedAudioClockConfig(desiredClock)) {
+        callback(kIOReturnUnsupported, {});
+        return;
+    }
+
+    duplexChannels_ = channels;
+    cmpClient_->SetDeviceNode(static_cast<uint8_t>(nodeId_),
+                              IRM::Generation{busInfo_.GetGeneration()});
+    ApplyClockConfig(
+        desiredClock,
+        [this, channels, callback = std::move(callback)](IOReturn status,
+                                                         ClockApplyResult result) mutable {
+            callback(status,
+                     DuplexPrepareResult{
+                         .generation = result.generation,
+                         .channels = channels,
+                         .appliedClock = result.appliedClock,
+                         .runtimeCaps = result.runtimeCaps,
+                     });
+        });
+}
+
+void ApogeeDuetProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
+                                          ClockApplyCallback callback) {
+    if (!fcpTransport_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+    if (!IsSupportedAudioClockConfig(desiredClock)) {
+        callback(kIOReturnUnsupported, {});
+        return;
+    }
+
+    using SignalCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
+    using SampleRate = Protocols::AVC::StreamFormats::SampleRate;
+
+    // Linux fcp.c:44-78 and oxfw-command.c:120-150 use unit-level
+    // INPUT/OUTPUT PLUG SIGNAL FORMAT with AM824 + SFC 0x02 for 48 kHz.
+    auto output = std::make_shared<SignalCommand>(*fcpTransport_, 0, false,
+                                                  SampleRate::k48000Hz);
+    output->Submit(
+        [this, desiredClock, callback = std::move(callback), output](
+            Protocols::AVC::AVCResult outputResult, const SignalCommand::SignalFormat&) mutable {
+            const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
+            if (outputStatus != kIOReturnSuccess) {
+                callback(outputStatus, {});
+                return;
+            }
+
+            auto input = std::make_shared<SignalCommand>(*fcpTransport_, 0, true,
+                                                         SampleRate::k48000Hz);
+            input->Submit(
+                [this, desiredClock, callback = std::move(callback), input](
+                    Protocols::AVC::AVCResult inputResult,
+                    const SignalCommand::SignalFormat&) mutable {
+                    const IOReturn inputStatus = MapAVCResultToIOReturn(inputResult);
+                    if (inputStatus != kIOReturnSuccess) {
+                        callback(inputStatus, {});
+                        return;
+                    }
+
+                    appliedClock_ = desiredClock;
+                    AudioStreamRuntimeCaps caps{};
+                    (void)GetRuntimeAudioStreamCaps(caps);
+                    callback(kIOReturnSuccess,
+                             ClockApplyResult{
+                                 .generation = busInfo_.GetGeneration(),
+                                 .appliedClock = appliedClock_,
+                                 .runtimeCaps = caps,
+                             });
+                });
+        });
+}
+
+namespace {
+
+struct CMPWaitState {
+    std::atomic<bool> done{false};
+    std::atomic<CMP::CMPStatus> status{CMP::CMPStatus::Failed};
+};
+
+struct CMPWaitResult {
+    bool completed{false};
+    CMP::CMPStatus status{CMP::CMPStatus::Failed};
+};
+
+[[nodiscard]] CMPWaitResult WaitForCMP(const std::shared_ptr<CMPWaitState>& state) noexcept {
+    for (uint32_t waited = 0; waited < kCMPTimeoutMs; waited += kCMPPollMs) {
+        if (state->done.load(std::memory_order_acquire)) {
+            return CMPWaitResult{
+                .completed = true,
+                .status = state->status.load(std::memory_order_acquire),
+            };
+        }
+        IOSleep(kCMPPollMs);
+    }
+    return {};
+}
+
+} // namespace
+
+void ApogeeDuetProtocol::ProgramRx(StageCallback callback) {
+    if (!cmpClient_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+
+    auto state = std::make_shared<CMPWaitState>();
+    cmpClient_->ConnectOPCR(0, [state](CMP::CMPStatus status) {
+        state->status.store(status, std::memory_order_release);
+        state->done.store(true, std::memory_order_release);
+    });
+    const CMPWaitResult wait = WaitForCMP(state);
+    const bool connected = wait.completed && wait.status == CMP::CMPStatus::Success;
+    outputConnected_ = connected;
+
+    AudioStreamRuntimeCaps caps{};
+    (void)GetRuntimeAudioStreamCaps(caps);
+    callback(connected ? kIOReturnSuccess
+                       : (wait.completed ? kIOReturnError : kIOReturnTimeout),
+             DuplexStageResult{
+                 .generation = busInfo_.GetGeneration(),
+                 .channels = duplexChannels_,
+                 .phase = DuplexRestartPhase::kDeviceRxProgrammed,
+                 .runtimeCaps = caps,
+             });
+}
+
+void ApogeeDuetProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
+    if (!cmpClient_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+
+    auto state = std::make_shared<CMPWaitState>();
+    cmpClient_->ConnectIPCR(0, duplexChannels_.hostToDeviceIsoChannel,
+                            [state](CMP::CMPStatus status) {
+                                state->status.store(status, std::memory_order_release);
+                                state->done.store(true, std::memory_order_release);
+                            });
+    const CMPWaitResult wait = WaitForCMP(state);
+    const bool connected = wait.completed && wait.status == CMP::CMPStatus::Success;
+    inputConnected_ = connected;
+
+    AudioStreamRuntimeCaps caps{};
+    (void)GetRuntimeAudioStreamCaps(caps);
+    callback(connected ? kIOReturnSuccess
+                       : (wait.completed ? kIOReturnError : kIOReturnTimeout),
+             DuplexStageResult{
+                 .generation = busInfo_.GetGeneration(),
+                 .channels = duplexChannels_,
+                 .phase = DuplexRestartPhase::kDeviceTxArmed,
+                 .runtimeCaps = caps,
+             });
+}
+
+void ApogeeDuetProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
+    AudioStreamRuntimeCaps caps{};
+    (void)GetRuntimeAudioStreamCaps(caps);
+    callback((outputConnected_ && inputConnected_) ? kIOReturnSuccess : kIOReturnNotReady,
+             DuplexConfirmResult{
+                 .generation = busInfo_.GetGeneration(),
+                 .channels = duplexChannels_,
+                 .appliedClock = appliedClock_,
+                 .runtimeCaps = caps,
+             });
+}
+
+void ApogeeDuetProtocol::ReadDuplexHealth(HealthCallback callback) {
+    AudioStreamRuntimeCaps caps{};
+    (void)GetRuntimeAudioStreamCaps(caps);
+    callback(kIOReturnSuccess,
+             DuplexHealthResult{
+                 .generation = busInfo_.GetGeneration(),
+                 .appliedClock = appliedClock_,
+                 .runtimeCaps = caps,
+                 .sourceLocked = appliedClock_.sampleRateHz != 0,
+                 .clockReferenceHealthy = true,
+                 .nominalRateHz = appliedClock_.sampleRateHz,
+             });
+}
+
+void ApogeeDuetProtocol::DisconnectPlayback(VoidCallback callback) {
+    if (!cmpClient_ || !inputConnected_) {
+        inputConnected_ = false;
+        callback(kIOReturnSuccess);
+        return;
+    }
+
+    auto state = std::make_shared<CMPWaitState>();
+    cmpClient_->DisconnectIPCR(0, [state](CMP::CMPStatus status) {
+        state->status.store(status, std::memory_order_release);
+        state->done.store(true, std::memory_order_release);
+    });
+    const CMPWaitResult wait = WaitForCMP(state);
+    const bool disconnected = wait.completed && wait.status == CMP::CMPStatus::Success;
+    inputConnected_ = false;
+    callback(disconnected ? kIOReturnSuccess : kIOReturnTimeout);
+}
+
+void ApogeeDuetProtocol::DisconnectCapture(VoidCallback callback) {
+    if (!cmpClient_ || !outputConnected_) {
+        outputConnected_ = false;
+        callback(kIOReturnSuccess);
+        return;
+    }
+
+    auto state = std::make_shared<CMPWaitState>();
+    cmpClient_->DisconnectOPCR(0, [state](CMP::CMPStatus status) {
+        state->status.store(status, std::memory_order_release);
+        state->done.store(true, std::memory_order_release);
+    });
+    const CMPWaitResult wait = WaitForCMP(state);
+    const bool disconnected = wait.completed && wait.status == CMP::CMPStatus::Success;
+    outputConnected_ = false;
+    callback(disconnected ? kIOReturnSuccess : kIOReturnTimeout);
+}
+
+IOReturn ApogeeDuetProtocol::StopDuplex() {
+    IOReturn playbackStatus = kIOReturnSuccess;
+    DisconnectPlayback([&playbackStatus](IOReturn status) { playbackStatus = status; });
+
+    IOReturn captureStatus = kIOReturnSuccess;
+    DisconnectCapture([&captureStatus](IOReturn status) { captureStatus = status; });
+
+    if (playbackStatus != kIOReturnSuccess) {
+        return playbackStatus;
+    }
+    return captureStatus;
 }
 
 bool ApogeeDuetProtocol::SupportsBooleanControl(uint32_t classIdFourCC,

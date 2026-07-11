@@ -7,14 +7,16 @@
 #pragma once
 
 #include "IAudioBackend.hpp"
+#include "DiceDuplexRestartCoordinator.hpp"
+#include "DiceHostTransport.hpp"
 
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 
 #include "../../../Discovery/DeviceRegistry.hpp"
 #include "../../../Hardware/HardwareInterface.hpp"
 #include "../../../Isoch/IsochService.hpp"
-#include "../../../Protocols/AVC/CMP/CMPClient.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <unordered_map>
 
@@ -36,26 +38,21 @@ public:
 
     [[nodiscard]] const char* Name() const noexcept override { return "AV/C"; }
 
-    void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept { cmpClient_ = client; }
-
     void OnAudioConfigurationReady(uint64_t guid, const Model::ASFWAudioDevice& config) noexcept;
     void OnDeviceRemoved(uint64_t guid) noexcept;
+    void BeginTeardown() noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
 
 private:
-    [[nodiscard]] bool WaitForCMP(std::atomic<bool>& done,
-                                  std::atomic<ASFW::CMP::CMPStatus>& status,
-                                  uint32_t timeoutMs) noexcept;
-
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
-    Driver::IsochService& isoch_;
     Driver::HardwareInterface& hardware_;
-
-    ASFW::CMP::CMPClient* cmpClient_{nullptr};
+    DiceIsochHostTransport hostTransport_;
+    std::atomic<bool> stopping_{false};
+    AudioDuplexCoordinator duplexCoordinator_;
 
     IOLock* lock_{nullptr};
     std::unordered_map<uint64_t, Model::ASFWAudioDevice> configByGuid_{};

@@ -9,6 +9,8 @@ using ASFW::Audio::Backends::DuplexHostDirection;
 using ASFW::Audio::Backends::DuplexStreamProfile;
 using ASFW::Audio::Backends::DuplexStreamProfileResolver;
 using ASFW::DeviceProfiles::Audio::kAlesisVendorId;
+using ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
+using ASFW::DeviceProfiles::Audio::kApogeeVendorId;
 using ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
 using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 using ASFW::Discovery::DeviceRecord;
@@ -66,6 +68,23 @@ TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeomet
     EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile.captureStreams[0].am824Slots, 9U);
+}
+
+TEST(DuplexStreamProfileTests, ApogeeDuetPreservesLegacyChannelsAndCmpInterleave) {
+    DeviceRecord record{
+        .vendorId = kApogeeVendorId,
+        .modelId = kApogeeDuetModelId,
+    };
+
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, {});
+
+    EXPECT_EQ(profile.channels.deviceToHostIsoChannel, 0U);
+    EXPECT_EQ(profile.channels.hostToDeviceIsoChannel, 1U);
+    EXPECT_TRUE(profile.startOrder.startReceiveBeforeDeviceRx);
+    EXPECT_TRUE(profile.startOrder.startTransmitBeforeDeviceTx);
+    EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
+    EXPECT_TRUE(profile.stopOrder
+                    .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive);
 }
 
 TEST(DuplexStreamProfileTests, AlesisModelsClampAdvertisedCaptureStreamsToOne) {
