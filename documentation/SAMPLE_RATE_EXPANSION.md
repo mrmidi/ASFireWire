@@ -96,6 +96,60 @@ drift) is strictly stronger than regenerating a nominal pattern — this is the
 Saffire lesson of `44100.md` §9, and it is why the fractional-cadence problem
 largely disappears for the duplex case.
 
+### The minimal TX cadence contract
+
+Distilled, the per-cycle TX cadence output is only two things: the
+**data/no-data decision** and, on data packets, the **SYT**. Everything else
+follows from those or sits beside them:
+
+- **DBC is not a third axis.** In blocking mode it advances by `sytInterval` on
+  a data packet and is unchanged on a no-data packet, so it is the running sum
+  of the data/no-data sequence — fully determined once that sequence is fixed.
+  It must still be emitted and seeded correctly (a DBC that disagrees with the
+  block count is a classic reason a device drops the stream — capture gate §8
+  item 2), but it is bookkeeping, not an independent decision.
+- **SYT is a delta replay plus a phase re-anchor, not a copy.** The device's SYT
+  *deltas* carry the fractional-rate structure and are replayed 1:1; the
+  *absolute* phase is re-anchored to the outgoing packet's bus time plus a
+  per-rate presentation lead (`ComputeReplaySytFromTicks` + `txTransferDelayTicks`,
+  §2). The rate can be perfect while a wrong lead still walks the device's
+  receive buffer into under/overflow — the lead is the part that must be
+  validated per device (§8 item 3; RME uses a per-rate startup-latency table,
+  `44100.md` §12.4).
+- **Payload is a separate axis.** The cadence only *sizes* each packet (how many
+  frames, and when); sourcing those frames from the CoreAudio buffer and
+  AM824-encoding them is the `PrepareTransmitSlots`/payload path, unaffected by
+  which rate produced the cadence.
+- **RX carries no cadence obligation at all** — it decodes `dataBlocks` from the
+  CIP header and stores what arrives (restated from the transaction section, §6).
+
+### What "device-as-master" removes — and what it does not
+
+The duplex clock-master case (the normal DICE-at-internal-clock topology)
+removes the cadence *generator*, not cadence as a concern. It removes computing
+the 441/640 D/N pattern and 4458/4459-tick SYT deltas yourself — the device's RX
+stream carries them and replay reproduces them (§2–§3). It does **not** remove:
+
+1. **Bring-up.** Before replay warms there is nothing to replay, and the device
+   will not lock its receive stream until it sees a paced host stream. TX must
+   emit valid no-data packets during that window, and the startup seed / lead /
+   reset policy is a distinct, capture-gated deliverable (§6 item 7, §8 item 1) —
+   not covered by "the device dictates cadence."
+2. **Framing correctness** (the contract above): DBC continuity, SYT encoding,
+   no-data format. Replay supplies timing, not framing.
+3. **The per-rate host-clock anchor.** ZTS seed and transfer delay are per-rate,
+   not a 48 kHz constant (§4 notes, §6 items 2–3, §8 item 3).
+4. **The synthesized fallback engine.** Playback-only devices, an unusable RX
+   SYT stream, and the AVC/Oxford path have no replay source and still need the
+   ideal engine (§5, Phase 4). This is why the design keeps both models rather
+   than declaring cadence "solved" by device-as-master.
+
+Three unrelated device-clocked stacks confirm the split: Saffire, FFADO, and RME
+are each clock-slaved to the device yet all keep a startup bootstrap, an explicit
+resync/discontinuity guard, and a per-rate startup anchor (`44100.md` §9, §10.2,
+§12.3–§12.4). A driver that had truly stopped caring about cadence would need
+none of those.
+
 ## 4. Cross-validation results (44100.md open question #6 — resolved)
 
 The Apple-derived model survives the Linux check in full:
@@ -379,7 +433,46 @@ and both copies plus their pinning tests go away with the rational form.)
 
 ## 8. Open risks / capture gates
 
-Wire enablement of 44.1 remains gated on `44100.md` open questions 7–9:
+Wire enablement of 44.1 reduces to **one measurement in one gated session**, not
+several separate captures. The capture-gated items in `44100.md` §13 (#7, #9,
+#10, #11, and the value-half of #12) collapse once *observing the device* is
+separated from *emitting our own stream*:
+
+- **Genuinely needs hardware — the presentation lead / transfer delay the target
+  device expects at 44.1, plus tolerance of ASFW's startup no-data prefix.** This
+  is the union of #7, #11, and #12-value, and it is a single number per rate
+  family. It needs hardware because it is *not* derivable from spec: Linux (`+1`
+  SYT interval on the `0x2e00` base), Apple (15-cycle lead + startup seed), and
+  RME (per-rate table, 1516 µs at 44.1, `44100.md` §12.4) each use a different
+  convention, so the value must be matched to the target empirically. Reachable
+  only after the §6 plumbing lets ASFW emit 44.1.
+- **Moot under replay — `44100.md` #9/#10** ("learn the device cadence / compare
+  SYT deltas"). The replay ring copies the device's stream verbatim, so it needs
+  no prior knowledge of the blocking pattern or delta sequence. A capture here
+  matters only when the *synthesized* engine must drive that specific device (the
+  fallback path), not for the normal duplex path.
+- **Needs no hardware — already cross-validated.** The 441/640 blocking pattern,
+  the 4458/4459-tick SYT deltas (34-long-per-147), and the DBC convention are
+  proven four ways (Apple/Linux/FFADO/RME, §4 and `44100.md` §9–§12) and
+  reproduced by `tools/amdtp_blocking_cadence_sim.py`. A capture only *confirms*
+  the target does not deviate — nice-to-have under the wire-compat doctrine, not
+  a discovery task.
+
+### What the gated session must contain, and how to sequence it
+
+- **Early / cheap (before the plumbing):** passively observe the device's own
+  stream while it runs at 44.1 (any known-good stack, or ASFW just setting
+  `CLOCK_SELECT` and receiving). This validates the replay source and retires the
+  device-observation half of #7 without ASFW transmitting anything.
+- **The real gate (after §6 plumbing):** ASFW emits 44.1 and we measure whether
+  the device locks and how receive-buffer occupancy trends over minutes — a wrong
+  lead shows up as a slow buffer walk even at a perfect rate. **This does not
+  require a FireWire bus analyzer:** ASFW's own `[TxSyt]`/`[Zts]` traces plus
+  `tools/zts_sim.py` (once it takes `--rate`, §6 ZTS residual 3) settle it
+  functionally. Hand the `log stream … | grep [TxSyt]` command to the user to run
+  — the dext trace is not readable from the agent sandbox.
+
+The detailed risk register (unchanged):
 
 1. Device tolerance of ASFW's warmup no-data prefix at 44.1 (blocking seed and
    no-data placement). **The engine's startup seed is not a wire contract**:
