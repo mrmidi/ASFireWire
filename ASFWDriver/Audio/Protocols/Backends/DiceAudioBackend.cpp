@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "DiceAudioBackend.hpp"
+#include "DiceRuntimeDeviceConfig.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
@@ -438,6 +439,17 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             return;
         }
         if (protocol) {
+            AudioStreamRuntimeCaps caps{};
+            if (protocol->GetRuntimeAudioStreamCaps(caps) &&
+                ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry rate=%u in=%u out=%u (GUID=0x%016llx)",
+                         dev.currentSampleRate,
+                         dev.inputChannelCount,
+                         dev.outputChannelCount,
+                         guid);
+            }
+
             std::vector<std::string> inNames;
             std::vector<std::string> outNames;
             if (protocol->GetChannelLabels(inNames, outNames)) {

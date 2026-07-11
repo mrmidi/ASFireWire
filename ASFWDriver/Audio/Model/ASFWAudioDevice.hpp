@@ -63,18 +63,44 @@ struct ASFWAudioDevice {
         }
 
         auto deviceNameStr = OSSharedPtr(OSString::withCString(deviceName.c_str()), OSNoRetain);
+        auto channelCountNum = OSSharedPtr(OSNumber::withNumber(channelCount, 32), OSNoRetain);
         auto guidNum = OSSharedPtr(OSNumber::withNumber(guid, 64), OSNoRetain);
         auto vendorIdNum = OSSharedPtr(OSNumber::withNumber(vendorId, 32), OSNoRetain);
         auto modelIdNum = OSSharedPtr(OSNumber::withNumber(modelId, 32), OSNoRetain);
+        auto inputChannelCountNum =
+            OSSharedPtr(OSNumber::withNumber(inputChannelCount, 32), OSNoRetain);
+        auto outputChannelCountNum =
+            OSSharedPtr(OSNumber::withNumber(outputChannelCount, 32), OSNoRetain);
+        auto sampleRatesArray = OSSharedPtr(
+            OSArray::withCapacity(static_cast<uint32_t>(sampleRates.size())), OSNoRetain);
+        auto inputPlugNameStr = OSSharedPtr(OSString::withCString(inputPlugName.c_str()), OSNoRetain);
+        auto outputPlugNameStr = OSSharedPtr(OSString::withCString(outputPlugName.c_str()), OSNoRetain);
+        auto currentRateNum = OSSharedPtr(OSNumber::withNumber(currentSampleRate, 32), OSNoRetain);
 
-        if (!deviceNameStr || !guidNum || !vendorIdNum || !modelIdNum) {
+        if (!deviceNameStr || !channelCountNum || !guidNum || !vendorIdNum || !modelIdNum ||
+            !inputChannelCountNum || !outputChannelCountNum || !sampleRatesArray ||
+            !inputPlugNameStr || !outputPlugNameStr || !currentRateNum) {
             return false;
         }
 
+        for (uint32_t rate : sampleRates) {
+            auto rateNum = OSSharedPtr(OSNumber::withNumber(rate, 32), OSNoRetain);
+            if (rateNum) {
+                sampleRatesArray->setObject(rateNum.get());
+            }
+        }
+
         properties->setObject(PropertyKeys::kDeviceName, deviceNameStr.get());
+        properties->setObject(PropertyKeys::kChannelCount, channelCountNum.get());
+        properties->setObject(PropertyKeys::kSampleRates, sampleRatesArray.get());
         properties->setObject(PropertyKeys::kGuid, guidNum.get());
         properties->setObject(PropertyKeys::kVendorId, vendorIdNum.get());
         properties->setObject(PropertyKeys::kModelId, modelIdNum.get());
+        properties->setObject(PropertyKeys::kInputChannelCount, inputChannelCountNum.get());
+        properties->setObject(PropertyKeys::kOutputChannelCount, outputChannelCountNum.get());
+        properties->setObject(PropertyKeys::kInputPlugName, inputPlugNameStr.get());
+        properties->setObject(PropertyKeys::kOutputPlugName, outputPlugNameStr.get());
+        properties->setObject(PropertyKeys::kCurrentSampleRate, currentRateNum.get());
 
         // Per-channel device labels (optional). The audio side reads these in
         // channel order and prefers them over synthesized names.

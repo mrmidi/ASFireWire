@@ -60,6 +60,10 @@ add_device_test(DuplexStreamProfileTests
     DuplexStreamProfileTests.cpp
 )
 
+add_device_test(DiceRuntimeDeviceConfigTests
+    DiceRuntimeDeviceConfigTests.cpp
+)
+
 # FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
 add_device_test(WaitForAsyncResultTests
     WaitForAsyncResultTests.cpp
@@ -100,4 +104,3 @@ add_device_test(ApogeeDuetVendorCmdTests
     ApogeeDuetVendorCmdTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
 )
-

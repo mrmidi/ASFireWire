@@ -45,9 +45,11 @@ void ParseIdentityProperties(OSDictionary* properties, ParsedAudioDriverConfig& 
     }
     if (auto* inputChannels = OSDynamicCast(OSNumber, properties->getObject(Keys::kInputChannelCount))) {
         inOutConfig.inputChannelCount = inputChannels->unsigned32BitValue();
+        inOutConfig.hasExplicitInputChannelCount = true;
     }
     if (auto* outputChannels = OSDynamicCast(OSNumber, properties->getObject(Keys::kOutputChannelCount))) {
         inOutConfig.outputChannelCount = outputChannels->unsigned32BitValue();
+        inOutConfig.hasExplicitOutputChannelCount = true;
     }
 }
 

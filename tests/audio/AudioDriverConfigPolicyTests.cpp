@@ -70,6 +70,32 @@ TEST(AudioDriverConfigPolicyTests, ClampChannelsRespectsMaxSupportedForExplicitD
     EXPECT_EQ(config.channelCount, 16u);
 }
 
+TEST(AudioDriverConfigPolicyTests, RuntimeDirectionalCountsWinOverProfileFallback) {
+    ParsedAudioDriverConfig config{};
+    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
+    config.inputChannelCount = 16;
+    config.outputChannelCount = 2;
+    config.hasExplicitInputChannelCount = true;
+    config.hasExplicitOutputChannelCount = true;
+
+    ASFW::Isoch::Audio::ApplyProfileChannelCountFallback(config, 2, 2);
+
+    EXPECT_EQ(config.inputChannelCount, 16U);
+    EXPECT_EQ(config.outputChannelCount, 2U);
+    EXPECT_EQ(config.channelCount, 16U);
+}
+
+TEST(AudioDriverConfigPolicyTests, ProfileCountsRemainFallbackForLegacyNubs) {
+    ParsedAudioDriverConfig config{};
+    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
+
+    ASFW::Isoch::Audio::ApplyProfileChannelCountFallback(config, 8, 6);
+
+    EXPECT_EQ(config.inputChannelCount, 8U);
+    EXPECT_EQ(config.outputChannelCount, 6U);
+    EXPECT_EQ(config.channelCount, 8U);
+}
+
 TEST(AudioDriverConfigPolicyTests, BuildFallbackBoolControlsMapsPhantomMask) {
     ParsedAudioDriverConfig config{};
     ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
