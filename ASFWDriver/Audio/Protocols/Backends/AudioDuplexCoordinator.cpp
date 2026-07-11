@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
-#include "DiceDuplexRestartCoordinator.hpp"
+#include "AudioDuplexCoordinator.hpp"
 #include "DiceRecoveryPolicy.hpp"
 #include "DuplexStreamProfile.hpp"
 #include "RestartJournal.hpp"
@@ -52,7 +52,8 @@ inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
 // FW-70: the execution body of a duplex start/stop/idle-clock transaction.  The
 // coordinator remains the FSM entry-point and owns the gate/store, while this
 // runner owns the ordered stage sequence through protocol-neutral dependency
-// seams. FW-73 will perform the remaining mechanical file/type rename.
+// seams. FW-73 renamed this file + the host-transport type to their neutral
+// spellings; the restart/session vocabulary rename is a follow-up (FW-73b).
 // Device stream programming before GLOBAL_ENABLE is cross-validated with Linux
 // dice-stream.c:326-374 and dice-interface.h:120-125; no source code is copied.
 class DuplexStartTransaction final {

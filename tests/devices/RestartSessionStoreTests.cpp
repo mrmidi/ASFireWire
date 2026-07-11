@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // FW-69b characterization tests for RestartSessionStore — the per-GUID session store + restart-id
-// allocator extracted from DiceDuplexRestartCoordinator. Pins the observable contract of the
+// allocator extracted from AudioDuplexCoordinator. Pins the observable contract of the
 // former coordinator members (LoadSession/StoreSession/GetSession/AllocateRestartId) and the
 // lock-held accessors (FindSessionLocked/EraseSessionLocked) used inside the coordinator's
 // multi-domain critical sections. Host tests, no hardware.

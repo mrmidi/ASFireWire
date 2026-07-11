@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
-#include "DiceHostTransport.hpp"
+#include "IsochDuplexHostTransport.hpp"
 
 #include "../../../Common/DriverKitOwnership.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
@@ -9,17 +9,17 @@
 
 namespace ASFW::Audio {
 
-void DiceIsochHostTransport::SetTimingLossCallback(
+void IsochDuplexHostTransport::SetTimingLossCallback(
     Driver::IsochService::TimingLossCallback callback) noexcept {
     isoch_.SetTimingLossCallback(std::move(callback));
 }
 
-kern_return_t DiceIsochHostTransport::BeginSplitDuplex(uint64_t guid) noexcept {
+kern_return_t IsochDuplexHostTransport::BeginSplitDuplex(uint64_t guid) noexcept {
     reservations_.ReleaseAll();
     return isoch_.BeginSplitDuplex(guid);
 }
 
-kern_return_t DiceIsochHostTransport::ReservePlaybackResources(uint64_t guid,
+kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(uint64_t guid,
                                                                ::ASFW::IRM::IRMClient& irmClient,
                                                                uint8_t channel,
                                                                uint32_t bandwidthUnits) noexcept {
@@ -36,7 +36,7 @@ kern_return_t DiceIsochHostTransport::ReservePlaybackResources(uint64_t guid,
     return bookkeeping;
 }
 
-kern_return_t DiceIsochHostTransport::ReserveCaptureResources(uint64_t guid,
+kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(uint64_t guid,
                                                               ::ASFW::IRM::IRMClient& irmClient,
                                                               uint8_t channel,
                                                               uint32_t bandwidthUnits) noexcept {
@@ -53,7 +53,7 @@ kern_return_t DiceIsochHostTransport::ReserveCaptureResources(uint64_t guid,
     return bookkeeping;
 }
 
-kern_return_t DiceIsochHostTransport::PrepareReceive(
+kern_return_t IsochDuplexHostTransport::PrepareReceive(
     uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels) noexcept {
@@ -61,13 +61,13 @@ kern_return_t DiceIsochHostTransport::PrepareReceive(
                                  /*packetCallback=*/nullptr, streamChannels);
 }
 
-kern_return_t DiceIsochHostTransport::PrepareTransmit(uint8_t channel,
+kern_return_t IsochDuplexHostTransport::PrepareTransmit(uint8_t channel,
                                                       Driver::HardwareInterface& hardware,
                                                       uint8_t sourceId) noexcept {
     return isoch_.PrepareTransmit(channel, hardware, sourceId);
 }
 
-kern_return_t DiceIsochHostTransport::PrepareReceiveStream(
+kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
     uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) noexcept {
@@ -75,29 +75,29 @@ kern_return_t DiceIsochHostTransport::PrepareReceiveStream(
                                        streamChannels, wireFormat, am824Slots);
 }
 
-kern_return_t DiceIsochHostTransport::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+kern_return_t IsochDuplexHostTransport::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                                             Driver::HardwareInterface& hardware,
                                                             uint8_t sourceId) noexcept {
     return isoch_.PrepareTransmitStream(streamIndex, channel, hardware, sourceId);
 }
 
-kern_return_t DiceIsochHostTransport::StartPreparedReceive() noexcept {
+kern_return_t IsochDuplexHostTransport::StartPreparedReceive() noexcept {
     return isoch_.StartPreparedReceive();
 }
 
-kern_return_t DiceIsochHostTransport::StartPreparedTransmit() noexcept {
+kern_return_t IsochDuplexHostTransport::StartPreparedTransmit() noexcept {
     return isoch_.StartPreparedTransmit();
 }
 
-kern_return_t DiceIsochHostTransport::StopPreparedReceive() noexcept {
+kern_return_t IsochDuplexHostTransport::StopPreparedReceive() noexcept {
     return isoch_.StopReceive();
 }
 
-kern_return_t DiceIsochHostTransport::StopPreparedTransmit() noexcept {
+kern_return_t IsochDuplexHostTransport::StopPreparedTransmit() noexcept {
     return isoch_.StopTransmit();
 }
 
-kern_return_t DiceIsochHostTransport::StopAll() noexcept {
+kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
     isoch_.StopAll();
     reservations_.ReleaseAll();
     return kIOReturnSuccess;

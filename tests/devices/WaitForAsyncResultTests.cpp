@@ -4,7 +4,7 @@
 // FW-65 characterization tests for the WaitForAsyncResult sync/async bridge.
 //
 // These lock the exact observable behaviour of the helper extracted from
-// DiceDuplexRestartCoordinator.cpp into SyncAsyncBridge.hpp, so the move is provably
+// AudioDuplexCoordinator.cpp into SyncAsyncBridge.hpp, so the move is provably
 // behaviour-preserving. Every timeout here is small (<= 60 ms) because the host mock
 // IOSleep is a real std::this_thread::sleep_for.
 

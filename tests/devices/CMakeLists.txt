@@ -47,9 +47,9 @@ add_device_test(DICERestartSessionTests
 )
 
 # DICE duplex restart coordinator FSM tests
-add_device_test(DiceDuplexRestartCoordinatorTests
-    DiceDuplexRestartCoordinatorTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceDuplexRestartCoordinator.cpp"
+add_device_test(AudioDuplexCoordinatorTests
+    AudioDuplexCoordinatorTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// DiceDuplexRestartCoordinator.hpp - Top-level audio duplex lifecycle owner
+// AudioDuplexCoordinator.hpp - Top-level audio duplex lifecycle owner
 
 #pragma once
 
 #include "ClockRequestBroker.hpp"
-#include "DiceHostTransport.hpp"
+#include "IsochDuplexHostTransport.hpp"
 #include "DuplexOperationGate.hpp"
 #include "RestartSessionStore.hpp"
 #include "../Duplex/IDuplexDeviceControl.hpp"

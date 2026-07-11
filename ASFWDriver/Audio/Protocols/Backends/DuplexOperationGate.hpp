@@ -4,7 +4,7 @@
 // DuplexOperationGate.hpp
 //
 // FW-68 (Step 4 of FW-64): per-GUID duplex operation gating extracted from
-// DiceDuplexRestartCoordinator. Owns the two per-GUID sets that gate concurrent duplex
+// AudioDuplexCoordinator. Owns the two per-GUID sets that gate concurrent duplex
 // operations:
 //   * activeGuids_        - a GUID currently owns the duplex run body (claim/release).
 //   * stopRequestedGuids_ - a GUID has a pending per-stream stop intent.

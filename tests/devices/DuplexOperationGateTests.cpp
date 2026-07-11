@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // FW-68 characterization tests for DuplexOperationGate, the per-GUID duplex operation gate
-// extracted from DiceDuplexRestartCoordinator. These pin the observable behaviour of the former
+// extracted from AudioDuplexCoordinator. These pin the observable behaviour of the former
 // coordinator members (TryAcquireGuid/ReleaseGuid/RequestStopIntent/ClearStopIntent/
 // IsStopRequested) and the lock-held variants used inside the coordinator's multi-domain
 // critical sections, so the extraction is provably behaviour-preserving. Host tests, no hardware.
