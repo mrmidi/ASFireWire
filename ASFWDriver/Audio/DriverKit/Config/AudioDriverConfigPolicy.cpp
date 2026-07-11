@@ -93,6 +93,19 @@ void ClampAudioDriverChannels(ParsedAudioDriverConfig& inOutConfig,
                                         inOutConfig.outputChannelCount);
 }
 
+void ApplyProfileChannelCountFallback(ParsedAudioDriverConfig& inOutConfig,
+                                      uint32_t profileInputChannels,
+                                      uint32_t profileOutputChannels) {
+    if (!inOutConfig.hasExplicitInputChannelCount && profileInputChannels > 0) {
+        inOutConfig.inputChannelCount = profileInputChannels;
+    }
+    if (!inOutConfig.hasExplicitOutputChannelCount && profileOutputChannels > 0) {
+        inOutConfig.outputChannelCount = profileOutputChannels;
+    }
+    inOutConfig.channelCount = std::max(inOutConfig.inputChannelCount,
+                                        inOutConfig.outputChannelCount);
+}
+
 const char* ScopeLabel(uint32_t scopeFourCC) {
     switch (scopeFourCC) {
         case static_cast<uint32_t>('inpt'):

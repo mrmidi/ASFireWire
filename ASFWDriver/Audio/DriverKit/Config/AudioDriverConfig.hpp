@@ -46,6 +46,8 @@ struct ParsedAudioDriverConfig {
     uint32_t channelCount{kDefaultChannelCount};
     uint32_t inputChannelCount{kDefaultChannelCount};
     uint32_t outputChannelCount{kDefaultChannelCount};
+    bool hasExplicitInputChannelCount{false};
+    bool hasExplicitOutputChannelCount{false};
 
     double sampleRates[kMaxSampleRates]{};
     uint32_t sampleRateCount{1};
@@ -89,6 +91,12 @@ void ApplyBringupSingleFormatPolicy(ParsedAudioDriverConfig& inOutConfig);
 
 void ClampAudioDriverChannels(ParsedAudioDriverConfig& inOutConfig,
                               uint32_t maxSupportedChannels);
+
+// Device-published runtime counts win. Profile counts are fallback geometry for
+// older nubs that do not publish directional channel properties.
+void ApplyProfileChannelCountFallback(ParsedAudioDriverConfig& inOutConfig,
+                                      uint32_t profileInputChannels,
+                                      uint32_t profileOutputChannels);
 
 [[nodiscard]] const char* ScopeLabel(uint32_t scopeFourCC);
 

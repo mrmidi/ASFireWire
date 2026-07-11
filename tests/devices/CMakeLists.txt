@@ -60,6 +60,10 @@ add_device_test(DuplexStreamProfileTests
     DuplexStreamProfileTests.cpp
 )
 
+add_device_test(DiceRuntimeDeviceConfigTests
+    DiceRuntimeDeviceConfigTests.cpp
+)
+
 # FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
 add_device_test(WaitForAsyncResultTests
     WaitForAsyncResultTests.cpp

@@ -150,13 +150,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
         const uint32_t rxChannels = profile->RxChannelCount();
         const uint32_t txChannels = profile->TxChannelCount();
-        if (rxChannels > 0) {
-            parsedConfig.inputChannelCount = rxChannels;
-        }
-        if (txChannels > 0) {
-            parsedConfig.outputChannelCount = txChannels;
-        }
-        parsedConfig.channelCount = std::max(parsedConfig.inputChannelCount, parsedConfig.outputChannelCount);
+        ASFW::Isoch::Audio::ApplyProfileChannelCountFallback(parsedConfig,
+                                                            rxChannels,
+                                                            txChannels);
 
         // Regenerate channel names for the updated channel counts. Prefers the
         // device's per-channel labels (published by the core side) and falls
