@@ -206,17 +206,84 @@ In rough dependency order:
    read) to populate the nub's supported-rate list instead of assuming.
 6. **HAL rate switching is not wired.** The ADK graph already publishes
    multiple rates (`ASFWAudioDriverGraph.cpp:294-306`,
-   `SetAvailableSampleRates` from nub properties), but there is no
-   `PerformDeviceConfigurationChange` handler, so a HAL-initiated rate change
-   has no path to *stop streams → reprogram CLOCK_SELECT → restart duplex*.
-   `DiceDuplexRestartCoordinator` is the natural vehicle: a rate change is a
-   restart with new parameters.
+   `SetAvailableSampleRates` from nub properties), but `ASFWAudioDevice`
+   overrides only `StartIO`/`StopIO` (`Audio/DriverKit/ASFWAudioDevice.iig`)
+   and has no `HandleChangeSampleRate`,
+   `PerformDeviceConfigurationChange`, or
+   `AbortDeviceConfigurationChange` path. A HAL- or device-initiated rate
+   change therefore has no transaction to *stop streams → reprogram
+   CLOCK_SELECT → update the ADK graph → restart duplex*. The required ADK
+   contract is specified below. `DiceDuplexRestartCoordinator` is the natural
+   device-side vehicle: a rate change is a restart with new parameters.
 7. **Fallback-ladder policy (explicit decision).** Keep start-up as-is
    (no-data until replay warms, ≈32 ms — behaviorally equivalent to Linux
    `on_the_fly=false`), keep FATAL on mid-stream replay underrun, and treat
    the ideal engine as the source for *non-replay device classes* — not as a
    mid-stream hot-swap. Hot-swapping cadence sources mid-stream is exactly the
    double-path trap.
+
+### AudioDriverKit sample-rate-change transaction (required)
+
+**This is a host-coordinated configuration transaction, not a call to
+`SetSampleRate` while the stream is live.** The authoritative local API source
+is the installed Xcode 27 DriverKit header
+`AudioDriverKit.framework/Headers/IOUserAudioClockDevice.iig:211-246`: it says
+that a device **must** begin any I/O- or structure-affecting state change with
+`RequestDeviceConfigurationChange`, and explicitly lists nominal sample rate,
+stream formats, ring-buffer size, presentation latency, and safety offset.
+The header also says the host may defer the `Perform...` callback to another
+thread. This was cross-checked with Context7's current Apple
+`Creating an audio device driver` documentation on 2026-07-10.
+
+| Phase | AudioDriverKit contract | ASFW requirement |
+|---|---|---|
+| 1. Propose | The initiator calls `RequestDeviceConfigurationChange(action, info)`. The request only asks the host to begin the transaction; it does not grant permission to change hardware. | Validate the exact requested Hz against the nub's advertised rates and current device caps. Store a single pending record `{rate, clock source, reason, topology generation}` behind the audio-device work queue, then request a private `kSampleRateChange` action. A HAL property write enters through `HandleChangeSampleRate`; for ASFW it must enqueue this transaction, not inherit the default direct `SetSampleRate` behavior. An external clock/device-rate notification uses the same path. |
+| 2. Quiesce | The host stops outstanding I/O, calls `StopIO`, then later calls `PerformDeviceConfigurationChange`. | `StopIO` must stop duplex/isoch, stop new payload preparation and ZTS publication, clear `isRunning`/`txActive`, and detach every transport view before freeing a mapping. It must not reprogram the DICE clock or publish a new ADK rate. Existing `ASFWAudioDevice::StopIO` is the correct teardown entry point, but its ordering must be shared with the rate transaction rather than duplicated. |
+| 3. Commit | `PerformDeviceConfigurationChange(action, info)` is the only point at which the device may change the requested state. I/O is already stopped. | Match the pending action and generation; serialize with bus-reset/teardown and other clock requests. Program DICE `CLOCK_SELECT` plus rate, then wait until the device reports the requested rate and a stable lock. Do **not** return success merely because an async request was queued: once `Perform...` returns, the host is allowed to restart I/O. |
+| 4. Publish | Set the device rate and update each stream's current format before returning. | After hardware commit, update `ivars.device.currentSampleRate`, direct-memory metadata, `AudioGraphBinding::sampleRateHz`, replay/cadence/DBC state, timing geometry, and transfer-delay policy as one configuration. Call `audioDevice->SetSampleRate(rate)`, then `inputStream->DeviceSampleRateChanged(rate)` and `outputStream->DeviceSampleRateChanged(rate)`. The latter chooses the available stream format matching the new rate and invokes the stream's current-format handler (`IOUserAudioStream.iig:254-266`). Call `super::PerformDeviceConfigurationChange` exactly once after the custom action has succeeded, as required by the base header. |
+| 5. Resume | After `Perform...` returns, AudioDriverKit observes the changed object state and restarts active I/O with `StartIO` if required. There is no separate `CompleteDeviceConfigurationChange` API. | `StartIO` must acquire/rebuild only resources compatible with the committed rate, reset packet/replay/ZTS state, and start the duplex stream at that same rate. It must never reload the current 48 kHz defaults. Only the `kern_return_t` from `Perform...` is the completion signal to the host. |
+| Abort/failure | The host may call `AbortDeviceConfigurationChange` for a request it will not perform. A non-success return from `Perform...` rejects the commit. | Abort drops the matching pending record without changing hardware and calls `super::AbortDeviceConfigurationChange`. A hardware/programming/lock failure leaves the ADK rate and stream formats at the old committed state, returns failure, and performs an explicit device recovery if a partial DICE write occurred. Never publish 44.1 to CoreAudio while the device is still running 48 kHz. |
+
+`HandleChangeSampleRate` is therefore **not sufficient on its own** for this
+driver. The base implementation merely calls `SetSampleRate`; it is suitable
+for a virtual clock whose rate has no live transport consequences. ASFW owns a
+hardware clock, FireWire DMA geometry, packet cadence, and shared mappings, so
+the framework's mandatory request/perform barrier applies. In particular, do
+not make `SetSampleRate`, `SetCurrentStreamFormat`, or a DICE register write
+from the real-time I/O handler.
+
+The existing direct-memory contract makes buffer ownership part of the same
+transaction. `IOUserAudioStream::SetIOMemoryDescriptor` is documented as legal
+only inside `PerformDeviceConfigurationChange`
+(`IOUserAudioStream.iig:429-446`). If a new rate preserves PCM frame layout
+and ring capacity, retain the descriptors and only rebuild FireWire-side
+resources. If geometry requires replacement, install the new descriptors in
+phase 4 only after `StopIO` has dropped every cross-service view; no raw
+pointer into an old audio-owned mapping may survive the swap (FW-60 rule).
+The graph already rejects a direct-memory sample-rate mismatch at
+`ASFWAudioDriverGraph.cpp:355-367`, so the nub/control-block rate and ADK
+device rate must be advanced together, never one callback apart.
+
+**ASFW implementation delta.** Add the three overrides to
+`ASFWAudioDevice.iig` and implement a small pending-change state machine in
+`ASFWAudioDevice.cpp`; keep all state transition work on the existing
+`ivars.workQueue`. Teach the DICE coordinator to accept every supported
+`DiceDesiredClockConfig` instead of its present 48 kHz default
+(`DiceDuplexRestartCoordinator.cpp:455-460`), and make the packetizer,
+replay-bootstrap step, transfer delays, and timing geometry rate-parameterized
+before connecting the new action. The current `DICETcatProtocol` 48 kHz
+wrappers (`DICETcatProtocol.cpp:240-249`) are explicitly not a valid
+implementation of this transaction.
+
+**Acceptance test for rate change.** Exercise 48,000 → 44,100 → 48,000 while
+an input and output client are active, and assert the ordered trace
+`Request → StopIO → Perform → StartIO` for each switch. At the end of each
+`Perform`, assert one committed rate across DICE global state, nub/direct
+memory metadata, `IOUserAudioDevice`, both `IOUserAudioStream` current
+formats, `AudioGraphBinding`, and TX/RX cadence state. Add separate cases for
+an unsupported rate, host abort before `Perform`, a DICE lock timeout, device
+removal, and a bus reset during the request; none may leave a live stream or a
+ZTS anchor using the old rate after the new rate has been published.
 
 The RX side needs essentially nothing for cadence: it decodes per-packet
 `dataBlocks` from the CIP header, and the replay ring stores whatever arrives.
