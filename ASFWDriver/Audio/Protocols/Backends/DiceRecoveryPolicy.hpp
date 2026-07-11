@@ -18,7 +18,7 @@
 
 #pragma once
 
-#include "../DICE/Core/DICERestartSession.hpp"
+#include "../Duplex/DuplexRestartSession.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -29,10 +29,10 @@ namespace ASFW::Audio::Backends {
 // The recovery policy is expressed over the DICE restart-session vocabulary; bring those
 // types into scope so the moved bodies stay byte-identical (they referenced them unqualified
 // inside the coordinator via the same using-declarations).
-using ASFW::Audio::DICE::DiceRestartFailureCause;
-using ASFW::Audio::DICE::DiceRestartPhase;
-using ASFW::Audio::DICE::DiceRestartReason;
-using ASFW::Audio::DICE::DiceRestartState;
+using ASFW::Audio::DuplexRestartFailureCause;
+using ASFW::Audio::DuplexRestartPhase;
+using ASFW::Audio::DuplexRestartReason;
+using ASFW::Audio::DuplexRestartState;
 
 enum class DiceRecoveryDisposition : uint8_t {
     kIgnore,
@@ -51,9 +51,9 @@ enum class DiceRecoveryPolicyReason : uint8_t {
 };
 
 struct DiceRecoveryContext {
-    DiceRestartReason triggerReason{DiceRestartReason::kManualReconfigure};
-    DiceRestartState state{DiceRestartState::kIdle};
-    DiceRestartPhase phase{DiceRestartPhase::kIdle};
+    DuplexRestartReason triggerReason{DuplexRestartReason::kManualReconfigure};
+    DuplexRestartState state{DuplexRestartState::kIdle};
+    DuplexRestartPhase phase{DuplexRestartPhase::kIdle};
     bool stopRequested{false};
     bool hasRestartIntent{false};
     bool hasHostFootprint{false};
@@ -97,57 +97,57 @@ struct DiceRecoveryDecision {
            status == kIOReturnNoDevice;
 }
 
-[[nodiscard]] constexpr DiceRestartFailureCause FailureCauseForReason(
-    DiceRestartReason reason) noexcept {
+[[nodiscard]] constexpr DuplexRestartFailureCause FailureCauseForReason(
+    DuplexRestartReason reason) noexcept {
     switch (reason) {
-        case DiceRestartReason::kBusResetRebind: return DiceRestartFailureCause::kBusResetRebind;
-        case DiceRestartReason::kRecoverAfterTimingLoss: return DiceRestartFailureCause::kTimingLoss;
-        case DiceRestartReason::kRecoverAfterCycleInconsistent:
-            return DiceRestartFailureCause::kCycleInconsistent;
-        case DiceRestartReason::kRecoverAfterLockLoss: return DiceRestartFailureCause::kLockLoss;
-        case DiceRestartReason::kRecoverAfterTxFault: return DiceRestartFailureCause::kTxFault;
-        case DiceRestartReason::kInitialStart:
-        case DiceRestartReason::kSampleRateChange:
-        case DiceRestartReason::kClockSourceChange:
-        case DiceRestartReason::kManualReconfigure:
-            return DiceRestartFailureCause::kNone;
+        case DuplexRestartReason::kBusResetRebind: return DuplexRestartFailureCause::kBusResetRebind;
+        case DuplexRestartReason::kRecoverAfterTimingLoss: return DuplexRestartFailureCause::kTimingLoss;
+        case DuplexRestartReason::kRecoverAfterCycleInconsistent:
+            return DuplexRestartFailureCause::kCycleInconsistent;
+        case DuplexRestartReason::kRecoverAfterLockLoss: return DuplexRestartFailureCause::kLockLoss;
+        case DuplexRestartReason::kRecoverAfterTxFault: return DuplexRestartFailureCause::kTxFault;
+        case DuplexRestartReason::kInitialStart:
+        case DuplexRestartReason::kSampleRateChange:
+        case DuplexRestartReason::kClockSourceChange:
+        case DuplexRestartReason::kManualReconfigure:
+            return DuplexRestartFailureCause::kNone;
     }
-    return DiceRestartFailureCause::kNone;
+    return DuplexRestartFailureCause::kNone;
 }
 
-[[nodiscard]] constexpr bool IsRecoveryReason(DiceRestartReason reason) noexcept {
-    return FailureCauseForReason(reason) != DiceRestartFailureCause::kNone;
+[[nodiscard]] constexpr bool IsRecoveryReason(DuplexRestartReason reason) noexcept {
+    return FailureCauseForReason(reason) != DuplexRestartFailureCause::kNone;
 }
 
-[[nodiscard]] constexpr DiceRestartState RestartStateForStartReason(
-    DiceRestartReason reason) noexcept {
+[[nodiscard]] constexpr DuplexRestartState RestartStateForStartReason(
+    DuplexRestartReason reason) noexcept {
     switch (reason) {
-        case DiceRestartReason::kBusResetRebind:
-        case DiceRestartReason::kRecoverAfterTimingLoss:
-        case DiceRestartReason::kRecoverAfterCycleInconsistent:
-        case DiceRestartReason::kRecoverAfterLockLoss:
-        case DiceRestartReason::kRecoverAfterTxFault:
-            return DiceRestartState::kRecovering;
-        case DiceRestartReason::kInitialStart:
-        case DiceRestartReason::kSampleRateChange:
-        case DiceRestartReason::kClockSourceChange:
-        case DiceRestartReason::kManualReconfigure:
-            return DiceRestartState::kStarting;
+        case DuplexRestartReason::kBusResetRebind:
+        case DuplexRestartReason::kRecoverAfterTimingLoss:
+        case DuplexRestartReason::kRecoverAfterCycleInconsistent:
+        case DuplexRestartReason::kRecoverAfterLockLoss:
+        case DuplexRestartReason::kRecoverAfterTxFault:
+            return DuplexRestartState::kRecovering;
+        case DuplexRestartReason::kInitialStart:
+        case DuplexRestartReason::kSampleRateChange:
+        case DuplexRestartReason::kClockSourceChange:
+        case DuplexRestartReason::kManualReconfigure:
+            return DuplexRestartState::kStarting;
     }
 
-    return DiceRestartState::kStarting;
+    return DuplexRestartState::kStarting;
 }
 
 [[nodiscard]] constexpr DiceRecoveryDecision EvaluateRecoveryPolicy(
     const DiceRecoveryContext& context) noexcept {
-    if (context.stopRequested || context.state == DiceRestartState::kStopping) {
+    if (context.stopRequested || context.state == DuplexRestartState::kStopping) {
         return {
             .disposition = DiceRecoveryDisposition::kIgnore,
             .reason = DiceRecoveryPolicyReason::kSuppressedByStop,
         };
     }
 
-    if (context.state == DiceRestartState::kApplyingIdleClock) {
+    if (context.state == DuplexRestartState::kApplyingIdleClock) {
         return {
             .disposition = DiceRecoveryDisposition::kIgnore,
             .reason = DiceRecoveryPolicyReason::kIdleApplyInvalidated,
@@ -159,10 +159,10 @@ struct DiceRecoveryDecision {
 
     if (!context.hasDiceRecord || !context.hasProtocol) {
         const bool activeSession =
-            context.state == DiceRestartState::kStarting ||
-            context.state == DiceRestartState::kRunning ||
-            context.state == DiceRestartState::kRecovering ||
-            context.state == DiceRestartState::kFailed ||
+            context.state == DuplexRestartState::kStarting ||
+            context.state == DuplexRestartState::kRunning ||
+            context.state == DuplexRestartState::kRecovering ||
+            context.state == DuplexRestartState::kFailed ||
             hasRestartFootprint;
         return {
             .disposition = activeSession ? DiceRecoveryDisposition::kFailSession
@@ -172,7 +172,7 @@ struct DiceRecoveryDecision {
         };
     }
 
-    if (context.state == DiceRestartState::kFailed) {
+    if (context.state == DuplexRestartState::kFailed) {
         return {
             .disposition = context.lastFailureRetryable
                 ? DiceRecoveryDisposition::kRestart
@@ -183,9 +183,9 @@ struct DiceRecoveryDecision {
         };
     }
 
-    if (context.state == DiceRestartState::kStarting ||
-        context.state == DiceRestartState::kRunning ||
-        context.state == DiceRestartState::kRecovering ||
+    if (context.state == DuplexRestartState::kStarting ||
+        context.state == DuplexRestartState::kRunning ||
+        context.state == DuplexRestartState::kRecovering ||
         hasRestartFootprint) {
         return {
             .disposition = DiceRecoveryDisposition::kRestart,

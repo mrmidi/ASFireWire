@@ -31,14 +31,14 @@ using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioDuplexChannels;
 using ASFW::Audio::DICE::ClockSource;
 using ASFW::Audio::DICE::DICETransaction;
-using ASFW::Audio::DICE::DiceDuplexConfirmResult;
-using ASFW::Audio::DICE::DiceDuplexPrepareResult;
-using ASFW::Audio::DICE::DiceDuplexStageResult;
+using ASFW::Audio::DuplexConfirmResult;
+using ASFW::Audio::DuplexPrepareResult;
+using ASFW::Audio::DuplexStageResult;
 using ASFW::Audio::DICE::GeneralSections;
 using ASFW::Audio::DICE::kOwnerNoOwner;
 using ASFW::Audio::DICE::MakeDICEAddress;
-using ASFW::Audio::DICE::DiceRestartPhase;
-using ASFW::Audio::DICE::DiceRestartReason;
+using ASFW::Audio::DuplexRestartPhase;
+using ASFW::Audio::DuplexRestartReason;
 namespace NotificationMailbox = ASFW::Audio::DICE::NotificationMailbox;
 using ASFW::Audio::DICE::Section;
 using ASFW::Audio::DICE::DICEDuplexBringupController;
@@ -1135,11 +1135,11 @@ TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBri
     };
 
     std::optional<IOReturn> prepareStatus;
-    std::optional<DiceDuplexPrepareResult> prepareResult;
+    std::optional<DuplexPrepareResult> prepareResult;
     rig.controller.PrepareDuplex(
         channels,
         {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal},
-        [&prepareStatus, &prepareResult](IOReturn status, DiceDuplexPrepareResult result) {
+        [&prepareStatus, &prepareResult](IOReturn status, DuplexPrepareResult result) {
             prepareStatus = status;
             prepareResult = result;
         });
@@ -1160,15 +1160,15 @@ TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBri
     rig.bus.SetScript(ReferencePhase0ParityFixture::kProgramRxExpectedRequests,
                       ReferencePhase0ParityFixture::kProgramRxResponseSteps);
     std::optional<IOReturn> rxStatus;
-    std::optional<DiceDuplexStageResult> rxResult;
-    rig.controller.ProgramRx([&rxStatus, &rxResult](IOReturn status, DiceDuplexStageResult result) {
+    std::optional<DuplexStageResult> rxResult;
+    rig.controller.ProgramRx([&rxStatus, &rxResult](IOReturn status, DuplexStageResult result) {
         rxStatus = status;
         rxResult = result;
     });
     ASSERT_TRUE(rxStatus.has_value());
     ASSERT_EQ(*rxStatus, kIOReturnSuccess);
     ASSERT_TRUE(rxResult.has_value());
-    EXPECT_EQ(rxResult->phase, DiceRestartPhase::kDeviceRxProgrammed);
+    EXPECT_EQ(rxResult->phase, DuplexRestartPhase::kDeviceRxProgrammed);
     EXPECT_TRUE(rig.controller.IsPrepared());
     EXPECT_FALSE(rig.controller.IsArmed());
 
@@ -1176,23 +1176,23 @@ TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBri
     rig.bus.SetScript(ReferencePhase0ParityFixture::kProgramTxEnableExpectedRequests,
                       ReferencePhase0ParityFixture::kProgramTxEnableResponseSteps);
     std::optional<IOReturn> txStatus;
-    std::optional<DiceDuplexStageResult> txResult;
-    rig.controller.ProgramTxAndEnableDuplex([&txStatus, &txResult](IOReturn status, DiceDuplexStageResult result) {
+    std::optional<DuplexStageResult> txResult;
+    rig.controller.ProgramTxAndEnableDuplex([&txStatus, &txResult](IOReturn status, DuplexStageResult result) {
         txStatus = status;
         txResult = result;
     });
     ASSERT_TRUE(txStatus.has_value());
     ASSERT_EQ(*txStatus, kIOReturnSuccess);
     ASSERT_TRUE(txResult.has_value());
-    EXPECT_EQ(txResult->phase, DiceRestartPhase::kDeviceTxArmed);
+    EXPECT_EQ(txResult->phase, DuplexRestartPhase::kDeviceTxArmed);
     EXPECT_TRUE(rig.controller.IsArmed());
 
     rig.bus.ClearScript();
     rig.bus.ClearOperations();
     std::optional<IOReturn> confirmStatus;
-    std::optional<DiceDuplexConfirmResult> confirmResult;
+    std::optional<DuplexConfirmResult> confirmResult;
     rig.controller.ConfirmDuplexStart(
-        [&confirmStatus, &confirmResult](IOReturn status, DiceDuplexConfirmResult result) {
+        [&confirmStatus, &confirmResult](IOReturn status, DuplexConfirmResult result) {
             confirmStatus = status;
             confirmResult = result;
         });
@@ -1223,21 +1223,21 @@ TEST(DICEDuplexBringupControllerTests,
     rig.controller.PrepareDuplex(
         channels,
         {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal},
-        [&prepareStatus](IOReturn status, DiceDuplexPrepareResult) {
+        [&prepareStatus](IOReturn status, DuplexPrepareResult) {
             prepareStatus = status;
         });
     ASSERT_EQ(prepareStatus, kIOReturnSuccess);
 
     std::optional<IOReturn> rxStatus;
     rig.controller.ProgramRx(
-        [&rxStatus](IOReturn status, DiceDuplexStageResult) {
+        [&rxStatus](IOReturn status, DuplexStageResult) {
             rxStatus = status;
         });
     ASSERT_EQ(rxStatus, kIOReturnSuccess);
 
     std::optional<IOReturn> txStatus;
     rig.controller.ProgramTxAndEnableDuplex(
-        [&txStatus](IOReturn status, DiceDuplexStageResult) {
+        [&txStatus](IOReturn status, DuplexStageResult) {
             txStatus = status;
         });
     ASSERT_EQ(txStatus, kIOReturnSuccess);
@@ -1246,7 +1246,7 @@ TEST(DICEDuplexBringupControllerTests,
 
     std::optional<IOReturn> confirmStatus;
     rig.controller.ConfirmDuplexStart(
-        [&confirmStatus](IOReturn status, DiceDuplexConfirmResult) {
+        [&confirmStatus](IOReturn status, DuplexConfirmResult) {
             confirmStatus = status;
         });
 

@@ -67,7 +67,7 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
     ASFW_LOG(Audio,
              "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
              guid);
-    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
+    dice_.HandleRecoveryEvent(guid, DuplexRestartReason::kBusResetRebind);
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
@@ -155,7 +155,7 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
     ASFW_LOG_WARNING(Audio,
                      "AudioCoordinator: cycleInconsistent observed; scheduling DICE recovery GUID=0x%016llx",
                      guid);
-    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterCycleInconsistent);
+    dice_.HandleRecoveryEvent(guid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
 }
 
 IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {

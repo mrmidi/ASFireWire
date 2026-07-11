@@ -3,7 +3,7 @@
 //
 // FW-69a characterization tests for RestartJournal — the FSM-journal state mutators extracted
 // from AudioDuplexCoordinator into RestartJournal.hpp. These pin the state-mutating half
-// by EFFECT on DiceRestartSession. The Log* emitters are void and observable only via the field
+// by EFFECT on DuplexRestartSession. The Log* emitters are void and observable only via the field
 // trace, which is a no-op in host tests (os_log stubbed), so their byte-identical strings are
 // preserved by the verbatim whole-body move and exercised by the coordinator integration suite.
 // Host tests, no hardware.
@@ -19,7 +19,7 @@ namespace {
 using namespace ASFW::Audio::Backends;
 
 // The 10 progress flags ClearRestartProgress (and thus ApplyTerminalPhase) must reset.
-void SetAllProgressFlags(DiceRestartSession& s) {
+void SetAllProgressFlags(DuplexRestartSession& s) {
     s.ownerClaimed = true;
     s.devicePrepared = true;
     s.deviceRxProgrammed = true;
@@ -32,7 +32,7 @@ void SetAllProgressFlags(DiceRestartSession& s) {
     s.hostTransmitStarted = true;
 }
 
-void ExpectAllProgressCleared(const DiceRestartSession& s) {
+void ExpectAllProgressCleared(const DuplexRestartSession& s) {
     EXPECT_FALSE(s.ownerClaimed);
     EXPECT_FALSE(s.devicePrepared);
     EXPECT_FALSE(s.deviceRxProgrammed);
@@ -46,52 +46,52 @@ void ExpectAllProgressCleared(const DiceRestartSession& s) {
 }
 
 TEST(RestartJournalTests, SetSessionStateSetsStateOnly) {
-    DiceRestartSession s{};
-    s.phase = DiceRestartPhase::kPreparingDevice;
-    SetSessionState(s, DiceRestartState::kRunning, "confirmed_running");
-    EXPECT_EQ(s.state, DiceRestartState::kRunning);
-    EXPECT_EQ(s.phase, DiceRestartPhase::kPreparingDevice);  // untouched
+    DuplexRestartSession s{};
+    s.phase = DuplexRestartPhase::kPreparingDevice;
+    SetSessionState(s, DuplexRestartState::kRunning, "confirmed_running");
+    EXPECT_EQ(s.state, DuplexRestartState::kRunning);
+    EXPECT_EQ(s.phase, DuplexRestartPhase::kPreparingDevice);  // untouched
 }
 
 TEST(RestartJournalTests, SetSessionPhaseSetsPhaseOnly) {
-    DiceRestartSession s{};
-    s.state = DiceRestartState::kRunning;
-    SetSessionPhase(s, DiceRestartPhase::kPreparingDevice);
-    EXPECT_EQ(s.phase, DiceRestartPhase::kPreparingDevice);
-    EXPECT_EQ(s.state, DiceRestartState::kRunning);  // untouched
+    DuplexRestartSession s{};
+    s.state = DuplexRestartState::kRunning;
+    SetSessionPhase(s, DuplexRestartPhase::kPreparingDevice);
+    EXPECT_EQ(s.phase, DuplexRestartPhase::kPreparingDevice);
+    EXPECT_EQ(s.state, DuplexRestartState::kRunning);  // untouched
 }
 
 // ApplyTerminalPhase(kIdle): phase+state -> kIdle, terminalError cleared, progress flags reset.
 TEST(RestartJournalTests, ApplyTerminalPhaseIdleResetsToIdle) {
-    DiceRestartSession s{};
-    s.state = DiceRestartState::kRunning;
-    s.phase = DiceRestartPhase::kRunning;
+    DuplexRestartSession s{};
+    s.state = DuplexRestartState::kRunning;
+    s.phase = DuplexRestartPhase::kRunning;
     s.terminalError = kIOReturnError;
     SetAllProgressFlags(s);
-    ApplyTerminalPhase(s, DiceRestartPhase::kIdle, "reset_before_start");
-    EXPECT_EQ(s.phase, DiceRestartPhase::kIdle);
-    EXPECT_EQ(s.state, DiceRestartState::kIdle);
+    ApplyTerminalPhase(s, DuplexRestartPhase::kIdle, "reset_before_start");
+    EXPECT_EQ(s.phase, DuplexRestartPhase::kIdle);
+    EXPECT_EQ(s.state, DuplexRestartState::kIdle);
     EXPECT_EQ(s.terminalError, kIOReturnSuccess);  // cleared for non-failure terminal
     ExpectAllProgressCleared(s);
 }
 
 // ApplyTerminalPhase(kFailed): phase+state -> kFailed, terminalError PRESERVED.
 TEST(RestartJournalTests, ApplyTerminalPhaseFailedPreservesTerminalError) {
-    DiceRestartSession s{};
-    s.state = DiceRestartState::kRunning;
-    s.phase = DiceRestartPhase::kRunning;
+    DuplexRestartSession s{};
+    s.state = DuplexRestartState::kRunning;
+    s.phase = DuplexRestartPhase::kRunning;
     s.terminalError = kIOReturnError;
     SetAllProgressFlags(s);
-    ApplyTerminalPhase(s, DiceRestartPhase::kFailed, "stop_failed");
-    EXPECT_EQ(s.phase, DiceRestartPhase::kFailed);
-    EXPECT_EQ(s.state, DiceRestartState::kFailed);
+    ApplyTerminalPhase(s, DuplexRestartPhase::kFailed, "stop_failed");
+    EXPECT_EQ(s.phase, DuplexRestartPhase::kFailed);
+    EXPECT_EQ(s.state, DuplexRestartState::kFailed);
     EXPECT_EQ(s.terminalError, kIOReturnError);  // preserved on failure
     ExpectAllProgressCleared(s);
 }
 
 TEST(RestartJournalTests, ClearFailureSnapshotResetsLastFailure) {
-    DiceRestartSession s{};
-    s.lastFailure = DiceRestartIssueInfo{};
+    DuplexRestartSession s{};
+    s.lastFailure = DuplexRestartIssueInfo{};
     ASSERT_TRUE(s.lastFailure.has_value());
     ClearFailureSnapshot(s);
     EXPECT_FALSE(s.lastFailure.has_value());
@@ -100,13 +100,13 @@ TEST(RestartJournalTests, ClearFailureSnapshotResetsLastFailure) {
 // RecordIssue fills the destination optional with the passed facts and copies restartId +
 // generation from the session (the epoch stamp), leaving the session's own fields untouched.
 TEST(RestartJournalTests, RecordIssuePopulatesAndStampsSessionEpoch) {
-    DiceRestartSession s{};
+    DuplexRestartSession s{};
     s.restartId = 7;
-    std::optional<DiceRestartIssueInfo> dest;
+    std::optional<DuplexRestartIssueInfo> dest;
     RecordIssue(s, dest,
-                DiceRestartPhase::kPreparingDevice,
-                DiceRestartErrorClass::kStageFailure,
-                DiceRestartFailureCause::kTimingLoss,
+                DuplexRestartPhase::kPreparingDevice,
+                DuplexRestartErrorClass::kStageFailure,
+                DuplexRestartFailureCause::kTimingLoss,
                 kIOReturnError,
                 /*retryable=*/true,
                 /*rollbackAttempted=*/false,
@@ -114,9 +114,9 @@ TEST(RestartJournalTests, RecordIssuePopulatesAndStampsSessionEpoch) {
                 /*hostStateKnown=*/true,
                 /*deviceStateKnown=*/false);
     ASSERT_TRUE(dest.has_value());
-    EXPECT_EQ(dest->failedPhase, DiceRestartPhase::kPreparingDevice);
-    EXPECT_EQ(dest->errorClass, DiceRestartErrorClass::kStageFailure);
-    EXPECT_EQ(dest->cause, DiceRestartFailureCause::kTimingLoss);
+    EXPECT_EQ(dest->failedPhase, DuplexRestartPhase::kPreparingDevice);
+    EXPECT_EQ(dest->errorClass, DuplexRestartErrorClass::kStageFailure);
+    EXPECT_EQ(dest->cause, DuplexRestartFailureCause::kTimingLoss);
     EXPECT_EQ(dest->status, kIOReturnError);
     EXPECT_TRUE(dest->retryable);
     EXPECT_FALSE(dest->rollbackAttempted);

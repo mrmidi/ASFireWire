@@ -24,12 +24,12 @@ using namespace ASFW::Audio::Backends;
 
 namespace {
 
-using ASFW::Audio::DICE::ClearRestartProgress;
+using ASFW::Audio::ClearRestartProgress;
 using ASFW::Audio::AudioClockConfig;
-using ASFW::Audio::DICE::HasAnyRestartState;
-using ASFW::Audio::DICE::HasDeviceRestartState;
-using ASFW::Audio::DICE::HasHostRestartState;
-using ASFW::Audio::DICE::HasRestartIntent;
+using ASFW::Audio::HasAnyRestartState;
+using ASFW::Audio::HasDeviceRestartState;
+using ASFW::Audio::HasHostRestartState;
+using ASFW::Audio::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 
@@ -423,7 +423,7 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
         .sampleRateHz = 48000U,
     };
     const DuplexRestartReason reason = HasRestartIntent(session)
-                                         ? DICE::ClassifyRestartReason(&session, desiredClock)
+                                         ? ClassifyRestartReason(&session, desiredClock)
                                          : DuplexRestartReason::kInitialStart;
 
     const IOReturn status =

@@ -6,7 +6,7 @@
 #pragma once
 
 #include "../../Duplex/IDuplexDeviceControl.hpp"
-#include "DICERestartSession.hpp"
+#include "../../Duplex/DuplexRestartSession.hpp"
 #include "DICETypes.hpp"
 #include "DICETransaction.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
@@ -130,7 +130,7 @@ private:
     IODispatchQueue* workQueue_;   // NOT owned — borrowed from caller
     GeneralSections sections_;
 
-    DiceRestartSession restartSession_{};
+    DuplexRestartSession restartSession_{};
     DiceClockConfiguration diceClock_{};
     FlowMode flowMode_{FlowMode::kNone};
     AudioStreamRuntimeCaps runtimeCaps_{};

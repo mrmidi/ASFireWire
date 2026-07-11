@@ -3,132 +3,132 @@
 //
 // RestartJournal.hpp
 //
-// FW-69a (Step 5 of FW-64, journal half): the DICE restart FSM journal — the stateless
+// FW-69a (Step 5 of FW-64, journal half): the duplex restart FSM journal — the stateless
 // transition/logging free functions extracted from AudioDuplexCoordinator.cpp. Each
-// operates only on a passed DiceRestartSession& (or value params) and emits the [FSM] field
+// operates only on a passed DuplexRestartSession& (or value params) and emits the [FSM] field
 // trace via ASFW_LOG_V*; none touch the coordinator, the session store (sessions_), lock_, or
-// any member. Also carries the DICE-enum ToString formatters + GenerationValue they depend on
+// any member. Also carries the restart-enum ToString formatters + GenerationValue they depend on
 // (used by the coordinator's own logging too, so kept visible via this header).
 //
 // Behaviour-preserving: bodies copied byte-for-byte, so every log format string, the DICE
 // verbosity gate, and the anomaly-only no-op guards are textually unchanged (identical field
-// trace). Names keep their Dice* prefix (neutral rename is FW-73b). The session STORE (sessions_
+// trace). The session STORE (sessions_
 // + Load/Store/Get/Clear + epoch/restartId) is a separate component (FW-69b).
 
 #pragma once
 
 #include "DiceRecoveryPolicy.hpp"
 
-#include "../DICE/Core/DICERestartSession.hpp"
+#include "../Duplex/DuplexRestartSession.hpp"
 #include "../../../Logging/Logging.hpp"
 
 #include <cstdint>
 
 namespace ASFW::Audio::Backends {
 
-// The journal is expressed over the DICE restart-session vocabulary; bring those names into
+// The journal is expressed over the duplex restart-session vocabulary; bring those names into
 // scope so the moved bodies stay byte-identical (they referenced them unqualified in the
 // coordinator's anonymous namespace via the same using-declarations).
-using ASFW::Audio::DICE::ClearRestartProgress;
-using ASFW::Audio::DICE::DiceClockRequestOutcome;
-using ASFW::Audio::DICE::DiceRestartErrorClass;
-using ASFW::Audio::DICE::DiceRestartFailureCause;
-using ASFW::Audio::DICE::DiceRestartIssueInfo;
-using ASFW::Audio::DICE::DiceRestartPhase;
-using ASFW::Audio::DICE::DiceRestartReason;
-using ASFW::Audio::DICE::DiceRestartState;
-using ASFW::Audio::DICE::DiceRestartSession;
+using ASFW::Audio::ClearRestartProgress;
+using ASFW::Audio::DuplexClockRequestOutcome;
+using ASFW::Audio::DuplexRestartErrorClass;
+using ASFW::Audio::DuplexRestartFailureCause;
+using ASFW::Audio::DuplexRestartIssueInfo;
+using ASFW::Audio::DuplexRestartPhase;
+using ASFW::Audio::DuplexRestartReason;
+using ASFW::Audio::DuplexRestartState;
+using ASFW::Audio::DuplexRestartSession;
 
-[[nodiscard]] constexpr const char* ToString(DiceRestartReason reason) noexcept {
+[[nodiscard]] constexpr const char* ToString(DuplexRestartReason reason) noexcept {
     switch (reason) {
-        case DiceRestartReason::kInitialStart: return "InitialStart";
-        case DiceRestartReason::kSampleRateChange: return "SampleRateChange";
-        case DiceRestartReason::kClockSourceChange: return "ClockSourceChange";
-        case DiceRestartReason::kBusResetRebind: return "BusResetRebind";
-        case DiceRestartReason::kRecoverAfterTimingLoss: return "TimingLoss";
-        case DiceRestartReason::kRecoverAfterCycleInconsistent: return "CycleInconsistent";
-        case DiceRestartReason::kRecoverAfterLockLoss: return "LockLoss";
-        case DiceRestartReason::kRecoverAfterTxFault: return "TxFault";
-        case DiceRestartReason::kManualReconfigure: return "ManualReconfigure";
+        case DuplexRestartReason::kInitialStart: return "InitialStart";
+        case DuplexRestartReason::kSampleRateChange: return "SampleRateChange";
+        case DuplexRestartReason::kClockSourceChange: return "ClockSourceChange";
+        case DuplexRestartReason::kBusResetRebind: return "BusResetRebind";
+        case DuplexRestartReason::kRecoverAfterTimingLoss: return "TimingLoss";
+        case DuplexRestartReason::kRecoverAfterCycleInconsistent: return "CycleInconsistent";
+        case DuplexRestartReason::kRecoverAfterLockLoss: return "LockLoss";
+        case DuplexRestartReason::kRecoverAfterTxFault: return "TxFault";
+        case DuplexRestartReason::kManualReconfigure: return "ManualReconfigure";
     }
     return "Unknown";
 }
 
-[[nodiscard]] constexpr const char* ToString(DiceRestartPhase phase) noexcept {
+[[nodiscard]] constexpr const char* ToString(DuplexRestartPhase phase) noexcept {
     switch (phase) {
-        case DiceRestartPhase::kIdle: return "Idle";
-        case DiceRestartPhase::kPreparingDevice: return "PreparingDevice";
-        case DiceRestartPhase::kPrepared: return "Prepared";
-        case DiceRestartPhase::kReservingPlaybackResources: return "ReservingPlaybackResources";
-        case DiceRestartPhase::kProgrammingDeviceRx: return "ProgrammingDeviceRx";
-        case DiceRestartPhase::kDeviceRxProgrammed: return "DeviceRxProgrammed";
-        case DiceRestartPhase::kReservingCaptureResources: return "ReservingCaptureResources";
-        case DiceRestartPhase::kStartingHostReceive: return "StartingHostReceive";
-        case DiceRestartPhase::kProgrammingDeviceTx: return "ProgrammingDeviceTx";
-        case DiceRestartPhase::kDeviceTxArmed: return "DeviceTxArmed";
-        case DiceRestartPhase::kWaitingGlobalClock: return "WaitingGlobalClock";
-        case DiceRestartPhase::kStartingHostTransmit: return "StartingHostTransmit";
-        case DiceRestartPhase::kConfirmingDeviceStart: return "ConfirmingDeviceStart";
-        case DiceRestartPhase::kRunning: return "Running";
-        case DiceRestartPhase::kStopping: return "Stopping";
-        case DiceRestartPhase::kFailed: return "Failed";
+        case DuplexRestartPhase::kIdle: return "Idle";
+        case DuplexRestartPhase::kPreparingDevice: return "PreparingDevice";
+        case DuplexRestartPhase::kPrepared: return "Prepared";
+        case DuplexRestartPhase::kReservingPlaybackResources: return "ReservingPlaybackResources";
+        case DuplexRestartPhase::kProgrammingDeviceRx: return "ProgrammingDeviceRx";
+        case DuplexRestartPhase::kDeviceRxProgrammed: return "DeviceRxProgrammed";
+        case DuplexRestartPhase::kReservingCaptureResources: return "ReservingCaptureResources";
+        case DuplexRestartPhase::kStartingHostReceive: return "StartingHostReceive";
+        case DuplexRestartPhase::kProgrammingDeviceTx: return "ProgrammingDeviceTx";
+        case DuplexRestartPhase::kDeviceTxArmed: return "DeviceTxArmed";
+        case DuplexRestartPhase::kWaitingGlobalClock: return "WaitingGlobalClock";
+        case DuplexRestartPhase::kStartingHostTransmit: return "StartingHostTransmit";
+        case DuplexRestartPhase::kConfirmingDeviceStart: return "ConfirmingDeviceStart";
+        case DuplexRestartPhase::kRunning: return "Running";
+        case DuplexRestartPhase::kStopping: return "Stopping";
+        case DuplexRestartPhase::kFailed: return "Failed";
     }
     return "Unknown";
 }
 
-[[nodiscard]] constexpr const char* ToString(DiceRestartState state) noexcept {
+[[nodiscard]] constexpr const char* ToString(DuplexRestartState state) noexcept {
     switch (state) {
-        case DiceRestartState::kIdle: return "Idle";
-        case DiceRestartState::kApplyingIdleClock: return "ApplyingIdleClock";
-        case DiceRestartState::kStarting: return "Starting";
-        case DiceRestartState::kRunning: return "Running";
-        case DiceRestartState::kStopping: return "Stopping";
-        case DiceRestartState::kRecovering: return "Recovering";
-        case DiceRestartState::kFailed: return "Failed";
+        case DuplexRestartState::kIdle: return "Idle";
+        case DuplexRestartState::kApplyingIdleClock: return "ApplyingIdleClock";
+        case DuplexRestartState::kStarting: return "Starting";
+        case DuplexRestartState::kRunning: return "Running";
+        case DuplexRestartState::kStopping: return "Stopping";
+        case DuplexRestartState::kRecovering: return "Recovering";
+        case DuplexRestartState::kFailed: return "Failed";
     }
     return "Unknown";
 }
 
-[[nodiscard]] constexpr const char* ToString(DiceClockRequestOutcome outcome) noexcept {
+[[nodiscard]] constexpr const char* ToString(DuplexClockRequestOutcome outcome) noexcept {
     switch (outcome) {
-        case DiceClockRequestOutcome::kApplied: return "Applied";
-        case DiceClockRequestOutcome::kSuperseded: return "Superseded";
-        case DiceClockRequestOutcome::kAbortedByStop: return "AbortedByStop";
-        case DiceClockRequestOutcome::kFailed: return "Failed";
+        case DuplexClockRequestOutcome::kApplied: return "Applied";
+        case DuplexClockRequestOutcome::kSuperseded: return "Superseded";
+        case DuplexClockRequestOutcome::kAbortedByStop: return "AbortedByStop";
+        case DuplexClockRequestOutcome::kFailed: return "Failed";
     }
     return "Unknown";
 }
 
-[[nodiscard]] constexpr const char* ToString(DiceRestartErrorClass errorClass) noexcept {
+[[nodiscard]] constexpr const char* ToString(DuplexRestartErrorClass errorClass) noexcept {
     switch (errorClass) {
-        case DiceRestartErrorClass::kUnsupportedConfig: return "UnsupportedConfig";
-        case DiceRestartErrorClass::kMissingDependency: return "MissingDependency";
-        case DiceRestartErrorClass::kStageFailure: return "StageFailure";
-        case DiceRestartErrorClass::kEpochInvalidated: return "EpochInvalidated";
-        case DiceRestartErrorClass::kStopIntent: return "StopIntent";
+        case DuplexRestartErrorClass::kUnsupportedConfig: return "UnsupportedConfig";
+        case DuplexRestartErrorClass::kMissingDependency: return "MissingDependency";
+        case DuplexRestartErrorClass::kStageFailure: return "StageFailure";
+        case DuplexRestartErrorClass::kEpochInvalidated: return "EpochInvalidated";
+        case DuplexRestartErrorClass::kStopIntent: return "StopIntent";
     }
     return "Unknown";
 }
 
-[[nodiscard]] constexpr const char* ToString(DiceRestartFailureCause cause) noexcept {
+[[nodiscard]] constexpr const char* ToString(DuplexRestartFailureCause cause) noexcept {
     switch (cause) {
-        case DiceRestartFailureCause::kNone: return "None";
-        case DiceRestartFailureCause::kPrepare: return "Prepare";
-        case DiceRestartFailureCause::kReservePlayback: return "ReservePlayback";
-        case DiceRestartFailureCause::kProgramRx: return "ProgramRx";
-        case DiceRestartFailureCause::kReserveCapture: return "ReserveCapture";
-        case DiceRestartFailureCause::kStartReceive: return "StartReceive";
-        case DiceRestartFailureCause::kProgramTx: return "ProgramTx";
-        case DiceRestartFailureCause::kGlobalClockLock: return "GlobalClockLock";
-        case DiceRestartFailureCause::kStartTransmit: return "StartTransmit";
-        case DiceRestartFailureCause::kConfirmStart: return "ConfirmStart";
-        case DiceRestartFailureCause::kIdleClockApply: return "IdleClockApply";
-        case DiceRestartFailureCause::kStop: return "Stop";
-        case DiceRestartFailureCause::kBusResetRebind: return "BusResetRebind";
-        case DiceRestartFailureCause::kTimingLoss: return "TimingLoss";
-        case DiceRestartFailureCause::kCycleInconsistent: return "CycleInconsistent";
-        case DiceRestartFailureCause::kLockLoss: return "LockLoss";
-        case DiceRestartFailureCause::kTxFault: return "TxFault";
+        case DuplexRestartFailureCause::kNone: return "None";
+        case DuplexRestartFailureCause::kPrepare: return "Prepare";
+        case DuplexRestartFailureCause::kReservePlayback: return "ReservePlayback";
+        case DuplexRestartFailureCause::kProgramRx: return "ProgramRx";
+        case DuplexRestartFailureCause::kReserveCapture: return "ReserveCapture";
+        case DuplexRestartFailureCause::kStartReceive: return "StartReceive";
+        case DuplexRestartFailureCause::kProgramTx: return "ProgramTx";
+        case DuplexRestartFailureCause::kGlobalClockLock: return "GlobalClockLock";
+        case DuplexRestartFailureCause::kStartTransmit: return "StartTransmit";
+        case DuplexRestartFailureCause::kConfirmStart: return "ConfirmStart";
+        case DuplexRestartFailureCause::kIdleClockApply: return "IdleClockApply";
+        case DuplexRestartFailureCause::kStop: return "Stop";
+        case DuplexRestartFailureCause::kBusResetRebind: return "BusResetRebind";
+        case DuplexRestartFailureCause::kTimingLoss: return "TimingLoss";
+        case DuplexRestartFailureCause::kCycleInconsistent: return "CycleInconsistent";
+        case DuplexRestartFailureCause::kLockLoss: return "LockLoss";
+        case DuplexRestartFailureCause::kTxFault: return "TxFault";
     }
     return "Unknown";
 }
@@ -141,9 +141,9 @@ inline void LogFsmEvent(const char* eventName,
                  uint64_t guid,
                  uint64_t restartId,
                  FW::Generation generation,
-                 DiceRestartState state,
-                 DiceRestartPhase phase,
-                 DiceRestartReason reason,
+                 DuplexRestartState state,
+                 DuplexRestartPhase phase,
+                 DuplexRestartReason reason,
                  uint64_t token = 0) noexcept {
     if (token != 0) {
         ASFW_LOG_V2(DICE,
@@ -170,9 +170,9 @@ inline void LogFsmEvent(const char* eventName,
                 ToString(reason));
 }
 
-inline void LogStateTransition(const DiceRestartSession& session,
-                        DiceRestartState oldState,
-                        DiceRestartState newState,
+inline void LogStateTransition(const DuplexRestartSession& session,
+                        DuplexRestartState oldState,
+                        DuplexRestartState newState,
                         const char* why) noexcept {
     if (oldState == newState) {
         return;
@@ -189,9 +189,9 @@ inline void LogStateTransition(const DiceRestartSession& session,
                 why);
 }
 
-inline void LogPhaseTransition(const DiceRestartSession& session,
-                        DiceRestartPhase oldPhase,
-                        DiceRestartPhase newPhase) noexcept {
+inline void LogPhaseTransition(const DuplexRestartSession& session,
+                        DuplexRestartPhase oldPhase,
+                        DuplexRestartPhase newPhase) noexcept {
     if (oldPhase == newPhase) {
         return;
     }
@@ -206,22 +206,22 @@ inline void LogPhaseTransition(const DiceRestartSession& session,
                 GenerationValue(session.topologyGeneration));
 }
 
-inline void SetSessionState(DiceRestartSession& session,
-                     DiceRestartState newState,
+inline void SetSessionState(DuplexRestartSession& session,
+                     DuplexRestartState newState,
                      const char* why) noexcept {
     const auto oldState = session.state;
     session.state = newState;
     LogStateTransition(session, oldState, newState, why);
 }
 
-inline void SetSessionPhase(DiceRestartSession& session, DiceRestartPhase newPhase) noexcept {
+inline void SetSessionPhase(DuplexRestartSession& session, DuplexRestartPhase newPhase) noexcept {
     const auto oldPhase = session.phase;
     session.phase = newPhase;
     LogPhaseTransition(session, oldPhase, newPhase);
 }
 
-inline void ApplyTerminalPhase(DiceRestartSession& session,
-                        DiceRestartPhase terminalPhase,
+inline void ApplyTerminalPhase(DuplexRestartSession& session,
+                        DuplexRestartPhase terminalPhase,
                         const char* why) noexcept {
     const auto oldState = session.state;
     const auto oldPhase = session.phase;
@@ -230,22 +230,22 @@ inline void ApplyTerminalPhase(DiceRestartSession& session,
     LogStateTransition(session, oldState, session.state, why);
 }
 
-inline void ClearFailureSnapshot(DiceRestartSession& session) noexcept {
+inline void ClearFailureSnapshot(DuplexRestartSession& session) noexcept {
     session.lastFailure.reset();
 }
 
-inline void RecordIssue(DiceRestartSession& session,
-                 std::optional<DiceRestartIssueInfo>& destination,
-                 DiceRestartPhase failedPhase,
-                 DiceRestartErrorClass errorClass,
-                 DiceRestartFailureCause cause,
+inline void RecordIssue(DuplexRestartSession& session,
+                 std::optional<DuplexRestartIssueInfo>& destination,
+                 DuplexRestartPhase failedPhase,
+                 DuplexRestartErrorClass errorClass,
+                 DuplexRestartFailureCause cause,
                  IOReturn status,
                  bool retryable,
                  bool rollbackAttempted,
                  IOReturn rollbackStatus,
                  bool hostStateKnown,
                  bool deviceStateKnown) noexcept {
-    destination = DiceRestartIssueInfo{
+    destination = DuplexRestartIssueInfo{
         .failedPhase = failedPhase,
         .errorClass = errorClass,
         .cause = cause,
@@ -260,7 +260,7 @@ inline void RecordIssue(DiceRestartSession& session,
     };
 }
 
-inline void LogInvalidation(const DiceRestartSession& session) noexcept {
+inline void LogInvalidation(const DuplexRestartSession& session) noexcept {
     if (!session.lastInvalidation.has_value()) {
         return;
     }
@@ -279,8 +279,8 @@ inline void LogInvalidation(const DiceRestartSession& session) noexcept {
                 GenerationValue(session.topologyGeneration));
 }
 
-inline void LogRecoveryPolicy(const DiceRestartSession& session,
-                       DiceRestartReason triggerReason,
+inline void LogRecoveryPolicy(const DuplexRestartSession& session,
+                       DuplexRestartReason triggerReason,
                        const DiceRecoveryDecision& decision) noexcept {
     ASFW_LOG_V3(DICE,
                 "[FSM] policy disposition=%{public}s cause=%{public}s why=%{public}s guid=0x%llx restartId=%llu state=%{public}s phase=%{public}s gen=%u",
@@ -294,8 +294,8 @@ inline void LogRecoveryPolicy(const DiceRestartSession& session,
                 GenerationValue(session.topologyGeneration));
 }
 
-inline void LogTerminal(const DiceRestartSession& session) noexcept {
-    if (session.state == DiceRestartState::kFailed && session.lastFailure.has_value()) {
+inline void LogTerminal(const DuplexRestartSession& session) noexcept {
+    if (session.state == DuplexRestartState::kFailed && session.lastFailure.has_value()) {
         const auto& failure = *session.lastFailure;
         ASFW_LOG_V1(DICE,
                     "[FSM] terminal state=%{public}s phase=%{public}s class=%{public}s cause=%{public}s retryable=%d rollback=0x%08x status=0x%08x guid=0x%llx restartId=%llu gen=%u",

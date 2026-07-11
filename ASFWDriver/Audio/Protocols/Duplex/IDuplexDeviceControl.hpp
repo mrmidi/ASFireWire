@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "DuplexControlTypes.hpp"
+#include "DuplexRestartSession.hpp"
 
 #include <DriverKit/IOReturn.h>
 

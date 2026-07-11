@@ -20,7 +20,7 @@ using namespace ASFW::Audio::Backends;
 
 // A context with dependencies satisfied (record + protocol present) and neither stop nor
 // idle-apply, so the state/footprint branches are reached. Individual tests tweak fields.
-constexpr DiceRecoveryContext WithDeps(DiceRestartState state) noexcept {
+constexpr DiceRecoveryContext WithDeps(DuplexRestartState state) noexcept {
     DiceRecoveryContext c{};
     c.state = state;
     c.hasDiceRecord = true;
@@ -37,63 +37,63 @@ static_assert(!IsRetryableStatus(kIOReturnSuccess));
 static_assert(!IsRetryableStatus(kIOReturnError));
 
 // ---- FailureCauseForReason / IsRecoveryReason ----
-static_assert(FailureCauseForReason(DiceRestartReason::kBusResetRebind) ==
-              DiceRestartFailureCause::kBusResetRebind);
-static_assert(FailureCauseForReason(DiceRestartReason::kRecoverAfterTimingLoss) ==
-              DiceRestartFailureCause::kTimingLoss);
-static_assert(FailureCauseForReason(DiceRestartReason::kRecoverAfterCycleInconsistent) ==
-              DiceRestartFailureCause::kCycleInconsistent);
-static_assert(FailureCauseForReason(DiceRestartReason::kRecoverAfterLockLoss) ==
-              DiceRestartFailureCause::kLockLoss);
-static_assert(FailureCauseForReason(DiceRestartReason::kRecoverAfterTxFault) ==
-              DiceRestartFailureCause::kTxFault);
-static_assert(FailureCauseForReason(DiceRestartReason::kInitialStart) ==
-              DiceRestartFailureCause::kNone);
-static_assert(FailureCauseForReason(DiceRestartReason::kManualReconfigure) ==
-              DiceRestartFailureCause::kNone);
-static_assert(FailureCauseForReason(DiceRestartReason::kSampleRateChange) ==
-              DiceRestartFailureCause::kNone);
-static_assert(FailureCauseForReason(DiceRestartReason::kClockSourceChange) ==
-              DiceRestartFailureCause::kNone);
-static_assert(IsRecoveryReason(DiceRestartReason::kBusResetRebind));
-static_assert(!IsRecoveryReason(DiceRestartReason::kInitialStart));
-static_assert(!IsRecoveryReason(DiceRestartReason::kSampleRateChange));
-static_assert(!IsRecoveryReason(DiceRestartReason::kClockSourceChange));
-static_assert(!IsRecoveryReason(DiceRestartReason::kManualReconfigure));
+static_assert(FailureCauseForReason(DuplexRestartReason::kBusResetRebind) ==
+              DuplexRestartFailureCause::kBusResetRebind);
+static_assert(FailureCauseForReason(DuplexRestartReason::kRecoverAfterTimingLoss) ==
+              DuplexRestartFailureCause::kTimingLoss);
+static_assert(FailureCauseForReason(DuplexRestartReason::kRecoverAfterCycleInconsistent) ==
+              DuplexRestartFailureCause::kCycleInconsistent);
+static_assert(FailureCauseForReason(DuplexRestartReason::kRecoverAfterLockLoss) ==
+              DuplexRestartFailureCause::kLockLoss);
+static_assert(FailureCauseForReason(DuplexRestartReason::kRecoverAfterTxFault) ==
+              DuplexRestartFailureCause::kTxFault);
+static_assert(FailureCauseForReason(DuplexRestartReason::kInitialStart) ==
+              DuplexRestartFailureCause::kNone);
+static_assert(FailureCauseForReason(DuplexRestartReason::kManualReconfigure) ==
+              DuplexRestartFailureCause::kNone);
+static_assert(FailureCauseForReason(DuplexRestartReason::kSampleRateChange) ==
+              DuplexRestartFailureCause::kNone);
+static_assert(FailureCauseForReason(DuplexRestartReason::kClockSourceChange) ==
+              DuplexRestartFailureCause::kNone);
+static_assert(IsRecoveryReason(DuplexRestartReason::kBusResetRebind));
+static_assert(!IsRecoveryReason(DuplexRestartReason::kInitialStart));
+static_assert(!IsRecoveryReason(DuplexRestartReason::kSampleRateChange));
+static_assert(!IsRecoveryReason(DuplexRestartReason::kClockSourceChange));
+static_assert(!IsRecoveryReason(DuplexRestartReason::kManualReconfigure));
 
 // ---- RestartStateForStartReason: reason -> restart state ----
-static_assert(RestartStateForStartReason(DiceRestartReason::kBusResetRebind) ==
-              DiceRestartState::kRecovering);
-static_assert(RestartStateForStartReason(DiceRestartReason::kRecoverAfterTimingLoss) ==
-              DiceRestartState::kRecovering);
-static_assert(RestartStateForStartReason(DiceRestartReason::kRecoverAfterCycleInconsistent) ==
-              DiceRestartState::kRecovering);
-static_assert(RestartStateForStartReason(DiceRestartReason::kRecoverAfterLockLoss) ==
-              DiceRestartState::kRecovering);
-static_assert(RestartStateForStartReason(DiceRestartReason::kRecoverAfterTxFault) ==
-              DiceRestartState::kRecovering);
-static_assert(RestartStateForStartReason(DiceRestartReason::kInitialStart) ==
-              DiceRestartState::kStarting);
-static_assert(RestartStateForStartReason(DiceRestartReason::kSampleRateChange) ==
-              DiceRestartState::kStarting);
-static_assert(RestartStateForStartReason(DiceRestartReason::kClockSourceChange) ==
-              DiceRestartState::kStarting);
-static_assert(RestartStateForStartReason(DiceRestartReason::kManualReconfigure) ==
-              DiceRestartState::kStarting);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kBusResetRebind) ==
+              DuplexRestartState::kRecovering);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kRecoverAfterTimingLoss) ==
+              DuplexRestartState::kRecovering);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kRecoverAfterCycleInconsistent) ==
+              DuplexRestartState::kRecovering);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kRecoverAfterLockLoss) ==
+              DuplexRestartState::kRecovering);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kRecoverAfterTxFault) ==
+              DuplexRestartState::kRecovering);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kInitialStart) ==
+              DuplexRestartState::kStarting);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kSampleRateChange) ==
+              DuplexRestartState::kStarting);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kClockSourceChange) ==
+              DuplexRestartState::kStarting);
+static_assert(RestartStateForStartReason(DuplexRestartReason::kManualReconfigure) ==
+              DuplexRestartState::kStarting);
 // Cross-invariant: a reason enters kRecovering exactly when it has a failure cause.
-static_assert(RestartStateForStartReason(DiceRestartReason::kRecoverAfterLockLoss) ==
-                  DiceRestartState::kRecovering &&
-              IsRecoveryReason(DiceRestartReason::kRecoverAfterLockLoss));
-static_assert(RestartStateForStartReason(DiceRestartReason::kManualReconfigure) ==
-                  DiceRestartState::kStarting &&
-              !IsRecoveryReason(DiceRestartReason::kManualReconfigure));
+static_assert(RestartStateForStartReason(DuplexRestartReason::kRecoverAfterLockLoss) ==
+                  DuplexRestartState::kRecovering &&
+              IsRecoveryReason(DuplexRestartReason::kRecoverAfterLockLoss));
+static_assert(RestartStateForStartReason(DuplexRestartReason::kManualReconfigure) ==
+                  DuplexRestartState::kStarting &&
+              !IsRecoveryReason(DuplexRestartReason::kManualReconfigure));
 
 // ---- EvaluateRecoveryPolicy: compile-time locks on the branch precedence ----
-static_assert(EvaluateRecoveryPolicy(WithDeps(DiceRestartState::kIdle)).disposition ==
+static_assert(EvaluateRecoveryPolicy(WithDeps(DuplexRestartState::kIdle)).disposition ==
               DiceRecoveryDisposition::kIgnore);
-static_assert(EvaluateRecoveryPolicy(WithDeps(DiceRestartState::kRunning)).disposition ==
+static_assert(EvaluateRecoveryPolicy(WithDeps(DuplexRestartState::kRunning)).disposition ==
               DiceRecoveryDisposition::kRestart);
-static_assert(EvaluateRecoveryPolicy(WithDeps(DiceRestartState::kStopping)).reason ==
+static_assert(EvaluateRecoveryPolicy(WithDeps(DuplexRestartState::kStopping)).reason ==
               DiceRecoveryPolicyReason::kSuppressedByStop);
 
 TEST(DiceRecoveryPolicyTests, RetryableStatusSet) {
@@ -104,27 +104,27 @@ TEST(DiceRecoveryPolicyTests, RetryableStatusSet) {
 }
 
 TEST(DiceRecoveryPolicyTests, RecoveryReasonMapping) {
-    EXPECT_TRUE(IsRecoveryReason(DiceRestartReason::kRecoverAfterLockLoss));
-    EXPECT_FALSE(IsRecoveryReason(DiceRestartReason::kSampleRateChange));
-    EXPECT_EQ(FailureCauseForReason(DiceRestartReason::kRecoverAfterTxFault),
-              DiceRestartFailureCause::kTxFault);
+    EXPECT_TRUE(IsRecoveryReason(DuplexRestartReason::kRecoverAfterLockLoss));
+    EXPECT_FALSE(IsRecoveryReason(DuplexRestartReason::kSampleRateChange));
+    EXPECT_EQ(FailureCauseForReason(DuplexRestartReason::kRecoverAfterTxFault),
+              DuplexRestartFailureCause::kTxFault);
 }
 
 TEST(DiceRecoveryPolicyTests, RestartStateForStartReasonMapping) {
     // Recovery reasons enter kRecovering; deliberate (re)starts enter kStarting.
-    EXPECT_EQ(RestartStateForStartReason(DiceRestartReason::kBusResetRebind),
-              DiceRestartState::kRecovering);
-    EXPECT_EQ(RestartStateForStartReason(DiceRestartReason::kRecoverAfterTxFault),
-              DiceRestartState::kRecovering);
-    EXPECT_EQ(RestartStateForStartReason(DiceRestartReason::kInitialStart),
-              DiceRestartState::kStarting);
-    EXPECT_EQ(RestartStateForStartReason(DiceRestartReason::kManualReconfigure),
-              DiceRestartState::kStarting);
+    EXPECT_EQ(RestartStateForStartReason(DuplexRestartReason::kBusResetRebind),
+              DuplexRestartState::kRecovering);
+    EXPECT_EQ(RestartStateForStartReason(DuplexRestartReason::kRecoverAfterTxFault),
+              DuplexRestartState::kRecovering);
+    EXPECT_EQ(RestartStateForStartReason(DuplexRestartReason::kInitialStart),
+              DuplexRestartState::kStarting);
+    EXPECT_EQ(RestartStateForStartReason(DuplexRestartReason::kManualReconfigure),
+              DuplexRestartState::kStarting);
 }
 
 // stop wins over everything, including an otherwise-restartable running session.
 TEST(DiceRecoveryPolicyTests, StopRequestedIsSuppressed) {
-    DiceRecoveryContext c = WithDeps(DiceRestartState::kRunning);
+    DiceRecoveryContext c = WithDeps(DuplexRestartState::kRunning);
     c.stopRequested = true;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kIgnore);
@@ -132,13 +132,13 @@ TEST(DiceRecoveryPolicyTests, StopRequestedIsSuppressed) {
 }
 
 TEST(DiceRecoveryPolicyTests, StoppingStateIsSuppressed) {
-    const auto d = EvaluateRecoveryPolicy(WithDeps(DiceRestartState::kStopping));
+    const auto d = EvaluateRecoveryPolicy(WithDeps(DuplexRestartState::kStopping));
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kIgnore);
     EXPECT_EQ(d.reason, DiceRecoveryPolicyReason::kSuppressedByStop);
 }
 
 TEST(DiceRecoveryPolicyTests, ApplyingIdleClockIsInvalidated) {
-    const auto d = EvaluateRecoveryPolicy(WithDeps(DiceRestartState::kApplyingIdleClock));
+    const auto d = EvaluateRecoveryPolicy(WithDeps(DuplexRestartState::kApplyingIdleClock));
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kIgnore);
     EXPECT_EQ(d.reason, DiceRecoveryPolicyReason::kIdleApplyInvalidated);
 }
@@ -146,7 +146,7 @@ TEST(DiceRecoveryPolicyTests, ApplyingIdleClockIsInvalidated) {
 // Missing record/protocol + an active session (or footprint) -> fail the session.
 TEST(DiceRecoveryPolicyTests, MissingDependencyWithActiveSessionFails) {
     DiceRecoveryContext c{};
-    c.state = DiceRestartState::kRunning;
+    c.state = DuplexRestartState::kRunning;
     c.hasDiceRecord = false;
     c.hasProtocol = true;
     const auto d = EvaluateRecoveryPolicy(c);
@@ -157,7 +157,7 @@ TEST(DiceRecoveryPolicyTests, MissingDependencyWithActiveSessionFails) {
 // Missing dependency but idle with no footprint -> nothing to recover, ignore.
 TEST(DiceRecoveryPolicyTests, MissingDependencyWhileIdleIsIgnored) {
     DiceRecoveryContext c{};
-    c.state = DiceRestartState::kIdle;
+    c.state = DuplexRestartState::kIdle;
     c.hasDiceRecord = true;
     c.hasProtocol = false;
     const auto d = EvaluateRecoveryPolicy(c);
@@ -166,7 +166,7 @@ TEST(DiceRecoveryPolicyTests, MissingDependencyWhileIdleIsIgnored) {
 }
 
 TEST(DiceRecoveryPolicyTests, FailedRetryableRestarts) {
-    DiceRecoveryContext c = WithDeps(DiceRestartState::kFailed);
+    DiceRecoveryContext c = WithDeps(DuplexRestartState::kFailed);
     c.lastFailureRetryable = true;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kRestart);
@@ -174,7 +174,7 @@ TEST(DiceRecoveryPolicyTests, FailedRetryableRestarts) {
 }
 
 TEST(DiceRecoveryPolicyTests, FailedNonRetryableFailsSession) {
-    DiceRecoveryContext c = WithDeps(DiceRestartState::kFailed);
+    DiceRecoveryContext c = WithDeps(DuplexRestartState::kFailed);
     c.lastFailureRetryable = false;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kFailSession);
@@ -182,7 +182,7 @@ TEST(DiceRecoveryPolicyTests, FailedNonRetryableFailsSession) {
 }
 
 TEST(DiceRecoveryPolicyTests, RunningRestarts) {
-    const auto d = EvaluateRecoveryPolicy(WithDeps(DiceRestartState::kRunning));
+    const auto d = EvaluateRecoveryPolicy(WithDeps(DuplexRestartState::kRunning));
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kRestart);
     EXPECT_EQ(d.reason, DiceRecoveryPolicyReason::kRunningWithFootprint);
 }
@@ -190,7 +190,7 @@ TEST(DiceRecoveryPolicyTests, RunningRestarts) {
 // An idle state but with a footprint still restarts (footprint outlives the state). Each of
 // the three OR-branches of hasRestartFootprint independently forces the restart.
 TEST(DiceRecoveryPolicyTests, IdleWithHostFootprintRestarts) {
-    DiceRecoveryContext c = WithDeps(DiceRestartState::kIdle);
+    DiceRecoveryContext c = WithDeps(DuplexRestartState::kIdle);
     c.hasHostFootprint = true;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kRestart);
@@ -198,7 +198,7 @@ TEST(DiceRecoveryPolicyTests, IdleWithHostFootprintRestarts) {
 }
 
 TEST(DiceRecoveryPolicyTests, IdleWithRestartIntentRestarts) {
-    DiceRecoveryContext c = WithDeps(DiceRestartState::kIdle);
+    DiceRecoveryContext c = WithDeps(DuplexRestartState::kIdle);
     c.hasRestartIntent = true;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kRestart);
@@ -206,7 +206,7 @@ TEST(DiceRecoveryPolicyTests, IdleWithRestartIntentRestarts) {
 }
 
 TEST(DiceRecoveryPolicyTests, IdleWithDeviceFootprintRestarts) {
-    DiceRecoveryContext c = WithDeps(DiceRestartState::kIdle);
+    DiceRecoveryContext c = WithDeps(DuplexRestartState::kIdle);
     c.hasDeviceFootprint = true;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kRestart);
@@ -214,7 +214,7 @@ TEST(DiceRecoveryPolicyTests, IdleWithDeviceFootprintRestarts) {
 }
 
 TEST(DiceRecoveryPolicyTests, IdleWithoutFootprintIsIgnored) {
-    const auto d = EvaluateRecoveryPolicy(WithDeps(DiceRestartState::kIdle));
+    const auto d = EvaluateRecoveryPolicy(WithDeps(DuplexRestartState::kIdle));
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kIgnore);
     EXPECT_EQ(d.reason, DiceRecoveryPolicyReason::kIdleWithoutFootprint);
 }
