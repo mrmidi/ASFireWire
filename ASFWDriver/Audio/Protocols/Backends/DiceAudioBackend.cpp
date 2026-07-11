@@ -74,7 +74,7 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
 
     DICE::NotificationMailbox::SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
     hostTransport_.SetTimingLossCallback([this](uint64_t guid) {
-        HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
+        HandleRecoveryEvent(guid, DuplexRestartReason::kRecoverAfterTimingLoss);
     });
 }
 
@@ -159,7 +159,7 @@ void DiceAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
     }
 }
 
-void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept {
+void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept {
     if (guid == 0) {
         return;
     }
@@ -286,11 +286,11 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     struct WaitState {
         std::atomic<bool> done{false};
         IOReturn status{kIOReturnTimeout};
-        DICE::DiceDuplexHealthResult result{};
+        DuplexHealthResult result{};
     };
 
     auto waitState = std::make_shared<WaitState>();
-    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
+    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DuplexHealthResult result) {
         waitState->status = status;
         waitState->result = std::move(result);
         waitState->done.store(true, std::memory_order_release);

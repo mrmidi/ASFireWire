@@ -16,14 +16,14 @@
 //   * self-locking operations for ordinary producer/consumer/completion paths; and
 //   * *Locked operations for the coordinator's existing multi-domain critical sections.
 //
-// The restart/session Dice* names are intentional for now; a follow-up sweep (FW-73b) performs
-// the mechanical neutral rename of that vocabulary.
+// The restart/session vocabulary carries its neutral Duplex* spelling (FW-73b); this broker
+// consumes it via ../Duplex/DuplexRestartSession.hpp.
 
 #pragma once
 
 #include "RestartJournal.hpp"
 #include "RestartSessionStore.hpp"
-#include "../Duplex/DuplexControlTypes.hpp"
+#include "../Duplex/DuplexRestartSession.hpp"
 
 #include <DriverKit/IOLib.h>
 

@@ -38,7 +38,7 @@ TEST_F(RestartSessionStoreTest, LoadMissReturnsDefaultWithGuid) {
 }
 
 TEST_F(RestartSessionStoreTest, StoreThenLoadAndGetRoundTrip) {
-    DiceRestartSession s{};
+    DuplexRestartSession s{};
     s.guid = 0x22;
     s.restartId = 9;
     store_.StoreSession(s);
@@ -58,7 +58,7 @@ TEST_F(RestartSessionStoreTest, GetMissIsNullopt) {
 
 // guid==0 guards on Load/Store/Get match the former members (Load returns default, Store no-ops).
 TEST_F(RestartSessionStoreTest, ZeroGuidGuardsMatchOriginals) {
-    DiceRestartSession s{};  // guid == 0
+    DuplexRestartSession s{};  // guid == 0
     s.restartId = 7;
     store_.StoreSession(s);                       // guarded no-op
     EXPECT_FALSE(store_.GetSession(0).has_value());
@@ -79,7 +79,7 @@ TEST(RestartSessionStoreNullLock, NoLockShortCircuitsSelfLockingApi) {
     EXPECT_EQ(store.LoadSession(0x11).guid, 0x11u);  // default (no lock)
     EXPECT_EQ(store.AllocateRestartId(), 0u);        // 0 on no lock
     EXPECT_FALSE(store.GetSession(0x11).has_value());
-    DiceRestartSession s{};
+    DuplexRestartSession s{};
     s.guid = 0x11;
     s.restartId = 5;
     store.StoreSession(s);                           // no-op, must not deref null lock
@@ -96,7 +96,7 @@ TEST(RestartSessionStoreNullLock, NoLockShortCircuitsSelfLockingApi) {
 // visible via the self-locking reads (same underlying map) — this is what the coordinator's
 // multi-domain holds rely on.
 TEST_F(RestartSessionStoreTest, FindSessionLockedMutatesInPlace) {
-    DiceRestartSession s{};
+    DuplexRestartSession s{};
     s.guid = 0x44;
     store_.StoreSession(s);
 
@@ -113,7 +113,7 @@ TEST_F(RestartSessionStoreTest, FindSessionLockedMutatesInPlace) {
 
 TEST_F(RestartSessionStoreTest, FindMissIsNullptrAndEraseRemoves) {
     EXPECT_EQ(store_.FindSessionLocked(0x55), nullptr);
-    DiceRestartSession s{};
+    DuplexRestartSession s{};
     s.guid = 0x55;
     store_.StoreSession(s);
     EXPECT_NE(store_.FindSessionLocked(0x55), nullptr);
@@ -125,7 +125,7 @@ TEST_F(RestartSessionStoreTest, FindMissIsNullptrAndEraseRemoves) {
 // The const FindSessionLocked overload is callable on a const store (used by the const
 // IsRestartEpochCurrent path).
 TEST_F(RestartSessionStoreTest, ConstFindSessionLockedReads) {
-    DiceRestartSession s{};
+    DuplexRestartSession s{};
     s.guid = 0x66;
     s.restartId = 3;
     store_.StoreSession(s);

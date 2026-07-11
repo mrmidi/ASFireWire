@@ -42,8 +42,8 @@ add_device_test(DICETcatProtocolTests
 )
 
 # DICE restart-session tests
-add_device_test(DICERestartSessionTests
-    DICERestartSessionTests.cpp
+add_device_test(DuplexRestartSessionTests
+    DuplexRestartSessionTests.cpp
 )
 
 # DICE duplex restart coordinator FSM tests

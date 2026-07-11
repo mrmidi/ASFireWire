@@ -43,7 +43,7 @@ public:
 
     void OnDeviceRecordUpdated(uint64_t guid) noexcept;
     void OnDeviceRemoved(uint64_t guid) noexcept;
-    void HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept;
+    void HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;

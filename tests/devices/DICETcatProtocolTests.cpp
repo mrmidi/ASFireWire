@@ -367,9 +367,9 @@ TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
     bus.status_ = kLocked48kStatus;
     bus.extStatus_ = 0x40U;
 
-    std::optional<ASFW::Audio::DICE::DiceDuplexHealthResult> health;
+    std::optional<ASFW::Audio::DuplexHealthResult> health;
     IOReturn healthStatus = kIOReturnError;
-    protocol.ReadDuplexHealth([&](IOReturn status, ASFW::Audio::DICE::DiceDuplexHealthResult result) {
+    protocol.ReadDuplexHealth([&](IOReturn status, ASFW::Audio::DuplexHealthResult result) {
         healthStatus = status;
         health = result;
     });
