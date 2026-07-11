@@ -14,7 +14,6 @@
 
 #include <DriverKit/IOLib.h>
 
-#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <utility>
@@ -311,19 +310,9 @@ IOReturn DiceDuplexRestartCoordinator::RequestClockConfig(
         return kIOReturnAborted;
     }
 
-    request.token = nextClockToken_++;
+    request.token = clockRequests_.AllocateTokenLocked();
     if (gate_.IsActiveLocked(guid)) {
-        const auto existingIt = pendingClockRequests_.find(guid);
-        if (existingIt != pendingClockRequests_.end()) {
-            supersededRequest = existingIt->second;
-        }
-        pendingClockRequests_[guid] = request;
-        auto* sessionPtr = store_.FindSessionLocked(guid);
-        if (sessionPtr != nullptr) {
-            sessionPtr->pendingClock = request.desiredClock;
-            sessionPtr->pendingReason = request.reason;
-            sessionPtr->hasPendingClockRequest = true;
-        }
+        supersededRequest = clockRequests_.QueuePendingLocked(guid, request);
     } else {
         gate_.AcquireLocked(guid);
         shouldLaunchLoop = true;
@@ -429,8 +418,7 @@ void DiceDuplexRestartCoordinator::ClearSession(uint64_t guid) noexcept {
 
     IOLockLock(lock_);
     store_.EraseSessionLocked(guid);
-    pendingClockRequests_.erase(guid);
-    completedClockRequests_.erase(guid);
+    clockRequests_.ClearLocked(guid);
     gate_.ReleaseLocked(guid);
     gate_.ClearStopLocked(guid);
     IOLockUnlock(lock_);
@@ -1671,113 +1659,25 @@ bool DiceDuplexRestartCoordinator::IsRestartEpochCurrent(uint64_t guid,
 
 bool DiceDuplexRestartCoordinator::TryConsumePendingClockRequest(uint64_t guid,
                                                                  PendingClockRequest& outRequest) noexcept {
-    if (!lock_) {
-        return false;
-    }
-
-    IOLockLock(lock_);
-    const auto it = pendingClockRequests_.find(guid);
-    if (it == pendingClockRequests_.end()) {
-        IOLockUnlock(lock_);
-        return false;
-    }
-
-    outRequest = it->second;
-    pendingClockRequests_.erase(it);
-    auto* sessionPtr = store_.FindSessionLocked(guid);
-    if (sessionPtr != nullptr) {
-        sessionPtr->pendingClock = {};
-        sessionPtr->pendingReason = DiceRestartReason::kInitialStart;
-        sessionPtr->hasPendingClockRequest = false;
-    }
-    IOLockUnlock(lock_);
-    return true;
+    return clockRequests_.TryConsumePending(guid, outRequest);
 }
 
 bool DiceDuplexRestartCoordinator::TryTakeCompletedClockRequest(
     uint64_t guid,
     uint64_t token,
     DiceClockRequestCompletion& outCompletion) noexcept {
-    if (!lock_) {
-        return false;
-    }
-
-    IOLockLock(lock_);
-    auto storeIt = completedClockRequests_.find(guid);
-    if (storeIt == completedClockRequests_.end()) {
-        IOLockUnlock(lock_);
-        return false;
-    }
-
-    auto completionIt = storeIt->second.byToken.find(token);
-    if (completionIt == storeIt->second.byToken.end()) {
-        IOLockUnlock(lock_);
-        return false;
-    }
-
-    outCompletion = completionIt->second;
-    storeIt->second.byToken.erase(completionIt);
-    auto& order = storeIt->second.insertionOrder;
-    order.erase(std::remove(order.begin(), order.end(), token), order.end());
-    if (storeIt->second.byToken.empty() && order.empty()) {
-        completedClockRequests_.erase(storeIt);
-    }
-    IOLockUnlock(lock_);
-    return true;
+    return clockRequests_.TryTakeCompleted(guid, token, outCompletion);
 }
 
 void DiceDuplexRestartCoordinator::CompleteClockRequest(const DiceClockRequestCompletion& completion,
                                                         uint64_t guid) noexcept {
-    if (!lock_) {
-        return;
-    }
-
-    IOLockLock(lock_);
-    auto& store = completedClockRequests_[guid];
-    if (store.byToken.find(completion.token) == store.byToken.end()) {
-        store.insertionOrder.push_back(completion.token);
-    }
-    store.byToken[completion.token] = completion;
-    while (store.insertionOrder.size() > kMaxCompletedClockRequestsPerGuid) {
-        const uint64_t evictedToken = store.insertionOrder.front();
-        store.insertionOrder.pop_front();
-        store.byToken.erase(evictedToken);
-    }
-
-    auto* sessionPtr = store_.FindSessionLocked(guid);
-    if (sessionPtr != nullptr) {
-        sessionPtr->lastClockCompletion = completion;
-    }
-    IOLockUnlock(lock_);
-
-    ASFW_LOG_V2(DICE,
-                "[FSM] clock token=%llu outcome=%{public}s status=0x%08x guid=0x%llx restartId=%llu gen=%u",
-                completion.token,
-                ToString(completion.outcome),
-                static_cast<unsigned>(completion.status),
-                guid,
-                completion.restartId,
-                GenerationValue(completion.generation));
+    clockRequests_.Complete(completion, guid);
 }
 
 void DiceDuplexRestartCoordinator::FailPendingClockRequest(uint64_t guid,
                                                            DiceClockRequestOutcome outcome,
                                                            IOReturn status) noexcept {
-    PendingClockRequest request{};
-    if (TryConsumePendingClockRequest(guid, request)) {
-        const DiceRestartSession session = LoadSession(guid);
-        CompleteClockRequest(
-            DiceClockRequestCompletion{
-                .token = request.token,
-                .desiredClock = request.desiredClock,
-                .reason = request.reason,
-                .outcome = outcome,
-                .status = status,
-                .restartId = session.restartId,
-                .generation = session.topologyGeneration,
-            },
-            guid);
-    }
+    clockRequests_.FailPending(guid, outcome, status);
 }
 
 void DiceDuplexRestartCoordinator::RecordTeardownAbort(const char* stage,
