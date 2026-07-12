@@ -85,6 +85,8 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     return kIOReturnSuccess;
 }
 
+} // namespace
+
 void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
                        double sampleRate,
                        uint32_t channels) noexcept {
@@ -98,8 +100,6 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
     fmt.mChannelsPerFrame = channels;
     fmt.mBitsPerChannel = 32;
 }
-
-} // namespace
 
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept {
     ASFW::Isoch::Audio::ParsedAudioDriverConfig defaultConfig{};

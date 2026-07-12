@@ -269,6 +269,14 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
                         AudioGraphStartState* state) noexcept;
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 
+// Single construction point for the HAL-facing Float32 stream format. The
+// format set as a stream's current format on a rate change must be
+// byte-identical to the advertised entry built at graph creation, so both
+// call this.
+void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
+                       double sampleRate,
+                       uint32_t channels) noexcept;
+
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;

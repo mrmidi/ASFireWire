@@ -687,6 +687,49 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
         ASFW_LOG(Audio,
                  "ASFWAudioDevice: HandleChangeSampleRate SetSampleRate(%.0f) failed: 0x%x",
                  in_sample_rate, setKr);
+        return setKr;
     }
-    return setKr;
+
+    // CoreAudio params-change contract: a rate change is stop -> set new
+    // params -> start (the HAL brackets this call with StopIO/StartIO). "New
+    // params" includes each stream's CURRENT format, not just the device
+    // nominal rate — without this the streams keep advertising the previous
+    // rate and clients see device=new-rate / stream=old-rate, an inconsistent
+    // configuration. Build the format identically to the advertised entries
+    // (FillFloat32Format is the single construction point).
+    IOUserAudioStreamBasicDescription inputFormat{};
+    IOUserAudioStreamBasicDescription outputFormat{};
+    ASFW::Audio::DriverKit::FillFloat32Format(
+        inputFormat, in_sample_rate, ivars.device.inputChannelCount);
+    ASFW::Audio::DriverKit::FillFloat32Format(
+        outputFormat, in_sample_rate, ivars.device.outputChannelCount);
+
+    if (ivars.inputStream) {
+        const kern_return_t inKr =
+            ivars.inputStream->SetCurrentStreamFormat(&inputFormat);
+        if (inKr != kIOReturnSuccess) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: HandleChangeSampleRate input "
+                     "SetCurrentStreamFormat(%.0f) failed: 0x%x",
+                     in_sample_rate, inKr);
+            return inKr;
+        }
+    }
+    if (ivars.outputStream) {
+        const kern_return_t outKr =
+            ivars.outputStream->SetCurrentStreamFormat(&outputFormat);
+        if (outKr != kIOReturnSuccess) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: HandleChangeSampleRate output "
+                     "SetCurrentStreamFormat(%.0f) failed: 0x%x",
+                     in_sample_rate, outKr);
+            return outKr;
+        }
+    }
+
+    ASFW_LOG(Audio,
+             "ASFWAudioDevice: HandleChangeSampleRate committed %.0f Hz "
+             "(device nominal + input/output stream formats)",
+             in_sample_rate);
+    return kIOReturnSuccess;
 }
