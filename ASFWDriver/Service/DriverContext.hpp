@@ -52,7 +52,16 @@ struct ServiceContext {
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2TargetBridge> sbp2Bridge;
 
     void DisarmProviderNotifications();
-    void Reset();
+
+    // Full tears everything down (driver free/Stop). ForSuspend (sleep and the
+    // wake-verify self-heal) preserves the interrupt machinery — dispatch
+    // source, work queue, interrupt action — because destroying and re-creating
+    // the IOInterruptDispatchSource across a rebuild re-registers the same
+    // interrupt vector while the old source's kernel-side unregister is still
+    // in flight; the resulting double-unregister panics the kernel on a shared
+    // interrupt controller (observed 2026-07-10/11 on the FW643).
+    enum class ResetMode { Full, ForSuspend };
+    void Reset(ResetMode mode = ResetMode::Full);
 };
 
 namespace ASFW::Driver {

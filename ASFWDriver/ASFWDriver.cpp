@@ -392,6 +392,12 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
 kern_return_t IMPL(ASFWDriver, Stop) {
     QuiesceRuntime();
+    if (ivars && ivars->context && ivars->context->deps.interrupts) {
+        // Real stop: cancel the interrupt dispatch source now, while the
+        // provider is still attached, so the kernel-side unregisterInterrupt
+        // is ordered before termination instead of racing it.
+        ivars->context->deps.interrupts->Teardown();
+    }
     if (ivars) {
         if (ivars->wakeVerifyTimer) {
             // Disable only, then release — Cancel() dispatches async and can
@@ -475,7 +481,7 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
             if (!ivars->runtimeSuspended && ivars->context) {
                 ASFW_LOG(Controller, "SetPowerState: quiescing runtime for sleep");
                 QuiesceRuntime();
-                ivars->context->Reset();
+                ivars->context->Reset(ServiceContext::ResetMode::ForSuspend);
                 ivars->runtimeSuspended = true;
             }
         } else {
@@ -566,7 +572,7 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
     }
 
     QuiesceRuntime();
-    ctx.Reset();
+    ctx.Reset(ServiceContext::ResetMode::ForSuspend);
     const kern_return_t kr = StartRuntime(ivars->powerProvider);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Controller, "Wake verify: ❌ rebuild failed: 0x%08x", kr);

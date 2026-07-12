@@ -30,6 +30,7 @@
 #ifndef ASFWSCSIController_h
 #define ASFWSCSIController_h
 
+#include <DriverKit/IOTimerDispatchSource.iig>
 #include <SCSIControllerDriverKit/IOUserSCSIParallelInterfaceController.iig>
 
 class ASFWSCSIController: public IOUserSCSIParallelInterfaceController
@@ -75,6 +76,15 @@ public:
         uint32_t* response,
         OSAction* completion) override;
 
+    // Bounds the pre-login held INQUIRY. The kernel probe (IOSCSITargetDevice →
+    // RetrieveDefaultINQUIRYData → WaitForTask) blocks the nub's IOConfigThread
+    // with no timeout of its own; if SBP-2 login never arrives, the registry
+    // busy-timeout panics the machine at 60 s (IOService.cpp:5986 — the
+    // 2026-07-10 boot loop). Fires on the AuxiliaryQueue and flushes the hold
+    // with BUSY.
+    virtual void HeldInquiryTimerFired(OSAction* action, uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+
     // --- bundled-task path: opt OUT (return failure) so the framework uses the
     //     single-task UserProcessParallelTask path above. Both are pure-virtual
     //     so must be declared; UserProcessBundledParallelTasks is never called. ---
@@ -106,6 +116,8 @@ struct ASFWSCSIController_IVars {
     IODispatchQueue* auxQueue{nullptr}; // the framework's "AuxiliaryQueue" contract
     uint32_t nextUniqueTaskID{0};       // handed out in UserMapHBAData (must be unique per task)
     void* pendingState{nullptr};        // PendingState* (deferred pre-login INQUIRY), defined in .cpp
+    IOTimerDispatchSource* holdTimer{nullptr}; // bounds the held INQUIRY (AuxiliaryQueue)
+    OSAction* holdTimerAction{nullptr};
 };
 
 #endif /* ASFWSCSIController_h */

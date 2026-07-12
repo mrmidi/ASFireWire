@@ -240,6 +240,12 @@ public:
 
     kern_return_t SetHandler(OSAction*) { return kIOReturnUnsupported; }
     kern_return_t SetEnableWithCompletion(bool, void*) { return kIOReturnUnsupported; }
+    kern_return_t Cancel(void (^handler)(void)) {
+        if (handler) {
+            handler();
+        }
+        return kIOReturnSuccess;
+    }
 };
 
 class IOTimerDispatchSource : public OSObject {
@@ -432,6 +438,18 @@ public:
     void reset() { ptr_.reset(); }
     void reset(T* ptr, OSNoRetainTag) { ptr_.reset(ptr); }
     void reset(T* ptr, OSRetainTag) { ptr_.reset(ptr); }
+
+    // Ownership transfer to the caller. Stub OSObject::release() is a no-op,
+    // so keep one strong ref alive (intentional leak) instead of letting the
+    // shared_ptr destroy an object the caller still holds.
+    T* detach() {
+        T* raw = ptr_.get();
+        if (raw) {
+            new std::shared_ptr<T>(ptr_);
+        }
+        ptr_.reset();
+        return raw;
+    }
 
 private:
     std::shared_ptr<T> ptr_;
