@@ -1003,9 +1003,11 @@ TEST(DICEDuplexBringupControllerTests, PrepareSequenceMatchesReferenceWindow) {
     const auto& refRequests = ReferencePhase0ParityFixture::kPrepareExpectedRequests;
     const auto& refResponses = ReferencePhase0ParityFixture::kPrepareResponseSteps;
     std::vector<ExpectedRequest> requests(refRequests.begin(), refRequests.end());
+    ASSERT_GT(requests.size(), 7U);
     ASSERT_EQ(requests[6].kind, OpKind::Write); // CLOCK_SELECT in the reference
     requests[6] = requests[7];                  // becomes the await-lock global read
     std::vector<ResponseStep> responses(refResponses.begin(), refResponses.end());
+    ASSERT_GT(responses.size(), 6U);
     responses.insert(responses.begin() + 7, responses[6]); // second locked global read
 
     rig.bus.SetScript(requests, responses);

@@ -626,6 +626,22 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
 
     const uint32_t rateHz = static_cast<uint32_t>(in_sample_rate);
 
+    // Only accept rates this device advertised; anything else would program a
+    // clock the transport can't honor and desync host from device.
+    bool rateSupported = false;
+    for (uint32_t i = 0; i < ivars.device.sampleRateCount; ++i) {
+        if (static_cast<uint32_t>(ivars.device.sampleRates[i]) == rateHz) {
+            rateSupported = true;
+            break;
+        }
+    }
+    if (!rateSupported) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - unsupported rate",
+                 in_sample_rate);
+        return kIOReturnUnsupported;
+    }
+
     // Reject a rate change while IO is active. Live (hot) reconfiguration would
     // restart the duplex transport underneath running IO across the cross-service
     // seam, which currently desynchronizes the device clock from the host and
@@ -645,17 +661,22 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
     // coordinator (CLOCK_SELECT + duplex reconfigure). The device is idle here,
     // so this stores/applies the clock for the next StartIO. Reject the change if
     // the transport can't apply it so CoreAudio does not believe the hardware moved.
-    if (ivars.device.audioNub) {
-        const kern_return_t kr =
-            ivars.device.audioNub->RequestSampleRateChange(rateHz);
-        if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: HandleChangeSampleRate transport reconfig failed: 0x%x",
-                     kr);
-            return kr;
-        }
-        ivars.device.currentSampleRate = static_cast<double>(rateHz);
+    if (!ivars.device.audioNub) {
+        // Without the nub the device clock can't be programmed; succeeding here
+        // would make CoreAudio believe the hardware moved when it didn't.
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - no audio nub",
+                 in_sample_rate);
+        return kIOReturnNotReady;
     }
+    const kern_return_t kr = ivars.device.audioNub->RequestSampleRateChange(rateHz);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate transport reconfig failed: 0x%x",
+                 kr);
+        return kr;
+    }
+    ivars.device.currentSampleRate = static_cast<double>(rateHz);
 
     // Commit the rate to the ADK device. The validated ADK contract
     // (ADKVirtualAudioLab) applies the change by calling SetSampleRate here, not
