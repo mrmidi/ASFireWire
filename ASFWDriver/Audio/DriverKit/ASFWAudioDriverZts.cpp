@@ -225,40 +225,38 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 break;
             }
 
-            if (!ivars.runtime.txReplayReader.IsActive() &&
-                !ivars.runtime.txReplayReader.Begin(
-                    directControl->rxSequenceReplay)) {
-                directControl->txReplayUnderflows.fetch_add(
-                    1, std::memory_order_relaxed);
-                failProducer(
-                    ASFW::IsochTransport::TxProducerStage::
-                        kReplayBegin,
-                    ASFW::IsochTransport::TxProducerFailureReason::
-                        kReplayUnavailable,
-                    ASFW::Audio::Runtime::FatalStreamReason::
-                        TxReplayUnavailable,
-                    nextPacketToPrepare);
-                break;
+            // A replay stall is transient, not fatal. RX bumps its replay epoch
+            // on every rebind/discontinuity (aggregate StartIO/StopIO churn, a
+            // packet gap), which invalidates the reader's epoch, and the reader
+            // can momentarily outrun the producer. Killing TX here would leave the
+            // stream permanently silent -- the timing-loss recovery is health-gated
+            // when the device clock is fine (see DiceAudioBackend), and even ungated
+            // a coordinator restart cannot re-prime TX. Instead, re-sync the reader
+            // to RX's current epoch and ship a NO-DATA (silence) packet for this
+            // slot; DATA replay resumes as soon as RX republishes kReadDelay
+            // entries. Persistent unavailability degrades to silence, which is the
+            // correct "nothing to send yet" state, not a stream death.
+            if (!ivars.runtime.txReplayReader.IsActive()) {
+                (void)ivars.runtime.txReplayReader.Begin(
+                    directControl->rxSequenceReplay);
             }
 
             ASFW::Audio::Runtime::RxSequenceEntry replay{};
-            if (!ivars.runtime.txReplayReader.TryRead(
+            if (ivars.runtime.txReplayReader.IsActive() &&
+                ivars.runtime.txReplayReader.TryRead(
                     directControl->rxSequenceReplay, replay)) {
+                directControl->txReplayEntries.fetch_add(
+                    1, std::memory_order_relaxed);
+                timing.replayDataBlocks = replay.dataBlocks;
+            } else {
+                // Reader stale (epoch moved) or ahead of the producer: count it,
+                // drop the reader so the next packet re-Begins on the live epoch,
+                // and fall through with the NO-DATA disposition set above.
                 directControl->txReplayUnderflows.fetch_add(
                     1, std::memory_order_relaxed);
-                failProducer(
-                    ASFW::IsochTransport::TxProducerStage::
-                        kReplayRead,
-                    ASFW::IsochTransport::TxProducerFailureReason::
-                        kReplayUnavailable,
-                    ASFW::Audio::Runtime::FatalStreamReason::
-                        TxReplayUnavailable,
-                    nextPacketToPrepare);
-                break;
+                ivars.runtime.txReplayReader.Reset();
+                timing.replayDataBlocks = 0;
             }
-            directControl->txReplayEntries.fetch_add(
-                1, std::memory_order_relaxed);
-            timing.replayDataBlocks = replay.dataBlocks;
 
             if (replay.dataBlocks != 0) {
                 if (replay.sytOffset ==
