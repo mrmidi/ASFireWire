@@ -251,10 +251,23 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             } else {
                 // Reader stale (epoch moved) or ahead of the producer: count it,
                 // drop the reader so the next packet re-Begins on the live epoch,
-                // and fall through with the NO-DATA disposition set above.
+                // and fall through with the NO-DATA disposition set above. Also
+                // re-arm the frame-cursor alignment: while stalled we emit NO-DATA
+                // packets, which do NOT advance the content-frame cursor, so it
+                // freezes at its pre-stall frame while CoreAudio keeps writing. If
+                // the stall outlasts one playback ring the cursor is stranded on
+                // overwritten (silent) frames forever. Re-arming makes the first
+                // DATA packet after replay recovers re-project the cursor to the
+                // live frame, closing the gap. Only reached on a genuine replay
+                // stall (churn), never during normal cadence NO-DATA.
                 directControl->txReplayUnderflows.fetch_add(
                     1, std::memory_order_relaxed);
                 ivars.runtime.txReplayReader.Reset();
+                ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
+                if (ivars.runtime.txSecondaryActive) {
+                    ivars.runtime.txStreamEngineSecondary
+                        .ReArmFrameCursorAlignment();
+                }
                 timing.replayDataBlocks = 0;
             }
 
@@ -357,11 +370,26 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     const uint64_t alignedFrame =
                         (projectedFrame / kFramesPerPacket) *
                         kFramesPerPacket;
-                    (void)ivars.runtime.txStreamEngine
-                        .AlignFrameCursorOnce(alignedFrame);
+                    const bool aligned =
+                        ivars.runtime.txStreamEngine
+                            .AlignFrameCursorOnce(alignedFrame);
                     if (ivars.runtime.txSecondaryActive) {
                         (void)ivars.runtime.txStreamEngineSecondary
                             .AlignFrameCursorOnce(alignedFrame);
+                    }
+                    // Fires once at stream start, then again each time replay
+                    // recovers after a stall re-armed the cursor. A 2nd+ line is
+                    // the self-heal closing a deficit that would otherwise be
+                    // permanent silence; anomaly-only, so a clean run prints one.
+                    if (aligned) {
+                        ASFW_LOG(DirectAudio,
+                                 "[TxAlign] frame cursor -> %llu (projected=%llu "
+                                 "rxFirstFrame=%llu deltaTicks=%lld rate=%u)",
+                                 alignedFrame,
+                                 projectedFrame,
+                                 replay.firstAudioFrame,
+                                 static_cast<long long>(presentationDeltaTicks),
+                                 txConfig.sampleRate);
                     }
                 }
             }

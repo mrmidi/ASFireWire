@@ -47,6 +47,11 @@ public:
 
     [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
 
+    // Re-arm the one-shot frame-cursor alignment after an RX replay stall so the
+    // next DATA packet re-projects the cursor to the live frame (see
+    // AmdtpTxPacketizer::ReArmFrameCursorAlignment).
+    void ReArmFrameCursorAlignment() noexcept;
+
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
         uint32_t packetIndex,
         const AMDTP::AmdtpTimingState& timing) noexcept;

@@ -126,6 +126,10 @@ bool AmdtpTxPacketizer::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
     return true;
 }
 
+void AmdtpTxPacketizer::ReArmFrameCursorAlignment() noexcept {
+    frameCursorAligned_ = false;
+}
+
 bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
                                           const AmdtpTimingState& timing,
                                           PreparedTxPacket& outPacket) noexcept {

@@ -28,6 +28,17 @@ public:
     // Reset().
     [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
 
+    // Re-arm the one-shot frame-cursor alignment WITHOUT resetting DBC/cadence.
+    // Used when the RX replay the frame cursor rides went unavailable (epoch
+    // reset / underrun during aggregate churn): the cursor would otherwise stay
+    // frozen at its pre-stall frame while CoreAudio's write cursor advances,
+    // and once it falls more than a playback ring behind, TX transmits the
+    // overwritten (silent) region forever. Re-arming lets the first DATA packet
+    // after replay recovers re-project the cursor to the live frame. Only fires
+    // on genuine replay stalls, so a healthy (e.g. direct-bound) stream that
+    // never stalls is unaffected.
+    void ReArmFrameCursorAlignment() noexcept;
+
     bool PrepareNextPacket(TxPacketSlotView slot,
                            const AmdtpTimingState& timing,
                            PreparedTxPacket& outPacket) noexcept;
