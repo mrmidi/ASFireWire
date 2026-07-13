@@ -340,8 +340,26 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     DICE::FormatExtStatus(waitState->result.extStatus, extStr, sizeof(extStr));
 
     if (sourceLocked && extClockHealthy) {
-        // Healthy: the device is just narrating its clock/ext status. Surface
-        // what it actually reports (rate-limited) instead of staying silent.
+        // Healthy — but the device may have moved to a different rate on its
+        // own (front-panel clock change / external sync source). Compare the
+        // PLL's locked nominal rate against the host's current belief and, on
+        // a mismatch, tell the audio driver to re-sync the HAL (forced format
+        // change; AppleUSBAudio's device-driven rate-move analog).
+        const uint32_t deviceRateHz = waitState->result.nominalRateHz;
+        auto* nub = publisher_.GetNub(guid);
+        const uint32_t hostRateHz = nub ? nub->GetCurrentSampleRateHz() : 0;
+        if (nub && deviceRateHz != 0 && hostRateHz != 0 &&
+            deviceRateHz != hostRateHz) {
+            ASFW_LOG_WARNING(Audio,
+                             "DiceAudioBackend: device-initiated clock change "
+                             "GUID=%llx device=%u Hz host=%u Hz -> notify audio driver",
+                             guid, deviceRateHz, hostRateHz);
+            nub->NotifyDeviceClockChanged(deviceRateHz);
+            return;
+        }
+
+        // The device is just narrating its clock/ext status. Surface what it
+        // actually reports (rate-limited) instead of staying silent.
         ASFW_LOG_RL(Audio, "dice/notify-confirm", 1000, OS_LOG_TYPE_DEFAULT,
                     "DiceAudioBackend: notify confirm GUID=%llx notify=%{public}s clock=%{public}s ext=%{public}s healthy",
                     guid, notifyStr, clockStr, extStr);

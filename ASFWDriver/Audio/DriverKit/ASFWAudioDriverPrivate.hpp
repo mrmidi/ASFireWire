@@ -40,6 +40,9 @@ struct AudioDriverDeviceState {
     double sampleRates[8]{};
     uint32_t sampleRateCount{0};
     double currentSampleRate{0};
+    // Rate reported by a device-initiated clock change (front panel/external
+    // sync), pending until PerformDeviceConfigurationChange commits it.
+    std::atomic<uint32_t> pendingExternalRateHz{0};
     uint32_t streamModeRaw{0};
     bool hasPhantomOverride{false};
     uint32_t phantomSupportedMask{0};
@@ -232,6 +235,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> txPreparationQueue;
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
+    OSSharedPtr<OSAction> deviceClockChangedAction;
 
 
 

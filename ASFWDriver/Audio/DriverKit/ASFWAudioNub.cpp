@@ -252,6 +252,10 @@ void ASFWAudioNub::free()
             ivars->ztsAnchorAction->release();
             ivars->ztsAnchorAction = nullptr;
         }
+        if (ivars->deviceClockChangedAction) {
+            ivars->deviceClockChangedAction->release();
+            ivars->deviceClockChangedAction = nullptr;
+        }
         IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
     }
     super::free();
@@ -303,6 +307,10 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
         if (ivars->ztsAnchorAction) {
             ivars->ztsAnchorAction->release();
             ivars->ztsAnchorAction = nullptr;
+        }
+        if (ivars->deviceClockChangedAction) {
+            ivars->deviceClockChangedAction->release();
+            ivars->deviceClockChangedAction = nullptr;
         }
         ivars->parentDriver = nullptr;
     }
@@ -418,6 +426,45 @@ void IMPL(ASFWAudioNub, ZtsAnchorReady)
 {
     (void)action;
     (void)generation;
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterDeviceClockChangedAction)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    if (action) {
+        action->retain();
+    }
+    OSAction* oldAction = ivars->deviceClockChangedAction;
+    ivars->deviceClockChangedAction = action;
+    if (oldAction) {
+        oldAction->release();
+    }
+    return kIOReturnSuccess;
+}
+
+void IMPL(ASFWAudioNub, DeviceClockChanged)
+{
+    (void)action;
+    (void)nominalRateHz;
+}
+
+void ASFWAudioNub::NotifyDeviceClockChanged(uint32_t nominalRateHz)
+{
+    if (!ivars || !ivars->deviceClockChangedAction) {
+        return;
+    }
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: NotifyDeviceClockChanged %u Hz guid=0x%016llx",
+             nominalRateHz, ivars->guid);
+    DeviceClockChanged(ivars->deviceClockChangedAction, nominalRateHz);
+}
+
+uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
+{
+    return ivars ? ivars->currentSampleRateHz : 0;
 }
 
 ASFWDriver* ASFWAudioNub::GetParentDriver() const

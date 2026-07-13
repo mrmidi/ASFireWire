@@ -94,8 +94,27 @@ public:
     virtual kern_return_t RegisterZtsAnchorAction(
         OSAction* action TYPE(ZtsAnchorReady));
 
+    // Device-initiated clock change (front panel / external sync source): the
+    // transport side detected the device PLL locked at a rate different from
+    // the host's current rate. The audio driver reacts by re-syncing the HAL
+    // (forced format change), mirroring AppleUSBAudio's emergency format
+    // change for device-driven rate moves.
+    virtual void DeviceClockChanged(OSAction* action TARGET,
+                                    uint32_t nominalRateHz);
+    virtual kern_return_t RegisterDeviceClockChangedAction(
+        OSAction* action TYPE(DeviceClockChanged));
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
+
+    // Fire the registered DeviceClockChanged action (called by the DICE
+    // backend when a health probe sees a healthy device at a foreign rate).
+    void NotifyDeviceClockChanged(uint32_t nominalRateHz) LOCALONLY;
+
+    // Host-side belief of the device rate (updated on publish and on every
+    // successful RequestSampleRateChange). Used by the transport side to
+    // detect device-initiated clock moves.
+    uint32_t GetCurrentSampleRateHz() const LOCALONLY;
 
     // Set channel count directly (called by AVCDiscovery after Create())
     void SetChannelCount(uint32_t channels) LOCALONLY;
@@ -143,6 +162,7 @@ struct ASFWAudioNub_IVars {
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
     OSAction* txPreparationAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};
+    OSAction* deviceClockChangedAction{nullptr};
 };
 
 #endif /* ASFWAudioNub_h */
