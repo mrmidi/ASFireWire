@@ -88,6 +88,10 @@ public:
         completedClockRequests_.erase(guid);
     }
 
+    [[nodiscard]] bool HasPendingLocked(uint64_t guid) const noexcept {
+        return pendingClockRequests_.find(guid) != pendingClockRequests_.end();
+    }
+
     // --- self-locking API: exact former coordinator helper behaviour.
 
     [[nodiscard]] bool TryConsumePending(

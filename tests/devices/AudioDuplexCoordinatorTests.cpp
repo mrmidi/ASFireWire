@@ -959,6 +959,33 @@ TEST_F(AudioDuplexCoordinatorTests, LockLossRecoveryRestartsRunningSession) {
     EXPECT_EQ(calls[3], "device.prepare");
 }
 
+TEST_F(AudioDuplexCoordinatorTests, ClockOperationInFlightTracksHostInitiatedChanges) {
+    // Idle, streaming steady-state, and post-change steady-state must all read "not in
+    // flight" — health probes use this to tell a genuine device-initiated clock move from
+    // the echo of the host's own change (the Logic rate-switch feedback loop).
+    EXPECT_FALSE(coordinator_.IsClockOperationInFlight(kTestGuid));
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_FALSE(coordinator_.IsClockOperationInFlight(kTestGuid));
+
+    protocol_->SetHoldPrepare(true);
+    std::promise<IOReturn> requestPromise;
+    std::future<IOReturn> requestFuture = requestPromise.get_future();
+    std::thread requestThread([&] {
+        requestPromise.set_value(coordinator_.RequestClockConfig(
+            kTestGuid, kSupportedClock, DiceRestartReason::kSampleRateChange));
+    });
+
+    ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(2));
+    EXPECT_TRUE(coordinator_.IsClockOperationInFlight(kTestGuid));
+
+    protocol_->SetHoldPrepare(false);
+    EXPECT_EQ(requestFuture.get(), kIOReturnSuccess);
+    requestThread.join();
+
+    EXPECT_FALSE(coordinator_.IsClockOperationInFlight(kTestGuid));
+}
+
 TEST_F(AudioDuplexCoordinatorTests, LatestPendingClockRequestWinsDuringRestart) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
     protocol_->SetHoldPrepare(true);

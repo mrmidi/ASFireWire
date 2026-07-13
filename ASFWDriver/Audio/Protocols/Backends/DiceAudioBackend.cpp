@@ -350,6 +350,30 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         const uint32_t hostRateHz = nub ? nub->GetCurrentSampleRateHz() : 0;
         if (nub && deviceRateHz != 0 && hostRateHz != 0 &&
             deviceRateHz != hostRateHz) {
+            // A mismatch here is only device-initiated if the host isn't the
+            // one moving the clock. During a host-initiated rate change the
+            // PLL relocks at the new rate while the nub's belief still holds
+            // the old one (it updates only after RequestClockConfig returns),
+            // and the device's lock-change notifications land exactly in that
+            // window. Notifying then would inject a second, competing
+            // config-change into the middle of the host's own change (HAL
+            // rate switches wedge until the client reopens the device).
+            // Suppress while the coordinator holds the gate / has a queued
+            // clock request, and when the "new" device rate is just the echo
+            // of the clock the host itself asked for.
+            const auto session = restartCoordinator_.GetSession(guid);
+            const bool echoesHostClock =
+                session.has_value() &&
+                (session->hasPendingClockRequest ||
+                 session->pendingClock.sampleRateHz == deviceRateHz ||
+                 session->desiredClock.sampleRateHz == deviceRateHz);
+            if (echoesHostClock || restartCoordinator_.IsClockOperationInFlight(guid)) {
+                ASFW_LOG_RL(Audio, "dice/rate-echo", 1000, OS_LOG_TYPE_DEFAULT,
+                            "DiceAudioBackend: rate mismatch is host-initiated "
+                            "(in flight) GUID=%llx device=%u Hz host=%u Hz -> no resync",
+                            guid, deviceRateHz, hostRateHz);
+                return;
+            }
             ASFW_LOG_WARNING(Audio,
                              "DiceAudioBackend: device-initiated clock change "
                              "GUID=%llx device=%u Hz host=%u Hz -> notify audio driver",

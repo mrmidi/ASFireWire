@@ -405,6 +405,17 @@ AudioDuplexCoordinator::GetSession(uint64_t guid) const noexcept {
     return store_.GetSession(guid);
 }
 
+bool AudioDuplexCoordinator::IsClockOperationInFlight(uint64_t guid) const noexcept {
+    if (!lock_ || guid == 0) {
+        return false;
+    }
+    IOLockLock(lock_);
+    const bool inFlight =
+        gate_.IsActiveLocked(guid) || clockRequests_.HasPendingLocked(guid);
+    IOLockUnlock(lock_);
+    return inFlight;
+}
+
 IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     if (TeardownRequested()) {
         return kIOReturnAborted;
