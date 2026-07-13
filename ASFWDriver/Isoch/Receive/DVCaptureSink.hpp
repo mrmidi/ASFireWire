@@ -118,6 +118,16 @@ public:
         hdr_->packetsSeen++;
         hdr_->lastXferStatus = xferStatus;
 
+        // Filter out corrupted packets (e.g. data CRC errors).
+        // xferStatus 0x11 (ack_complete) is the only valid success code.
+        // Dropping corrupted packets prevents garbage DIF blocks (multicolor squares).
+        const uint32_t evtCode = xferStatus & 0x1F;
+        if (evtCode != 0x11) {
+            hdr_->nonDvPackets++;
+            hdr_->lastRejectLen = static_cast<uint32_t>(length);
+            return;
+        }
+
         if (length < kDriverPrefixBytes + kCipHeaderBytes) {
             hdr_->nonDvPackets++;
             hdr_->lastRejectLen = static_cast<uint32_t>(length);

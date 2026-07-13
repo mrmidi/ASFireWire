@@ -271,12 +271,16 @@ uint32_t IsochReceiveContext::Poll() {
                 absoluteFrameCursor_;
             const uint32_t channels = directInputView_.memory.inputChannels;
             const uint32_t slots = directInputView_.deviceToHostAm824Slots;
-            const auto result = directProcessor_.ProcessPacket(pkt.payload,
-                                                               pkt.actualLength,
-                                                               packetFirstAudioFrame,
-                                                               channels,
-                                                               slots,
-                                                               wireFormat_);
+            
+            auto result = AudioEngine::Direct::Rx::RxAudioPacketProcessorResult{};
+            if ((pkt.xferStatus & 0x1F) == 0x11) {
+                result = directProcessor_.ProcessPacket(pkt.payload,
+                                                        pkt.actualLength,
+                                                        packetFirstAudioFrame,
+                                                        channels,
+                                                        slots,
+                                                        wireFormat_);
+            }
             const bool packetAccepted =
                 result.status ==
                     AudioEngine::Direct::Rx::
