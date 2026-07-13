@@ -514,7 +514,16 @@ kern_return_t IMPL(ASFWSCSIController, UserDoesHBASupportMultiPathing)
 
 kern_return_t IMPL(ASFWSCSIController, UserDoesHBAPerformDeviceManagement)
 {
-    *result = false; // let the SAM manage device objects
+    // False despite the driver managing targets itself (login-driven
+    // create/destroy). The value only gates family-initiated scanning, never
+    // the driver's own UserCreateTargetForID/UserDestroyTargetForID — the
+    // whole HW-validated lifecycle ran with false. In the legacy kernel
+    // family, false is what triggers the auto-create scan; the DriverKit
+    // shim's presence scan (neutralized by UserTargetPresentForID == false
+    // below) appears to be its analog, but the shim source is not published,
+    // so true's exact effect is unverified. Flipping to true might suppress
+    // that scan at the root — untested on HW; see the validation plan.
+    *result = false;
     return kIOReturnSuccess;
 }
 
