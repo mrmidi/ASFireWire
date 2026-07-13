@@ -240,6 +240,29 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
                 FinishRecovery(guid);
                 return;
             }
+
+            // Health gate: a host-side replay discontinuity (aggregate-device
+            // StartIO/StopIO churn, an RX packet gap) fires the same timing-loss
+            // detector as a genuine device clock drop. When the device still
+            // reports a locked, healthy clock the discontinuity is host-side and
+            // the RX epoch reset (ResetReplayEpochForDiscontinuity) already
+            // re-establishes cadence and replay for both directions. A destructive
+            // coordinator restart here would only tear down a healthy running
+            // session -- and it cannot re-prime TX (the producer-cursor reset lives
+            // in ADK StartIO), so it lands Failed and leaves the HAL running silent
+            // IO. Only escalate to a restart when the device clock is genuinely
+            // unhealthy. (Read failure returns false -> recover, never suppress on
+            // missing evidence.)
+            if (DeviceReportsHealthyClock(guid)) {
+                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend: runtime-fault recovery dropped (device clock "
+                         "locked+healthy; RX self-heals) GUID=%llx reason=%u",
+                         guid,
+                         static_cast<unsigned>(reason));
+                FinishRecovery(guid);
+                return;
+            }
         }
         const IOReturn status = restartCoordinator_.RecoverStreaming(guid, reason);
         if (status == kIOReturnSuccess) {
@@ -448,6 +471,47 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
 
     (void)guid;
     (void)notificationBits;
+}
+
+bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
+    if (stopping_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    // Hold the protocol alive for the blocking read (same discipline as
+    // ProbeDuplexHealth) so a concurrent device removal cannot free it underneath.
+    auto protocol = runtime_.FindShared(guid);
+    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
+    if (!diceProtocol) {
+        return false;
+    }
+
+    struct WaitState {
+        std::atomic<bool> done{false};
+        IOReturn status{kIOReturnTimeout};
+        DICE::DiceDuplexHealthResult result{};
+    };
+    auto waitState = std::make_shared<WaitState>();
+    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
+        waitState->status = status;
+        waitState->result = std::move(result);
+        waitState->done.store(true, std::memory_order_release);
+    });
+
+    for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
+        if (waitState->done.load(std::memory_order_acquire)) {
+            break;
+        }
+        if (stopping_.load(std::memory_order_acquire)) {
+            return false;
+        }
+        IOSleep(kHealthBridgePollMs);
+    }
+
+    if (!waitState->done.load(std::memory_order_acquire) ||
+        waitState->status != kIOReturnSuccess) {
+        return false;
+    }
+    return waitState->result.sourceLocked && waitState->result.clockReferenceHealthy;
 }
 
 bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {
