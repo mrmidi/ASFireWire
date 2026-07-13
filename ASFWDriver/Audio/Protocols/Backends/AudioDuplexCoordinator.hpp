@@ -56,7 +56,7 @@ public:
     // True while a host-initiated duplex operation (start/stop/clock change/recovery) holds the
     // per-GUID gate or a clock request is queued behind it. Health probes use this to tell a
     // genuine device-initiated clock move from the echo of the host's own in-flight change.
-    [[nodiscard]] bool IsClockOperationInFlight(uint64_t guid) const noexcept;
+    [[nodiscard]] bool IsOperationInFlight(uint64_t guid) const noexcept;
 
     [[nodiscard]] uint64_t TeardownAbortCount() const noexcept {
         return teardownAbortCount_.load(std::memory_order_acquire);

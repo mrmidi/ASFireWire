@@ -405,7 +405,7 @@ AudioDuplexCoordinator::GetSession(uint64_t guid) const noexcept {
     return store_.GetSession(guid);
 }
 
-bool AudioDuplexCoordinator::IsClockOperationInFlight(uint64_t guid) const noexcept {
+bool AudioDuplexCoordinator::IsOperationInFlight(uint64_t guid) const noexcept {
     if (!lock_ || guid == 0) {
         return false;
     }

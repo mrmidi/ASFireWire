@@ -173,6 +173,37 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
         return;
     }
 
+    // Runtime-fault recoveries (timing loss, cycle-inconsistent, ...) are only valid
+    // for the session that raised them. CoreAudio re-probes a fresh rate with rapid
+    // StartIO/StopIO cycles, and each ordered teardown fires the same replay-
+    // discontinuity detectors as a genuine mid-run fault; a recovery queued from
+    // that churn executes after the next start goes live, tears down the healthy
+    // session, and its restart then fails TX prime (stale producer cursors -- the
+    // cursor reset only runs in ADK StartIO) leaving the HAL running silent IO.
+    // Drop the event when the coordinator is already running an operation (the
+    // "fault" is that transition), and re-check the restart epoch when the queued
+    // block finally runs. Bus-reset rebinds stay unguarded: they are external
+    // topology events that must always rebind.
+    const bool isRuntimeFault =
+        reason == DICE::DiceRestartReason::kRecoverAfterTimingLoss ||
+        reason == DICE::DiceRestartReason::kRecoverAfterCycleInconsistent ||
+        reason == DICE::DiceRestartReason::kRecoverAfterLockLoss ||
+        reason == DICE::DiceRestartReason::kRecoverAfterTxFault;
+    uint64_t faultRestartId = 0;
+    if (isRuntimeFault) {
+        if (restartCoordinator_.IsOperationInFlight(guid)) {
+            recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: recovery event dropped (duplex operation in "
+                     "flight) GUID=%llx reason=%u",
+                     guid,
+                     static_cast<unsigned>(reason));
+            return;
+        }
+        const auto session = restartCoordinator_.GetSession(guid);
+        faultRestartId = session ? session->restartId : 0;
+    }
+
     if (!TryBeginRecovery(guid)) {
         return;
     }
@@ -188,6 +219,27 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
                      static_cast<unsigned>(reason));
             FinishRecovery(guid);
             return;
+        }
+        if (isRuntimeFault) {
+            // Re-validate at execution time: an operation may have started, or a
+            // restart may have completed, while this block sat on the queue. In
+            // either case the fault belongs to a superseded session -- recovering
+            // now would tear down healthy state.
+            const auto session = restartCoordinator_.GetSession(guid);
+            const uint64_t currentRestartId = session ? session->restartId : 0;
+            if (restartCoordinator_.IsOperationInFlight(guid) ||
+                currentRestartId != faultRestartId) {
+                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend: queued recovery dropped as stale GUID=%llx "
+                         "reason=%u faultRestartId=%llu currentRestartId=%llu",
+                         guid,
+                         static_cast<unsigned>(reason),
+                         faultRestartId,
+                         currentRestartId);
+                FinishRecovery(guid);
+                return;
+            }
         }
         const IOReturn status = restartCoordinator_.RecoverStreaming(guid, reason);
         if (status == kIOReturnSuccess) {
@@ -367,7 +419,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
                 (session->hasPendingClockRequest ||
                  session->pendingClock.sampleRateHz == deviceRateHz ||
                  session->desiredClock.sampleRateHz == deviceRateHz);
-            if (echoesHostClock || restartCoordinator_.IsClockOperationInFlight(guid)) {
+            if (echoesHostClock || restartCoordinator_.IsOperationInFlight(guid)) {
                 ASFW_LOG_RL(Audio, "dice/rate-echo", 1000, OS_LOG_TYPE_DEFAULT,
                             "DiceAudioBackend: rate mismatch is host-initiated "
                             "(in flight) GUID=%llx device=%u Hz host=%u Hz -> no resync",
