@@ -33,7 +33,11 @@ jobs:
           brew install xcodegen
           xcodegen --version
           xcodegen generate --quiet
-          if ! git diff --exit-code --stat -- ASFW.xcodeproj project.yml; then
+          # Diff only the pbxproj: scheme files are cosmetically rewritten by
+          # any open Xcode (version attr, BuildableName flavor, empty blocks),
+          # so they flip-flop between xcodegen and Xcode styles; their semantic
+          # content comes from project.yml either way.
+          if ! git diff --exit-code --stat -- ASFW.xcodeproj/project.pbxproj project.yml; then
             echo "::error::ASFW.xcodeproj is out of sync with project.yml. Run 'xcodegen generate' locally and commit the regenerated project (see README → Building)."
             exit 1
           fi

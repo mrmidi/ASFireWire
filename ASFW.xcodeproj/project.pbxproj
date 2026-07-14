@@ -1060,7 +1060,6 @@
 		F46044243554D4B325071905 /* AudioTimingGeometry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioTimingGeometry.hpp; sourceTree = "<group>"; };
 		F49607C2B6C75A5EACC56433 /* IAmdtpTxSlotProvider.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAmdtpTxSlotProvider.hpp; sourceTree = "<group>"; };
 		F4A7F52D42A80A09468F41F1 /* PayloadWriterTelemetry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PayloadWriterTelemetry.hpp; sourceTree = "<group>"; };
-		F4F1A0B82213C2C07F19CA6D /* DriverVersion.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DriverVersion.hpp; sourceTree = "<group>"; };
 		F714F267E66F185F1C86F905 /* SBP2CommandORB.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2CommandORB.hpp; sourceTree = "<group>"; };
 		F71A638FD501761865722676 /* AudioCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioCoordinator.cpp; sourceTree = "<group>"; };
 		F7AAEEA6F540F467BB7E4B7D /* DeviceDiscoveryWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceDiscoveryWireFormats.hpp; sourceTree = "<group>"; };
@@ -2111,7 +2110,6 @@
 				3876883203AF84B6CA0CAE61 /* Snapshot */,
 				012EE77B2DD6E4CAF796B4EA /* Testing */,
 				813C7699966A2E0788051640 /* UserClient */,
-				C29A43D72FED69D8FFD9A78E /* Version */,
 			);
 			path = ASFWDriver;
 			sourceTree = "<group>";
@@ -2378,14 +2376,6 @@
 				3FC44F28E3D0C276B2761EB5 /* AudioSubunit.hpp */,
 			);
 			path = Audio;
-			sourceTree = "<group>";
-		};
-		C29A43D72FED69D8FFD9A78E /* Version */ = {
-			isa = PBXGroup;
-			children = (
-				F4F1A0B82213C2C07F19CA6D /* DriverVersion.hpp */,
-			);
-			path = Version;
 			sourceTree = "<group>";
 		};
 		C40C968BCE19BD580FD81C6B /* AVC */ = {
