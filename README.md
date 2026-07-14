@@ -46,9 +46,12 @@ What is real today:
 - Async FireWire transactions are in place and used by discovery and protocol code.
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
-- Personally tested audio hardware now includes the Apogee Duet FireWire path, Focusrite Saffire Pro 24 DSP, and PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming).
-- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, and PreSonus StudioLive 16.0.2.
-- Focusrite Saffire Pro 26, Saffire Pro 40, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet because the current generic DICE backend is still effectively single-stream.
+- Personally tested audio hardware now includes the Apogee Duet FireWire path, Focusrite Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming), and the Midas Venice F32 (full duplex 32-in/32-out streaming).
+- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2, and the Midas Venice F32.
+- **Multi-stream DICE now works.** The Midas Venice F32 runs two isochronous streams per direction (2×16 channels = 32×32 total duplex).
+- **Host-controlled sample-rate switching is implemented**, including 44.1 kHz alongside 48 kHz. The driver decodes the device's advertised clock capabilities and drives DICE `CLOCK_SELECT`, so a rate change in the host (e.g. Logic) reprograms the device live without a reconnect. Switching rates on a CoreAudio aggregate device whose clock master is the FireWire interface is supported.
+- **Per-channel names** (device nickname plus per-channel TX/RX labels) are read from DICE devices and surfaced to CoreAudio.
+- Focusrite Saffire Pro 26, Saffire Pro 40, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet — their stream layouts still need to be captured from real hardware.
 - PreSonus StudioLive 16.4.2, 24.4.2, and 32.4.2 are recognized by name but not audio-enabled yet: their FireWire channel counts differ from the 16.0.2 and must be captured from real hardware first (a wrong channel count means the device never locks to the stream). If you own one, see the call for testing below.
 - The project is still not stable enough to recommend as a drop-in replacement for Apple's old FireWire stack.
 
@@ -62,6 +65,7 @@ Please test these currently enabled DICE devices:
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
 - PreSonus StudioLive 16.0.2 (personally tested on one unit; broader validation welcome)
+- Midas Venice F32 (personally tested; broader validation welcome)
 
 StudioLive 16.4.2 / 24.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
 
@@ -143,12 +147,14 @@ Audio-device support in tree today:
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
 - PreSonus StudioLive 16.0.2
+- Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 
 Personally tested with working audio:
 
 - Apogee Duet FireWire
 - Focusrite Saffire Pro 24 DSP
 - PreSonus StudioLive 16.0.2
+- Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching)
 
 Recognized but not enabled yet:
 
@@ -219,7 +225,10 @@ This project is in active development. The following features are implemented:
 - AV/C FCP request/response and CMP plug connection
 - IRM (Isochronous Resource Manager)
 - AudioDriverKit publication for supported devices
-- Experimental DICE audio bring-up and runtime capability discovery for selected Focusrite Saffire models
+- Experimental DICE audio bring-up and runtime capability discovery for selected Focusrite Saffire, PreSonus StudioLive, and Midas Venice models
+- Multi-stream DICE duplex (two isochronous streams per direction) for higher-channel devices such as the Midas Venice F32 (32×32)
+- Host-controlled sample-rate switching (44.1 kHz / 48 kHz) driven from the device's advertised clock capabilities, including live rate changes on CoreAudio aggregate devices clocked by the FireWire interface
+- DICE per-channel naming (device nickname plus TX/RX channel labels) surfaced to CoreAudio
 
 ## Driver initialization (high level)
 
@@ -244,7 +253,7 @@ Planned work:
 
 1. Stabilize the audio path for longer playback/capture runs, especially timing and timestamp monotonicity.
 2. Finish the remaining isochronous receive and bus-reset recovery work.
-3. Broaden DICE support beyond the current single-stream Focusrite Saffire set.
+3. Broaden DICE support beyond the currently enabled set (Focusrite Saffire, PreSonus StudioLive, Midas Venice), including the recognized-but-not-yet-captured Saffire Pro 26/40 and larger StudioLive mixers.
 4. Improve hardware coverage with more community-tested hosts, adapters, and interfaces.
 5. Continue filling out device-specific controls where generic FireWire or generic DICE handling is not enough.
 
@@ -331,7 +340,7 @@ The driver is organized into functional subsystems:
 
 - **Audio/** — FireWire audio stack.
   - **Protocols/** — Device-specific audio protocols.
-    - **DICE/** — DICE/TCAT protocol: core transaction layer, Focusrite-specific bring-up (Saffire Pro 24 DSP), generic TCAT backend.
+    - **DICE/** — DICE/TCAT protocol: core transaction layer, clock-capability decode and sample-rate selection (`CLOCK_SELECT`), per-device isoch profiles (Focusrite Saffire, PreSonus StudioLive, Midas Venice), generic TCAT backend.
     - **Oxford/** — Oxford/Apogee protocol (Duet FireWire).
     - **Backends/** — Audio backend implementations (AVC-driven and DICE-driven).
   - **Engine/Direct/** — Direct audio engine: clock publisher, output reader, input writer, DICE TX stream engine, RX packet processor.
@@ -351,7 +360,7 @@ The driver is organized into functional subsystems:
 
 **Supporting subsystems:**
 
-- **DeviceProfiles/** — Device identity and audio profile registry. Vendor-specific profiles for Focusrite, Apogee, and Alesis.
+- **DeviceProfiles/** — Device identity and audio profile registry. Vendor-specific profiles for Focusrite, Apogee, Alesis, PreSonus, and Midas.
 - **Diagnostics/** — Runtime diagnostics, controller metrics, status publishing, signposts.
 - **Logging/** — Structured logging system.
 - **Debug/** — Packet capture and async trace tools.
