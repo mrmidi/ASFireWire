@@ -204,9 +204,10 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
-    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 192U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 336U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 384U);
+    // Worst-case (44.1k) cadence sizing: exposure lead 108 packets.
+    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 216U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 360U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 408U);
 }
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {

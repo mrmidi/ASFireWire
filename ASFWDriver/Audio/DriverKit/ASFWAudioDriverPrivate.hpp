@@ -40,6 +40,9 @@ struct AudioDriverDeviceState {
     double sampleRates[8]{};
     uint32_t sampleRateCount{0};
     double currentSampleRate{0};
+    // Rate reported by a device-initiated clock change (front panel/external
+    // sync), pending until PerformDeviceConfigurationChange commits it.
+    std::atomic<uint32_t> pendingExternalRateHz{0};
     uint32_t streamModeRaw{0};
     bool hasPhantomOverride{false};
     uint32_t phantomSupportedMask{0};
@@ -232,6 +235,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> txPreparationQueue;
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
+    OSSharedPtr<OSAction> deviceClockChangedAction;
 
 
 
@@ -268,6 +272,14 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
                         ASFWAudioDriver_IVars& ivars,
                         AudioGraphStartState* state) noexcept;
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
+
+// Single construction point for the HAL-facing Float32 stream format. The
+// format set as a stream's current format on a rate change must be
+// byte-identical to the advertised entry built at graph creation, so both
+// call this.
+void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
+                       double sampleRate,
+                       uint32_t channels) noexcept;
 
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                                                                                            const char* reason,

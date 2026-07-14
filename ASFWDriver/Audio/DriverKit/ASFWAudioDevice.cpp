@@ -165,6 +165,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig");
                 return;
             }
+            // The profile describes the wire geometry at its default (48 kHz);
+            // the live cadence/FDF follow the device's current nominal rate.
+            if (ivars.device.currentSampleRate > 0) {
+                txConfig.sampleRate =
+                    static_cast<uint32_t>(ivars.device.currentSampleRate);
+            }
 
             const uint32_t numSlots =
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
@@ -211,6 +217,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             uint8_t* payloadBase = reinterpret_cast<uint8_t*>(ivars.txPayloadMap->GetAddress());
             auto* metadataRing = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars.txMetadataMap->GetAddress());
             auto* controlBlock = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars.txControlMap->GetAddress());
+
+            // Clear stale runtime cursors before prefill: the shared slab can be
+            // reused across StartIO/StopIO probes (CoreAudio re-probes on a
+            // sample-rate change), and a carried-over exposeCursor fails the IT
+            // prime ("committed prefill > slots").
+            controlBlock->ResetForStart();
 
             ivars.runtime.txSlotProvider.payloadBase = payloadBase;
             ivars.runtime.txSlotProvider.metadataRing = metadataRing;
@@ -260,6 +272,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig2");
                 return;
             }
+            if (ivars.device.currentSampleRate > 0) {
+                txConfig2.sampleRate =
+                    static_cast<uint32_t>(ivars.device.currentSampleRate);
+            }
             txConfig2.sourceChannelOffset = txConfig2.pcmChannels;
 
             const uint32_t numSlots2 =
@@ -294,6 +310,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             auto* metadataRing2 = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars.txMetadataMapSecondary->GetAddress());
             auto* controlBlock2 = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars.txControlMapSecondary->GetAddress());
 
+            controlBlock2->ResetForStart();
+
             ivars.runtime.txSlotProviderSecondary.payloadBase = payloadBase2;
             ivars.runtime.txSlotProviderSecondary.metadataRing = metadataRing2;
             ivars.runtime.txSlotProviderSecondary.controlBlock = controlBlock2;
@@ -312,8 +330,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSecondaryActive = true;
 
             ASFW_LOG(Audio,
-                     "ASFWAudioDevice: Allocated & configured SECONDARY TX stream offset=%u dbs=%u slots=%u slotSize=%u",
-                     txConfig2.sourceChannelOffset, txConfig2.dbs, numSlots2, maxPacketBytes2);
+                     "ASFWAudioDevice: Allocated & configured SECONDARY TX stream offset=%u dbs=%u slots=%u slotSize=%u rate=%u",
+                     txConfig2.sourceChannelOffset, txConfig2.dbs, numSlots2, maxPacketBytes2,
+                     txConfig2.sampleRate);
         }
         }
 
@@ -592,4 +611,197 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
     });
 
     return kr;
+}
+
+kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
+    ASFW_LOG(Audio, "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz (entry)", in_sample_rate);
+    if (!ivars || !ivars->driverIvars) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate NOT READY (ivars=%p driverIvars=%p)",
+                 static_cast<void*>(ivars),
+                 static_cast<void*>(ivars ? ivars->driverIvars : nullptr));
+        return kIOReturnNotReady;
+    }
+    auto& ivars = *this->ivars->driverIvars;
+
+    const uint32_t rateHz = static_cast<uint32_t>(in_sample_rate);
+
+    // Only accept rates this device advertised; anything else would program a
+    // clock the transport can't honor and desync host from device.
+    bool rateSupported = false;
+    for (uint32_t i = 0; i < ivars.device.sampleRateCount; ++i) {
+        if (static_cast<uint32_t>(ivars.device.sampleRates[i]) == rateHz) {
+            rateSupported = true;
+            break;
+        }
+    }
+    if (!rateSupported) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - unsupported rate",
+                 in_sample_rate);
+        return kIOReturnUnsupported;
+    }
+
+    // Reject a rate change while IO is active. Live (hot) reconfiguration would
+    // restart the duplex transport underneath running IO across the cross-service
+    // seam, which currently desynchronizes the device clock from the host and
+    // leaves audio dead until a full stop/replug. Until hot-swap is supported,
+    // require the device to be stopped: returning an error makes CoreAudio keep
+    // the current rate rather than believe the hardware moved. The rate then
+    // changes cleanly on the next idle pick + StartIO.
+    if (ivars.runtime.isRunning.load(std::memory_order_acquire)) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - IO active "
+                 "(stop playback to change sample rate)",
+                 in_sample_rate);
+        return kIOReturnBusy;
+    }
+
+    // Program the device's DICE clock to the new rate via the transport-side
+    // coordinator (CLOCK_SELECT + duplex reconfigure). The device is idle here,
+    // so this stores/applies the clock for the next StartIO. Reject the change if
+    // the transport can't apply it so CoreAudio does not believe the hardware moved.
+    if (!ivars.device.audioNub) {
+        // Without the nub the device clock can't be programmed; succeeding here
+        // would make CoreAudio believe the hardware moved when it didn't.
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - no audio nub",
+                 in_sample_rate);
+        return kIOReturnNotReady;
+    }
+    const kern_return_t kr = ivars.device.audioNub->RequestSampleRateChange(rateHz);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate transport reconfig failed: 0x%x",
+                 kr);
+        return kr;
+    }
+    ivars.device.currentSampleRate = static_cast<double>(rateHz);
+
+    // Commit the rate to the ADK device. The validated ADK contract
+    // (ADKVirtualAudioLab) applies the change by calling SetSampleRate here, not
+    // by delegating to super — the base HandleChangeSampleRate does not move the
+    // active format, so without this the HAL reverts to the previous rate.
+    const kern_return_t setKr = SetSampleRate(in_sample_rate);
+    if (setKr != kIOReturnSuccess) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: HandleChangeSampleRate SetSampleRate(%.0f) failed: 0x%x",
+                 in_sample_rate, setKr);
+        return setKr;
+    }
+
+    // CoreAudio params-change contract: a rate change is stop -> set new
+    // params -> start (the HAL brackets this call with StopIO/StartIO). "New
+    // params" includes each stream's CURRENT format, not just the device
+    // nominal rate — without this the streams keep advertising the previous
+    // rate and clients see device=new-rate / stream=old-rate, an inconsistent
+    // configuration. Build the format identically to the advertised entries
+    // (FillFloat32Format is the single construction point).
+    IOUserAudioStreamBasicDescription inputFormat{};
+    IOUserAudioStreamBasicDescription outputFormat{};
+    ASFW::Audio::DriverKit::FillFloat32Format(
+        inputFormat, in_sample_rate, ivars.device.inputChannelCount);
+    ASFW::Audio::DriverKit::FillFloat32Format(
+        outputFormat, in_sample_rate, ivars.device.outputChannelCount);
+
+    if (ivars.inputStream) {
+        const kern_return_t inKr =
+            ivars.inputStream->SetCurrentStreamFormat(&inputFormat);
+        if (inKr != kIOReturnSuccess) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: HandleChangeSampleRate input "
+                     "SetCurrentStreamFormat(%.0f) failed: 0x%x",
+                     in_sample_rate, inKr);
+            return inKr;
+        }
+    }
+    if (ivars.outputStream) {
+        const kern_return_t outKr =
+            ivars.outputStream->SetCurrentStreamFormat(&outputFormat);
+        if (outKr != kIOReturnSuccess) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: HandleChangeSampleRate output "
+                     "SetCurrentStreamFormat(%.0f) failed: 0x%x",
+                     in_sample_rate, outKr);
+            return outKr;
+        }
+    }
+
+    ASFW_LOG(Audio,
+             "ASFWAudioDevice: HandleChangeSampleRate committed %.0f Hz "
+             "(device nominal + input/output stream formats)",
+             in_sample_rate);
+    return kIOReturnSuccess;
+}
+
+namespace {
+// Custom IOUserAudioDevice configuration-change action for a device-initiated
+// clock move ("ASFWRATE"). Purely driver-internal per the ADK contract.
+constexpr uint64_t kConfigChangeActionExternalRateResync = 0x4153465752415445ULL;
+} // namespace
+
+kern_return_t ASFWAudioDevice::RequestExternalRateResync(uint32_t nominalRateHz) {
+    if (!ivars || !ivars->driverIvars) {
+        return kIOReturnNotReady;
+    }
+    auto& driverIvars = *this->ivars->driverIvars;
+
+    if (static_cast<uint32_t>(driverIvars.device.currentSampleRate) ==
+        nominalRateHz) {
+        return kIOReturnSuccess; // already in sync — nothing to do
+    }
+
+    driverIvars.device.pendingExternalRateHz.store(nominalRateHz,
+                                                   std::memory_order_release);
+    ASFW_LOG(Audio,
+             "ASFWAudioDevice: device-initiated clock change to %u Hz — "
+             "requesting configuration-change window",
+             nominalRateHz);
+    // The host stops IO, calls PerformDeviceConfigurationChange, restarts IO
+    // (AudioDriverKit contract; AppleUSBAudio's forced format change analog).
+    return RequestDeviceConfigurationChange(kConfigChangeActionExternalRateResync,
+                                            nullptr);
+}
+
+kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
+    uint64_t change_action, OSObject* in_change_info) {
+    if (change_action != kConfigChangeActionExternalRateResync) {
+        return super::PerformDeviceConfigurationChange(change_action,
+                                                       in_change_info);
+    }
+    if (!ivars || !ivars->driverIvars) {
+        return kIOReturnNotReady;
+    }
+    auto& driverIvars = *this->ivars->driverIvars;
+
+    const uint32_t rateHz =
+        driverIvars.device.pendingExternalRateHz.exchange(
+            0, std::memory_order_acq_rel);
+    if (rateHz == 0) {
+        return kIOReturnSuccess; // superseded/aborted meanwhile
+    }
+
+    // IO is stopped by the host inside this window, so the HAL-initiated
+    // commit path applies verbatim: validate against advertised rates, align
+    // the transport clock (the redundant CLOCK_SELECT write is skipped since
+    // the device is already at this rate), then move the device nominal rate
+    // and both stream formats.
+    const kern_return_t kr = HandleChangeSampleRate(static_cast<double>(rateHz));
+    ASFW_LOG(Audio,
+             "ASFWAudioDevice: external rate resync to %u Hz %{public}s (0x%x)",
+             rateHz, kr == kIOReturnSuccess ? "committed" : "FAILED", kr);
+    return kr;
+}
+
+kern_return_t ASFWAudioDevice::AbortDeviceConfigurationChange(
+    uint64_t change_action, OSObject* in_change_info) {
+    if (change_action == kConfigChangeActionExternalRateResync) {
+        if (ivars && ivars->driverIvars) {
+            ivars->driverIvars->device.pendingExternalRateHz.store(
+                0, std::memory_order_release);
+        }
+        ASFW_LOG(Audio,
+                 "ASFWAudioDevice: external rate resync aborted by host");
+    }
+    return super::AbortDeviceConfigurationChange(change_action, in_change_info);
 }

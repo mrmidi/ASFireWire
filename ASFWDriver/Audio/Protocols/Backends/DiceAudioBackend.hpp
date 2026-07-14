@@ -61,6 +61,11 @@ private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
     void HandleDeviceNotification(uint32_t bits) noexcept;
     void ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept;
+    // Blocking device-health read (dice queue only). Returns true ONLY when the device
+    // confirms a locked, healthy clock reference (sourceLocked && clockReferenceHealthy).
+    // Any read failure/timeout returns false so a possibly-needed recovery is never
+    // suppressed on missing evidence.
+    [[nodiscard]] bool DeviceReportsHealthyClock(uint64_t guid) noexcept;
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
     static void NotificationObserverThunk(void* context, uint32_t bits) noexcept;

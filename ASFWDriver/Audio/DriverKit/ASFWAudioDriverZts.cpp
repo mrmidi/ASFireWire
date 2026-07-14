@@ -225,40 +225,51 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 break;
             }
 
-            if (!ivars.runtime.txReplayReader.IsActive() &&
-                !ivars.runtime.txReplayReader.Begin(
-                    directControl->rxSequenceReplay)) {
-                directControl->txReplayUnderflows.fetch_add(
-                    1, std::memory_order_relaxed);
-                failProducer(
-                    ASFW::IsochTransport::TxProducerStage::
-                        kReplayBegin,
-                    ASFW::IsochTransport::TxProducerFailureReason::
-                        kReplayUnavailable,
-                    ASFW::Audio::Runtime::FatalStreamReason::
-                        TxReplayUnavailable,
-                    nextPacketToPrepare);
-                break;
+            // A replay stall is transient, not fatal. RX bumps its replay epoch
+            // on every rebind/discontinuity (aggregate StartIO/StopIO churn, a
+            // packet gap), which invalidates the reader's epoch, and the reader
+            // can momentarily outrun the producer. Killing TX here would leave the
+            // stream permanently silent -- the timing-loss recovery is health-gated
+            // when the device clock is fine (see DiceAudioBackend), and even ungated
+            // a coordinator restart cannot re-prime TX. Instead, re-sync the reader
+            // to RX's current epoch and ship a NO-DATA (silence) packet for this
+            // slot; DATA replay resumes as soon as RX republishes kReadDelay
+            // entries. Persistent unavailability degrades to silence, which is the
+            // correct "nothing to send yet" state, not a stream death.
+            if (!ivars.runtime.txReplayReader.IsActive()) {
+                (void)ivars.runtime.txReplayReader.Begin(
+                    directControl->rxSequenceReplay);
             }
 
             ASFW::Audio::Runtime::RxSequenceEntry replay{};
-            if (!ivars.runtime.txReplayReader.TryRead(
+            if (ivars.runtime.txReplayReader.IsActive() &&
+                ivars.runtime.txReplayReader.TryRead(
                     directControl->rxSequenceReplay, replay)) {
+                directControl->txReplayEntries.fetch_add(
+                    1, std::memory_order_relaxed);
+                timing.replayDataBlocks = replay.dataBlocks;
+            } else {
+                // Reader stale (epoch moved) or ahead of the producer: count it,
+                // drop the reader so the next packet re-Begins on the live epoch,
+                // and fall through with the NO-DATA disposition set above. Also
+                // re-arm the frame-cursor alignment: while stalled we emit NO-DATA
+                // packets, which do NOT advance the content-frame cursor, so it
+                // freezes at its pre-stall frame while CoreAudio keeps writing. If
+                // the stall outlasts one playback ring the cursor is stranded on
+                // overwritten (silent) frames forever. Re-arming makes the first
+                // DATA packet after replay recovers re-project the cursor to the
+                // live frame, closing the gap. Only reached on a genuine replay
+                // stall (churn), never during normal cadence NO-DATA.
                 directControl->txReplayUnderflows.fetch_add(
                     1, std::memory_order_relaxed);
-                failProducer(
-                    ASFW::IsochTransport::TxProducerStage::
-                        kReplayRead,
-                    ASFW::IsochTransport::TxProducerFailureReason::
-                        kReplayUnavailable,
-                    ASFW::Audio::Runtime::FatalStreamReason::
-                        TxReplayUnavailable,
-                    nextPacketToPrepare);
-                break;
+                ivars.runtime.txReplayReader.Reset();
+                ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
+                if (ivars.runtime.txSecondaryActive) {
+                    ivars.runtime.txStreamEngineSecondary
+                        .ReArmFrameCursorAlignment();
+                }
+                timing.replayDataBlocks = 0;
             }
-            directControl->txReplayEntries.fetch_add(
-                1, std::memory_order_relaxed);
-            timing.replayDataBlocks = replay.dataBlocks;
 
             if (replay.dataBlocks != 0) {
                 if (replay.sytOffset ==
@@ -343,24 +354,42 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         outputPresentationTicks,
                         sourcePresentationTicks);
                 if (presentationDeltaTicks >= 0) {
-                    constexpr uint32_t kFramesPerPacket =
-                        ASFW::IsochTransport::
-                            AudioTimingGeometry::
-                                kFramesPerDataPacket;
+                    // ticks -> frames at the live rate. 44.1k has no integer
+                    // ticks/sample (24576000/44100 ~= 557.28), so divide the
+                    // tick*rate product instead of dividing by a per-sample
+                    // constant (the old /512 overshot ~8.8% at 44.1k).
+                    const auto& txConfig =
+                        ivars.runtime.txStreamEngine.StreamConfig();
+                    const uint32_t kFramesPerPacket =
+                        txConfig.framesPerDataPacket;
                     const uint64_t projectedFrame =
                         replay.firstAudioFrame +
-                        static_cast<uint64_t>(
-                            presentationDeltaTicks /
-                            ASFW::Timing::
-                                kTicksPerSample48k);
+                        (static_cast<uint64_t>(presentationDeltaTicks) *
+                         txConfig.sampleRate) /
+                            ASFW::Timing::kTicksPerSecond;
                     const uint64_t alignedFrame =
                         (projectedFrame / kFramesPerPacket) *
                         kFramesPerPacket;
-                    (void)ivars.runtime.txStreamEngine
-                        .AlignFrameCursorOnce(alignedFrame);
+                    const bool aligned =
+                        ivars.runtime.txStreamEngine
+                            .AlignFrameCursorOnce(alignedFrame);
                     if (ivars.runtime.txSecondaryActive) {
                         (void)ivars.runtime.txStreamEngineSecondary
                             .AlignFrameCursorOnce(alignedFrame);
+                    }
+                    // Fires once at stream start, then again each time replay
+                    // recovers after a stall re-armed the cursor. A 2nd+ line is
+                    // the self-heal closing a deficit that would otherwise be
+                    // permanent silence; anomaly-only, so a clean run prints one.
+                    if (aligned) {
+                        ASFW_LOG(DirectAudio,
+                                 "[TxAlign] frame cursor -> %llu (projected=%llu "
+                                 "rxFirstFrame=%llu deltaTicks=%lld rate=%u)",
+                                 alignedFrame,
+                                 projectedFrame,
+                                 replay.firstAudioFrame,
+                                 static_cast<long long>(presentationDeltaTicks),
+                                 txConfig.sampleRate);
                     }
                 }
             }

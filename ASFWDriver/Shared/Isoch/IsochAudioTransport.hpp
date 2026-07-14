@@ -350,6 +350,27 @@ struct TxStreamControl final {
                                             ///< (end-exclusive absolute index).
     TxProducerFailureSnapshot producerFailure{};
 
+    // Clears all runtime progress cursors to a clean pre-start state while
+    // preserving the core-written geometry (numSlots, strides, ABI). The shared
+    // buffer is not guaranteed to be freshly zeroed across StartIO/StopIO cycles
+    // (CoreAudio re-probes a device on a sample-rate change, reusing the slab),
+    // so without this exposeCursor/completionCursor carry over and the IT prime
+    // fails ("committed prefill > slots"). The producer owns this reset; it runs
+    // in StartIO before the prefill and before the transport consumer arms.
+    void ResetForStart() noexcept {
+        startCycleMatch.store(0, std::memory_order_relaxed);
+        startFirstPacketIndex.store(0, std::memory_order_relaxed);
+        completionCursor.store(0, std::memory_order_relaxed);
+        completionStampCount.store(0, std::memory_order_relaxed);
+        preparationRequestGeneration.store(0, std::memory_order_relaxed);
+        preparationHandledGeneration.store(0, std::memory_order_relaxed);
+        preparationRequestHostTicks.store(0, std::memory_order_relaxed);
+        preparationRequestCount.store(0, std::memory_order_relaxed);
+        preparationCoalescedCount.store(0, std::memory_order_relaxed);
+        producerFailure.Reset();
+        exposeCursor.store(0, std::memory_order_release);
+    }
+
     void MarkPreparationHandled(uint64_t generation) noexcept {
         uint64_t handled =
             preparationHandledGeneration.load(std::memory_order_relaxed);

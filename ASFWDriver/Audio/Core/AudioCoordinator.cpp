@@ -304,6 +304,9 @@ IOReturn AudioCoordinator::RequestClockConfig(
 
     const auto* record = registry_.FindByGuid(guid);
     if (!record) {
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: RequestDiceClockConfig no registry record for GUID=0x%016llx (device not registered yet?)",
+                         guid);
         return kIOReturnNotReady;
     }
 
@@ -319,6 +322,14 @@ IOReturn AudioCoordinator::RequestClockConfig(
                        guid,
                        kr);
         return kr;
+    }
+
+    // Keep the endpoint's clock in step with the new device rate so the next
+    // StartIO seeds the direct-binding/ZTS clock at the live rate. Without this
+    // the binding stays at the publish-time rate (48 kHz) while the device runs
+    // 44.1 kHz, and CoreAudio churns StartIO/StopIO on the clock mismatch.
+    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+        endpoint->SetCurrentSampleRate(desiredClock.sampleRateHz);
     }
 
     ASFW_LOG(Audio,

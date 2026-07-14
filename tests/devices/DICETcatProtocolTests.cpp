@@ -260,15 +260,26 @@ TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     EXPECT_EQ(bus.lockCount, 0);
 }
 
-TEST(DICETcatProtocolTests, Neutral48kClockRequestMapsToDiceClockSelectInsideAdapter) {
+TEST(DICETcatProtocolTests, NeutralClockRequestMapsToDiceClockSelectInsideAdapter) {
     DiceClockConfiguration mapped{};
     EXPECT_TRUE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::MakeDiceClockConfiguration(
         AudioClockConfig{.sampleRateHz = 48000U}, mapped));
     EXPECT_EQ(mapped.sampleRateHz, 48000U);
     EXPECT_EQ(mapped.clockSelect, kClockSelect48kInternal);
 
-    EXPECT_FALSE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::MakeDiceClockConfiguration(
+    // Validated 1x rates map to their CLOCK_SELECT encoding (rate index << 8 |
+    // internal source).
+    EXPECT_TRUE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::MakeDiceClockConfiguration(
         AudioClockConfig{.sampleRateHz = 44100U}, mapped));
+    EXPECT_EQ(mapped.sampleRateHz, 44100U);
+    EXPECT_EQ(mapped.clockSelect,
+              (ASFW::Audio::DICE::ClockRateIndex::k44100
+               << ASFW::Audio::DICE::ClockSelect::kRateShift) |
+                  static_cast<uint32_t>(ClockSource::Internal));
+
+    // 2x/4x rates stay rejected until the stream geometry is HW-validated.
+    EXPECT_FALSE(ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::MakeDiceClockConfiguration(
+        AudioClockConfig{.sampleRateHz = 96000U}, mapped));
 }
 
 TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {

@@ -34,10 +34,10 @@ namespace {
 using ASFW::IsochTransport::AudioTimingGeometry;
 using ASFW::IsochTransport::ExpectedCommitGen;
 
-constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 384
+constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 408
 constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 48
 constexpr uint32_t kCoverageLead = AudioTimingGeometry::kTxCoverageLeadPackets; // 144
-constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 336
+constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 360
 constexpr uint32_t kGroup = AudioTimingGeometry::kTxPacketsPerGroup;          // 6
 
 // The historical pre-fix lead (slack == 2*group) the hardware IT FATAL was

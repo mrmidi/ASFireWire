@@ -16,8 +16,6 @@ namespace ASFW::Driver {
 class RxSytCadence final {
 public:
     static constexpr uint16_t kNoInfo = 0xFFFF;
-    static constexpr uint16_t kNominalStepTicks48k =
-        static_cast<uint16_t>(ASFW::Timing::kSytPacketStepTicks48k);
     static constexpr uint32_t kEntryCount = 512;
     static constexpr uint32_t kReadDelay = kEntryCount / 2;
     static constexpr uint32_t kWarmupUpdates = kEntryCount + 1;
@@ -57,10 +55,16 @@ public:
         BeginWrite();
 
         const uint16_t previous = previousSyt_.load(std::memory_order_relaxed);
-        int64_t delta = kNominalStepTicks48k;
-        if (previous != kNoInfo) {
-            delta = ASFW::Timing::SYTDiffInOffsets(syt, previous);
+        if (previous == kNoInfo) {
+            // First SYT of a chain (start, or restart after an invalid delta)
+            // only seeds previousSyt_. Recording a synthetic nominal delta
+            // would bias the ring at any rate whose real step differs from
+            // the seed constant (48k = 4096 ticks vs 44.1k = 4458/4459).
+            previousSyt_.store(syt, std::memory_order_relaxed);
+            EndWrite();
+            return true;
         }
+        const int64_t delta = ASFW::Timing::SYTDiffInOffsets(syt, previous);
         if (delta <= 0 || delta > UINT16_MAX) {
             previousSyt_.store(kNoInfo, std::memory_order_relaxed);
             EndWrite();

@@ -26,9 +26,11 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOKitKeys.h>
+#include <DriverKit/IOTimerDispatchSource.h>
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSNumber.h>
 
+#include "../Common/TimingUtils.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/SBP2/SCSICommandSet.hpp"
 #include "SBP2BridgeHub.hpp"
@@ -71,6 +73,12 @@ struct HeldInquiry {
 struct PendingState {
     IOLock* lock;
     HeldInquiry inquiry;
+    // Set when a held INQUIRY expired without login. Later pre-login INQUIRYs
+    // then answer BUSY immediately instead of re-holding: the SAM retries the
+    // probe a few times, and each re-hold would stack another full hold window
+    // onto a nub that has been busy since boot — back into the 60 s panic.
+    // Cleared on the next login-up notification.
+    bool loginWindowExpired;
 };
 
 // Must match UserGetDMASpecification's maxTransferSize. Sized as a permissive
@@ -82,6 +90,13 @@ constexpr uint64_t kMaxTransferPerTask = 1u * 1024u * 1024u;
 // scanner mechanics in general (SCAN, autofocus run tens of seconds) — not tuned
 // to a specific model.
 constexpr uint32_t kDefaultTaskTimeoutMs = 60'000;
+
+// Upper bound on how long a pre-login probe INQUIRY may be held. The kernel
+// probe path has no timeout of its own and blocks the nub's IOConfigThread;
+// the registry busy-timeout panics at 60 s of sustained busy (IOService.cpp:
+// 5986). 20 s spans a normal login (~2-5 s) plus bus-reset retries while
+// leaving ample headroom before the panic.
+constexpr uint64_t kHeldInquiryMaxHoldNs = 20'000'000'000ull;
 
 // Map an SBP-2 command result onto the SAM response. Synthetic
 // kIOReturnNotReady (bridge accepted the task but the session dropped out
@@ -134,12 +149,30 @@ bool TryHoldInquiry(PendingState* ps, const HeldInquiry& held) {
         return false;
     }
     IOLockLock(ps->lock);
-    const bool slotFree = !ps->inquiry.inUse;
+    const bool slotFree = !ps->inquiry.inUse && !ps->loginWindowExpired;
     if (slotFree) {
         ps->inquiry = held;
     }
     IOLockUnlock(ps->lock);
     return slotFree;
+}
+
+void MarkLoginWindowExpired(PendingState* ps) {
+    if (ps == nullptr || ps->lock == nullptr) {
+        return;
+    }
+    IOLockLock(ps->lock);
+    ps->loginWindowExpired = true;
+    IOLockUnlock(ps->lock);
+}
+
+void ClearLoginWindowExpired(PendingState* ps) {
+    if (ps == nullptr || ps->lock == nullptr) {
+        return;
+    }
+    IOLockLock(ps->lock);
+    ps->loginWindowExpired = false;
+    IOLockUnlock(ps->lock);
 }
 
 // Take ownership of the held INQUIRY (if any). Exactly one caller wins; the
@@ -261,6 +294,11 @@ void ASFWSCSIController::free()
         IOSafeDeleteNULL(ps, PendingState, 1);
         ivars->pendingState = nullptr;
     }
+    if (ivars != nullptr) {
+        // Backstop for a Start that failed before Stop could run.
+        OSSafeReleaseNULL(ivars->holdTimerAction);
+        OSSafeReleaseNULL(ivars->holdTimer);
+    }
     IOSafeDeleteNULL(ivars, ASFWSCSIController_IVars, 1);
     super::free();
 }
@@ -283,6 +321,27 @@ kern_return_t IMPL(ASFWSCSIController, Start)
         ASFW_LOG(Controller, "[SCSIHBA] SetDispatchQueue(AuxiliaryQueue) failed: 0x%x", ret);
         return ret;
     }
+    // The hold-bound timer must exist before the framework can probe target 0
+    // (a held INQUIRY without it can wedge the nub's IOConfigThread past the
+    // 60 s registry busy timeout). Created on the aux queue so the expiry
+    // handler serializes with the login drain and the Stop flush barrier.
+    ret = IOTimerDispatchSource::Create(ivars->auxQueue, &ivars->holdTimer);
+    if (ret != kIOReturnSuccess || ivars->holdTimer == nullptr) {
+        ASFW_LOG(Controller, "[SCSIHBA] hold timer create failed: 0x%x", ret);
+        return ret != kIOReturnSuccess ? ret : kIOReturnError;
+    }
+    ret = CreateActionHeldInquiryTimerFired(0, &ivars->holdTimerAction);
+    if (ret != kIOReturnSuccess || ivars->holdTimerAction == nullptr) {
+        ASFW_LOG(Controller, "[SCSIHBA] hold timer action create failed: 0x%x", ret);
+        return ret != kIOReturnSuccess ? ret : kIOReturnError;
+    }
+    ret = ivars->holdTimer->SetHandler(ivars->holdTimerAction);
+    if (ret != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "[SCSIHBA] hold timer SetHandler failed: 0x%x", ret);
+        return ret;
+    }
+    (void)ivars->holdTimer->SetEnableWithCompletion(true, nullptr);
+
     ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[SCSIHBA] super::Start failed: 0x%x", ret);
@@ -303,8 +362,10 @@ kern_return_t IMPL(ASFWSCSIController, Start)
         }
         this->retain();
         ivars->auxQueue->DispatchAsync(^{
+            auto* ps = static_cast<PendingState*>(ivars->pendingState);
+            ClearLoginWindowExpired(ps);
             HeldInquiry held{};
-            if (ExtractHeldInquiry(static_cast<PendingState*>(ivars->pendingState), &held)) {
+            if (ExtractHeldInquiry(ps, &held)) {
                 ASFW_LOG(Controller, "[SCSIHBA] replaying held INQUIRY after login");
                 SubmitHeldInquiry(this, held);
             }
@@ -312,6 +373,28 @@ kern_return_t IMPL(ASFWSCSIController, Start)
         });
     });
     return kIOReturnSuccess;
+}
+
+void ASFWSCSIController::HeldInquiryTimerFired_Impl(
+    ASFWSCSIController_HeldInquiryTimerFired_Args)
+{
+    (void)action;
+    (void)time;
+    if (ivars == nullptr) {
+        return;
+    }
+    auto* ps = static_cast<PendingState*>(ivars->pendingState);
+    HeldInquiry held{};
+    if (ExtractHeldInquiry(ps, &held)) {
+        // Login never arrived. Refuse further holds until it does (the SAM's
+        // probe retries would otherwise stack fresh hold windows onto a nub
+        // that has been busy since boot) and fail the probe with BUSY.
+        MarkLoginWindowExpired(ps);
+        ASFW_LOG(Controller,
+                 "[SCSIHBA] held INQUIRY expired without SBP-2 login → BUSY "
+                 "(further pre-login INQUIRYs answer BUSY until login)");
+        CompleteHeldInquiryBusy(this, held);
+    }
 }
 
 kern_return_t IMPL(ASFWSCSIController, Stop)
@@ -332,6 +415,28 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
                 CompleteHeldInquiryBusy(this, held);
             }
         });
+        if (ivars->holdTimer != nullptr) {
+            // Same ordering rule as InterruptManager::Teardown: the final
+            // releases ride in the cancel completion, so the kernel-side free
+            // cannot land while a fire is still in flight.
+            IOTimerDispatchSource* timer = ivars->holdTimer;
+            OSAction* timerAction = ivars->holdTimerAction;
+            ivars->holdTimer = nullptr;
+            ivars->holdTimerAction = nullptr;
+            timer->SetEnableWithCompletion(false, nullptr);
+            const kern_return_t ckr = timer->Cancel(^{
+                if (timerAction != nullptr) {
+                    timerAction->release();
+                }
+                timer->release();
+            });
+            if (ckr != kIOReturnSuccess) {
+                if (timerAction != nullptr) {
+                    timerAction->release();
+                }
+                timer->release();
+            }
+        }
         OSSafeReleaseNULL(ivars->auxQueue);
     }
     // No UserDestroyTargetForID: target 0 is framework-auto-created (presence
@@ -612,10 +717,21 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
                 completion->retain();
                 if (TryHoldInquiry(static_cast<PendingState*>(ivars->pendingState), held)) {
                     ASFW_LOG(Controller, "[SCSIHBA] INQUIRY deferred until SBP-2 login");
+                    // Bound the hold: the kernel probe blocks the nub's
+                    // IOConfigThread with no timeout of its own, and the
+                    // registry panics at 60 s of sustained busy.
+                    if (ivars->holdTimer != nullptr) {
+                        (void)ASFW::Timing::initializeHostTimebase();
+                        const uint64_t deadline =
+                            mach_absolute_time() +
+                            ASFW::Timing::nanosToHostTicks(kHeldInquiryMaxHoldNs);
+                        (void)ivars->holdTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
+                                                           deadline, 0);
+                    }
                     if (response != nullptr) {
                         *response = kIOReturnSuccess;
                     }
-                    return kIOReturnSuccess;  // completion fires on drain/flush
+                    return kIOReturnSuccess;  // completion fires on drain/flush/expiry
                 }
                 // Slot already occupied — undo the retain, fall through to BUSY.
                 completion->release();

@@ -959,6 +959,33 @@ TEST_F(AudioDuplexCoordinatorTests, LockLossRecoveryRestartsRunningSession) {
     EXPECT_EQ(calls[3], "device.prepare");
 }
 
+TEST_F(AudioDuplexCoordinatorTests, ClockOperationInFlightTracksHostInitiatedChanges) {
+    // Idle, streaming steady-state, and post-change steady-state must all read "not in
+    // flight" — health probes use this to tell a genuine device-initiated clock move from
+    // the echo of the host's own change (the Logic rate-switch feedback loop).
+    EXPECT_FALSE(coordinator_.IsOperationInFlight(kTestGuid));
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_FALSE(coordinator_.IsOperationInFlight(kTestGuid));
+
+    protocol_->SetHoldPrepare(true);
+    std::promise<IOReturn> requestPromise;
+    std::future<IOReturn> requestFuture = requestPromise.get_future();
+    std::thread requestThread([&] {
+        requestPromise.set_value(coordinator_.RequestClockConfig(
+            kTestGuid, kSupportedClock, DiceRestartReason::kSampleRateChange));
+    });
+
+    ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(2));
+    EXPECT_TRUE(coordinator_.IsOperationInFlight(kTestGuid));
+
+    protocol_->SetHoldPrepare(false);
+    EXPECT_EQ(requestFuture.get(), kIOReturnSuccess);
+    requestThread.join();
+
+    EXPECT_FALSE(coordinator_.IsOperationInFlight(kTestGuid));
+}
+
 TEST_F(AudioDuplexCoordinatorTests, LatestPendingClockRequestWinsDuringRestart) {
     ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
     protocol_->SetHoldPrepare(true);
@@ -1126,8 +1153,11 @@ TEST_F(AudioDuplexCoordinatorTests, ProgramRxFailureRollsBackHostAndDeviceInOrde
 }
 
 TEST_F(AudioDuplexCoordinatorTests, UnsupportedClockConfigFailsBeforeHostAllocation) {
+    // 2x/4x rates are not yet validated end-to-end and must be rejected before
+    // any host allocation. (44.1 kHz is a supported 1x rate as of the dynamic
+    // sample-rate work.)
     const AudioClockConfig unsupportedClock{
-        .sampleRateHz = 44100U,
+        .sampleRateHz = 96000U,
     };
 
     EXPECT_EQ(coordinator_.RequestClockConfig(kTestGuid, unsupportedClock,

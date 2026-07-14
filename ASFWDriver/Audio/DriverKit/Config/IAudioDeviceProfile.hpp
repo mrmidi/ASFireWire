@@ -8,6 +8,7 @@
 
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include <cstdint>
+#include <vector>
 
 namespace ASFW::Isoch::Audio {
 
@@ -58,6 +59,12 @@ public:
 
     /// Returns the reported receive latency in frames for a given sample rate.
     [[nodiscard]] virtual uint32_t RxReportedLatencyFrames(double sampleRate) const noexcept = 0;
+
+    /// Sample rates advertised to CoreAudio. Default is a single 48 kHz; profiles
+    /// override to expose the device's supported set (DICE decodes CLOCKCAPABILITIES).
+    [[nodiscard]] virtual std::vector<uint32_t> SupportedSampleRates() const {
+        return {48000u};
+    }
 
     /// IEC 61883-6 presentation delay removed from received SYT before replay.
     [[nodiscard]] virtual uint32_t RxTransferDelayTicks(double sampleRate) const noexcept {

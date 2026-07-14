@@ -102,6 +102,25 @@ struct ASFWAudioDevice {
         properties->setObject(PropertyKeys::kOutputPlugName, outputPlugNameStr.get());
         properties->setObject(PropertyKeys::kCurrentSampleRate, currentRateNum.get());
 
+        // Sample rates advertised to CoreAudio. The HAL builds a stream format
+        // per entry (ASFWAudioDriverGraph), so this is what the user can select.
+        if (!sampleRates.empty()) {
+            auto rateArray = OSSharedPtr(OSArray::withCapacity(
+                static_cast<uint32_t>(sampleRates.size())), OSNoRetain);
+            if (rateArray) {
+                for (uint32_t hz : sampleRates) {
+                    auto n = OSSharedPtr(OSNumber::withNumber(hz, 32), OSNoRetain);
+                    if (n) {
+                        rateArray->setObject(n.get());
+                    }
+                }
+                properties->setObject(PropertyKeys::kSampleRates, rateArray.get());
+            }
+        }
+        if (auto curRate = OSSharedPtr(OSNumber::withNumber(currentSampleRate, 32), OSNoRetain)) {
+            properties->setObject(PropertyKeys::kCurrentSampleRate, curRate.get());
+        }
+
         // Per-channel device labels (optional). The audio side reads these in
         // channel order and prefers them over synthesized names.
         PublishChannelNames(properties, PropertyKeys::kInputChannelNames, inputChannelNames);

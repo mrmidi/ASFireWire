@@ -49,7 +49,7 @@ void ServiceContext::DisarmProviderNotifications() {
 #endif
 }
 
-void ServiceContext::Reset() {
+void ServiceContext::Reset(ResetMode mode) {
     stopping.store(true, std::memory_order_release);
     if (audioCoordinator) {
         audioCoordinator->BeginTeardown();
@@ -79,7 +79,9 @@ void ServiceContext::Reset() {
     deps.stateMachine.reset();
     deps.configRom.reset();
     deps.configRomStager.reset();
-    deps.interrupts.reset();
+    if (mode == ResetMode::Full) {
+        deps.interrupts.reset(); // ~InterruptManager cancels the dispatch source
+    }
     deps.topology.reset();
     deps.topologyMapService.reset();
     deps.busManagerElectionDriver.reset();
@@ -95,8 +97,10 @@ void ServiceContext::Reset() {
     statusPublisher.Reset();
     watchdog.Reset();
     DisarmProviderNotifications();
-    workQueue.reset();
-    interruptAction.reset();
+    if (mode == ResetMode::Full) {
+        workQueue.reset();
+        interruptAction.reset();
+    }
 }
 
 namespace ASFW::Driver {
@@ -275,30 +279,41 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
         return kIOReturnBadArgument;
     }
 
-    auto pci = OSDynamicCast(IOPCIDevice, provider);
-    if (!pci) {
-        return kIOReturnBadArgument;
-    }
-
-    auto status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
-    if (status != kIOReturnSuccess) {
-        status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessaged, 1, 1, 0);
-        if (status != kIOReturnSuccess) {
-            return status;
-        }
-    }
-
-    OSAction* action = nullptr;
-    auto kr = service.CreateActionInterruptOccurred(0, &action);
-    if (kr != kIOReturnSuccess || !action)
-        return kr != kIOReturnSuccess ? kr : kIOReturnError;
-    ctx.interruptAction = OSSharedPtr(action, OSNoRetain);
     auto intrMgr = ctx.deps.interrupts;
     if (!intrMgr) {
         return kIOReturnNoResources;
     }
 
-    kr = intrMgr->Initialise(provider, ctx.workQueue, ctx.interruptAction);
+    // MSI configuration happens once per provider lifetime, only before the
+    // dispatch source exists. The source survives suspend/rebuild (see
+    // ServiceContext::ResetMode): re-running ConfigureInterrupts or creating a
+    // second source would re-register the same interrupt vector while the old
+    // registration is still live, and the eventual double-unregister panics
+    // the kernel on a shared interrupt controller.
+    if (!intrMgr->HasSource()) {
+        auto pci = OSDynamicCast(IOPCIDevice, provider);
+        if (!pci) {
+            return kIOReturnBadArgument;
+        }
+
+        auto status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
+        if (status != kIOReturnSuccess) {
+            status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessaged, 1, 1, 0);
+            if (status != kIOReturnSuccess) {
+                return status;
+            }
+        }
+    }
+
+    if (!ctx.interruptAction) {
+        OSAction* action = nullptr;
+        auto kr = service.CreateActionInterruptOccurred(0, &action);
+        if (kr != kIOReturnSuccess || !action)
+            return kr != kIOReturnSuccess ? kr : kIOReturnError;
+        ctx.interruptAction = OSSharedPtr(action, OSNoRetain);
+    }
+
+    auto kr = intrMgr->Initialise(provider, ctx.workQueue, ctx.interruptAction);
     if (kr != kIOReturnSuccess) {
         ctx.interruptAction.reset();
         return kr;

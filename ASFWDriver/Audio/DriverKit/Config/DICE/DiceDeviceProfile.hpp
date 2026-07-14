@@ -11,6 +11,7 @@
 #include "Isoch/DiceStreamConfig.hpp"
 
 #include <cstdint>
+#include <vector>
 
 namespace ASFW::Isoch::Audio::DICE {
 
@@ -42,6 +43,14 @@ public:
     /// (Venice F32 = 2×16) overrides these; single-stream devices keep 1.
     [[nodiscard]] virtual uint32_t TxStreamCount() const noexcept { return 1; }
     [[nodiscard]] virtual uint32_t RxStreamCount() const noexcept { return 1; }
+
+    /// Sample rates advertised to CoreAudio. Default is the universal DICE 1x
+    /// baseline (44.1/48 kHz); 2x/4x are omitted until their stream geometry is
+    /// verified end-to-end (see kDiceMaxSupportedRateHz). Profiles for devices
+    /// with a different 1x set may override.
+    [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override {
+        return {44100u, 48000u};
+    }
 
     // Default implementations mapping DICE structures to the unified IAudioDeviceProfile:
     [[nodiscard]] Encoding::AudioWireFormat TxWireFormat() const noexcept override {

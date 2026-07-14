@@ -95,6 +95,15 @@ private:
     bool initialized_{false};
     bool sectionsLoaded_{false};
 
+    // The user-selected device clock, remembered across StartIO cycles so the
+    // per-StartIO bring-up (PrepareDuplex48k) targets the live rate instead of a
+    // hardcoded 48 kHz. Updated whenever a real clock is applied (ApplyClockConfig
+    // for idle rate changes, PrepareDuplex for restarts). Default {0} means
+    // "nothing selected yet" → PrepareDuplex48k falls back to 48 kHz. Without this
+    // every StartIO rewrites CLOCK_SELECT back to 48 kHz and fights a 44.1 kHz
+    // selection, flapping the device PLL and starving audio.
+    AudioClockConfig selectedClock_{};
+
     std::atomic<uint32_t> runtimeSampleRateHz_{0};
     std::atomic<uint32_t> hostInputPcmChannels_{0};
     std::atomic<uint32_t> hostOutputPcmChannels_{0};

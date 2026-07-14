@@ -15,7 +15,7 @@
 namespace ASFW::Driver {
 
 InterruptManager::InterruptManager() = default;
-InterruptManager::~InterruptManager() = default;
+InterruptManager::~InterruptManager() { Teardown(); }
 
 kern_return_t InterruptManager::Initialise(IOService* owner,
                                            OSSharedPtr<IODispatchQueue> queue,
@@ -61,6 +61,44 @@ void InterruptManager::Disable() {
     if (source_) {
         source_->SetEnableWithCompletion(false, nullptr);
     }
+    // The manager (and its shadow mask) now survives suspend, but the silicon's
+    // IntMask does not — a stale shadow would make UnmaskInterrupts skip the
+    // hardware write after the wake re-init's soft reset.
+    shadowMask_.store(0, std::memory_order_release);
+}
+
+void InterruptManager::Teardown() {
+    if (!source_) {
+        queue_.reset();
+        handler_.reset();
+        return;
+    }
+
+    source_->SetEnableWithCompletion(false, nullptr);
+
+    // The kernel-side source performs IOService::unregisterInterrupt in its
+    // free(), i.e. whenever the last reference drops. Hand the final references
+    // to the cancel completion so that free is ordered after cancellation
+    // instead of landing whenever the async release RPC is processed. (Releasing
+    // before the completion ran is the Cancel_Impl crash noted in
+    // WatchdogCoordinator::Stop; releasing without Cancel at all is the
+    // 2026-07-11 IOSharedInterruptController panic.)
+    IOInterruptDispatchSource* source = source_.detach();
+    OSAction* handler = handler_.detach();
+    const kern_return_t kr = source->Cancel(^{
+        if (handler) {
+            handler->release();
+        }
+        source->release();
+    });
+    if (kr != kIOReturnSuccess) {
+        // Completion will never run; fall back to direct release.
+        if (handler) {
+            handler->release();
+        }
+        source->release();
+    }
+    queue_.reset();
 }
 
 void InterruptManager::EnableInterrupts(uint32_t bits) {

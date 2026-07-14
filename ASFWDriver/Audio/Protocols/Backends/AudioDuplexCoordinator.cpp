@@ -405,6 +405,17 @@ AudioDuplexCoordinator::GetSession(uint64_t guid) const noexcept {
     return store_.GetSession(guid);
 }
 
+bool AudioDuplexCoordinator::IsOperationInFlight(uint64_t guid) const noexcept {
+    if (!lock_ || guid == 0) {
+        return false;
+    }
+    IOLockLock(lock_);
+    const bool inFlight =
+        gate_.IsActiveLocked(guid) || clockRequests_.HasPendingLocked(guid);
+    IOLockUnlock(lock_);
+    return inFlight;
+}
+
 IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     if (TeardownRequested()) {
         return kIOReturnAborted;
@@ -419,9 +430,22 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     }
 
     DuplexRestartSession session = LoadSession(guid);
-    const AudioClockConfig desiredClock{
+    // Honor a clock the user selected before streaming began. A rate pick while
+    // idle runs the idle clock-apply path, which persists the rate into
+    // desiredClock / appliedClock (NOT pendingClock) — so resolve all three,
+    // newest first, mirroring the bus-reset rebind path. Without this the start
+    // drops the selected rate and forces 48 kHz, leaving the device clocked at
+    // 48k while the host runs at the picked rate.
+    AudioClockConfig desiredClock{
         .sampleRateHz = 48000U,
     };
+    if (IsSupportedAudioClockConfig(session.pendingClock)) {
+        desiredClock = session.pendingClock;
+    } else if (IsSupportedAudioClockConfig(session.desiredClock)) {
+        desiredClock = session.desiredClock;
+    } else if (IsSupportedAudioClockConfig(session.appliedClock)) {
+        desiredClock = session.appliedClock;
+    }
     const DuplexRestartReason reason = HasRestartIntent(session)
                                          ? DICE::ClassifyRestartReason(&session, desiredClock)
                                          : DuplexRestartReason::kInitialStart;

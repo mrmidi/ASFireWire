@@ -988,8 +988,29 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOCompareSwap64UsesLockAn
 TEST(DICEDuplexBringupControllerTests, PrepareSequenceMatchesReferenceWindow) {
     DuplexRig rig;
     NotificationMailbox::Reset();
-    rig.bus.SetScript(ReferencePhase0ParityFixture::kPrepareExpectedRequests,
-                      ReferencePhase0ParityFixture::kPrepareResponseSteps);
+
+    // The reference trace always rewrites CLOCK_SELECT during prepare. ASFW
+    // intentionally deviates in two HW-validated ways (see
+    // DICEDuplexBringupController):
+    //  1. The CLOCK_SELECT write is skipped when the pre-claim global read
+    //     already reports the target clock (0x020C here) — rewriting it
+    //     re-triggers a PLL relock mid-bring-up and fights an idle rate change.
+    //  2. DoAwaitStreamingClockLock adds one extra global-state read between
+    //     clock-confirm and stream discovery so streams are never enabled on a
+    //     still-relocking clock.
+    // Net: the Write op is replaced by a second 380-byte global read, and that
+    // read consumes one extra scripted response reporting locked-at-target.
+    const auto& refRequests = ReferencePhase0ParityFixture::kPrepareExpectedRequests;
+    const auto& refResponses = ReferencePhase0ParityFixture::kPrepareResponseSteps;
+    std::vector<ExpectedRequest> requests(refRequests.begin(), refRequests.end());
+    ASSERT_GT(requests.size(), 7U);
+    ASSERT_EQ(requests[6].kind, OpKind::Write); // CLOCK_SELECT in the reference
+    requests[6] = requests[7];                  // becomes the await-lock global read
+    std::vector<ResponseStep> responses(refResponses.begin(), refResponses.end());
+    ASSERT_GT(responses.size(), 6U);
+    responses.insert(responses.begin() + 7, responses[6]); // second locked global read
+
+    rig.bus.SetScript(requests, responses);
 
     std::optional<IOReturn> startStatus;
     const AudioDuplexChannels channels{
@@ -1005,7 +1026,7 @@ TEST(DICEDuplexBringupControllerTests, PrepareSequenceMatchesReferenceWindow) {
     EXPECT_EQ(rig.bus.Owner(), 0xFFC0000100000000ULL);
     EXPECT_EQ(rig.bus.BandwidthAvailable(), 4019U);
     EXPECT_EQ(rig.bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
-    ExpectRequests(rig.bus.Operations(), ReferencePhase0ParityFixture::kPrepareExpectedRequests);
+    ExpectRequests(rig.bus.Operations(), requests);
     EXPECT_TRUE(rig.bus.ScriptConsumed());
 
     for (const auto& op : rig.bus.Operations()) {

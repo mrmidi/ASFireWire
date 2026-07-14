@@ -13,7 +13,8 @@ namespace ASFW::IsochTransport {
 //   ...Blocks   OHCI descriptor blocks (4 per TX packet, Z=4)
 //   ...Ticks    24.576 MHz FireWire ticks (3072/cycle)
 // Never compare a *Packets value to a *Frames value without an explicit
-// conversion (the cadence is the only bridge: 6 frames/packet average).
+// conversion (the cadence is the only bridge: 6 frames/packet average at 48k,
+// 5.5125 at 44.1k -- budgets use the worst case, kMinAvgCadence*).
 //
 // CURSOR MODEL (TX): three frame-domain cursors race --
 //   T hardware transmit pos,  W CoreAudio write frontier,  E exposure frontier.
@@ -33,6 +34,14 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kFramesPerDataPacket = 8;
     static constexpr uint32_t kCadenceBlockPackets = 4;
     static constexpr uint32_t kCadenceBlockFrames = 24;
+
+    // Worst-case average cadence across supported 1x rates: the 44.1k family
+    // carries 441 frames per 80 packets (5.5125 frames/packet average), fewer
+    // than 48k's 6. Packet budgets that must cover a frame requirement are
+    // sized with this ratio so they hold at every supported rate
+    // (tools/amdtp_blocking_cadence_sim.py, production wiring item 4).
+    static constexpr uint32_t kMinAvgCadencePackets = 80;
+    static constexpr uint32_t kMinAvgCadenceFrames = 441;
 
     // DMA completion cadence is deliberately independent from the HAL ZTS
     // grid. Six FireWire cycles give 0.75 ms refill latency. Depending on the
@@ -82,12 +91,18 @@ struct AudioTimingGeometry final {
     // once measured. Frames.
     static constexpr uint32_t kTxExposureLeadFrames =
         kHalIoPeriodFrames + kSchedulingJitterFrames;          // 512 + 64 = 576
-    // Packet lead deep enough to expose that many frames at the six-frame
-    // average cadence. ceil(576 / 6) = 96 packets.
+    // Packet lead deep enough to expose that many frames at the worst-case
+    // (44.1k) average cadence: ceil(576 / 5.5125) = 105 packets, rounded up
+    // to a whole interrupt group (108) so every budget derived from it keeps
+    // the group- and cadence-block-aligned ring-wrap asserts below.
+    static constexpr uint32_t kTxExposureLeadPacketsRaw =
+        (kTxExposureLeadFrames * kMinAvgCadencePackets +
+         kMinAvgCadenceFrames - 1) /
+        kMinAvgCadenceFrames;
     static constexpr uint32_t kTxExposureLeadPackets =
-        (kTxExposureLeadFrames * kCadenceBlockPackets +
-         kCadenceBlockFrames - 1) /
-        kCadenceBlockFrames;
+        ((kTxExposureLeadPacketsRaw + kTxPacketsPerGroup - 1) /
+         kTxPacketsPerGroup) *
+        kTxPacketsPerGroup;
 
     // Packet-domain TX ownership: 48 descriptors on hardware, plus two
     // independent producer budgets:
@@ -110,8 +125,9 @@ struct AudioTimingGeometry final {
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
     // Covers a full client write window plus the output exposure cushion when
     // the producer target is expressed as WriteEnd + kTxExposureLeadFrames.
-    // 2 * 96 packets = 1152 nominal frames, enough for 512 + 576 = 1088 frames
-    // while preserving cadence/group-friendly packet counts.
+    // 2 * 108 packets = 1190 worst-case (44.1k) frames, enough for
+    // 512 + 576 = 1088 frames while preserving cadence/group-friendly packet
+    // counts at every supported rate.
     static constexpr uint32_t kTxFrameExposureWindowPackets =
         2 * kTxExposureLeadPackets;
     static constexpr uint32_t kTxPreparationLeadPackets =
@@ -204,12 +220,12 @@ static_assert(AudioTimingGeometry::kTxExposureLeadPackets <=
                   AudioTimingGeometry::kTxSharedSlotPackets,
               "TX packet lead must be able to hold the required exposure frames");
 static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets *
-                  AudioTimingGeometry::kCadenceBlockFrames >=
+                  AudioTimingGeometry::kMinAvgCadenceFrames >=
               (AudioTimingGeometry::kHalIoPeriodFrames +
                AudioTimingGeometry::kTxExposureLeadFrames) *
-                  AudioTimingGeometry::kCadenceBlockPackets,
+                  AudioTimingGeometry::kMinAvgCadencePackets,
               "TX frame-exposure packet window must cover WriteEnd plus the "
-              "exposure cushion");
+              "exposure cushion at the worst-case (44.1k) cadence");
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
                   AudioTimingGeometry::kTimelineSlots,
               "shared packet ring must fit inside the timeline slot array");
