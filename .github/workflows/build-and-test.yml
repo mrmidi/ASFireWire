@@ -23,6 +23,21 @@ jobs:
         run: |
           gem install xcpretty
 
+      # ASFW.xcodeproj is generated from project.yml (XcodeGen) and committed.
+      # Fail if they drifted apart — someone edited project.yml or added source
+      # files without regenerating, or hand-edited the pbxproj. If this fails
+      # after an xcodegen version bump changed the output format, regenerate
+      # locally with the new version and commit.
+      - name: Verify ASFW.xcodeproj matches project.yml (XcodeGen)
+        run: |
+          brew install xcodegen
+          xcodegen --version
+          xcodegen generate --quiet
+          if ! git diff --exit-code --stat -- ASFW.xcodeproj project.yml; then
+            echo "::error::ASFW.xcodeproj is out of sync with project.yml. Run 'xcodegen generate' locally and commit the regenerated project (see README → Building)."
+            exit 1
+          fi
+
       - name: Install the Apple certificate and provisioning profile
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.CERT_BASE_64 }}
