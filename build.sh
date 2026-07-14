@@ -115,6 +115,14 @@ preflight() {
   # When running test-only we don't need xcodebuild or the Xcode project present.
   if ! $TEST_ONLY; then
     require_cmd xcodebuild
+    # The Xcode project is generated from project.yml (XcodeGen). Regenerate so
+    # source globs pick up added/removed files; output is deterministic, so this
+    # is a no-op when nothing changed. Falls through to the committed project
+    # when xcodegen isn't installed (e.g. CI runners).
+    if [[ -f "project.yml" ]] && command -v xcodegen >/dev/null 2>&1; then
+      log "Regenerating ${PROJECT_NAME}.xcodeproj from project.yml..."
+      xcodegen generate --quiet || { err "xcodegen generate failed"; exit 1; }
+    fi
     [[ -f "${PROJECT_NAME}.xcodeproj/project.pbxproj" ]] || { err "Run from project root (missing ${PROJECT_NAME}.xcodeproj)"; exit 1; }
   fi
   if $GENERATE_COMMANDS; then

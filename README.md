@@ -365,6 +365,24 @@ The driver is organized into functional subsystems:
 
 Build scripts or CMakeLists are for quick testing and creating compile_commands.json for static analysis tools. The proper way to build and sign the driver is via Xcode.
 
+### Xcode project is generated (XcodeGen)
+
+`ASFW.xcodeproj` is generated from the root [`project.yml`](project.yml) with
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+The generated project is committed, so plain checkouts (and CI) build without
+XcodeGen installed — but **never edit the pbxproj or project settings in the
+Xcode UI**; change `project.yml` instead.
+
+After **adding, removing, or renaming source files**, regenerate the project
+and commit it together with your change:
+
+```bash
+xcodegen generate     # ./build.sh does this automatically when xcodegen is installed
+```
+
+Output is deterministic — regenerating with no changes produces an identical
+pbxproj.
+
 NOTE: You need an Apple Developer account (paid) and appropriate entitlements — or a free account plus SIP disabled — to build/load the driver on your machine. See Apple's documentation for details: https://developer.apple.com/documentation/driverkit/debugging-and-testing-system-extensions
 
 Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build
