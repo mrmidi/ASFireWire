@@ -13,7 +13,7 @@
     "performanceAntipatternCheckerEnabled" : true,
     "targetForVariableExpansion" : {
       "containerPath" : "container:ASFW.xcodeproj",
-      "identifier" : "3A1693D72E808727000BD368",
+      "identifier" : "EE5A446B3669D0171F9606EE",
       "name" : "ASFW"
     }
   },
@@ -22,7 +22,7 @@
       "parallelizable" : true,
       "target" : {
         "containerPath" : "container:ASFW.xcodeproj",
-        "identifier" : "3AB4713E2EE31CF0003A4E2A",
+        "identifier" : "348672D607701677ABCB567C",
         "name" : "ASFWTests"
       }
     }
