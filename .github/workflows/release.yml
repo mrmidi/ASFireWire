@@ -27,7 +27,7 @@ jobs:
       CONFIGURATION: Release
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Show toolchain
         run: |
@@ -67,7 +67,7 @@ jobs:
           shasum -a 256 "$ZIP"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # No .zip suffix: artifact downloads are zip containers themselves,
           # so a .zip name would yield ASFW-x.zip.zip.
