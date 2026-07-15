@@ -219,7 +219,7 @@ void MusicSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> co
 
     // CRITICAL: Capture shared_ptr to AVCUnit to keep FCPTransport alive during async operations.
     // The DescriptorAccessor stores FCPTransport& as a reference, so the AVCUnit (which owns
-    // the FCPTransport via OSSharedPtr) must stay alive until all callbacks complete.
+    // the FCPTransport via shared_ptr) must stay alive until all callbacks complete.
     // Without this, the FCPTransport reference becomes dangling after OPEN completes but
     // before READ is issued, causing a null pointer crash in FCPTransport::SubmitCommand.
     auto unitPtr = unit.shared_from_this();

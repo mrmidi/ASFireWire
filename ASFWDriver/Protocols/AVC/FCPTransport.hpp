@@ -13,7 +13,6 @@
 #else
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
-#include <DriverKit/OSObject.h>
 #include <DriverKit/IODispatchQueue.h>
 #endif
 #include <array>
@@ -118,24 +117,15 @@ struct FCPTransportConfig {
 // FCP Transport
 //==============================================================================
 
-class FCPTransport : public OSObject {
-private:
-    using super = OSObject;
+class FCPTransport : public std::enable_shared_from_this<FCPTransport> {
 public:
     FCPTransport() = default;
-    virtual ~FCPTransport() = default;
+    ~FCPTransport();
 
-    void* operator new(size_t size) { return IOMallocZero(size); }
-    void operator delete(void* ptr, size_t size) { IOFree(ptr, size); }
-
-    virtual bool init() override { return super::init(); }
-
-    virtual bool init(Protocols::Ports::FireWireBusOps* busOps,
-                      Protocols::Ports::FireWireBusInfo* busInfo,
-                      Discovery::FWDevice* device,
-                      const FCPTransportConfig& config = {});
-
-    virtual void free() override;
+    bool init(Protocols::Ports::FireWireBusOps* busOps,
+              Protocols::Ports::FireWireBusInfo* busInfo,
+              Discovery::FWDevice* device,
+              const FCPTransportConfig& config = {});
 
     FCPTransport(const FCPTransport&) = delete;
     FCPTransport& operator=(const FCPTransport&) = delete;
@@ -187,7 +177,7 @@ private:
 
     Protocols::Ports::FireWireBusOps* busOps_{nullptr};
     Protocols::Ports::FireWireBusInfo* busInfo_{nullptr};
-    Discovery::FWDevice* device_;
+    Discovery::FWDevice* device_{nullptr};
     FCPTransportConfig config_;
 
     IOLock* lock_{nullptr};
@@ -196,8 +186,8 @@ private:
 
     uint64_t nextTimeoutToken_{0};
 
-    // Protected by lock_. Timeout and async-completion blocks retain this
-    // OSObject until they leave, so free() cannot race their callback target.
+    // Protected by lock_. Timeout and async-completion blocks capture shared
+    // ownership, so destruction cannot race their callback target.
     bool shuttingDown_{false};
 
     std::unique_ptr<OutstandingCommand> pending_;

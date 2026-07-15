@@ -135,7 +135,7 @@ private:
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
 
-    OSSharedPtr<FCPTransport> fcpTransport_;
+    std::shared_ptr<FCPTransport> fcpTransport_;
 
     std::shared_ptr<DescriptorAccessor> descriptorAccessor_;
 

@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <span>
+#include <type_traits>
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
@@ -19,6 +20,9 @@ using VendorCmdCode = ApogeeDuetProtocol::VendorCommand::Code;
 using DuetKnobState = KnobState;
 using DuetKnobTarget = KnobTarget;
 using DuetOutputMuteMode = OutputMuteMode;
+
+static_assert(!std::is_base_of_v<OSObject, ASFW::Protocols::AVC::FCPTransport>,
+              "FCPTransport is shared C++ state, not a DriverKit OSObject");
 
 // Constants from ApogeeDuetProtocol
 constexpr uint8_t kBoolOn = 0x70;
@@ -441,8 +445,8 @@ TEST(ApogeeDuetVendorCmd, BuildDisplayParamsQuery) {
 TEST(ApogeeDuetDuplexAdapter, Applies48kToOutputThenInputUnitPlugs) {
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
-    FCPTransport transport;
-    ApogeeDuetProtocol protocol(bus, bus, 2, &transport);
+    auto transport = std::make_shared<FCPTransport>();
+    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get());
     gSubmittedFCPFrames.clear();
 
     IOReturn completionStatus = kIOReturnNotReady;
@@ -491,7 +495,7 @@ bool FCPTransport::init(Protocols::Ports::FireWireBusOps*,
     return true;
 }
 
-void FCPTransport::free() {}
+FCPTransport::~FCPTransport() = default;
 
 void FCPTransport::Shutdown() {}
 

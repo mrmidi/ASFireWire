@@ -16,23 +16,13 @@
 using namespace ASFW::Protocols::AVC;
 
 //==============================================================================
-// Constructor / Destructor
-//==============================================================================
-
-// OSDefineMetaClassAndStructors(FCPTransport, OSObject);
-
-//==============================================================================
-// Init / Free
+// Init / Destruction
 //==============================================================================
 
 bool FCPTransport::init(Protocols::Ports::FireWireBusOps* busOps,
                         Protocols::Ports::FireWireBusInfo* busInfo,
                         Discovery::FWDevice* device,
                         const FCPTransportConfig& config) {
-    if (!OSObject::init()) {
-        return false;
-    }
-
     busOps_ = busOps;
     busInfo_ = busInfo;
     device_ = device;
@@ -70,7 +60,7 @@ bool FCPTransport::init(Protocols::Ports::FireWireBusOps* busOps,
     return true;
 }
 
-void FCPTransport::free() {
+FCPTransport::~FCPTransport() {
     Shutdown();
 
     // Release queue
@@ -83,8 +73,6 @@ void FCPTransport::free() {
     }
 
     ASFW_LOG_V1(FCP, "FCPTransport: Destroyed");
-    
-    OSObject::free();
 }
 
 //==============================================================================
@@ -198,19 +186,18 @@ ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame,
 
     IOLockUnlock(lock_);
 
-    // The async transaction owns a retain until it calls us back. Without it,
-    // a timeout cancellation can free FCPTransport while a callback still has
-    // its raw target pointer.
-    retain();
+    // The async transaction owns this transport until its callback leaves.
+    // FCPTransport is ordinary C++ state, not a DriverKit OSObject: using
+    // OSObject::retain() on a `new`-allocated instance is invalid.
+    const auto self = weak_from_this().lock();
+    if (!self) {
+        return Async::AsyncHandle{0};
+    }
     const auto handle = busOps_->WriteBlock(
         gen, node, addr, frame.Payload(), FW::FwSpeed::S100,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnAsyncWriteComplete(status, response);
-            release();
+        [self](Async::AsyncStatus status, std::span<const uint8_t> response) {
+            self->OnAsyncWriteComplete(status, response);
         });
-    if (!handle.value) {
-        release();
-    }
     return handle;
 }
 
@@ -456,33 +443,36 @@ void FCPTransport::ScheduleTimeout(uint32_t timeoutMs) {
 
     const uint64_t token = pending_->timeoutToken;
 
-    // Pair with release() on every exit. The queue can still be sleeping when
-    // AV/C discovery tears down, and that block must retain its callback
-    // target until it observes the shutdown token.
-    retain();
+    const auto self = weak_from_this().lock();
+    if (!self) {
+        return;
+    }
+
+    // The queue can still be sleeping when AV/C discovery tears down. Shared
+    // ownership keeps its callback target alive until it observes shutdown.
     queue->DispatchAsync(^{
-        IOLockLock(lock_);
-        bool stillPending = (!shuttingDown_ && pending_ && pending_->timeoutToken == token);
-        IOLockUnlock(lock_);
+        IOLockLock(self->lock_);
+        bool stillPending = (!self->shuttingDown_ && self->pending_ &&
+                             self->pending_->timeoutToken == token);
+        IOLockUnlock(self->lock_);
 
         if (!stillPending) {
-            release();
             return;
         }
 
         IOSleep(static_cast<uint64_t>(timeoutMs));
 
-        IOLockLock(lock_);
-        bool shouldFire = (!shuttingDown_ && pending_ && pending_->timeoutToken == token);
+        IOLockLock(self->lock_);
+        bool shouldFire = (!self->shuttingDown_ && self->pending_ &&
+                           self->pending_->timeoutToken == token);
         if (shouldFire) {
-            pending_->timeoutToken = 0;
+            self->pending_->timeoutToken = 0;
         }
-        IOLockUnlock(lock_);
+        IOLockUnlock(self->lock_);
 
         if (shouldFire) {
-            OnCommandTimeout();
+            self->OnCommandTimeout();
         }
-        release();
     });
 }
 
