@@ -37,8 +37,7 @@ RxPath::RxPath(ARRequestContext& arReqContext,
         });
 }
 
-void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress,
-                                  bool isRunning,
+void RxPath::ProcessARInterrupts(bool isRunning,
                                   Debug::BusResetPacketCapture* busResetCapture) {
     if (!isRunning) {
         return;
@@ -46,13 +45,14 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
 
     currentBusResetCapture_ = busResetCapture;
     ProcessRequestInterrupts();
-
-    if (is_bus_reset_in_progress.load(std::memory_order_acquire)) {
-        ASFW_LOG(Async, "RxPath: Skipping AR Response during bus reset");
-        currentBusResetCapture_ = nullptr;
-        return;
-    }
-
+    // AR Request and AR Response are persistent DMA streams. A bus reset
+    // invalidates transactions, but it does not make queued response packets
+    // disposable: leaving ARRsp undrained can exhaust its descriptor ring and
+    // make the link stop acknowledging later packets. The tracking layer has
+    // already canceled old-generation requests, so stale responses are safely
+    // ignored after they are drained. Cross-validated with Linux
+    // firewire-ohci/ohci.c:2241-2245, which schedules both AR contexts while
+    // processing the reset interrupt.
     ProcessResponseInterrupts(busResetCapture);
     currentBusResetCapture_ = nullptr;
 }

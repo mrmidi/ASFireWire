@@ -151,7 +151,8 @@ bool DuplexStartTransaction::IsRestartEpochCurrent(
     }
 
     const auto* liveRecord = dependencies_.registry.FindByGuid(guid);
-    return liveRecord != nullptr && liveRecord->gen == topologyGeneration;
+    return liveRecord != nullptr && liveRecord->gen == topologyGeneration &&
+           Discovery::TryOperationalNodeId(liveRecord->nodeId).has_value();
 }
 
 Runtime::IDirectAudioBindingSource* DuplexStartTransaction::GetDirectAudioBindingSource(
@@ -1587,7 +1588,7 @@ Discovery::DeviceRecord* AudioDuplexCoordinator::RequireDuplexRecord(
     outDeviceControl = nullptr;
     outHold.reset();
     auto* record = registry_.FindByGuid(guid);
-    if (!record) {
+    if (!record || !Discovery::TryOperationalNodeId(record->nodeId).has_value()) {
         return nullptr;
     }
 
@@ -1662,7 +1663,8 @@ bool AudioDuplexCoordinator::IsRestartEpochCurrent(
     }
 
     const auto* liveRecord = registry_.FindByGuid(guid);
-    if (!liveRecord || liveRecord->gen != topologyGeneration) {
+    if (!liveRecord || liveRecord->gen != topologyGeneration ||
+        !Discovery::TryOperationalNodeId(liveRecord->nodeId).has_value()) {
         return false;
     }
 

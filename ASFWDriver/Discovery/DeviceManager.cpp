@@ -355,6 +355,36 @@ void DeviceManager::MarkDeviceLost(Guid64 guid)
     IOLockUnlock(mutex_);
 }
 
+void DeviceManager::SuspendAllForBusReset()
+{
+    IOLockLock(mutex_);
+
+    size_t suspendedCount = 0;
+    for (const auto& entry : devicesByGuid_) {
+        const auto& device = entry.second;
+        if (!device || device->IsTerminated() || !device->IsReady()) {
+            continue;
+        }
+
+        device->Suspend();
+        ++suspendedCount;
+        NotifyDeviceSuspended(device);
+        for (const auto& unit : device->GetUnits()) {
+            if (unit && unit->IsSuspended()) {
+                NotifyUnitSuspended(unit);
+            }
+        }
+    }
+
+    // A reset invalidates all node IDs, including those whose numerical node
+    // number happens not to change after the topology is rediscovered.
+    genNodeToGuid_.clear();
+    missingScanCounts_.clear();
+    IOLockUnlock(mutex_);
+
+    ASFW_LOG(Discovery, "Bus reset: suspended %zu published devices pending discovery", suspendedCount);
+}
+
 void DeviceManager::TerminateDevice(Guid64 guid)
 {
     IOLockLock(mutex_);

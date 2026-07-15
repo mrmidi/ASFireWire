@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Discovery/DeviceManager.hpp"
+#include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/SBP2/SBP2ManagementORB.hpp"
 #include "ASFWDriver/Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "ASFWDriver/Protocols/SBP2/SCSICommandSet.hpp"
@@ -33,7 +34,9 @@ using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceKind;
 using ASFW::Discovery::DeviceManager;
 using ASFW::Discovery::DeviceRecord;
+using ASFW::Discovery::DeviceRegistry;
 using ASFW::Discovery::Generation;
+using ASFW::Discovery::kInvalidNodeId;
 using ASFW::Discovery::LifeState;
 using ASFW::Discovery::LinkPolicy;
 using ASFW::Discovery::RomEntry;
@@ -792,6 +795,49 @@ TEST(SessionRegistryTests, MissingDiscoveryStillTerminatesNonSBP2Device) {
     ASSERT_NE(nullptr, deviceManager.UpsertDevice(record, rom));
     deviceManager.MarkDeviceLost(record.guid);
     EXPECT_EQ(nullptr, deviceManager.GetDeviceByGUID(record.guid));
+}
+
+TEST(SessionRegistryTests, BusResetInvalidatesDeviceMappingsBeforeDiscoveryRebinds) {
+    SessionRegistryRig rig;
+    const auto original = rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid);
+    ASSERT_NE(nullptr, original);
+    ASSERT_TRUE(original->IsReady());
+    ASSERT_NE(nullptr, rig.deviceManager.GetDeviceByNode(Generation{1}, 0x32));
+
+    rig.deviceManager.SuspendAllForBusReset();
+
+    EXPECT_TRUE(original->IsSuspended());
+    EXPECT_EQ(kInvalidNodeId, original->GetNodeID());
+    EXPECT_TRUE(rig.deviceManager.GetReadyDevices().empty());
+    EXPECT_EQ(nullptr, rig.deviceManager.GetDeviceByNode(Generation{1}, 0x32));
+
+    rig.UpsertDevice(Generation{2}, 0x21);
+    const auto rebound = rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid);
+    ASSERT_NE(nullptr, rebound);
+    EXPECT_EQ(original.get(), rebound.get());
+    EXPECT_TRUE(rebound->IsReady());
+    EXPECT_EQ(Generation{2}, rebound->GetGeneration());
+    EXPECT_EQ(0x21, rebound->GetNodeID());
+    EXPECT_EQ(rebound, rig.deviceManager.GetDeviceByNode(Generation{2}, 0x21));
+}
+
+TEST(SessionRegistryTests, BusResetInvalidatesRegistryMappingUntilNewRom) {
+    DeviceRegistry registry;
+    ConfigROM rom{};
+    rom.bib.guid = SessionRegistryRig::kGuid;
+    rom.gen = Generation{1};
+    rom.nodeId = 0x32;
+
+    auto& record = registry.UpsertFromROM(rom, LinkPolicy{});
+    EXPECT_EQ(&record, registry.FindByNode(Generation{1}, 0x32));
+    ASSERT_EQ(1u, registry.LiveDevices(Generation{1}).size());
+
+    registry.InvalidateLiveMappingsForBusReset();
+
+    EXPECT_EQ(nullptr, registry.FindByNode(Generation{1}, 0x32));
+    ASSERT_NE(nullptr, registry.FindByGuid(SessionRegistryRig::kGuid));
+    EXPECT_EQ(kInvalidNodeId, registry.FindByGuid(SessionRegistryRig::kGuid)->nodeId);
+    EXPECT_TRUE(registry.LiveDevices(Generation{1}).empty());
 }
 
 TEST(SessionRegistryTests, SubmitCommandRejectsCDBLargerThanORBPayloadBudget) {

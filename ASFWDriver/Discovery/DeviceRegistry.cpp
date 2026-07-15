@@ -223,6 +223,24 @@ void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
     }
 }
 
+void DeviceRegistry::InvalidateLiveMappingsForBusReset() {
+    size_t invalidatedCount = 0;
+    for (auto& entry : devicesByGuid_) {
+        auto& device = entry.second;
+        if (!TryOperationalNodeId(device.nodeId).has_value()) {
+            continue;
+        }
+
+        device.nodeId = kInvalidNodeId;
+        ++invalidatedCount;
+    }
+
+    genNodeToGuid_.clear();
+    ASFW_LOG(Discovery,
+             "Bus reset: invalidated %zu live GUID-to-node mappings pending ROM rescan",
+             invalidatedCount);
+}
+
 DeviceRecord* DeviceRegistry::FindByGuid(Guid64 guid) {
     auto it = devicesByGuid_.find(guid);
     return (it != devicesByGuid_.end()) ? &it->second : nullptr;
@@ -256,8 +274,9 @@ const DeviceRecord* DeviceRegistry::FindByNode(Generation gen, uint8_t nodeId) c
 std::vector<DeviceRecord> DeviceRegistry::LiveDevices(Generation gen) const {
     std::vector<DeviceRecord> result;
     
-    for (const auto& [guid, device] : devicesByGuid_) {
-        if (device.gen == gen && device.nodeId != 0xFF) {
+    for (const auto& entry : devicesByGuid_) {
+        const auto& device = entry.second;
+        if (device.gen == gen && TryOperationalNodeId(device.nodeId).has_value()) {
             result.push_back(device);
         }
     }
