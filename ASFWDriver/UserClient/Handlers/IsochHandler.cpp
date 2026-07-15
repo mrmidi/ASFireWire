@@ -170,7 +170,8 @@ kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args
 
     auto* driver = driver_;
 
-    cmpClient->ConnectOPCR(kTestPlug, [driver](ASFW::CMP::CMPStatus status) {
+    constexpr uint8_t kTestChannel = 0;
+    cmpClient->ConnectOPCR(kTestPlug, kTestChannel, [driver](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) {
             ASFW_LOG(UserClient, "✅ CMP oPCR connect succeeded!");
 

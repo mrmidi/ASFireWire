@@ -125,6 +125,7 @@ public:
     void PrepareDuplex(const AudioDuplexChannels& channels,
                        const AudioClockConfig& desiredClock,
                        PrepareCallback callback) override;
+    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
     void ProgramRx(StageCallback callback) override;
     void ProgramTxAndEnableDuplex(StageCallback callback) override;
     void ConfirmDuplexStart(ConfirmCallback callback) override;
@@ -181,6 +182,11 @@ public:
 
     // Runtime integration hook. Not wired by factory yet.
     void SetFCPTransport(Protocols::AVC::FCPTransport* fcpTransport) noexcept {
+        // The cache describes commands accepted through one transport epoch;
+        // a replacement transport must re-establish the device formation.
+        if (fcpTransport_ != fcpTransport) {
+            clockConfigApplied_ = false;
+        }
         fcpTransport_ = fcpTransport;
     }
 
@@ -227,6 +233,7 @@ private:
     CMP::CMPClient* cmpClient_{nullptr};
     AudioDuplexChannels duplexChannels_{};
     AudioClockConfig appliedClock_{};
+    bool clockConfigApplied_{false};
     bool outputConnected_{false};
     bool inputConnected_{false};
 

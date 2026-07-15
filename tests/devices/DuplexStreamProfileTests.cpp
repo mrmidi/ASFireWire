@@ -18,6 +18,7 @@ using ASFW::Encoding::AudioWireFormat;
 
 TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe) {
     DeviceRecord record{};
+    record.link.localToNode = ASFW::FW::FwSpeed::S400;
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = 16,
         .hostOutputPcmChannels = 16,
@@ -40,8 +41,10 @@ TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe)
     EXPECT_EQ(profile.captureStreams[0].am824Slots, 17U);
     EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kAM824);
     EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kAM824);
-    EXPECT_EQ(profile.playbackBandwidthUnits, 320U);
-    EXPECT_EQ(profile.captureBandwidthUnits, 576U);
+    EXPECT_EQ(profile.playbackStreams[0].bandwidthUnits, 1076U);
+    EXPECT_EQ(profile.captureStreams[0].bandwidthUnits, 1076U);
+    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, uint64_t{1} << 0U);
+    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, uint64_t{1} << 1U);
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 2U);
     EXPECT_FALSE(profile.startOrder.startReceiveBeforeDeviceRx);
     EXPECT_FALSE(profile.startOrder.startTransmitBeforeDeviceTx);
@@ -70,16 +73,26 @@ TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeomet
     EXPECT_EQ(profile.captureStreams[0].am824Slots, 9U);
 }
 
-TEST(DuplexStreamProfileTests, ApogeeDuetPreservesLegacyChannelsAndCmpInterleave) {
+TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInterleave) {
     DeviceRecord record{
         .vendorId = kApogeeVendorId,
         .modelId = kApogeeDuetModelId,
     };
+    record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 2,
+        .hostOutputPcmChannels = 2,
+        .deviceToHostAm824Slots = 2,
+        .hostToDeviceAm824Slots = 2,
+        .sampleRateHz = 48000,
+    };
 
-    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, {});
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
 
-    EXPECT_EQ(profile.channels.deviceToHostIsoChannel, 0U);
-    EXPECT_EQ(profile.channels.hostToDeviceIsoChannel, 1U);
+    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.captureStreams[0].bandwidthUnits, 596U);
+    EXPECT_EQ(profile.playbackStreams[0].bandwidthUnits, 596U);
     EXPECT_TRUE(profile.startOrder.startReceiveBeforeDeviceRx);
     EXPECT_TRUE(profile.startOrder.startTransmitBeforeDeviceTx);
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);

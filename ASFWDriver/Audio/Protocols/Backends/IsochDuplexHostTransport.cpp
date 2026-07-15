@@ -21,15 +21,20 @@ kern_return_t IsochDuplexHostTransport::BeginSplitDuplex(uint64_t guid) noexcept
 
 kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(uint64_t guid,
                                                                ::ASFW::IRM::IRMClient& irmClient,
-                                                               uint8_t channel,
-                                                               uint32_t bandwidthUnits) noexcept {
-    const kern_return_t status =
-        reservations_.ReservePlayback(irmClient, channel, bandwidthUnits);
-    if (status != kIOReturnSuccess) {
-        return status;
+                                                               uint64_t allowedChannels,
+                                                               uint32_t bandwidthUnits,
+                                                               uint8_t& outChannel) noexcept {
+    // The IRM, not the device profile, chooses the live channel. A one-bit
+    // mask preserves DICE's device-assigned channels; OXFW supplies all usable
+    // channels and consumes the returned value for CMP + OHCI programming.
+    const Backends::IRMReservationResult reservation =
+        reservations_.ReserveAnyPlayback(irmClient, allowedChannels, bandwidthUnits);
+    if (reservation.status != kIOReturnSuccess) {
+        return reservation.status;
     }
+    outChannel = reservation.channel;
     const kern_return_t bookkeeping =
-        isoch_.ReservePlaybackResources(guid, irmClient, channel, bandwidthUnits);
+        isoch_.ReservePlaybackResources(guid, irmClient, outChannel, bandwidthUnits);
     if (bookkeeping != kIOReturnSuccess) {
         reservations_.ReleaseAll();
     }
@@ -38,15 +43,17 @@ kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(uint64_t guid,
 
 kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(uint64_t guid,
                                                               ::ASFW::IRM::IRMClient& irmClient,
-                                                              uint8_t channel,
-                                                              uint32_t bandwidthUnits) noexcept {
-    const kern_return_t status =
-        reservations_.ReserveCapture(irmClient, channel, bandwidthUnits);
-    if (status != kIOReturnSuccess) {
-        return status;
+                                                              uint64_t allowedChannels,
+                                                              uint32_t bandwidthUnits,
+                                                              uint8_t& outChannel) noexcept {
+    const Backends::IRMReservationResult reservation =
+        reservations_.ReserveAnyCapture(irmClient, allowedChannels, bandwidthUnits);
+    if (reservation.status != kIOReturnSuccess) {
+        return reservation.status;
     }
+    outChannel = reservation.channel;
     const kern_return_t bookkeeping =
-        isoch_.ReserveCaptureResources(guid, irmClient, channel, bandwidthUnits);
+        isoch_.ReserveCaptureResources(guid, irmClient, outChannel, bandwidthUnits);
     if (bookkeeping != kIOReturnSuccess) {
         reservations_.ReleaseAll();
     }

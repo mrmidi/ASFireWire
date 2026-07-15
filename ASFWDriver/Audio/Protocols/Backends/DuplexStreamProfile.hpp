@@ -7,6 +7,7 @@
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "../../../Discovery/DiscoveryTypes.hpp"
+#include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../AudioTypes.hpp"
 #include "../IDeviceProtocol.hpp"
@@ -46,13 +47,15 @@ struct DuplexStopOrderRecipe {
     bool disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive{false};
 };
 
-// Host receive geometry for one DICE TX stream. `pcmChannels == 0` preserves
-// the legacy single-stream full-width receive path.
+// Host receive geometry for one device-to-host stream. `pcmChannels == 0`
+// preserves the legacy single-stream full-width receive path.
 struct DuplexCaptureStreamGeometry {
     uint8_t isoChannel{AudioStreamWireInfo::kInvalidIsoChannel};
     uint32_t pcmChannelOffset{0};
     uint32_t pcmChannels{0};
     uint32_t am824Slots{0};
+    uint32_t bandwidthUnits{0};
+    uint64_t allowedIsoChannels{0};
 };
 
 // Retained even though the current host IT seam derives its own packet geometry:
@@ -61,6 +64,8 @@ struct DuplexPlaybackStreamGeometry {
     uint8_t isoChannel{AudioStreamWireInfo::kInvalidIsoChannel};
     uint32_t pcmChannels{0};
     uint32_t am824Slots{0};
+    uint32_t bandwidthUnits{0};
+    uint64_t allowedIsoChannels{0};
 };
 
 struct DuplexStreamProfile {
@@ -70,15 +75,14 @@ struct DuplexStreamProfile {
     std::array<DuplexPlaybackStreamGeometry, kMaxAudioStreamsPerDirection> playbackStreams{};
     Encoding::AudioWireFormat captureWireFormat{Encoding::AudioWireFormat::kAM824};
     Encoding::AudioWireFormat playbackWireFormat{Encoding::AudioWireFormat::kAM824};
-    uint32_t playbackBandwidthUnits{320};
-    uint32_t captureBandwidthUnits{576};
     DuplexStartOrderRecipe startOrder{};
     DuplexStopOrderRecipe stopOrder{};
 };
 
 // The coordinator deliberately delegates all device identity checks and stream
-// geometry policy to this resolver. It owns DICE's defaults, quirks, AM824
-// geometry, resource costs, and host-start ordering as immutable profile data.
+// geometry policy to this resolver. It owns fixed-vs-dynamic channel policy,
+// device quirks, AM824 geometry, resource costs, and host-start ordering as
+// immutable profile data.
 class DuplexStreamProfileResolver final {
   public:
     [[nodiscard]] static DuplexStreamProfile Resolve(const Discovery::DeviceRecord& record,
@@ -103,8 +107,51 @@ class DuplexStreamProfileResolver final {
     }
 
   private:
+    static constexpr uint64_t kAllIsoChannels = ~uint64_t{0};
     static constexpr uint8_t kDefaultCaptureIsoChannel = 1;
     static constexpr uint8_t kDefaultPlaybackIsoChannel = 0;
+
+    // Linux sound/firewire/iso-resources.c:48-76 calculates bandwidth from the
+    // maximum CIP payload plus the three-quadlet isoch packet header, scaled to
+    // S400 allocation units. Its 512-unit fallback is used when optimized gap
+    // count information is unavailable; DeviceRecord currently carries link
+    // speed but not the live gap count, so use that conservative reference path.
+    [[nodiscard]] static constexpr uint32_t
+    PacketBandwidthUnits(uint32_t maxPayloadBytes, FW::FwSpeed speed) noexcept {
+        const uint32_t alignedPayloadBytes = (maxPayloadBytes + 3U) & ~3U;
+        const uint32_t packetBytesAtSpeed = 12U + alignedPayloadBytes;
+
+        uint32_t packetUnits = packetBytesAtSpeed;
+        switch (speed) {
+            case FW::FwSpeed::S100:
+                packetUnits *= 4U;
+                break;
+            case FW::FwSpeed::S200:
+                packetUnits *= 2U;
+                break;
+            case FW::FwSpeed::S400:
+                break;
+            case FW::FwSpeed::S800:
+                packetUnits = (packetUnits + 1U) / 2U;
+                break;
+        }
+        return packetUnits + 512U;
+    }
+
+    [[nodiscard]] static constexpr uint32_t
+    AmdtpBandwidthUnits(uint32_t am824Slots, uint32_t sampleRateHz,
+                        FW::FwSpeed speed) noexcept {
+        const auto rate = Encoding::AmdtpRateGeometryForSampleRate(
+            sampleRateHz != 0 ? sampleRateHz : 48000U);
+        const uint32_t blocksPerPacket = rate ? rate->sytIntervalFrames : 8U;
+        const uint32_t slots = am824Slots != 0 ? am824Slots : 1U;
+        const uint32_t maxPayloadBytes = 8U + blocksPerPacket * slots * 4U;
+        return PacketBandwidthUnits(maxPayloadBytes, speed);
+    }
+
+    [[nodiscard]] static constexpr uint64_t FixedChannelMask(uint8_t channel) noexcept {
+        return IsValidIsoChannel(channel) ? (uint64_t{1} << channel) : 0;
+    }
 
     [[nodiscard]] static constexpr bool IsValidIsoChannel(uint8_t channel) noexcept {
         return channel <= 0x3F;
@@ -142,8 +189,8 @@ class DuplexStreamProfileResolver final {
     ResolveChannels(const Discovery::DeviceRecord& record,
                     const AudioStreamRuntimeCaps& caps) noexcept {
         AudioDuplexChannels channels{
-            .deviceToHostIsoChannel = IsApogeeDuet(record) ? uint8_t{0} : kDefaultCaptureIsoChannel,
-            .hostToDeviceIsoChannel = IsApogeeDuet(record) ? uint8_t{1} : kDefaultPlaybackIsoChannel,
+            .deviceToHostIsoChannel = kDefaultCaptureIsoChannel,
+            .hostToDeviceIsoChannel = kDefaultPlaybackIsoChannel,
         };
 
         channels.captureStreamCount = ClampStreamCount(caps.deviceToHostStreamCount);
@@ -211,6 +258,11 @@ class DuplexStreamProfileResolver final {
             geometry.pcmChannelOffset = captureChannelOffset;
             geometry.pcmChannels = multiCapture ? stream.pcmChannels : 0;
             geometry.am824Slots = multiCapture ? stream.am824Slots : caps.deviceToHostAm824Slots;
+            geometry.bandwidthUnits = AmdtpBandwidthUnits(
+                geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
+            geometry.allowedIsoChannels = IsApogeeDuet(record)
+                                              ? kAllIsoChannels
+                                              : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
         }
 
@@ -218,8 +270,17 @@ class DuplexStreamProfileResolver final {
             const AudioStreamWireInfo& stream = caps.hostToDeviceStreams[i];
             DuplexPlaybackStreamGeometry& geometry = profile.playbackStreams[i];
             geometry.isoChannel = channels.PlaybackChannel(i);
-            geometry.pcmChannels = stream.pcmChannels;
-            geometry.am824Slots = stream.am824Slots;
+            geometry.pcmChannels = stream.pcmChannels != 0
+                                       ? stream.pcmChannels
+                                       : (i == 0 ? caps.hostOutputPcmChannels : 0U);
+            geometry.am824Slots = stream.am824Slots != 0
+                                      ? stream.am824Slots
+                                      : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
+            geometry.bandwidthUnits = AmdtpBandwidthUnits(
+                geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
+            geometry.allowedIsoChannels = IsApogeeDuet(record)
+                                              ? kAllIsoChannels
+                                              : FixedChannelMask(geometry.isoChannel);
         }
 
         if (IsSPro24Dsp(record) && caps.hostInputPcmChannels == 8 &&

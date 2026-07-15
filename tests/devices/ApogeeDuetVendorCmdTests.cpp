@@ -37,7 +37,7 @@ class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
     ASFW::Async::AsyncHandle ReadBlock(
         ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress, uint32_t,
         ASFW::FW::FwSpeed, ASFW::Async::InterfaceCompletionCallback callback) override {
-        const uint32_t pcrBE = OSSwapHostToBigInt32(0x80000000U);
+        const uint32_t pcrBE = OSSwapHostToBigInt32(pcrValue);
         std::array<uint8_t, 4> payload{};
         std::memcpy(payload.data(), &pcrBE, sizeof(pcrBE));
         callback(ASFW::Async::AsyncStatus::kSuccess, payload);
@@ -56,6 +56,7 @@ class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
         ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress,
         ASFW::FW::LockOp, std::span<const uint8_t> operand, uint32_t,
         ASFW::FW::FwSpeed, ASFW::Async::InterfaceCompletionCallback callback) override {
+        lastLockOperand.assign(operand.begin(), operand.end());
         std::array<uint8_t, 4> oldValue{};
         std::copy_n(operand.begin(), oldValue.size(), oldValue.begin());
         if (failCompareSwap) {
@@ -74,6 +75,8 @@ class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
     ASFW::FW::NodeId GetLocalNodeID() const override { return ASFW::FW::NodeId{0}; }
 
     bool failCompareSwap{false};
+    uint32_t pcrValue{0x80000000U};
+    std::vector<uint8_t> lastLockOperand;
 
   private:
     uint32_t handle_{0};
@@ -442,7 +445,7 @@ TEST(ApogeeDuetVendorCmd, BuildDisplayParamsQuery) {
     EXPECT_EQ(cmds.size(), 3u);  // isInput, followKnob, overhold
 }
 
-TEST(ApogeeDuetDuplexAdapter, Applies48kToOutputThenInputUnitPlugs) {
+TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
     auto transport = std::make_shared<FCPTransport>();
@@ -458,12 +461,84 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToOutputThenInputUnitPlugs) {
 
     ASSERT_EQ(completionStatus, kIOReturnSuccess);
     ASSERT_EQ(gSubmittedFCPFrames.size(), 2U);
-    constexpr std::array<uint8_t, 8> expectedOutput{
-        0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF};
     constexpr std::array<uint8_t, 8> expectedInput{
         0x00, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF};
-    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[0].Payload(), expectedOutput));
-    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[1].Payload(), expectedInput));
+    constexpr std::array<uint8_t, 8> expectedOutput{
+        0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF};
+    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[0].Payload(), expectedInput));
+    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[1].Payload(), expectedOutput));
+
+    // The same restart request must use the cached formation instead of
+    // perturbing the OXFW device with another pair of AV/C controls.
+    protocol.ApplyClockConfig(
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
+        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+            completionStatus = status;
+        });
+    EXPECT_EQ(completionStatus, kIOReturnSuccess);
+    EXPECT_EQ(gSubmittedFCPFrames.size(), 2U);
+}
+
+TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
+    using namespace ASFW::Protocols::AVC;
+    RecordingAVCBus bus;
+    auto transport = std::make_shared<FCPTransport>();
+    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get());
+    gSubmittedFCPFrames.clear();
+
+    IOReturn completionStatus = kIOReturnNotReady;
+    protocol.ApplyClockConfig(
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = 44100U},
+        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+            completionStatus = status;
+        });
+
+    ASSERT_EQ(completionStatus, kIOReturnSuccess);
+    ASSERT_EQ(gSubmittedFCPFrames.size(), 2U);
+    EXPECT_EQ(gSubmittedFCPFrames[0].Payload()[5], 0x01U);
+    EXPECT_EQ(gSubmittedFCPFrames[1].Payload()[5], 0x01U);
+}
+
+TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
+    RecordingAVCBus bus;
+    ASFW::IRM::IRMClient irm(bus);
+    ASFW::CMP::CMPClient cmp(bus);
+    cmp.SetDeviceNode(2, ASFW::IRM::Generation{1});
+    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp);
+    ASFW::Audio::AudioDuplexChannels channels{};
+    channels.deviceToHostIsoChannel = 5;
+    protocol.SetAssignedChannels(channels);
+
+    IOReturn status = kIOReturnNotReady;
+    protocol.ProgramRx([&status](IOReturn result, ASFW::Audio::DuplexStageResult) {
+        status = result;
+    });
+
+    ASSERT_EQ(status, kIOReturnSuccess);
+    ASSERT_EQ(bus.lastLockOperand.size(), 8U);
+    uint32_t desiredBE = 0;
+    std::memcpy(&desiredBE, bus.lastLockOperand.data() + 4, sizeof(desiredBE));
+    EXPECT_EQ(OSSwapBigToHostInt32(desiredBE), 0x81050000U);
+}
+
+TEST(CMPClientPCRBits, UsesSixBitPointToPointConnectionCount) {
+    EXPECT_EQ(ASFW::CMP::PCRBits::GetP2P(0xBF000000U), 63U);
+    EXPECT_EQ(ASFW::CMP::PCRBits::SetP2P(0x80000000U, 63U), 0xBF000000U);
+}
+
+TEST(CMPClientPCRBits, RejectsChangingChannelOfExistingPointToPointConnection) {
+    RecordingAVCBus bus;
+    bus.pcrValue = 0x81030000U; // online, one connection, channel 3
+    ASFW::CMP::CMPClient cmp(bus);
+    cmp.SetDeviceNode(2, ASFW::IRM::Generation{1});
+
+    ASFW::CMP::CMPStatus status = ASFW::CMP::CMPStatus::Success;
+    cmp.ConnectOPCR(0, 5, [&status](ASFW::CMP::CMPStatus result) {
+        status = result;
+    });
+
+    EXPECT_EQ(status, ASFW::CMP::CMPStatus::NoResources);
+    EXPECT_TRUE(bus.lastLockOperand.empty());
 }
 
 TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
