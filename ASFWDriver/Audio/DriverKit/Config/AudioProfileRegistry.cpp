@@ -5,13 +5,22 @@
 // Global profile registry dispatcher.
 
 #include "AudioProfileRegistry.hpp"
+#include "AVC/ApogeeDuetProfile.hpp"
 #include "DICE/DiceProfileRegistry.hpp"
+
+#include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 namespace ASFW::Isoch::Audio {
 
 const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
                                                              uint32_t modelId,
                                                              uint64_t guid) noexcept {
+    static AVC::Profiles::ApogeeDuetProfile apogeeDuetProfile{};
+    if (vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
+        modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
+        return &apogeeDuetProfile;
+    }
+
     // Map identity to the DICE family structures
     DICE::DiceDeviceIdentity identity{
         .guid = guid,

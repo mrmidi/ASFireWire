@@ -93,6 +93,7 @@
 		3D13B6691F2A30C4FCC49C94 /* SBP2BridgeHub.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CA65E64C4DAEC918DD1EE8D6 /* SBP2BridgeHub.cpp */; };
 		3D17947727268382159DE318 /* ASFWDiagnosticsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23B5AED98E4C020648E7DAF9 /* ASFWDiagnosticsClient.swift */; };
 		3D4211FC6DE43A112951FF2F /* DriverConnector+ConfigROM.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC7D308D1F12806CA102258 /* DriverConnector+ConfigROM.swift */; };
+		3D97308CA3A11622955D8461 /* ApogeeDuetProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E63A4F43A53A0611B8354DAD /* ApogeeDuetProfile.cpp */; };
 		3D9D02951035C22384C1CBF0 /* AmdtpTxPacketizer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A63F3E78327A5940C2725365 /* AmdtpTxPacketizer.cpp */; };
 		3DA9E274A44D3A82390F4FFC /* ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 84EE5D95253736515AA645E1 /* ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3ECDDF5924BE520E1750A8FF /* PostResetTimingCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 55C248E22BAFC97B171317B1 /* PostResetTimingCoordinator.cpp */; };
@@ -676,6 +677,7 @@
 		65B3BA7B9A5F9DC8E1BEC3EA /* IsochDMAMemoryManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IsochDMAMemoryManager.cpp; sourceTree = "<group>"; };
 		664BCCE4CA38E930A13BFB54 /* ASFWSBP2Nub.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWSBP2Nub.cpp; sourceTree = "<group>"; };
 		66752E26A9486DAA98D1BBD9 /* AudioFunctionBlockCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioFunctionBlockCommand.cpp; sourceTree = "<group>"; };
+		6680B2421DD01722EDC795B5 /* ApogeeDuetProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeDuetProfile.hpp; sourceTree = "<group>"; };
 		67AA940379DFC95D081CDAD1 /* RolePolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RolePolicy.hpp; sourceTree = "<group>"; };
 		67EA274FE08992171A4F029B /* DiceRuntimeDeviceConfig.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceRuntimeDeviceConfig.hpp; sourceTree = "<group>"; };
 		67FAC0642F9E1AC5D6CC4C88 /* MCPMockHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPMockHarnessTests.swift; sourceTree = "<group>"; };
@@ -1017,6 +1019,7 @@
 		E59555396092ECD2402D8F08 /* FWUnit.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FWUnit.hpp; sourceTree = "<group>"; };
 		E5EE2C40B8486AC468AD29BD /* CSRContractVerifier.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRContractVerifier.hpp; sourceTree = "<group>"; };
 		E609DB6610DFDC460AA66A7C /* Signposts.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Signposts.hpp; sourceTree = "<group>"; };
+		E63A4F43A53A0611B8354DAD /* ApogeeDuetProfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeDuetProfile.cpp; sourceTree = "<group>"; };
 		E65F4C594C3BECAA8FE6A032 /* CyclePolicyCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CyclePolicyCoordinator.hpp; sourceTree = "<group>"; };
 		E71B2347AC9656DEB2B6FF0C /* TopologyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopologyView.swift; sourceTree = "<group>"; };
 		E789FE1BCC1F31A996C8E799 /* ASFWTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ASFWTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1345,6 +1348,15 @@
 				53DEDB80CA15AB259093212A /* TxCompletion.hpp */,
 			);
 			path = Track;
+			sourceTree = "<group>";
+		};
+		2F972AECFA3DE3EB886C4748 /* AVC */ = {
+			isa = PBXGroup;
+			children = (
+				E63A4F43A53A0611B8354DAD /* ApogeeDuetProfile.cpp */,
+				6680B2421DD01722EDC795B5 /* ApogeeDuetProfile.hpp */,
+			);
+			path = AVC;
 			sourceTree = "<group>";
 		};
 		2FC52F01DC43D8FC1F67E182 /* Tx */ = {
@@ -2123,6 +2135,7 @@
 				0A84CBB71A14092CC7AAA130 /* AudioProfileRegistry.cpp */,
 				066A08C3B2FEF14C810ED1AD /* AudioProfileRegistry.hpp */,
 				45B16280BCB222CDD3CDEE11 /* IAudioDeviceProfile.hpp */,
+				2F972AECFA3DE3EB886C4748 /* AVC */,
 				70E5274A1DF48CE123F48782 /* DICE */,
 			);
 			path = Config;
@@ -2895,6 +2908,7 @@
 				1AA921B5214974B982C6AF6D /* AmdtpPacketTimeline.cpp in Sources */,
 				0D45E9D5217493F2CA468B66 /* AmdtpPayloadWriter.cpp in Sources */,
 				3D9D02951035C22384C1CBF0 /* AmdtpTxPacketizer.cpp in Sources */,
+				3D97308CA3A11622955D8461 /* ApogeeDuetProfile.cpp in Sources */,
 				397A66B5278D4CEA50CEFE3E /* ApogeeDuetProtocol.cpp in Sources */,
 				B88224662B577BC1F022CE84 /* AsyncSubsystem.cpp in Sources */,
 				7C6A17973382F6042B6956AB /* AsyncSubsystemBusReset.cpp in Sources */,
