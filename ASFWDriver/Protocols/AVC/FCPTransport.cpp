@@ -37,6 +37,7 @@ bool FCPTransport::init(Protocols::Ports::FireWireBusOps* busOps,
     busInfo_ = busInfo;
     device_ = device;
     config_ = config;
+    shuttingDown_ = false;
 
     if (!busOps_ || !busInfo_) {
         ASFW_LOG_V1(FCP, "FCPTransport: Missing FireWire bus ports");
@@ -70,12 +71,7 @@ bool FCPTransport::init(Protocols::Ports::FireWireBusOps* busOps,
 }
 
 void FCPTransport::free() {
-    shuttingDown_ = true;
-
-    // Cancel any pending command
-    if (pending_) {
-        CompleteCommand(FCPStatus::kTransportError, {});
-    }
+    Shutdown();
 
     // Release queue
     timeoutQueue_.reset();
@@ -105,12 +101,13 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
         return {};
     }
 
+    IOLockLock(lock_);
+
     if (shuttingDown_) {
+        IOLockUnlock(lock_);
         completion(FCPStatus::kTransportError, {});
         return {};
     }
-
-    IOLockLock(lock_);
 
     if (pending_) {
         IOLockUnlock(lock_);
@@ -146,10 +143,11 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     pending_ = std::move(cmd);
 
     FCPFrame commandCopy = pending_->command;
+    const uint32_t generation = pending_->generation;
 
     IOLockUnlock(lock_);
 
-    auto handle = SubmitWriteCommand(commandCopy);
+    auto handle = SubmitWriteCommand(commandCopy, generation);
     if (!handle.value) {
         IOLockLock(lock_);
         if (!pending_) {
@@ -168,7 +166,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     }
 
     IOLockLock(lock_);
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         IOLockUnlock(lock_);
         busOps_->Cancel(handle);
         return {};
@@ -183,26 +181,69 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     return FCPHandle{kTransactionID};
 }
 
-ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame) {
-    if (!pending_) {
+ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame,
+                                                           uint32_t generation) {
+    IOLockLock(lock_);
+    if (shuttingDown_ || !busOps_ || !device_) {
+        IOLockUnlock(lock_);
         return Async::AsyncHandle{0};
     }
 
-    const FW::Generation gen{pending_->generation};
+    const FW::Generation gen{generation};
     const FW::NodeId node{static_cast<uint8_t>(device_->GetNodeID() & 0x3Fu)};
     const Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = static_cast<uint16_t>((config_.commandAddress >> 32U) & 0xFFFFU),
         .addressLo = static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFU),
     }};
 
-    return busOps_->WriteBlock(gen,
-                               node,
-                               addr,
-                               frame.Payload(),
-                               FW::FwSpeed::S100,
-                               [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-                                   this->OnAsyncWriteComplete(status, response);
-                               });
+    IOLockUnlock(lock_);
+
+    // The async transaction owns a retain until it calls us back. Without it,
+    // a timeout cancellation can free FCPTransport while a callback still has
+    // its raw target pointer.
+    retain();
+    const auto handle = busOps_->WriteBlock(
+        gen, node, addr, frame.Payload(), FW::FwSpeed::S100,
+        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+            OnAsyncWriteComplete(status, response);
+            release();
+        });
+    if (!handle.value) {
+        release();
+    }
+    return handle;
+}
+
+void FCPTransport::Shutdown() {
+    if (!lock_) {
+        shuttingDown_ = true;
+        return;
+    }
+
+    Async::AsyncHandle handle{};
+    FCPCompletion completion;
+
+    IOLockLock(lock_);
+    if (shuttingDown_) {
+        IOLockUnlock(lock_);
+        return;
+    }
+
+    shuttingDown_ = true;
+    if (pending_) {
+        handle = pending_->asyncHandle;
+        completion = std::move(pending_->completion);
+        CancelTimeout();
+        pending_.reset();
+    }
+    IOLockUnlock(lock_);
+
+    if (handle.value && busOps_) {
+        busOps_->Cancel(handle);
+    }
+    if (completion) {
+        completion(FCPStatus::kTransportError, {});
+    }
 }
 
 //==============================================================================
@@ -224,10 +265,15 @@ bool FCPTransport::CancelCommand(FCPHandle handle) {
     ASFW_LOG_V2(FCP,
                 "FCPTransport: Cancelling command");
 
-    // Cancel async operation
-    busOps_->Cancel(pending_->asyncHandle);
+    const Async::AsyncHandle asyncHandle = pending_->asyncHandle;
 
     IOLockUnlock(lock_);
+
+    // Completion can be delivered synchronously by a host implementation, so
+    // never call into the async layer while holding the FCP state lock.
+    if (asyncHandle.value && busOps_) {
+        busOps_->Cancel(asyncHandle);
+    }
 
     CompleteCommand(FCPStatus::kTransportError, {});
 
@@ -244,7 +290,7 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
                                  std::span<const uint8_t> payload) {
     IOLockLock(lock_);
 
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP,
                      "FCPTransport: Spurious response (no pending command)");
@@ -331,7 +377,7 @@ void FCPTransport::OnAsyncWriteComplete(Async::AsyncStatus status,
     (void)response;
     IOLockLock(lock_);
 
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         IOLockUnlock(lock_);
         return;
     }
@@ -368,7 +414,7 @@ void FCPTransport::OnAsyncWriteComplete(Async::AsyncStatus status,
 void FCPTransport::OnCommandTimeout() {
     IOLockLock(lock_);
 
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         IOLockUnlock(lock_);
         return;
     }
@@ -394,7 +440,7 @@ void FCPTransport::OnCommandTimeout() {
 }
 
 void FCPTransport::ScheduleTimeout(uint32_t timeoutMs) {
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         return;
     }
 
@@ -410,19 +456,24 @@ void FCPTransport::ScheduleTimeout(uint32_t timeoutMs) {
 
     const uint64_t token = pending_->timeoutToken;
 
+    // Pair with release() on every exit. The queue can still be sleeping when
+    // AV/C discovery tears down, and that block must retain its callback
+    // target until it observes the shutdown token.
+    retain();
     queue->DispatchAsync(^{
         IOLockLock(lock_);
-        bool stillPending = (pending_ && pending_->timeoutToken == token);
+        bool stillPending = (!shuttingDown_ && pending_ && pending_->timeoutToken == token);
         IOLockUnlock(lock_);
 
         if (!stillPending) {
+            release();
             return;
         }
 
         IOSleep(static_cast<uint64_t>(timeoutMs));
 
         IOLockLock(lock_);
-        bool shouldFire = (pending_ && pending_->timeoutToken == token);
+        bool shouldFire = (!shuttingDown_ && pending_ && pending_->timeoutToken == token);
         if (shouldFire) {
             pending_->timeoutToken = 0;
         }
@@ -431,6 +482,7 @@ void FCPTransport::ScheduleTimeout(uint32_t timeoutMs) {
         if (shouldFire) {
             OnCommandTimeout();
         }
+        release();
     });
 }
 
@@ -447,7 +499,7 @@ void FCPTransport::CancelTimeout() {
 void FCPTransport::RetryCommand() {
     IOLockLock(lock_);
 
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         IOLockUnlock(lock_);
         return;
     }
@@ -461,9 +513,10 @@ void FCPTransport::RetryCommand() {
                 pending_->generation);
 
     FCPFrame commandCopy = pending_->command;
+    const uint32_t generation = pending_->generation;
     IOLockUnlock(lock_);
 
-    auto handle = SubmitWriteCommand(commandCopy);
+    auto handle = SubmitWriteCommand(commandCopy, generation);
     if (!handle.value) {
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Async write submission failed during retry");
@@ -472,7 +525,7 @@ void FCPTransport::RetryCommand() {
     }
 
     IOLockLock(lock_);
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         IOLockUnlock(lock_);
         busOps_->Cancel(handle);
         return;
@@ -492,7 +545,7 @@ void FCPTransport::RetryCommand() {
 void FCPTransport::OnBusReset(uint32_t newGeneration) {
     IOLockLock(lock_);
 
-    if (!pending_) {
+    if (shuttingDown_ || !pending_) {
         IOLockUnlock(lock_);
         return;
     }

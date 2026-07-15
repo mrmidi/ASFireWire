@@ -95,6 +95,15 @@ class AsyncSubsystem : public IAsyncControllerPort {
 
     kern_return_t ArmARContextsOnly() override;
 
+    /**
+     * Close the submission gate before the async contexts are stopped.
+     *
+     * This is deliberately lighter than Stop(): it does not touch OHCI or
+     * destroy DMA state. It prevents timeout/retry producers from issuing a
+     * fresh transaction while the regular Stop() path drains the hardware.
+     */
+    void BeginQuiesce() noexcept;
+
     void Stop();
 
     AsyncHandle Read(const ReadParams& params, CompletionCallback callback) override;
@@ -223,6 +232,7 @@ class AsyncSubsystem : public IAsyncControllerPort {
 
   private:
     std::atomic<uint32_t> is_bus_reset_in_progress_{0};
+    std::atomic<bool> acceptingSubmissions_{false};
 
     Driver::HardwareInterface* hardware_{nullptr};
     ::OSObject* owner_{nullptr};

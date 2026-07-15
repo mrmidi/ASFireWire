@@ -143,6 +143,9 @@ public:
     [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
                                           FCPCompletion completion);
 
+    /// Stop retries and complete any outstanding command without more bus I/O.
+    void Shutdown();
+
     bool CancelCommand(FCPHandle handle);
 
     void OnFCPResponse(uint16_t srcNodeID,
@@ -168,7 +171,7 @@ private:
 
     void OnAsyncWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response);
 
-    Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame);
+    Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame, uint32_t generation);
 
     void OnCommandTimeout();
 
@@ -193,6 +196,8 @@ private:
 
     uint64_t nextTimeoutToken_{0};
 
+    // Protected by lock_. Timeout and async-completion blocks retain this
+    // OSObject until they leave, so free() cannot race their callback target.
     bool shuttingDown_{false};
 
     std::unique_ptr<OutstandingCommand> pending_;

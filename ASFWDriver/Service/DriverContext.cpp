@@ -30,6 +30,7 @@
 #include "../Hardware/InterruptManager.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
+#include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
 #include "../Protocols/SBP2/Session/DriverKitSessionScheduler.hpp"
 #include "../Protocols/SBP2/Session/SessionRegistry.hpp"
@@ -51,8 +52,14 @@ void ServiceContext::DisarmProviderNotifications() {
 
 void ServiceContext::Reset(ResetMode mode) {
     stopping.store(true, std::memory_order_release);
+    if (deps.asyncSubsystem) {
+        deps.asyncSubsystem->BeginQuiesce();
+    }
     if (audioCoordinator) {
         audioCoordinator->BeginTeardown();
+    }
+    if (deps.avcDiscovery) {
+        deps.avcDiscovery->Shutdown();
     }
     // Unpublish + shut down the HBA bridge while the session registry and bus
     // are still alive: Shutdown() releases the SBP-2 session (logout on the
@@ -327,8 +334,14 @@ kern_return_t DriverWiring::PrepareWatchdog(ASFWDriver& service, ::ServiceContex
 
 void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     ctx.stopping.store(true, std::memory_order_release);
+    if (ctx.deps.asyncSubsystem) {
+        ctx.deps.asyncSubsystem->BeginQuiesce();
+    }
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->BeginTeardown();
+    }
+    if (ctx.deps.avcDiscovery) {
+        ctx.deps.avcDiscovery->Shutdown();
     }
     ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
     if (ctx.sbp2Bridge) {
@@ -336,25 +349,23 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
         ctx.sbp2Bridge.reset();
     }
     ctx.isoch.StopAll();
-    if (ctx.controller) {
-        ctx.controller->Stop();
-        ctx.controller.reset();
-    }
-
-    // CRITICAL: Stop asyncSubsystem BEFORE cancelling watchdog
-    // This prevents the crash where watchdog fires after completion queue is deactivated
-    if (ctx.deps.asyncSubsystem) {
-        ctx.deps.asyncSubsystem->Stop();
-    }
-
     if (ctx.deps.interrupts)
-        ctx.deps.interrupts->Disable();
+        ctx.deps.interrupts->Teardown();
     if (ctx.deps.selfId && ctx.deps.hardware)
         ctx.deps.selfId->Disarm(*ctx.deps.hardware);
     if (ctx.deps.selfId)
         ctx.deps.selfId->ReleaseBuffers();
     if (ctx.deps.configRomStager && ctx.deps.hardware)
         ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
+
+    // Stop the async engine before ControllerCore::Stop closes the PCI BAR.
+    if (ctx.deps.asyncSubsystem) {
+        ctx.deps.asyncSubsystem->Stop();
+    }
+    if (ctx.controller) {
+        ctx.controller->Stop();
+        ctx.controller.reset();
+    }
     if (ctx.deps.hardware)
         ctx.deps.hardware->Detach();
     ctx.interruptAction.reset();

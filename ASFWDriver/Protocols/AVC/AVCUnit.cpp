@@ -78,7 +78,15 @@ void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
 }
 
 AVCUnit::~AVCUnit() {
+    Shutdown();
     ASFW_LOG_V1(AVC, "AVCUnit: Destroyed (GUID=%llx)", GetGUID());
+}
+
+void AVCUnit::Shutdown() {
+    initialized_ = false;
+    if (fcpTransport_) {
+        fcpTransport_->Shutdown();
+    }
 }
 
 //==============================================================================

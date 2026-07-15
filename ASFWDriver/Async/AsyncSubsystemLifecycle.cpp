@@ -451,6 +451,7 @@ void AsyncSubsystem::FinalizeStart() {
 
     ResetWatchdogCounters();
     is_bus_reset_in_progress_.store(0, std::memory_order_release);
+    acceptingSubmissions_.store(true, std::memory_order_release);
     isRunning_ = true;
 }
 
@@ -554,12 +555,18 @@ kern_return_t AsyncSubsystem::ArmARContextsOnly() {
     return kIOReturnSuccess;
 }
 
+void AsyncSubsystem::BeginQuiesce() noexcept {
+    acceptingSubmissions_.store(false, std::memory_order_release);
+}
+
 void AsyncSubsystem::Stop() {
-    const bool disableHardware = isRunning_ && hardware_ != nullptr;
+    const bool disableHardware =
+        isRunning_ && hardware_ != nullptr && hardware_->IsAvailable();
     Teardown(disableHardware);
 }
 
 void AsyncSubsystem::Teardown(bool disableHardware) {
+    acceptingSubmissions_.store(false, std::memory_order_release);
     if (disableHardware && hardware_) {
         hardware_->SetInterruptMask(0xFFFFFFFFu, false);
         hardware_->ClearLinkControlBits(kLinkControlRcvPhyPktBit);
@@ -626,19 +633,26 @@ void AsyncSubsystem::Teardown(bool disableHardware) {
 // ============================================================================
 
 std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
-    // Step 1: Bus reset gate check
+    // Step 1: Lifecycle gate. This must precede any NodeID MMIO read so a
+    // timeout or retry cannot submit while Stop() is draining OHCI.
+    if (!acceptingSubmissions_.load(std::memory_order_acquire)) {
+        ASFW_LOG_ERROR(Async, "PrepareTransactionContext: Subsystem is quiescing");
+        return std::nullopt;
+    }
+
+    // Step 2: Bus reset gate check
     if (is_bus_reset_in_progress_.load(std::memory_order_acquire)) {
         ASFW_LOG_ERROR(Async, "PrepareTransactionContext: Bus reset in progress");
         return std::nullopt;
     }
 
-    // Step 2: Validate subsystem components initialized
+    // Step 3: Validate subsystem components initialized
     if (!packetBuilder_ || !descriptorBuilder_ || !ResolveAtRequestContext()) {
         ASFW_LOG_ERROR(Async, "PrepareTransactionContext: Subsystem not initialized");
         return std::nullopt;
     }
 
-    // Step 3: Read NodeID register with valid bit check (OHCI §5.10, bit 31)
+    // Step 4: Read NodeID register with valid bit check (OHCI §5.10, bit 31)
     const uint32_t nodeIdReg = hardware_->ReadNodeID();
     constexpr uint32_t kNodeIDValidBit = 0x80000000u;
     if ((nodeIdReg & kNodeIDValidBit) == 0) {
@@ -648,15 +662,15 @@ std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
     }
     const uint16_t sourceNodeID = static_cast<uint16_t>(nodeIdReg & 0xFFFFu);
 
-    // Step 4: Query current generation from GenerationTracker
+    // Step 5: Query current generation from GenerationTracker
     const auto busState = generationTracker_->GetCurrentState();
     const uint16_t currentGeneration = busState.generation16;
 
-    // Step 5: Resolve speed code. TODO(ASFW-Topology): query TopologyManager instead of using the
+    // Step 6: Resolve speed code. TODO(ASFW-Topology): query TopologyManager instead of using the
     // compatibility S100 default.
     const uint8_t speedCode = kDefaultAsyncSpeed; // S100 (98.304 Mbps)
 
-    // Step 6: Build TransactionContext with PacketContext
+    // Step 7: Build TransactionContext with PacketContext
     TransactionContext txCtx{};
     txCtx.sourceNodeID = sourceNodeID;
     txCtx.generation = currentGeneration;

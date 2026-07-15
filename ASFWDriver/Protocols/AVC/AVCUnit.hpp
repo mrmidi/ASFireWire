@@ -100,6 +100,9 @@ public:
 
     void OnBusReset(uint32_t newGeneration);
 
+    /// Stop the unit's FCP transport before the async bus is torn down.
+    void Shutdown();
+
     bool IsInitialized() const { return initialized_; }
 
     uint64_t GetGUID() const;

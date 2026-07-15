@@ -493,6 +493,8 @@ bool FCPTransport::init(Protocols::Ports::FireWireBusOps*,
 
 void FCPTransport::free() {}
 
+void FCPTransport::Shutdown() {}
+
 FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command, FCPCompletion completion) {
     gSubmittedFCPFrames.push_back(command);
     FCPFrame response = command;
