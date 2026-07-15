@@ -211,11 +211,13 @@ class IsochReceiveContext final
     uint8_t lastDbc_{0};
     bool dbcInitialized_{false};
 
-    // Drain-only state for consecutive-anchor clock comparison.
+    // Drain-only state for sampled-anchor clock comparison.
     // Not hot-path: only touched in DrainZtsTelemetry.
-    uint64_t prevAnchorFrame_{0};
-    uint64_t prevAnchorHostTicks_{0};
-    bool prevAnchorValid_{false};
+    Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
+    uint64_t prevLoggedAnchorFrame_{0};
+    uint64_t prevLoggedAnchorHostTicks_{0};
+    uint32_t prevLoggedAnchorRate_{0};
+    bool prevLoggedAnchorValid_{false};
 
     Registers GetRegisters(uint8_t index) const;
 };

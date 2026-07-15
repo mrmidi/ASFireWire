@@ -14,9 +14,9 @@
 namespace ASFW::Driver {
 namespace {
 // ZTS telemetry drain cadence. The watchdog ticks every 1 ms; draining every
-// 100 ticks (~100 ms) and emitting up to 8 evenly-strided records keeps the
-// off-hot-path os_log volume bounded (~tens of lines/s) while still resolving
-// host-vs-bus-cycle drift. Seed records are always emitted (see ZtsTelemetryRing).
+// 100 ticks (~100 ms) keeps the ring drained well below its capacity. The
+// receive context always logs the seed, then gates steady-state snapshots to
+// one per ~4 seconds while retaining the multi-second clock-drift measurement.
 constexpr uint32_t kZtsDrainIntervalTicks = 100;
 constexpr uint32_t kZtsRecordsPerDrain = 8;
 // Audio payload writer decisions arrive ~100/s, so drain every 100 ticks
@@ -151,9 +151,8 @@ void WatchdogCoordinator::TickIsochReceive(
     // ZTS clock telemetry is captured lock-free inside Poll() (which runs in
     // the interrupt hot path); format it here, off the hot path, on a ~100 ms
     // cadence (tick = 1 ms). Gated by the DirectAudio verbosity so it shares
-    // the direct-audio diagnostics kill switch (default on). The drain emits an
-    // evenly-strided sample so the host/bus-cycle drift stays visible without
-    // flooding os_log from the real-time path.
+    // the direct-audio diagnostics kill switch (default on). Draining remains
+    // frequent; the receive-side log gate controls the much lower print rate.
     if (isRunning && ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1) {
         if (++ztsLogDivider_ >= kZtsDrainIntervalTicks) {
             ztsLogDivider_ = 0;
