@@ -41,7 +41,7 @@ using ASFW::Driver::kContextControlWakeBit;
  *
  * \par Design Rationale
  * AR contexts differ from AT contexts:
- * - **No descriptor chaining**: Use fixed buffers, not linked chains
+ * - **Bounded descriptor chaining**: a moving Z=0 tail prevents overwrite
  * - **No submission queue**: Hardware fills buffers automatically
  * - **Packet streams**: Each buffer may contain multiple packets
  * - **Bus reset resilience**: Keep running during reset per OHCI §C.3
@@ -105,7 +105,8 @@ public:
      * - Bits [31:4]: Physical address of first descriptor (16-byte aligned)
      * - Bit [0]: Z flag (1=continue, 0=last descriptor)
      *
-     * For circular buffer rings, Z=1 indicates continuous operation.
+     * CommandPtr Z=1 starts the descriptor program. Its moving Z=0 branch tail
+     * stops OHCI before it can wrap into a buffer software has not recycled.
      *
      * \par Implementation
      * 1. Verify context not already running
@@ -369,6 +370,13 @@ std::optional<FilledBufferInfo> ARContextBase<Derived, Tag>::Dequeue() noexcept 
     // NOTE: bufferRing_->Dequeue() calls FetchRange() internally, which provides
     // the correct DSB barrier for device memory access
     std::optional<FilledBufferInfo> result = bufferRing_->Dequeue();
+    if (bufferRing_->TakeWakeRequired() && this->hw_) {
+        // Dequeue can auto-recycle a fully consumed buffer after observing DMA
+        // in its successor. Wake is required because OHCI may already be asleep
+        // at the old Z=0 terminal by the time software extends the chain.
+        Driver::WriteBarrier();
+        this->WriteControlSet(kContextControlWakeBit);
+    }
 
     IOLockUnlock(lock_);
 
@@ -394,6 +402,7 @@ kern_return_t ARContextBase<Derived, Tag>::Recycle(size_t index) noexcept {
         // Write ContextControl.wake bit to signal hardware
         // Use global constant (bit 12 = 0x1000, verified against Linux/Apple/OHCI spec)
         this->WriteControlSet(kContextControlWakeBit);
+        (void)bufferRing_->TakeWakeRequired();
 
         // DIAGNOSTIC: Log wake bit write to trace hardware notification
         ASFW_LOG(Async,
@@ -442,7 +451,7 @@ kern_return_t ARContextBase<Derived, Tag>::ConsumeReadableBytes(size_t consumedB
 
     IOLockLock(lock_);
     const kern_return_t result = bufferRing_->ConsumeReadableBytes(consumedBytes);
-    if (result == kIOReturnSuccess) {
+    if (result == kIOReturnSuccess && bufferRing_->TakeWakeRequired()) {
         Driver::WriteBarrier();
         this->WriteControlSet(kContextControlWakeBit);
     }

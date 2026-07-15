@@ -323,7 +323,7 @@ void ContextManager::teardown(bool disable_hw) noexcept {
 }
 
 // ============================================================================
-// ARM AR — circular buffer mode (Z=1)
+// ARM AR — bounded linked ring (CommandPtr Z=1, moving branch tail Z=0)
 // ============================================================================
 kern_return_t ContextManager::armAR() noexcept {
     if (!state_ || !state_->provisioned) return kIOReturnNotReady;
