@@ -105,7 +105,6 @@ public:
     ASFW::IsochTransport::TxStreamControl* controlBlock{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
-    uint8_t isoChannel{0};
 
     bool AcquireWritableSlot(
         uint32_t packetIndex,
@@ -134,15 +133,16 @@ public:
         meta.payloadLength = packet.byteCount;
 
         // immediateData[0] = isoch packet header: spd=2 (S400) at [18:16],
-        // tag=1 (standard CIP) at [15:14], channel at [13:8], tcode=0xA (isoch
-        // data block transmit) at [7:4], sy=0. The speed field is mandatory —
-        // omitting it transmits at S100 and produces a header the device/
-        // analyzer treats as malformed.
+        // tag=1 (standard CIP) at [15:14], tcode=0xA (isoch data block
+        // transmit) at [7:4], sy=0. The channel at [13:8] is deliberately
+        // left as a placeholder: the owning transport ring always stamps its
+        // configured channel immediately before publishing the descriptor.
+        // The speed field is mandatory — omitting it transmits at S100 and
+        // produces a header the device/analyzer treats as malformed.
         // Cross-validated with Linux: firewire/ohci.h:277-286 and
         // firewire/ohci.c:3377-3381.
         const uint32_t isochHeaderQ0 = (static_cast<uint32_t>(2 & 0x7) << 16) |
                                        (static_cast<uint32_t>(1 & 0x3) << 14) |
-                                       (static_cast<uint32_t>(isoChannel & 0x3F) << 8) |
                                        (static_cast<uint32_t>(0xA & 0xF) << 4);
         meta.immediateHeader[0] = OSSwapHostToLittleInt32(isochHeaderQ0);
 

@@ -377,10 +377,6 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
                  streamIndex, kr);
         return kr;
     }
-    // The audio-side slot provider encodes a placeholder channel; have the ring
-    // stamp this context's real transmit channel (from Configure above) instead.
-    slot->EnableChannelStamping();
-
     // Wire this stream's own shared payload slab (allocated via
     // AllocateTxIsochResources(streamIndex)) so the context can DMA it. The
     // audio engine maps the same descriptors and writes the de-interleaved slice.

@@ -116,12 +116,6 @@ public:
 
     void SetChannel(uint8_t channel) noexcept { channel_ = channel; }
 
-    // When enabled, the refill path overrides the transmit channel ([13:8]) of
-    // each non-empty packet header with channel_. Secondary streams opt in so
-    // they ride their own iso channel without the audio-side producer encoding
-    // it; the master leaves this off (verbatim metadata copy).
-    void SetStampChannel(bool enabled) noexcept { stampChannel_ = enabled; }
-
     [[nodiscard]] bool HasRings() const noexcept { return slab_.IsValid(); }
 
     [[nodiscard]] kern_return_t SetupRings(Memory::IIsochDMAMemory& dmaMemory) noexcept {
@@ -163,7 +157,6 @@ public:
     [[nodiscard]] const IsochTxDescriptorSlab& Slab() const noexcept { return slab_; }
 
 private:
-    [[nodiscard]] static uint32_t BuildIsochHeaderQ0(uint8_t channel) noexcept;
     [[nodiscard]] uint32_t ComputeDeltaConsumed(uint32_t hwPacketIndex) noexcept;
     void UpdateGapCounters(uint32_t gap) noexcept;
     void ResyncCycleTracking(Driver::HardwareInterface& hw,
@@ -180,7 +173,6 @@ private:
                           uint32_t payloadLength) noexcept;
 
     uint8_t channel_{0};
-    bool stampChannel_{false};
     IsochTxDescriptorSlab slab_{};
     Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 
