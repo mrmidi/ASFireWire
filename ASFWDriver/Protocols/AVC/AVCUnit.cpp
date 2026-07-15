@@ -37,7 +37,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     config.allowBusResetRetry = false;  // Default: generation-locked
 
     // Create FCP transport
-    fcpTransport_ = OSSharedPtr(new FCPTransport, OSNoRetain);
+    fcpTransport_ = std::make_shared<FCPTransport>();
     if (fcpTransport_) {
         fcpTransport_->init(&busOps_, &busInfo_, device.get(), config);
 
@@ -78,7 +78,15 @@ void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
 }
 
 AVCUnit::~AVCUnit() {
+    Shutdown();
     ASFW_LOG_V1(AVC, "AVCUnit: Destroyed (GUID=%llx)", GetGUID());
+}
+
+void AVCUnit::Shutdown() {
+    initialized_ = false;
+    if (fcpTransport_) {
+        fcpTransport_->Shutdown();
+    }
 }
 
 //==============================================================================

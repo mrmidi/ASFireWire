@@ -33,8 +33,8 @@ namespace PCRRegisters {
 namespace PCRBits {
     // Common to oPCR and iPCR
     constexpr uint32_t kOnlineMask      = 0x80000000;  ///< Bit 31: online
-    constexpr uint32_t kBcastMask       = 0x7C000000;  ///< Bits 30-26: broadcast count
-    constexpr uint32_t kP2PMask         = 0x03000000;  ///< Bits 25-24: p2p count (2 bits)
+    constexpr uint32_t kBcastMask       = 0x40000000;  ///< Bit 30: broadcast connection
+    constexpr uint32_t kP2PMask         = 0x3F000000;  ///< Bits 29-24: p2p count (6 bits)
     constexpr uint8_t  kP2PShift        = 24;
     constexpr uint32_t kChannelMask     = 0x003F0000;  ///< Bits 21-16: channel
     constexpr uint8_t  kChannelShift    = 16;
@@ -46,7 +46,7 @@ namespace PCRBits {
     
     // Set p2p count in PCR value
     inline uint32_t SetP2P(uint32_t pcr, uint8_t p2p) {
-        return (pcr & ~kP2PMask) | ((static_cast<uint32_t>(p2p) & 0x03) << kP2PShift);
+        return (pcr & ~kP2PMask) | ((static_cast<uint32_t>(p2p) & 0x3F) << kP2PShift);
     }
     
     // Extract channel from PCR value
@@ -88,7 +88,7 @@ using PCRReadCallback = std::function<void(bool success, uint32_t value)>;
  * Usage:
  *   CMPClient cmpClient(busOps);
  *   cmpClient.SetDeviceNode(deviceNodeId, generation);
- *   cmpClient.ConnectOPCR(0, [](CMPStatus status) { ... });
+ *   cmpClient.ConnectOPCR(0, channel, [](CMPStatus status) { ... });
  *
  * Reference: Apple's LockRq to 0xF000.0904 in FireBug logs
  */
@@ -138,14 +138,16 @@ public:
     
     /**
      * CMP ESTABLISH on oPCR - connect to device's output plug.
-     * Increments p2p connection count via lock-compare-swap.
+     * Sets the allocated isochronous channel and increments the p2p connection
+     * count via lock-compare-swap.
      * 
      * After success, device should start isochronous transmission.
      * 
      * @param plugNum Output plug number (usually 0)
+     * @param channel IRM-allocated channel for the device-to-host stream
      * @param callback Completion callback
      */
-    void ConnectOPCR(uint8_t plugNum, CMPCallback callback);
+    void ConnectOPCR(uint8_t plugNum, uint8_t channel, CMPCallback callback);
     
     /**
      * CMP BREAK on oPCR - disconnect from device's output plug.

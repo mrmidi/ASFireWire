@@ -297,10 +297,11 @@ The repository is organized into these top-level components:
 - **ASFWDriver/** — Main DriverKit-based FireWire driver (detailed below).
 - **ASFWTests/** — DriverKit-independent unit and integration tests.
 - **tests/** — Additional test fixtures and test infrastructure.
-- **ADKVirtualAudioLab/** — AudioDriverKit virtual audio lab for testing audio paths without hardware.
+- **ADKVirtualAudioLab/** — AudioDriverKit virtual audio lab for testing audio paths without hardware (has its own `project.yml`).
 - **documentation/** — Public project documentation and implementation guides.
 - **diagrams/** — Architecture and design diagrams.
 - **tools/** — Build and development utilities.
+- **project.yml** — [XcodeGen](https://github.com/yonaskolb/XcodeGen) spec that `ASFW.xcodeproj` is generated from — the source of truth for targets, build settings, entitlements wiring, and schemes (see [Building](#building)).
 
 ### ASFWDriver structure
 
@@ -373,6 +374,24 @@ The driver is organized into functional subsystems:
 ## Building
 
 Build scripts or CMakeLists are for quick testing and creating compile_commands.json for static analysis tools. The proper way to build and sign the driver is via Xcode.
+
+### Xcode project is generated (XcodeGen)
+
+`ASFW.xcodeproj` is generated from the root [`project.yml`](project.yml) with
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+The generated project is committed, so plain checkouts (and CI) build without
+XcodeGen installed — but **never edit the pbxproj or project settings in the
+Xcode UI**; change `project.yml` instead.
+
+After **adding, removing, or renaming source files**, regenerate the project
+and commit it together with your change:
+
+```bash
+xcodegen generate     # ./build.sh does this automatically when xcodegen is installed
+```
+
+Output is deterministic — regenerating with no changes produces an identical
+pbxproj.
 
 NOTE: You need an Apple Developer account (paid) and appropriate entitlements — or a free account plus SIP disabled — to build/load the driver on your machine. See Apple's documentation for details: https://developer.apple.com/documentation/driverkit/debugging-and-testing-system-extensions
 
@@ -492,6 +511,12 @@ Contributions are VERY welcome! If you want to contribute to the project, please
 3. Make your changes and commit them with clear messages
 4. Push your changes to your forked repository
 5. Open a pull request on the original repository, describing your changes and why they should be merged
+
+> **Note:** `ASFW.xcodeproj` is generated from `project.yml` (see
+> [Building](#building)). If your change adds, removes, or renames source
+> files, run `xcodegen generate` and include the regenerated project in the
+> same commit. Don't hand-edit the pbxproj or change build settings through
+> the Xcode UI — those changes will be overwritten; edit `project.yml` instead.
 
 Literally any help is appreciated, from fixing typos in documentation to implementing new features or fixing bugs. Writing tests, improving code quality, testing on hardware, and reporting regressions are all valuable. Hardware reports for supported Saffire devices are especially useful right now. If you have any experience with FireWire protocol, just opening an issue or emailing me is invaluable. If you have any experience with Swift, the ASFW app could use some love too.
 

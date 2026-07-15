@@ -13,7 +13,6 @@
 #else
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
-#include <DriverKit/OSObject.h>
 #include <DriverKit/IODispatchQueue.h>
 #endif
 #include <array>
@@ -118,30 +117,24 @@ struct FCPTransportConfig {
 // FCP Transport
 //==============================================================================
 
-class FCPTransport : public OSObject {
-private:
-    using super = OSObject;
+class FCPTransport : public std::enable_shared_from_this<FCPTransport> {
 public:
     FCPTransport() = default;
-    virtual ~FCPTransport() = default;
+    ~FCPTransport();
 
-    void* operator new(size_t size) { return IOMallocZero(size); }
-    void operator delete(void* ptr, size_t size) { IOFree(ptr, size); }
-
-    virtual bool init() override { return super::init(); }
-
-    virtual bool init(Protocols::Ports::FireWireBusOps* busOps,
-                      Protocols::Ports::FireWireBusInfo* busInfo,
-                      Discovery::FWDevice* device,
-                      const FCPTransportConfig& config = {});
-
-    virtual void free() override;
+    bool init(Protocols::Ports::FireWireBusOps* busOps,
+              Protocols::Ports::FireWireBusInfo* busInfo,
+              Discovery::FWDevice* device,
+              const FCPTransportConfig& config = {});
 
     FCPTransport(const FCPTransport&) = delete;
     FCPTransport& operator=(const FCPTransport&) = delete;
 
     [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
                                           FCPCompletion completion);
+
+    /// Stop retries and complete any outstanding command without more bus I/O.
+    void Shutdown();
 
     bool CancelCommand(FCPHandle handle);
 
@@ -168,7 +161,7 @@ private:
 
     void OnAsyncWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response);
 
-    Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame);
+    Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame, uint32_t generation);
 
     void OnCommandTimeout();
 
@@ -184,7 +177,7 @@ private:
 
     Protocols::Ports::FireWireBusOps* busOps_{nullptr};
     Protocols::Ports::FireWireBusInfo* busInfo_{nullptr};
-    Discovery::FWDevice* device_;
+    Discovery::FWDevice* device_{nullptr};
     FCPTransportConfig config_;
 
     IOLock* lock_{nullptr};
@@ -193,6 +186,8 @@ private:
 
     uint64_t nextTimeoutToken_{0};
 
+    // Protected by lock_. Timeout and async-completion blocks capture shared
+    // ownership, so destruction cannot race their callback target.
     bool shuttingDown_{false};
 
     std::unique_ptr<OutstandingCommand> pending_;

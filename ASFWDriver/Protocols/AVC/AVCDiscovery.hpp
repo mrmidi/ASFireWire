@@ -11,6 +11,7 @@
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -38,7 +39,8 @@ namespace ASFW::Protocols::AVC {
 
 class AVCDiscovery : public Discovery::IUnitObserver,
                      public Discovery::IDeviceObserver,
-                     public IAVCDiscovery {
+                     public IAVCDiscovery,
+                     public std::enable_shared_from_this<AVCDiscovery> {
 public:
     AVCDiscovery(IOService* driver,
                  Discovery::IDeviceManager& deviceManager,
@@ -67,6 +69,9 @@ public:
     std::vector<AVCUnit*> GetAllAVCUnits() override;
 
     void ReScanAllUnits() override;
+
+    /// Stop every FCP producer before the async subsystem is dismantled.
+    void Shutdown();
 
     FCPTransport* GetFCPTransportForNodeID(uint16_t nodeID) override;
 
@@ -147,6 +152,8 @@ private:
     std::unordered_map<uint64_t, DuetPrefetchState> duetPrefetchByGuid_;
 
     OSSharedPtr<IODispatchQueue> rescanQueue_;
+
+    std::atomic<bool> shuttingDown_{false};
 
     os_log_t log_{OS_LOG_DEFAULT};
 };

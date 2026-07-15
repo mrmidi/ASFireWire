@@ -502,6 +502,28 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         return kIOReturnSuccess;
     }
 
+    // The runtime protocol is created during ROM discovery, before AVCDiscovery
+    // has a live FCP transport to pass into the factory. Refresh that volatile
+    // context immediately before duplex preparation so AV/C devices do not fail
+    // PrepareDuplex with kIOReturnNotReady.
+    ProtocolRuntimeBinding binding{};
+    if (ResolveProtocolRuntimeBinding(ivars, binding) == kIOReturnSuccess &&
+        binding.avcDiscovery != nullptr) {
+        auto* transport = binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId);
+        if (transport != nullptr) {
+            binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+            ASFW_LOG(Audio,
+                     "ASFWAudioNub: refreshed protocol runtime context GUID=0x%016llx node=%u",
+                     ivars->guid,
+                     binding.device->nodeId);
+        } else {
+            ASFW_LOG_WARNING(Audio,
+                             "ASFWAudioNub: no AVC FCP transport available before streaming GUID=0x%016llx node=%u",
+                             ivars->guid,
+                             binding.device->nodeId);
+        }
+    }
+
     auto* coordinator = GetAudioCoordinator(ivars);
     if (!coordinator) {
         ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming: missing AudioCoordinator");

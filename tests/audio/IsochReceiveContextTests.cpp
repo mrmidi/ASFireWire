@@ -18,6 +18,35 @@ using namespace ASFW::Async;
 using namespace ASFW::Isoch::Memory;
 using namespace testing;
 
+TEST(ZtsTelemetryLogGateTests,
+     EmitsSeedThenEveryFourSecondsAndRearmsOnGridReset) {
+    constexpr uint32_t kRate = 48000;
+    constexpr uint64_t kStartFrame = 1536;
+    ASFW::Isoch::Rx::ZtsTelemetryLogGate gate;
+    ASFW::Isoch::Rx::ZtsTelemetryRecord record{};
+
+    record.kind = static_cast<uint8_t>(ASFW::Isoch::Rx::ZtsEventKind::kSeed);
+    record.sampleFrame = kStartFrame;
+    EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+
+    record.kind = static_cast<uint8_t>(ASFW::Isoch::Rx::ZtsEventKind::kUpdate);
+    record.sampleFrame =
+        kStartFrame + kRate *
+            ASFW::Isoch::Rx::ZtsTelemetryLogGate::kIntervalSeconds - 1;
+    EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+
+    record.sampleFrame =
+        kStartFrame + kRate *
+            ASFW::Isoch::Rx::ZtsTelemetryLogGate::kIntervalSeconds;
+    EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+
+    ++record.sampleFrame;
+    EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+
+    record.sampleFrame = 0;
+    EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+}
+
 class IsochReceiveContextTest : public Test {
 protected:
     void SetUp() override {

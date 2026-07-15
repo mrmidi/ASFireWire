@@ -146,15 +146,24 @@ void CMPClient::ReadOPCR(uint8_t plugNum, PCRReadCallback callback) {
     ReadPCRQuadlet(PCRRegisters::GetOPCRAddress(plugNum), callback);
 }
 
-void CMPClient::ConnectOPCR(uint8_t plugNum, CMPCallback callback) {
+void CMPClient::ConnectOPCR(uint8_t plugNum, uint8_t channel, CMPCallback callback) {
     if (plugNum > 30) {
         ASFW_LOG(CMP, "CMPClient: Invalid oPCR plug number %u", plugNum);
         callback(CMPStatus::Failed);
         return;
     }
-    
-    ASFW_LOG(CMP, "CMPClient: Connecting oPCR[%u]", plugNum);
-    PerformConnect(PCRRegisters::GetOPCRAddress(plugNum), plugNum, std::nullopt, callback);
+    if (channel > 63) {
+        ASFW_LOG(CMP, "CMPClient: Invalid channel %u", channel);
+        callback(CMPStatus::Failed);
+        return;
+    }
+
+    // Both directions carry the IRM-allocated channel in their PCR. Linux
+    // cmp.c:220-275 and Apple's IOFireWireAVCUserClient.cpp:667-675 update the
+    // channel before the compare-and-swap; preserving an oPCR's reset default
+    // would make the device transmit on a channel the host did not reserve.
+    ASFW_LOG(CMP, "CMPClient: Connecting oPCR[%u] on channel %u", plugNum, channel);
+    PerformConnect(PCRRegisters::GetOPCRAddress(plugNum), plugNum, channel, callback);
 }
 
 void CMPClient::DisconnectOPCR(uint8_t plugNum, CMPCallback callback) {
@@ -233,8 +242,21 @@ void CMPClient::PerformConnect(uint32_t pcrAddress, uint8_t plugNum,
         
         // Step 3: Check p2p count
         uint8_t p2p = PCRBits::GetP2P(current);
-        if (p2p >= 3) {
+        if (p2p >= 63) {
             ASFW_LOG(CMP, "CMPClient: Connect failed - p2p count already max (%u)", p2p);
+            callback(CMPStatus::NoResources);
+            return;
+        }
+
+        if (setChannel.has_value() && p2p != 0 &&
+            PCRBits::GetChannel(current) != *setChannel) {
+            // A non-zero p2p count means another connection owns the current
+            // channel. Apple's updateP2PCount rejects a different channel at
+            // IOFireWireAVCUserClient.cpp:667-675; changing it here would move
+            // that live stream without the other connection's consent.
+            ASFW_LOG(CMP,
+                     "CMPClient: Connect failed - plug %u already uses channel %u, requested %u",
+                     plugNum, PCRBits::GetChannel(current), *setChannel);
             callback(CMPStatus::NoResources);
             return;
         }
@@ -243,7 +265,7 @@ void CMPClient::PerformConnect(uint32_t pcrAddress, uint8_t plugNum,
         uint32_t newVal = PCRBits::SetP2P(current, p2p + 1);
         
         if (setChannel.has_value()) {
-            // Set channel for iPCR connection
+            // CMP writes the selected channel into both iPCR and oPCR.
             newVal = (newVal & ~PCRBits::kChannelMask) |
                      (static_cast<uint32_t>(*setChannel) << PCRBits::kChannelShift);
         }

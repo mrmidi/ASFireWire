@@ -127,6 +127,11 @@ kern_return_t IsochReceiveContext::Start() {
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
     ztsTelemetry_.Reset();
+    ztsTelemetryLogGate_.Reset();
+    prevLoggedAnchorFrame_ = 0;
+    prevLoggedAnchorHostTicks_ = 0;
+    prevLoggedAnchorRate_ = 0;
+    prevLoggedAnchorValid_ = false;
     (void)ASFW::Timing::initializeHostTimebase();
 
     rxLock_.clear(std::memory_order_release);
@@ -697,6 +702,10 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
 
     const uint64_t dropped = ztsTelemetry_.Drain(
         maxRecords, [&](const Rx::ZtsTelemetryRecord& rec) {
+            if (!ztsTelemetryLogGate_.ShouldEmit(rec, rate)) {
+                return;
+            }
+
             // Three clocks side by side so drift between them is visible:
             //   host monotonic (host = published grid value, rawHost =
             //     back-corrected packet receive, drainHost = batch-drain read),
@@ -731,17 +740,19 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
                 rate,
                 rec.hostNanosPerSampleQ8);
 
-            // Consecutive-anchor clock comparison: measure actual device frames
-            // per host second and compare against nominal 48 kHz. This reveals
-            // whether the ZTS anchors are host-clock-disciplined or device-derived.
-            if (prevAnchorValid_ && rate != 0) {
+            // Sampled-anchor clock comparison: measure actual device frames
+            // across the multi-second log interval and compare against nominal
+            // rate. This smooths 32 ms quantization jitter while preserving the
+            // long-term device-vs-host drift signal.
+            if (prevLoggedAnchorValid_ && rate != 0 &&
+                rate == prevLoggedAnchorRate_) {
                 const int64_t frameDelta =
                     static_cast<int64_t>(rec.sampleFrame) -
-                    static_cast<int64_t>(prevAnchorFrame_);
+                    static_cast<int64_t>(prevLoggedAnchorFrame_);
                 if (frameDelta > 0) {
                     // Host time delta: convert mach ticks to nanoseconds.
                     const uint64_t hostDeltaTicks =
-                        rec.hostTicks - prevAnchorHostTicks_;
+                        rec.hostTicks - prevLoggedAnchorHostTicks_;
                     const uint64_t hostDeltaNs =
                         ASFW::Timing::hostTicksToNanos(hostDeltaTicks);
 
@@ -778,7 +789,7 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
 
                     // Frame residual: how far nominal interpolation misses.
                     const int64_t nominalExpectedFrame =
-                        static_cast<int64_t>(prevAnchorFrame_) +
+                        static_cast<int64_t>(prevLoggedAnchorFrame_) +
                         static_cast<int64_t>(
                             (hostDeltaNs * static_cast<uint64_t>(rate)) /
                             1'000'000'000ULL);
@@ -800,9 +811,10 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
                         frameResidual);
                 }
             }
-            prevAnchorFrame_ = rec.sampleFrame;
-            prevAnchorHostTicks_ = rec.hostTicks;
-            prevAnchorValid_ = true;
+            prevLoggedAnchorFrame_ = rec.sampleFrame;
+            prevLoggedAnchorHostTicks_ = rec.hostTicks;
+            prevLoggedAnchorRate_ = rate;
+            prevLoggedAnchorValid_ = true;
         });
 
     if (dropped != 0) {

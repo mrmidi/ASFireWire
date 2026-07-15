@@ -14,9 +14,9 @@ using namespace ASFW::Driver;
 
 namespace {
 // Replace the channel field [13:8] of a little-endian OHCI isoch transmit header
-// quadlet with `channel`. The producer (slot provider) encodes a channel; this
-// lets the owning ring override it with its configured transmit channel so a
-// secondary stream rides its own iso channel.
+// quadlet with the channel owned by this ring. Linux queue_iso_transmit() likewise
+// takes the channel from the isoch context, never from content-layer metadata
+// (references/linux-ohci-firewire-low-level-stack/ohci.c:3373-3381).
 [[nodiscard]] inline uint32_t StampHeaderChannel(uint32_t leHeader, uint8_t channel) noexcept {
     // An all-zero header is the "no packet" sentinel (e.g. underrun): leave it
     // untouched so the ring never invents packet state.
@@ -140,14 +140,6 @@ void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
     lastHwTimestamp_ = 0;
     ASFW_LOG(Isoch, "IT: Cycle tracking seeded: currentCycle=%u nextTxCycle=%u",
              currentCycle, nextTransmitCycle_);
-}
-
-uint32_t IsochTxDmaRing::BuildIsochHeaderQ0(uint8_t channel) noexcept {
-    return ((2u & 0x7) << 16) |   // spd
-           ((1u & 0x3) << 14) |   // tag
-           ((channel & 0x3F) << 8) |
-           ((0xAu & 0xF) << 4) |  // tcode = STREAM_DATA
-           (0u & 0xF);
 }
 
 uint32_t IsochTxDmaRing::ComputeDeltaConsumed(const uint32_t hwPacketIndex) noexcept {
@@ -311,13 +303,10 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
             .branchBits = OHCIDescriptor::kBranchNever,
         });
 
-        // Set the immediate isochronous headers from metadata. Secondary streams
-        // opt into restamping the transmit channel ([13:8]) from this ring's
-        // channel_ (set by Configure), so they ride their own iso channel without
-        // the audio-side slot provider knowing it. The master copies verbatim.
-        immDesc->immediateData[0] = stampChannel_
-            ? StampHeaderChannel(meta.immediateHeader[0], channel_)
-            : meta.immediateHeader[0];
+        // The transport context owns channel selection. Always override the
+        // producer placeholder so master and secondary streams obey Configure().
+        immDesc->immediateData[0] =
+            StampHeaderChannel(meta.immediateHeader[0], channel_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
 
         // Linux queue_iso_transmit() self-links the skip address so a lost
@@ -714,9 +703,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint32_t descBase = hwSlot * Layout::kBlocksPerPacket;
         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
             slab_.GetDescriptorPtr(descBase));
-        immDesc->immediateData[0] = stampChannel_
-            ? StampHeaderChannel(meta.immediateHeader[0], channel_)
-            : meta.immediateHeader[0];
+        immDesc->immediateData[0] =
+            StampHeaderChannel(meta.immediateHeader[0], channel_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),

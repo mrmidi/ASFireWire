@@ -27,6 +27,20 @@ using ASFW::Async::HW::OHCIDescriptor;
 using ASFW::Async::HW::OHCIDescriptorImmediate;
 using ASFW::Driver::Register32;
 
+namespace {
+
+constexpr uint32_t kIsochChannelMask = 0x3fu << 8;
+
+[[nodiscard]] uint32_t WithIsochChannel(uint32_t leHeader,
+                                        uint8_t channel) noexcept {
+    uint32_t hostHeader = OSSwapLittleToHostInt32(leHeader);
+    hostHeader = (hostHeader & ~kIsochChannelMask) |
+                 (static_cast<uint32_t>(channel & 0x3fu) << 8);
+    return OSSwapHostToLittleInt32(hostHeader);
+}
+
+} // namespace
+
 class IsochTxDmaRingTest : public ::testing::Test {
 protected:
     static constexpr uint64_t kSharedPayloadIOVA = 0x70000000u;
@@ -153,6 +167,33 @@ TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
         const uint32_t nextDescIOVA = ring_.Slab().GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
         EXPECT_EQ(desc3->branchWord, (nextDescIOVA & 0xFFFFFFF0u) | Layout::kBlocksPerPacket);
     }
+}
+
+TEST_F(IsochTxDmaRingTest,
+       PrimeOverridesProducerChannelWithConfiguredTransportChannel) {
+    constexpr uint8_t kConfiguredChannel = 37;
+    constexpr uint32_t kProducerHostHeader =
+        (2u << 16) | (1u << 14) | (0u << 8) | (0xau << 4) | 5u;
+    const uint32_t producerHeader =
+        OSSwapHostToLittleInt32(kProducerHostHeader);
+
+    auto metadataRing = MakeMetadataRing();
+    metadataRing[0].immediateHeader[0] = producerHeader;
+    ring_.SetChannel(kConfiguredChannel);
+
+    const auto stats = ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), Layout::kNumPackets);
+    ASSERT_EQ(stats.packetsAssembled, Layout::kNumPackets);
+
+    const auto* immediate = reinterpret_cast<const OHCIDescriptorImmediate*>(
+        ring_.Slab().GetDescriptorPtr(0));
+    const uint32_t actualHostHeader =
+        OSSwapLittleToHostInt32(immediate->immediateData[0]);
+    EXPECT_EQ((actualHostHeader & kIsochChannelMask) >> 8,
+              kConfiguredChannel);
+    EXPECT_EQ(actualHostHeader & ~kIsochChannelMask,
+              kProducerHostHeader & ~kIsochChannelMask);
 }
 
 TEST_F(IsochTxDmaRingTest, PrimeRejectsMissingSharedPayloadGeometry) {
@@ -327,6 +368,53 @@ TEST_F(IsochTxDmaRingTest, RefillUsesMappedIOVAAfterPageBoundary) {
     EXPECT_EQ(firstPacketOnSecondPage->dataAddress, kRemainingPagesIOVA);
 }
 
+TEST_F(IsochTxDmaRingTest,
+       RefillOverridesProducerChannelWithConfiguredTransportChannel) {
+    constexpr uint8_t kConfiguredChannel = 37;
+    constexpr uint32_t kProducerHostHeader =
+        (2u << 16) | (1u << 14) | (0u << 8) | (0xau << 4) | 5u;
+
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), Layout::kNumPackets);
+    ring_.ResetForStart();
+    ring_.SetChannel(kConfiguredChannel);
+    ring_.SeedCycleTracking(hardware_);
+
+    metadataRing[0].immediateHeader[0] =
+        OSSwapHostToLittleInt32(kProducerHostHeader);
+
+    TxStreamControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+
+    const uint32_t nextPacketIOVA =
+        ring_.Slab().GetDescriptorIOVA(Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+        nextPacketIOVA | Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto outcome = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(outcome.ok);
+    ASSERT_EQ(outcome.packetsFilled, 1u);
+
+    const auto* immediate = reinterpret_cast<const OHCIDescriptorImmediate*>(
+        ring_.Slab().GetDescriptorPtr(0));
+    const uint32_t actualHostHeader =
+        OSSwapLittleToHostInt32(immediate->immediateData[0]);
+    EXPECT_EQ((actualHostHeader & kIsochChannelMask) >> 8,
+              kConfiguredChannel);
+    EXPECT_EQ(actualHostHeader & ~kIsochChannelMask,
+              kProducerHostHeader & ~kIsochChannelMask);
+}
+
 TEST_F(IsochTxDmaRingTest, RefillProgramsPayloadCrossingDmaSegment) {
     auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
@@ -468,7 +556,8 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
                    0xFFFFFFF0u) |
                       Layout::kBlocksPerPacket);
         EXPECT_EQ(desc0->statusWord, 0u);
-        EXPECT_EQ(immDesc->immediateData[0], 0x11110000 + i);
+        EXPECT_EQ(immDesc->immediateData[0],
+                  WithIsochChannel(0x11110000 + i, 1));
         EXPECT_EQ(immDesc->immediateData[1], 0x22220000 + i);
 
         auto* desc2 = ring_.Slab().GetDescriptorPtr(
@@ -622,7 +711,8 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
     auto* wrappedImmediate = reinterpret_cast<OHCIDescriptorImmediate*>(
         ring_.Slab().GetDescriptorPtr(0));
     EXPECT_EQ(wrappedImmediate->immediateData[0],
-              0x11000000u + Layout::kNumPackets);
+              WithIsochChannel(
+                  0x11000000u + Layout::kNumPackets, 1));
     EXPECT_EQ(wrappedImmediate->immediateData[1],
               0x22000000u + Layout::kNumPackets);
 }

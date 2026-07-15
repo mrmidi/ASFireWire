@@ -204,9 +204,10 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
 }
 
 AVCDiscovery::~AVCDiscovery() {
-    // Unregister discovery observers
-    deviceManager_.UnregisterDeviceObserver(this);
-    deviceManager_.UnregisterUnitObserver(this);
+    Shutdown();
+
+    // Shutdown() unregisters observers before stopping outstanding FCP work.
+    // Do not free the lock until that lifecycle boundary has been established.
 
     // Clean up lock
     if (lock_) {
@@ -217,11 +218,46 @@ AVCDiscovery::~AVCDiscovery() {
     os_log_info(log_, "AVCDiscovery: Destroyed");
 }
 
+void AVCDiscovery::Shutdown() {
+    bool expected = false;
+    if (!shuttingDown_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    // Remove external producers first. Device callbacks may otherwise enqueue
+    // a fresh AV/C command after FCP has been shut down.
+    deviceManager_.UnregisterDeviceObserver(this);
+    deviceManager_.UnregisterUnitObserver(this);
+
+    std::vector<std::shared_ptr<AVCUnit>> units;
+    if (lock_) {
+        IOLockLock(lock_);
+        units.reserve(units_.size());
+        for (const auto& [guid, unit] : units_) {
+            (void)guid;
+            if (unit) {
+                units.push_back(unit);
+            }
+        }
+        fcpTransportsByNodeID_.clear();
+        rescanAttempts_.clear();
+        duetPrefetchByGuid_.clear();
+        IOLockUnlock(lock_);
+    }
+
+    for (const auto& unit : units) {
+        unit->Shutdown();
+    }
+}
+
 //==============================================================================
 // IUnitObserver Interface
 //==============================================================================
 
 void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     if (!IsAVCUnit(unit)) {
         return;
     }
@@ -242,22 +278,35 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // Create AVCUnit
     auto avcUnit = std::make_shared<AVCUnit>(device, unit, busOps_, busInfo_);
 
+    // Publish the unit to the shutdown owner before initializing it. A
+    // termination callback can race discovery after our first atomic check;
+    // if it wins, Shutdown() will see and stop this FCP producer.
+    IOLockLock(lock_);
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        IOLockUnlock(lock_);
+        avcUnit->Shutdown();
+        return;
+    }
+    units_[guid] = avcUnit;
+    IOLockUnlock(lock_);
+
+    const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
+
     // Initialize (probe subunits, plugs)
-    avcUnit->Initialize([this, avcUnit, guid](bool success) {
+    avcUnit->Initialize([weakSelf, avcUnit, guid](bool success) {
+        const auto self = weakSelf.lock();
+        if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+        }
         if (!success) {
-            os_log_error(log_,
+            os_log_error(self->log_,
                          "AVCDiscovery: AVCUnit initialization failed: GUID=%llx",
                          guid);
             return;
         }
 
-        HandleInitializedUnit(guid, avcUnit);
+        self->HandleInitializedUnit(guid, avcUnit);
     });
-
-    // Store AVCUnit
-    IOLockLock(lock_);
-    units_[guid] = std::move(avcUnit);
-    IOLockUnlock(lock_);
 
     // Rebuild node ID map (unit now has transport)
     RebuildNodeIDMap();
@@ -765,6 +814,9 @@ void AVCDiscovery::ContinueDuetPrefetchHardware(
 }
 
 void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     if (!avcUnit) {
         return;
     }
@@ -787,21 +839,34 @@ void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>&
     IOLockUnlock(lock_);
 
     auto unit = avcUnit;
-    auto rescanWork = [this, guid, attempt, unit]() {
+    const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
+    auto rescanWork = [weakSelf, guid, attempt, unit]() {
+        const auto self = weakSelf.lock();
+        if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+        }
         if (kRescanDelayMs > 0) {
             IOSleep(kRescanDelayMs);
         }
 
+        if (self->shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+        }
+
         ASFW_LOG(Audio, "AVCDiscovery: Auto re-scan attempt %u for GUID=%llx", attempt, guid);
-        unit->ReScan([this, guid, unit](bool success) {
+        unit->ReScan([weakSelf, guid, unit](bool success) {
+            const auto self = weakSelf.lock();
+            if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
+                return;
+            }
             if (!success) {
-                os_log_error(log_,
+                os_log_error(self->log_,
                              "AVCDiscovery: AVCUnit re-scan failed: GUID=%llx",
                              guid);
                 return;
             }
 
-            HandleInitializedUnit(guid, unit);
+            self->HandleInitializedUnit(guid, unit);
         });
     };
 
@@ -813,6 +878,9 @@ void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>&
 }
 
 void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     uint64_t guid = GetUnitGUID(unit);
 
     IOLockLock(lock_);
@@ -831,6 +899,9 @@ void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {
 }
 
 void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     uint64_t guid = GetUnitGUID(unit);
 
     IOLockLock(lock_);
@@ -848,6 +919,9 @@ void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
 }
 
 void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     uint64_t guid = GetUnitGUID(unit);
 
     IOLockLock(lock_);
@@ -868,18 +942,30 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
 }
 
 void AVCDiscovery::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     (void)device;
 }
 
 void AVCDiscovery::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     (void)device;
 }
 
 void AVCDiscovery::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     (void)device;
 }
 
 void AVCDiscovery::OnDeviceRemoved(Discovery::Guid64 guid) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     IOLockLock(lock_);
 
     units_.erase(guid);
@@ -930,6 +1016,9 @@ std::vector<AVCUnit*> AVCDiscovery::GetAllAVCUnits() {
 }
 
 void AVCDiscovery::ReScanAllUnits() {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     IOLockLock(lock_);
     
     os_log_info(log_, "AVCDiscovery: Re-scanning all %zu units", units_.size());
@@ -948,6 +1037,9 @@ void AVCDiscovery::ReScanAllUnits() {
 }
 
 FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return nullptr;
+    }
     IOLockLock(lock_);
 
     // Normalize to node number (low 6 bits) to match map keys
@@ -968,6 +1060,9 @@ FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {
 //==============================================================================
 
 void AVCDiscovery::OnBusReset(uint32_t newGeneration) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     os_log_info(log_,
                 "AVCDiscovery: Bus reset (generation %u)",
                 newGeneration);
@@ -1019,6 +1114,9 @@ uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) cons
 }
 
 void AVCDiscovery::RebuildNodeIDMap() {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     IOLockLock(lock_);
 
     // Clear old mappings

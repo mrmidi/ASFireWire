@@ -158,27 +158,44 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override {
         log_.Add("host.begin");
         lastGuid = guid;
+        assignedChannelMask_ = 0;
         ++beginCalls;
         return beginStatus;
     }
 
-    kern_return_t ReservePlaybackResources(uint64_t guid, IRMClient&, uint8_t channel,
-                                           uint32_t bandwidthUnits) noexcept override {
+    kern_return_t ReservePlaybackResources(uint64_t guid, IRMClient&, uint64_t allowedChannels,
+                                           uint32_t bandwidthUnits,
+                                           uint8_t& outChannel) noexcept override {
         log_.Add("host.reserve_playback");
         lastGuid = guid;
-        lastPlaybackChannel = channel;
+        lastPlaybackAllowedChannels = allowedChannels;
         lastPlaybackBandwidth = bandwidthUnits;
         ++reservePlaybackCalls;
+        if (reservePlaybackStatus == kIOReturnSuccess) {
+            outChannel = SelectChannel(allowedChannels);
+            if (outChannel == ASFW::Audio::AudioStreamWireInfo::kInvalidIsoChannel) {
+                return kIOReturnNoResources;
+            }
+            lastPlaybackChannel = outChannel;
+        }
         return reservePlaybackStatus;
     }
 
-    kern_return_t ReserveCaptureResources(uint64_t guid, IRMClient&, uint8_t channel,
-                                          uint32_t bandwidthUnits) noexcept override {
+    kern_return_t ReserveCaptureResources(uint64_t guid, IRMClient&, uint64_t allowedChannels,
+                                          uint32_t bandwidthUnits,
+                                          uint8_t& outChannel) noexcept override {
         log_.Add("host.reserve_capture");
         lastGuid = guid;
-        lastCaptureChannel = channel;
+        lastCaptureAllowedChannels = allowedChannels;
         lastCaptureBandwidth = bandwidthUnits;
         ++reserveCaptureCalls;
+        if (reserveCaptureStatus == kIOReturnSuccess) {
+            outChannel = SelectChannel(allowedChannels);
+            if (outChannel == ASFW::Audio::AudioStreamWireInfo::kInvalidIsoChannel) {
+                return kIOReturnNoResources;
+            }
+            lastCaptureChannel = outChannel;
+        }
         return reserveCaptureStatus;
     }
 
@@ -277,8 +294,10 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
 
     uint64_t lastGuid{0};
     uint8_t lastPlaybackChannel{0};
+    uint64_t lastPlaybackAllowedChannels{0};
     uint32_t lastPlaybackBandwidth{0};
     uint8_t lastCaptureChannel{0};
+    uint64_t lastCaptureAllowedChannels{0};
     uint32_t lastCaptureBandwidth{0};
     uint8_t lastReceiveChannel{0};
     ASFW::Audio::Runtime::IDirectAudioBindingSource* lastReceiveBindingSource{nullptr};
@@ -315,7 +334,20 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     int stopTransmitCalls{0};
 
   private:
+    [[nodiscard]] uint8_t SelectChannel(uint64_t allowedChannels) noexcept {
+        const uint64_t available = allowedChannels & ~assignedChannelMask_;
+        for (uint8_t channel = 0; channel < 64; ++channel) {
+            const uint64_t bit = uint64_t{1} << channel;
+            if ((available & bit) != 0) {
+                assignedChannelMask_ |= bit;
+                return channel;
+            }
+        }
+        return ASFW::Audio::AudioStreamWireInfo::kInvalidIsoChannel;
+    }
+
     SharedCallLog& log_;
+    uint64_t assignedChannelMask_{0};
 };
 
 class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceControl {
@@ -369,6 +401,17 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
                                     .appliedClock = currentClock_,
                                     .runtimeCaps = currentCaps_,
                                 });
+    }
+
+    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override {
+        // Simulate the protocol adapter consuming the IRM result before PCR
+        // programming; logging is intentionally omitted so lifecycle ordering
+        // assertions remain about wire/host stages only.
+        lastChannels_ = channels;
+    }
+
+    [[nodiscard]] const AudioDuplexChannels& LastChannels() const noexcept {
+        return lastChannels_;
     }
 
     void ProgramRx(StageCallback callback) override {
@@ -687,8 +730,16 @@ TEST_F(AudioDuplexCoordinatorTests,
 
     EXPECT_EQ(hostTransport_.reservePlaybackCalls, 1);
     EXPECT_EQ(hostTransport_.reserveCaptureCalls, 1);
-    EXPECT_EQ(hostTransport_.lastPlaybackChannel, 1U);
-    EXPECT_EQ(hostTransport_.lastCaptureChannel, 0U);
+    EXPECT_EQ(hostTransport_.lastPlaybackAllowedChannels, ~uint64_t{0});
+    EXPECT_EQ(hostTransport_.lastCaptureAllowedChannels, ~uint64_t{0});
+    EXPECT_EQ(hostTransport_.lastPlaybackChannel, 0U);
+    EXPECT_EQ(hostTransport_.lastCaptureChannel, 1U);
+    EXPECT_EQ(protocol_->LastChannels().hostToDeviceIsoChannel, 0U);
+    EXPECT_EQ(protocol_->LastChannels().deviceToHostIsoChannel, 1U);
+    const auto session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->channels.hostToDeviceIsoChannel, 0U);
+    EXPECT_EQ(session->channels.deviceToHostIsoChannel, 1U);
     EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{
                                  "host.begin",
                                  "device.prepare",

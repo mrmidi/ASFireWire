@@ -375,11 +375,19 @@ IOReturn ApogeeDuetProtocol::Initialize() {
 }
 
 IOReturn ApogeeDuetProtocol::Shutdown() {
+    clockConfigApplied_ = false;
+    outputConnected_ = false;
+    inputConnected_ = false;
     return kIOReturnSuccess;
 }
 
 void ApogeeDuetProtocol::UpdateRuntimeContext(uint16_t nodeId,
                                               Protocols::AVC::FCPTransport* transport) {
+    // A replacement transport or node identity denotes a newly discovered bus
+    // epoch. Do not carry the AV/C configuration cache across that boundary.
+    if (nodeId_ != nodeId || fcpTransport_ != transport) {
+        clockConfigApplied_ = false;
+    }
     nodeId_ = nodeId;
     fcpTransport_ = transport;
 }
@@ -428,6 +436,13 @@ void ApogeeDuetProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
         });
 }
 
+void ApogeeDuetProtocol::SetAssignedChannels(const AudioDuplexChannels& channels) noexcept {
+    // PrepareDuplex runs before IRM allocation so it can establish clock and
+    // geometry. The coordinator calls this hook with the committed allocation
+    // before either CMP plug is programmed.
+    duplexChannels_ = channels;
+}
+
 void ApogeeDuetProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                                           ClockApplyCallback callback) {
     if (!fcpTransport_) {
@@ -439,35 +454,64 @@ void ApogeeDuetProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
         return;
     }
 
+    if (clockConfigApplied_ && appliedClock_.sampleRateHz == desiredClock.sampleRateHz) {
+        AudioStreamRuntimeCaps caps{};
+        (void)GetRuntimeAudioStreamCaps(caps);
+        callback(kIOReturnSuccess,
+                 ClockApplyResult{
+                     .generation = busInfo_.GetGeneration(),
+                     .appliedClock = appliedClock_,
+                     .runtimeCaps = caps,
+                 });
+        return;
+    }
+
     using SignalCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
     using SampleRate = Protocols::AVC::StreamFormats::SampleRate;
 
-    // Linux fcp.c:44-78 and oxfw-command.c:120-150 use unit-level
-    // INPUT/OUTPUT PLUG SIGNAL FORMAT with AM824 + SFC 0x02 for 48 kHz.
-    auto output = std::make_shared<SignalCommand>(*fcpTransport_, 0, false,
-                                                  SampleRate::k48000Hz);
-    output->Submit(
-        [this, desiredClock, callback = std::move(callback), output](
-            Protocols::AVC::AVCResult outputResult, const SignalCommand::SignalFormat&) mutable {
-            const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
-            if (outputStatus != kIOReturnSuccess) {
-                callback(outputStatus, {});
+    const SampleRate sampleRate = [&desiredClock]() noexcept {
+        switch (desiredClock.sampleRateHz) {
+            case 32000U:
+                return SampleRate::k32000Hz;
+            case 44100U:
+                return SampleRate::k44100Hz;
+            case 48000U:
+                return SampleRate::k48000Hz;
+            default:
+                return SampleRate::kUnknown;
+        }
+    }();
+
+    // OXFW's assumed-format path programs INPUT first and OUTPUT second
+    // (Linux oxfw-stream.c:41-54). Re-sending these controls during every
+    // restart is not harmless: the reference only changes format when the
+    // requested formation changes (oxfw-stream.c:273-310), and some devices
+    // freeze on requests immediately after a format change.
+    auto input =
+        std::make_shared<SignalCommand>(*fcpTransport_, 0, true, sampleRate);
+    input->Submit(
+        [this, desiredClock, sampleRate, callback = std::move(callback), input](
+            Protocols::AVC::AVCResult inputResult, const SignalCommand::SignalFormat&) mutable {
+            const IOReturn inputStatus = MapAVCResultToIOReturn(inputResult);
+            if (inputStatus != kIOReturnSuccess) {
+                callback(inputStatus, {});
                 return;
             }
 
-            auto input = std::make_shared<SignalCommand>(*fcpTransport_, 0, true,
-                                                         SampleRate::k48000Hz);
-            input->Submit(
-                [this, desiredClock, callback = std::move(callback), input](
-                    Protocols::AVC::AVCResult inputResult,
+            auto output =
+                std::make_shared<SignalCommand>(*fcpTransport_, 0, false, sampleRate);
+            output->Submit(
+                [this, desiredClock, callback = std::move(callback), output](
+                    Protocols::AVC::AVCResult outputResult,
                     const SignalCommand::SignalFormat&) mutable {
-                    const IOReturn inputStatus = MapAVCResultToIOReturn(inputResult);
-                    if (inputStatus != kIOReturnSuccess) {
-                        callback(inputStatus, {});
+                    const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
+                    if (outputStatus != kIOReturnSuccess) {
+                        callback(outputStatus, {});
                         return;
                     }
 
                     appliedClock_ = desiredClock;
+                    clockConfigApplied_ = true;
                     AudioStreamRuntimeCaps caps{};
                     (void)GetRuntimeAudioStreamCaps(caps);
                     callback(kIOReturnSuccess,
@@ -514,7 +558,8 @@ void ApogeeDuetProtocol::ProgramRx(StageCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->ConnectOPCR(0, [state](CMP::CMPStatus status) {
+    cmpClient_->ConnectOPCR(0, duplexChannels_.deviceToHostIsoChannel,
+                            [state](CMP::CMPStatus status) {
         state->status.store(status, std::memory_order_release);
         state->done.store(true, std::memory_order_release);
     });

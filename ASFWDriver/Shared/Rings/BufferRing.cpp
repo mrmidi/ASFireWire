@@ -32,6 +32,10 @@ bool BufferRing::Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span
         ASFW_LOG(Async, "BufferRing::Initialize: descriptor count %zu != buffer count %zu", descriptors.size(), bufferCount);
         return false;
     }
+    if (bufferCount < 2) {
+        ASFW_LOG(Async, "BufferRing::Initialize: AR ring needs at least two buffers");
+        return false;
+    }
     if (buffers.size() < bufferCount * bufferSize) {
         ASFW_LOG(Async, "BufferRing::Initialize: buffer storage too small (%zu < %zu)", buffers.size(), bufferCount * bufferSize);
         return false;
@@ -51,6 +55,8 @@ bool BufferRing::Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span
     head_ = 0;
     last_dequeued_bytes_ = 0;
     last_observed_total_bytes_ = 0;
+    lastLinkedIndex_ = bufferCount - 1;
+    wakeRequired_ = false;
     for (size_t i = 0; i < bufferCount; ++i) {
         auto& desc = descriptors_[i];
         desc = HW::OHCIDescriptor{};
@@ -91,7 +97,13 @@ bool BufferRing::Finalize(uint64_t descriptorsIOVABase, uint64_t buffersIOVABase
         desc.dataAddress = static_cast<uint32_t>(dataIOVA);
         const size_t nextIndex = (i + 1) % bufferCount_;
         const uint64_t nextDescIOVA = descriptorsIOVABase + static_cast<uint64_t>(nextIndex) * sizeof(HW::OHCIDescriptor);
-        const uint32_t branchWord = HW::MakeBranchWordAR(nextDescIOVA, /*continueFlag=*/true);
+        // Do not make the receive program permanently circular. The final
+        // descriptor is a Z=0 stop marker; recycling moves that marker behind
+        // the hardware producer. Linux establishes the same initial boundary
+        // in ohci.c:1118-1128 and moves it in ohci.c:736-752; without it OHCI
+        // can wrap into buffers software has not consumed.
+        const bool continueFlag = i != (bufferCount_ - 1);
+        const uint32_t branchWord = HW::MakeBranchWordAR(nextDescIOVA, continueFlag);
         if (branchWord == 0) {
             ASFW_LOG(Async, "BufferRing::Finalize: invalid branchWord for index %zu (nextIOVA=0x%llx)", i, nextDescIOVA);
             return false;
@@ -101,6 +113,8 @@ bool BufferRing::Finalize(uint64_t descriptorsIOVABase, uint64_t buffersIOVABase
     ASFW_LOG(Async, "BufferRing finalized: descIOVA=0x%llx bufIOVA=0x%llx buffers=%zu", descriptorsIOVABase, buffersIOVABase, bufferCount_);
     descIOVABase_ = static_cast<uint32_t>(descriptorsIOVABase & 0xFFFFFFFFu);
     bufIOVABase_ = static_cast<uint32_t>(buffersIOVABase & 0xFFFFFFFFu);
+    lastLinkedIndex_ = bufferCount_ - 1;
+    wakeRequired_ = false;
     return true;
 }
 
@@ -128,8 +142,9 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     }
     #endif
 
-    // Extract resCount and xferStatus using AR-specific accessors
-    // CRITICAL: statusWord is in BIG-ENDIAN per OHCI §8.4.2, Table 8-1
+    // Extract resCount and xferStatus using AR-specific accessors. Descriptor
+    // fields are OHCI little-endian (and the supported ARM64 host is little-
+    // endian), unlike the big-endian IEEE 1394 packet bytes in the data buffer.
     const uint16_t resCount = HW::AR_resCount(desc);
     const uint16_t reqCount = static_cast<uint16_t>(desc.control & 0xFFFF);
 
@@ -166,19 +181,15 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
                     next_resCount,
                     next_reqCount);
 
-        auto& desc_to_recycle = descriptors_[index];
-        const uint16_t reqCount_recycle = static_cast<uint16_t>(desc_to_recycle.control & 0xFFFF);
-        HW::AR_init_status(desc_to_recycle, reqCount_recycle);
-
-        if (dma_) {
-            dma_->PublishToDevice(&desc_to_recycle, sizeof(desc_to_recycle));
+        const kern_return_t recycleKr = Recycle(index);
+        if (recycleKr != kIOReturnSuccess) {
+            ASFW_LOG(Async,
+                     "BufferRing::Dequeue: auto-recycle failed for buffer[%zu], kr=0x%08x",
+                     index,
+                     recycleKr);
+            return std::nullopt;
         }
-        Driver::WriteBarrier();
-
-        head_ = next_index;
-        last_dequeued_bytes_ = 0;
-        last_observed_total_bytes_ = 0;
-        index = next_index;
+        index = head_;
 
         auto& advancedDesc = descriptors_[index];
         if (dma_) {
@@ -302,7 +313,6 @@ kern_return_t BufferRing::CommitConsumed(size_t index, size_t consumedBytes) noe
         ASFW_LOG(Async, "BufferRing::CommitConsumed: index %zu out of bounds", index);
         return kIOReturnBadArgument;
     }
-
     auto& desc = descriptors_[index];
     if (dma_) {
         dma_->FetchFromDevice(&desc, sizeof(desc));
@@ -506,7 +516,6 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
         ASFW_LOG(Async, "BufferRing::Recycle: index %zu out of bounds", index);
         return kIOReturnBadArgument;
     }
-
     auto& desc = descriptors_[index];
     const uint16_t reqCount = static_cast<uint16_t>(desc.control & 0xFFFF);
 
@@ -515,8 +524,11 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
     const uint16_t xferStatusBefore = HW::AR_xferStatus(desc);
     const uint32_t statusWordBefore = desc.statusWord;
 
-    // Reset statusWord to indicate buffer is empty
-    // CRITICAL: Use AR_init_status() to handle native byte order correctly
+    // Prepare the consumed descriptor as the new terminal before exposing it
+    // through the old terminal's branch. Ordering is load-bearing: publishing
+    // the old link first would briefly let OHCI enter a descriptor whose status
+    // still belongs to the previous traversal.
+    desc.branchWord &= ~uint32_t{1};
     HW::AR_init_status(desc, reqCount);
 
     // DIAGNOSTIC: Read descriptor state AFTER reset (but before cache flush)
@@ -524,11 +536,24 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
     const uint16_t xferStatusAfter = HW::AR_xferStatus(desc);
     const uint32_t statusWordAfter = desc.statusWord;
 
-    // Sync descriptor to device after AR_init_status (publish to HC)
+    // Publish the new Z=0 terminal first.
     if (dma_) {
         dma_->PublishToDevice(&desc, sizeof(desc));
     }
     Driver::WriteBarrier();
+
+    // Now extend the existing program by setting Z=1 on its old terminal.
+    // Only the branch word is published so CPU does not overwrite transfer
+    // status that OHCI may have just completed in that descriptor.
+    auto& oldTerminal = descriptors_[lastLinkedIndex_];
+    oldTerminal.branchWord |= uint32_t{1};
+    if (dma_) {
+        dma_->PublishToDevice(
+            &oldTerminal, offsetof(HW::OHCIDescriptor, statusWord));
+    }
+    Driver::WriteBarrier();
+    lastLinkedIndex_ = index;
+    wakeRequired_ = true;
 
     // CRITICAL DIAGNOSTIC: Always log recycle operation to trace buffer lifecycle
     ASFW_LOG_V4(Async,
@@ -538,7 +563,7 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
                 "♻️  BufferRing::Recycle[%zu]: AFTER  statusWord=0x%08X (resCount=%u xferStatus=0x%04X) reqCount=%u",
                 index, statusWordAfter, resCountAfter, xferStatusAfter, reqCount);
     ASFW_LOG_V4(Async,
-                "♻️  BufferRing::Recycle[%zu]: head_ %zu → %zu (next buffer)",
+                "♻️  BufferRing::Recycle[%zu]: moved Z=0 terminal, head_ %zu → %zu",
                 index, head_, (head_ + 1) % bufferCount_);
 
     if (resCountAfter != reqCount) {

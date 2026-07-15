@@ -80,7 +80,7 @@ void AsyncSubsystem::OnTxInterrupt() {
 
 void AsyncSubsystem::OnRxInterrupt(ARContextType /*contextType*/) {
     if (rxPath_) {
-        rxPath_->ProcessARInterrupts(is_bus_reset_in_progress_, isRunning_, busResetCapture_.get());
+        rxPath_->ProcessARInterrupts(isRunning_, busResetCapture_.get());
     }
 
     // No bus-reset work here. AR IRQ ≠ bus reset.

@@ -36,6 +36,15 @@ public:
     virtual void PrepareDuplex(const AudioDuplexChannels& channels,
                                const AudioClockConfig& desiredClock,
                                PrepareCallback callback) = 0;
+
+    // IRM allocation can replace a profile's provisional channel numbers. The
+    // protocol adapter must receive the committed values before it programs
+    // remote PCRs; otherwise the device and the host DMA contexts can transmit
+    // and listen on different channels. Fixed-channel protocols need no work.
+    virtual void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept {
+        (void)channels;
+    }
+
     virtual void ProgramRx(StageCallback callback) = 0;
     virtual void ProgramTxAndEnableDuplex(StageCallback callback) = 0;
     virtual void ConfirmDuplexStart(ConfirmCallback callback) = 0;

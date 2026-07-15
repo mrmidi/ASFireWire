@@ -32,6 +32,14 @@ public:
     [[nodiscard]] size_t CopyReadableBytes(std::span<uint8_t> destination) noexcept;
     [[nodiscard]] kern_return_t ConsumeReadableBytes(size_t consumedBytes) noexcept;
     [[nodiscard]] kern_return_t Recycle(size_t index) noexcept;
+    // Relinking a consumed descriptor extends the bounded OHCI program. The AR
+    // context consumes this latch and writes ContextControl.wake after the DMA
+    // descriptor writes are visible to the controller.
+    [[nodiscard]] bool TakeWakeRequired() noexcept {
+        const bool required = wakeRequired_;
+        wakeRequired_ = false;
+        return required;
+    }
     [[nodiscard]] uint8_t* GetBufferAddress(size_t index) const noexcept;
     [[nodiscard]] size_t Head() const noexcept { return head_; }
     [[nodiscard]] size_t BufferCount() const noexcept { return bufferCount_; }
@@ -75,6 +83,8 @@ private:
     size_t head_{0};
     size_t last_dequeued_bytes_{0};
     size_t last_observed_total_bytes_{0};
+    size_t lastLinkedIndex_{0};
+    bool wakeRequired_{false};
     uint32_t descIOVABase_{0};
     uint32_t bufIOVABase_{0};
     IDMAMemory* dma_{nullptr};

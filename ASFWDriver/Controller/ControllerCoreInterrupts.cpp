@@ -59,6 +59,18 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
         const uint32_t generation = hw.Read(Register32::kSelfIDGeneration);
+        // A reset edge is a hard liveness boundary: no higher layer may retain
+        // the old (generation,node) address while Self-ID and ROM discovery are
+        // in flight. This matches the legacy IOFireWireFamily policy of
+        // invalidating all node IDs before resuming children
+        // (IOFireWireController.cpp:1983-2019). GUID identity is retained and
+        // rebound by the ensuing discovery scan.
+        if (deps_.deviceRegistry) {
+            deps_.deviceRegistry->InvalidateLiveMappingsForBusReset();
+        }
+        if (deps_.deviceManager) {
+            deps_.deviceManager->SuspendAllForBusReset();
+        }
         if (deps_.busManagerElectionDriver) {
             deps_.busManagerElectionDriver->OnBusReset();
         }

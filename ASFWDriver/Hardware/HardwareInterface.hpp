@@ -58,10 +58,20 @@ class HardwareInterface {
     ~HardwareInterface();
 
     kern_return_t Attach(IOService* owner, IOService* provider);
+    /**
+     * Fence all future PCI BAR accesses without releasing the provider.
+     *
+     * Once PCI memory decoding has been withdrawn, even a diagnostic register
+     * read raises a fatal SError on Apple silicon. Use this as the first half
+     * of Detach(), or from an independently signalled provider-revocation
+     * path, before any concurrent software producer can touch OHCI.
+     */
+    void Revoke() noexcept;
     void Detach();
     void BindAsyncControllerPort(ASFW::Async::IAsyncControllerPort* controllerPort) noexcept;
 
-    [[nodiscard]] bool Attached() const noexcept { return static_cast<bool>(device_); }
+    [[nodiscard]] bool Attached() const noexcept;
+    [[nodiscard]] bool IsAvailable() const noexcept;
 
     [[nodiscard]] uint32_t Read(Register32 reg) const noexcept;
     void Write(Register32 reg, uint32_t value) noexcept;
@@ -207,6 +217,11 @@ class HardwareInterface {
 #endif
 
   private:
+    // Serializes the PCI object lifetime with every BAR access.  `ioEnabled_`
+    // is protected by this lock; Revoke() waits for any current access before
+    // returning, so no later caller can race Detach() or a force-closed BAR.
+    IOLock* accessLock_{nullptr};
+    bool ioEnabled_{false};
     OSSharedPtr<IOPCIDevice> device_;
     IOService* owner_{nullptr};
     uint8_t barIndex_{0};

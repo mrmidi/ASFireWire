@@ -26,8 +26,7 @@ public:
            PacketRouter& packetRouter);
 
     // This single method will be called by the engine on an RX interrupt.
-    void ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress,
-                             bool isRunning,
+    void ProcessARInterrupts(bool isRunning,
                              Debug::BusResetPacketCapture* busResetCapture);
 
 private:

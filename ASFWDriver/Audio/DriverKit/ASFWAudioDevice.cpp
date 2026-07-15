@@ -229,7 +229,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.controlBlock = controlBlock;
             ivars.runtime.txSlotProvider.numSlots = numSlots;
             ivars.runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
-            ivars.runtime.txSlotProvider.isoChannel = txConfig.sid;
 
             ivars.runtime.txExecutionTimeline.controlBlock = controlBlock;
 
@@ -317,9 +316,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProviderSecondary.controlBlock = controlBlock2;
             ivars.runtime.txSlotProviderSecondary.numSlots = numSlots2;
             ivars.runtime.txSlotProviderSecondary.slotStrideBytes = maxPacketBytes2;
-            // isoChannel here is only a fallback; the host IT ring stamps the real
-            // transmit channel (PlaybackChannel(1)) from its Configure() value.
-            ivars.runtime.txSlotProviderSecondary.isoChannel = txConfig2.sid;
 
             if (!ivars.runtime.txStreamEngineSecondary.Configure(*profile, txConfig2)) {
                 kr = failStart(kIOReturnError, "ConfigureTxStreamEngine2");

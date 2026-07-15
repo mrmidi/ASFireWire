@@ -13,6 +13,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 
 namespace {
 
@@ -56,6 +57,19 @@ TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+}
+
+TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
+    const auto* profile = AudioProfileRegistry::FindProfile(
+        0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL);
+
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "Duet");
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->TxChannelCount(), 2u);
+    EXPECT_EQ(profile->RxChannelCount(), 2u);
+    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{44100u, 48000u}));
 }
 
 TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {

@@ -100,6 +100,9 @@ public:
 
     void OnBusReset(uint32_t newGeneration);
 
+    /// Stop the unit's FCP transport before the async bus is torn down.
+    void Shutdown();
+
     bool IsInitialized() const { return initialized_; }
 
     uint64_t GetGUID() const;
@@ -132,7 +135,7 @@ private:
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
 
-    OSSharedPtr<FCPTransport> fcpTransport_;
+    std::shared_ptr<FCPTransport> fcpTransport_;
 
     std::shared_ptr<DescriptorAccessor> descriptorAccessor_;
 

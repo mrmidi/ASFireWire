@@ -1559,6 +1559,26 @@ TEST(DICEDuplexBringupControllerTests,
 }
 
 TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsSelectsFirstAllowedChannelThatIRMReportsFree) {
+    RecordingFireWireBus bus;
+    // IRM channel bits are big-endian within each CSR quadlet: bit 31 is
+    // channel 0 and bit 30 is channel 1. Make channel 0 busy and channel 1 free.
+    bus.SetIRMResourceState(4915U, 0x7FFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    const auto result = reservations.ReserveAny(
+        irm, (uint64_t{1} << 0U) | (uint64_t{1} << 1U), 596U);
+
+    ASSERT_EQ(result.status, kIOReturnSuccess);
+    EXPECT_EQ(result.channel, 1U);
+    EXPECT_EQ(reservations.Count(), 1U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4319U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
      DuplexIRMReservationsTracksAndReleasesEveryMultistreamAllocation) {
     RecordingFireWireBus bus;
     bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);

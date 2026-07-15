@@ -391,13 +391,12 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 }
 
 kern_return_t IMPL(ASFWDriver, Stop) {
-    QuiesceRuntime();
     if (ivars && ivars->context && ivars->context->deps.interrupts) {
-        // Real stop: cancel the interrupt dispatch source now, while the
-        // provider is still attached, so the kernel-side unregisterInterrupt
-        // is ordered before termination instead of racing it.
+        // The interrupt source unregisters itself asynchronously on its cancel
+        // completion. Start that process while the PCI provider is valid.
         ivars->context->deps.interrupts->Teardown();
     }
+    QuiesceRuntime();
     if (ivars) {
         if (ivars->wakeVerifyTimer) {
             // Disable only, then release — Cancel() dispatches async and can
@@ -425,39 +424,46 @@ void ASFWDriver::QuiesceRuntime() {
         ctx.DisarmProviderNotifications();
 #endif
 
+        // Gate new transactions first, but retain the BAR until every user of
+        // it has stopped. HardwareInterface::Detach() calls IOPCIDevice::Close,
+        // which disables PCI memory decoding; it must be the final step.
+        if (ctx.deps.asyncSubsystem) {
+            ctx.deps.asyncSubsystem->BeginQuiesce();
+        }
+
         ASFW_LOG(Controller, "Stop: quiescing audio coordinator before Detach");
         if (ctx.audioCoordinator) {
             ctx.audioCoordinator->BeginTeardown();
         }
-        ASFW_LOG(Controller, "Stop: audio quiesced - stopping isoch before Detach");
-        ctx.isoch.StopAll();
-
-        ASFW_LOG(Controller, "Stop: audio quiesced - detaching hardware");
-        if (ctx.deps.hardware) {
-            ctx.deps.hardware->Detach();
+        if (ctx.deps.avcDiscovery) {
+            ctx.deps.avcDiscovery->Shutdown();
         }
-
-        // Stop periodic callbacks early to minimize post-unplug activity.
+        // Stop periodic callbacks before dismantling their targets.
         ctx.watchdog.Stop();
         if (ctx.deps.interrupts) {
             ctx.deps.interrupts->Disable();
         }
+        ASFW_LOG(Controller, "Stop: audio quiesced - stopping isoch before Detach");
+        ctx.isoch.StopAll();
 
         ctx.statusPublisher.BindListener(nullptr);
         ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
                                     SharedStatusReason::Disconnect);
-        if (ctx.deps.asyncSubsystem) {
-            ctx.deps.asyncSubsystem->Stop();
-        }
-        if (ctx.controller) {
-            ctx.controller->Stop();
-        }
         if (ctx.deps.selfId && ctx.deps.hardware)
             ctx.deps.selfId->Disarm(*ctx.deps.hardware);
         if (ctx.deps.selfId)
             ctx.deps.selfId->ReleaseBuffers();
         if (ctx.deps.configRomStager && ctx.deps.hardware)
             ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
+        if (ctx.deps.asyncSubsystem) {
+            ctx.deps.asyncSubsystem->Stop();
+        }
+        if (ctx.controller) {
+            ctx.controller->Stop();
+        }
+        if (ctx.deps.hardware) {
+            ctx.deps.hardware->Detach();
+        }
     }
 }
 
@@ -872,23 +878,13 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
         return;
     }
 
-    // Quiesce immediately: any MMIO after TB/PCIe removal is a fatal Apple-silicon SError.
-    (void)ctx.stopping.exchange(true, std::memory_order_acq_rel);
-    ASFW_LOG(Controller, "Provider termination: quiescing audio coordinator before Detach");
-    if (ctx.audioCoordinator) {
-        ctx.audioCoordinator->BeginTeardown();
-    }
-    ctx.isoch.StopAll();
-    ASFW_LOG(Controller, "Provider termination: audio quiesced - detaching hardware");
-    ctx.watchdog.Stop();
     if (ctx.deps.interrupts) {
-        ctx.deps.interrupts->Disable();
-    }
-    if (ctx.deps.hardware) {
-        ctx.deps.hardware->Detach();
+        ctx.deps.interrupts->Teardown();
     }
 
-    ctx.DisarmProviderNotifications();
+    // Quiesce immediately. QuiesceRuntime() closes producer gates before
+    // stopping OHCI users, and closes the PCI provider only as its last step.
+    QuiesceRuntime();
 #endif
 }
 

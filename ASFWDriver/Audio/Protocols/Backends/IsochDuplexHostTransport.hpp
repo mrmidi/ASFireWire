@@ -29,11 +29,13 @@ class IIsochDuplexHostTransport {
 
     [[nodiscard]] virtual kern_return_t BeginSplitDuplex(uint64_t guid) noexcept = 0;
     [[nodiscard]] virtual kern_return_t
-    ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint8_t channel,
-                             uint32_t bandwidthUnits) noexcept = 0;
+    ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
+                             uint64_t allowedChannels, uint32_t bandwidthUnits,
+                             uint8_t& outChannel) noexcept = 0;
     [[nodiscard]] virtual kern_return_t
-    ReserveCaptureResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint8_t channel,
-                            uint32_t bandwidthUnits) noexcept = 0;
+    ReserveCaptureResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
+                            uint64_t allowedChannels, uint32_t bandwidthUnits,
+                            uint8_t& outChannel) noexcept = 0;
     [[nodiscard]] virtual kern_return_t
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
@@ -73,12 +75,14 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
     [[nodiscard]] kern_return_t ReservePlaybackResources(uint64_t guid,
                                                          ::ASFW::IRM::IRMClient& irmClient,
-                                                         uint8_t channel,
-                                                         uint32_t bandwidthUnits) noexcept override;
+                                                         uint64_t allowedChannels,
+                                                         uint32_t bandwidthUnits,
+                                                         uint8_t& outChannel) noexcept override;
     [[nodiscard]] kern_return_t ReserveCaptureResources(uint64_t guid,
                                                         ::ASFW::IRM::IRMClient& irmClient,
-                                                        uint8_t channel,
-                                                        uint32_t bandwidthUnits) noexcept override;
+                                                        uint64_t allowedChannels,
+                                                        uint32_t bandwidthUnits,
+                                                        uint8_t& outChannel) noexcept override;
     [[nodiscard]] kern_return_t
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,

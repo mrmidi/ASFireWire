@@ -151,7 +151,8 @@ bool DuplexStartTransaction::IsRestartEpochCurrent(
     }
 
     const auto* liveRecord = dependencies_.registry.FindByGuid(guid);
-    return liveRecord != nullptr && liveRecord->gen == topologyGeneration;
+    return liveRecord != nullptr && liveRecord->gen == topologyGeneration &&
+           Discovery::TryOperationalNodeId(liveRecord->nodeId).has_value();
 }
 
 Runtime::IDirectAudioBindingSource* DuplexStartTransaction::GetDirectAudioBindingSource(
@@ -814,7 +815,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
 
     const DuplexStreamProfile initialProfile =
         DuplexStreamProfileResolver::Resolve(record, runtimeProtocol.get());
-    const AudioDuplexChannels channels = initialProfile.channels;
+    AudioDuplexChannels channels = initialProfile.channels;
     const uint64_t restartId = AllocateRestartId();
 
     auto finalizeFailure = [&](IOReturn failureStatus, DuplexRestartPhase failedPhase,
@@ -952,24 +953,34 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     session.generation = prepare.value.generation;
     session.appliedClock = prepare.value.appliedClock;
     session.runtimeCaps = prepare.value.runtimeCaps;
-    const DuplexStreamProfile streamProfile =
+    DuplexStreamProfile streamProfile =
         DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, channels);
     SetSessionPhase(session, DuplexRestartPhase::kPrepared);
     StoreSession(session);
 
     // Reserve IRM bandwidth + channel for EVERY playback (host IT -> device RX)
     // stream. A multi-stream device needs all of its playback isoch channels reserved before
-    // the device-enable stage; single-stream devices loop once.
+    // the device-enable stage; single-stream devices loop once. OXFW/CMP devices do not own a
+    // hard-coded channel: the IRM selects a currently free channel and we feed that result back
+    // into both the remote PCR and the host OHCI context. DICE profiles provide a one-bit mask,
+    // preserving the channel selected through the device's own register protocol.
     if (abortIfTeardown("ReservingPlaybackResources")) {
         return kIOReturnAborted;
     }
     for (uint32_t i = 0; i < channels.playbackStreamCount; ++i) {
+        const DuplexPlaybackStreamGeometry& geometry = streamProfile.playbackStreams[i];
+        uint8_t assignedChannel = AudioStreamWireInfo::kInvalidIsoChannel;
         const kern_return_t reservePlaybackStatus = hostTransport_.ReservePlaybackResources(
-            guid, *irmClient, channels.PlaybackChannel(i), streamProfile.playbackBandwidthUnits);
+            guid, *irmClient, geometry.allowedIsoChannels, geometry.bandwidthUnits,
+            assignedChannel);
         if (reservePlaybackStatus != kIOReturnSuccess) {
             return rollbackToFailure(reservePlaybackStatus,
                                      DuplexRestartPhase::kReservingPlaybackResources,
                                      DuplexRestartFailureCause::kReservePlayback);
+        }
+        channels.playbackIsoChannels[i] = assignedChannel;
+        if (i == 0) {
+            channels.hostToDeviceIsoChannel = assignedChannel;
         }
         if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
             return rollbackToInvalidation(kIOReturnAborted,
@@ -986,12 +997,19 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         return kIOReturnAborted;
     }
     for (uint32_t i = 0; i < channels.captureStreamCount; ++i) {
+        const DuplexCaptureStreamGeometry& geometry = streamProfile.captureStreams[i];
+        uint8_t assignedChannel = AudioStreamWireInfo::kInvalidIsoChannel;
         const kern_return_t reserveCaptureStatus = hostTransport_.ReserveCaptureResources(
-            guid, *irmClient, channels.CaptureChannel(i), streamProfile.captureBandwidthUnits);
+            guid, *irmClient, geometry.allowedIsoChannels, geometry.bandwidthUnits,
+            assignedChannel);
         if (reserveCaptureStatus != kIOReturnSuccess) {
             return rollbackToFailure(reserveCaptureStatus,
                                      DuplexRestartPhase::kReservingCaptureResources,
                                      DuplexRestartFailureCause::kReserveCapture);
+        }
+        channels.captureIsoChannels[i] = assignedChannel;
+        if (i == 0) {
+            channels.deviceToHostIsoChannel = assignedChannel;
         }
         if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
             return rollbackToInvalidation(kIOReturnAborted,
@@ -1001,6 +1019,15 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     }
     SetSessionPhase(session, DuplexRestartPhase::kReservingCaptureResources);
     session.hostCaptureReserved = true;
+    session.channels = channels;
+
+    // CMP ESTABLISH writes these allocated channels into the remote PCRs. Commit
+    // them to the protocol adapter before either ProgramRx or ProgramTx runs,
+    // then rebuild the per-stream profile so subsequent OHCI setup uses exactly
+    // the same values. This is the allocation -> PCR -> DMA flow used by the
+    // Linux OXFW/CMP and FFADO streaming lifecycles.
+    deviceControl.SetAssignedChannels(channels);
+    streamProfile = DuplexStreamProfileResolver::Resolve(record, session.runtimeCaps, channels);
     StoreSession(session);
 
     ASFW_LOG(Audio,
@@ -1587,7 +1614,7 @@ Discovery::DeviceRecord* AudioDuplexCoordinator::RequireDuplexRecord(
     outDeviceControl = nullptr;
     outHold.reset();
     auto* record = registry_.FindByGuid(guid);
-    if (!record) {
+    if (!record || !Discovery::TryOperationalNodeId(record->nodeId).has_value()) {
         return nullptr;
     }
 
@@ -1662,7 +1689,8 @@ bool AudioDuplexCoordinator::IsRestartEpochCurrent(
     }
 
     const auto* liveRecord = registry_.FindByGuid(guid);
-    if (!liveRecord || liveRecord->gen != topologyGeneration) {
+    if (!liveRecord || liveRecord->gen != topologyGeneration ||
+        !Discovery::TryOperationalNodeId(liveRecord->nodeId).has_value()) {
         return false;
     }
 

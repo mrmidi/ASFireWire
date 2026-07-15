@@ -113,9 +113,56 @@ TEST_F(BufferRingDMATest, FinalizeProgramsDataAddressAndBranchWords) {
             static_cast<uint32_t>((descBaseIOVA_ + nextIndex * sizeof(Async::HW::OHCIDescriptor)) & 0xFFFFFFF0u);
         const uint32_t branchAddr = Async::HW::DecodeBranchPhys32_AR(desc->branchWord);
         EXPECT_EQ(branchAddr, expectedNextDescAddr);
-        EXPECT_EQ(desc->branchWord & 0xFu, 1u);
+        // The final descriptor is the producer stop marker. A permanently
+        // circular ring lets OHCI wrap into unread buffers.
+        EXPECT_EQ(desc->branchWord & 0xFu, i == (kNum - 1) ? 0u : 1u);
         EXPECT_NE(desc->branchWord, 0u);
     }
+}
+
+TEST_F(BufferRingDMATest, RecycleMovesTerminalStopMarkerBehindConsumedBuffer) {
+    constexpr size_t kLast = 31;
+    auto* consumed = ring_.GetDescriptor(0);
+    auto* oldTerminal = ring_.GetDescriptor(kLast);
+    ASSERT_NE(consumed, nullptr);
+    ASSERT_NE(oldTerminal, nullptr);
+    ASSERT_EQ(consumed->branchWord & 0x1u, 1u);
+    ASSERT_EQ(oldTerminal->branchWord & 0x1u, 0u);
+
+    ASSERT_EQ(ring_.Recycle(0), kIOReturnSuccess);
+
+    // Linux ohci.c ar_context_link_page() initializes the returned page as the
+    // new terminal before enabling the old terminal's branch, then wakes OHCI.
+    EXPECT_EQ(oldTerminal->branchWord & 0x1u, 1u);
+    EXPECT_EQ(consumed->branchWord & 0x1u, 0u);
+    EXPECT_EQ(ring_.Head(), 1U);
+    EXPECT_TRUE(ring_.TakeWakeRequired());
+    EXPECT_FALSE(ring_.TakeWakeRequired());
+}
+
+TEST_F(BufferRingDMATest, AutoRecycleAlsoRequestsContextWake) {
+    auto* current = ring_.GetDescriptor(0);
+    auto* next = ring_.GetDescriptor(1);
+    ASSERT_NE(current, nullptr);
+    ASSERT_NE(next, nullptr);
+
+    constexpr uint16_t kReqCount = 256;
+    ASFW::Async::HW::AR_init_status(*current, static_cast<uint16_t>(kReqCount - 16));
+    auto first = ring_.Dequeue();
+    ASSERT_TRUE(first.has_value());
+    ASSERT_EQ(ring_.CommitConsumed(first->descriptorIndex, first->bytesFilled),
+              kIOReturnSuccess);
+
+    // Once OHCI has entered the successor, Dequeue returns the fully consumed
+    // head to the producer and must request an MMIO wake for the moved tail.
+    ASFW::Async::HW::AR_init_status(*next, static_cast<uint16_t>(kReqCount - 16));
+    auto second = ring_.Dequeue();
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->descriptorIndex, 1U);
+    EXPECT_EQ(ring_.Head(), 1U);
+    EXPECT_TRUE(ring_.TakeWakeRequired());
+    EXPECT_EQ(current->branchWord & 0x1u, 0u);
+    EXPECT_EQ(ring_.GetDescriptor(31)->branchWord & 0x1u, 1u);
 }
 
 TEST_F(BufferRingDMATest, InitializeProgramsInputMoreControlWithLinuxDescriptorBits) {
