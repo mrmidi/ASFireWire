@@ -74,6 +74,21 @@ struct ASFWMCPFcpCommandRequest: Equatable {
             dryRun: dryRun
         )
     }
+
+    /// Read-only MCP calls must prove that the AV/C ctype byte agrees with
+    /// their declared intent. This prevents a caller from labelling a CONTROL
+    /// frame as STATUS to bypass the developer-write gate.
+    var hasMatchingReadOnlyCType: Bool {
+        guard let ctype = payload.first else { return false }
+        switch intent {
+        case .status:
+            return ctype == 0x01
+        case .inquiry:
+            return ctype == 0x02
+        case .control, .notify, .vendorDependent:
+            return false
+        }
+    }
 }
 
 /// Receipt for a developer FCP command. `observedNodeId` and

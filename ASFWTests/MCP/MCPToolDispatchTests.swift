@@ -125,6 +125,41 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
 
+    @Test func readOnlyFcpStatusCommandRoutesThroughDriver() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("status")
+        // UNIT_INFO status, padded to one quadlet as ASFW's AVCUnit emits it.
+        args["payload"] = .array([.int(0x01), .int(0xFF), .int(0x30), .int(0x00)])
+
+        let result = await transport.callTool("asfw_fcp_send_command", arguments: .object(args))
+
+        let data = try object(result)
+        #expect(result.ok)
+        #expect(data["status"] == .string("ok"))
+        #expect(data["expectedNodeId"] == .int(0))
+        #expect(data["expectedGeneration"] == .int(17))
+        #expect(data["observedNodeId"] == .int(0))
+        #expect(await driver.unexpectedWriteAttemptCount() == 1)
+    }
+
+    @Test func readOnlyFcpRejectsControlFrameClaimedAsStatus() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("status")
+        args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x30), .int(0x00)])
+
+        let result = await transport.callTool("asfw_fcp_send_command", arguments: .object(args))
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .malformedRequest)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func developerFcpCommandRefusesStaleGenerationBeforeDriverAccess() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))

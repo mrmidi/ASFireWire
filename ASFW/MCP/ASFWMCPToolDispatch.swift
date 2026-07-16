@@ -67,8 +67,10 @@ extension ASFWMCPCore {
         case "asfw_irm_allocate_bandwidth", "asfw_irm_free_bandwidth":
             return await dispatchIrmBandwidth(name, decoder: decoder, allocate: name == "asfw_irm_allocate_bandwidth")
         case "asfw_avc_list_units", "asfw_avc_get_subunit_capabilities", "asfw_avc_get_subunit_descriptor",
-             "asfw_fcp_send_command", "asfw_fcp_get_recent_responses":
-            return notImplementedToolResult(name, reason: "AV/C/FCP read dispatch needs protocol adapter support from FW-94.")
+             "asfw_fcp_get_recent_responses":
+            return notImplementedToolResult(name, reason: "Recent FCP command/response records are not exposed by the live adapter yet.")
+        case "asfw_fcp_send_command":
+            return await dispatchFcpReadCommand(name, decoder: decoder)
         case "asfw_fcp_send_command_dev":
             return await dispatchFcpDeveloperCommand(name, decoder: decoder)
         case "asfw_cmp_list_plugs", "asfw_cmp_read_pcr":
@@ -306,6 +308,31 @@ extension ASFWMCPCore {
                 durationUsec: receipt.durationUsec,
                 policy: policy
             )
+            return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func dispatchFcpReadCommand(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let request = ASFWMCPFcpCommandRequest(
+                targetGUID: try decoder.uint64("targetGuid"),
+                address: try decoder.address(),
+                intent: try decoder.intent(),
+                payload: try decoder.bytes("payload")
+            )
+            if let error = request.validationError {
+                return malformedTransactionResult(name, kind: .writeBlock, generation: request.address.generation, code: error)
+            }
+            guard request.hasMatchingReadOnlyCType else {
+                return malformedToolResult(
+                    name,
+                    reason: "Read-only FCP accepts only STATUS (ctype 0x01) or SPECIFIC_INQUIRY (ctype 0x02) frames. Use asfw_fcp_send_command_dev for mutating commands."
+                )
+            }
+
+            let receipt = await driver.executeFCPCommand(request)
             return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)

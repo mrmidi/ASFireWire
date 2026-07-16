@@ -73,6 +73,34 @@ struct MCPAvcFcpToolsTests {
         #expect(request.policyRequest(currentGeneration: 17) == nil)
     }
 
+    @Test func readOnlyIntentMustMatchAvcCType() {
+        // The MIT-licensed ALSA ta1394 general protocol tests independently
+        // exercise STATUS UnitInfo framing.  These are fresh policy tests that
+        // ensure the declared MCP intent cannot disguise a CONTROL frame.
+        let status = ASFWMCPFcpCommandRequest(
+            targetGUID: duetGUID,
+            address: fcpAddress(),
+            intent: .status,
+            payload: [0x01, 0xFF, 0x30, 0x00]
+        )
+        let inquiry = ASFWMCPFcpCommandRequest(
+            targetGUID: duetGUID,
+            address: fcpAddress(),
+            intent: .inquiry,
+            payload: [0x02, 0xFF, 0x30, 0x00]
+        )
+        let disguisedControl = ASFWMCPFcpCommandRequest(
+            targetGUID: duetGUID,
+            address: fcpAddress(),
+            intent: .status,
+            payload: [0x00, 0xFF, 0x30, 0x00]
+        )
+
+        #expect(status.hasMatchingReadOnlyCType)
+        #expect(inquiry.hasMatchingReadOnlyCType)
+        #expect(disguisedControl.hasMatchingReadOnlyCType == false)
+    }
+
     @Test func controlCommandsArePolicyGated() throws {
         let request = ASFWMCPFcpCommandRequest(targetGUID: duetGUID, address: fcpAddress(), intent: .control, payload: [0x00, 0x11, 0x22, 0x33])
         let gated = try #require(request.policyRequest(currentGeneration: 17))
