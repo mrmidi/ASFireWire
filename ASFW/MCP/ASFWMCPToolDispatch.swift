@@ -108,6 +108,10 @@ extension ASFWMCPCore {
             return await bebobUnitPlugInfoResult(toolName: name, decoder: decoder)
         case "asfw_bebob_get_clock_topology":
             return await bebobClockTopologyResult(toolName: name, decoder: decoder)
+        case "asfw_phase88_get_clock":
+            return await phase88GetClockResult(toolName: name, decoder: decoder)
+        case "asfw_phase88_set_clock_internal":
+            return await phase88SetClockInternalResult(toolName: name, decoder: decoder)
         case "asfw_phase88_start_48k", "asfw_phase88_stop":
             return await phase88StreamingResult(toolName: name, decoder: decoder,
                                                 start: name == "asfw_phase88_start_48k")
@@ -1127,6 +1131,205 @@ private extension ASFWMCPCore {
                 "kind": .string("bebobBootRomInfo"),
                 "transaction": transaction.mcpValue,
                 "information": information.mcpValue
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func phase88GetClockResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: generation,
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+            
+            // FCP status query for FB 9 (External clock source / internal selector)
+            // operands: 
+            // [0]=0x80 (Selector type)
+            // [1]=0x09 (FB 9)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0xFF (Input Plug placeholder)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb9Cdb: [UInt8] = [
+                0x01, 0x08, 0xB8, 0x80, 0x09, 0x10, 0x02, 0xFF, 0x01, 0x00, 0x00, 0x00
+            ]
+            
+            // FCP status query for FB 8 (External clock source type: S/PDIF / WordClock)
+            // operands:
+            // [0]=0x80 (Selector type)
+            // [1]=0x08 (FB 8)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0xFF (Input Plug placeholder)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb8Cdb: [UInt8] = [
+                0x01, 0x08, 0xB8, 0x80, 0x08, 0x10, 0x02, 0xFF, 0x01, 0x00, 0x00, 0x00
+            ]
+
+            var transactions: [ASFWMCPValue] = []
+
+            let fb9Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .status,
+                    payload: fb9Cdb
+                )
+            )
+            transactions.append(fb9Receipt.mcpValue)
+
+            let fb8Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .status,
+                    payload: fb8Cdb
+                )
+            )
+            transactions.append(fb8Receipt.mcpValue)
+
+            guard fb9Receipt.ok, let fb9Response = fb9Receipt.response, fb9Response.count >= 9,
+                  fb8Receipt.ok, let fb8Response = fb8Receipt.response, fb8Response.count >= 9 else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("phase88ClockStatus"),
+                    "ok": .bool(false),
+                    "transactions": .array(transactions),
+                    "reason": .string("FCP status queries to Selector Function Blocks failed or returned incomplete payloads.")
+                ]))
+            }
+
+            // In FCP response, the modified operand is returned (Byte 7 is the selected input plug)
+            let fb9InputPlug = fb9Response[7]
+            let fb8InputPlug = fb8Response[7]
+
+            let sourceText: String
+            if fb9InputPlug == 0 {
+                sourceText = "internal"
+            } else if fb9InputPlug == 1 {
+                if fb8InputPlug == 0 {
+                    sourceText = "spdif"
+                } else if fb8InputPlug == 1 {
+                    sourceText = "wordclock"
+                } else {
+                    sourceText = "external_unknown"
+                }
+            } else {
+                sourceText = "unknown"
+            }
+
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("phase88ClockStatus"),
+                "ok": .bool(true),
+                "clockSource": .string(sourceText),
+                "fb9InputPlug": .int(Int(fb9InputPlug)),
+                "fb8InputPlug": .int(Int(fb8InputPlug)),
+                "transactions": .array(transactions)
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func phase88SetClockInternalResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: generation,
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+
+            // FCP control command to set FB 9 (External clock source selector) to Internal (0x00)
+            // operands: 
+            // [0]=0x80 (Selector type)
+            // [1]=0x09 (FB 9)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0x00 (Input Plug: 0 for Internal)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb9Control: [UInt8] = [
+                0x00, 0x08, 0xB8, 0x80, 0x09, 0x10, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00
+            ]
+
+            // FCP control command to set FB 8 (External clock source type) to S/PDIF (0x00)
+            // operands: 
+            // [0]=0x80 (Selector type)
+            // [1]=0x08 (FB 8)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0x00 (Input Plug: 0 for S/PDIF)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb8Control: [UInt8] = [
+                0x00, 0x08, 0xB8, 0x80, 0x08, 0x10, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00
+            ]
+
+            var transactions: [ASFWMCPValue] = []
+
+            let fb9Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .control,
+                    payload: fb9Control
+                )
+            )
+            transactions.append(fb9Receipt.mcpValue)
+
+            let fb8Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .control,
+                    payload: fb8Control
+                )
+            )
+            transactions.append(fb8Receipt.mcpValue)
+
+            let success = fb9Receipt.ok && fb9Receipt.response?[0] == 0x09 &&
+                          fb8Receipt.ok && fb8Receipt.response?[0] == 0x09
+
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("phase88SetClockInternal"),
+                "ok": .bool(success),
+                "transactions": .array(transactions)
             ]))
         } catch {
             return malformedToolResult(toolName, reason: error.localizedDescription)

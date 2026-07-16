@@ -34,6 +34,24 @@ extension ASFWMCPToolCatalog {
             requiredProtocolHints: ["bebob"]
         ),
         ASFWMCPToolDefinition(
+            name: "asfw_phase88_get_clock",
+            group: "bebob",
+            visibility: .readOnly,
+            readOnly: true,
+            idempotent: false,
+            summary: "Get the current clock status of PHASE 88 (targetGuid, nodeId, generation required).",
+            requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_phase88_set_clock_internal",
+            group: "bebob",
+            visibility: .developerWrite,
+            readOnly: false,
+            idempotent: false,
+            summary: "Set PHASE 88 clock source to Internal (targetGuid, nodeId, generation required).",
+            requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
             name: "asfw_phase88_start_48k",
             group: "bebob",
             visibility: .developerWrite,
