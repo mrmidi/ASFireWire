@@ -178,6 +178,11 @@ public:
 
     void OnBusReset(uint32_t newGeneration);
 
+    /// Resume an explicitly idempotent command only after discovery has
+    /// rebound this transport's device to the reset generation. Calling this
+    /// before the device is ready is deliberately a no-op.
+    void OnRouteRevalidated(uint32_t generation);
+
     const FCPTransportConfig& GetConfig() const { return config_; }
 
     // The FWDevice object survives a bus reset and is updated with its new
@@ -214,6 +219,12 @@ private:
         /// Set only by the success completion of `activeWriteAttempt`. Response
         /// matching reads this value and never mutable device/bus state.
         std::optional<FCPWriteAttempt> successfulWriteAttempt;
+        /// A reset may invalidate the route between write and response. An
+        /// explicitly idempotent request waits here until discovery confirms a
+        /// fresh `(node, generation)` route; it must never replay immediately
+        /// on the reset interrupt path.
+        bool awaitingRouteRevalidation{false};
+        uint32_t resetGeneration{0};
         bool gotInterim{false};
 
         Async::AsyncHandle asyncHandle;

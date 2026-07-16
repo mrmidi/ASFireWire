@@ -46,7 +46,7 @@ are an epoch-bound route, not device identity.
 | --- | --- |
 | Discovery / resume | Resolve GUID to current node and generation before issuing work. |
 | Command write success | Capture the route used for that command, then arm its response timeout. |
-| Bus suspend/reset | Reject new old-epoch work; resolve every outstanding operation exactly once; invalidate CMP leases and isoch reservations. |
+| Bus suspend/reset | Reject new old-epoch work; resolve every outstanding operation exactly once; invalidate CMP leases and isoch reservations. An explicitly idempotent FCP request may remain pending only until discovery revalidates its GUID/node/generation route; it never replays directly from the reset edge. |
 | Resume | Re-discover capabilities and reconstruct reservations/connections through the profile. Never reuse a prior-generation PCR lease. |
 | Removal / shutdown | Quiesce host stream, cancel FCP timers/operations, drop routing leases, then release profile/buffer state. |
 

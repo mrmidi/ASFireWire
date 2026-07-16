@@ -868,15 +868,24 @@ void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
     }
     uint64_t guid = GetUnitGUID(unit);
 
+    std::shared_ptr<AVCUnit> avcUnit;
     IOLockLock(lock_);
     auto it = units_.find(guid);
     if (it != units_.end()) {
+        avcUnit = it->second;
         os_log_info(log_,
                     "AVCDiscovery: AV/C unit resumed: GUID=%llx",
                     guid);
         // Unit is now available again
     }
     IOLockUnlock(lock_);
+
+    if (avcUnit) {
+        const auto device = avcUnit->GetDevice();
+        if (device && device->IsReady()) {
+            avcUnit->OnRouteRevalidated(static_cast<uint32_t>(device->GetGeneration().value));
+        }
+    }
 
     // Rebuild node ID map (resumed units back in routing)
     RebuildNodeIDMap();
@@ -888,10 +897,12 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
     }
     uint64_t guid = GetUnitGUID(unit);
 
+    std::shared_ptr<AVCUnit> avcUnit;
     IOLockLock(lock_);
 
     auto it = units_.find(guid);
     if (it != units_.end()) {
+        avcUnit = it->second;
         os_log_info(log_,
                     "AVCDiscovery: AV/C unit terminated: GUID=%llx",
                     guid);
@@ -900,6 +911,13 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
     rescanAttempts_.erase(guid);
     duetPrefetchByGuid_.erase(guid);
     IOLockUnlock(lock_);
+
+    // A response-router lease may keep the transport alive after its unit has
+    // left discovery. Stop it explicitly so no pending callback survives the
+    // unit-removal lifecycle boundary.
+    if (avcUnit) {
+        avcUnit->Shutdown();
+    }
 
     // Rebuild node ID map (terminated unit removed)
     RebuildNodeIDMap();
@@ -930,12 +948,21 @@ void AVCDiscovery::OnDeviceRemoved(Discovery::Guid64 guid) {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
+    std::shared_ptr<AVCUnit> avcUnit;
     IOLockLock(lock_);
 
-    units_.erase(guid);
+    const auto it = units_.find(guid);
+    if (it != units_.end()) {
+        avcUnit = it->second;
+        units_.erase(it);
+    }
     rescanAttempts_.erase(guid);
     duetPrefetchByGuid_.erase(guid);
     IOLockUnlock(lock_);
+
+    if (avcUnit) {
+        avcUnit->Shutdown();
+    }
 
     RebuildNodeIDMap();
 }

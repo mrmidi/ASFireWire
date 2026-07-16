@@ -620,13 +620,21 @@ void AVCUnit::OnBusReset(uint32_t newGeneration) {
                 newGeneration);
 
     // Forward to FCP transport (will handle pending commands)
-    fcpTransport_->OnBusReset(newGeneration);
+    if (fcpTransport_) {
+        fcpTransport_->OnBusReset(newGeneration);
+    }
 
     // v1: Keep cached state (subunits, plugs rarely change)
     // Caller can re-Initialize() if topology changed
 
     // v2 improvement: Could invalidate cache on topology change
     // and re-probe automatically
+}
+
+void AVCUnit::OnRouteRevalidated(uint32_t generation) {
+    if (fcpTransport_) {
+        fcpTransport_->OnRouteRevalidated(generation);
+    }
 }
 
 //==============================================================================

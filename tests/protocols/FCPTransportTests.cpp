@@ -195,9 +195,64 @@ TEST_F(FCPTransportTests, CancellingCommandCancelsItsTimeout) {
 
     scheduler_.Advance(config_.timeoutMs * kMillisecondNs);
     EXPECT_EQ(completionCount, 1);
+
+    transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    EXPECT_EQ(completionCount, 1);
 }
 
-TEST_F(FCPTransportTests, ResetRetryCancelsPreviousWriteBeforeResubmission) {
+TEST_F(FCPTransportTests, WriteFailureCompletesWithoutArmingResponseTimeout) {
+    FCPStatus completionStatus = FCPStatus::kOk;
+    ASSERT_TRUE(transport_->SubmitCommand(
+                             MakeUnitInfoCommand(),
+                             [&completionStatus](FCPStatus status, const FCPFrame&) {
+                                 completionStatus = status;
+                             })
+                    .IsValid());
+    ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kTimeout));
+
+    EXPECT_EQ(completionStatus, FCPStatus::kTransportError);
+    EXPECT_EQ(scheduler_.PendingCount(), 0U);
+}
+
+TEST_F(FCPTransportTests, SynchronousWriteAdmissionFailureCompletesExactlyOnce) {
+    bus_.FailNextWriteBlock();
+    int completionCount = 0;
+    FCPStatus completionStatus = FCPStatus::kOk;
+
+    const auto handle = transport_->SubmitCommand(
+        MakeUnitInfoCommand(),
+        [&completionCount, &completionStatus](FCPStatus status, const FCPFrame&) {
+            ++completionCount;
+            completionStatus = status;
+        });
+
+    EXPECT_FALSE(handle.IsValid());
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(completionStatus, FCPStatus::kTransportError);
+    EXPECT_EQ(scheduler_.PendingCount(), 0U);
+}
+
+TEST_F(FCPTransportTests, InterimResponseExtendsDeadlineWithoutCompletingCommand) {
+    int completionCount = 0;
+    ASSERT_TRUE(transport_->SubmitCommand(
+                             MakeUnitInfoCommand(),
+                             [&completionCount](FCPStatus, const FCPFrame&) { ++completionCount; })
+                    .IsValid());
+    ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
+    ASSERT_EQ(scheduler_.PendingCount(), 1U);
+
+    constexpr std::array<uint8_t, 3> interim{0x0F, 0xFF, 0x30};
+    transport_->OnFCPResponse(2, 1, interim);
+    EXPECT_EQ(completionCount, 0);
+    EXPECT_EQ(scheduler_.PendingCount(), 1U);
+
+    scheduler_.Advance(config_.timeoutMs * kMillisecondNs);
+    EXPECT_EQ(completionCount, 0);
+    transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    EXPECT_EQ(completionCount, 1);
+}
+
+TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) {
     config_.allowBusResetRetry = true;
     config_.maxRetries = 1;
     transport_->Shutdown();
@@ -217,12 +272,64 @@ TEST_F(FCPTransportTests, ResetRetryCancelsPreviousWriteBeforeResubmission) {
     bus_.SetGeneration(Generation{2});
     transport_->OnBusReset(2);
 
+    EXPECT_EQ(bus_.WriteCount(), 1U);
+    EXPECT_EQ(bus_.PendingWriteCount(), 0U);
+    EXPECT_EQ(completionCount, 0);
+
+    // A reset makes the prior route invalid. Rebinding the GUID to node 3 in
+    // generation 2 is the only event allowed to replay this idempotent query.
+    device_->Publish();
+    device_->Suspend();
+    device_->Resume(Generation{2}, 3, {});
+    transport_->OnRouteRevalidated(2);
+
     EXPECT_EQ(bus_.WriteCount(), 2U);
+    EXPECT_EQ(bus_.WriteAt(1).nodeId.value, 3U);
+    EXPECT_EQ(bus_.WriteAt(1).generation.value, 2U);
     ASSERT_EQ(bus_.PendingWriteCount(), 1U);
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     const auto response = MakeAcceptedUnitInfoResponse();
-    transport_->OnFCPResponse(2, 2, response);
+    transport_->OnFCPResponse(3, 2, response);
     EXPECT_EQ(completionCount, 1);
+}
+
+TEST_F(FCPTransportTests, ShutdownCompletesPendingAndQueuedCommandsExactlyOnce) {
+    std::vector<FCPStatus> completions;
+    ASSERT_TRUE(transport_->SubmitCommand(
+                             MakeUnitInfoCommand(),
+                             [&completions](FCPStatus status, const FCPFrame&) { completions.push_back(status); })
+                    .IsValid());
+    ASSERT_TRUE(transport_->SubmitCommand(
+                             MakeUnitInfoCommand(),
+                             [&completions](FCPStatus status, const FCPFrame&) { completions.push_back(status); })
+                    .IsValid());
+
+    transport_->Shutdown();
+    ASSERT_EQ(completions.size(), 2U);
+    EXPECT_EQ(completions[0], FCPStatus::kTransportError);
+    EXPECT_EQ(completions[1], FCPStatus::kTransportError);
+    EXPECT_EQ(bus_.PendingWriteCount(), 0U);
+
+    transport_->OnFCPResponse(2, 1, MakeAcceptedUnitInfoResponse());
+    EXPECT_EQ(completions.size(), 2U);
+}
+
+TEST_F(FCPTransportTests, NonIdempotentCommandCompletesOnBusResetWithoutReplay) {
+    FCPStatus completionStatus = FCPStatus::kOk;
+    ASSERT_TRUE(transport_->SubmitCommand(
+                             MakeUnitInfoCommand(),
+                             [&completionStatus](FCPStatus status, const FCPFrame&) {
+                                 completionStatus = status;
+                             })
+                    .IsValid());
+    ASSERT_EQ(bus_.WriteCount(), 1U);
+
+    bus_.SetGeneration(Generation{2});
+    transport_->OnBusReset(2);
+
+    EXPECT_EQ(completionStatus, FCPStatus::kBusReset);
+    EXPECT_EQ(bus_.WriteCount(), 1U);
+    EXPECT_EQ(bus_.PendingWriteCount(), 0U);
 }
 
 TEST_F(FCPTransportTests, ControlCommandDoesNotRetryAfterTimeout) {

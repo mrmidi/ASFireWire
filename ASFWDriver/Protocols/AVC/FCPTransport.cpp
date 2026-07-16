@@ -623,22 +623,73 @@ void FCPTransport::OnBusReset(uint32_t newGeneration) {
                 activeGeneration, newGeneration,
                 pending_->allowBusResetRetry, pending_->retriesLeft);
 
+    const Async::AsyncHandle priorHandle = pending_->asyncHandle;
+    pending_->asyncHandle = {};
+    pending_->activeWriteAttempt.reset();
+    pending_->successfulWriteAttempt.reset();
+    pending_->gotInterim = false;
+    CancelTimeout();
+
     if (pending_->allowBusResetRetry && pending_->retriesLeft > 0) {
-        pending_->retriesLeft--;
+        // Linux's generic fcp helper retries a pending transaction after its
+        // update callback observes a reset (firewire/fcp.c:292-317). ASFW's
+        // DeviceManager deliberately invalidates all routes at that point, so
+        // we defer our idempotent replay until discovery has bound this GUID to
+        // the new generation. Apple likewise keeps the in-generation command
+        // variant from retrying directly on a reset
+        // (IOFireWireAVCCommand.cpp:430-458). This is a clean-room policy for
+        // our asynchronous, rebinding transport.
+        pending_->awaitingRouteRevalidation = true;
+        pending_->resetGeneration = newGeneration;
         pending_->gotInterim = false;
 
         ASFW_LOG_V2(FCP,
-                    "FCPTransport: Retrying command after bus reset");
+                    "FCPTransport: Deferring idempotent retry until route revalidation");
 
         IOLockUnlock(lock_);
-        RetryCommand();
-        return;
-    } else {
-        IOLockUnlock(lock_);
-
-        CompleteCommand(FCPStatus::kBusReset, {});
+        if (priorHandle.value && busOps_) {
+            busOps_->Cancel(priorHandle);
+        }
         return;
     }
+
+    IOLockUnlock(lock_);
+    if (priorHandle.value && busOps_) {
+        busOps_->Cancel(priorHandle);
+    }
+    CompleteCommand(FCPStatus::kBusReset, {});
+}
+
+void FCPTransport::OnRouteRevalidated(uint32_t generation) {
+    IOLockLock(lock_);
+
+    if (shuttingDown_ || !pending_ || !pending_->awaitingRouteRevalidation) {
+        IOLockUnlock(lock_);
+        return;
+    }
+
+    const bool routeIsCurrent = generation == pending_->resetGeneration &&
+                                busInfo_ && device_ && device_->IsReady() &&
+                                device_->GetGeneration().value == generation &&
+                                busInfo_->GetGeneration().value == generation &&
+                                device_->GetNodeID() != 0xFFFFU;
+    if (!routeIsCurrent) {
+        IOLockUnlock(lock_);
+        ASFW_LOG_V3(FCP,
+                    "FCPTransport: Ignoring route revalidation for generation %u",
+                    generation);
+        return;
+    }
+
+    pending_->awaitingRouteRevalidation = false;
+    pending_->resetGeneration = 0;
+    --pending_->retriesLeft;
+    IOLockUnlock(lock_);
+
+    ASFW_LOG_V2(FCP,
+                "FCPTransport: Retrying idempotent command on revalidated generation %u",
+                generation);
+    (void)StartPendingWrite();
 }
 
 

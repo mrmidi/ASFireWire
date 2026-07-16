@@ -102,6 +102,7 @@ public:
     std::shared_ptr<FCPTransport> GetFCPTransportShared() const { return fcpTransport_; }
 
     void OnBusReset(uint32_t newGeneration);
+    void OnRouteRevalidated(uint32_t generation);
 
     /// Stop the unit's FCP transport before the async bus is torn down.
     void Shutdown();
