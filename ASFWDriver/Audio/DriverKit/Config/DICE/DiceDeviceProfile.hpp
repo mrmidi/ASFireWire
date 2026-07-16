@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "../IAudioDeviceProfile.hpp"
+#include "../AudioStreamProfile.hpp"
 #include "Async/DiceQuirks.hpp"
 #include "Isoch/DiceStreamConfig.hpp"
 
@@ -21,7 +21,7 @@ struct DiceDeviceIdentity final {
     uint32_t modelId{0};
 };
 
-class IDiceDeviceProfile : public IAudioDeviceProfile {
+class IDiceDeviceProfile : public IAudioStreamProfile {
 public:
     virtual ~IDiceDeviceProfile() override = default;
 
@@ -31,19 +31,6 @@ public:
     /// Returns the DICE specific hardware/software quirks (e.g. PCM format, DBS policy).
     [[nodiscard]] virtual DiceDeviceQuirks Quirks() const noexcept = 0;
 
-    /// Builds the default transmit (host-to-device) stream configuration.
-    [[nodiscard]] virtual bool BuildDefaultTxStreamConfig(DiceStreamConfig& outConfig) const noexcept = 0;
-
-    /// Builds the default receive (device-to-host) stream configuration.
-    [[nodiscard]] virtual bool BuildDefaultRxStreamConfig(DiceStreamConfig& outConfig) const noexcept = 0;
-
-    /// Number of isochronous streams per direction (DICE TX_NUMBER/RX_NUMBER).
-    /// BuildDefault*StreamConfig describes ONE wire stream; the HAL aggregate
-    /// channel count is per-stream PCM × stream count. A multi-stream device
-    /// (Venice F32 = 2×16) overrides these; single-stream devices keep 1.
-    [[nodiscard]] virtual uint32_t TxStreamCount() const noexcept { return 1; }
-    [[nodiscard]] virtual uint32_t RxStreamCount() const noexcept { return 1; }
-
     /// Sample rates advertised to CoreAudio. Default is the universal DICE 1x
     /// baseline (44.1/48 kHz); 2x/4x are omitted until their stream geometry is
     /// verified end-to-end (see kDiceMaxSupportedRateHz). Profiles for devices
@@ -52,7 +39,8 @@ public:
         return {44100u, 48000u};
     }
 
-    // Default implementations mapping DICE structures to the unified IAudioDeviceProfile:
+    // DICE control profiles retain their wire-format and quirk policy here;
+    // neutral stream geometry lives in IAudioStreamProfile.
     [[nodiscard]] Encoding::AudioWireFormat TxWireFormat() const noexcept override {
         return Quirks().tx.hostToDevicePcmEncoding;
     }
@@ -61,54 +49,16 @@ public:
         return Quirks().rx.deviceToHostPcmEncoding;
     }
 
-    // HAL aggregate = per-stream PCM × stream count. Single-stream profiles
-    // (TxStreamCount/RxStreamCount == 1) are unchanged.
-    [[nodiscard]] uint32_t TxChannelCount() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultTxStreamConfig(config)) {
-            return config.pcmChannels * TxStreamCount();
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t RxChannelCount() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultRxStreamConfig(config)) {
-            return config.pcmChannels * RxStreamCount();
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t TxMidiSlots() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultTxStreamConfig(config)) {
-            return config.midiSlots;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t RxMidiSlots() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultRxStreamConfig(config)) {
-            return config.midiSlots;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t TxDbs() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultTxStreamConfig(config)) {
-            return config.dbs;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t RxDbs() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultRxStreamConfig(config)) {
-            return config.dbs;
-        }
-        return 0;
+    [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override {
+        const DiceDeviceQuirks quirks = Quirks();
+        const DiceTxQuirks& tx = quirks.tx;
+        return AudioStreamTxPolicy{
+            .hostToDevicePcmEncoding = tx.hostToDevicePcmEncoding,
+            .variableDbs = tx.dbsPolicy == DbsPolicy::VariablePerPacket,
+            .defaultNonAudioSlotWord = tx.defaultNonAudioSlotWord,
+            .initializeNonAudioSlots = tx.initializeNonAudioSlots,
+            .preserveFdfInNoDataPackets = tx.preserveFdfInNoDataPackets,
+        };
     }
 
     [[nodiscard]] virtual uint32_t SafetyOffsetFrames(double sampleRate) const noexcept {

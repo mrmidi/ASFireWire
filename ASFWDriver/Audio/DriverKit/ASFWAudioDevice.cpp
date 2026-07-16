@@ -152,14 +152,14 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 ivars.device.modelId,
                 ivars.device.guid
             );
-            const auto* profile = static_cast<const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile*>(baseProfile);
+            const auto* profile = static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(baseProfile);
             if (!profile) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - profile not found");
                 kr = failStart(kIOReturnError, "ResolveProfile");
                 return;
             }
 
-            ASFW::Isoch::Audio::DICE::DiceStreamConfig txConfig{};
+            ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
             if (!profile->BuildDefaultTxStreamConfig(txConfig)) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - BuildDefaultTxStreamConfig failed");
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig");
@@ -266,7 +266,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // is created + wired to this slab by the duplex bringup
         // (PrepareTransmitStream), which runs after this allocation.
         if (profile->TxStreamCount() > 1) {
-            ASFW::Isoch::Audio::DICE::DiceStreamConfig txConfig2{};
+            ASFW::Isoch::Audio::AudioStreamConfig txConfig2{};
             if (!profile->BuildDefaultTxStreamConfig(txConfig2)) {
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig2");
                 return;

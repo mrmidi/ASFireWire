@@ -6,6 +6,7 @@
 
 #include "AudioProfileRegistry.hpp"
 #include "AVC/ApogeeDuetProfile.hpp"
+#include "AVC/Phase88Profile.hpp"
 #include "DICE/DiceProfileRegistry.hpp"
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
@@ -19,6 +20,12 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
     if (vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
         modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
         return &apogeeDuetProfile;
+    }
+
+    static AVC::Profiles::Phase88Profile phase88Profile{};
+    if (vendorId == DeviceProfiles::Audio::kTerraTecVendorId &&
+        modelId == DeviceProfiles::Audio::kPhase88RackFwModelId) {
+        return &phase88Profile;
     }
 
     // Map identity to the DICE family structures
@@ -36,7 +43,8 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
         return profile;
     }
 
-    // Fall back to the Generic DICE profile if no specific vendor profile matched
+    // The generic profile is a DICE fallback only. Exact AV/C adapters above
+    // must never inherit its name or wire geometry.
     return diceRegistry.GenericProfile();
 }
 

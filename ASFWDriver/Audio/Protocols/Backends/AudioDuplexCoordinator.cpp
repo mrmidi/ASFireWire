@@ -1130,20 +1130,30 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         }
     }
 
-    SetSessionPhase(session, DuplexRestartPhase::kWaitingGlobalClock);
-    StoreSession(session);
-    if (abortIfTeardown("WaitingGlobalClock")) {
-        return kIOReturnAborted;
-    }
-    const IOReturn clockLockStatus =
-        WaitForStableGlobalClock(guid, deviceControl, topologyGeneration, desiredClock);
-    if (clockLockStatus != kIOReturnSuccess) {
-        return rollbackToFailure(clockLockStatus, DuplexRestartPhase::kWaitingGlobalClock,
-                                 DuplexRestartFailureCause::kGlobalClockLock);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kWaitingGlobalClock,
-                                      DuplexRestartFailureCause::kGlobalClockLock);
+    if (streamProfile.startOrder.requiresPreStreamClockLock) {
+        SetSessionPhase(session, DuplexRestartPhase::kWaitingGlobalClock);
+        StoreSession(session);
+        if (abortIfTeardown("WaitingGlobalClock")) {
+            return kIOReturnAborted;
+        }
+        const IOReturn clockLockStatus =
+            WaitForStableGlobalClock(guid, deviceControl, topologyGeneration, desiredClock);
+        if (clockLockStatus != kIOReturnSuccess) {
+            return rollbackToFailure(clockLockStatus, DuplexRestartPhase::kWaitingGlobalClock,
+                                     DuplexRestartFailureCause::kGlobalClockLock);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kWaitingGlobalClock,
+                                          DuplexRestartFailureCause::kGlobalClockLock);
+        }
+    } else {
+        // Linux's BeBoB lifecycle establishes iPCR/oPCR before starting AMDTP;
+        // its internal clock has no meaningful pre-connection lock state.
+        // Cross-validated with linux-sound-firewire-stack/firewire/bebob/
+        // bebob_stream.c:593-674. Packet readiness is verified post-start.
+        ASFW_LOG(Audio,
+                 "AudioDuplexCoordinator: skipping pre-stream clock lock for BeBoB GUID=0x%016llx",
+                 guid);
     }
 
     // AV/C/CMP profiles retain the historical interleave in which the host

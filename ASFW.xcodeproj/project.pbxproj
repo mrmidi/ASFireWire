@@ -175,6 +175,7 @@
 		7A904CEDE54313921506AFCB /* ASFWMCPControlViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A09404BC6EB84DDE150E905 /* ASFWMCPControlViewModel.swift */; };
 		7B2BAF8A00881B81B43290E6 /* BusResetCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 24202F4C65E43DBC5A0951CC /* BusResetCoordinator.cpp */; };
 		7C6A17973382F6042B6956AB /* AsyncSubsystemBusReset.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 782F6B3B8831C7D812DD7704 /* AsyncSubsystemBusReset.cpp */; };
+		7CD54427453C2933E0519203 /* Phase88Profile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D91E6B11847C64760DC9FA87 /* Phase88Profile.cpp */; };
 		7EC90B35354E754E20425C17 /* RolePolicy.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BCD6B302DCC686B9FD46CE06 /* RolePolicy.cpp */; };
 		7FDF0CBEF91429BDD8AC2348 /* AVCDiscovery.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5CFD326310BE43F6EA6ECF38 /* AVCDiscovery.cpp */; };
 		810AEF6ADC5C6393DAB9AC3B /* InfoRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 070831F2CFF382CA4A41D45E /* InfoRow.swift */; };
@@ -995,6 +996,7 @@
 		D710940703C1A030B7B978DB /* ASFWMCPSDKBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPSDKBridge.swift; sourceTree = "<group>"; };
 		D718A3763916B3EC2654BF13 /* ConfigROMStager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMStager.hpp; sourceTree = "<group>"; };
 		D846D7A387D0EEED5A819EC0 /* SBP2BridgeHub.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2BridgeHub.hpp; sourceTree = "<group>"; };
+		D91E6B11847C64760DC9FA87 /* Phase88Profile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Phase88Profile.cpp; sourceTree = "<group>"; };
 		D96ECD95A8DC6C40A1E45005 /* AVCStreamFormatCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCStreamFormatCommand.hpp; sourceTree = "<group>"; };
 		D9C9CEE2B5EF0A53B8A52533 /* ControllerCoreLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCoreLifecycle.cpp; sourceTree = "<group>"; };
 		DA93CEBA7777F3441342F48F /* BringupOverrides.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BringupOverrides.hpp; sourceTree = "<group>"; };
@@ -1021,6 +1023,7 @@
 		E16CD7D8847B269F7291724B /* DiagnosticsService.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiagnosticsService.cpp; sourceTree = "<group>"; };
 		E27ACAC62D6F66AAB6061C27 /* DescriptorAccessor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DescriptorAccessor.hpp; sourceTree = "<group>"; };
 		E2C4D17A33EDCA3ABE6B5D82 /* DiceQuirks.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceQuirks.hpp; sourceTree = "<group>"; };
+		E2C7021E0B5A7CF87A2D74C2 /* Phase88Profile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Phase88Profile.hpp; sourceTree = "<group>"; };
 		E2D78CE8B9FA9B223B42FCC8 /* MCPIrmCasToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPIrmCasToolsTests.swift; sourceTree = "<group>"; };
 		E322CC2DD807CECAC38E3BB4 /* IDuplexDeviceControl.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IDuplexDeviceControl.hpp; sourceTree = "<group>"; };
 		E35C1BE247D10AA612B410E6 /* DriverKitSessionScheduler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DriverKitSessionScheduler.hpp; sourceTree = "<group>"; };
@@ -1064,6 +1067,7 @@
 		ED4A3A1028716DA2733167A2 /* LogConfig.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LogConfig.cpp; sourceTree = "<group>"; };
 		EDE4C64EB76B940DE3EB7EC2 /* LocalCSRAccessor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LocalCSRAccessor.hpp; sourceTree = "<group>"; };
 		EDF5A258BCDC5915AF742794 /* HardwareInterface.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareInterface.hpp; sourceTree = "<group>"; };
+		EDFC4883118C4CC3B50C50FC /* AudioStreamProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioStreamProfile.hpp; sourceTree = "<group>"; };
 		EE0F3DBAE7AE49EE55051B29 /* CSRContractVerifier.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CSRContractVerifier.cpp; sourceTree = "<group>"; };
 		EE503DDF07D0510DECCEBD3B /* ASFWMCPDiceTcatTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPDiceTcatTools.swift; sourceTree = "<group>"; };
 		EEA485C0412D0BA1D14FE998 /* ASFWMCPTransactionSchemas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPTransactionSchemas.swift; sourceTree = "<group>"; };
@@ -1377,6 +1381,8 @@
 			children = (
 				E63A4F43A53A0611B8354DAD /* ApogeeDuetProfile.cpp */,
 				6680B2421DD01722EDC795B5 /* ApogeeDuetProfile.hpp */,
+				D91E6B11847C64760DC9FA87 /* Phase88Profile.cpp */,
+				E2C7021E0B5A7CF87A2D74C2 /* Phase88Profile.hpp */,
 			);
 			path = AVC;
 			sourceTree = "<group>";
@@ -2171,6 +2177,7 @@
 				77718C25B7597AEFA561E918 /* AudioDriverConfigPolicy.cpp */,
 				0A84CBB71A14092CC7AAA130 /* AudioProfileRegistry.cpp */,
 				066A08C3B2FEF14C810ED1AD /* AudioProfileRegistry.hpp */,
+				EDFC4883118C4CC3B50C50FC /* AudioStreamProfile.hpp */,
 				45B16280BCB222CDD3CDEE11 /* IAudioDeviceProfile.hpp */,
 				2F972AECFA3DE3EB886C4748 /* AVC */,
 				70E5274A1DF48CE123F48782 /* DICE */,
@@ -3086,6 +3093,7 @@
 				2B3406B0907FC37FBA107BD2 /* PayloadHandle.cpp in Sources */,
 				E8E793E5929460B3A42C034D /* PayloadRegistry.cpp in Sources */,
 				3C130CEE2A5FE017326B568E /* PcmSlotCodec.cpp in Sources */,
+				7CD54427453C2933E0519203 /* Phase88Profile.cpp in Sources */,
 				A15BD9EC21603242D1B19C09 /* Phase88Protocol.cpp in Sources */,
 				836FE3225BA2D368808EFC48 /* PhyCommand.cpp in Sources */,
 				3ECDDF5924BE520E1750A8FF /* PostResetTimingCoordinator.cpp in Sources */,

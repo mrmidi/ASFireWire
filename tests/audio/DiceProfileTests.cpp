@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "Audio/DriverKit/Config/AudioProfileRegistry.hpp"
+#include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceDeviceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceProfileRegistry.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
@@ -14,6 +15,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
 
 namespace {
 
@@ -70,6 +72,29 @@ TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
     EXPECT_EQ(profile->TxChannelCount(), 2u);
     EXPECT_EQ(profile->RxChannelCount(), 2u);
     EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{44100u, 48000u}));
+}
+
+TEST(DiceProfileTests, ResolvesPhase88AsAvcWireProfileNotGenericDice) {
+    const auto* profile = AudioProfileRegistry::FindProfile(
+        0x000AAC, 0x000003, 0x000AAC0300B1D1F7ULL);
+
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "PHASE 88 Rack FW");
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->TxChannelCount(), 10U);
+    EXPECT_EQ(profile->RxChannelCount(), 10U);
+    EXPECT_EQ(profile->TxMidiSlots(), 1U);
+    EXPECT_EQ(profile->RxMidiSlots(), 1U);
+    EXPECT_EQ(profile->TxDbs(), 11U);
+    EXPECT_EQ(profile->RxDbs(), 11U);
+    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{48000U}));
+
+    const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
+    AudioStreamConfig tx{};
+    ASSERT_TRUE(wireProfile->BuildDefaultTxStreamConfig(tx));
+    EXPECT_EQ(tx.framesPerDataPacket, 8U);
+    EXPECT_EQ(8U + tx.framesPerDataPacket * tx.dbs * 4U, 360U);
 }
 
 TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {

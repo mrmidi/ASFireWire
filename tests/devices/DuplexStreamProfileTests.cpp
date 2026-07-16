@@ -128,6 +128,7 @@ TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrder
     EXPECT_EQ(profile.playbackStreams[0].am824Slots, 11U);
     EXPECT_FALSE(profile.startOrder.startReceiveBeforeDeviceRx);
     EXPECT_FALSE(profile.startOrder.startTransmitBeforeDeviceTx);
+    EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock);
     EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
     EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);

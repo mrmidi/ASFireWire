@@ -30,6 +30,10 @@ struct DuplexStartOrderRecipe {
     // FW-72 can select the inverse interleave for a protocol that requires it.
     bool startReceiveBeforeDeviceRx{false};
     bool startTransmitBeforeDeviceTx{false};
+    // DICE reports an explicit GLOBAL clock-lock state before its stream
+    // enable. BeBoB with an internal clock has no equivalent pre-CMP state;
+    // validate its PCR leases and packet liveness after host RX/TX starts.
+    bool requiresPreStreamClockLock{true};
     std::array<DuplexHostDirection, 2> prepareOrder{
         DuplexHostDirection::kReceive,
         DuplexHostDirection::kTransmit,
@@ -319,6 +323,7 @@ class DuplexStreamProfileResolver final {
             // 593-674. No reference implementation is copied.
             profile.startOrder.startReceiveBeforeDeviceRx = false;
             profile.startOrder.startTransmitBeforeDeviceTx = false;
+            profile.startOrder.requiresPreStreamClockLock = false;
             profile.startOrder.startOrder = {
                 DuplexHostDirection::kReceive,
                 DuplexHostDirection::kTransmit,
