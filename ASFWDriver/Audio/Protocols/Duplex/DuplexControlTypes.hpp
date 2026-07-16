@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// DuplexControlTypes.hpp - Neutral names for the DICE-origin restart vocabulary
+// DuplexControlTypes.hpp - Protocol-neutral duplex restart vocabulary
 
 #pragma once
 
@@ -9,11 +9,9 @@
 
 namespace ASFW::Audio {
 
-// FW-71 exposes these neutral names at the duplex seam; FW-73 renamed the
-// transport + coordinator files/types. The underlying restart/session
-// declarations still carry their DICE::Dice* spelling and are renamed/moved by
-// a follow-up sweep (FW-73b) — these aliases keep every seam reading neutral in
-// the meantime.
+// The state machine is shared by DICE and AV/C backends. Keep the seam's
+// vocabulary neutral even while the owning header retains its historical DICE
+// location; device-specific DICE protocol results remain explicitly DICE-named.
 using DuplexRestartReason = DICE::DiceRestartReason;
 using DuplexRestartPhase = DICE::DiceRestartPhase;
 using DuplexRestartState = DICE::DiceRestartState;
@@ -28,5 +26,12 @@ using DuplexStageResult = DICE::DiceDuplexStageResult;
 using DuplexConfirmResult = DICE::DiceDuplexConfirmResult;
 using ClockApplyResult = DICE::DiceClockApplyResult;
 using DuplexHealthResult = DICE::DiceDuplexHealthResult;
+
+using DICE::ClassifyRestartReason;
+using DICE::ClearRestartProgress;
+using DICE::HasAnyRestartState;
+using DICE::HasDeviceRestartState;
+using DICE::HasHostRestartState;
+using DICE::HasRestartIntent;
 
 } // namespace ASFW::Audio

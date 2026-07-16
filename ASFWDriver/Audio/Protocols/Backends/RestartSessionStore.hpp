@@ -18,12 +18,12 @@
 //   * *Locked accessors (FindSessionLocked/EraseSessionLocked) that assume the caller already
 //     holds the lock, for the multi-domain sections that must stay one uninterrupted hold.
 //
-// Names keep their Dice* prefix for now (neutral rename is FW-73b). The FSM journal is the
-// separate FW-69a component (RestartJournal.hpp).
+// The store uses the protocol-neutral duplex session contract. The FSM journal is the separate
+// FW-69a component (RestartJournal.hpp).
 
 #pragma once
 
-#include "../DICE/Core/DICERestartSession.hpp"
+#include "../Duplex/DuplexControlTypes.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -33,7 +33,7 @@
 
 namespace ASFW::Audio::Backends {
 
-using ASFW::Audio::DICE::DiceRestartSession;
+using ASFW::Audio::DuplexRestartSession;
 
 class RestartSessionStore {
 public:
@@ -44,21 +44,21 @@ public:
     // --- self-locking API: byte-for-byte reproductions of the former coordinator members
     //     LoadSession / StoreSession / GetSession / AllocateRestartId.
 
-    [[nodiscard]] DiceRestartSession LoadSession(uint64_t guid) const noexcept {
+    [[nodiscard]] DuplexRestartSession LoadSession(uint64_t guid) const noexcept {
         IOLock* const lock = *lockRef_;
         if (!lock || guid == 0) {
-            return DiceRestartSession{.guid = guid};
+            return DuplexRestartSession{.guid = guid};
         }
         IOLockLock(lock);
         const auto it = sessions_.find(guid);
-        DiceRestartSession session = (it != sessions_.end())
+        DuplexRestartSession session = (it != sessions_.end())
             ? it->second
-            : DiceRestartSession{.guid = guid};
+            : DuplexRestartSession{.guid = guid};
         IOLockUnlock(lock);
         return session;
     }
 
-    void StoreSession(const DiceRestartSession& session) noexcept {
+    void StoreSession(const DuplexRestartSession& session) noexcept {
         IOLock* const lock = *lockRef_;
         if (!lock || session.guid == 0) {
             return;
@@ -68,7 +68,7 @@ public:
         IOLockUnlock(lock);
     }
 
-    [[nodiscard]] std::optional<DiceRestartSession> GetSession(uint64_t guid) const noexcept {
+    [[nodiscard]] std::optional<DuplexRestartSession> GetSession(uint64_t guid) const noexcept {
         IOLock* const lock = *lockRef_;
         if (!lock || guid == 0) {
             return std::nullopt;
@@ -76,7 +76,7 @@ public:
         IOLockLock(lock);
         const auto it = sessions_.find(guid);
         const auto session = (it != sessions_.end())
-            ? std::optional<DiceRestartSession>(it->second)
+            ? std::optional<DuplexRestartSession>(it->second)
             : std::nullopt;
         IOLockUnlock(lock);
         return session;
@@ -97,12 +97,12 @@ public:
     //     coordinator's multi-domain critical sections stay one uninterrupted hold. These match
     //     the former inline `sessions_.find(guid)` / `sessions_.erase(guid)` uses exactly.
 
-    [[nodiscard]] DiceRestartSession* FindSessionLocked(uint64_t guid) noexcept {
+    [[nodiscard]] DuplexRestartSession* FindSessionLocked(uint64_t guid) noexcept {
         const auto it = sessions_.find(guid);
         return it != sessions_.end() ? &it->second : nullptr;
     }
 
-    [[nodiscard]] const DiceRestartSession* FindSessionLocked(uint64_t guid) const noexcept {
+    [[nodiscard]] const DuplexRestartSession* FindSessionLocked(uint64_t guid) const noexcept {
         const auto it = sessions_.find(guid);
         return it != sessions_.end() ? &it->second : nullptr;
     }
@@ -113,7 +113,7 @@ public:
 
 private:
     IOLock** lockRef_;  // borrowed: &coordinator.lock_ (not owned; never allocated/freed here)
-    std::unordered_map<uint64_t, DiceRestartSession> sessions_{};
+    std::unordered_map<uint64_t, DuplexRestartSession> sessions_{};
     uint64_t nextRestartId_{1};
 };
 

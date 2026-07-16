@@ -45,7 +45,10 @@ void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
 
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
-    dice_.OnDeviceRecordUpdated(device->GetGUID());
+    const uint64_t guid = device->GetGUID();
+    if (BackendForGuid(guid) == &dice_) {
+        dice_.OnDeviceRecordUpdated(guid);
+    }
 }
 
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
