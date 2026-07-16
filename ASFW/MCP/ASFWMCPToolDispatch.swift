@@ -104,6 +104,8 @@ extension ASFWMCPCore {
             return await bebobBootRomResult(toolName: name, decoder: decoder)
         case "asfw_bebob_get_unit_plug_info":
             return await bebobUnitPlugInfoResult(toolName: name, decoder: decoder)
+        case "asfw_bebob_get_clock_topology":
+            return await bebobClockTopologyResult(toolName: name, decoder: decoder)
         default:
             return notImplementedToolResult(name, reason: "Catalog tool \(name) has no dispatch arm.")
         }
@@ -716,6 +718,147 @@ extension ASFWMCPCore {
 }
 
 private extension ASFWMCPCore {
+    func bebobClockTopologyResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: try decoder.uint32("generation"),
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+            var transactions: [ASFWMCPValue] = []
+            func send(_ payload: [UInt8]) async -> ASFWMCPFcpCommandReceipt {
+                let receipt = await driver.executeFCPCommand(
+                    ASFWMCPFcpCommandRequest(
+                        targetGUID: targetGUID,
+                        address: address,
+                        intent: .status,
+                        payload: payload
+                    )
+                )
+                transactions.append(receipt.mcpValue)
+                return receipt
+            }
+            func incomplete(_ reason: String) -> ASFWMCPToolCallResult {
+                .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobClockTopology"),
+                    "recognized": .bool(false),
+                    "transactions": .array(transactions),
+                    "reason": .string(reason)
+                ]))
+            }
+
+            let musicPlugReceipt = await send(ASFWMCPBeBoBClockTopology.musicSubunitPlugInfoCommand())
+            guard musicPlugReceipt.ok,
+                  let musicPlugResponse = musicPlugReceipt.response,
+                  let inputPlugCount = ASFWMCPBeBoBClockTopology.musicSubunitInputPlugCount(musicPlugResponse) else {
+                return incomplete("Music Subunit PLUG_INFO did not return a stable input-plug count.")
+            }
+            guard inputPlugCount <= ASFWMCPBeBoBClockTopology.maxMusicSubunitInputPlugs else {
+                return incomplete("Music Subunit advertised more input plugs than the bounded diagnostic supports.")
+            }
+
+            var inputPlugs: [ASFWMCPValue] = []
+            var syncInputPlug: UInt8?
+            for plug in 0..<inputPlugCount {
+                let receipt = await send(ASFWMCPBeBoBClockTopology.musicSubunitInputPlugTypeCommand(plug))
+                guard receipt.ok, let response = receipt.response,
+                      let type = ASFWMCPBeBoBClockTopology.plugType(response) else {
+                    return incomplete("Music Subunit input plug \(plug) did not return a stable BridgeCo type.")
+                }
+                inputPlugs.append(.object([
+                    "id": .int(Int(plug)),
+                    "type": .int(Int(type)),
+                    "typeName": .string(ASFWMCPBeBoBClockTopology.plugTypeName(type))
+                ]))
+                if type == ASFWMCPBeBoBClockTopology.syncPlugType, syncInputPlug == nil {
+                    syncInputPlug = plug
+                }
+            }
+
+            guard let syncInputPlug else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobClockTopology"),
+                    "recognized": .bool(true),
+                    "musicSubunitInputPlugs": .array(inputPlugs),
+                    "syncInputPlug": .null,
+                    "clockSource": .object(["classification": .string("internalAssumedNoSyncInput")]),
+                    "transactions": .array(transactions)
+                ]))
+            }
+
+            let sourceReceipt = await send(ASFWMCPBeBoBClockTopology.musicSubunitInputSourceCommand(syncInputPlug))
+            guard sourceReceipt.ok, let sourceResponse = sourceReceipt.response,
+                  let descriptor = ASFWMCPBeBoBClockTopology.sourceDescriptor(sourceResponse) else {
+                return incomplete("Music Subunit SYNC input did not return a complete source descriptor.")
+            }
+
+            var clockSource: [String: ASFWMCPValue] = [
+                "descriptor": .array(descriptor.map { .int(Int($0)) }),
+                "classification": .string("unknown")
+            ]
+            if descriptor[0] == 0xff {
+                clockSource["classification"] = .string("internal")
+            } else if descriptor[0] == ASFWMCPBeBoBClockTopology.outputDirection,
+                      descriptor[1] == ASFWMCPBeBoBClockTopology.subunitMode,
+                      descriptor[2] == 0x0c {
+                clockSource["classification"] = .string("internal")
+            } else if descriptor[0] == ASFWMCPBeBoBClockTopology.inputDirection,
+                      descriptor[1] == ASFWMCPBeBoBClockTopology.unitMode,
+                      descriptor[2] == ASFWMCPBeBoBClockTopology.isochronousUnitClass {
+                clockSource["classification"] = .string(descriptor[3] == 0 ? "syt" : "externalIsochronous")
+            } else if descriptor[0] == ASFWMCPBeBoBClockTopology.inputDirection,
+                      descriptor[1] == ASFWMCPBeBoBClockTopology.unitMode,
+                      descriptor[2] == ASFWMCPBeBoBClockTopology.externalUnitClass {
+                let externalReceipt = await send(ASFWMCPBeBoBClockTopology.externalInputPlugTypeCommand(descriptor[3]))
+                guard externalReceipt.ok, let externalResponse = externalReceipt.response,
+                      let externalType = ASFWMCPBeBoBClockTopology.plugType(externalResponse) else {
+                    return incomplete("Clock source external plug did not return a stable BridgeCo type.")
+                }
+                clockSource["externalPlug"] = .object([
+                    "id": .int(Int(descriptor[3])),
+                    "type": .int(Int(externalType)),
+                    "typeName": .string(ASFWMCPBeBoBClockTopology.plugTypeName(externalType))
+                ])
+                switch externalType {
+                case ASFWMCPBeBoBClockTopology.digitalPlugType, ASFWMCPBeBoBClockTopology.syncPlugType:
+                    clockSource["classification"] = .string("external")
+                case ASFWMCPBeBoBClockTopology.additionalPlugType:
+                    clockSource["classification"] = .string("internal")
+                default:
+                    break
+                }
+            }
+
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("bebobClockTopology"),
+                "recognized": .bool(true),
+                "musicSubunitInputPlugs": .array(inputPlugs),
+                "syncInputPlug": .int(Int(syncInputPlug)),
+                "clockSource": .object(clockSource),
+                "transactions": .array(transactions)
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
     func bebobUnitPlugInfoResult(
         toolName: String,
         decoder: ASFWMCPToolArgumentDecoder

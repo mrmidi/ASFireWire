@@ -267,7 +267,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         attemptedWriteCount += 1
         let payload = request.payload
         if request.intent == .status,
-           payload == ASFWMCPBeBoBUnitPlugInformation.statusCommand {
+           payload == [0x01, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00] {
             return ASFWMCPFcpCommandReceipt(
                 targetGUID: request.targetGUID,
                 expectedNodeId: request.address.nodeId,
@@ -277,6 +277,53 @@ actor MockASFWDriverControl: ASFWDriverControlling {
                 response: [0x0C, 0xFF, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00],
                 status: .ok,
                 correlationId: "mock-fcp-bebob-unit-plug-info",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
+        if request.intent == .status,
+           payload == [0x01, 0x60, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00] {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0x60, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-msu-plug-info",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
+        if request.intent == .status,
+           payload == [0x01, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00] {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x03],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-msu-sync-type",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
+        if request.intent == .status,
+           payload == [0x01, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF,
+                       0xFF, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0x05,
+                           0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-msu-sync-source",
                 durationUsec: 200,
                 policy: nil
             )

@@ -61,6 +61,9 @@ python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py c
 
 # BridgeCo/BeBoB generic unit PLUG_INFO (fixed, STATUS-only FCP command).
 python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_bebob_get_unit_plug_info '{"targetGuid":3003878663639543,"nodeId":0,"generation":2}'
+
+# Music Subunit SYNC input and current BridgeCo clock-source topology.
+python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_bebob_get_clock_topology '{"targetGuid":3003878663639543,"nodeId":0,"generation":2}'
 ```
 
 If the endpoint is unavailable, report the connection failure and ask the user to enable the MCP Control Plane in ASFW. Do not fall back to guessed driver state.

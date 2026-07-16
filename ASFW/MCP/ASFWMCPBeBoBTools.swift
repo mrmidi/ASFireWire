@@ -23,6 +23,15 @@ extension ASFWMCPToolCatalog {
             idempotent: false,
             summary: "Send the Linux-style AV/C unit PLUG_INFO STATUS query and decode ISO/external plug counts (targetGuid, nodeId, generation required).",
             requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_get_clock_topology",
+            group: "bebob",
+            visibility: .readOnly,
+            readOnly: true,
+            idempotent: false,
+            summary: "Inspect Music Subunit SYNC input topology and classify its current BridgeCo clock source (targetGuid, nodeId, generation required).",
+            requiredProtocolHints: ["bebob"]
         )
     ]
 }
@@ -66,6 +75,107 @@ struct ASFWMCPBeBoBUnitPlugInformation: Equatable {
             "externalInput": .int(Int(externalInputCount)),
             "externalOutput": .int(Int(externalOutputCount)),
         ])
+    }
+}
+
+/// Read-only BridgeCo/Music-Subunit clock-source discovery. The sequence is
+/// cross-validated with Linux `firewire/bebob/bebob_stream.c:139-240` and
+/// `firewire/fcp.c:139-183`; this is a fresh Swift implementation.
+enum ASFWMCPBeBoBClockTopology {
+    static let musicSubunitAddress: UInt8 = 0x60
+    static let inputDirection: UInt8 = 0x00
+    static let outputDirection: UInt8 = 0x01
+    static let unitMode: UInt8 = 0x00
+    static let subunitMode: UInt8 = 0x01
+    static let isochronousUnitClass: UInt8 = 0x00
+    static let externalUnitClass: UInt8 = 0x01
+    static let syncPlugType: UInt8 = 0x03
+    static let digitalPlugType: UInt8 = 0x05
+    static let additionalPlugType: UInt8 = 0x06
+    static let maxMusicSubunitInputPlugs = 16
+
+    static func musicSubunitPlugInfoCommand() -> [UInt8] {
+        [0x01, musicSubunitAddress, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00]
+    }
+
+    static func musicSubunitInputPlugTypeCommand(_ plug: UInt8) -> [UInt8] {
+        extendedPlugInfoCommand(
+            subunitAddress: musicSubunitAddress,
+            direction: inputDirection,
+            mode: subunitMode,
+            unitClassOrPlug: plug,
+            reserved: 0xff,
+            infoType: 0x00
+        )
+    }
+
+    static func musicSubunitInputSourceCommand(_ plug: UInt8) -> [UInt8] {
+        var command = extendedPlugInfoCommand(
+            subunitAddress: musicSubunitAddress,
+            direction: inputDirection,
+            mode: subunitMode,
+            unitClassOrPlug: plug,
+            reserved: 0xff,
+            infoType: 0x05
+        )
+        command += [0x00, 0x00, 0x00, 0x00]
+        return command
+    }
+
+    static func externalInputPlugTypeCommand(_ plug: UInt8) -> [UInt8] {
+        extendedPlugInfoCommand(
+            subunitAddress: 0xff,
+            direction: inputDirection,
+            mode: unitMode,
+            unitClassOrPlug: externalUnitClass,
+            reserved: plug,
+            infoType: 0x00
+        )
+    }
+
+    static func musicSubunitInputPlugCount(_ response: [UInt8]) -> UInt8? {
+        guard isStablePlugInfoResponse(response), response.count >= 8 else { return nil }
+        return response[4]
+    }
+
+    static func plugType(_ response: [UInt8]) -> UInt8? {
+        guard isStablePlugInfoResponse(response), response.count >= 11 else { return nil }
+        return response[10]
+    }
+
+    static func sourceDescriptor(_ response: [UInt8]) -> [UInt8]? {
+        guard isStablePlugInfoResponse(response), response.count >= 15 else { return nil }
+        return Array(response[10..<15])
+    }
+
+    static func plugTypeName(_ type: UInt8) -> String {
+        switch type {
+        case 0x00: return "isochronous"
+        case 0x01: return "asynchronous"
+        case 0x02: return "midi"
+        case 0x03: return "sync"
+        case 0x04: return "analogue"
+        case 0x05: return "digital"
+        case 0x06: return "additional"
+        default: return "unknown"
+        }
+    }
+
+    private static func extendedPlugInfoCommand(
+        subunitAddress: UInt8,
+        direction: UInt8,
+        mode: UInt8,
+        unitClassOrPlug: UInt8,
+        reserved: UInt8,
+        infoType: UInt8
+    ) -> [UInt8] {
+        [0x01, subunitAddress, 0x02, 0xc0,
+         direction, mode, unitClassOrPlug, reserved, 0xff,
+         infoType, 0x00, 0x00]
+    }
+
+    private static func isStablePlugInfoResponse(_ response: [UInt8]) -> Bool {
+        response.count >= 3 && response[0] == 0x0c && response[2] == 0x02
     }
 }
 

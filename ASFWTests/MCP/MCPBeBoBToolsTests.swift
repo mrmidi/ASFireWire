@@ -70,4 +70,28 @@ struct MCPBeBoBToolsTests {
         #expect(information["externalOutput"] == .int(0))
         #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
+
+    @Test func clockTopologyMcpToolFollowsMusicSubunitSyncDiscovery() async throws {
+        let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)
+
+        let result = await core.callTool(name: "asfw_bebob_get_clock_topology", arguments: .object([
+            "targetGuid": .uint64(0x000A_AC03_00B1_D1F7),
+            "nodeId": .int(3),
+            "generation": .int(17),
+        ]))
+
+        guard case .object(let data) = result.data,
+              case .object(let clockSource)? = data["clockSource"] else {
+            Issue.record("Expected structured BeBoB clock topology data.")
+            return
+        }
+        #expect(result.ok)
+        #expect(data["kind"] == .string("bebobClockTopology"))
+        #expect(data["recognized"] == .bool(true))
+        #expect(data["syncInputPlug"] == .int(0))
+        #expect(clockSource["classification"] == .string("internal"))
+        #expect(await core.listTools().contains { $0.name == "asfw_bebob_get_clock_topology" })
+        #expect(await driver.unexpectedWriteAttemptCount() == 3)
+    }
 }
