@@ -150,7 +150,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
             : snapshot.txMaximumLeadTicks + transferDelayTicks;
     ASFW_LOG(
         DirectAudio,
-        "ADK timing anchor(generation=%llu frame=%llu updates=%llu mirrors=%llu invalid=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
+        "ADK timing anchor(generation=%llu frame=%llu updates=%llu mirrors=%llu invalid=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu empty=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
         snapshot.hostAnchorGeneration,
         snapshot.hostAnchorFrame,
         snapshot.hostAnchorUpdates,
@@ -164,6 +164,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         wireLeadMaximum,
         snapshot.txDataPackets,
         snapshot.txNoDataPackets,
+        snapshot.txEmptyPackets,
         snapshot.txPostLockNoDataPackets,
         snapshot.txLastPreparationLatencyTicks,
         snapshot.txMaxPreparationLatencyTicks,

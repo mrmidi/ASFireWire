@@ -50,6 +50,7 @@ struct AmdtpTxPolicy final {
     bool clearPayloadBeforeExposure{true};
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
+    bool emptyPacketsDuringIdle{false};
 };
 
 struct HostAudioBufferView final {

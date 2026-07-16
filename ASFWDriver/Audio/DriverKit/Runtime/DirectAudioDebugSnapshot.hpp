@@ -62,6 +62,7 @@ struct DirectAudioDebugSnapshot final {
     int64_t txMaximumLeadTicks{INT64_MIN};
     uint64_t txDataPackets{0};
     uint64_t txNoDataPackets{0};
+    uint64_t txEmptyPackets{0};
     uint64_t txPostLockNoDataPackets{0};
     uint64_t txPhaseRebases{0};
     uint64_t txSilenceFallback{0};
@@ -232,6 +233,8 @@ struct DirectAudioDebugLogState final {
         control.counters.txDataPackets.load(std::memory_order_relaxed);
     snapshot.txNoDataPackets =
         control.counters.txNoDataPackets.load(std::memory_order_relaxed);
+    snapshot.txEmptyPackets =
+        control.counters.txEmptyPackets.load(std::memory_order_relaxed);
     snapshot.txPostLockNoDataPackets =
         control.counters.txPostLockNoDataPackets.load(
             std::memory_order_relaxed);

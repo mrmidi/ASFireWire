@@ -266,7 +266,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
                 pktIdx);
             return stats;
         }
-        if (meta.payloadLength < 2 || meta.payloadLength > slotStrideBytes) {
+        if (meta.payloadLength != 0 && (meta.payloadLength < 2 || meta.payloadLength > slotStrideBytes)) {
             ASFW_LOG(
                 Isoch,
                 "IT: Prime failed - invalid payload length packet=%u slot=%u len=%u stride=%u",
@@ -653,8 +653,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         const uint32_t payloadLength = meta.payloadLength;
 
-        if (payloadLength < 2 ||
-            payloadLength > controlBlock->maxPacketBytes) {
+        if (payloadLength != 0 && (payloadLength < 2 ||
+            payloadLength > controlBlock->maxPacketBytes)) {
             counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
             out.failureReason = RefillFailureReason::InvalidPacketSize;
             out.failurePacketAbs = fillAbsIdx;

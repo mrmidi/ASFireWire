@@ -81,4 +81,15 @@ uint32_t Phase88Profile::RxReportedLatencyFrames(double sampleRate) const noexce
     return 128;
 }
 
+AudioStreamTxPolicy Phase88Profile::TxStreamPolicy() const noexcept {
+    return AudioStreamTxPolicy{
+        .hostToDevicePcmEncoding = Encoding::AudioWireFormat::kAM824,
+        .variableDbs = false,
+        .defaultNonAudioSlotWord = 0x80000000,
+        .initializeNonAudioSlots = true,
+        .preserveFdfInNoDataPackets = false,
+        .emptyPacketsDuringIdle = true
+    };
+}
+
 } // namespace ASFW::Isoch::Audio::AVC::Profiles

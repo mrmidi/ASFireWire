@@ -36,6 +36,7 @@ struct AudioStreamTxPolicy final {
     uint32_t defaultNonAudioSlotWord{0x80000000};
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
+    bool emptyPacketsDuringIdle{false};
 };
 
 // ADK packet allocation and AMDTP encoding are shared by multiple protocol
@@ -50,6 +51,15 @@ public:
     [[nodiscard]] virtual uint32_t TxStreamCount() const noexcept { return 1; }
     [[nodiscard]] virtual uint32_t RxStreamCount() const noexcept { return 1; }
     [[nodiscard]] virtual AudioStreamTxPolicy TxStreamPolicy() const noexcept { return {}; }
+
+    // Budget StartIO grants the device-to-host stream to deliver the first
+    // data-bearing packet (which seeds the HAL zero-timestamp anchor) before
+    // the start attempt is failed. DICE devices stream data within a few
+    // milliseconds of the isoch start, so the default stays tight. BeBoB
+    // devices transmit only CIP NO-DATA until roughly one second after they
+    // begin receiving host packets, so their profiles must widen this budget
+    // (Linux waits 4 s; cross-validated with Linux bebob_stream.c:10,636-666).
+    [[nodiscard]] virtual uint32_t InitialClockAnchorTimeoutMs() const noexcept { return 500; }
 
     [[nodiscard]] uint32_t TxChannelCount() const noexcept override {
         AudioStreamConfig config{};

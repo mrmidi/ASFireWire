@@ -29,6 +29,17 @@ public:
     [[nodiscard]] uint32_t RxSafetyOffsetFrames(double sampleRate) const noexcept override;
     [[nodiscard]] uint32_t TxReportedLatencyFrames(double sampleRate) const noexcept override;
     [[nodiscard]] uint32_t RxReportedLatencyFrames(double sampleRate) const noexcept override;
+
+    // Wire-verified 2026-07-16: with only an oPCR connection the PHASE 88
+    // transmits 8-byte CIP NO-DATA indefinitely (7.5 s observed); it starts
+    // multiplexing data only after receiving host packets for about a second.
+    // A 500 ms budget therefore always tears the stream down just before the
+    // device comes up. Match Linux READY_TIMEOUT_MS (bebob_stream.c:10).
+    [[nodiscard]] uint32_t InitialClockAnchorTimeoutMs() const noexcept override {
+        return 4000;
+    }
+
+    [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override;
 };
 
 } // namespace ASFW::Isoch::Audio::AVC::Profiles

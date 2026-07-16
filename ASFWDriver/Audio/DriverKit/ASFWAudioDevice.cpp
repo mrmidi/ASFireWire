@@ -146,6 +146,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
 
         // --- Allocate and map shared TX isoch resources ---
+        uint32_t initialClockAnchorTimeoutMs = 500;
         {
             const auto* baseProfile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
                 ivars.device.vendorId,
@@ -158,6 +159,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 kr = failStart(kIOReturnError, "ResolveProfile");
                 return;
             }
+            initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
 
             ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
             if (!profile->BuildDefaultTxStreamConfig(txConfig)) {
@@ -391,12 +393,14 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
 
         // AudioDriverKit needs a valid clock anchor when StartIO transitions
         // the device into the running state. The hardware ZTS action executes
-        // on its dedicated queue, so it can publish while this work queue waits.
-        constexpr uint32_t kInitialHardwareZtsTimeoutMs = 500;
+        // on its dedicated queue, so it can publish while this work queue
+        // waits. The budget is profile-owned: BeBoB devices spend ~1 s in CIP
+        // NO-DATA after their input stream starts before the first data packet
+        // can seed the anchor (Linux bebob_stream.c:661-666).
         uint32_t ztsWaitMs = 0;
         while (ivars.runtime.lastHalZeroTimestampHostTicks.load(
                    std::memory_order_acquire) == 0 &&
-               ztsWaitMs < kInitialHardwareZtsTimeoutMs) {
+               ztsWaitMs < initialClockAnchorTimeoutMs) {
             IOSleep(1);
             ++ztsWaitMs;
         }

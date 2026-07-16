@@ -147,6 +147,7 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.defaultNonAudioSlotWord = streamPolicy.defaultNonAudioSlotWord;
     policy.initializeNonAudioSlots = streamPolicy.initializeNonAudioSlots;
     policy.preserveFdfInNoDataPackets = streamPolicy.preserveFdfInNoDataPackets;
+    policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
     policy.clearPayloadBeforeExposure = true;
     return policy;
 }

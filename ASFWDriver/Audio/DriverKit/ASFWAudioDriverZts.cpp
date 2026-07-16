@@ -470,6 +470,9 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 1, std::memory_order_relaxed);
             directControl->counters.txValidSytPackets.fetch_add(
                 1, std::memory_order_relaxed);
+        } else if (meta.payloadLength == 0) {
+            directControl->counters.txEmptyPackets.fetch_add(
+                1, std::memory_order_relaxed);
         } else {
             directControl->counters.txNoDataPackets.fetch_add(
                 1, std::memory_order_relaxed);
