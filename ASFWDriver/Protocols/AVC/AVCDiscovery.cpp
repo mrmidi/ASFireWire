@@ -363,7 +363,7 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
     if (audioDeviceConfig.channelCount == 0 || audioDeviceConfig.sampleRates.empty() ||
         audioDeviceConfig.currentSampleRate == 0) {
         ASFW_LOG_WARNING(Audio,
-                         "AVCDiscovery: Deferring audio nub for GUID=%llx; decoded format lacks %s%s%s",
+                         "AVCDiscovery: Deferring audio nub for GUID=%llx; decoded format lacks %{public}s%{public}s%{public}s",
                          guid,
                          audioDeviceConfig.channelCount == 0 ? "channel count" : "",
                          audioDeviceConfig.channelCount == 0 && audioDeviceConfig.sampleRates.empty() ? " and " : "",

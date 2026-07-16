@@ -516,7 +516,7 @@ void DeviceManager::UpdateOperationalIndex(Guid64 guid,
         return;
     }
 
-    ASFW_LOG(Discovery, "Skipping device index %s for GUID=0x%016llx with invalid nodeId=%u",
+    ASFW_LOG(Discovery, "Skipping device index %{public}s for GUID=0x%016llx with invalid nodeId=%u",
              action, guid, nodeId);
 }
 

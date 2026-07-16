@@ -132,7 +132,7 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
                         ASFW_LOG_V1(AVC,
                                    "AVCUnit: Initialized - "
                                    "%zu subunits, %u/%u ISO plugs, "
-                                   "descriptor support: %s",
+                                   "descriptor support: %{public}s",
                                    subunits_.size(),
                                    plugCounts_.isoInputPlugs,
                                    plugCounts_.isoOutputPlugs,

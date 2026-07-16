@@ -326,7 +326,7 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
     ivars.runtime.directAudioSkeletonBound.store(true, std::memory_order_release);
     ASFW_LOG(DirectAudio,
-             "ADK DBG BIND skeleton %s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
+             "ADK DBG BIND skeleton %{public}s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
              "bound",
              static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
              ivars.runtime.directAudioGraph.memory.outputFrameCapacity,

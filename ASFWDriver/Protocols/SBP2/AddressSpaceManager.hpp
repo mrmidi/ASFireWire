@@ -510,7 +510,7 @@ private:
     }
 
     void LogRangesLocked(const char* reason, uint64_t address, uint32_t length) {
-        ASFW_ADDRSPACE_LOG("AddressSpaceManager[%p] %s addr=0x%012llx len=%u ranges=%lu",
+        ASFW_ADDRSPACE_LOG("AddressSpaceManager[%p] %{public}s addr=0x%012llx len=%u ranges=%lu",
                            this,
                            reason,
                            static_cast<unsigned long long>(address),
@@ -519,7 +519,7 @@ private:
         for (const auto& entry : ranges_) {
             const auto& range = entry.second;
             ASFW_ADDRSPACE_LOG(
-                "AddressSpaceManager[%p] range label=%s handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
+                "AddressSpaceManager[%p] range label=%{public}s handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
                 this,
                 DebugLabelCString(range),
                 static_cast<unsigned long long>(range.meta.handle),

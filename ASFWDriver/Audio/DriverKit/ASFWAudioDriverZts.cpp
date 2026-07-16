@@ -766,7 +766,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 DirectAudio,
                 "[TxPrep] margin=%u min=%u lead=%u distMin=%u lastLatUs=%llu "
                 "maxLatUs=%llu late1500=%llu wakes=%llu exposureLead=%u "
-                "coverageLead=%u%s",
+                "coverageLead=%u%{public}s",
                 boundedMargin,
                 minCommittedMargin,
                 ASFW::IsochTransport::AudioTimingGeometry::

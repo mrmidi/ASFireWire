@@ -52,7 +52,7 @@ IsochTransmitContext::~IsochTransmitContext() noexcept = default;
 
 kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
-        ASFW_LOG(Isoch, "IT: Configure rejected - state=%s", TxStateName(state_));
+        ASFW_LOG(Isoch, "IT: Configure rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnBusy;
     }
 
@@ -251,7 +251,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
 
 kern_return_t IsochTransmitContext::Start() noexcept {
     if (state_ != State::Configured && state_ != State::Stopped) {
-        ASFW_LOG(Isoch, "IT: Start rejected - state=%s", TxStateName(state_));
+        ASFW_LOG(Isoch, "IT: Start rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnNotReady;
     }
 
