@@ -19,6 +19,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include "AVCDefs.hpp"
 #include "../Ports/FireWireBusPort.hpp"
@@ -187,23 +188,32 @@ public:
     }
 
 private:
+    /// Immutable routing epoch for one FCP block-write attempt.  A response
+    /// may match only after this exact attempt has completed successfully.
+    /// Linux pairs destination identity with generation at request issue
+    /// (core-transaction.c:285-303, 363-372); Apple's AVC stack retains the
+    /// equivalent fWriteNodeID/fWriteGen on its write command
+    /// (IOFireWireAVCCommand.cpp:481-491).  We reproduce that behavior, not
+    /// their implementation.
+    struct FCPWriteAttempt {
+        uint64_t id{0};
+        uint16_t targetNodeID{0xFFFFU};
+        uint32_t generation{0};
+    };
+
     struct OutstandingCommand {
         FCPFrame command;
         FCPCompletion completion;
         FCPCommandPolicy policy;
         uint32_t transactionID{0};
-        uint32_t generation;
-        // Captured before this exact write is handed to the async layer.
-        // OnFCPResponse must never re-read the mutable FWDevice identity.
-        // Cross-validated with Linux fcp.c:349-352 and Apple's stored
-        // IOFireWireAVCAsynchronousCommand::fWriteNodeID.
-        uint16_t expectedNodeID{0xFFFFU};
         uint8_t retriesLeft;
         bool allowBusResetRetry;
-        // A remote response is meaningful only after the local FCP write has
-        // completed successfully for this attempt.
-        bool writeCompleted{false};
-        uint64_t writeAttempt{0};
+        /// The currently submitted async write. Cleared before cancellation
+        /// so its late completion cannot affect a replacement attempt.
+        std::optional<FCPWriteAttempt> activeWriteAttempt;
+        /// Set only by the success completion of `activeWriteAttempt`. Response
+        /// matching reads this value and never mutable device/bus state.
+        std::optional<FCPWriteAttempt> successfulWriteAttempt;
         bool gotInterim{false};
 
         Async::AsyncHandle asyncHandle;
@@ -211,14 +221,12 @@ private:
         uint64_t timeoutEpoch{0};
     };
 
-    void OnAsyncWriteComplete(uint64_t writeAttempt,
+    void OnAsyncWriteComplete(FCPWriteAttempt writeAttempt,
                               Async::AsyncStatus status,
                               std::span<const uint8_t> response);
 
     Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame,
-                                          uint32_t generation,
-                                          uint16_t expectedNodeID,
-                                          uint64_t writeAttempt);
+                                          FCPWriteAttempt writeAttempt);
 
     [[nodiscard]] bool StartPendingWrite();
     void StartNextQueuedCommand();

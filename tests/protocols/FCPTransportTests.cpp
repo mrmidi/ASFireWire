@@ -129,6 +129,32 @@ TEST_F(FCPTransportTests, MatchesResponseAgainstNodeCapturedForWriteAttempt) {
     EXPECT_EQ(completionCount, 1);
 }
 
+TEST_F(FCPTransportTests, CapturesSuccessfulWriteRouteBeforeMutableDeviceRebind) {
+    int completionCount = 0;
+    ASSERT_TRUE(transport_->SubmitCommand(
+                             MakeUnitInfoCommand(),
+                             [&completionCount](FCPStatus, const FCPFrame&) { ++completionCount; })
+                    .IsValid());
+    ASSERT_EQ(bus_.WriteCount(), 1U);
+    EXPECT_EQ(bus_.WriteAt(0).nodeId.value, 2U);
+    EXPECT_EQ(bus_.WriteAt(0).generation.value, 1U);
+
+    // The write has already been addressed to node 2/generation 1. Discovery
+    // can rebind the device before the async completion runs; response routing
+    // must retain the issued route rather than sample this mutable device later.
+    device_->Publish();
+    device_->Suspend();
+    device_->Resume(Generation{2}, 3, {});
+
+    ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
+    const auto response = MakeAcceptedUnitInfoResponse();
+    transport_->OnFCPResponse(3, 2, response);
+    EXPECT_EQ(completionCount, 0);
+
+    transport_->OnFCPResponse(2, 1, response);
+    EXPECT_EQ(completionCount, 1);
+}
+
 TEST_F(FCPTransportTests, StartsTimeoutOnlyAfterCommandWriteCompletes) {
     int completionCount = 0;
     FCPStatus completionStatus = FCPStatus::kOk;

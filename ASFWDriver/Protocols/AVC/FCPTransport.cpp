@@ -108,7 +108,6 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     if (cmd->transactionID == 0) {
         cmd->transactionID = ++nextTransactionID_;
     }
-    cmd->generation = static_cast<uint32_t>(busInfo_->GetGeneration().value);
     const bool isIdempotent = cmd->policy.retryClass == FCPRetryClass::kIdempotent;
     cmd->retriesLeft = isIdempotent ? config_.maxRetries : 0;
     cmd->allowBusResetRetry = isIdempotent && config_.allowBusResetRetry;
@@ -142,9 +141,9 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
         }
         ASFW_LOG_HEX(FCP,
                     "FCPTransport: Submitting command: opcode=0x%02x, length=%zu, "
-                    "generation=%u, retries=%u, data=[%{public}s]",
+                    "retries=%u, data=[%{public}s]",
                     command.data[2], command.length,
-                    cmd->generation, cmd->retriesLeft, hexbuf);
+                    cmd->retriesLeft, hexbuf);
     }
 
     pending_ = std::move(cmd);
@@ -159,17 +158,15 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
 }
 
 ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame,
-                                                           uint32_t generation,
-                                                           uint16_t expectedNodeID,
-                                                           uint64_t writeAttempt) {
+                                                           FCPWriteAttempt writeAttempt) {
     IOLockLock(lock_);
     if (shuttingDown_ || !busOps_ || !device_) {
         IOLockUnlock(lock_);
         return Async::AsyncHandle{0};
     }
 
-    const FW::Generation gen{generation};
-    const FW::NodeId node{static_cast<uint8_t>(expectedNodeID & 0x3Fu)};
+    const FW::Generation gen{writeAttempt.generation};
+    const FW::NodeId node{static_cast<uint8_t>(writeAttempt.targetNodeID & 0x3Fu)};
     const Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = static_cast<uint16_t>((config_.commandAddress >> 32U) & 0xFFFFU),
         .addressLo = static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFU),
@@ -198,24 +195,27 @@ bool FCPTransport::StartPendingWrite() {
     }
 
     IOLockLock(lock_);
-    if (shuttingDown_ || !pending_ || !busInfo_) {
+    if (shuttingDown_ || !pending_ || !busInfo_ || !device_) {
         IOLockUnlock(lock_);
         return false;
     }
 
-    pending_->generation = static_cast<uint32_t>(busInfo_->GetGeneration().value);
-    pending_->writeCompleted = false;
     pending_->asyncHandle = {};
-    const uint64_t writeAttempt = ++nextWriteAttempt_;
-    pending_->writeAttempt = writeAttempt;
+    const FCPWriteAttempt writeAttempt{
+        .id = ++nextWriteAttempt_,
+        .targetNodeID = device_->GetNodeID(),
+        .generation = static_cast<uint32_t>(busInfo_->GetGeneration().value),
+    };
+    pending_->activeWriteAttempt = writeAttempt;
+    pending_->successfulWriteAttempt.reset();
     const uint32_t transactionID = pending_->transactionID;
     const FCPFrame commandCopy = pending_->command;
-    const uint32_t generation = pending_->generation;
-    const uint16_t expectedNodeID = device_->GetNodeID();
-    pending_->expectedNodeID = expectedNodeID;
     IOLockUnlock(lock_);
 
-    const auto handle = SubmitWriteCommand(commandCopy, generation, expectedNodeID, writeAttempt);
+    ASFW_LOG_V2(FCP,
+                "FCPTransport: Issuing write attempt=%llu node=0x%04x generation=%u",
+                writeAttempt.id, writeAttempt.targetNodeID, writeAttempt.generation);
+    const auto handle = SubmitWriteCommand(commandCopy, writeAttempt);
     if (!handle.value) {
         ASFW_LOG_V1(FCP, "FCPTransport: Failed to submit async write");
         CompleteCommand(FCPStatus::kTransportError, {});
@@ -225,7 +225,8 @@ bool FCPTransport::StartPendingWrite() {
     IOLockLock(lock_);
     const bool stillCurrent = !shuttingDown_ && pending_ &&
                               pending_->transactionID == transactionID &&
-                              pending_->writeAttempt == writeAttempt;
+                              pending_->activeWriteAttempt.has_value() &&
+                              pending_->activeWriteAttempt->id == writeAttempt.id;
     if (stillCurrent) {
         pending_->asyncHandle = handle;
     }
@@ -308,7 +309,8 @@ bool FCPTransport::CancelCommand(FCPHandle handle) {
         const Async::AsyncHandle asyncHandle = pending_->asyncHandle;
         // Prevent a synchronous cancel completion from retrying this command
         // while the caller is explicitly terminating it.
-        pending_->writeAttempt = ++nextWriteAttempt_;
+        pending_->activeWriteAttempt.reset();
+        pending_->successfulWriteAttempt.reset();
         pending_->asyncHandle = {};
         IOLockUnlock(lock_);
 
@@ -358,14 +360,15 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         return;
     }
 
-    if (!pending_->writeCompleted) {
+    if (!pending_->successfulWriteAttempt.has_value()) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP,
                      "FCPTransport: Ignoring response before write completion");
         return;
     }
 
-    const uint16_t expectedNodeID = pending_->expectedNodeID;
+    const FCPWriteAttempt successfulAttempt = *pending_->successfulWriteAttempt;
+    const uint16_t expectedNodeID = successfulAttempt.targetNodeID;
     const bool exactMatch = srcNodeID == expectedNodeID;
     const bool nodeNumberMatch = (srcNodeID & 0x3F) == (expectedNodeID & 0x3F);
     if (!exactMatch && !nodeNumberMatch) {
@@ -385,11 +388,11 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
     // Match the generation captured for this write attempt exactly.  A retry
     // after a bus reset starts a new write attempt with its new generation;
     // it must not make an old-generation response eligible for completion.
-    if (generation != pending_->generation) {
+    if (generation != successfulAttempt.generation) {
         IOLockUnlock(lock_);
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Response generation mismatch: %u (expected %u)",
-                     generation, pending_->generation);
+                     generation, successfulAttempt.generation);
         return;
     }
 
@@ -430,7 +433,7 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
 // Async Write Completion
 //==============================================================================
 
-void FCPTransport::OnAsyncWriteComplete(uint64_t writeAttempt,
+void FCPTransport::OnAsyncWriteComplete(FCPWriteAttempt writeAttempt,
                                         Async::AsyncStatus status,
                                         std::span<const uint8_t> response) {
     (void)response;
@@ -443,7 +446,8 @@ void FCPTransport::OnAsyncWriteComplete(uint64_t writeAttempt,
 
     // A reset/retry can have issued another FCP write while this asynchronous
     // completion was in flight. It must not arm or fail the newer attempt.
-    if (pending_->writeAttempt != writeAttempt) {
+    if (!pending_->activeWriteAttempt.has_value() ||
+        pending_->activeWriteAttempt->id != writeAttempt.id) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP, "FCPTransport: Ignoring stale write completion");
         return;
@@ -474,7 +478,7 @@ void FCPTransport::OnAsyncWriteComplete(uint64_t writeAttempt,
     // The response interval begins only when the command write reached the
     // remote node. Apple IOFireWireAVC records the route and arms its timer
     // from writeDone; submission latency is not device response time.
-    pending_->writeCompleted = true;
+    pending_->successfulWriteAttempt = writeAttempt;
     ScheduleTimeout(config_.timeoutMs);
 
     IOLockUnlock(lock_);
@@ -577,11 +581,11 @@ void FCPTransport::RetryCommand() {
     CancelTimeout();
     const Async::AsyncHandle priorHandle = pending_->asyncHandle;
     pending_->asyncHandle = {};
-    pending_->writeCompleted = false;
-    // Cancel() is allowed to complete synchronously. Advance the attempt tag
-    // before calling out so that completion cannot fail or complete the new
-    // retry candidate while it is being installed.
-    pending_->writeAttempt = ++nextWriteAttempt_;
+    // Cancel() is allowed to complete synchronously. Clear both attempt
+    // snapshots before calling out so that a late completion cannot arm or
+    // complete the replacement write.
+    pending_->activeWriteAttempt.reset();
+    pending_->successfulWriteAttempt.reset();
     pending_->gotInterim = false;
 
     IOLockUnlock(lock_);
@@ -608,15 +612,19 @@ void FCPTransport::OnBusReset(uint32_t newGeneration) {
         return;
     }
 
+    const uint32_t activeGeneration = pending_->successfulWriteAttempt
+                                          ? pending_->successfulWriteAttempt->generation
+                                          : (pending_->activeWriteAttempt
+                                                 ? pending_->activeWriteAttempt->generation
+                                                 : 0U);
     ASFW_LOG_V2(FCP,
                 "FCPTransport: Bus reset during command (gen %u → %u, "
                 "allowRetry=%d, retriesLeft=%u)",
-                pending_->generation, newGeneration,
+                activeGeneration, newGeneration,
                 pending_->allowBusResetRetry, pending_->retriesLeft);
 
     if (pending_->allowBusResetRetry && pending_->retriesLeft > 0) {
         pending_->retriesLeft--;
-        pending_->generation = newGeneration;
         pending_->gotInterim = false;
 
         ASFW_LOG_V2(FCP,
