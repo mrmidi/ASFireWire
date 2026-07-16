@@ -29,6 +29,20 @@ struct ASFWMCPIrmSnapshotRequest: Equatable {
     let generation: UInt32
 }
 
+/// Read-only local IRM resource view supplied by the driver's diagnostics
+/// snapshot. It is used only when ASFW itself owns the IRM role; issuing an
+/// async transaction to the local node has no remote AR response to match.
+struct ASFWMCPLocalIrmResourceSnapshot: Equatable {
+    let generation: UInt32
+    let localNodeId: UInt32
+    let irmNodeId: UInt32
+    let isLocalIRM: Bool
+    let readbackValid: Bool
+    let bandwidthAvailable: UInt32
+    let channelsAvailable31_0: UInt32
+    let channelsAvailable63_32: UInt32
+}
+
 struct ASFWMCPIrmResourceSnapshot: Equatable {
     let requestedGeneration: UInt32
     let observedGeneration: UInt32

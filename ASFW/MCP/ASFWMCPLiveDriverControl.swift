@@ -8,6 +8,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpCurrentGeneration() -> UInt32?
     func mcpControllerStatus() -> ControllerStatus?
     func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot
+    func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot?
     func mcpDiscoveredDevices() -> [FWDeviceInfo]?
     func mcpAVCUnits() -> [AVCUnitInfo]?
 
@@ -35,6 +36,26 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot {
         try ASFWDiagnosticsClient(connector: self).fetchSnapshot()
+    }
+
+    func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot? {
+        guard let diagnostics = try? mcpFetchDiagnostics(),
+              let localNodeId = diagnostics.busContract.localNode.nodeIdOrNil,
+              let irmNodeId = diagnostics.busContract.irmNode.nodeIdOrNil else {
+            return nil
+        }
+
+        let busManager = diagnostics.busManager
+        return ASFWMCPLocalIrmResourceSnapshot(
+            generation: diagnostics.busContract.header.generation,
+            localNodeId: localNodeId,
+            irmNodeId: irmNodeId,
+            isLocalIRM: busManager.localIsIRM != 0,
+            readbackValid: busManager.localIrmReadbackValid != 0,
+            bandwidthAvailable: busManager.localIrmBandwidthAvailable,
+            channelsAvailable31_0: busManager.localIrmChannelsAvailableLo,
+            channelsAvailable63_32: busManager.localIrmChannelsAvailableHi
+        )
     }
 
     func mcpDiscoveredDevices() -> [FWDeviceInfo]? {
@@ -358,9 +379,54 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
                 status: .staleGeneration, correlationId: correlationId, durationUsec: nil
             )
         }
-        guard let irmNodeId = backend.mcpControllerStatus()?.irmNodeID.map({ UInt32($0 & 0x003F) }) else {
+
+        // A local IRM owns these CSRs through OHCI CSRControl. Reading them as
+        // an async transaction addressed to ourselves cannot yield a remote
+        // AR response, so consume the driver's generation-consistent local
+        // resource snapshot instead. This follows the local-CSR split owned
+        // by LocalIRMResourceController and cross-checked with Linux
+        // firewire-ohci's local CSRControl path.
+        let started = Date()
+        if let local = backend.mcpLocalIrmResourceSnapshot(),
+           local.localNodeId == local.irmNodeId {
+            guard local.generation == request.generation else {
+                return irmSnapshot(
+                    request, observedGeneration: currentGeneration, irmNodeId: local.irmNodeId,
+                    bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                    status: .unavailable, correlationId: correlationId, durationUsec: nil
+                )
+            }
+            guard local.isLocalIRM, local.readbackValid else {
+                return irmSnapshot(
+                    request, observedGeneration: currentGeneration, irmNodeId: local.irmNodeId,
+                    bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                    status: .unavailable, correlationId: correlationId, durationUsec: nil
+                )
+            }
+            return irmSnapshot(
+                request,
+                observedGeneration: currentGeneration,
+                irmNodeId: local.irmNodeId,
+                bandwidthAvailable: local.bandwidthAvailable,
+                channelsAvailable31_0: local.channelsAvailable31_0,
+                channelsAvailable63_32: local.channelsAvailable63_32,
+                status: .ok,
+                correlationId: correlationId,
+                durationUsec: elapsedUsec(since: started)
+            )
+        }
+
+        guard let controllerStatus = backend.mcpControllerStatus(),
+              let irmNodeId = controllerStatus.irmNodeID.map({ UInt32($0 & 0x003F) }) else {
             return irmSnapshot(
                 request, observedGeneration: currentGeneration, irmNodeId: nil,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .unavailable, correlationId: correlationId, durationUsec: nil
+            )
+        }
+        if irmNodeId == controllerStatus.localNodeID.map({ UInt32($0 & 0x003F) }) {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: irmNodeId,
                 bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
                 status: .unavailable, correlationId: correlationId, durationUsec: nil
             )
@@ -368,7 +434,6 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
         // Keep the established IRMClient order: bandwidth, channels 31...0,
         // then channels 63...32. Each CSR is independently read-only.
-        let started = Date()
         let addresses: [UInt32] = [0xF000_0220, 0xF000_0224, 0xF000_0228]
         var values: [UInt32] = []
         for addressLow in addresses {

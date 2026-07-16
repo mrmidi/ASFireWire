@@ -154,6 +154,55 @@ struct MCPLiveDriverControlTests {
         #expect(backend.busResetRequests == 1)
     }
 
+    @Test func localIrmSnapshotUsesDiagnosticStateInsteadOfAsyncSelfRead() async {
+        let backend = FakeLiveDriverBackend()
+        backend.localIrmResourceSnapshot = ASFWMCPLocalIrmResourceSnapshot(
+            generation: 17,
+            localNodeId: 2,
+            irmNodeId: 2,
+            isLocalIRM: true,
+            readbackValid: true,
+            bandwidthAvailable: 0x1333,
+            channelsAvailable31_0: 0xFFFF_FFFE,
+            channelsAvailable63_32: 0xFFFF_FFFF
+        )
+
+        let result = await LiveASFWDriverControl(backend: backend).executeIRMSnapshot(
+            ASFWMCPIrmSnapshotRequest(generation: 17)
+        )
+
+        #expect(result.ok)
+        #expect(result.irmNodeId == 2)
+        #expect(result.bandwidthAvailable == 0x1333)
+        #expect(result.channelsAvailable31_0 == 0xFFFF_FFFE)
+        #expect(result.channelsAvailable63_32 == 0xFFFF_FFFF)
+        #expect(backend.reads == 0)
+        #expect(backend.resultPolls == 0)
+    }
+
+    @Test func localIrmSnapshotRejectsUnvalidatedDiagnosticState() async {
+        let backend = FakeLiveDriverBackend()
+        backend.localIrmResourceSnapshot = ASFWMCPLocalIrmResourceSnapshot(
+            generation: 17,
+            localNodeId: 2,
+            irmNodeId: 2,
+            isLocalIRM: true,
+            readbackValid: false,
+            bandwidthAvailable: 0,
+            channelsAvailable31_0: 0,
+            channelsAvailable63_32: 0
+        )
+
+        let result = await LiveASFWDriverControl(backend: backend).executeIRMSnapshot(
+            ASFWMCPIrmSnapshotRequest(generation: 17)
+        )
+
+        #expect(!result.ok)
+        #expect(result.status == .unavailable)
+        #expect(backend.reads == 0)
+        #expect(backend.resultPolls == 0)
+    }
+
     private func address(generation: UInt32) -> ASFWMCPAddress {
         ASFWMCPAddress(
             nodeId: 0xFFC1,
@@ -198,10 +247,14 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var fcpResponse: Data?
     var busResetRequests = 0
     var resetGenerationOnRequest = false
+    var localIrmResourceSnapshot: ASFWMCPLocalIrmResourceSnapshot?
 
     func mcpCurrentGeneration() -> UInt32? { generation }
     func mcpControllerStatus() -> ControllerStatus? { nil }
     func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot { throw DiagnosticsError.notConnected }
+    func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot? {
+        localIrmResourceSnapshot
+    }
     func mcpDiscoveredDevices() -> [FWDeviceInfo]? { devices }
     func mcpAVCUnits() -> [AVCUnitInfo]? { avcUnits }
 
