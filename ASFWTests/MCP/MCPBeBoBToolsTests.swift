@@ -18,23 +18,27 @@ struct MCPBeBoBToolsTests {
 
     @Test func decodesLittleEndianBridgeCoBootRomRecord() {
         var bytes = Array("bridgeCo".utf8)
-        bytes += bytes32(0x0001_0000)
-        bytes += bytes32(0x0203_0004)
-        bytes += [0xf7, 0xd1, 0xb1, 0x00, 0x03, 0xac, 0x0a, 0x00]
+        bytes += bytes32(1)
+        bytes += bytes32(0)
+        // Captured from the PHASE 88 BootROM. The bootloader record's GUID
+        // field is little-endian and is distinct from Config ROM byte order.
+        bytes += [0x03, 0xac, 0x0a, 0x00, 0xf7, 0xd1, 0xb1, 0x00]
         bytes += bytes32(3)
-        bytes += bytes32(0x0100_0001)
-        bytes += Array("20260716".utf8) + Array("10153000".utf8)
-        bytes += bytes32(0x1234_5678)
-        bytes += bytes32(0x0102_0003)
-        bytes += bytes32(0x1000_0000)
-        bytes += bytes32(0x0080_0000)
-        bytes += Array("20250101".utf8) + Array("00000000".utf8)
-        bytes += Array(repeating: 0, count: 24)
+        bytes += bytes32(1)
+        bytes += Array("20051215".utf8) + Array("163713".utf8) + [0, 0]
+        bytes += bytes32(3)
+        bytes += bytes32(0x0112_0d1f)
+        bytes += bytes32(0x2008_0000)
+        bytes += bytes32(0x0018_0000)
+        bytes += Array("20040719".utf8) + Array("134046".utf8) + [0, 0]
+        // The live read returns the 104-byte record plus one padded quadlet.
+        bytes += Array(repeating: 0, count: 28)
 
         let record = ASFWMCPBeBoBBootRomInformation.decode(bytes)
-        #expect(record?.guid == 0x000A_AC03_00B1_D1F7)
+        #expect(record?.guid == 0x00B1_D1F7_000A_AC03)
         #expect(record?.hardwareModelId == 3)
-        #expect(record?.softwareTimestamp == "20260716T10153000Z")
+        #expect(record?.softwareTimestamp == "20051215T163713Z")
+        #expect(record?.bootloaderTimestamp == "20040719T134046Z")
         #expect(record?.debugger == nil)
     }
 

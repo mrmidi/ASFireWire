@@ -340,7 +340,13 @@ struct ASFWMCPBeBoBBootRomInformation: Equatable {
               date.allSatisfy({ $0.isNumber }) else { return nil }
         let timeBytes = bytes[(offset + 8)..<(offset + 16)]
         if timeBytes.allSatisfy({ $0 == 0 }) { return "\(date)T000000Z" }
-        guard let time = String(bytes: timeBytes, encoding: .ascii), time.allSatisfy({ $0.isNumber }) else {
+        // BridgeCo stores HHMMSS in the first six bytes and often NUL-pads
+        // the final two bytes. Require the meaningful time digits while
+        // accepting either NUL padding or a vendor's extra ASCII digits.
+        let timePrefix = timeBytes.prefix(6)
+        guard let time = String(bytes: timePrefix, encoding: .ascii),
+              time.allSatisfy({ $0.isNumber }),
+              timeBytes.dropFirst(6).allSatisfy({ $0 == 0 || ($0 >= 0x30 && $0 <= 0x39) }) else {
             return nil
         }
         return "\(date)T\(time)Z"
