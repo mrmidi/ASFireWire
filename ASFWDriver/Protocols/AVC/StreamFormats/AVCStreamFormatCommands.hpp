@@ -34,6 +34,15 @@ constexpr uint8_t kStreamFormatSubfunc_Supported = 0xC1;
 constexpr uint8_t kStreamFormatOpcode_Primary = 0xBF;
 constexpr uint8_t kStreamFormatOpcode_Alternate = 0x2F;
 
+/// Unit-level extended-stream-format plug class. The wire encoding has a
+/// distinct unit-address byte followed by this class; a plug number cannot
+/// safely infer either value.
+enum class UnitPlugAddressType : uint8_t {
+    kIsochronousPCR = 0x00,
+    kExternal = 0x01,
+    kAsynchronous = 0x02,
+};
+
 //==============================================================================
 // Stream Format Query Command
 //==============================================================================
@@ -60,11 +69,12 @@ public:
                            uint8_t subunitAddr,
                            uint8_t plugNum,
                            bool isInput,
-                           bool useAlternateOpcode = false)
+                           bool useAlternateOpcode = false,
+                           UnitPlugAddressType unitPlugAddressType = UnitPlugAddressType::kIsochronousPCR)
         : submitter_(submitter)
         , cdb_(BuildCdb(subunitAddr, plugNum, isInput,
                        kStreamFormatSubfunc_Current, 0xFF,
-                       useAlternateOpcode))
+                       useAlternateOpcode, unitPlugAddressType))
         , isListQuery_(false) {}
 
     /// Constructor for querying supported formats
@@ -80,11 +90,12 @@ public:
                            uint8_t plugNum,
                            bool isInput,
                            uint8_t listIndex,
-                           bool useAlternateOpcode = false)
+                           bool useAlternateOpcode = false,
+                           UnitPlugAddressType unitPlugAddressType = UnitPlugAddressType::kIsochronousPCR)
         : submitter_(submitter)
         , cdb_(BuildCdb(subunitAddr, plugNum, isInput,
                        kStreamFormatSubfunc_Supported, listIndex,
-                       useAlternateOpcode))
+                       useAlternateOpcode, unitPlugAddressType))
         , isListQuery_(true) {}
 
     /// Constructor for setting format
@@ -100,11 +111,12 @@ public:
                            uint8_t plugNum,
                            bool isInput,
                            const AudioStreamFormat& format,
-                           bool useAlternateOpcode = false)
+                           bool useAlternateOpcode = false,
+                           UnitPlugAddressType unitPlugAddressType = UnitPlugAddressType::kIsochronousPCR)
         : submitter_(submitter)
         , cdb_(BuildCdb(subunitAddr, plugNum, isInput,
                        kStreamFormatSubfunc_Current, 0xFF,
-                       useAlternateOpcode, &format))
+                       useAlternateOpcode, unitPlugAddressType, &format))
         , isListQuery_(false) {}
 
     //==========================================================================
@@ -115,6 +127,17 @@ public:
     /// Uses StreamFormatParser for robust parsing
     void Submit(std::function<void(AVC::AVCResult, const std::optional<AudioStreamFormat>&)> completion) {
         auto completionState = Common::ShareCallback(std::move(completion));
+        // BuildCdb rejects incomplete CONTROL formations.  Keep that local
+        // validation on this side of the transport boundary: zero operands
+        // must never become a malformed FCP write.
+        if (cdb_.operandLength == 0) {
+            Common::InvokeSharedCallback(
+                completionState,
+                AVC::AVCResult::kInvalidResponse,
+                std::optional<AudioStreamFormat>{}
+            );
+            return;
+        }
         submitter_.SubmitCommand(cdb_, [this, completionState](AVC::AVCResult result, const AVC::AVCCdb& response) {
             if (AVC::IsSuccess(result)) {
                 auto format = ParseFormatResponse(response);
@@ -136,7 +159,8 @@ private:
 
     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static AVC::AVCCdb BuildCdb(uint8_t subunitAddr, uint8_t plugNum, bool isInput,
-                                uint8_t subfunction, uint8_t listIndex, bool useAlternateOpcode, // NOLINT(bugprone-easily-swappable-parameters)
+                                uint8_t subfunction, uint8_t listIndex, bool useAlternateOpcode,
+                                UnitPlugAddressType unitPlugAddressType, // NOLINT(bugprone-easily-swappable-parameters)
                                 const AudioStreamFormat* formatToSet = nullptr) {
         AVC::AVCCdb cdb;
         // If setting format, use CONTROL, otherwise STATUS
@@ -150,10 +174,11 @@ private:
         cdb.operands[offset++] = isInput ? 0x00 : 0x01; // plug_direction
 
         if (subunitAddr == 0xFF) {
-            // Unit plugs (isochronous or external)
-            uint8_t plugType = (plugNum < 0x80) ? 0x00 : 0x01; // 0=Iso, 1=External
-            cdb.operands[offset++] = plugType;
-            cdb.operands[offset++] = plugType;
+            // Unit plug address: unit-address mode, then a typed plug class.
+            // Cross-checked with Linux oxfw-command.c:16-31. The preceding
+            // direction byte is common to both unit and subunit forms.
+            cdb.operands[offset++] = 0x00;
+            cdb.operands[offset++] = static_cast<uint8_t>(unitPlugAddressType);
             cdb.operands[offset++] = plugNum;
             cdb.operands[offset++] = 0xFF; // format_info_label
             if (subfunction == kStreamFormatSubfunc_Supported) {
@@ -183,24 +208,34 @@ private:
 
         // Append format data if setting
         if (formatToSet) {
-            // Serialize format
-            // Assumes AM824 for now as that's what we use
-            // TODO: Make this generic based on format type
-            
-            // AM824 Compound Format
+            // Extended stream-format control carries the entire requested
+            // formation, not just a rate header. Do not emit a malformed
+            // partial formation when the caller has not supplied channel
+            // fields.
+            if (formatToSet->formatHierarchy != FormatHierarchy::kCompoundAM824 ||
+                formatToSet->subtype != AM824Subtype::kCompound ||
+                formatToSet->sampleRate == SampleRate::kUnknown ||
+                formatToSet->sampleRate == SampleRate::kDontCare ||
+                formatToSet->channelFormats.empty() ||
+                formatToSet->channelFormats.size() > 0xFFU ||
+                offset + 5U + formatToSet->channelFormats.size() * 2U > kAVCOperandMaxLength) {
+                cdb.operandLength = 0;
+                return cdb;
+            }
+
             cdb.operands[offset++] = 0x90; // AM824
             cdb.operands[offset++] = 0x40; // Compound
             cdb.operands[offset++] = static_cast<uint8_t>(formatToSet->sampleRate); // Rate code
-            cdb.operands[offset++] = 0x00; // Sync (internal)
-            cdb.operands[offset++] = static_cast<uint8_t>(formatToSet->channelFormats.size()); // Num channels
-            
-            // Channel formats?
-            // For SetSampleRate, we might just send the header?
-            // Or we need to send the full format?
-            // The spec says "The format_information_field shall contain the new format."
-            // If we are just changing sample rate, we should probably preserve other fields,
-            // but here we are constructing a new format.
-            // For now, we just send the header as implemented above.
+            cdb.operands[offset++] = formatToSet->syncMode == SyncMode::kSynchronized ? 0x04 : 0x00;
+            cdb.operands[offset++] = static_cast<uint8_t>(formatToSet->channelFormats.size());
+            for (const auto& field : formatToSet->channelFormats) {
+                if (field.channelCount == 0 || field.formatCode == StreamFormatCode::kUnknown) {
+                    cdb.operandLength = 0;
+                    return cdb;
+                }
+                cdb.operands[offset++] = field.channelCount;
+                cdb.operands[offset++] = static_cast<uint8_t>(field.formatCode);
+            }
         }
 
         cdb.operandLength = offset;

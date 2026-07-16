@@ -89,12 +89,6 @@ add_protocols_test(ClusterInfoParsingTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
 )
 
-# Extended Stream Format Command Tests
-add_protocols_mock_test(ExtendedStreamFormatCommandTests
-    ExtendedStreamFormatCommandTests.cpp
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/ExtendedStreamFormatCommand.cpp"
-)
-
 # AVC Stream Format Command Tests
 add_protocols_mock_test(AVCStreamFormatCommandTests
     AVCStreamFormatCommandTests.cpp

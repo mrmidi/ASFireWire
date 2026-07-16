@@ -105,8 +105,6 @@ private:
                                           const Discovery::FWDevice& device,
                                           Music::MusicSubunit& musicSubunit) const;
     void UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) const;
-    void ApplyTargetSampleRateIfSupported(const std::shared_ptr<AVCUnit>& avcUnit,
-                                          Music::MusicSubunit& musicSubunit) const;
     [[nodiscard]] ::ASFW::Audio::Model::ASFWAudioDevice BuildAudioDeviceConfig(uint64_t guid,
                                                                        const Discovery::FWDevice& device,
                                                                        const Music::MusicSubunit& musicSubunit) const;

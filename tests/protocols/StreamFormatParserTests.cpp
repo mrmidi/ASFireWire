@@ -98,7 +98,9 @@ TEST(StreamFormatParserTests, ParsesSimpleAM824_3Byte_SyncStream) {
     EXPECT_EQ(result->formatHierarchy, FormatHierarchy::kAM824);
     EXPECT_EQ(result->subtype, AM824Subtype::kSimple);
     EXPECT_EQ(result->sampleRate, SampleRate::kDontCare);
-    EXPECT_EQ(result->totalChannels, 2); // Simple format defaults to stereo
+    // A simple formation carries no channel map. Do not invent stereo; a
+    // profile may supply validated device-specific evidence later.
+    EXPECT_EQ(result->totalChannels, 0);
 }
 
 // 6-byte simple format with rate in nibble at byte[4]
@@ -209,54 +211,62 @@ TEST(StreamFormatParserTests, RejectsUnknownSubtype) {
     EXPECT_FALSE(result.has_value());
 }
 
+TEST(StreamFormatParserTests, RejectsCompoundFormatWithTruncatedChannelFields) {
+    // The header declares two fields but only provides one. Returning the
+    // partial formation would publish a false channel count.
+    uint8_t data[] = {0x90, 0x40, 0x04, 0x00, 0x02, 0x02, 0x06};
+
+    EXPECT_FALSE(StreamFormatParser::Parse(data, sizeof(data)).has_value());
+}
+
 //==============================================================================
 // Sample Rate Coverage Tests
 //==============================================================================
 
 TEST(StreamFormatParserTests, ParsesSampleRate22050Hz) {
-    uint8_t data[] = { 0x90, 0x40, 0x00, 0x00, 0x02, 0x02, 0x06 }; // Rate 0x00
+    uint8_t data[] = { 0x90, 0x40, 0x00, 0x00, 0x01, 0x02, 0x06 }; // Rate 0x00
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->sampleRate, SampleRate::k22050Hz);
 }
 
 TEST(StreamFormatParserTests, ParsesSampleRate24000Hz) {
-    uint8_t data[] = { 0x90, 0x40, 0x01, 0x00, 0x02, 0x02, 0x06 }; // Rate 0x01
+    uint8_t data[] = { 0x90, 0x40, 0x01, 0x00, 0x01, 0x02, 0x06 }; // Rate 0x01
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->sampleRate, SampleRate::k24000Hz);
 }
 
 TEST(StreamFormatParserTests, ParsesSampleRate32000Hz) {
-    uint8_t data[] = { 0x90, 0x40, 0x02, 0x00, 0x02, 0x02, 0x06 }; // Rate 0x02
+    uint8_t data[] = { 0x90, 0x40, 0x02, 0x00, 0x01, 0x02, 0x06 }; // Rate 0x02
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->sampleRate, SampleRate::k32000Hz);
 }
 
 TEST(StreamFormatParserTests, ParsesSampleRate176400Hz) {
-    uint8_t data[] = { 0x90, 0x40, 0x06, 0x00, 0x02, 0x02, 0x06 }; // Rate 0x06
+    uint8_t data[] = { 0x90, 0x40, 0x06, 0x00, 0x01, 0x02, 0x06 }; // Rate 0x06
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->sampleRate, SampleRate::k176400Hz);
 }
 
 TEST(StreamFormatParserTests, ParsesSampleRate192000Hz) {
-    uint8_t data[] = { 0x90, 0x40, 0x07, 0x00, 0x02, 0x02, 0x06 }; // Rate 0x07
+    uint8_t data[] = { 0x90, 0x40, 0x07, 0x00, 0x01, 0x02, 0x06 }; // Rate 0x07
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->sampleRate, SampleRate::k192000Hz);
 }
 
 TEST(StreamFormatParserTests, ParsesSampleRateDontCare) {
-    uint8_t data[] = { 0x90, 0x40, 0x0F, 0x00, 0x02, 0x02, 0x06 }; // Rate 0x0F
+    uint8_t data[] = { 0x90, 0x40, 0x0F, 0x00, 0x01, 0x02, 0x06 }; // Rate 0x0F
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->sampleRate, SampleRate::kDontCare);
 }
 
 TEST(StreamFormatParserTests, ParsesUnknownSampleRate) {
-    uint8_t data[] = { 0x90, 0x40, 0x0E, 0x00, 0x02, 0x02, 0x06 }; // Rate 0x0E (undefined)
+    uint8_t data[] = { 0x90, 0x40, 0x0E, 0x00, 0x01, 0x02, 0x06 }; // Rate 0x0E (undefined)
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->sampleRate, SampleRate::kUnknown);
@@ -268,7 +278,7 @@ TEST(StreamFormatParserTests, ParsesUnknownSampleRate) {
 
 TEST(StreamFormatParserTests, ParsesSyncModeEnabled) {
     // Byte[3] bit 2 set (0x04) = synchronized
-    uint8_t data[] = { 0x90, 0x40, 0x03, 0x04, 0x02, 0x02, 0x06 };
+    uint8_t data[] = { 0x90, 0x40, 0x03, 0x04, 0x01, 0x02, 0x06 };
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->syncMode, SyncMode::kSynchronized);
@@ -276,7 +286,7 @@ TEST(StreamFormatParserTests, ParsesSyncModeEnabled) {
 
 TEST(StreamFormatParserTests, ParsesSyncModeDisabled) {
     // Byte[3] bit 2 clear = no sync
-    uint8_t data[] = { 0x90, 0x40, 0x03, 0x00, 0x02, 0x02, 0x06 };
+    uint8_t data[] = { 0x90, 0x40, 0x03, 0x00, 0x01, 0x02, 0x06 };
     auto result = StreamFormatParser::Parse(data, sizeof(data));
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->syncMode, SyncMode::kNoSync);

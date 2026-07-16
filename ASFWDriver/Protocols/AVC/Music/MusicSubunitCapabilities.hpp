@@ -84,9 +84,9 @@ struct MusicSubunitCapabilities {
     /// Supported sample rates in Hz (extracted from supportedFormats)
     std::vector<double> supportedSampleRates;
     
-    /// Current sample rate in Hz (from device's active format)
-    /// Defaults to 48000 if unknown
-    double currentSampleRate{48000.0};
+    /// Current sample rate in Hz (from a decoded active format). Zero means
+    /// unknown; generic discovery must not invent a rate.
+    double currentSampleRate{0.0};
     
     /// Plug names (first input/output plug names for stream labeling)
     /// Defaults to "Input"/"Output" if no name available from device
@@ -105,9 +105,9 @@ struct MusicSubunitCapabilities {
         const char* modelName{nullptr};          // Points to parent's modelName
         const double* sampleRates{nullptr};      // Points to supportedSampleRates.data()
         uint32_t sampleRateCount{0};
-        double defaultSampleRate{44100.0};       // 44.1kHz by default
-        uint16_t maxInputChannels{2};
-        uint16_t maxOutputChannels{2};
+        double defaultSampleRate{0.0};
+        uint16_t maxInputChannels{0};
+        uint16_t maxOutputChannels{0};
         const char* inputStreamName{nullptr};    // Points to inputPlugName
         const char* outputStreamName{nullptr};   // Points to outputPlugName
         
@@ -140,9 +140,9 @@ struct MusicSubunitCapabilities {
         config.modelName = modelName.empty() ? "Device" : modelName.c_str();
         config.sampleRates = supportedSampleRates.empty() ? nullptr : supportedSampleRates.data();
         config.sampleRateCount = static_cast<uint32_t>(supportedSampleRates.size());
-        config.defaultSampleRate = supportedSampleRates.empty() ? 44100.0 : supportedSampleRates[0];
-        config.maxInputChannels = maxAudioInputChannels.value_or(2);
-        config.maxOutputChannels = maxAudioOutputChannels.value_or(2);
+        config.defaultSampleRate = supportedSampleRates.empty() ? 0.0 : supportedSampleRates[0];
+        config.maxInputChannels = maxAudioInputChannels.value_or(0);
+        config.maxOutputChannels = maxAudioOutputChannels.value_or(0);
         config.inputStreamName = inputPlugName.c_str();
         config.outputStreamName = outputPlugName.c_str();
         return config;

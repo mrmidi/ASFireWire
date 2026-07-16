@@ -95,6 +95,90 @@ TEST_F(AVCStreamFormatCommandTests, ParsesUnitPlugCurrentFormat_C0) {
     EXPECT_EQ(parsedFormat->sampleRate, SampleRate::k44100Hz);
 }
 
+TEST_F(AVCStreamFormatCommandTests, EncodesUnitPCRAddressWithoutInferringPlugClass) {
+    EXPECT_CALL(mockSubmitter_, SubmitCommand(_, _))
+        .WillOnce([](const AVCCdb& cdb, auto completion) {
+            EXPECT_EQ(cdb.ctype, static_cast<uint8_t>(AVCCommandType::kStatus));
+            EXPECT_EQ(cdb.subunit, 0xFF);
+            EXPECT_EQ(cdb.opcode, 0xBF);
+            ASSERT_EQ(cdb.operandLength, 6U);
+            EXPECT_EQ(cdb.operands[0], 0xC0);
+            EXPECT_EQ(cdb.operands[1], 0x00);
+            EXPECT_EQ(cdb.operands[2], 0x00); // unit address
+            EXPECT_EQ(cdb.operands[3], 0x00); // PCR plug class
+            EXPECT_EQ(cdb.operands[4], 0x7F); // a high-numbered PCR plug
+            EXPECT_EQ(cdb.operands[5], 0xFF);
+            completion(AVCResult::kNotImplemented, AVCCdb{});
+        });
+
+    AVCStreamFormatCommand cmd(mockSubmitter_, 0xFF, 0x7F, true);
+    cmd.Submit([](AVCResult, const std::optional<AudioStreamFormat>&) {});
+}
+
+TEST_F(AVCStreamFormatCommandTests, EncodesExplicitExternalUnitPlugAddress) {
+    EXPECT_CALL(mockSubmitter_, SubmitCommand(_, _))
+        .WillOnce([](const AVCCdb& cdb, auto completion) {
+            ASSERT_EQ(cdb.operandLength, 6U);
+            EXPECT_EQ(cdb.operands[2], 0x00); // unit address
+            EXPECT_EQ(cdb.operands[3], 0x01); // external plug class
+            EXPECT_EQ(cdb.operands[4], 0x02);
+            completion(AVCResult::kNotImplemented, AVCCdb{});
+        });
+
+    AVCStreamFormatCommand cmd(
+        mockSubmitter_, 0xFF, 0x02, false, false, UnitPlugAddressType::kExternal);
+    cmd.Submit([](AVCResult, const std::optional<AudioStreamFormat>&) {});
+}
+
+TEST_F(AVCStreamFormatCommandTests, SerializesEveryCompoundChannelFieldForControl) {
+    AudioStreamFormat format{};
+    format.formatHierarchy = FormatHierarchy::kCompoundAM824;
+    format.subtype = AM824Subtype::kCompound;
+    format.sampleRate = SampleRate::k48000Hz;
+    format.syncMode = SyncMode::kSynchronized;
+    format.channelFormats = {
+        {.channelCount = 2, .formatCode = StreamFormatCode::kMBLA},
+        {.channelCount = 1, .formatCode = StreamFormatCode::kMIDI},
+    };
+
+    EXPECT_CALL(mockSubmitter_, SubmitCommand(_, _))
+        .WillOnce([](const AVCCdb& cdb, auto completion) {
+            EXPECT_EQ(cdb.ctype, static_cast<uint8_t>(AVCCommandType::kControl));
+            ASSERT_EQ(cdb.operandLength, 15U);
+            EXPECT_EQ(cdb.operands[6], 0x90);
+            EXPECT_EQ(cdb.operands[7], 0x40);
+            EXPECT_EQ(cdb.operands[8], 0x04);
+            EXPECT_EQ(cdb.operands[9], 0x04);
+            EXPECT_EQ(cdb.operands[10], 0x02);
+            EXPECT_EQ(cdb.operands[11], 0x02);
+            EXPECT_EQ(cdb.operands[12], 0x06);
+            EXPECT_EQ(cdb.operands[13], 0x01);
+            EXPECT_EQ(cdb.operands[14], 0x0D);
+            completion(AVCResult::kNotImplemented, AVCCdb{});
+        });
+
+    AVCStreamFormatCommand cmd(mockSubmitter_, 0xFF, 0, true, format);
+    cmd.Submit([](AVCResult, const std::optional<AudioStreamFormat>&) {});
+}
+
+TEST_F(AVCStreamFormatCommandTests, RejectsIncompleteControlFormationBeforeSubmission) {
+    AudioStreamFormat format{};
+    format.formatHierarchy = FormatHierarchy::kCompoundAM824;
+    format.subtype = AM824Subtype::kCompound;
+    format.sampleRate = SampleRate::k48000Hz;
+
+    EXPECT_CALL(mockSubmitter_, SubmitCommand(_, _)).Times(0);
+
+    AVCResult result = AVCResult::kImplementedStable;
+    AVCStreamFormatCommand cmd(mockSubmitter_, 0xFF, 0, true, format);
+    cmd.Submit([&](AVCResult completionResult, const std::optional<AudioStreamFormat>& parsed) {
+        result = completionResult;
+        EXPECT_FALSE(parsed.has_value());
+    });
+
+    EXPECT_EQ(result, AVCResult::kInvalidResponse);
+}
+
 // Real data from discovery.txt line 154:
 // RSP: 0x0C 0xFF 0xBF 0xC1 0x00 0x00 0x00 0x00 0xFF 0x00 0x00 0x90 0x40 0x03 0x02 0x01 0x02 0x06
 // C1 (supported format), unit plug, format starts at operands[8]

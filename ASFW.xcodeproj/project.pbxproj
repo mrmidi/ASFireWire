@@ -212,7 +212,6 @@
 		963574C5C0B791D8C9BC3322 /* ASFWMCPCmpTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 969C58B339AB3E30DB3B3E45 /* ASFWMCPCmpTools.swift */; };
 		96BB0B87EC5E19FC54BF6338 /* MCPBusResetToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F50437CCB59475ED6F54FC52 /* MCPBusResetToolsTests.swift */; };
 		971AC3A1D14A2A8C0F6E1939 /* DeviceManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7193EECF6193A154761C3877 /* DeviceManager.cpp */; };
-		987C4E9A43D76B82965BBC50 /* ExtendedStreamFormatCommand.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 99283778582B47956DBAD311 /* ExtendedStreamFormatCommand.cpp */; };
 		9939EA3C38D005D2B1706109 /* LockCommand.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 647BC02DDA3AE383EBFED56E /* LockCommand.cpp */; };
 		9A00ED30A11DABC7DD49E7BC /* DriverConnector+Isoch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88363EE0072BC820ECBB6C1D /* DriverConnector+Isoch.swift */; };
 		9B8E94EA1F0A961CD016D197 /* DriverViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7892E16293D409FFB4F00710 /* DriverViewModel.swift */; };
@@ -815,7 +814,6 @@
 		983FFE1617FDE6BE97522EEB /* CompareSwapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompareSwapView.swift; sourceTree = "<group>"; };
 		98A85E0CF7896060CCA24844 /* OHCIHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OHCIHelpers.hpp; sourceTree = "<group>"; };
 		98E4B62FD8A7189DA0D52590 /* TopologyMapBuilder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyMapBuilder.hpp; sourceTree = "<group>"; };
-		99283778582B47956DBAD311 /* ExtendedStreamFormatCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ExtendedStreamFormatCommand.cpp; sourceTree = "<group>"; };
 		9974FB5D63A443E28719167C /* AVCCommands.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCCommands.hpp; sourceTree = "<group>"; };
 		9A17820A3A580BFA5594E937 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		9A1C22634720D239BA82B050 /* WatchdogCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WatchdogCoordinator.hpp; sourceTree = "<group>"; };
@@ -898,7 +896,6 @@
 		B6782BCBA6C17DF0ABBC5CD5 /* ASFWProtocolBooleanControl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWProtocolBooleanControl.cpp; sourceTree = "<group>"; };
 		B68AF53D0E4DFFFEFFB6C111 /* AVCUnit.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AVCUnit.cpp; sourceTree = "<group>"; };
 		B6FC8F89D537351E9BA9D735 /* ControllerConfig.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerConfig.cpp; sourceTree = "<group>"; };
-		B71473EE13C485A0319044F6 /* ExtendedStreamFormatCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ExtendedStreamFormatCommand.hpp; sourceTree = "<group>"; };
 		B72D79445AA6DCE3312ACA22 /* DbcCounter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DbcCounter.hpp; sourceTree = "<group>"; };
 		B75579195E29284CAB4859A6 /* TestHooks.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TestHooks.cpp; sourceTree = "<group>"; };
 		B7E03EB5573EA30EB8F2D42B /* PingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PingView.swift; sourceTree = "<group>"; };
@@ -2426,8 +2423,6 @@
 				B68AF53D0E4DFFFEFFB6C111 /* AVCUnit.cpp */,
 				76B69B4F0AB736B03BF63BBF /* AVCUnit.hpp */,
 				271D19B33726351A04BA8A5F /* AVCUnitPlugInfoCommand.hpp */,
-				99283778582B47956DBAD311 /* ExtendedStreamFormatCommand.cpp */,
-				B71473EE13C485A0319044F6 /* ExtendedStreamFormatCommand.hpp */,
 				0B1E275E80008044A52CD867 /* FCPResponseRouter.hpp */,
 				632D4C8307E08820BF267291 /* FCPTransport.cpp */,
 				C5EB42ED67DD30C52C95743F /* FCPTransport.hpp */,
@@ -3006,7 +3001,6 @@
 				D261DD483669607D182DF164 /* DirectOutputReader.cpp in Sources */,
 				42ED41C966FB1C93702515DA /* DriverContext.cpp in Sources */,
 				33E9FD1D749D7D94F18FDD6C /* DriverKitSessionScheduler.cpp in Sources */,
-				987C4E9A43D76B82965BBC50 /* ExtendedStreamFormatCommand.cpp in Sources */,
 				417D66A9EBE23DBB15A978FC /* FCPTransport.cpp in Sources */,
 				422796F0E8E594CF7694A396 /* FWDevice.cpp in Sources */,
 				4EBE9CFD71C09AFC0D3747BF /* FWUnit.cpp in Sources */,

@@ -358,9 +358,18 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
 
     PopulateMusicSubunitCapabilities(guid, *device, *musicSubunit);
     UpdateCurrentSampleRate(*musicSubunit);
-    ApplyTargetSampleRateIfSupported(avcUnit, *musicSubunit);
 
     auto audioDeviceConfig = BuildAudioDeviceConfig(guid, *device, *musicSubunit);
+    if (audioDeviceConfig.channelCount == 0 || audioDeviceConfig.sampleRates.empty() ||
+        audioDeviceConfig.currentSampleRate == 0) {
+        ASFW_LOG_WARNING(Audio,
+                         "AVCDiscovery: Deferring audio nub for GUID=%llx; decoded format lacks %s%s%s",
+                         guid,
+                         audioDeviceConfig.channelCount == 0 ? "channel count" : "",
+                         audioDeviceConfig.channelCount == 0 && audioDeviceConfig.sampleRates.empty() ? " and " : "",
+                         audioDeviceConfig.sampleRates.empty() ? "sample rate" : "");
+        return;
+    }
     if (IsApogeeDuet(*device)) {
         ConfigureDuetPhantomOverrides(audioDeviceConfig, std::nullopt);
         ASFW_LOG(Audio,
@@ -415,9 +424,6 @@ void AVCDiscovery::PopulateMusicSubunitCapabilities(uint64_t guid,
     }
 
     mutableCaps.supportedSampleRates.assign(rateSet.begin(), rateSet.end());
-    if (mutableCaps.supportedSampleRates.empty()) {
-        mutableCaps.supportedSampleRates = {44100.0, 48000.0};
-    }
 
     for (const auto& plug : musicSubunit.GetPlugs()) {
         if (plug.IsInput() && !plug.name.empty() && mutableCaps.outputPlugName == "Output") {
@@ -452,54 +458,10 @@ void AVCDiscovery::UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) co
         mutableCaps.currentSampleRate = mutableCaps.supportedSampleRates[0];
         ASFW_LOG(Audio, "AVCDiscovery: Using first supported rate as current: %.0f Hz",
                  mutableCaps.currentSampleRate);
-    }
-}
-
-void AVCDiscovery::ApplyTargetSampleRateIfSupported(const std::shared_ptr<AVCUnit>& avcUnit,
-                                                    Music::MusicSubunit& musicSubunit) const {
-    constexpr double kTargetSampleRate = 48000.0;
-    auto& mutableCaps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit.GetCapabilities());
-    const bool supports48k = std::find(mutableCaps.supportedSampleRates.begin(),
-                                       mutableCaps.supportedSampleRates.end(),
-                                       kTargetSampleRate) != mutableCaps.supportedSampleRates.end();
-
-    if (!supports48k) {
-        ASFW_LOG(Audio, "AVCDiscovery: Device does not support 48kHz, using %.0f Hz",
-                 mutableCaps.currentSampleRate);
         return;
     }
-
-    if (mutableCaps.currentSampleRate == kTargetSampleRate) {
-        ASFW_LOG(Audio, "AVCDiscovery: Device already at 48kHz");
-        return;
-    }
-
-    ASFW_LOG(Audio, "AVCDiscovery: Switching sample rate from %.0f Hz to %.0f Hz (fire-and-forget)",
-             mutableCaps.currentSampleRate, kTargetSampleRate);
-
-    AVCCdb cdb;
-    cdb.ctype = static_cast<uint8_t>(AVCCommandType::kControl);
-    cdb.subunit = 0xFF;
-    cdb.opcode = 0x19;
-    cdb.operands[0] = 0x00;
-    cdb.operands[1] = 0x90;
-    cdb.operands[2] = 0x02;
-    cdb.operands[3] = 0xFF;
-    cdb.operands[4] = 0xFF;
-    cdb.operandLength = 5;
-
-    auto setRateCmd = std::make_shared<AVCCommand>(avcUnit->GetFCPTransport(), cdb);
-    setRateCmd->Submit([setRateCmd](AVCResult result, const AVCCdb&) {
-        if (IsSuccess(result)) {
-            ASFW_LOG(Audio, "✅ AVCDiscovery: Sample rate change command accepted");
-        } else {
-            ASFW_LOG_WARNING(Audio, "AVCDiscovery: Sample rate change command response: %d",
-                             static_cast<int>(result));
-        }
-    });
-
-    mutableCaps.currentSampleRate = kTargetSampleRate;
-    ASFW_LOG(Audio, "AVCDiscovery: Assuming 48kHz - nub will use this rate");
+    mutableCaps.currentSampleRate = 0.0;
+    ASFW_LOG_WARNING(Audio, "AVCDiscovery: Current sample rate unavailable from decoded format");
 }
 
 ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
