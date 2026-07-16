@@ -18,6 +18,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16?
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult?
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data?
+    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
 }
 
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
@@ -77,6 +78,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
         sendRawFCPCommand(guid: guid, frame: frame, timeoutMs: timeoutMs)
     }
+
+    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
+        requestUserBusReset(expectedGeneration: expectedGeneration, shortReset: shortReset)
+    }
 }
 
 @MainActor
@@ -84,15 +89,18 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     private let backend: any ASFWLiveDriverBackend
     private let transactionTimeout: TimeInterval
     private let pollIntervalNs: UInt64
+    private let busResetTimeout: TimeInterval
 
     init(
         backend: any ASFWLiveDriverBackend,
         transactionTimeout: TimeInterval = 2.0,
-        pollIntervalNs: UInt64 = 25_000_000
+        pollIntervalNs: UInt64 = 25_000_000,
+        busResetTimeout: TimeInterval = 10.0
     ) {
         self.backend = backend
         self.transactionTimeout = transactionTimeout
         self.pollIntervalNs = pollIntervalNs
+        self.busResetTimeout = busResetTimeout
     }
 
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot {
@@ -287,6 +295,50 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             correlationId: correlationId,
             durationUsec: elapsedUsec(since: started)
         )
+    }
+
+    func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
+        let correlationId = "live-bus-reset-\(UUID().uuidString)"
+        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        guard backend.mcpIsConnected else {
+            return busResetReceipt(request, acceptedGeneration: nil, observedGeneration: currentGeneration,
+                                   status: .unavailable, correlationId: correlationId, durationUsec: nil)
+        }
+        guard currentGeneration == request.generation else {
+            return busResetReceipt(request, acceptedGeneration: nil, observedGeneration: currentGeneration,
+                                   status: .staleGeneration, correlationId: correlationId, durationUsec: nil)
+        }
+
+        let started = Date()
+        guard let acceptedGeneration = backend.mcpRequestUserBusReset(
+            expectedGeneration: request.generation,
+            shortReset: request.shortReset
+        ) else {
+            return busResetReceipt(request, acceptedGeneration: nil, observedGeneration: currentGeneration,
+                                   status: .unavailable, correlationId: correlationId,
+                                   durationUsec: elapsedUsec(since: started))
+        }
+
+        let deadline = started.addingTimeInterval(busResetTimeout)
+        while Date() < deadline {
+            guard backend.mcpIsConnected else {
+                return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+                                       observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
+                                       status: .unavailable, correlationId: correlationId,
+                                       durationUsec: elapsedUsec(since: started))
+            }
+            if let observedGeneration = backend.mcpCurrentGeneration(), observedGeneration != currentGeneration {
+                return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+                                       observedGeneration: observedGeneration, status: .ok,
+                                       correlationId: correlationId, durationUsec: elapsedUsec(since: started))
+            }
+            try? await Task.sleep(nanoseconds: pollIntervalNs)
+        }
+
+        return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+                               observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
+                               status: .timeout, correlationId: correlationId,
+                               durationUsec: elapsedUsec(since: started))
     }
 
     private func executeTransaction(
@@ -505,6 +557,26 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             observedNodeId: observedNodeId,
             observedGeneration: observedGeneration,
             response: response,
+            status: status,
+            correlationId: correlationId,
+            durationUsec: durationUsec,
+            policy: nil
+        )
+    }
+
+    private func busResetReceipt(
+        _ request: ASFWMCPBusResetRequest,
+        acceptedGeneration: UInt32?,
+        observedGeneration: UInt32,
+        status: ASFWMCPTransactionStatus,
+        correlationId: String,
+        durationUsec: UInt64?
+    ) -> ASFWMCPBusResetReceipt {
+        ASFWMCPBusResetReceipt(
+            requestedGeneration: request.generation,
+            acceptedGeneration: acceptedGeneration,
+            observedGeneration: observedGeneration,
+            shortReset: request.shortReset,
             status: status,
             correlationId: correlationId,
             durationUsec: durationUsec,

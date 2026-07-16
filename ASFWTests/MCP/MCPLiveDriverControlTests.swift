@@ -133,6 +133,27 @@ struct MCPLiveDriverControlTests {
         #expect(backend.fcpCommands == 1)
     }
 
+    @Test func busResetWaitsForGenerationChange() async {
+        let backend = FakeLiveDriverBackend()
+        backend.resetGenerationOnRequest = true
+        let control = LiveASFWDriverControl(
+            backend: backend,
+            transactionTimeout: 0.1,
+            pollIntervalNs: 1_000,
+            busResetTimeout: 0.1
+        )
+
+        let receipt = await control.executeBusReset(
+            ASFWMCPBusResetRequest(generation: 17, shortReset: true)
+        )
+
+        #expect(receipt.ok)
+        #expect(receipt.acceptedGeneration == 17)
+        #expect(receipt.observedGeneration == 18)
+        #expect(receipt.shortReset)
+        #expect(backend.busResetRequests == 1)
+    }
+
     private func address(generation: UInt32) -> ASFWMCPAddress {
         ASFWMCPAddress(
             nodeId: 0xFFC1,
@@ -175,6 +196,8 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var resultPolls = 0
     var fcpCommands = 0
     var fcpResponse: Data?
+    var busResetRequests = 0
+    var resetGenerationOnRequest = false
 
     func mcpCurrentGeneration() -> UInt32? { generation }
     func mcpControllerStatus() -> ControllerStatus? { nil }
@@ -215,5 +238,14 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
         fcpCommands += 1
         return fcpResponse
+    }
+
+    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
+        guard expectedGeneration == generation else { return nil }
+        busResetRequests += 1
+        if resetGenerationOnRequest {
+            generation &+= 1
+        }
+        return expectedGeneration
     }
 }

@@ -70,6 +70,7 @@ enum {
     kMethodGetSBP2CommandResult = 58,
     kMethodSubmitSBP2TaskManagement = 59,
     kMethodReleaseSBP2Session = 60,
+    kMethodRequestUserBusReset = 61,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -118,6 +119,8 @@ MethodDispatchResult DispatchBusResetMethods(ASFW::UserClient::UserClientRuntime
         return runtimeState.BusReset().GetBusResetHistory(arguments);
     case kMethodClearHistory:
         return runtimeState.BusReset().ClearHistory(arguments);
+    case kMethodRequestUserBusReset:
+        return runtimeState.BusReset().RequestUserReset(arguments);
     default:
         return std::nullopt;
     }

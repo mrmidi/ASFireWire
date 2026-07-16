@@ -38,6 +38,8 @@ extension ASFWMCPCore {
             return await explainCapabilityResult(toolName: name, decoder: decoder)
         case "asfw_get_controller_state", "asfw_get_topology", "asfw_get_config_rom":
             return notImplementedToolResult(name, reason: "Read-only \(name) dispatch is reserved for the live telemetry adapter.")
+        case "asfw_bus_reset_dev":
+            return await dispatchBusReset(name, decoder: decoder)
         case "asfw_read_quadlet":
             return await dispatchReadQuadlet(name, decoder: decoder)
         case "asfw_read_block":
@@ -255,6 +257,57 @@ extension ASFWMCPCore {
                 return malformedTransactionResult(name, kind: .compareSwap, generation: request.generation, code: error)
             }
             return policyOnlyMutationResult(name, kind: .compareSwap, generation: request.generation, policyRequest: request.policyRequest(currentGeneration: await currentGeneration(), dryRun: try decoder.bool("dryRun", default: false)))
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func dispatchBusReset(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let request = ASFWMCPBusResetRequest(
+                generation: try decoder.uint32("generation"),
+                shortReset: try decoder.bool("shortReset", default: false)
+            )
+            guard try decoder.bool("acknowledgeInterruption", default: false) else {
+                return .failure(
+                    toolName: name,
+                    code: .policyDenied,
+                    reason: "Bus reset interrupts active streams; set acknowledgeInterruption=true to proceed."
+                )
+            }
+
+            let policy = evaluateWritePolicy(
+                request.policyRequest(
+                    currentGeneration: await currentGeneration(),
+                    dryRun: try decoder.bool("dryRun", default: false)
+                )
+            )
+            guard policy.reachesDriverWritePath else {
+                let receipt = ASFWMCPBusResetReceipt(
+                    requestedGeneration: request.generation,
+                    acceptedGeneration: nil,
+                    observedGeneration: await currentGeneration(),
+                    shortReset: request.shortReset,
+                    status: policy.isDryRun ? .dryRun : .denied,
+                    correlationId: correlationId(name),
+                    durationUsec: nil,
+                    policy: policy
+                )
+                return ASFWMCPToolCallResult(toolName: name, ok: false, data: receipt.mcpValue, errors: [])
+            }
+
+            let liveReceipt = await driver.executeBusReset(request)
+            let receipt = ASFWMCPBusResetReceipt(
+                requestedGeneration: liveReceipt.requestedGeneration,
+                acceptedGeneration: liveReceipt.acceptedGeneration,
+                observedGeneration: liveReceipt.observedGeneration,
+                shortReset: liveReceipt.shortReset,
+                status: liveReceipt.status,
+                correlationId: liveReceipt.correlationId,
+                durationUsec: liveReceipt.durationUsec,
+                policy: policy
+            )
+            return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }

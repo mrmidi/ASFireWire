@@ -10,12 +10,13 @@ protocol ASFWDriverControlling {
     func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
+    func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
     private let nodes: [ASFWMCPNodeSummary]
     private let transactions: [ASFWMCPTransactionEvent]
-    private let generation: UInt32
+    private var generation: UInt32
     private let driverConnected: Bool
     private let controllerState: String
     private let linkActive: Bool
@@ -219,6 +220,36 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             status: .ok,
             correlationId: "mock-fcp-command",
             durationUsec: 200,
+            policy: nil
+        )
+    }
+
+    func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
+        let correlationId = "mock-bus-reset"
+        guard request.generation == generation else {
+            return ASFWMCPBusResetReceipt(
+                requestedGeneration: request.generation,
+                acceptedGeneration: nil,
+                observedGeneration: generation,
+                shortReset: request.shortReset,
+                status: .staleGeneration,
+                correlationId: correlationId,
+                durationUsec: nil,
+                policy: nil
+            )
+        }
+
+        attemptedWriteCount += 1
+        let acceptedGeneration = generation
+        generation &+= 1
+        return ASFWMCPBusResetReceipt(
+            requestedGeneration: request.generation,
+            acceptedGeneration: acceptedGeneration,
+            observedGeneration: generation,
+            shortReset: request.shortReset,
+            status: .ok,
+            correlationId: correlationId,
+            durationUsec: 500,
             policy: nil
         )
     }

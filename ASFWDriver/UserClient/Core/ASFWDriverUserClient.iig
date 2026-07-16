@@ -68,6 +68,9 @@ public:
         kMethodGetSBP2CommandResult    = 58,
         kMethodSubmitSBP2TaskManagement = 59,
         kMethodReleaseSBP2Session      = 60,
+        // Developer-only local reset request. The caller supplies the current
+        // generation so the driver can refuse a stale reset command.
+        kMethodRequestUserBusReset     = 61,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

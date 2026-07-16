@@ -56,6 +56,8 @@ final class ASFWDriverConnector: ObservableObject {
         // DV capture (raw DIF stream via shared ring, memory type 1)
         case startDVCapture = 50
         case stopDVCapture = 51
+        // Developer-only local software bus reset, generation-pinned.
+        case requestUserBusReset = 61
     }
 
     // MARK: - Re-exported Models
@@ -165,7 +167,7 @@ final class ASFWDriverConnector: ObservableObject {
         }
     }
 
-    
+
     func interpretIOReturn(_ kr: kern_return_t) -> String {
         let KERN_SUCCESS: kern_return_t = 0
         let KERN_PROTECTION_FAILURE: kern_return_t = -308
@@ -212,4 +214,3 @@ final class ASFWDriverConnector: ObservableObject {
     }
 
 }
-    

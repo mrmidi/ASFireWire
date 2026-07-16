@@ -11,6 +11,7 @@ enum ASFWMCPToolCatalog {
     static var all: [ASFWMCPToolDefinition] {
         coreTools
             + busTopologyTools
+            + busResetDeveloperTools
             + configRomTools
             + asyncTransactionTools
             + registerTools
