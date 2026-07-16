@@ -92,6 +92,11 @@ public:
     void ConnectIPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel, CMPCallback callback);
     void DisconnectIPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback);
 
+    using PCRBoolCallback = std::function<void(bool success, bool used)>;
+    void CheckPlugUsed(const CMPDevice& device, PCRDirection dir, uint8_t plugNum,
+                       PCRBoolCallback callback);
+    void BreakBothConnections(const CMPDevice& device, uint8_t plugNum, CMPCallback callback);
+
     // Compatibility shims for legacy user-client diagnostics. They deliberately
     // cannot issue bus traffic: an operation without a GUID/node/generation
     // must never select an arbitrary device.

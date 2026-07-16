@@ -11,11 +11,11 @@
 #include "../../../Logging/Logging.hpp"
 #include "../../../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../../../Protocols/AVC/FCPTransport.hpp"
+#include "../../../Protocols/AVC/AVCCommand.hpp"
 #include "../../../Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
 
 #include <DriverKit/IOLib.h>
 
-#include <atomic>
 #include <memory>
 
 namespace ASFW::Audio::BeBoB {
@@ -24,8 +24,6 @@ namespace {
 constexpr uint32_t kPhase88PcmChannels = 10;
 constexpr uint32_t kPhase88MidiDataBlocks = 1;
 constexpr uint32_t kPhase88SampleRateHz = 48000;
-constexpr uint32_t kCMPTimeoutMs = 250;
-constexpr uint32_t kCMPPollMs = 5;
 constexpr uint32_t kFormatSettleMs = 300;
 
 using SignalFormatCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
@@ -63,22 +61,9 @@ using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
            CMP::PCRBits::GetChannel(value) == expectedChannel;
 }
 
-struct CMPWaitState {
-    std::atomic<bool> done{false};
-    std::atomic<CMP::CMPStatus> status{CMP::CMPStatus::Failed};
-};
-
-[[nodiscard]] IOReturn WaitForCMP(const std::shared_ptr<CMPWaitState>& state) noexcept {
-    for (uint32_t elapsed = 0; elapsed < kCMPTimeoutMs; elapsed += kCMPPollMs) {
-        if (state->done.load(std::memory_order_acquire)) {
-            return state->status.load(std::memory_order_acquire) == CMP::CMPStatus::Success
-                       ? kIOReturnSuccess
-                       : kIOReturnError;
-        }
-        IOSleep(kCMPPollMs);
-    }
-    return kIOReturnTimeout;
-}
+// !!! DIAGNOSTIC: Phase88 CMP path tracing. Remove after FW-94 resolution.
+#define PH88TRACE(fmt, ...) \
+    ASFW_LOG(Audio, "!!! [BeBoB] " fmt, ##__VA_ARGS__)
 
 [[nodiscard]] AudioStreamRuntimeCaps Phase88Caps() noexcept {
     // The exact PHASE 88 model map is ten PCM channels plus one AM824 MIDI
@@ -251,7 +236,11 @@ void Phase88Protocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                 return;
             }
 
-            // Control-plane choreography only; this is never on the packet path.
+            // PHASE 88 ships with Internal clock source (FB9 selector reads position 0 =
+            // Internal). Linux never programs clock source during stream start; it only
+            // reads it later for clock sync.
+            // Cross-validated with linux-sound-firewire-stack/firewire/bebob/
+            // bebob_stream.c:619 (read-only) and bebob_terratec.c:10-36.
             IOSleep(kFormatSettleMs);
             appliedClock_ = desiredClock;
             ASFW_LOG(Audio, "[BeBoB] AV/C unit plugs set to AM824 48k GUID=0x%016llx",
@@ -269,18 +258,33 @@ void Phase88Protocol::ProgramRx(StageCallback callback) {
         callback(kIOReturnNotReady, {});
         return;
     }
-    auto state = std::make_shared<CMPWaitState>();
-    // "Rx" is device receive: the remote iPCR consumes the host IT stream.
-    // This is the first CMP leg in Linux's BeBoB start transaction.
-    cmpClient_->ConnectIPCR(CurrentCMPDevice(), 0, duplexChannels_.hostToDeviceIsoChannel,
-                            [state](CMP::CMPStatus status) {
-        state->status.store(status, std::memory_order_release);
-        state->done.store(true, std::memory_order_release);
+    PH88TRACE("ProgramRx entry: ch=%u", duplexChannels_.hostToDeviceIsoChannel);
+    EnsurePlugFree(CMP::PCRDirection::kInput, 0, [this, callback = std::move(callback)](IOReturn err) mutable {
+        if (err != kIOReturnSuccess) {
+            PH88TRACE("ProgramRx: EnsurePlugFree failed kr=0x%x", err);
+            callback(err, {});
+            return;
+        }
+
+        // "Rx" is device receive: the remote iPCR consumes the host IT stream.
+        // This is the first CMP leg in Linux's BeBoB start transaction. CMP
+        // ESTABLISH is an async remote lock transaction whose completion is
+        // delivered on the same transport queue that runs this EnsurePlugFree
+        // callback. Continue the stage from that completion — never block the
+        // queue polling for the result. A blocking wait here self-deadlocks:
+        // the completion that would satisfy it can never run while we hold the
+        // queue (FW-94).
+        PH88TRACE("ProgramRx: submitting ConnectIPCR ch=%u", duplexChannels_.hostToDeviceIsoChannel);
+        cmpClient_->ConnectIPCR(CurrentCMPDevice(), 0, duplexChannels_.hostToDeviceIsoChannel,
+                                [this, callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            const IOReturn kr = status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError;
+            inputConnected_ = kr == kIOReturnSuccess;
+            PH88TRACE("ProgramRx: ConnectIPCR callback status=%u kr=0x%x inputConnected=%u",
+                      status, kr, inputConnected_);
+            callback(kr, StageResult(duplexChannels_, busInfo_.GetGeneration(),
+                                     DuplexRestartPhase::kDeviceRxProgrammed));
+        });
     });
-    const IOReturn status = WaitForCMP(state);
-    inputConnected_ = status == kIOReturnSuccess;
-    callback(status, StageResult(duplexChannels_, busInfo_.GetGeneration(),
-                                 DuplexRestartPhase::kDeviceRxProgrammed));
 }
 
 void Phase88Protocol::ProgramTxAndEnableDuplex(StageCallback callback) {
@@ -288,17 +292,28 @@ void Phase88Protocol::ProgramTxAndEnableDuplex(StageCallback callback) {
         callback(kIOReturnNotReady, {});
         return;
     }
-    auto state = std::make_shared<CMPWaitState>();
-    // The second leg is remote oPCR for device-to-host capture (host IR).
-    cmpClient_->ConnectOPCR(CurrentCMPDevice(), 0, duplexChannels_.deviceToHostIsoChannel,
-                            [state](CMP::CMPStatus status) {
-        state->status.store(status, std::memory_order_release);
-        state->done.store(true, std::memory_order_release);
+    PH88TRACE("ProgramTx entry: ch=%u", duplexChannels_.deviceToHostIsoChannel);
+    EnsurePlugFree(CMP::PCRDirection::kOutput, 0, [this, callback = std::move(callback)](IOReturn err) mutable {
+        if (err != kIOReturnSuccess) {
+            PH88TRACE("ProgramTx: EnsurePlugFree failed kr=0x%x", err);
+            callback(err, {});
+            return;
+        }
+
+        // The second leg is remote oPCR for device-to-host capture (host IR).
+        // Same continuation-passing rule as ProgramRx: finish the stage from the
+        // CMP completion, never from a blocking poll on this queue (FW-94).
+        PH88TRACE("ProgramTx: submitting ConnectOPCR ch=%u", duplexChannels_.deviceToHostIsoChannel);
+        cmpClient_->ConnectOPCR(CurrentCMPDevice(), 0, duplexChannels_.deviceToHostIsoChannel,
+                                [this, callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            const IOReturn kr = status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError;
+            outputConnected_ = kr == kIOReturnSuccess;
+            PH88TRACE("ProgramTx: ConnectOPCR callback status=%u kr=0x%x outputConnected=%u",
+                      status, kr, outputConnected_);
+            callback(kr, StageResult(duplexChannels_, busInfo_.GetGeneration(),
+                                     DuplexRestartPhase::kDeviceTxArmed));
+        });
     });
-    const IOReturn status = WaitForCMP(state);
-    outputConnected_ = status == kIOReturnSuccess;
-    callback(status, StageResult(duplexChannels_, busInfo_.GetGeneration(),
-                                 DuplexRestartPhase::kDeviceTxArmed));
 }
 
 void Phase88Protocol::ConfirmDuplexStart(ConfirmCallback callback) {
@@ -358,14 +373,16 @@ void Phase88Protocol::DisconnectPlayback(VoidCallback callback) {
         callback(kIOReturnSuccess);
         return;
     }
-    auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->DisconnectIPCR(CurrentCMPDevice(), 0, [state](CMP::CMPStatus status) {
-        state->status.store(status, std::memory_order_release);
-        state->done.store(true, std::memory_order_release);
-    });
-    const IOReturn status = WaitForCMP(state);
+    // Commit the teardown intent synchronously, then break the remote iPCR with
+    // an async lock transaction. The completion captures only the caller
+    // callback — never `this` — so a fire-and-forget StopDuplex() may outlive
+    // this object without dereferencing freed state when the CMP completion
+    // lands on the transport queue (FW-94 / FW-60).
     inputConnected_ = false;
-    callback(status);
+    cmpClient_->DisconnectIPCR(CurrentCMPDevice(), 0,
+                               [callback = std::move(callback)](CMP::CMPStatus status) mutable {
+        callback(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
+    });
 }
 
 void Phase88Protocol::DisconnectCapture(VoidCallback callback) {
@@ -374,22 +391,88 @@ void Phase88Protocol::DisconnectCapture(VoidCallback callback) {
         callback(kIOReturnSuccess);
         return;
     }
-    auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->DisconnectOPCR(CurrentCMPDevice(), 0, [state](CMP::CMPStatus status) {
-        state->status.store(status, std::memory_order_release);
-        state->done.store(true, std::memory_order_release);
-    });
-    const IOReturn status = WaitForCMP(state);
+    // See DisconnectPlayback: reset state synchronously, break the remote oPCR
+    // asynchronously, and keep `this` out of the completion capture.
     outputConnected_ = false;
-    callback(status);
+    cmpClient_->DisconnectOPCR(CurrentCMPDevice(), 0,
+                               [callback = std::move(callback)](CMP::CMPStatus status) mutable {
+        callback(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);
+    });
 }
 
 IOReturn Phase88Protocol::StopDuplex() {
-    IOReturn playback = kIOReturnSuccess;
-    DisconnectPlayback([&playback](IOReturn status) { playback = status; });
-    IOReturn capture = kIOReturnSuccess;
-    DisconnectCapture([&capture](IOReturn status) { capture = status; });
-    return playback != kIOReturnSuccess ? playback : capture;
+    // Break both remote CMP connections best-effort. Each disconnect is an async
+    // remote lock transaction; issuing them fire-and-forget keeps StopDuplex
+    // non-blocking, so it is safe on any queue — a blocking wait here
+    // self-deadlocks when StopDuplex runs on the same queue that delivers the CMP
+    // completion (FW-94). Wire cleanup of the remote iPCR/oPCR completes on the
+    // transport queue; the next start's EnsurePlugFree re-verifies and clears any
+    // residual p2p lease, and CMPClient carries the async chain with value-copied
+    // lease state so it is unaffected by Shutdown()'s InvalidateDevice. The
+    // completions above capture no `this`, so the transaction may safely outlive
+    // this object. Cross-validated with Linux
+    // sound/firewire/bebob/bebob_stream.c:602-606 (break_both_connections on stop
+    // is best-effort); no reference source is copied.
+    DisconnectPlayback([](IOReturn) {});
+    DisconnectCapture([](IOReturn) {});
+    return kIOReturnSuccess;
+}
+
+void Phase88Protocol::EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug, std::function<void(IOReturn)> cb) {
+    if (!cmpClient_) {
+        cb(kIOReturnNotReady);
+        return;
+    }
+    const auto device = CurrentCMPDevice();
+    cmpClient_->CheckPlugUsed(device, dir, plug, [this, device, plug, dir, cb = std::move(cb)](bool success, bool used) {
+        if (!success) {
+            cb(kIOReturnNotResponding);
+            return;
+        }
+        if (used) {
+            ASFW_LOG(Audio, "[BeBoB] Plug %u (direction %s) in use, breaking connections",
+                     plug, dir == CMP::PCRDirection::kInput ? "Input" : "Output");
+            cmpClient_->BreakBothConnections(device, plug, [cb](CMP::CMPStatus status) {
+                if (status == CMP::CMPStatus::Success) {
+                    cb(kIOReturnSuccess);
+                } else {
+                    cb(kIOReturnError);
+                }
+            });
+        } else {
+            cb(kIOReturnSuccess);
+        }
+    });
+}
+
+void Phase88Protocol::BreakBothConnections(VoidCallback callback) {
+    if (!cmpClient_) {
+        callback(kIOReturnNotReady);
+        return;
+    }
+    cmpClient_->BreakBothConnections(CurrentCMPDevice(), 0, [callback](CMP::CMPStatus status) {
+        if (status == CMP::CMPStatus::Success) {
+            callback(kIOReturnSuccess);
+        } else {
+            callback(kIOReturnError);
+        }
+    });
+}
+
+void Phase88Protocol::SubmitCommand(const Protocols::AVC::AVCCdb& cdb,
+                                    Protocols::AVC::AVCCompletion completion) {
+    if (!fcpTransport_) {
+        completion(Protocols::AVC::AVCResult::kTransportError, cdb);
+        return;
+    }
+    auto cmd = std::make_shared<Protocols::AVC::AVCCommand>(*fcpTransport_, cdb);
+    // Capture cmd so the AVCCommand (and its weak_from_this()) stays alive
+    // until the FCP response arrives and the completion fires.
+    cmd->Submit([cmd, completion = std::move(completion)](
+                    Protocols::AVC::AVCResult result,
+                    const Protocols::AVC::AVCCdb& responseCdb) {
+        completion(result, responseCdb);
+    });
 }
 
 } // namespace ASFW::Audio::BeBoB

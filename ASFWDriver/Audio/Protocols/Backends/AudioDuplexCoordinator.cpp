@@ -844,6 +844,12 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (failureStatus == kIOReturnAborted && TeardownRequested()) {
             return failureStatus;
         }
+        (void)WaitForAsyncResult<bool>(
+            [&](auto callback) {
+                deviceControl.BreakBothConnections(
+                    [callback = std::move(callback)](IOReturn st) mutable { callback(st, true); });
+            },
+            kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, deviceControl, session);
         return finalizeFailure(failureStatus, failedPhase, cause,
                                DuplexRestartErrorClass::kStageFailure, true, rollbackStatus, true,
@@ -855,6 +861,12 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (invalidationStatus == kIOReturnAborted && TeardownRequested()) {
             return invalidationStatus;
         }
+        (void)WaitForAsyncResult<bool>(
+            [&](auto callback) {
+                deviceControl.BreakBothConnections(
+                    [callback = std::move(callback)](IOReturn st) mutable { callback(st, true); });
+            },
+            kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
         const IOReturn rollbackStatus = RunDuplexStop(guid, record, deviceControl, session);
         if (rollbackStatus != kIOReturnSuccess) {
             return finalizeFailure(

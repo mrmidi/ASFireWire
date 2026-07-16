@@ -9,6 +9,12 @@
 #include <cstring>
 #include <utility>
 
+// !!! DIAGNOSTIC: CMP connection-path tracing. Remove after FW-94 resolution.
+// Every async stage logs SUBMIT (request issued to bus ops) / DONE (callback fired)
+// with hex wire values so the trace aligns 1:1 with a FireBug capture.
+#define CMPTRACE(fmt, ...) \
+    ASFW_LOG(Audio, "!!! [CMP] " fmt, ##__VA_ARGS__)
+
 namespace ASFW::CMP {
 
 namespace {
@@ -50,12 +56,16 @@ void CMPClient::ReadIPCR(const CMPDevice& device, uint8_t plugNum, PCRReadCallba
 void CMPClient::ConnectOPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel,
                             CMPCallback callback) {
     const LeaseKey key{device.guid, PCRDirection::kOutput, plugNum};
+    CMPTRACE("ConnectOPCR entry: guid=0x%016llx node=%u gen=%u plug=%u ch=%u",
+             device.guid, device.nodeId.value, device.generation.value, plugNum, channel);
     if (!device.IsValid() || plugNum > kMaxPlugNumber || channel > 63 || !BeginConnect(key, device, channel)) {
+        CMPTRACE("ConnectOPCR: rejected invalid args or BeginConnect failed");
         callback(CMPStatus::Failed);
         return;
     }
     ReadMPR(device, PCRDirection::kOutput, plugNum,
             [this, key, device, channel, callback = std::move(callback)](CMPStatus status, FW::FwSpeed speed) mutable {
+                CMPTRACE("ConnectOPCR ReadMPR done: status=%u speed=%u", status, speed);
                 if (status != CMPStatus::Success) {
                     CompleteConnect(key, device, channel, status, std::move(callback));
                     return;
@@ -67,12 +77,16 @@ void CMPClient::ConnectOPCR(const CMPDevice& device, uint8_t plugNum, uint8_t ch
 void CMPClient::ConnectIPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel,
                             CMPCallback callback) {
     const LeaseKey key{device.guid, PCRDirection::kInput, plugNum};
+    CMPTRACE("ConnectIPCR entry: guid=0x%016llx node=%u gen=%u plug=%u ch=%u",
+             device.guid, device.nodeId.value, device.generation.value, plugNum, channel);
     if (!device.IsValid() || plugNum > kMaxPlugNumber || channel > 63 || !BeginConnect(key, device, channel)) {
+        CMPTRACE("ConnectIPCR: rejected invalid args or BeginConnect failed");
         callback(CMPStatus::Failed);
         return;
     }
     ReadMPR(device, PCRDirection::kInput, plugNum,
             [this, key, device, channel, callback = std::move(callback)](CMPStatus status, FW::FwSpeed speed) mutable {
+                CMPTRACE("ConnectIPCR ReadMPR done: status=%u speed=%u", status, speed);
                 if (status != CMPStatus::Success) {
                     CompleteConnect(key, device, channel, status, std::move(callback));
                     return;
@@ -84,9 +98,12 @@ void CMPClient::ConnectIPCR(const CMPDevice& device, uint8_t plugNum, uint8_t ch
 void CMPClient::DisconnectOPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback) {
     const LeaseKey key{device.guid, PCRDirection::kOutput, plugNum};
     Lease lease{};
+    CMPTRACE("DisconnectOPCR entry: guid=0x%016llx node=%u gen=%u plug=%u",
+             device.guid, device.nodeId.value, device.generation.value, plugNum);
     if (!device.IsValid() || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
         // No local lease means this client never established the remote p2p
         // count. Treat BREAK as idempotent without touching a foreign stream.
+        CMPTRACE("DisconnectOPCR: no local lease, returning Success");
         callback(CMPStatus::Success);
         return;
     }
@@ -96,7 +113,10 @@ void CMPClient::DisconnectOPCR(const CMPDevice& device, uint8_t plugNum, CMPCall
 void CMPClient::DisconnectIPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback) {
     const LeaseKey key{device.guid, PCRDirection::kInput, plugNum};
     Lease lease{};
+    CMPTRACE("DisconnectIPCR entry: guid=0x%016llx node=%u gen=%u plug=%u",
+             device.guid, device.nodeId.value, device.generation.value, plugNum);
     if (!device.IsValid() || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
+        CMPTRACE("DisconnectIPCR: no local lease, returning Success");
         callback(CMPStatus::Success);
         return;
     }
@@ -124,16 +144,24 @@ void CMPClient::ReadQuadlet(const CMPDevice& device, uint32_t address, FW::FwSpe
         .addressHi = PCRRegisters::kAddressHi,
         .addressLo = address,
     }};
+    CMPTRACE("ReadQuadlet SUBMIT: gen=%u node=%u addr=0x%08x (%{public}s)",
+             device.generation.value, device.nodeId.value, address,
+             address == PCRAddress(PCRDirection::kInput, 0) ? "iPCR0" :
+             address == PCRAddress(PCRDirection::kOutput, 0) ? "oPCR0" : "other");
     busOps_.ReadQuad(device.generation, device.nodeId, target, speed,
-                      [callback = std::move(callback)](Async::AsyncStatus status,
+                      [callback = std::move(callback), address](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) mutable {
         if (status != Async::AsyncStatus::kSuccess || payload.size() != sizeof(uint32_t)) {
+            CMPTRACE("ReadQuadlet DONE: addr=0x%08x status=%u (FAIL, payload=%zu)",
+                     address, status, payload.size());
             callback(false, 0);
             return;
         }
         uint32_t raw = 0;
-        std::memcpy(&raw, payload.data(), sizeof(raw));
-        callback(true, OSSwapBigToHostInt32(raw));
+        __builtin_memcpy(&raw, payload.data(), sizeof(raw));
+        const uint32_t value = OSSwapBigToHostInt32(raw);
+        CMPTRACE("ReadQuadlet DONE: addr=0x%08x value=0x%08x", address, value);
+        callback(true, value);
     });
 }
 
@@ -143,65 +171,89 @@ void CMPClient::CompareSwap(const CMPDevice& device, uint32_t address, uint32_t 
         .addressHi = PCRRegisters::kAddressHi,
         .addressLo = address,
     }};
-    std::array<uint8_t, 8> operand{};
+    alignas(uint32_t) std::array<uint8_t, 8> operand{};
     const uint32_t expectedBE = OSSwapHostToBigInt32(expected);
     const uint32_t desiredBE = OSSwapHostToBigInt32(desired);
-    std::memcpy(operand.data(), &expectedBE, sizeof(expectedBE));
-    std::memcpy(operand.data() + sizeof(expectedBE), &desiredBE, sizeof(desiredBE));
+    __builtin_memcpy(operand.data(), &expectedBE, sizeof(expectedBE));
+    __builtin_memcpy(operand.data() + sizeof(expectedBE), &desiredBE, sizeof(desiredBE));
 
+    CMPTRACE("CompareSwap SUBMIT: gen=%u node=%u addr=0x%08x expected=0x%08x desired=0x%08x",
+             device.generation.value, device.nodeId.value, address, expected, desired);
     busOps_.Lock(device.generation, device.nodeId, target, FW::LockOp::kCompareSwap,
                  operand, sizeof(uint32_t), speed,
-                 [callback = std::move(callback)](Async::AsyncStatus status,
+                 [callback = std::move(callback), address, expected, desired](Async::AsyncStatus status,
                                                   std::span<const uint8_t> payload) mutable {
         if (status != Async::AsyncStatus::kSuccess) {
+            CMPTRACE("CompareSwap DONE: addr=0x%08x status=%u (async FAIL)", address, status);
             callback(MapAsyncStatus(status), 0);
             return;
         }
         if (payload.size() != sizeof(uint32_t)) {
+            CMPTRACE("CompareSwap DONE: addr=0x%08x payload=%zu (SIZE FAIL)", address, payload.size());
             callback(CMPStatus::Failed, 0);
             return;
         }
         uint32_t raw = 0;
         std::memcpy(&raw, payload.data(), sizeof(raw));
-        callback(CMPStatus::Success, OSSwapBigToHostInt32(raw));
+        const uint32_t observed = OSSwapBigToHostInt32(raw);
+        CMPTRACE("CompareSwap DONE: addr=0x%08x expected=0x%08x desired=0x%08x observed=0x%08x (%{public}s)",
+                 address, expected, desired, observed,
+                 observed == expected ? "MATCH" : "MISMATCH");
+        callback(CMPStatus::Success, observed);
     });
 }
 
 void CMPClient::ReadMPR(const CMPDevice& device, PCRDirection direction, uint8_t plugNum,
                         std::function<void(CMPStatus, FW::FwSpeed)> callback) {
     const FW::FwSpeed routeSpeed = busInfo_.GetSpeed(device.nodeId);
-    ReadQuadlet(device, MPRAddress(direction), routeSpeed,
-                [routeSpeed, plugNum, callback = std::move(callback)](bool success, uint32_t mpr) mutable {
+    const uint32_t mprAddr = MPRAddress(direction);
+    CMPTRACE("ReadMPR SUBMIT: dir=%{public}s plug=%u addr=0x%08x",
+             direction == PCRDirection::kInput ? "Input" : "Output", plugNum, mprAddr);
+    ReadQuadlet(device, mprAddr, routeSpeed,
+                [routeSpeed, plugNum, direction, callback = std::move(callback)](bool success, uint32_t mpr) mutable {
         if (!success) {
+            CMPTRACE("ReadMPR DONE: dir=%{public}s plug=%u FAIL",
+                     direction == PCRDirection::kInput ? "Input" : "Output", plugNum);
             callback(CMPStatus::Failed, FW::FwSpeed::S100);
             return;
         }
         const uint8_t plugCount = static_cast<uint8_t>(mpr & 0x1FU);
         if (plugNum >= plugCount) {
+            CMPTRACE("ReadMPR DONE: dir=%{public}s plug=%u NotFound (count=%u)",
+                     direction == PCRDirection::kInput ? "Input" : "Output", plugNum, plugCount);
             callback(CMPStatus::NotFound, FW::FwSpeed::S100);
             return;
         }
         const auto mprSpeed = static_cast<FW::FwSpeed>((mpr >> 30U) & 0x03U);
+        CMPTRACE("ReadMPR DONE: dir=%{public}s plug=%u OK speed=%u plugCount=%u",
+                 direction == PCRDirection::kInput ? "Input" : "Output", plugNum, mprSpeed, plugCount);
         callback(CMPStatus::Success, MinSpeed(routeSpeed, mprSpeed));
     });
 }
 
 void CMPClient::AttemptConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel,
                                FW::FwSpeed speed, uint8_t attempt, CMPCallback callback) {
+    CMPTRACE("AttemptConnect entry: dir=%{public}s plug=%u ch=%u attempt=%u",
+             key.direction == PCRDirection::kInput ? "Input" : "Output",
+             key.plugNum, channel, attempt);
     ReadQuadlet(device, PCRAddress(key.direction, key.plugNum), speed,
                 [this, key, device, channel, speed, attempt, callback = std::move(callback)]
                 (bool success, uint32_t current) mutable {
         if (!success) {
+            CMPTRACE("AttemptConnect: readPCR failed");
             CompleteConnect(key, device, channel, CMPStatus::Failed, std::move(callback));
             return;
         }
         if (!PCRBits::IsOnline(current)) {
+            CMPTRACE("AttemptConnect: PCR not online (0x%08x)", current);
             CompleteConnect(key, device, channel, CMPStatus::NotFound, std::move(callback));
             return;
         }
         // Establish is exclusive. Sharing a p2p count is not safe without a
         // common lease owner and would let BREAK tear down another host stream.
         if (PCRBits::IsInUse(current)) {
+            CMPTRACE("AttemptConnect: PCR in use (0x%08x, p2p=%u bcast=%u)", current,
+                     PCRBits::GetP2P(current), (current & PCRBits::kBcastMask) != 0);
             CompleteConnect(key, device, channel, CMPStatus::NoResources, std::move(callback));
             return;
         }
@@ -213,21 +265,27 @@ void CMPClient::AttemptConnect(const LeaseKey& key, const CMPDevice& device, uin
             desired = PCRBits::SetDataRate(desired, speed);
             desired = PCRBits::SetOverheadId(desired, OverheadIdForGapCount(busInfo_.GetGapCount()));
         }
+        CMPTRACE("AttemptConnect: PCR=0x%08x → desired=0x%08x (p2p=1, ch=%u)", current, desired, channel);
         CompareSwap(device, PCRAddress(key.direction, key.plugNum), current, desired, speed,
                     [this, key, device, channel, speed, attempt, current, callback = std::move(callback)]
                     (CMPStatus status, uint32_t observed) mutable {
             if (status != CMPStatus::Success) {
+                CMPTRACE("AttemptConnect: CAS failed status=%u", status);
                 CompleteConnect(key, device, channel, status, std::move(callback));
                 return;
             }
             if (observed == current) {
+                CMPTRACE("AttemptConnect: CAS matched, connect SUCCESS");
                 CompleteConnect(key, device, channel, CMPStatus::Success, std::move(callback));
                 return;
             }
             if (attempt + 1U >= kMaxCompareSwapAttempts) {
+                CMPTRACE("AttemptConnect: CAS mismatch, max retries (%u) reached", attempt);
                 CompleteConnect(key, device, channel, CMPStatus::NoResources, std::move(callback));
                 return;
             }
+            CMPTRACE("AttemptConnect: CAS mismatch (0x%08x vs 0x%08x), retry %u",
+                     observed, current, attempt + 1U);
             AttemptConnect(key, device, channel, speed, attempt + 1U, std::move(callback));
         });
     });
@@ -326,6 +384,10 @@ void CMPClient::CompleteConnect(const LeaseKey& key, const CMPDevice& device, ui
         }
         IOLockUnlock(lock_);
     }
+    CMPTRACE("CompleteConnect: status=%u lease=%{public}s dir=%{public}s plug=%u ch=%u",
+             status, lock_ ? "found" : "no-lock",
+             key.direction == PCRDirection::kInput ? "Input" : "Output",
+             key.plugNum, channel);
     callback(status);
 }
 
@@ -343,6 +405,50 @@ void CMPClient::CompleteDisconnect(const LeaseKey& key, CMPStatus status, CMPCal
         IOLockUnlock(lock_);
     }
     callback(status);
+}
+
+void CMPClient::BreakBothConnections(const CMPDevice& device, uint8_t plugNum, CMPCallback callback) {
+    if (!device.IsValid() || plugNum > kMaxPlugNumber) {
+        callback(CMPStatus::Failed);
+        return;
+    }
+    CMPTRACE("BreakBothConnections SUBMIT: plug=%u (will clear iPCR then oPCR)", plugNum);
+    DisconnectIPCR(device, plugNum, [this, device, plugNum, callback](CMPStatus ipcrStatus) {
+        CMPTRACE("BreakBothConnections: iPCR clear status=%u", ipcrStatus);
+        DisconnectOPCR(device, plugNum, [ipcrStatus, callback](CMPStatus opcrStatus) {
+            CMPTRACE("BreakBothConnections: oPCR clear status=%u", opcrStatus);
+            if (ipcrStatus == CMPStatus::Success && opcrStatus == CMPStatus::Success) {
+                callback(CMPStatus::Success);
+            } else if (ipcrStatus != CMPStatus::Success) {
+                callback(ipcrStatus);
+            } else {
+                callback(opcrStatus);
+            }
+        });
+    });
+}
+
+void CMPClient::CheckPlugUsed(const CMPDevice& device, PCRDirection dir, uint8_t plugNum,
+                             PCRBoolCallback callback) {
+    if (!device.IsValid() || plugNum > kMaxPlugNumber) {
+        callback(false, false);
+        return;
+    }
+    const FW::FwSpeed speed = busInfo_.GetSpeed(device.nodeId);
+    CMPTRACE("CheckPlugUsed SUBMIT: dir=%{public}s plug=%u",
+             dir == PCRDirection::kInput ? "Input" : "Output", plugNum);
+    ReadQuadlet(device, PCRAddress(dir, plugNum), speed,
+                [callback = std::move(callback), dir, plugNum](bool success, uint32_t current) {
+        if (!success) {
+            CMPTRACE("CheckPlugUsed DONE: dir=%{public}s plug=%u FAIL", dir == PCRDirection::kInput ? "Input" : "Output", plugNum);
+            callback(false, false);
+        } else {
+            CMPTRACE("CheckPlugUsed DONE: dir=%{public}s plug=%u value=0x%08x used=%u",
+                     dir == PCRDirection::kInput ? "Input" : "Output", plugNum, current,
+                     PCRBits::IsInUse(current));
+            callback(true, PCRBits::IsInUse(current));
+        }
+    });
 }
 
 CMPStatus CMPClient::MapAsyncStatus(Async::AsyncStatus status) noexcept {

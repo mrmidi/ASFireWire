@@ -8,25 +8,24 @@
 #include "../Duplex/IDuplexDeviceControl.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../../../Protocols/Ports/FireWireBusPort.hpp"
+#include "../../../Protocols/AVC/CMP/CMPClient.hpp"
 
 #include <cstdint>
+#include <functional>
 
 namespace ASFW::Protocols::AVC {
 class FCPTransport;
-}
-
-namespace ASFW::CMP {
-class CMPClient;
-struct CMPDevice;
 }
 
 namespace ASFW::IRM {
 class IRMClient;
 }
 
+#include "../../../Protocols/AVC/IAVCCommandSubmitter.hpp"
+
 namespace ASFW::Audio::BeBoB {
 
-class Phase88Protocol final : public IDeviceProtocol, public IDuplexDeviceControl {
+class Phase88Protocol final : public IDeviceProtocol, public IDuplexDeviceControl, public Protocols::AVC::IAVCCommandSubmitter {
 public:
     Phase88Protocol(Protocols::Ports::FireWireBusOps& busOps,
                     Protocols::Ports::FireWireBusInfo& busInfo,
@@ -44,6 +43,9 @@ public:
     void UpdateRuntimeContext(uint16_t nodeId,
                               Protocols::AVC::FCPTransport* transport) override;
 
+    // IAVCCommandSubmitter
+    void SubmitCommand(const Protocols::AVC::AVCCdb& cdb, Protocols::AVC::AVCCompletion completion) override;
+
     // BeBoB starts the device's input PCR first, then its output PCR. The
     // generic coordinator supplies the Linux-equivalent ordering around these
     // two stages: reserve both channels -> IPCR -> OPCR -> host IR/IT start.
@@ -59,10 +61,12 @@ public:
     void ReadDuplexHealth(HealthCallback callback) override;
     void DisconnectPlayback(VoidCallback callback) override;
     void DisconnectCapture(VoidCallback callback) override;
+    void BreakBothConnections(VoidCallback callback) override;
     [[nodiscard]] IOReturn StopDuplex() override;
     [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
 private:
+    void EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug, std::function<void(IOReturn)> cb);
     [[nodiscard]] CMP::CMPDevice CurrentCMPDevice() const noexcept;
     [[nodiscard]] IOReturn ResetEpochIfNeeded() noexcept;
 
