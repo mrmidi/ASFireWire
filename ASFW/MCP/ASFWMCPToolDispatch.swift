@@ -70,8 +70,11 @@ extension ASFWMCPCore {
             return await dispatchIrmChannel(name, decoder: decoder, allocate: name == "asfw_irm_allocate_channel")
         case "asfw_irm_allocate_bandwidth", "asfw_irm_free_bandwidth":
             return await dispatchIrmBandwidth(name, decoder: decoder, allocate: name == "asfw_irm_allocate_bandwidth")
-        case "asfw_avc_list_units", "asfw_avc_get_subunit_capabilities", "asfw_avc_get_subunit_descriptor",
-             "asfw_fcp_get_recent_responses":
+        case "asfw_avc_list_units":
+            return await avcUnitInventoryResult(toolName: name)
+        case "asfw_avc_get_subunit_capabilities":
+            return await avcSubunitCapabilitiesResult(toolName: name, decoder: decoder)
+        case "asfw_avc_get_subunit_descriptor", "asfw_fcp_get_recent_responses":
             return notImplementedToolResult(name, reason: "Recent FCP command/response records are not exposed by the live adapter yet.")
         case "asfw_fcp_send_command":
             return await dispatchFcpReadCommand(name, decoder: decoder)
@@ -553,6 +556,62 @@ extension ASFWMCPCore {
 }
 
 private extension ASFWMCPCore {
+    func avcUnitInventoryResult(toolName: String) async -> ASFWMCPToolCallResult {
+        let units = await driver.listAVCUnits()
+        return .success(
+            toolName: toolName,
+            data: .object([
+                "kind": .string("avcUnitInventory"),
+                "units": .array(units.map(\.mcpValue)),
+            ])
+        )
+    }
+
+    func avcSubunitCapabilitiesResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let guid = try decoder.uint64("targetGuid")
+            let type = try decoder.uint32("subunitType")
+            let id = try decoder.uint32("subunitId")
+            guard type <= UInt32(UInt8.max), id <= UInt32(UInt8.max) else {
+                return malformedToolResult(toolName, reason: "subunitType and subunitId must fit in one byte")
+            }
+
+            let unit = await driver.listAVCUnits().first { $0.guid == guid }
+            guard unit?.subunits.contains(where: { $0.type == UInt8(type) && $0.id == UInt8(id) }) == true else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "The requested AV/C subunit is not present in the current discovery snapshot."
+                )
+            }
+            guard let capabilities = await driver.avcSubunitCapabilities(
+                guid: guid, type: UInt8(type), id: UInt8(id)
+            ) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "The driver could not provide decoded capabilities for the requested AV/C subunit."
+                )
+            }
+
+            return .success(
+                toolName: toolName,
+                data: .object([
+                    "kind": .string("avcSubunitCapabilities"),
+                    "targetGuid": .string(String(format: "0x%016llX", guid)),
+                    "subunitType": .int(Int(type)),
+                    "subunitId": .int(Int(id)),
+                    "capabilities": capabilities.mcpValue,
+                ])
+            )
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
     func capabilitiesResult(toolName: String) async -> ASFWMCPToolCallResult {
         let tools = await listTools()
         let groups = Set(tools.map(\.group)).sorted()

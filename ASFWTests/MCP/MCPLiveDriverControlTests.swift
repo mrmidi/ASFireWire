@@ -94,6 +94,50 @@ struct MCPLiveDriverControlTests {
         #expect(dice?.protocolHints == ["dice_tcat", "sbp2"])
     }
 
+    @Test func avcInspectionMapsDriverEvidenceWithoutFcpTraffic() async throws {
+        let backend = FakeLiveDriverBackend()
+        backend.avcUnits = [
+            AVCUnitInfo(
+                guid: 0x0011_2233_4455_6677,
+                nodeID: 0xFFC2,
+                vendorID: 0x0003DB,
+                modelID: 0x01DDDD,
+                subunits: [.init(type: 0x0C, subunitID: 0, numSrcPlugs: 1, numDestPlugs: 2)],
+                isoInputPlugs: 2,
+                isoOutputPlugs: 1,
+                extInputPlugs: 0,
+                extOutputPlugs: 0
+            )
+        ]
+        backend.avcSubunitCapabilities = try #require(capabilitiesFixture())
+        let control = LiveASFWDriverControl(backend: backend)
+
+        let units = await control.listAVCUnits()
+        let capabilities = await control.avcSubunitCapabilities(
+            guid: 0x0011_2233_4455_6677,
+            type: 0x0C,
+            id: 0
+        )
+
+        #expect(units.count == 1)
+        #expect(units[0].nodeId == 2)
+        #expect(units[0].subunits == [.init(type: 0x0C, id: 0, sourcePlugCount: 1, destinationPlugCount: 2)])
+        #expect(capabilities?.hasAudio == true)
+        #expect(capabilities?.hasMIDI == true)
+        #expect(capabilities?.currentRateCode == 0x04)
+        #expect(capabilities?.plugs == [
+            .init(
+                id: 2,
+                isInput: true,
+                type: 0,
+                name: "Input",
+                signalBlocks: [.init(formatCode: 0x06, channelCount: 2)],
+                supportedFormats: [.init(sampleRateCode: 0x04, formatCode: 0x06, channelCount: 2)]
+            )
+        ])
+        #expect(backend.fcpCommands == 0)
+    }
+
     @Test func fcpCommandUsesGuidBoundRouteAndReturnsResponseReceipt() async {
         let backend = FakeLiveDriverBackend()
         backend.devices = [
@@ -226,6 +270,30 @@ struct MCPLiveDriverControlTests {
             productName: "Disk"
         )
     }
+
+    private func capabilitiesFixture() -> AVCMusicCapabilities? {
+        var data = Data(repeating: 0, count: 18)
+        data[0] = 0x03
+        data[1] = 0x04
+        data.replaceSubrange(2..<6, with: [0x18, 0x00, 0x00, 0x00])
+        data[8] = 1
+        data[9] = 1
+        data[10] = 1
+        data[14] = 1
+
+        var plug = Data(repeating: 0, count: 40)
+        plug[0] = 2
+        plug[1] = 1
+        plug[2] = 0
+        plug[3] = 1
+        plug[4] = 5
+        plug.replaceSubrange(5..<10, with: Array("Input".utf8))
+        plug[37] = 1
+        data.append(plug)
+        data.append(contentsOf: [0x06, 0x02, 0x00, 0x00])
+        data.append(contentsOf: [0x04, 0x06, 0x02, 0x00])
+        return AVCMusicCapabilities(data: data)
+    }
 }
 
 @MainActor
@@ -235,6 +303,7 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var generation: UInt32 = 17
     var devices: [FWDeviceInfo] = []
     var avcUnits: [AVCUnitInfo] = []
+    var avcSubunitCapabilities: AVCMusicCapabilities?
     var nextHandle: UInt16 = 0x44
     var results: [UInt16: ASFWDriverConnector.AsyncTransactionResult] = [:]
     var reads = 0
@@ -257,6 +326,9 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     }
     func mcpDiscoveredDevices() -> [FWDeviceInfo]? { devices }
     func mcpAVCUnits() -> [AVCUnitInfo]? { avcUnits }
+    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
+        avcSubunitCapabilities
+    }
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
         reads += 1

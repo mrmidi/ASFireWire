@@ -37,6 +37,114 @@ enum ASFWMCPAvcCommandIntent: String, Equatable, CaseIterable {
     }
 }
 
+/// Generation-bound AV/C discovery evidence exposed to MCP. This deliberately
+/// mirrors only decoded driver state; it is not a request to probe hardware.
+struct ASFWMCPAVCUnitSummary: Equatable {
+    struct Subunit: Equatable {
+        let type: UInt8
+        let id: UInt8
+        let sourcePlugCount: UInt8
+        let destinationPlugCount: UInt8
+    }
+
+    let guid: UInt64
+    let nodeId: UInt32
+    let vendorId: UInt32
+    let modelId: UInt32
+    let isoInputPlugCount: UInt8
+    let isoOutputPlugCount: UInt8
+    let externalInputPlugCount: UInt8
+    let externalOutputPlugCount: UInt8
+    let subunits: [Subunit]
+}
+
+struct ASFWMCPAVCSubunitCapabilities: Equatable {
+    struct Plug: Equatable {
+        struct SignalBlock: Equatable {
+            let formatCode: UInt8
+            let channelCount: UInt8
+        }
+
+        struct SupportedFormat: Equatable {
+            let sampleRateCode: UInt8
+            let formatCode: UInt8
+            let channelCount: UInt8
+        }
+
+        let id: UInt8
+        let isInput: Bool
+        let type: UInt8
+        let name: String
+        let signalBlocks: [SignalBlock]
+        let supportedFormats: [SupportedFormat]
+    }
+
+    let hasAudio: Bool
+    let hasMIDI: Bool
+    let hasSMPTE: Bool
+    let currentRateCode: UInt8
+    let supportedRatesMask: UInt32
+    let plugs: [Plug]
+}
+
+extension ASFWMCPAVCUnitSummary {
+    var mcpValue: ASFWMCPValue {
+        .object([
+            "guid": .string(String(format: "0x%016llX", guid)),
+            "nodeId": .int(Int(nodeId)),
+            "vendorId": .string(String(format: "0x%06X", vendorId)),
+            "modelId": .string(String(format: "0x%06X", modelId)),
+            "plugs": .object([
+                "isoInput": .int(Int(isoInputPlugCount)),
+                "isoOutput": .int(Int(isoOutputPlugCount)),
+                "externalInput": .int(Int(externalInputPlugCount)),
+                "externalOutput": .int(Int(externalOutputPlugCount)),
+            ]),
+            "subunits": .array(subunits.map {
+                .object([
+                    "type": .int(Int($0.type)),
+                    "id": .int(Int($0.id)),
+                    "sourcePlugCount": .int(Int($0.sourcePlugCount)),
+                    "destinationPlugCount": .int(Int($0.destinationPlugCount)),
+                ])
+            }),
+        ])
+    }
+}
+
+extension ASFWMCPAVCSubunitCapabilities {
+    var mcpValue: ASFWMCPValue {
+        .object([
+            "hasAudio": .bool(hasAudio),
+            "hasMIDI": .bool(hasMIDI),
+            "hasSMPTE": .bool(hasSMPTE),
+            "currentRateCode": .int(Int(currentRateCode)),
+            "supportedRatesMask": .uint64(UInt64(supportedRatesMask)),
+            "plugs": .array(plugs.map { plug in
+                .object([
+                    "id": .int(Int(plug.id)),
+                    "isInput": .bool(plug.isInput),
+                    "type": .int(Int(plug.type)),
+                    "name": .string(plug.name),
+                    "signalBlocks": .array(plug.signalBlocks.map {
+                        .object([
+                            "formatCode": .int(Int($0.formatCode)),
+                            "channelCount": .int(Int($0.channelCount)),
+                        ])
+                    }),
+                    "supportedFormats": .array(plug.supportedFormats.map {
+                        .object([
+                            "sampleRateCode": .int(Int($0.sampleRateCode)),
+                            "formatCode": .int(Int($0.formatCode)),
+                            "channelCount": .int(Int($0.channelCount)),
+                        ])
+                    }),
+                ])
+            }),
+        ])
+    }
+}
+
 /// A raw FCP/AV/C command directed at a node's FCP command register.
 struct ASFWMCPFcpCommandRequest: Equatable {
     /// Stable device identity selected by the caller. The live adapter resolves

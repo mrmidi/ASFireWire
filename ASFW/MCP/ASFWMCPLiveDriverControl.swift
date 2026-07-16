@@ -11,6 +11,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot?
     func mcpDiscoveredDevices() -> [FWDeviceInfo]?
     func mcpAVCUnits() -> [AVCUnitInfo]?
+    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities?
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16?
     func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16?
@@ -64,6 +65,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpAVCUnits() -> [AVCUnitInfo]? {
         getAVCUnits()
+    }
+
+    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
+        getSubunitCapabilities(guid: guid, type: type, id: id)
     }
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
@@ -173,6 +178,64 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func listNodes() async -> [ASFWMCPNodeSummary] {
         listNodesFromBackend()
+    }
+
+    func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {
+        (backend.mcpAVCUnits() ?? []).map { unit in
+            ASFWMCPAVCUnitSummary(
+                guid: unit.guid,
+                nodeId: physicalNodeId(unit.nodeID),
+                vendorId: unit.vendorID,
+                modelId: unit.modelID,
+                isoInputPlugCount: unit.isoInputPlugs,
+                isoOutputPlugCount: unit.isoOutputPlugs,
+                externalInputPlugCount: unit.extInputPlugs,
+                externalOutputPlugCount: unit.extOutputPlugs,
+                subunits: unit.subunits.map {
+                    .init(
+                        type: $0.type,
+                        id: $0.subunitID,
+                        sourcePlugCount: $0.numSrcPlugs,
+                        destinationPlugCount: $0.numDestPlugs
+                    )
+                }
+            )
+        }
+    }
+
+    func avcSubunitCapabilities(
+        guid: UInt64,
+        type: UInt8,
+        id: UInt8
+    ) async -> ASFWMCPAVCSubunitCapabilities? {
+        guard let capabilities = backend.mcpAVCSubunitCapabilities(guid: guid, type: type, id: id) else {
+            return nil
+        }
+        return ASFWMCPAVCSubunitCapabilities(
+            hasAudio: capabilities.hasAudioCapability,
+            hasMIDI: capabilities.hasMidiCapability,
+            hasSMPTE: capabilities.hasSmpteCapability,
+            currentRateCode: capabilities.currentRate,
+            supportedRatesMask: capabilities.supportedRatesMask,
+            plugs: capabilities.plugs.map { plug in
+                .init(
+                    id: plug.plugID,
+                    isInput: plug.isInput,
+                    type: plug.type,
+                    name: plug.name,
+                    signalBlocks: plug.signalBlocks.map {
+                        .init(formatCode: $0.formatCode, channelCount: $0.channelCount)
+                    },
+                    supportedFormats: plug.supportedFormats.map {
+                        .init(
+                            sampleRateCode: $0.sampleRateCode,
+                            formatCode: $0.formatCode,
+                            channelCount: $0.channelCount
+                        )
+                    }
+                )
+            }
+        )
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {

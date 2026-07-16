@@ -3,6 +3,8 @@ import Foundation
 protocol ASFWDriverControlling {
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
     func listNodes() async -> [ASFWMCPNodeSummary]
+    func listAVCUnits() async -> [ASFWMCPAVCUnitSummary]
+    func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities?
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent]
     func executeReadQuadlet(_ request: ASFWMCPReadQuadletRequest) async -> ASFWMCPTransactionResult
     func executeReadBlock(_ request: ASFWMCPReadBlockRequest) async -> ASFWMCPTransactionResult
@@ -93,6 +95,49 @@ actor MockASFWDriverControl: ASFWDriverControlling {
 
     func listNodes() async -> [ASFWMCPNodeSummary] {
         nodes
+    }
+
+    func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {
+        nodes.compactMap { node in
+            guard node.protocolHints.contains("avc"),
+                  let guidText = node.guid,
+                  let guid = UInt64(guidText.dropFirst(2), radix: 16),
+                  let vendorText = node.vendorId,
+                  let vendorId = UInt32(vendorText.dropFirst(2), radix: 16),
+                  let modelText = node.modelId,
+                  let modelId = UInt32(modelText.dropFirst(2), radix: 16) else {
+                return nil
+            }
+            return ASFWMCPAVCUnitSummary(
+                guid: guid, nodeId: node.nodeId, vendorId: vendorId, modelId: modelId,
+                isoInputPlugCount: 1, isoOutputPlugCount: 1,
+                externalInputPlugCount: 1, externalOutputPlugCount: 1,
+                subunits: [.init(type: 0x0C, id: 0, sourcePlugCount: 1, destinationPlugCount: 1)]
+            )
+        }
+    }
+
+    func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities? {
+        guard (await listAVCUnits()).contains(where: { $0.guid == guid &&
+            $0.subunits.contains(where: { $0.type == type && $0.id == id })
+        }) else {
+            return nil
+        }
+        return ASFWMCPAVCSubunitCapabilities(
+            hasAudio: type == 0x0C || type == 0x01,
+            hasMIDI: type == 0x0C,
+            hasSMPTE: false,
+            currentRateCode: 0x04,
+            supportedRatesMask: (UInt32(1) << 3) | (UInt32(1) << 4),
+            plugs: [.init(
+                id: 0, isInput: true, type: 0x00, name: "Mock Audio",
+                signalBlocks: [.init(formatCode: 0x06, channelCount: 2)],
+                supportedFormats: [
+                    .init(sampleRateCode: 0x03, formatCode: 0x06, channelCount: 2),
+                    .init(sampleRateCode: 0x04, formatCode: 0x06, channelCount: 2),
+                ]
+            )]
+        )
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {

@@ -145,6 +145,66 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
 
+    @Test func avcInventoryExposesDecodedDriverStateWithoutFcpTraffic() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+
+        let result = await transport.callTool("asfw_avc_list_units")
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["kind"] == .string("avcUnitInventory"))
+        #expect(data["units"] == .array([.object([
+            "guid": .string("0x0011223344556677"),
+            "nodeId": .int(0),
+            "vendorId": .string("0x0003DB"),
+            "modelId": .string("0x01DDDD"),
+            "plugs": .object([
+                "isoInput": .int(1), "isoOutput": .int(1),
+                "externalInput": .int(1), "externalOutput": .int(1),
+            ]),
+            "subunits": .array([.object([
+                "type": .int(12), "id": .int(0),
+                "sourcePlugCount": .int(1), "destinationPlugCount": .int(1),
+            ])]),
+        ])]))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func avcCapabilitiesRequireDiscoveredGuidAndSubunit() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        let args: ASFWMCPValue = .object([
+            "targetGuid": .uint64(0x0011223344556677),
+            "subunitType": .int(0x0C),
+            "subunitId": .int(0),
+        ])
+
+        let result = await transport.callTool("asfw_avc_get_subunit_capabilities", arguments: args)
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["kind"] == .string("avcSubunitCapabilities"))
+        #expect(data["targetGuid"] == .string("0x0011223344556677"))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func avcCapabilitiesRefuseUnavailableDiscoveryTargetWithoutFcpTraffic() async {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        let args: ASFWMCPValue = .object([
+            "targetGuid": .uint64(0xDEAD_BEEF_0000_0001),
+            "subunitType": .int(0x0C),
+            "subunitId": .int(0),
+        ])
+
+        let result = await transport.callTool("asfw_avc_get_subunit_capabilities", arguments: args)
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .capabilityUnavailable)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func readOnlyFcpRejectsControlFrameClaimedAsStatus() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
