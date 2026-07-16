@@ -16,6 +16,8 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
+#include "../Protocols/AVCStartReadiness.hpp"
+#include "../Protocols/DeviceProtocolFactory.hpp"
 #include "../Protocols/DICE/Core/DICETypes.hpp"
 #include "../Protocols/DICE/Core/DICERestartSession.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
@@ -502,25 +504,32 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         return kIOReturnSuccess;
     }
 
-    // The runtime protocol is created during ROM discovery, before AVCDiscovery
-    // has a live FCP transport to pass into the factory. Refresh that volatile
-    // context immediately before duplex preparation so AV/C devices do not fail
-    // PrepareDuplex with kIOReturnNotReady.
+    // A bus reset invalidates the registry node mapping before its delayed ROM
+    // scan republishes the current route. Hold AV/C starts in that interval:
+    // Linux resets FCP before its OXFW stream restart (oxfw.c:279-287), and
+    // Apple likewise waits for its resumed state before reconnecting. DICE's
+    // hardcoded-nub path does not use FCP and remains independent.
     ProtocolRuntimeBinding binding{};
-    if (ResolveProtocolRuntimeBinding(ivars, binding) == kIOReturnSuccess &&
-        binding.avcDiscovery != nullptr) {
-        auto* transport = binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId);
-        if (transport != nullptr) {
+    const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
+    if (bindingStatus == kIOReturnSuccess && binding.device != nullptr) {
+        const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
+            binding.device->vendorId, binding.device->modelId);
+        if (integration != ASFW::Audio::DeviceIntegrationMode::kHardcodedNub) {
+            auto* transport = binding.avcDiscovery
+                ? binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId)
+                : nullptr;
+            if (!ASFW::Audio::HasReadyAVCStartRoute(binding.device->nodeId, transport != nullptr)) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioNub: deferring AV/C stream start until route is rebound GUID=0x%016llx node=%u",
+                         ivars->guid,
+                         binding.device->nodeId);
+                return kIOReturnNotReady;
+            }
             binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
             ASFW_LOG(Audio,
-                     "ASFWAudioNub: refreshed protocol runtime context GUID=0x%016llx node=%u",
+                     "ASFWAudioNub: refreshed AV/C protocol route GUID=0x%016llx node=%u",
                      ivars->guid,
                      binding.device->nodeId);
-        } else {
-            ASFW_LOG_WARNING(Audio,
-                             "ASFWAudioNub: no AVC FCP transport available before streaming GUID=0x%016llx node=%u",
-                             ivars->guid,
-                             binding.device->nodeId);
         }
     }
 

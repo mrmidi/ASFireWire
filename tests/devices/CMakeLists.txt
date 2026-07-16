@@ -106,3 +106,7 @@ add_device_test(ApogeeDuetVendorCmdTests
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
 )
+
+add_device_test(AVCStartReadinessTests
+    AVCStartReadinessTests.cpp
+)

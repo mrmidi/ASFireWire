@@ -691,6 +691,7 @@
 		6A816C540C2BEB377CE294ED /* DriverConnector+Saffire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+Saffire.swift"; sourceTree = "<group>"; };
 		6A84FED6327D57EDB2BB468D /* GapPolicyCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = GapPolicyCoordinator.hpp; sourceTree = "<group>"; };
 		6AAFED8C7E95799896EE2F31 /* CSRHardwareAdapters.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRHardwareAdapters.hpp; sourceTree = "<group>"; };
+		6B7F993511CFD4549164A9B2 /* AVCStartReadiness.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCStartReadiness.hpp; sourceTree = "<group>"; };
 		6B917A010E7BAEE492C0D5E0 /* StatusHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StatusHandler.hpp; sourceTree = "<group>"; };
 		6C6B4EEB948F7332CD86745F /* ReadWriteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadWriteView.swift; sourceTree = "<group>"; };
 		6C7953B6D38D66826A909B51 /* AudioRuntimeRegistry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioRuntimeRegistry.hpp; sourceTree = "<group>"; };
@@ -1607,6 +1608,7 @@
 			isa = PBXGroup;
 			children = (
 				8D626A4181F2CAB8C6612EBD /* AudioTypes.hpp */,
+				6B7F993511CFD4549164A9B2 /* AVCStartReadiness.hpp */,
 				A419B39B809F4E2F507AED0E /* DeviceProtocolFactory.cpp */,
 				BB6D447572725C5A695B245B /* DeviceProtocolFactory.hpp */,
 				7073720DB59010260D19ACCB /* DeviceStreamModeQuirks.cpp */,
