@@ -185,6 +185,12 @@ class DuplexStreamProfileResolver final {
                record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId;
     }
 
+    [[nodiscard]] static constexpr bool
+    IsTerraTecPhase88(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kTerraTecVendorId &&
+               record.modelId == DeviceProfiles::Audio::kPhase88RackFwModelId;
+    }
+
     [[nodiscard]] static AudioDuplexChannels
     ResolveChannels(const Discovery::DeviceRecord& record,
                     const AudioStreamRuntimeCaps& caps) noexcept {
@@ -260,7 +266,9 @@ class DuplexStreamProfileResolver final {
             geometry.am824Slots = multiCapture ? stream.am824Slots : caps.deviceToHostAm824Slots;
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = IsApogeeDuet(record)
+            // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
+            // IRM selects one, which is then committed back to its PCR.
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsTerraTecPhase88(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
@@ -278,7 +286,7 @@ class DuplexStreamProfileResolver final {
                                       : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = IsApogeeDuet(record)
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsTerraTecPhase88(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }

@@ -13,6 +13,7 @@
 #include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
+#include "BridgeCo/BridgeCoReadOnlyProbe.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -304,6 +305,16 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
             os_log_error(self->log_,
                          "AVCDiscovery: AVCUnit initialization failed: GUID=%llx",
                          guid);
+            // Standard AV/C discovery is allowed to fail for the exact BeBoB
+            // device: its UNIT_INFO behavior is non-standard, and the remaining
+            // standard commands may be unavailable too. Run its single-query
+            // BridgeCo discriminator only after that chain has quiesced, so it
+            // cannot race FCP's one-command-at-a-time transport.
+            const auto failedDevice = avcUnit->GetDevice();
+            if (failedDevice && BridgeCo::IsTerraTecPhase88RackFw(
+                                    failedDevice->GetVendorID(), failedDevice->GetModelID())) {
+                BridgeCo::StartPhase88ReadOnlyProbe(*avcUnit, guid);
+            }
             return;
         }
 
@@ -332,6 +343,14 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
                 avcUnit->GetSubunits().size(),
                 avcUnit->IsInitialized() ? 2 : 0,  // Placeholder
                 avcUnit->IsInitialized() ? 2 : 0); // Placeholder
+
+    // BeBoB devices can omit or mishandle standard AV/C UNIT_INFO and Music
+    // descriptors. The exact TerraTec identity is stable in its Config ROM, so
+    // start its independent STATUS-only inventory before requiring a generic
+    // Music subunit. The inventory never mutates device or PCR/CMP state.
+    if (BridgeCo::IsTerraTecPhase88RackFw(device->GetVendorID(), device->GetModelID())) {
+        BridgeCo::StartPhase88ReadOnlyProbe(*avcUnit, guid);
+    }
 
     auto* musicSubunit = FindAudioMusicSubunit(*avcUnit);
     if (!musicSubunit) {

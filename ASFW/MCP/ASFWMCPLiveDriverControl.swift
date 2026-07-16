@@ -651,6 +651,12 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     private func protocolHints(for device: FWDeviceInfo, avcNodeIds: Set<UInt32>) -> [String] {
         var hints = Set<String>()
+        // Exact Config-ROM identity, so BeBoB diagnostics remain visible even
+        // when a BridgeCo unit ignores generic AV/C UNIT_INFO.
+        if device.vendorId == 0x000AAC && device.modelId == 0x000003 {
+            hints.insert("bebob")
+            hints.insert("cmp")
+        }
         if avcNodeIds.contains(UInt32(device.nodeId)) {
             hints.insert("avc")
             hints.insert("cmp")

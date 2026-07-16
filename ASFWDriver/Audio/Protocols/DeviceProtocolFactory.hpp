@@ -56,6 +56,9 @@ public:
     static constexpr uint32_t kSPro40Tcd3070ModelId = DeviceProfiles::Audio::kSPro40Tcd3070ModelId;
     static constexpr uint32_t kApogeeVendorId = DeviceProfiles::Audio::kApogeeVendorId;
     static constexpr uint32_t kApogeeDuetModelId = DeviceProfiles::Audio::kApogeeDuetModelId;
+    static constexpr uint32_t kTerraTecVendorId = DeviceProfiles::Audio::kTerraTecVendorId;
+    static constexpr uint32_t kPhase88RackFwModelId =
+        DeviceProfiles::Audio::kPhase88RackFwModelId;
     static constexpr uint32_t kAlesisVendorId = DeviceProfiles::Audio::kAlesisVendorId;
     static constexpr uint32_t kAlesisMultiMixModelId = DeviceProfiles::Audio::kAlesisMultiMixModelId;
     static constexpr uint32_t kMidasVendorId = DeviceProfiles::Audio::kMidasVendorId;

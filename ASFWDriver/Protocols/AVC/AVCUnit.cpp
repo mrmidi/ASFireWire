@@ -113,9 +113,13 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
         ProbeSignalFormat([this, completionState](bool signalFormatOk) {
             ProbeUnitInfo([this, completionState](bool unitOk) {
                 if (!unitOk) {
-                    ASFW_LOG_V1(AVC, "AVCUnit: UNIT_INFO probe failed");
-                    Common::InvokeSharedCallback(completionState, false);
-                    return;
+                    // UNIT_INFO is an optional AV/C discovery hint, not a prerequisite
+                    // for the independent SUBUNIT_INFO and PLUG_INFO probes below.
+                    // TerraTec PHASE 88 Rack FW acknowledges the FCP request but does
+                    // not return an FCP response for this opcode (FireBug capture,
+                    // 2026-07-16). Continue so its BridgeCo-specific probe can run.
+                    ASFW_LOG_V1(AVC,
+                                "AVCUnit: UNIT_INFO unavailable; continuing with subunit/plug discovery");
                 }
 
             ProbeSubunits([this, completionState](bool subunitOk) {

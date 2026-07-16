@@ -47,6 +47,8 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
               AudioIntegrationMode::kNone);
     EXPECT_EQ(ModeFor(ids::kApogeeVendorId, ids::kApogeeDuetModelId),
               AudioIntegrationMode::kAVCDriven);
+    EXPECT_EQ(ModeFor(ids::kTerraTecVendorId, ids::kPhase88RackFwModelId),
+              AudioIntegrationMode::kAVCDriven);
     EXPECT_EQ(ModeFor(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId),
               AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(ModeFor(ids::kMidasVendorId, ids::kMidasVeniceModelId),
@@ -87,6 +89,9 @@ TEST(AudioProfileRegistryTests, RecognizesKnownVendorModelPairs) {
                     .has_value());
     EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
                     ByVendorModel(ids::kApogeeVendorId, ids::kApogeeDuetModelId))
+                    .has_value());
+    EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                    ByVendorModel(ids::kTerraTecVendorId, ids::kPhase88RackFwModelId))
                     .has_value());
     EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
                     ByVendorModel(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId))

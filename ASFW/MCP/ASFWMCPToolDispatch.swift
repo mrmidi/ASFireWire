@@ -100,6 +100,8 @@ extension ASFWMCPCore {
             return await dispatchWriteQuadlet(name, decoder: decoder, protocolHint: "dice_tcat")
         case "asfw_tcat_write_application_block":
             return await dispatchWriteBlock(name, decoder: decoder, protocolHint: "dice_tcat")
+        case "asfw_bebob_read_bootrom_info":
+            return await bebobBootRomResult(toolName: name, decoder: decoder)
         default:
             return notImplementedToolResult(name, reason: "Catalog tool \(name) has no dispatch arm.")
         }
@@ -712,6 +714,48 @@ extension ASFWMCPCore {
 }
 
 private extension ASFWMCPCore {
+    func bebobBootRomResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let address = ASFWMCPAddress(
+                nodeId: try decoder.uint32("nodeId"),
+                generation: try decoder.uint32("generation"),
+                addressHigh: ASFWMCPBeBoBBootRomInformation.addressHigh,
+                addressLow: ASFWMCPBeBoBBootRomInformation.addressLow
+            )
+            var transaction = await driver.executeReadBlock(
+                ASFWMCPReadBlockRequest(address: address,
+                                        length: UInt32(ASFWMCPBeBoBBootRomInformation.sizeWithDebugger))
+            )
+            // Older BridgeCo firmware exposes only the base 80-byte record.
+            if !transaction.ok {
+                transaction = await driver.executeReadBlock(
+                    ASFWMCPReadBlockRequest(address: address,
+                                            length: UInt32(ASFWMCPBeBoBBootRomInformation.sizeWithoutDebugger))
+                )
+            }
+            guard transaction.ok else { return transactionToolResult(toolName, transaction) }
+            guard let payload = transaction.payload,
+                  let information = ASFWMCPBeBoBBootRomInformation.decode(payload) else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobBootRomInfo"),
+                    "recognized": .bool(false),
+                    "transaction": transaction.mcpValue,
+                    "reason": .string("BridgeCo BootROM magic/layout was not present at the read address.")
+                ]))
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("bebobBootRomInfo"),
+                "transaction": transaction.mcpValue,
+                "information": information.mcpValue
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
     func avcUnitInventoryResult(toolName: String) async -> ASFWMCPToolCallResult {
         let units = await driver.listAVCUnits()
         return .success(
