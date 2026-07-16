@@ -22,7 +22,8 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
             case .readOnly:
                 return configuration.mode == .mock ||
                        configuration.mode == .readOnlyDeveloper ||
-                       configuration.mode == .developerWriteEnabled
+                       configuration.mode == .developerWriteEnabled ||
+                       configuration.mode == .unrestrictedWrite
             case .developerWrite:
                 return configuration.mode == .mock || configuration.canListDeveloperWriteTools
             case .rawDeveloper:

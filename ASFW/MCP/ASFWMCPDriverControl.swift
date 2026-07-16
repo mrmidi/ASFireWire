@@ -12,6 +12,7 @@ protocol ASFWDriverControlling {
     func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
+    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
 }
@@ -29,6 +30,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     private var attemptedWriteCount: Int = 0
     private var duetInputFdf: UInt8 = 0x02
     private var duetOutputFdf: UInt8 = 0x02
+    private var phase88Streaming = false
 
     init(
         generation: UInt32 = 17,
@@ -362,6 +364,17 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     }
 
+    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {
+        attemptedWriteCount += 1
+        let matched = nodes.contains { $0.guid == String(format: "0x%016llX", targetGuid) &&
+            $0.protocolHints.contains("bebob") && $0.protocolHints.contains("cmp") }
+        guard matched else {
+            return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: -536_870_201)
+        }
+        phase88Streaming = start
+        return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: 0)
+    }
+
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
         let correlationId = "mock-bus-reset"
         guard request.generation == generation else {
@@ -431,6 +444,19 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     private func mockQuadletValue(for address: ASFWMCPAddress) -> UInt32 {
         if address.offset48 == 0xFFFF_F000_0400 {
             return 0x3133_3934
+        }
+        switch address.addressLow {
+        case 0xf000_0900, 0xf000_0980:
+            // S400 MPR with two available PCRs.
+            return 0x8000_0002
+        case 0xf000_0904:
+            // Online oPCR[0], one P2P consumer, channel 5, S400, overhead 3.
+            return 0x8105_8c00
+        case 0xf000_0984:
+            // Online iPCR[0], one P2P consumer, channel 6.
+            return 0x8106_0000
+        default:
+            break
         }
         return address.addressLow
     }

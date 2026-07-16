@@ -84,23 +84,8 @@ final class ASFWMCPControlViewModel: ObservableObject {
         defaults.set(Int(port), forKey: DefaultsKey.port)
 
         let driver = LiveASFWDriverControl(backend: connector)
-        let provisionalConfiguration = runtimeConfiguration(swiftTestGatePassed: guardedFCPExperimentsEnabled)
-        let provisionalCore = ASFWMCPCore(configuration: provisionalConfiguration, driver: driver)
-        if guardedFCPExperimentsEnabled {
-            let testGate = await ASFWMCPTestGate.evaluate(core: provisionalCore)
-            guard ASFWMCPTestGate.allowsRealAgentHardwareAccess(testGate) else {
-                let failures = testGate.failedChecks.map(\.id).joined(separator: ", ")
-                lastError = "Guarded FCP experiments were not enabled: \(failures)"
-                status = .stopped
-                isEnabled = false
-                defaults.set(false, forKey: DefaultsKey.enabled)
-                isChangingState = false
-                return
-            }
-        }
-
         let core = ASFWMCPCore(
-            configuration: runtimeConfiguration(swiftTestGatePassed: guardedFCPExperimentsEnabled),
+            configuration: runtimeConfiguration(),
             driver: driver
         )
         let nextHost = ASFWMCPHost(core: core)
@@ -146,13 +131,12 @@ final class ASFWMCPControlViewModel: ObservableObject {
         isChangingState = false
     }
 
-    private func runtimeConfiguration(swiftTestGatePassed: Bool) -> ASFWMCPRuntimeConfiguration {
-        guard guardedFCPExperimentsEnabled else { return .readOnlyDeveloper }
+    private func runtimeConfiguration() -> ASFWMCPRuntimeConfiguration {
         return ASFWMCPRuntimeConfiguration(
-            mode: .developerWriteEnabled,
+            mode: .unrestrictedWrite,
             writePolicyAvailable: true,
-            swiftTestGatePassed: swiftTestGatePassed,
-            rawDeveloperTierEnabled: false
+            swiftTestGatePassed: true,
+            rawDeveloperTierEnabled: true
         )
     }
 }

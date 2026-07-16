@@ -20,6 +20,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16?
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult?
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data?
+    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
 }
 
@@ -103,6 +104,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
         sendRawFCPCommand(guid: guid, frame: frame, timeoutMs: timeoutMs)
+    }
+
+    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32 {
+        Int32(setAudioStreaming(guid: guid, enabled: enabled))
     }
 
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
@@ -378,6 +383,17 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             status: status,
             correlationId: correlationId,
             durationUsec: elapsedUsec(since: started)
+        )
+    }
+
+    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {
+        guard backend.mcpIsConnected else {
+            return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: -536_870_201)
+        }
+        return ASFWMCPPhase88StreamingReceipt(
+            targetGuid: targetGuid,
+            started: start,
+            status: backend.mcpSetAudioStreaming(guid: targetGuid, enabled: start)
         )
     }
 

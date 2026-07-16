@@ -58,6 +58,8 @@ final class ASFWDriverConnector: ObservableObject {
         case stopDVCapture = 51
         // Developer-only local software bus reset, generation-pinned.
         case requestUserBusReset = 61
+        case startAudioStreaming = 62
+        case stopAudioStreaming = 63
     }
 
     // MARK: - Re-exported Models

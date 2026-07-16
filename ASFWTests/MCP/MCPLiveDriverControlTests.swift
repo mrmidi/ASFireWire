@@ -198,6 +198,28 @@ struct MCPLiveDriverControlTests {
         #expect(backend.busResetRequests == 1)
     }
 
+    @Test func phase88LifecycleReachesTheDedicatedDriverControl() async {
+        let backend = FakeLiveDriverBackend()
+        let control = LiveASFWDriverControl(backend: backend)
+
+        let start = await control.executePhase88Streaming(
+            targetGuid: 0x000A_AC03_00B1_D1F7,
+            start: true
+        )
+        let stop = await control.executePhase88Streaming(
+            targetGuid: 0x000A_AC03_00B1_D1F7,
+            start: false
+        )
+
+        #expect(start.ok)
+        #expect(stop.ok)
+        #expect(backend.audioStreamingRequests.count == 2)
+        #expect(backend.audioStreamingRequests[0].0 == 0x000A_AC03_00B1_D1F7)
+        #expect(backend.audioStreamingRequests[0].1)
+        #expect(backend.audioStreamingRequests[1].0 == 0x000A_AC03_00B1_D1F7)
+        #expect(backend.audioStreamingRequests[1].1 == false)
+    }
+
     @Test func localIrmSnapshotUsesDiagnosticStateInsteadOfAsyncSelfRead() async {
         let backend = FakeLiveDriverBackend()
         backend.localIrmResourceSnapshot = ASFWMCPLocalIrmResourceSnapshot(
@@ -314,6 +336,7 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var resultPolls = 0
     var fcpCommands = 0
     var fcpResponse: Data?
+    var audioStreamingRequests: [(UInt64, Bool)] = []
     var busResetRequests = 0
     var resetGenerationOnRequest = false
     var localIrmResourceSnapshot: ASFWMCPLocalIrmResourceSnapshot?
@@ -363,6 +386,11 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
         fcpCommands += 1
         return fcpResponse
+    }
+
+    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32 {
+        audioStreamingRequests.append((guid, enabled))
+        return 0
     }
 
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {

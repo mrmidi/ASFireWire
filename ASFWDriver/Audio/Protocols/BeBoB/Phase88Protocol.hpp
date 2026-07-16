@@ -11,6 +11,10 @@
 
 #include <cstdint>
 
+namespace ASFW::Protocols::AVC {
+class FCPTransport;
+}
+
 namespace ASFW::CMP {
 class CMPClient;
 struct CMPDevice;
@@ -66,6 +70,9 @@ private:
     uint16_t nodeId_{0};
     IRM::IRMClient* irmClient_{nullptr};
     CMP::CMPClient* cmpClient_{nullptr};
+    // The runtime owns this transport. It is refreshed on every discovery
+    // epoch and used only for the profile's AV/C unit-plug format commands.
+    Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
     uint64_t deviceGuid_{0};
     FW::Generation preparedGeneration_{0};
     AudioDuplexChannels duplexChannels_{};

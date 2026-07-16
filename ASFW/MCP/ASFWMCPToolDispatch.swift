@@ -82,8 +82,10 @@ extension ASFWMCPCore {
             return await dispatchApogeeDuetFormatTransition(name, decoder: decoder)
         case "asfw_fcp_send_command_dev":
             return await dispatchFcpDeveloperCommand(name, decoder: decoder)
-        case "asfw_cmp_list_plugs", "asfw_cmp_read_pcr":
-            return notImplementedToolResult(name, reason: "CMP inspection dispatch needs protocol adapter support from FW-94.")
+        case "asfw_cmp_list_plugs":
+            return await cmpListPlugsResult(toolName: name, decoder: decoder)
+        case "asfw_cmp_read_pcr":
+            return await cmpReadPcrResult(toolName: name, decoder: decoder)
         case "asfw_cmp_write_pcr":
             return await dispatchCmpWritePcr(name, decoder: decoder)
         case "asfw_cmp_establish_connection", "asfw_cmp_break_connection":
@@ -106,6 +108,9 @@ extension ASFWMCPCore {
             return await bebobUnitPlugInfoResult(toolName: name, decoder: decoder)
         case "asfw_bebob_get_clock_topology":
             return await bebobClockTopologyResult(toolName: name, decoder: decoder)
+        case "asfw_phase88_start_48k", "asfw_phase88_stop":
+            return await phase88StreamingResult(toolName: name, decoder: decoder,
+                                                start: name == "asfw_phase88_start_48k")
         default:
             return notImplementedToolResult(name, reason: "Catalog tool \(name) has no dispatch arm.")
         }
@@ -292,14 +297,6 @@ extension ASFWMCPCore {
                 generation: try decoder.uint32("generation"),
                 shortReset: try decoder.bool("shortReset", default: false)
             )
-            guard try decoder.bool("acknowledgeInterruption", default: false) else {
-                return .failure(
-                    toolName: name,
-                    code: .policyDenied,
-                    reason: "Bus reset interrupts active streams; set acknowledgeInterruption=true to proceed."
-                )
-            }
-
             let policy = evaluateWritePolicy(
                 request.policyRequest(
                     currentGeneration: await currentGeneration(),
@@ -406,9 +403,6 @@ extension ASFWMCPCore {
             targetGUID = try decoder.uint64("targetGuid")
             address = try decoder.address()
             sampleRateHz = try decoder.uint32("sampleRateHz")
-            guard try decoder.bool("acknowledgeInterruption", default: false) else {
-                return malformedToolResult(name, reason: "acknowledgeInterruption=true is required because this operation changes the device stream format.")
-            }
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }
@@ -718,6 +712,185 @@ extension ASFWMCPCore {
 }
 
 private extension ASFWMCPCore {
+    func phase88StreamingResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder,
+        start: Bool
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGuid = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let targetGuidText = String(format: "0x%016llX", targetGuid)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText &&
+                $0.vendorId == "0x000AAC" && $0.modelId == "0x000003" &&
+                $0.protocolHints.contains("bebob") && $0.protocolHints.contains("cmp")
+            }) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "targetGuid/nodeId must identify the TerraTec PHASE 88 Rack FW BeBoB/CMP backend.")
+            }
+            let policy = evaluateWritePolicy(ASFWMCPPolicyRequest(
+                operationType: .write,
+                addressSpace: .unitsSpace,
+                requestedGeneration: generation,
+                currentGeneration: await currentGeneration(),
+                protocolHint: "bebob",
+                protocolSupported: await protocolSupported("bebob"),
+                dryRun: try decoder.bool("dryRun", default: false)
+            ))
+            guard policy.reachesDriverWritePath else {
+                return .failure(toolName: toolName,
+                                code: policy.isDryRun ? .dryRunOnly : (policy.errorCode ?? .policyDenied),
+                                reason: policy.reason,
+                                data: .object(["policy": policy.mcpValue]))
+            }
+            let receipt = await driver.executePhase88Streaming(targetGuid: targetGuid, start: start)
+            return receipt.ok
+                ? .success(toolName: toolName, data: .object([
+                    "kind": .string("phase88DuplexLifecycle"),
+                    "sampleRateHz": .int(48000),
+                    "choreography": .array(start ? [
+                        .string("set_unit_output_format_am824_48k"),
+                        .string("set_unit_input_format_am824_48k"),
+                        .string("reserve_irm_resources"),
+                        .string("connect_ipcr"),
+                        .string("connect_opcr"),
+                        .string("start_host_rx"),
+                        .string("start_host_tx"),
+                        .string("verify_remote_pcrs"),
+                    ] : [
+                        .string("stop_host_rx_tx"),
+                        .string("disconnect_ipcr"),
+                        .string("disconnect_opcr"),
+                        .string("release_irm_resources"),
+                    ]),
+                    "receipt": receipt.mcpValue,
+                    "policy": policy.mcpValue,
+                ]))
+                : .failure(toolName: toolName, code: .rcodeError,
+                           reason: "The driver rejected the PHASE 88 duplex lifecycle request.",
+                           data: .object(["receipt": receipt.mcpValue, "policy": policy.mcpValue]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func cmpReadPcrResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let plug = try decoder.uint32("plug")
+            guard let direction = ASFWMCPCmpPcrDirection(rawValue: try decoder.string("direction")),
+                  let addressLow = ASFWMCPCmpPcr.address(for: direction, plug: plug) else {
+                return malformedToolResult(toolName, reason: "direction must be input or output and plug must be in 0...30.")
+            }
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.protocolHints.contains("cmp")
+            }) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "nodeId must identify a currently discovered CMP-capable node.")
+            }
+
+            let address = ASFWMCPAddress(nodeId: nodeId, generation: generation,
+                                         addressHigh: 0xffff, addressLow: addressLow)
+            let transaction = await driver.executeReadQuadlet(ASFWMCPReadQuadletRequest(address: address))
+            guard transaction.ok else { return transactionToolResult(toolName, transaction) }
+            guard let rawValue = Self.bigEndianQuadlet(transaction.payload) else {
+                return .failure(toolName: toolName, code: .rcodeError,
+                                reason: "CMP PCR read completed without one quadlet of payload.",
+                                data: transaction.mcpValue)
+            }
+            let pcr = ASFWMCPCmpPcr(direction: direction, plug: plug, rawValue: rawValue)
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("cmpPcr"),
+                "target": .object([
+                    "nodeId": .int(Int(nodeId)),
+                    "generation": .int(Int(generation)),
+                    "address": .string(String(format: "0xFFFF%08X", addressLow)),
+                ]),
+                "pcr": pcr.mcpValue,
+                "transaction": transaction.mcpValue,
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func cmpListPlugsResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.protocolHints.contains("cmp")
+            }) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "nodeId must identify a currently discovered CMP-capable node.")
+            }
+
+            func read(_ addressLow: UInt32) async -> ASFWMCPTransactionResult {
+                await driver.executeReadQuadlet(ASFWMCPReadQuadletRequest(address: .init(
+                    nodeId: nodeId, generation: generation, addressHigh: 0xffff, addressLow: addressLow
+                )))
+            }
+            let outputMpr = await read(0xf000_0900)
+            let inputMpr = await read(0xf000_0980)
+            guard outputMpr.ok, inputMpr.ok,
+                  let outputCount = Self.cmpPlugCount(outputMpr.payload),
+                  let inputCount = Self.cmpPlugCount(inputMpr.payload) else {
+                return .failure(toolName: toolName, code: .rcodeError,
+                                reason: "CMP OMPR/IMPR did not return valid quadlets.",
+                                data: .object(["outputMpr": outputMpr.mcpValue, "inputMpr": inputMpr.mcpValue]))
+            }
+
+            var plugs: [ASFWMCPValue] = []
+            for direction in [ASFWMCPCmpPcrDirection.output, .input] {
+                let count = direction == .output ? outputCount : inputCount
+                for plug in 0..<count {
+                    guard let addressLow = ASFWMCPCmpPcr.address(for: direction, plug: plug) else { continue }
+                    let transaction = await read(addressLow)
+                    var item: [String: ASFWMCPValue] = [
+                        "direction": .string(direction.rawValue),
+                        "plug": .int(Int(plug)),
+                        "transaction": transaction.mcpValue,
+                    ]
+                    if let rawValue = Self.bigEndianQuadlet(transaction.payload), transaction.ok {
+                        item["pcr"] = ASFWMCPCmpPcr(direction: direction, plug: plug, rawValue: rawValue).mcpValue
+                    }
+                    plugs.append(.object(item))
+                }
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("cmpPlugInventory"),
+                "nodeId": .int(Int(nodeId)),
+                "generation": .int(Int(generation)),
+                "outputPlugCount": .int(Int(outputCount)),
+                "inputPlugCount": .int(Int(inputCount)),
+                "outputMpr": outputMpr.mcpValue,
+                "inputMpr": inputMpr.mcpValue,
+                "plugs": .array(plugs),
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    static func bigEndianQuadlet(_ payload: [UInt8]?) -> UInt32? {
+        guard let payload, payload.count == 4 else { return nil }
+        return payload.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+    }
+
+    static func cmpPlugCount(_ payload: [UInt8]?) -> UInt32? {
+        guard let value = bigEndianQuadlet(payload) else { return nil }
+        return min(value & 0x1f, ASFWMCPCmpLimits.maxPlug + 1)
+    }
+
     func bebobClockTopologyResult(
         toolName: String,
         decoder: ASFWMCPToolArgumentDecoder

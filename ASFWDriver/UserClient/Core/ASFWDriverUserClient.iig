@@ -71,6 +71,9 @@ public:
         // Developer-only local reset request. The caller supplies the current
         // generation so the driver can refuse a stale reset command.
         kMethodRequestUserBusReset     = 61,
+        // Developer-only complete audio lifecycle control, GUID scalar input.
+        kMethodStartAudioStreaming     = 62,
+        kMethodStopAudioStreaming      = 63,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

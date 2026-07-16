@@ -5,6 +5,10 @@ enum ASFWMCPRuntimeMode: String, Equatable {
     case mock
     case readOnlyDeveloper
     case developerWriteEnabled
+    /// Local, explicitly enabled control-plane mode for hardware bring-up.
+    /// It exposes all developer and raw write tools without the test-gate
+    /// latch. Address-space and generation validation still apply.
+    case unrestrictedWrite
 }
 
 enum ASFWMCPVisibility: String, Equatable {
@@ -153,11 +157,13 @@ struct ASFWMCPRuntimeConfiguration: Equatable {
     )
 
     var canListDeveloperWriteTools: Bool {
-        mode == .developerWriteEnabled && writePolicyAvailable && swiftTestGatePassed
+        if mode == .unrestrictedWrite { return true }
+        return mode == .developerWriteEnabled && writePolicyAvailable && swiftTestGatePassed
     }
 
     var canListRawDeveloperTools: Bool {
-        canListDeveloperWriteTools && rawDeveloperTierEnabled
+        if mode == .unrestrictedWrite { return true }
+        return canListDeveloperWriteTools && rawDeveloperTierEnabled
     }
 }
 

@@ -10,6 +10,8 @@
 #include "../../../Bus/IRM/IRMClient.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../Protocols/AVC/CMP/CMPClient.hpp"
+#include "../../../Protocols/AVC/FCPTransport.hpp"
+#include "../../../Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -20,9 +22,46 @@ namespace ASFW::Audio::BeBoB {
 namespace {
 
 constexpr uint32_t kPhase88PcmChannels = 10;
+constexpr uint32_t kPhase88MidiDataBlocks = 1;
 constexpr uint32_t kPhase88SampleRateHz = 48000;
 constexpr uint32_t kCMPTimeoutMs = 250;
 constexpr uint32_t kCMPPollMs = 5;
+constexpr uint32_t kFormatSettleMs = 300;
+
+using SignalFormatCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
+using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
+
+[[nodiscard]] IOReturn MapAVCResultToIOReturn(Protocols::AVC::AVCResult result) noexcept {
+    using Protocols::AVC::AVCResult;
+    switch (result) {
+        case AVCResult::kAccepted:
+        case AVCResult::kImplementedStable:
+        case AVCResult::kChanged:
+            return kIOReturnSuccess;
+        case AVCResult::kNotImplemented:
+            return kIOReturnUnsupported;
+        case AVCResult::kInTransition:
+        case AVCResult::kInterim:
+        case AVCResult::kBusy:
+            return kIOReturnBusy;
+        case AVCResult::kTimeout:
+            return kIOReturnTimeout;
+        case AVCResult::kBusReset:
+            return kIOReturnNotResponding;
+        default:
+            return kIOReturnError;
+    }
+}
+
+[[nodiscard]] bool Matches48kAm824(const SignalFormatCommand::SignalFormat& format) noexcept {
+    return format.plugID == 0 && format.format == 0x90U &&
+           format.frequency == 0x02U;
+}
+
+[[nodiscard]] bool MatchesConnectedPCR(uint32_t value, uint8_t expectedChannel) noexcept {
+    return CMP::PCRBits::IsOnline(value) && CMP::PCRBits::GetP2P(value) == 1U &&
+           CMP::PCRBits::GetChannel(value) == expectedChannel;
+}
 
 struct CMPWaitState {
     std::atomic<bool> done{false};
@@ -42,15 +81,18 @@ struct CMPWaitState {
 }
 
 [[nodiscard]] AudioStreamRuntimeCaps Phase88Caps() noexcept {
-    // The exact PHASE 88 model map is ten PCM channels in each direction.
+    // The exact PHASE 88 model map is ten PCM channels plus one AM824 MIDI
+    // conformant-data block in each direction (DBS=11 at 48 kHz). The one
+    // data block can multiplex the unit's two physical MIDI ports.
     // Cross-validated with alsa-userspace-control-protocols-impl/
-    // protocols/bebob/src/terratec/phase88.rs:11-46.  MIDI is intentionally
-    // zero until the BridgeCo format-list probe reports AM824 0x0d slots.
+    // protocols/bebob/src/terratec/phase88.rs:11-46.  The audio engine still
+    // exposes the PCM channels only; the one extra slot is preserved on-wire
+    // for AM824 MIDI routing rather than being misinterpreted as PCM.
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = kPhase88PcmChannels,
         .hostOutputPcmChannels = kPhase88PcmChannels,
-        .deviceToHostAm824Slots = kPhase88PcmChannels,
-        .hostToDeviceAm824Slots = kPhase88PcmChannels,
+        .deviceToHostAm824Slots = kPhase88PcmChannels + kPhase88MidiDataBlocks,
+        .hostToDeviceAm824Slots = kPhase88PcmChannels + kPhase88MidiDataBlocks,
         .sampleRateHz = kPhase88SampleRateHz,
         .deviceToHostIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel,
         .hostToDeviceIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel,
@@ -58,9 +100,9 @@ struct CMPWaitState {
         .hostToDeviceStreamCount = 1,
     };
     caps.deviceToHostStreams[0] = {.pcmChannels = kPhase88PcmChannels,
-                                   .am824Slots = kPhase88PcmChannels};
+                                   .am824Slots = kPhase88PcmChannels + kPhase88MidiDataBlocks};
     caps.hostToDeviceStreams[0] = {.pcmChannels = kPhase88PcmChannels,
-                                   .am824Slots = kPhase88PcmChannels};
+                                   .am824Slots = kPhase88PcmChannels + kPhase88MidiDataBlocks};
     return caps;
 }
 
@@ -110,16 +152,16 @@ bool Phase88Protocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps)
 
 void Phase88Protocol::UpdateRuntimeContext(uint16_t nodeId,
                                            Protocols::AVC::FCPTransport* transport) {
-    // BeBoB streaming needs no FCP transaction after the ROM match.  A node
-    // move is nonetheless a new CMP epoch and all local leases must be dropped.
-    (void)transport;
-    if (nodeId_ != nodeId && cmpClient_ && deviceGuid_ != 0) {
+    // A replacement transport or node identity denotes a newly discovered bus
+    // epoch. Do not retain a rate transition or CMP lease across that boundary.
+    if ((nodeId_ != nodeId || fcpTransport_ != transport) && cmpClient_ && deviceGuid_ != 0) {
         cmpClient_->InvalidateDevice(deviceGuid_);
         inputConnected_ = false;
         outputConnected_ = false;
         preparedGeneration_ = FW::Generation{0};
     }
     nodeId_ = nodeId;
+    fcpTransport_ = transport;
 }
 
 CMP::CMPDevice Phase88Protocol::CurrentCMPDevice() const noexcept {
@@ -169,19 +211,57 @@ void Phase88Protocol::SetAssignedChannels(const AudioDuplexChannels& channels) n
 
 void Phase88Protocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
                                        ClockApplyCallback callback) {
-    // Phase 1 intentionally does not switch rate: this exact backend only
-    // admits the requested 48 kHz mode.  The device in front of us has no FCP
-    // response path yet, so writing a speculative signal format would leave
-    // it in an unknown state.  The later BridgeCo formation probe supplies the
-    // evidence required to make a rate transition safe.
     if (desiredClock.sampleRateHz != kPhase88SampleRateHz) {
         callback(kIOReturnUnsupported, {});
         return;
     }
-    appliedClock_ = desiredClock;
-    callback(kIOReturnSuccess, ClockApplyResult{.generation = busInfo_.GetGeneration(),
-                                                .appliedClock = appliedClock_,
-                                                .runtimeCaps = Phase88Caps()});
+    if (!fcpTransport_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+
+    // Linux's BeBoB start sequence explicitly writes OUTPUT plug 0 first,
+    // then INPUT plug 0, using AM824/SFC=48k, and waits 300 ms before CMP.
+    // Cross-validated with linux-sound-firewire-stack/firewire/bebob/
+    // bebob_stream.c:96-115 and fcp.c:28-81.  Each command is retained until
+    // FCP completes so the callback never outlives its CDB.
+    auto output = std::make_shared<SignalFormatCommand>(*fcpTransport_, 0, false,
+                                                         SignalSampleRate::k48000Hz);
+    output->Submit([this, desiredClock, callback = std::move(callback), output](
+                       Protocols::AVC::AVCResult outputResult,
+                       const SignalFormatCommand::SignalFormat& outputFormat) mutable {
+        const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
+        if (outputStatus != kIOReturnSuccess || !Matches48kAm824(outputFormat)) {
+            callback(outputStatus != kIOReturnSuccess ? outputStatus : kIOReturnError, {});
+            return;
+        }
+
+        if (!fcpTransport_) {
+            callback(kIOReturnNotReady, {});
+            return;
+        }
+        auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, 0, true,
+                                                            SignalSampleRate::k48000Hz);
+        input->Submit([this, desiredClock, callback = std::move(callback), input](
+                          Protocols::AVC::AVCResult inputResult,
+                          const SignalFormatCommand::SignalFormat& inputFormat) mutable {
+            const IOReturn inputStatus = MapAVCResultToIOReturn(inputResult);
+            if (inputStatus != kIOReturnSuccess || !Matches48kAm824(inputFormat)) {
+                callback(inputStatus != kIOReturnSuccess ? inputStatus : kIOReturnError, {});
+                return;
+            }
+
+            // Control-plane choreography only; this is never on the packet path.
+            IOSleep(kFormatSettleMs);
+            appliedClock_ = desiredClock;
+            ASFW_LOG(Audio, "[BeBoB] AV/C unit plugs set to AM824 48k GUID=0x%016llx",
+                     deviceGuid_);
+            callback(kIOReturnSuccess,
+                     ClockApplyResult{.generation = busInfo_.GetGeneration(),
+                                      .appliedClock = appliedClock_,
+                                      .runtimeCaps = Phase88Caps()});
+        });
+    });
 }
 
 void Phase88Protocol::ProgramRx(StageCallback callback) {
@@ -222,11 +302,45 @@ void Phase88Protocol::ProgramTxAndEnableDuplex(StageCallback callback) {
 }
 
 void Phase88Protocol::ConfirmDuplexStart(ConfirmCallback callback) {
-    callback((inputConnected_ && outputConnected_) ? kIOReturnSuccess : kIOReturnNotReady,
-             DuplexConfirmResult{.generation = busInfo_.GetGeneration(),
-                                 .channels = duplexChannels_,
-                                 .appliedClock = appliedClock_,
-                                 .runtimeCaps = Phase88Caps()});
+    if (!cmpClient_ || !inputConnected_ || !outputConnected_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+
+    // Re-read both PCRs after host IR/IT starts. The successful CMP compare-
+    // swap alone is insufficient: this verifies that the remote still exposes
+    // the exclusive p2p lease and the exact channels we reserved.
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    const AudioDuplexChannels channels = duplexChannels_;
+    cmpClient_->ReadIPCR(device, 0,
+                         [this, device, channels, callback = std::move(callback)](
+                             bool inputRead, uint32_t inputPCR) mutable {
+        if (!inputRead || !MatchesConnectedPCR(inputPCR, channels.hostToDeviceIsoChannel)) {
+            callback(kIOReturnNotResponding, {});
+            return;
+        }
+        if (!cmpClient_) {
+            callback(kIOReturnNotReady, {});
+            return;
+        }
+        cmpClient_->ReadOPCR(device, 0,
+                             [this, channels, inputPCR, callback = std::move(callback)](
+                                 bool outputRead, uint32_t outputPCR) mutable {
+            if (!outputRead || !MatchesConnectedPCR(outputPCR,
+                                                     channels.deviceToHostIsoChannel)) {
+                callback(kIOReturnNotResponding, {});
+                return;
+            }
+            ASFW_LOG(Audio,
+                     "[BeBoB] CMP verified iPCR=0x%08x oPCR=0x%08x GUID=0x%016llx",
+                     inputPCR, outputPCR, deviceGuid_);
+            callback(kIOReturnSuccess,
+                     DuplexConfirmResult{.generation = busInfo_.GetGeneration(),
+                                         .channels = channels,
+                                         .appliedClock = appliedClock_,
+                                         .runtimeCaps = Phase88Caps()});
+        });
+    });
 }
 
 void Phase88Protocol::ReadDuplexHealth(HealthCallback callback) {

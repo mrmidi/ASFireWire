@@ -71,6 +71,8 @@ enum {
     kMethodSubmitSBP2TaskManagement = 59,
     kMethodReleaseSBP2Session = 60,
     kMethodRequestUserBusReset = 61,
+    kMethodStartAudioStreaming = 62,
+    kMethodStopAudioStreaming = 63,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -328,6 +330,16 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
     }
 
     switch (selector) {
+    case kMethodStartAudioStreaming:
+    case kMethodStopAudioStreaming: {
+        const auto guid = GetFirstScalarInput(arguments);
+        if (!guid.has_value() || *guid == 0) {
+            return MethodDispatchResult{kIOReturnBadArgument};
+        }
+        return MethodDispatchResult{selector == kMethodStartAudioStreaming
+                                        ? driver.StartAudioStreaming(*guid)
+                                        : driver.StopAudioStreaming(*guid)};
+    }
     case kMethodGetAudioAutoStart:
         return HandleGetAudioAutoStart(driver, arguments);
     case kMethodGetLogConfig:

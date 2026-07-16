@@ -41,6 +41,8 @@
 #include "Audio/Core/AudioCoordinator.hpp"
 #include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
+#include "Audio/Protocols/AVCStartReadiness.hpp"
+#include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/BusResetCoordinator.hpp"
 #include "Bus/SelfIDCapture.hpp"
 #include "Common/DriverKitOwnership.hpp"
@@ -51,6 +53,7 @@
 #include "Controller/ControllerStateMachine.hpp"
 #include "Diagnostics/MetricsSink.hpp"
 #include "Discovery/DeviceManager.hpp"
+#include "Discovery/DeviceRegistry.hpp"
 #include "Discovery/FWDevice.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/InterruptManager.hpp"
@@ -970,6 +973,44 @@ kern_return_t ASFWDriver::GetAudioAutoStart(uint32_t* enabled) const {
     *enabled = ASFW::LogConfig::Shared().IsAudioAutoStartEnabled() ? 1u : 0u;
     ASFW_LOG_INFO(Controller, "UserClient: Reading audio auto-start (enabled=%u)", *enabled);
     return kIOReturnSuccess;
+}
+
+kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
+    if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
+        return kIOReturnNotReady;
+    }
+    auto& ctx = *ivars->context;
+    // The normal AudioDriverKit path refreshes FCP routing immediately before
+    // each AV/C start. MCP must do the same: a GUID survives a bus reset while
+    // its node/FCP transport does not. This prevents a developer start from
+    // issuing the PHASE 88's unit-plug format command through a stale route.
+    if (!ctx.deps.deviceRegistry || !ctx.deps.audioRuntimeRegistry ||
+        !ctx.deps.avcDiscovery) {
+        return kIOReturnNotReady;
+    }
+    auto* record = ctx.deps.deviceRegistry->FindByGuid(guid);
+    auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
+    if (!record || !protocol) {
+        return kIOReturnNotReady;
+    }
+    auto* transport = ctx.deps.avcDiscovery->GetFCPTransportForNodeID(record->nodeId);
+    if (!ASFW::Audio::HasReadyAVCStartRoute(record->nodeId, transport != nullptr)) {
+        ASFW_LOG(Audio,
+                 "[BeBoB] developer stream start refused; no live FCP route GUID=0x%016llx node=%u",
+                 guid, record->nodeId);
+        return kIOReturnNotReady;
+    }
+    protocol->UpdateRuntimeContext(record->nodeId, transport);
+    ASFW_LOG(Audio, "[BeBoB] developer stream start GUID=0x%016llx", guid);
+    return ctx.audioCoordinator->StartStreaming(guid);
+}
+
+kern_return_t ASFWDriver::StopAudioStreaming(uint64_t guid) {
+    if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Audio, "[BeBoB] developer stream stop GUID=0x%016llx", guid);
+    return ivars->context->audioCoordinator->StopStreaming(guid);
 }
 
 kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) {

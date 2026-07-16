@@ -2,6 +2,15 @@ import Testing
 @testable import ASFW
 
 struct MCPBeBoBToolsTests {
+    private var unrestrictedWrite: ASFWMCPRuntimeConfiguration {
+        ASFWMCPRuntimeConfiguration(
+            mode: .unrestrictedWrite,
+            writePolicyAvailable: false,
+            swiftTestGatePassed: false,
+            rawDeveloperTierEnabled: false
+        )
+    }
+
     private func bytes32(_ value: UInt32) -> [UInt8] {
         [UInt8(truncatingIfNeeded: value), UInt8(truncatingIfNeeded: value >> 8),
          UInt8(truncatingIfNeeded: value >> 16), UInt8(truncatingIfNeeded: value >> 24)]
@@ -93,5 +102,29 @@ struct MCPBeBoBToolsTests {
         #expect(clockSource["classification"] == .string("internal"))
         #expect(await core.listTools().contains { $0.name == "asfw_bebob_get_clock_topology" })
         #expect(await driver.unexpectedWriteAttemptCount() == 3)
+    }
+
+    @Test func phase88LifecycleToolsUseTheDriverOwnedDuplexChoreography() async {
+        let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
+        let core = ASFWMCPCore(configuration: unrestrictedWrite, driver: driver)
+        let arguments: ASFWMCPValue = .object([
+            "targetGuid": .uint64(0x000A_AC03_00B1_D1F7),
+            "nodeId": .int(3),
+            "generation": .int(17),
+        ])
+
+        let start = await core.callTool(name: "asfw_phase88_start_48k", arguments: arguments)
+        let stop = await core.callTool(name: "asfw_phase88_stop", arguments: arguments)
+
+        #expect(start.ok)
+        #expect(stop.ok)
+        #expect(await core.listTools().contains { $0.name == "asfw_phase88_start_48k" })
+        #expect(await driver.unexpectedWriteAttemptCount() == 2)
+        guard case .object(let startData) = start.data,
+              case .array(let choreography)? = startData["choreography"] else {
+            Issue.record("Expected the published PHASE 88 start choreography.")
+            return
+        }
+        #expect(choreography.last == .string("verify_remote_pcrs"))
     }
 }

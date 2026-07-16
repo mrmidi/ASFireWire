@@ -33,7 +33,7 @@ struct MCPBusResetToolsTests {
         #expect(await enabled.listTools().contains { $0.name == "asfw_bus_reset_dev" })
     }
 
-    @Test func resetRequiresExplicitInterruptionAcknowledgement() async {
+    @Test func resetUsesDeveloperWriteModeWithoutInterruptionAcknowledgement() async {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
 
@@ -42,9 +42,8 @@ struct MCPBusResetToolsTests {
             arguments: arguments(acknowledgeInterruption: false)
         )
 
-        #expect(result.ok == false)
-        #expect(result.errors.first?.code == .policyDenied)
-        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+        #expect(result.ok)
+        #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
 
     @Test func resetDryRunNeverReachesDriver() async throws {

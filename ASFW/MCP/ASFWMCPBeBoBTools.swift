@@ -32,8 +32,43 @@ extension ASFWMCPToolCatalog {
             idempotent: false,
             summary: "Inspect Music Subunit SYNC input topology and classify its current BridgeCo clock source (targetGuid, nodeId, generation required).",
             requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_phase88_start_48k",
+            group: "bebob",
+            visibility: .developerWrite,
+            readOnly: false,
+            idempotent: false,
+            summary: "Start the PHASE 88 Linux-style 48 kHz duplex lifecycle: set unit OUTPUT/INPUT AM824 format, reserve IRM, connect iPCR/oPCR, start host RX/TX, and verify remote PCRs.",
+            requiredProtocolHints: ["bebob", "cmp"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_phase88_stop",
+            group: "bebob",
+            visibility: .developerWrite,
+            readOnly: false,
+            idempotent: true,
+            summary: "Stop and cleanly tear down the active PHASE 88 duplex lifecycle.",
+            requiredProtocolHints: ["bebob", "cmp"]
         )
     ]
+}
+
+struct ASFWMCPPhase88StreamingReceipt: Equatable {
+    let targetGuid: UInt64
+    let started: Bool
+    let status: Int32
+
+    var ok: Bool { status == 0 }
+
+    var mcpValue: ASFWMCPValue {
+        .object([
+            "targetGuid": .string(String(format: "0x%016llX", targetGuid)),
+            "action": .string(started ? "start" : "stop"),
+            "status": .int(Int(status)),
+            "ok": .bool(ok),
+        ])
+    }
 }
 
 /// The generic AV/C Unit PLUG_INFO STATUS command used before any BridgeCo
