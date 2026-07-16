@@ -78,6 +78,8 @@ extension ASFWMCPCore {
             return notImplementedToolResult(name, reason: "Recent FCP command/response records are not exposed by the live adapter yet.")
         case "asfw_fcp_send_command":
             return await dispatchFcpReadCommand(name, decoder: decoder)
+        case "asfw_apogee_duet_apply_format_dev":
+            return await dispatchApogeeDuetFormatTransition(name, decoder: decoder)
         case "asfw_fcp_send_command_dev":
             return await dispatchFcpDeveloperCommand(name, decoder: decoder)
         case "asfw_cmp_list_plugs", "asfw_cmp_read_pcr":
@@ -381,6 +383,160 @@ extension ASFWMCPCore {
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }
+    }
+
+    // FW-103: This is intentionally a named, narrow operation rather than a
+    // convenience wrapper around raw FCP. It mirrors the profile's control
+    // sequence: capture both formations, set input then output, wait, and
+    // prove the resulting AM824/FDF state. Linux's OXFW stream implementation
+    // establishes that ordering and the 100 ms post-write delay
+    // (references/linux-sound-firewire-stack/firewire/oxfw/oxfw-stream.c:41-54,
+    // 93-100). The tool is developer-write gated and never used implicitly.
+    private func dispatchApogeeDuetFormatTransition(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        let targetGUID: UInt64
+        let address: ASFWMCPAddress
+        let sampleRateHz: UInt32
+        do {
+            targetGUID = try decoder.uint64("targetGuid")
+            address = try decoder.address()
+            sampleRateHz = try decoder.uint32("sampleRateHz")
+            guard try decoder.bool("acknowledgeInterruption", default: false) else {
+                return malformedToolResult(name, reason: "acknowledgeInterruption=true is required because this operation changes the device stream format.")
+            }
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+
+        guard address.addressHigh == 0xFFFF, address.addressLow == 0xF0000B00 else {
+            return malformedToolResult(name, reason: "Apogee Duet format control is restricted to the FCP command register 0xFFFF_F0000B00.")
+        }
+        guard let fdf = Self.duetFdf(for: sampleRateHz), let discoveryRate = Self.duetDiscoveryRateCode(for: sampleRateHz) else {
+            return .failure(toolName: name, code: .capabilityUnavailable, reason: "Only 32000, 44100, and 48000 Hz have end-to-end ASFW clock geometry validation.")
+        }
+
+        let policyRequest = ASFWMCPPolicyRequest.forTransaction(
+            kind: .writeBlock,
+            address: address,
+            currentGeneration: await currentGeneration(),
+            protocolHint: "avc",
+            protocolSupported: await protocolSupported("avc"),
+            dryRun: (try? decoder.bool("dryRun", default: false)) ?? false
+        )
+        let policy = evaluateWritePolicy(policyRequest)
+        guard policy.reachesDriverWritePath else {
+            return .failure(toolName: name, code: policy.isDryRun ? .dryRunOnly : .policyDenied,
+                            reason: "The guarded Duet format operation did not pass the developer-write policy.",
+                            data: .object(["kind": .string("apogeeDuetFormatTransition"), "status": .string(policy.isDryRun ? "dryRun" : "denied"), "policy": policy.mcpValue]))
+        }
+
+        let units = await driver.listAVCUnits()
+        guard let unit = units.first(where: {
+            $0.guid == targetGUID && $0.nodeId == address.nodeId &&
+            $0.vendorId == 0x0003DB && $0.modelId == 0x01DDDD &&
+            $0.subunits.contains(where: { $0.type == 0x0C && $0.id == 0 })
+        }) else {
+            return .failure(toolName: name, code: .capabilityUnavailable, reason: "The requested target is not the discovered Apogee Duet Music subunit.")
+        }
+        guard let capabilities = await driver.avcSubunitCapabilities(guid: unit.guid, type: 0x0C, id: 0),
+              capabilities.hasAudio,
+              Self.duetCapabilitiesSupport(capabilities, discoveryRateCode: discoveryRate) else {
+            return .failure(toolName: name, code: .capabilityUnavailable, reason: "The discovered Duet capabilities do not advertise the requested stereo AM824 format.")
+        }
+
+        func command(_ intent: ASFWMCPAvcCommandIntent, _ opcode: UInt8, _ formatFdf: UInt8? = nil) -> ASFWMCPFcpCommandRequest {
+            let payload: [UInt8] = formatFdf.map { [0x00, 0xFF, opcode, 0x00, 0x90, $0, 0xFF, 0xFF] }
+                ?? [0x01, 0xFF, opcode, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]
+            return ASFWMCPFcpCommandRequest(targetGUID: targetGUID, address: address, intent: intent, payload: payload)
+        }
+        func observedFdf(_ receipt: ASFWMCPFcpCommandReceipt, opcode: UInt8) -> UInt8? {
+            guard receipt.ok, let response = receipt.response, response.count >= 6,
+                  response[0] == 0x0C, response[1] == 0xFF, response[2] == opcode,
+                  response[3] == 0x00, response[4] == 0x90 else { return nil }
+            return response[5]
+        }
+        func result(_ ok: Bool, _ status: String, _ inputFdf: UInt8?, _ outputFdf: UInt8?, _ rollbackAttempted: Bool = false) -> ASFWMCPToolCallResult {
+            let data: ASFWMCPValue = .object([
+                "kind": .string("apogeeDuetFormatTransition"),
+                "status": .string(status),
+                "targetGuid": .string(String(format: "0x%016llX", targetGUID)),
+                "nodeId": .int(Int(address.nodeId)),
+                "generation": .int(Int(address.generation)),
+                "sampleRateHz": .int(Int(sampleRateHz)),
+                "inputFdf": inputFdf.map { .int(Int($0)) } ?? .null,
+                "outputFdf": outputFdf.map { .int(Int($0)) } ?? .null,
+                "rollbackAttempted": .bool(rollbackAttempted),
+                "policy": policy.mcpValue,
+            ])
+            return ok ? .success(toolName: name, data: data) : .failure(toolName: name, code: .rcodeError, reason: "The Duet did not complete the requested OXFW format transition.", data: data)
+        }
+
+        let inputBeforeReceipt = await driver.executeFCPCommand(command(.status, 0x19))
+        guard let inputBefore = observedFdf(inputBeforeReceipt, opcode: 0x19) else {
+            return result(false, "inputPreflightFailed", nil, nil)
+        }
+        let outputBeforeReceipt = await driver.executeFCPCommand(command(.status, 0x18))
+        guard let outputBefore = observedFdf(outputBeforeReceipt, opcode: 0x18) else {
+            return result(false, "outputPreflightFailed", inputBefore, nil)
+        }
+
+        var inputChanged = false
+        var outputChanged = false
+        if inputBefore != fdf {
+            let receipt = await driver.executeFCPCommand(command(.control, 0x19, fdf))
+            guard receipt.ok else { return result(false, "inputControlFailed", inputBefore, outputBefore) }
+            inputChanged = true
+        }
+        if outputBefore != fdf {
+            let receipt = await driver.executeFCPCommand(command(.control, 0x18, fdf))
+            guard receipt.ok else {
+                if inputChanged, receipt.observedGeneration == address.generation {
+                    _ = await driver.executeFCPCommand(command(.control, 0x19, inputBefore))
+                }
+                return result(false, "outputControlFailed", inputBefore, outputBefore, inputChanged)
+            }
+            outputChanged = true
+        }
+        if inputChanged || outputChanged {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let inputAfterReceipt = await driver.executeFCPCommand(command(.status, 0x19))
+        let outputAfterReceipt = await driver.executeFCPCommand(command(.status, 0x18))
+        let inputAfter = observedFdf(inputAfterReceipt, opcode: 0x19)
+        let outputAfter = observedFdf(outputAfterReceipt, opcode: 0x18)
+        guard inputAfter == fdf && outputAfter == fdf else {
+            let canRollback = inputAfterReceipt.observedGeneration == address.generation &&
+                outputAfterReceipt.observedGeneration == address.generation
+            if canRollback {
+                if inputChanged { _ = await driver.executeFCPCommand(command(.control, 0x19, inputBefore)) }
+                if outputChanged { _ = await driver.executeFCPCommand(command(.control, 0x18, outputBefore)) }
+            }
+            return result(false, "verificationFailed", inputAfter, outputAfter, canRollback && (inputChanged || outputChanged))
+        }
+        return result(true, "verified", inputAfter, outputAfter)
+    }
+
+    private static func duetFdf(for sampleRateHz: UInt32) -> UInt8? {
+        switch sampleRateHz {
+        case 32000: return 0x00
+        case 44100: return 0x01
+        case 48000: return 0x02
+        default: return nil
+        }
+    }
+
+    private static func duetDiscoveryRateCode(for sampleRateHz: UInt32) -> UInt8? {
+        switch sampleRateHz {
+        case 32000: return 0x02
+        case 44100: return 0x03
+        case 48000: return 0x04
+        default: return nil
+        }
+    }
+
+    private static func duetCapabilitiesSupport(_ capabilities: ASFWMCPAVCSubunitCapabilities, discoveryRateCode: UInt8) -> Bool {
+        let audioPlugs = capabilities.plugs.filter { $0.type == 0x00 }
+        return audioPlugs.contains(where: { $0.isInput && $0.supportedFormats.contains { $0.sampleRateCode == discoveryRateCode && $0.formatCode == 0x06 && $0.channelCount == 2 } }) &&
+            audioPlugs.contains(where: { !$0.isInput && $0.supportedFormats.contains { $0.sampleRateCode == discoveryRateCode && $0.formatCode == 0x06 && $0.channelCount == 2 } })
     }
 
     private func dispatchFcpReadCommand(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {

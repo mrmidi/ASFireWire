@@ -44,6 +44,7 @@ Pass `--endpoint` or set `ASFW_MCP_ENDPOINT` when the server uses a non-default 
 - Use `--allow-mutation` only after the user explicitly authorizes the exact hardware action. Do not infer permission from a request to inspect, diagnose, capture, or test.
 - Read and preserve the current generation. A generation change means prior node IDs and writes are stale; refresh the summary before any follow-up action.
 - Do not use the skill to issue raw writes or control commands merely to probe a device. Prefer the MCP hardware-smoke runner's read-only mode.
+- `asfw_apogee_duet_apply_format_dev` is an intentional interruption: use it only when the user authorizes the exact rate change, includes `acknowledgeInterruption: true`, and has confirmed that audio is stopped. It is not suitable for discovery or routine diagnostics.
 
 ## Focused commands
 

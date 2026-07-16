@@ -27,6 +27,8 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     private let droppedEventCount: UInt32
     private let timeoutCount: UInt32
     private var attemptedWriteCount: Int = 0
+    private var duetInputFdf: UInt8 = 0x02
+    private var duetOutputFdf: UInt8 = 0x02
 
     init(
         generation: UInt32 = 17,
@@ -131,6 +133,13 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             supportedRatesMask: (UInt32(1) << 3) | (UInt32(1) << 4),
             plugs: [.init(
                 id: 0, isInput: true, type: 0x00, name: "Mock Audio",
+                signalBlocks: [.init(formatCode: 0x06, channelCount: 2)],
+                supportedFormats: [
+                    .init(sampleRateCode: 0x03, formatCode: 0x06, channelCount: 2),
+                    .init(sampleRateCode: 0x04, formatCode: 0x06, channelCount: 2),
+                ]
+            ), .init(
+                id: 0, isInput: false, type: 0x00, name: "Mock Audio",
                 signalBlocks: [.init(formatCode: 0x06, channelCount: 2)],
                 supportedFormats: [
                     .init(sampleRateCode: 0x03, formatCode: 0x06, channelCount: 2),
@@ -256,6 +265,27 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             )
         }
         attemptedWriteCount += 1
+        let payload = request.payload
+        if payload.count >= 6, payload[1] == 0xFF, payload[2] == 0x18 || payload[2] == 0x19 {
+            let isInput = payload[2] == 0x19
+            if request.intent == .status {
+                return ASFWMCPFcpCommandReceipt(
+                    targetGUID: request.targetGUID,
+                    expectedNodeId: request.address.nodeId,
+                    expectedGeneration: request.address.generation,
+                    observedNodeId: request.address.nodeId,
+                    observedGeneration: generation,
+                    response: [0x0C, 0xFF, payload[2], 0x00, 0x90, isInput ? duetInputFdf : duetOutputFdf, 0xFF, 0xFF],
+                    status: .ok,
+                    correlationId: "mock-fcp-unit-plug-status",
+                    durationUsec: 200,
+                    policy: nil
+                )
+            }
+            if request.intent == .control {
+                if isInput { duetInputFdf = payload[5] } else { duetOutputFdf = payload[5] }
+            }
+        }
         return ASFWMCPFcpCommandReceipt(
             targetGUID: request.targetGUID,
             expectedNodeId: request.address.nodeId,

@@ -266,7 +266,7 @@ Key points:
 
 - It lives inside the existing Xcode project (no separate Swift package or CLI). The MCP layer talks to the driver through a narrow `ASFWDriverControlling` boundary over `ASFWDriverConnector`, so handlers can be unit-tested with mocks and later backed by the live connector.
 - A local HTTP/SSE endpoint exposes the tool surface, gated behind an explicit runtime mode plus a write-policy engine — read/inspection tools first, with raw register and CAS writes refused unless the policy and test gates allow them.
-- Tool surfaces include register access, AV/C and raw FCP, CMP, IRM/CAS, SBP-2, and DICE/TCAT inspection. Telemetry and transaction schemas are published as MCP resources.
+- Tool surfaces include register access, AV/C (including one explicitly acknowledged, guarded Apogee Duet format transition) and raw FCP, CMP, IRM/CAS, SBP-2, and DICE/TCAT inspection. Telemetry and transaction schemas are published as MCP resources.
 - `asfw://control-plane/health` is the versioned first query for agents. It reports `ready`, `degraded`, or `unavailable`, explicit reasons, the expected generation, and whether deeper read-only diagnostics are trustworthy.
 - The default endpoint is loopback-only: `http://127.0.0.1:8766/mcp`. Enable the control plane in the ASFW app before connecting an agent; do not expose it on the network.
 - The app's **Run read-only smoke** action is the preferred hardware check. It captures generation and node inventory, reads Config ROM data, identifies adapter gaps, and never embeds a device-specific write recipe.

@@ -125,6 +125,41 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
 
+    @Test func guardedDuetFormatTransitionPreflightsAppliesAndVerifies() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["sampleRateHz"] = .int(44100)
+        args["acknowledgeInterruption"] = .bool(true)
+
+        let result = await transport.callTool("asfw_apogee_duet_apply_format_dev", arguments: .object(args))
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["kind"] == .string("apogeeDuetFormatTransition"))
+        #expect(data["status"] == .string("verified"))
+        #expect(data["inputFdf"] == .int(1))
+        #expect(data["outputFdf"] == .int(1))
+        #expect(await driver.unexpectedWriteAttemptCount() == 6)
+    }
+
+    @Test func guardedDuetFormatTransitionDoesNotReachDriverWhenPolicyIsClosed() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["sampleRateHz"] = .int(44100)
+        args["acknowledgeInterruption"] = .bool(true)
+
+        let result = await transport.callTool("asfw_apogee_duet_apply_format_dev", arguments: .object(args))
+        let data = try object(result)
+
+        #expect(result.ok == false)
+        #expect(data["status"] == .string("denied"))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func readOnlyFcpStatusCommandRoutesThroughDriver() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
