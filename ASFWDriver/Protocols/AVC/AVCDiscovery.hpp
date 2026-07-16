@@ -24,6 +24,7 @@
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Audio/Core/IAVCAudioConfigListener.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
+#include "../../Scheduling/ITimerScheduler.hpp"
 
 // Forward declarations
 namespace ASFW::Discovery { struct DeviceRecord; }
@@ -46,6 +47,7 @@ public:
                  Discovery::IDeviceManager& deviceManager,
                  Protocols::Ports::FireWireBusOps& busOps,
                  Protocols::Ports::FireWireBusInfo& busInfo,
+                 Scheduling::ITimerScheduler& timerScheduler,
                  ASFW::Audio::IAVCAudioConfigListener* audioConfigListener);
 
     ~AVCDiscovery() override;
@@ -74,6 +76,8 @@ public:
     void Shutdown();
 
     FCPTransport* GetFCPTransportForNodeID(uint16_t nodeID) override;
+
+    std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t nodeID) override;
 
     void OnBusReset(uint32_t newGeneration);
 
@@ -141,13 +145,14 @@ private:
     Discovery::IDeviceManager& deviceManager_;
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
+    Scheduling::ITimerScheduler& timerScheduler_;
     ASFW::Audio::IAVCAudioConfigListener* audioConfigListener_{nullptr};
 
     IOLock* lock_{nullptr};
 
     std::unordered_map<uint64_t, std::shared_ptr<AVCUnit>> units_;
 
-    std::unordered_map<uint16_t, FCPTransport*> fcpTransportsByNodeID_;
+    std::unordered_map<uint16_t, std::shared_ptr<FCPTransport>> fcpTransportsByNodeID_;
     std::unordered_map<uint64_t, uint8_t> rescanAttempts_;
     std::unordered_map<uint64_t, DuetPrefetchState> duetPrefetchByGuid_;
 

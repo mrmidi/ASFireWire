@@ -22,6 +22,7 @@
 #include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
+#include "../../Scheduling/ITimerScheduler.hpp"
 #include "AVCUnitPlugInfoCommand.hpp" // Added include here
 
 namespace ASFW::Protocols::AVC {
@@ -68,7 +69,8 @@ public:
     AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
             std::shared_ptr<Discovery::FWUnit> unit,
             Protocols::Ports::FireWireBusOps& busOps,
-            Protocols::Ports::FireWireBusInfo& busInfo);
+            Protocols::Ports::FireWireBusInfo& busInfo,
+            Scheduling::ITimerScheduler& timerScheduler);
 
     ~AVCUnit();
 
@@ -97,6 +99,7 @@ public:
 
     FCPTransport& GetFCPTransport() { return *fcpTransport_; }
     const FCPTransport& GetFCPTransport() const { return *fcpTransport_; }
+    std::shared_ptr<FCPTransport> GetFCPTransportShared() const { return fcpTransport_; }
 
     void OnBusReset(uint32_t newGeneration);
 
@@ -134,6 +137,7 @@ private:
 
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
+    Scheduling::ITimerScheduler& timerScheduler_;
 
     std::shared_ptr<FCPTransport> fcpTransport_;
 

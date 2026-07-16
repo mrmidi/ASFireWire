@@ -30,6 +30,22 @@ target_link_libraries(FCPPacketParsingTests PRIVATE
 )
 gtest_discover_tests(FCPPacketParsingTests)
 
+# FCP transport lifecycle tests (write completion, cancellable timeout, teardown)
+add_protocols_test(FCPTransportTests
+    FCPTransportTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
+# FCP response CSR range and transport-lifetime routing tests
+add_protocols_test(FCPResponseRouterTests
+    FCPResponseRouterTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 # Music Subunit Identifier Parser Tests
 add_executable(MusicSubunitIdentifierParserTests
     MusicSubunitIdentifierParserTests.cpp

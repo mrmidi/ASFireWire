@@ -31,6 +31,10 @@ public:
         for (auto& e : entries_) {
             if (e.token == token && !e.fired) {
                 e.canceled = true;
+                // Release captures immediately. Production Cancel() erases its
+                // pending callback, so retaining them in the virtual-clock fake
+                // would hide lifetime bugs and keep test objects alive.
+                e.fn = {};
             }
         }
     }

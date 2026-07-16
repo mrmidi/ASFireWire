@@ -594,6 +594,7 @@
 		492F816729EBB471D53E3D0B /* ASFWDriver+SCSI.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "ASFWDriver+SCSI.entitlements"; sourceTree = "<group>"; };
 		4A29B65AFF65A07671ACC9BB /* InterruptDispatcher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = InterruptDispatcher.cpp; sourceTree = "<group>"; };
 		4A89236ABF709F1C06A46D40 /* RoleCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RoleCoordinator.hpp; sourceTree = "<group>"; };
+		4AE8FA92BD497B00B01107A3 /* ITimerScheduler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ITimerScheduler.hpp; sourceTree = "<group>"; };
 		4B076CD52C117ABBC6A188EA /* PayloadRegistry.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PayloadRegistry.cpp; sourceTree = "<group>"; };
 		4B70F133E77570009DD68FD3 /* Scheduler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Scheduler.hpp; sourceTree = "<group>"; };
 		4B88D66FB60D411C99BECB93 /* Transaction.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Transaction.hpp; sourceTree = "<group>"; };
@@ -2301,6 +2302,7 @@
 		B63539896C934E1034BC433D /* Scheduling */ = {
 			isa = PBXGroup;
 			children = (
+				4AE8FA92BD497B00B01107A3 /* ITimerScheduler.hpp */,
 				9379C84175E3D9E61640368D /* Scheduler.cpp */,
 				4B70F133E77570009DD68FD3 /* Scheduler.hpp */,
 				5FB5C0A58E95DBC92C872879 /* WatchdogCoordinator.cpp */,

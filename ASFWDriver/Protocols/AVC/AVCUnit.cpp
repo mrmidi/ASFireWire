@@ -20,11 +20,13 @@ using namespace ASFW::Protocols::AVC;
 AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                  std::shared_ptr<Discovery::FWUnit> unit,
                  Protocols::Ports::FireWireBusOps& busOps,
-                 Protocols::Ports::FireWireBusInfo& busInfo)
+                 Protocols::Ports::FireWireBusInfo& busInfo,
+                 Scheduling::ITimerScheduler& timerScheduler)
     : device_(device),
       unit_(unit),
       busOps_(busOps),
-      busInfo_(busInfo) {
+      busInfo_(busInfo),
+      timerScheduler_(timerScheduler) {
 
     // Check for custom FCP addresses in Config ROM (optional)
     // For now, use standard addresses
@@ -39,7 +41,11 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     // Create FCP transport
     fcpTransport_ = std::make_shared<FCPTransport>();
     if (fcpTransport_) {
-        fcpTransport_->init(&busOps_, &busInfo_, device.get(), config);
+        if (!fcpTransport_->init(&busOps_, &busInfo_, device.get(), timerScheduler_, config)) {
+            ASFW_LOG_ERROR(AVC, "AVCUnit: Failed to initialize FCPTransport");
+            fcpTransport_.reset();
+            return;
+        }
 
         // Create DescriptorAccessor for unit-level descriptors (Phase 5)
         descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*fcpTransport_, kAVCSubunitUnit);

@@ -175,11 +175,13 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
                            Discovery::IDeviceManager& deviceManager,
                            Protocols::Ports::FireWireBusOps& busOps,
                            Protocols::Ports::FireWireBusInfo& busInfo,
+                           Scheduling::ITimerScheduler& timerScheduler,
                            ASFW::Audio::IAVCAudioConfigListener* audioConfigListener)
     : driver_(driver)
     , deviceManager_(deviceManager)
     , busOps_(busOps)
     , busInfo_(busInfo)
+    , timerScheduler_(timerScheduler)
     , audioConfigListener_(audioConfigListener) {
 
     // Allocate lock
@@ -276,7 +278,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     }
 
     // Create AVCUnit
-    auto avcUnit = std::make_shared<AVCUnit>(device, unit, busOps_, busInfo_);
+    auto avcUnit = std::make_shared<AVCUnit>(device, unit, busOps_, busInfo_, timerScheduler_);
 
     // Publish the unit to the shutdown owner before initializing it. A
     // termination callback can race discovery after our first atomic check;
@@ -1037,6 +1039,13 @@ void AVCDiscovery::ReScanAllUnits() {
 }
 
 FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {
+    // Legacy borrowing API. New asynchronous callers must use Acquire...()
+    // and retain the returned shared owner across their complete operation.
+    const auto transport = AcquireFCPTransportForNodeID(nodeID);
+    return transport.get();
+}
+
+std::shared_ptr<FCPTransport> AVCDiscovery::AcquireFCPTransportForNodeID(uint16_t nodeID) {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return nullptr;
     }
@@ -1046,9 +1055,9 @@ FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {
     const uint16_t nodeNumber = static_cast<uint16_t>(nodeID & 0x3Fu);
 
     auto it = fcpTransportsByNodeID_.find(nodeNumber);
-    FCPTransport* result = (it != fcpTransportsByNodeID_.end())
-                               ? it->second
-                               : nullptr;
+    std::shared_ptr<FCPTransport> result = (it != fcpTransportsByNodeID_.end())
+                                                ? it->second
+                                                : nullptr;
 
     IOLockUnlock(lock_);
 
@@ -1138,7 +1147,11 @@ void AVCDiscovery::RebuildNodeIDMap() {
         const uint16_t fullNodeID = device->GetNodeID();
         const uint16_t nodeNumber = static_cast<uint16_t>(fullNodeID & 0x3Fu);
         
-        fcpTransportsByNodeID_[nodeNumber] = &avcUnit->GetFCPTransport();
+        auto transport = avcUnit->GetFCPTransportShared();
+        if (!transport) {
+            continue;
+        }
+        fcpTransportsByNodeID_[nodeNumber] = std::move(transport);
 
         os_log_debug(log_,
                      "AVCDiscovery: Mapped fullNodeID=0x%04x (node=%u) → FCPTransport (GUID=%llx)",

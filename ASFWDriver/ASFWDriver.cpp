@@ -298,29 +298,32 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
     ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.rolePolicy, ctx.deps);
 
-    if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager) {
-        auto& bus = ctx.controller->Bus();
-        ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
-            this, *ctx.deps.deviceManager, bus, bus, ctx.audioCoordinator.get());
-        ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
-        ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
-    }
-
-    if (!ctx.deps.fcpResponseRouter && ctx.deps.avcDiscovery) {
-        auto& bus = ctx.controller->Bus();
-        ctx.deps.fcpResponseRouter =
-            std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(*ctx.deps.avcDiscovery, bus);
-        ctx.controller->SetFCPResponseRouter(ctx.deps.fcpResponseRouter);
-        ASFW_LOG(Controller, "✅ FCPResponseRouter initialized");
-    }
-
-    // Construct the SBP-2 manager dependency, then assemble the single inbound
-    // request dispatch (CSR / FCP / DICE / SBP-2) in one place.
+    // FCP shares the driver's cancellable control-plane timer with SBP-2. It
+    // must exist before AV/C discovery constructs per-unit FCP transports.
     kr = DriverWiring::EnsureSbp2Deps(*this, ctx);
     if (kr != kIOReturnSuccess) {
         DriverWiring::CleanupStartFailure(ctx);
         return kr;
     }
+
+    if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager) {
+        auto& bus = ctx.controller->Bus();
+        ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
+            this, *ctx.deps.deviceManager, bus, bus, *ctx.deps.sbp2SessionScheduler,
+            ctx.audioCoordinator.get());
+        ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
+        ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
+    }
+
+    if (!ctx.deps.fcpResponseRouter && ctx.deps.avcDiscovery) {
+        ctx.deps.fcpResponseRouter =
+            std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(*ctx.deps.avcDiscovery);
+        ctx.controller->SetFCPResponseRouter(ctx.deps.fcpResponseRouter);
+        ASFW_LOG(Controller, "✅ FCPResponseRouter initialized");
+    }
+
+    // Assemble the single inbound request dispatch (CSR / FCP / DICE / SBP-2)
+    // after all control-plane responders have been constructed.
     ASFW::Service::WireLocalRequestDispatch(ctx);
     EnsureRomScanner(ctx);
 

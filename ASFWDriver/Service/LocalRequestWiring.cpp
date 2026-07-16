@@ -125,6 +125,7 @@ private:
         const ASFW::Protocols::Ports::BlockWriteRequestView request{
             .sourceID = ctx.sourceID,
             .destOffset = ctx.destOffset,
+            .generation = ctx.generation,
             .payload = payload,
         };
         const auto disposition = fcp_->RouteBlockWrite(request);
