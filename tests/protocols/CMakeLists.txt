@@ -46,6 +46,12 @@ add_protocols_test(FCPResponseRouterTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
+# CMP device leases, MPR validation, and compare-swap contention tests
+add_protocols_test(CMPConnectionTests
+    CMPConnectionTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+)
+
 # Music Subunit Identifier Parser Tests
 add_executable(MusicSubunitIdentifierParserTests
     MusicSubunitIdentifierParserTests.cpp

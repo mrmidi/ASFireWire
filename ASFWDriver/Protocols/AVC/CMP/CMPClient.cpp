@@ -1,309 +1,383 @@
-//
-// CMPClient.cpp
-// ASFWDriver - CMP (Connection Management Procedures)
-//
-// CMP client implementation for connecting to device's PCR registers.
-//
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 ASFireWire Project
 
 #include "CMPClient.hpp"
-#include "../../../Common/CallbackUtils.hpp"
+
 #include "../../../Logging/Logging.hpp"
-#include <DriverKit/IOLib.h>
-#include <os/log.h>
+
+#include <array>
+#include <cstring>
+#include <utility>
 
 namespace ASFW::CMP {
 
-// ============================================================================
-// Constructor / Destructor
-// ============================================================================
+namespace {
 
-CMPClient::CMPClient(Async::IFireWireBusOps& busOps)
-    : busOps_(busOps)
-{
+[[nodiscard]] FW::FwSpeed MinSpeed(FW::FwSpeed lhs, FW::FwSpeed rhs) noexcept {
+    return static_cast<uint8_t>(lhs) < static_cast<uint8_t>(rhs) ? lhs : rhs;
 }
 
-CMPClient::~CMPClient() = default;
+} // namespace
 
-// ============================================================================
-// Configuration
-// ============================================================================
+CMPClient::CMPClient(Async::IFireWireBusOps& busOps, Async::IFireWireBusInfo& busInfo)
+    : busOps_(busOps), busInfo_(busInfo), lock_(IOLockAlloc()) {}
 
-void CMPClient::SetDeviceNode(uint8_t nodeId, IRM::Generation generation) {
-    deviceNodeId_ = nodeId;
-    generation_ = generation;
-    
-    ASFW_LOG(CMP, "CMPClient: Set device node=%u generation=%u",
-             nodeId, generation.value);
+CMPClient::~CMPClient() {
+    if (lock_) {
+        IOLockFree(lock_);
+        lock_ = nullptr;
+    }
 }
 
-// ============================================================================
-// Internal Helpers
-// ============================================================================
-
-void CMPClient::ReadPCRQuadlet(uint32_t addressLo, PCRReadCallback callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    Async::FWAddress addr{Async::FWAddress::AddressParts{
-        .addressHi = PCRRegisters::kAddressHi,
-        .addressLo = addressLo,
-    }};
-    
-    // PCR operations use device's max speed (typically S400)
-    // Note: CMP to device PCRs can use full speed (unlike IRM which requires S100)
-    FW::FwSpeed speed{2};  // S400
-    FW::NodeId node{deviceNodeId_};
-    FW::Generation gen{generation_};
-    
-    ASFW_LOG(CMP, "CMPClient: Reading PCR at 0x%08X (node=%u gen=%u)",
-             addressLo, deviceNodeId_, generation_.value);
-    
-    busOps_.ReadQuad(gen, node, addr, speed,
-        [callbackState, addressLo](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-            if (status == Async::AsyncStatus::kSuccess && payload.size() == 4) {
-                uint32_t raw = 0;
-                std::memcpy(&raw, payload.data(), sizeof(raw));
-                uint32_t hostValue = OSSwapBigToHostInt32(raw);
-                
-                ASFW_LOG(CMP, "CMPClient: Read PCR 0x%08X = 0x%08X (online=%d p2p=%u ch=%u)",
-                         addressLo, hostValue,
-                         PCRBits::IsOnline(hostValue),
-                         PCRBits::GetP2P(hostValue),
-                         PCRBits::GetChannel(hostValue));
-                
-                Common::InvokeSharedCallback(callbackState, true, hostValue);
-            } else {
-                ASFW_LOG(CMP,
-                         "CMPClient: Read PCR 0x%08X failed: status=%{public}s(%u)",
-                         addressLo,
-                         ASFW::Async::ToString(status),
-                         static_cast<unsigned>(status));
-                Common::InvokeSharedCallback(callbackState, false, 0u);
-            }
-        });
+void CMPClient::ReadOPCR(const CMPDevice& device, uint8_t plugNum, PCRReadCallback callback) {
+    if (!device.IsValid() || plugNum > kMaxPlugNumber) {
+        callback(false, 0);
+        return;
+    }
+    ReadQuadlet(device, PCRAddress(PCRDirection::kOutput, plugNum),
+                busInfo_.GetSpeed(device.nodeId), std::move(callback));
 }
 
-void CMPClient::CompareSwapPCR(uint32_t addressLo, uint32_t expected, uint32_t desired,
-                                CMPCallback callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    Async::FWAddress addr{Async::FWAddress::AddressParts{
-        .addressHi = PCRRegisters::kAddressHi,
-        .addressLo = addressLo,
-    }};
-    
-    FW::FwSpeed speed{2};  // S400
-    FW::NodeId node{deviceNodeId_};
-    FW::Generation gen{generation_};
-    
-    // Build CAS operand: [compare_value][swap_value] in big-endian
-    std::array<uint8_t, 8> operand;
-    uint32_t expectedBE = OSSwapHostToBigInt32(expected);
-    uint32_t desiredBE = OSSwapHostToBigInt32(desired);
-    std::memcpy(&operand[0], &expectedBE, 4);
-    std::memcpy(&operand[4], &desiredBE, 4);
-    
-    ASFW_LOG(CMP, "CMPClient: Lock PCR 0x%08X: 0x%08X → 0x%08X",
-             addressLo, expected, desired);
-    
-    busOps_.Lock(gen, node, addr, FW::LockOp::kCompareSwap,
-        std::span{operand}, 4, speed,
-        [callbackState, expected, desired, addressLo](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-            if (status == Async::AsyncStatus::kSuccess && payload.size() == 4) {
-                uint32_t raw = 0;
-                std::memcpy(&raw, payload.data(), sizeof(raw));
-                uint32_t oldValue = OSSwapBigToHostInt32(raw);
-                
-                bool succeeded = (oldValue == expected);
-                if (succeeded) {
-                    ASFW_LOG(CMP, "CMPClient: Lock PCR 0x%08X succeeded (0x%08X → 0x%08X)",
-                             addressLo, expected, desired);
-                    Common::InvokeSharedCallback(callbackState, CMPStatus::Success);
-                } else {
-                    ASFW_LOG(CMP, "CMPClient: Lock PCR 0x%08X contention (expected=0x%08X actual=0x%08X)",
-                             addressLo, expected, oldValue);
-                    Common::InvokeSharedCallback(callbackState, CMPStatus::Failed);
+void CMPClient::ReadIPCR(const CMPDevice& device, uint8_t plugNum, PCRReadCallback callback) {
+    if (!device.IsValid() || plugNum > kMaxPlugNumber) {
+        callback(false, 0);
+        return;
+    }
+    ReadQuadlet(device, PCRAddress(PCRDirection::kInput, plugNum),
+                busInfo_.GetSpeed(device.nodeId), std::move(callback));
+}
+
+void CMPClient::ConnectOPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel,
+                            CMPCallback callback) {
+    const LeaseKey key{device.guid, PCRDirection::kOutput, plugNum};
+    if (!device.IsValid() || plugNum > kMaxPlugNumber || channel > 63 || !BeginConnect(key, device, channel)) {
+        callback(CMPStatus::Failed);
+        return;
+    }
+    ReadMPR(device, PCRDirection::kOutput, plugNum,
+            [this, key, device, channel, callback = std::move(callback)](CMPStatus status, FW::FwSpeed speed) mutable {
+                if (status != CMPStatus::Success) {
+                    CompleteConnect(key, device, channel, status, std::move(callback));
+                    return;
                 }
-            } else {
-                ASFW_LOG(CMP,
-                         "CMPClient: Lock PCR 0x%08X failed: status=%{public}s(%u)",
-                         addressLo,
-                         ASFW::Async::ToString(status),
-                         static_cast<unsigned>(status));
-                Common::InvokeSharedCallback(callbackState, CMPStatus::Failed);
-            }
-        });
+                AttemptConnect(key, device, channel, speed, 0, std::move(callback));
+            });
 }
 
-// ============================================================================
-// oPCR Operations (device→host stream)
-// ============================================================================
-
-void CMPClient::ReadOPCR(uint8_t plugNum, PCRReadCallback callback) {
-    if (plugNum > 30) {
-        ASFW_LOG(CMP, "CMPClient: Invalid oPCR plug number %u", plugNum);
-        callback(false, 0);
-        return;
-    }
-    
-    ReadPCRQuadlet(PCRRegisters::GetOPCRAddress(plugNum), callback);
-}
-
-void CMPClient::ConnectOPCR(uint8_t plugNum, uint8_t channel, CMPCallback callback) {
-    if (plugNum > 30) {
-        ASFW_LOG(CMP, "CMPClient: Invalid oPCR plug number %u", plugNum);
+void CMPClient::ConnectIPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel,
+                            CMPCallback callback) {
+    const LeaseKey key{device.guid, PCRDirection::kInput, plugNum};
+    if (!device.IsValid() || plugNum > kMaxPlugNumber || channel > 63 || !BeginConnect(key, device, channel)) {
         callback(CMPStatus::Failed);
         return;
     }
-    if (channel > 63) {
-        ASFW_LOG(CMP, "CMPClient: Invalid channel %u", channel);
-        callback(CMPStatus::Failed);
-        return;
-    }
-
-    // Both directions carry the IRM-allocated channel in their PCR. Linux
-    // cmp.c:220-275 and Apple's IOFireWireAVCUserClient.cpp:667-675 update the
-    // channel before the compare-and-swap; preserving an oPCR's reset default
-    // would make the device transmit on a channel the host did not reserve.
-    ASFW_LOG(CMP, "CMPClient: Connecting oPCR[%u] on channel %u", plugNum, channel);
-    PerformConnect(PCRRegisters::GetOPCRAddress(plugNum), plugNum, channel, callback);
+    ReadMPR(device, PCRDirection::kInput, plugNum,
+            [this, key, device, channel, callback = std::move(callback)](CMPStatus status, FW::FwSpeed speed) mutable {
+                if (status != CMPStatus::Success) {
+                    CompleteConnect(key, device, channel, status, std::move(callback));
+                    return;
+                }
+                AttemptConnect(key, device, channel, speed, 0, std::move(callback));
+            });
 }
 
-void CMPClient::DisconnectOPCR(uint8_t plugNum, CMPCallback callback) {
-    if (plugNum > 30) {
-        ASFW_LOG(CMP, "CMPClient: Invalid oPCR plug number %u", plugNum);
-        callback(CMPStatus::Failed);
+void CMPClient::DisconnectOPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback) {
+    const LeaseKey key{device.guid, PCRDirection::kOutput, plugNum};
+    Lease lease{};
+    if (!device.IsValid() || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
+        // No local lease means this client never established the remote p2p
+        // count. Treat BREAK as idempotent without touching a foreign stream.
+        callback(CMPStatus::Success);
         return;
     }
-    
-    ASFW_LOG(CMP, "CMPClient: Disconnecting oPCR[%u]", plugNum);
-    PerformDisconnect(PCRRegisters::GetOPCRAddress(plugNum), plugNum, callback);
+    AttemptDisconnect(key, lease, 0, std::move(callback));
 }
 
-// ============================================================================
-// iPCR Operations (host→device stream)
-// ============================================================================
-
-void CMPClient::ReadIPCR(uint8_t plugNum, PCRReadCallback callback) {
-    if (plugNum > 30) {
-        ASFW_LOG(CMP, "CMPClient: Invalid iPCR plug number %u", plugNum);
-        callback(false, 0);
+void CMPClient::DisconnectIPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback) {
+    const LeaseKey key{device.guid, PCRDirection::kInput, plugNum};
+    Lease lease{};
+    if (!device.IsValid() || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
+        callback(CMPStatus::Success);
         return;
     }
-    
-    ReadPCRQuadlet(PCRRegisters::GetIPCRAddress(plugNum), callback);
+    AttemptDisconnect(key, lease, 0, std::move(callback));
 }
 
-void CMPClient::ConnectIPCR(uint8_t plugNum, uint8_t channel, CMPCallback callback) {
-    if (plugNum > 30) {
-        ASFW_LOG(CMP, "CMPClient: Invalid iPCR plug number %u", plugNum);
-        callback(CMPStatus::Failed);
+void CMPClient::InvalidateDevice(uint64_t guid) {
+    if (!lock_ || guid == 0) {
         return;
     }
-    if (channel > 63) {
-        ASFW_LOG(CMP, "CMPClient: Invalid channel %u", channel);
-        callback(CMPStatus::Failed);
-        return;
+    IOLockLock(lock_);
+    for (auto it = leases_.begin(); it != leases_.end();) {
+        if (it->first.guid == guid) {
+            it = leases_.erase(it);
+        } else {
+            ++it;
+        }
     }
-    
-    ASFW_LOG(CMP, "CMPClient: Connecting iPCR[%u] on channel %u", plugNum, channel);
-    PerformConnect(PCRRegisters::GetIPCRAddress(plugNum), plugNum, channel, callback);
+    IOLockUnlock(lock_);
 }
 
-void CMPClient::DisconnectIPCR(uint8_t plugNum, CMPCallback callback) {
-    if (plugNum > 30) {
-        ASFW_LOG(CMP, "CMPClient: Invalid iPCR plug number %u", plugNum);
-        callback(CMPStatus::Failed);
-        return;
-    }
-    
-    ASFW_LOG(CMP, "CMPClient: Disconnecting iPCR[%u]", plugNum);
-    PerformDisconnect(PCRRegisters::GetIPCRAddress(plugNum), plugNum, callback);
-}
-
-// ============================================================================
-// Private Implementation
-// ============================================================================
-
-void CMPClient::PerformConnect(uint32_t pcrAddress, uint8_t plugNum,
-                                std::optional<uint8_t> setChannel, CMPCallback callback) {
-    // Step 1: Read current PCR value
-    ReadPCRQuadlet(pcrAddress, [this, pcrAddress, plugNum, setChannel, callback](bool success, uint32_t current) {
-        if (!success) {
-            ASFW_LOG(CMP, "CMPClient: Connect failed - cannot read PCR 0x%08X", pcrAddress);
-            callback(CMPStatus::Failed);
+void CMPClient::ReadQuadlet(const CMPDevice& device, uint32_t address, FW::FwSpeed speed,
+                            PCRReadCallback callback) {
+    const Async::FWAddress target{Async::FWAddress::AddressParts{
+        .addressHi = PCRRegisters::kAddressHi,
+        .addressLo = address,
+    }};
+    busOps_.ReadQuad(device.generation, device.nodeId, target, speed,
+                      [callback = std::move(callback)](Async::AsyncStatus status,
+                                                       std::span<const uint8_t> payload) mutable {
+        if (status != Async::AsyncStatus::kSuccess || payload.size() != sizeof(uint32_t)) {
+            callback(false, 0);
             return;
         }
-        
-        // Step 2: Verify plug is online
+        uint32_t raw = 0;
+        std::memcpy(&raw, payload.data(), sizeof(raw));
+        callback(true, OSSwapBigToHostInt32(raw));
+    });
+}
+
+void CMPClient::CompareSwap(const CMPDevice& device, uint32_t address, uint32_t expected,
+                            uint32_t desired, FW::FwSpeed speed, CompareSwapCallback callback) {
+    const Async::FWAddress target{Async::FWAddress::AddressParts{
+        .addressHi = PCRRegisters::kAddressHi,
+        .addressLo = address,
+    }};
+    std::array<uint8_t, 8> operand{};
+    const uint32_t expectedBE = OSSwapHostToBigInt32(expected);
+    const uint32_t desiredBE = OSSwapHostToBigInt32(desired);
+    std::memcpy(operand.data(), &expectedBE, sizeof(expectedBE));
+    std::memcpy(operand.data() + sizeof(expectedBE), &desiredBE, sizeof(desiredBE));
+
+    busOps_.Lock(device.generation, device.nodeId, target, FW::LockOp::kCompareSwap,
+                 operand, sizeof(uint32_t), speed,
+                 [callback = std::move(callback)](Async::AsyncStatus status,
+                                                  std::span<const uint8_t> payload) mutable {
+        if (status != Async::AsyncStatus::kSuccess) {
+            callback(MapAsyncStatus(status), 0);
+            return;
+        }
+        if (payload.size() != sizeof(uint32_t)) {
+            callback(CMPStatus::Failed, 0);
+            return;
+        }
+        uint32_t raw = 0;
+        std::memcpy(&raw, payload.data(), sizeof(raw));
+        callback(CMPStatus::Success, OSSwapBigToHostInt32(raw));
+    });
+}
+
+void CMPClient::ReadMPR(const CMPDevice& device, PCRDirection direction, uint8_t plugNum,
+                        std::function<void(CMPStatus, FW::FwSpeed)> callback) {
+    const FW::FwSpeed routeSpeed = busInfo_.GetSpeed(device.nodeId);
+    ReadQuadlet(device, MPRAddress(direction), routeSpeed,
+                [routeSpeed, plugNum, callback = std::move(callback)](bool success, uint32_t mpr) mutable {
+        if (!success) {
+            callback(CMPStatus::Failed, FW::FwSpeed::S100);
+            return;
+        }
+        const uint8_t plugCount = static_cast<uint8_t>(mpr & 0x1FU);
+        if (plugNum >= plugCount) {
+            callback(CMPStatus::NotFound, FW::FwSpeed::S100);
+            return;
+        }
+        const auto mprSpeed = static_cast<FW::FwSpeed>((mpr >> 30U) & 0x03U);
+        callback(CMPStatus::Success, MinSpeed(routeSpeed, mprSpeed));
+    });
+}
+
+void CMPClient::AttemptConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel,
+                               FW::FwSpeed speed, uint8_t attempt, CMPCallback callback) {
+    ReadQuadlet(device, PCRAddress(key.direction, key.plugNum), speed,
+                [this, key, device, channel, speed, attempt, callback = std::move(callback)]
+                (bool success, uint32_t current) mutable {
+        if (!success) {
+            CompleteConnect(key, device, channel, CMPStatus::Failed, std::move(callback));
+            return;
+        }
         if (!PCRBits::IsOnline(current)) {
-            ASFW_LOG(CMP, "CMPClient: Connect failed - plug %u not online (PCR=0x%08X)",
-                     plugNum, current);
-            callback(CMPStatus::Failed);
+            CompleteConnect(key, device, channel, CMPStatus::NotFound, std::move(callback));
             return;
         }
-        
-        // Step 3: Check p2p count
-        uint8_t p2p = PCRBits::GetP2P(current);
-        if (p2p >= 63) {
-            ASFW_LOG(CMP, "CMPClient: Connect failed - p2p count already max (%u)", p2p);
-            callback(CMPStatus::NoResources);
+        // Establish is exclusive. Sharing a p2p count is not safe without a
+        // common lease owner and would let BREAK tear down another host stream.
+        if (PCRBits::IsInUse(current)) {
+            CompleteConnect(key, device, channel, CMPStatus::NoResources, std::move(callback));
             return;
         }
 
-        if (setChannel.has_value() && p2p != 0 &&
-            PCRBits::GetChannel(current) != *setChannel) {
-            // A non-zero p2p count means another connection owns the current
-            // channel. Apple's updateP2PCount rejects a different channel at
-            // IOFireWireAVCUserClient.cpp:667-675; changing it here would move
-            // that live stream without the other connection's consent.
-            ASFW_LOG(CMP,
-                     "CMPClient: Connect failed - plug %u already uses channel %u, requested %u",
-                     plugNum, PCRBits::GetChannel(current), *setChannel);
-            callback(CMPStatus::NoResources);
-            return;
+        uint32_t desired = PCRBits::SetChannel(PCRBits::SetP2P(current, 1), channel);
+        if (key.direction == PCRDirection::kOutput) {
+            // Cross-validated with Linux sound/firewire/cmp.c:231-273 and
+            // iso-resources.c:64-79: oPCR carries speed and overhead ID.
+            desired = PCRBits::SetDataRate(desired, speed);
+            desired = PCRBits::SetOverheadId(desired, OverheadIdForGapCount(busInfo_.GetGapCount()));
         }
-        
-        // Step 4: Compute new value (increment p2p, optionally set channel)
-        uint32_t newVal = PCRBits::SetP2P(current, p2p + 1);
-        
-        if (setChannel.has_value()) {
-            // CMP writes the selected channel into both iPCR and oPCR.
-            newVal = (newVal & ~PCRBits::kChannelMask) |
-                     (static_cast<uint32_t>(*setChannel) << PCRBits::kChannelShift);
-        }
-        
-        ASFW_LOG(CMP, "CMPClient: Connect PCR 0x%08X: p2p %u→%u (0x%08X → 0x%08X)",
-                 pcrAddress, p2p, p2p + 1, current, newVal);
-        
-        // Step 5: Lock-compare-swap
-        CompareSwapPCR(pcrAddress, current, newVal, callback);
+        CompareSwap(device, PCRAddress(key.direction, key.plugNum), current, desired, speed,
+                    [this, key, device, channel, speed, attempt, current, callback = std::move(callback)]
+                    (CMPStatus status, uint32_t observed) mutable {
+            if (status != CMPStatus::Success) {
+                CompleteConnect(key, device, channel, status, std::move(callback));
+                return;
+            }
+            if (observed == current) {
+                CompleteConnect(key, device, channel, CMPStatus::Success, std::move(callback));
+                return;
+            }
+            if (attempt + 1U >= kMaxCompareSwapAttempts) {
+                CompleteConnect(key, device, channel, CMPStatus::NoResources, std::move(callback));
+                return;
+            }
+            AttemptConnect(key, device, channel, speed, attempt + 1U, std::move(callback));
+        });
     });
 }
 
-void CMPClient::PerformDisconnect(uint32_t pcrAddress, uint8_t plugNum, CMPCallback callback) {
-    // Step 1: Read current PCR value
-    ReadPCRQuadlet(pcrAddress, [this, pcrAddress, plugNum, callback](bool success, uint32_t current) {
+void CMPClient::AttemptDisconnect(const LeaseKey& key, const Lease& lease, uint8_t attempt,
+                                  CMPCallback callback) {
+    const FW::FwSpeed speed = busInfo_.GetSpeed(lease.device.nodeId);
+    ReadQuadlet(lease.device, PCRAddress(key.direction, key.plugNum), speed,
+                [this, key, lease, speed, attempt, callback = std::move(callback)]
+                (bool success, uint32_t current) mutable {
         if (!success) {
-            ASFW_LOG(CMP, "CMPClient: Disconnect failed - cannot read PCR 0x%08X", pcrAddress);
-            callback(CMPStatus::Failed);
+            CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
             return;
         }
-        
-        // Step 2: Check p2p count
-        uint8_t p2p = PCRBits::GetP2P(current);
-        if (p2p == 0) {
-            ASFW_LOG(CMP, "CMPClient: Disconnect - p2p already 0, nothing to do");
-            callback(CMPStatus::Success);  // Already disconnected
+        // Never decrement a PCR unless it still describes the exclusive lease
+        // that this client established in this generation.
+        if (PCRBits::GetP2P(current) != 1 || PCRBits::GetChannel(current) != lease.channel ||
+            (current & PCRBits::kBcastMask) != 0) {
+            CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
             return;
         }
-        
-        // Step 3: Compute new value (decrement p2p)
-        uint32_t newVal = PCRBits::SetP2P(current, p2p - 1);
-        
-        ASFW_LOG(CMP, "CMPClient: Disconnect PCR 0x%08X: p2p %u→%u (0x%08X → 0x%08X)",
-                 pcrAddress, p2p, p2p - 1, current, newVal);
-        
-        // Step 4: Lock-compare-swap
-        CompareSwapPCR(pcrAddress, current, newVal, callback);
+        const uint32_t desired = PCRBits::SetP2P(current, 0);
+        CompareSwap(lease.device, PCRAddress(key.direction, key.plugNum), current, desired, speed,
+                    [this, key, lease, attempt, current, callback = std::move(callback)]
+                    (CMPStatus status, uint32_t observed) mutable {
+            if (status != CMPStatus::Success) {
+                CompleteDisconnect(key, status, std::move(callback));
+                return;
+            }
+            if (observed == current) {
+                CompleteDisconnect(key, CMPStatus::Success, std::move(callback));
+                return;
+            }
+            if (attempt + 1U >= kMaxCompareSwapAttempts) {
+                CompleteDisconnect(key, CMPStatus::Failed, std::move(callback));
+                return;
+            }
+            AttemptDisconnect(key, lease, attempt + 1U, std::move(callback));
+        });
     });
+}
+
+bool CMPClient::BeginConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel) {
+    if (!lock_) {
+        return false;
+    }
+    IOLockLock(lock_);
+    const auto it = leases_.find(key);
+    if (it != leases_.end()) {
+        if (it->second.device.generation != device.generation || it->second.device.nodeId != device.nodeId) {
+            leases_.erase(it);
+        } else {
+            IOLockUnlock(lock_);
+            return false;
+        }
+    }
+    leases_.emplace(key, Lease{device, channel, LeaseState::kConnecting});
+    IOLockUnlock(lock_);
+    return true;
+}
+
+bool CMPClient::BeginDisconnect(const LeaseKey& key, const CMPDevice& device, Lease& outLease) {
+    if (!lock_) {
+        return false;
+    }
+    IOLockLock(lock_);
+    const auto it = leases_.find(key);
+    if (it == leases_.end() || it->second.state != LeaseState::kConnected) {
+        IOLockUnlock(lock_);
+        return false;
+    }
+    if (it->second.device.generation != device.generation || it->second.device.nodeId != device.nodeId) {
+        leases_.erase(it);
+        IOLockUnlock(lock_);
+        return false;
+    }
+    it->second.state = LeaseState::kDisconnecting;
+    outLease = it->second;
+    IOLockUnlock(lock_);
+    return true;
+}
+
+void CMPClient::CompleteConnect(const LeaseKey& key, const CMPDevice& device, uint8_t channel,
+                                CMPStatus status, CMPCallback callback) {
+    if (lock_) {
+        IOLockLock(lock_);
+        const auto it = leases_.find(key);
+        if (it != leases_.end() && it->second.device.generation == device.generation &&
+            it->second.device.nodeId == device.nodeId && it->second.channel == channel) {
+            if (status == CMPStatus::Success) {
+                it->second.state = LeaseState::kConnected;
+            } else {
+                leases_.erase(it);
+            }
+        }
+        IOLockUnlock(lock_);
+    }
+    callback(status);
+}
+
+void CMPClient::CompleteDisconnect(const LeaseKey& key, CMPStatus status, CMPCallback callback) {
+    if (lock_) {
+        IOLockLock(lock_);
+        const auto it = leases_.find(key);
+        if (it != leases_.end()) {
+            if (status == CMPStatus::Success) {
+                leases_.erase(it);
+            } else {
+                it->second.state = LeaseState::kConnected;
+            }
+        }
+        IOLockUnlock(lock_);
+    }
+    callback(status);
+}
+
+CMPStatus CMPClient::MapAsyncStatus(Async::AsyncStatus status) noexcept {
+    switch (status) {
+        case Async::AsyncStatus::kSuccess:
+            return CMPStatus::Success;
+        case Async::AsyncStatus::kTimeout:
+            return CMPStatus::Timeout;
+        case Async::AsyncStatus::kStaleGeneration:
+            return CMPStatus::GenerationMismatch;
+        default:
+            return CMPStatus::Failed;
+    }
+}
+
+uint32_t CMPClient::PCRAddress(PCRDirection direction, uint8_t plugNum) noexcept {
+    return direction == PCRDirection::kOutput ? PCRRegisters::GetOPCRAddress(plugNum)
+                                              : PCRRegisters::GetIPCRAddress(plugNum);
+}
+
+uint32_t CMPClient::MPRAddress(PCRDirection direction) noexcept {
+    return direction == PCRDirection::kOutput ? PCRRegisters::kOMPR : PCRRegisters::kIMPR;
+}
+
+uint8_t CMPClient::OverheadIdForGapCount(uint8_t gapCount) noexcept {
+    // Linux derives allocation overhead from the live gap count. The
+    // unoptimised fallback (63) maps to 512 units and thus overhead ID 0.
+    const uint32_t overhead = gapCount < 63U ? (static_cast<uint32_t>(gapCount) * 97U) / 10U + 89U
+                                             : 512U;
+    for (uint8_t id = 1; id < 16U; ++id) {
+        if (overhead < (static_cast<uint32_t>(id) << 5U)) {
+            return id;
+        }
+    }
+    return 0;
 }
 
 } // namespace ASFW::CMP

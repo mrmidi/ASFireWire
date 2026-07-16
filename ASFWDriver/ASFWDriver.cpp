@@ -342,7 +342,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
 
     if (!ctx.deps.cmpClient) {
-        ctx.deps.cmpClient = std::make_shared<ASFW::CMP::CMPClient>(ctx.controller->Bus());
+        ctx.deps.cmpClient = std::make_shared<ASFW::CMP::CMPClient>(ctx.controller->Bus(),
+                                                                      ctx.controller->Bus());
         ctx.controller->SetCMPClient(ctx.deps.cmpClient);
         ASFW_LOG(Controller, "✅ CMPClient initialized");
     }

@@ -40,6 +40,10 @@ public:
      */
     virtual uint32_t HopCount(FW::NodeId nodeA, FW::NodeId nodeB) const = 0;
 
+    /// Current bus gap count, or the conservative unoptimised value (63).
+    /// CMP uses it to encode oPCR overhead from the live bus policy.
+    virtual uint8_t GetGapCount() const { return 63; }
+
     /**
      * @brief Get current bus generation.
      *
