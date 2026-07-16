@@ -293,6 +293,21 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     units_[guid] = avcUnit;
     IOLockUnlock(lock_);
 
+    // The PHASE 88 is a BeBoB unit matched by stable Config ROM identity.
+    // Linux BeBoB starts directly with unit PLUG_INFO and BridgeCo commands;
+    // it does not require generic UNIT_INFO or SUBUNIT_INFO first. Keep that
+    // wire ordering instead of letting generic AV/C discovery consume or race
+    // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
+    // firewire/bebob/bebob_stream.c:908-940.
+    if (BridgeCo::IsTerraTecPhase88RackFw(device->GetVendorID(), device->GetModelID())) {
+        ASFW_LOG(AVC,
+                 "AVCDiscovery: PHASE 88 matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
+                 guid);
+        BridgeCo::StartPhase88ReadOnlyProbe(*avcUnit, guid);
+        RebuildNodeIDMap();
+        return;
+    }
+
     const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
 
     // Initialize (probe subunits, plugs)
@@ -305,16 +320,6 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
             os_log_error(self->log_,
                          "AVCDiscovery: AVCUnit initialization failed: GUID=%llx",
                          guid);
-            // Standard AV/C discovery is allowed to fail for the exact BeBoB
-            // device: its UNIT_INFO behavior is non-standard, and the remaining
-            // standard commands may be unavailable too. Run its single-query
-            // BridgeCo discriminator only after that chain has quiesced, so it
-            // cannot race FCP's one-command-at-a-time transport.
-            const auto failedDevice = avcUnit->GetDevice();
-            if (failedDevice && BridgeCo::IsTerraTecPhase88RackFw(
-                                    failedDevice->GetVendorID(), failedDevice->GetModelID())) {
-                BridgeCo::StartPhase88ReadOnlyProbe(*avcUnit, guid);
-            }
             return;
         }
 
@@ -343,14 +348,6 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
                 avcUnit->GetSubunits().size(),
                 avcUnit->IsInitialized() ? 2 : 0,  // Placeholder
                 avcUnit->IsInitialized() ? 2 : 0); // Placeholder
-
-    // BeBoB devices can omit or mishandle standard AV/C UNIT_INFO and Music
-    // descriptors. The exact TerraTec identity is stable in its Config ROM, so
-    // start its independent STATUS-only inventory before requiring a generic
-    // Music subunit. The inventory never mutates device or PCR/CMP state.
-    if (BridgeCo::IsTerraTecPhase88RackFw(device->GetVendorID(), device->GetModelID())) {
-        BridgeCo::StartPhase88ReadOnlyProbe(*avcUnit, guid);
-    }
 
     auto* musicSubunit = FindAudioMusicSubunit(*avcUnit);
     if (!musicSubunit) {
