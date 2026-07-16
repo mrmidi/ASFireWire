@@ -83,6 +83,12 @@ struct DeviceModel {
 
     [[nodiscard]] bool HasAgreedCurrentRate() const noexcept;
     [[nodiscard]] std::optional<uint8_t> CurrentRateCode() const noexcept;
+
+    /// True when both host-to-device and device-to-host ISO plug 0 advertise
+    /// the same AM824 slot geometry. Rate selection remains a separate
+    /// operation: a formation list is capability data, not the current clock.
+    [[nodiscard]] bool SupportsDuplexFormation(uint8_t pcmChannels,
+                                                uint8_t midiSlots) const noexcept;
 };
 
 // A BridgeCo extended stream-format-list response echoes the requested list

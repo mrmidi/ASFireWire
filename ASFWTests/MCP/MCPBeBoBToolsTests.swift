@@ -127,4 +127,31 @@ struct MCPBeBoBToolsTests {
         }
         #expect(choreography.last == .string("verify_remote_pcrs"))
     }
+
+    @Test func phase88LifecycleAcceptsCanonicalHexGuid() async {
+        let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
+        let core = ASFWMCPCore(configuration: unrestrictedWrite, driver: driver)
+        let result = await core.callTool(name: "asfw_phase88_start_48k", arguments: .object([
+            "targetGuid": .string("0x000AAC0300B1D1F7"),
+            "nodeId": .int(3),
+            "generation": .int(17),
+        ]))
+
+        #expect(result.ok)
+        #expect(await driver.unexpectedWriteAttemptCount() == 1)
+    }
+
+    @Test func phase88LifecycleRejectsMalformedHexGuid() async {
+        let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
+        let core = ASFWMCPCore(configuration: unrestrictedWrite, driver: driver)
+        let result = await core.callTool(name: "asfw_phase88_start_48k", arguments: .object([
+            "targetGuid": .string("0xnot-a-guid"),
+            "nodeId": .int(3),
+            "generation": .int(17),
+        ]))
+
+        #expect(!result.ok)
+        #expect(result.errors.first?.code == .malformedRequest)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
 }

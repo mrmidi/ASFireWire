@@ -13,6 +13,8 @@ using ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
 using ASFW::DeviceProfiles::Audio::kApogeeVendorId;
 using ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
 using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
+using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
+using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Encoding::AudioWireFormat;
 
@@ -98,6 +100,37 @@ TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInt
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
     EXPECT_TRUE(profile.stopOrder
                     .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive);
+}
+
+TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrdering) {
+    DeviceRecord record{
+        .vendorId = kTerraTecVendorId,
+        .modelId = kPhase88RackFwModelId,
+    };
+    record.link.localToNode = ASFW::FW::FwSpeed::S400;
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 10,
+        .hostOutputPcmChannels = 10,
+        .deviceToHostAm824Slots = 11,
+        .hostToDeviceAm824Slots = 11,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+
+    // Linux establishes iPCR then oPCR before amdtp_domain_start(), which
+    // starts the device-to-host RX path before host-to-device TX.
+    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.captureStreams[0].am824Slots, 11U);
+    EXPECT_EQ(profile.playbackStreams[0].am824Slots, 11U);
+    EXPECT_FALSE(profile.startOrder.startReceiveBeforeDeviceRx);
+    EXPECT_FALSE(profile.startOrder.startTransmitBeforeDeviceTx);
+    EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
+    EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
+    EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
 }
 
 TEST(DuplexStreamProfileTests, AlesisModelsClampAdvertisedCaptureStreamsToOne) {

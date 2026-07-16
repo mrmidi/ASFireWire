@@ -353,6 +353,25 @@ std::optional<uint8_t> DeviceModel::CurrentRateCode() const noexcept {
     return inputRate->rateCode;
 }
 
+bool DeviceModel::SupportsDuplexFormation(uint8_t pcmChannels,
+                                          uint8_t midiSlots) const noexcept {
+    if (!unitPlugCounts.has_value() ||
+        unitPlugCounts->isochronousInputs == 0 ||
+        unitPlugCounts->isochronousOutputs == 0) {
+        return false;
+    }
+
+    const auto supports = [pcmChannels, midiSlots](const IsochronousPlugModel& plug) {
+        for (const auto& formation : plug.supportedFormations) {
+            if (formation.pcmChannels == pcmChannels && formation.midiSlots == midiSlots) {
+                return true;
+            }
+        }
+        return false;
+    };
+    return supports(input) && supports(output);
+}
+
 void StartPhase88ReadOnlyProbe(IAVCCommandSubmitter& submitter, uint64_t guid,
                                ReadOnlyProbeCompletion completion) {
     std::make_shared<Probe>(submitter, guid, std::move(completion))->Start();

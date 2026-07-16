@@ -310,6 +310,21 @@ class DuplexStreamProfileResolver final {
             profile.stopOrder
                 .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
         }
+        if (IsTerraTecPhase88(record)) {
+            // Linux BeBoB reserves both CMP resources, establishes remote
+            // iPCR then oPCR, and only then starts the AMDTP domain (RX before
+            // TX). Keep that wire-visible ordering explicit rather than
+            // inheriting an incidental generic/DICE default. Cross-validated:
+            // linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:525-590,
+            // 593-674. No reference implementation is copied.
+            profile.startOrder.startReceiveBeforeDeviceRx = false;
+            profile.startOrder.startTransmitBeforeDeviceTx = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kReceive,
+                DuplexHostDirection::kTransmit,
+            };
+            profile.startOrder.postDeviceEnableDelayMs = 0;
+        }
         return profile;
     }
 };

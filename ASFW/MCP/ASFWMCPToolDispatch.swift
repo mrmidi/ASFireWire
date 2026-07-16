@@ -1339,8 +1339,17 @@ private struct ASFWMCPToolArgumentDecoder {
             raw = UInt64(int)
         case .uint64(let uint):
             raw = uint
+        case .string(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isHex = trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X")
+            let digits = isHex ? String(trimmed.dropFirst(2)) : trimmed
+            guard !digits.isEmpty,
+                  let parsed = UInt64(digits, radix: isHex ? 16 : 10) else {
+                throw ASFWMCPToolArgumentError.malformed("\(key) must be an unsigned decimal integer or 0x-prefixed hexadecimal integer")
+            }
+            raw = parsed
         default:
-            throw ASFWMCPToolArgumentError.malformed("\(key) must be an unsigned integer")
+            throw ASFWMCPToolArgumentError.malformed("\(key) must be an unsigned decimal integer or 0x-prefixed hexadecimal integer")
         }
         guard raw <= max else {
             throw ASFWMCPToolArgumentError.malformed("\(key) exceeds \(max)")

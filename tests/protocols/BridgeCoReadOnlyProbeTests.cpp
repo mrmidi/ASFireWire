@@ -114,7 +114,7 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
         {MakeCdb(0x01, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
          AVCResult::kImplementedStable,
          MakeCdb(0x0c, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
-                               0x90, 0x40, 0x04, 0x00, 0x01, 0x0a, 0x06})},
+                               0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
         // BridgeCo ISO output plug type.
         {MakeCdb(0x01, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00}),
          AVCResult::kImplementedStable,
@@ -123,7 +123,7 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
         {MakeCdb(0x01, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00}),
          AVCResult::kImplementedStable,
          MakeCdb(0x0c, 0x2f, {0xc1, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
-                               0x90, 0x40, 0x04, 0x00, 0x01, 0x0a, 0x06})},
+                               0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
         // Linux treats the first invalid next list entry as end-of-list.
         {MakeCdb(0x01, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x01}),
          AVCResult::kNotImplemented, {}},
@@ -144,7 +144,11 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
     ASSERT_EQ(model->output.supportedFormations.size(), 1U);
     EXPECT_EQ(model->input.supportedFormations[0].rateCode, 0x04);
     EXPECT_EQ(model->input.supportedFormations[0].pcmChannels, 10);
+    EXPECT_EQ(model->input.supportedFormations[0].midiSlots, 1);
     EXPECT_EQ(model->output.supportedFormations[0].pcmChannels, 10);
+    EXPECT_EQ(model->output.supportedFormations[0].midiSlots, 1);
+    EXPECT_TRUE(model->SupportsDuplexFormation(10, 1));
+    EXPECT_FALSE(model->SupportsDuplexFormation(10, 2));
 }
 
 TEST(BridgeCoReadOnlyProbeTests, ParsesPcmAndMidiSlotsWithoutGuessingPorts) {

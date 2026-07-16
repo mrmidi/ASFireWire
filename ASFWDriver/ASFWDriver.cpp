@@ -977,6 +977,9 @@ kern_return_t ASFWDriver::GetAudioAutoStart(uint32_t* enabled) const {
 
 kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
     if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
+        ASFW_LOG_ERROR(Audio,
+                       "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx",
+                       "audio-coordinator", guid);
         return kIOReturnNotReady;
     }
     auto& ctx = *ivars->context;
@@ -986,11 +989,17 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
     // issuing the PHASE 88's unit-plug format command through a stale route.
     if (!ctx.deps.deviceRegistry || !ctx.deps.audioRuntimeRegistry ||
         !ctx.deps.avcDiscovery) {
+        ASFW_LOG_ERROR(Audio,
+                       "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx",
+                       "runtime-dependencies", guid);
         return kIOReturnNotReady;
     }
     auto* record = ctx.deps.deviceRegistry->FindByGuid(guid);
     auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
     if (!record || !protocol) {
+        ASFW_LOG_ERROR(Audio,
+                       "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx record=%u protocol=%u",
+                       "device-config", guid, record != nullptr, protocol != nullptr);
         return kIOReturnNotReady;
     }
     auto* transport = ctx.deps.avcDiscovery->GetFCPTransportForNodeID(record->nodeId);
