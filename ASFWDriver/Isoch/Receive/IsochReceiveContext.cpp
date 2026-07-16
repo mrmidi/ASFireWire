@@ -173,6 +173,10 @@ uint32_t IsochReceiveContext::Poll() {
         if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
             const bool bindingChanged = snapshot.generation != lastDirectAudioGeneration_;
             if (bindingChanged) {
+                // The producer's cumulative counters are scoped to its control
+                // block. Rebase the drain-side comparison before observing a
+                // newly published binding.
+                payloadWriterTelemetryAggregator_.Reset();
                 if (snapshot.valid && snapshot.HasInput()) {
                     ASFW_LOG(Isoch,
                              "IR: direct audio binding changed (gen %llu -> %llu). Arming direct Rx inBase=%p inFrames=%u inCh=%u outBase=%p outFrames=%u outCh=%u control=%p rate=%u",
@@ -661,6 +665,7 @@ void IsochReceiveContext::ResetReplayEpochForDiscontinuity() noexcept {
 void IsochReceiveContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept {
     directAudioBindingSource_ = source;
     lastDirectAudioGeneration_ = 0;
+    payloadWriterTelemetryAggregator_.Reset();
 }
 
 
@@ -825,7 +830,7 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
     }
 }
 
-void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
+void IsochReceiveContext::DrainPayloadWriterTelemetry() {
     auto* control = directInputView_.control;
     if (control == nullptr) {
         return;
@@ -852,90 +857,40 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
             errorGeneration, std::memory_order_release);
     }
 
-    if (control->payloadWriterTelemetry.PendingCount() == 0) {
+    // Basic TX flow is confirmed (under-exposure / Defect B closed, see tag
+    // tx-frame-exposure-lead). Keep draining the ring every watchdog pass so
+    // it never overflows, but only emit an aggregate when a counter advances
+    // anomalously. The callback path itself only records into the ring.
+    payloadWriterTelemetryAggregator_.BeginDrain();
+    ASFW::Audio::Runtime::PayloadWriterTelemetryRecord lastRecord{};
+    bool haveLastRecord = false;
+    const uint64_t dropped = control->payloadWriterTelemetry.Drain(
+        [this, &lastRecord, &haveLastRecord](
+            const ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& r) {
+            payloadWriterTelemetryAggregator_.Observe(r);
+            lastRecord = r;
+            haveLastRecord = true;
+        });
+
+    const auto& summary = payloadWriterTelemetryAggregator_.Summary();
+    if (haveLastRecord && summary.HasAnomaly()) {
         ASFW_LOG(
             DirectAudio,
-            "[PayloadWriter] no pending records: callbacks=%llu lastOp=%u objectId=%u frameCount=%u sampleTime=%llu hostTime=%llu beginRead=%llu writeEnd=%llu playbackWrite=%llu",
-            control->ioCallbackGeneration.load(std::memory_order_acquire),
-            control->ioLastOperation.load(std::memory_order_relaxed),
-            control->ioLastObjectId.load(std::memory_order_relaxed),
-            control->ioLastFrameCount.load(std::memory_order_relaxed),
-            control->ioLastSampleTime.load(std::memory_order_relaxed),
-            control->ioLastHostTime.load(std::memory_order_relaxed),
-            control->counters.ioBeginReadCount.load(std::memory_order_relaxed),
-            control->counters.ioWriteEndCount.load(std::memory_order_relaxed),
-            control->playbackRingWriteFrame.load(std::memory_order_relaxed));
-        return;
+            "[PayloadWriter] anomaly lastSample=%llu completion=%llu deficitMax=%llu "
+            "visitedDelta=%llu writtenDelta=%llu withoutPktDelta=%llu outsidePktDelta=%llu "
+            "racedDelta=%llu transmittedDelta=%llu underExpCallsDelta=%llu underExpFramesDelta=%llu",
+            lastRecord.sampleTime,
+            lastRecord.completionCursor,
+            summary.maxExposureDeficitFrames,
+            summary.visitedDelta,
+            summary.writtenDelta,
+            summary.withoutPacketDelta,
+            summary.outsidePacketDelta,
+            summary.racedReuseDelta,
+            summary.wroteIntoTransmittedDelta,
+            summary.underExposureCallsDelta,
+            summary.underExposureFramesDelta);
     }
-
-    // Basic TX flow is confirmed (under-exposure / Defect B closed, see tag
-    // tx-frame-exposure-lead). Keep draining the ring every tick so it never
-    // overflows, but only LOG a record when it shows an anomaly -- the happy
-    // path stays silent. A single [PayloadWriter] line in the log now means
-    // something is actually wrong.
-    const uint64_t dropped = control->payloadWriterTelemetry.Drain(
-        maxRecords, [](const ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& r) {
-            const bool anomaly =
-                r.exposureDeficitFrames != 0 || r.withoutPacket != 0 ||
-                r.outsidePacket != 0 || r.racedReuse != 0 ||
-                r.wroteIntoTransmitted != 0 || r.written != r.visited;
-            if (!anomaly) {
-                return;
-            }
-
-            const uint32_t cipQ0 = (static_cast<uint32_t>(r.lastReadPacketBytes[0]) << 24) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[1]) << 16) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[2]) << 8) |
-                                   static_cast<uint32_t>(r.lastReadPacketBytes[3]);
-            const uint32_t cipQ1 = (static_cast<uint32_t>(r.lastReadPacketBytes[4]) << 24) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[5]) << 16) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[6]) << 8) |
-                                   static_cast<uint32_t>(r.lastReadPacketBytes[7]);
-            const uint32_t payQ0 = (static_cast<uint32_t>(r.lastReadPacketBytes[8]) << 24) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[9]) << 16) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[10]) << 8) |
-                                   static_cast<uint32_t>(r.lastReadPacketBytes[11]);
-            const uint32_t payQ1 = (static_cast<uint32_t>(r.lastReadPacketBytes[12]) << 24) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[13]) << 16) |
-                                   (static_cast<uint32_t>(r.lastReadPacketBytes[14]) << 8) |
-                                   static_cast<uint32_t>(r.lastReadPacketBytes[15]);
-
-            ASFW_LOG(
-                DirectAudio,
-                "[PayloadWriter] sampleTime=%llu writeEnd=%llu frameCount=%u frameCapacity=%u completion=%llu exposedEnd=%llu deficit=%llu "
-                "visited=%llu written=%llu withoutPkt=%llu outsidePkt=%llu raced=%llu legacyTrans=%llu nonZero=%llu maxAbs=%f "
-                "underExpCalls=%llu underExpFrames=%llu "
-                "pbRead=%llu pbWrite=%llu outBase=0x%llx capRead=%llu capWrite=%llu inBase=0x%llx "
-                "lastReadPkt=%llu cip=%08x %08x pay=%08x %08x",
-                r.sampleTime,
-                r.writeEndFrame,
-                r.frameCount,
-                r.frameCapacity,
-                r.completionCursor,
-                r.exposedFrameEnd,
-                r.exposureDeficitFrames,
-                r.visited,
-                r.written,
-                r.withoutPacket,
-                r.outsidePacket,
-                r.racedReuse,
-                r.wroteIntoTransmitted,
-                r.nonZeroFrames,
-                r.maxAbsSample,
-                r.underExposureCalls,
-                r.underExposureFrames,
-                r.playbackRingReadFrame,
-                r.playbackRingWriteFrame,
-                r.outputBaseAddr,
-                r.captureRingReadFrame,
-                r.captureRingWriteFrame,
-                r.inputBaseAddr,
-                r.lastReadPacketIndex,
-                cipQ0,
-                cipQ1,
-                payQ0,
-                payQ1);
-        });
 
     if (dropped != 0) {
         ASFW_LOG(DirectAudio,

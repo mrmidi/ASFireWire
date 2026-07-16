@@ -5,6 +5,7 @@
 #include "Isoch/Memory/IsochDMAMemoryManager.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/OHCIConstants.hpp"
+#include "Audio/DriverKit/Runtime/PayloadWriterTelemetry.hpp"
 
 // Use a mock or stub for HardwareInterface
 namespace ASFW::Driver {
@@ -17,6 +18,57 @@ using namespace ASFW::Shared;
 using namespace ASFW::Async;
 using namespace ASFW::Isoch::Memory;
 using namespace testing;
+
+TEST(PayloadWriterTelemetryTests,
+     HistoricalStartupCountersDoNotMakeTheHealthySteadyStateNoisy) {
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryAnomalyAggregator;
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryRecord;
+
+    PayloadWriterTelemetryAnomalyAggregator aggregator;
+    PayloadWriterTelemetryRecord record{};
+    record.visited = 1'000;
+    record.written = 900;
+    record.withoutPacket = 100;
+
+    aggregator.BeginDrain();
+    aggregator.Observe(record);
+    EXPECT_FALSE(aggregator.Summary().HasAnomaly());
+
+    aggregator.BeginDrain();
+    record.visited += 512;
+    record.written += 512;
+    aggregator.Observe(record);
+    EXPECT_FALSE(aggregator.Summary().HasAnomaly());
+
+    aggregator.BeginDrain();
+    ++record.visited;
+    ++record.withoutPacket;
+    aggregator.Observe(record);
+    EXPECT_TRUE(aggregator.Summary().HasAnomaly());
+    EXPECT_EQ(aggregator.Summary().withoutPacketDelta, 1u);
+    EXPECT_EQ(aggregator.Summary().visitedDelta, 1u);
+    EXPECT_EQ(aggregator.Summary().writtenDelta, 0u);
+}
+
+TEST(PayloadWriterTelemetryTests, DrainVisitsAllRetainedRecordsOffTheCallbackPath) {
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryRecord;
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryRing;
+
+    PayloadWriterTelemetryRing ring;
+    for (uint64_t sampleTime = 1; sampleTime <= 3; ++sampleTime) {
+        PayloadWriterTelemetryRecord record{};
+        record.sampleTime = sampleTime;
+        ring.Record(record);
+    }
+
+    uint64_t visited = 0;
+    EXPECT_EQ(ring.Drain([&visited](const PayloadWriterTelemetryRecord&) {
+                  ++visited;
+              }),
+              0u);
+    EXPECT_EQ(visited, 3u);
+    EXPECT_EQ(ring.PendingCount(), 0u);
+}
 
 TEST(ZtsTelemetryLogGateTests,
      EmitsSeedThenEveryFourSecondsAndRearmsOnGridReset) {
