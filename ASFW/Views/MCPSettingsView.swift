@@ -75,10 +75,24 @@ struct MCPSettingsView: View {
                 }
                 .disabled(!viewModel.status.isRunning || viewModel.isChangingState)
 
+                Button {
+                    Task { await viewModel.runReadOnlyHardwareSmoke() }
+                } label: {
+                    Label("Run read-only smoke", systemImage: "checkmark.shield")
+                }
+                .disabled(!viewModel.canRunReadOnlyHardwareSmoke)
+
                 if viewModel.isChangingState {
                     ProgressView()
                         .controlSize(.small)
                 }
+            }
+
+            if let report = viewModel.hardwareSmokeReport {
+                Label(report.conciseSummary, systemImage: report.failures.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(report.failures.isEmpty ? Color.secondary : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer()

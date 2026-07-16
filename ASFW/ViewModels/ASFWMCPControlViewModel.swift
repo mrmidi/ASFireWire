@@ -8,6 +8,7 @@ final class ASFWMCPControlViewModel: ObservableObject {
     @Published private(set) var status: ASFWMCPHostStatus = .stopped
     @Published private(set) var isChangingState = false
     @Published private(set) var lastError: String?
+    @Published private(set) var hardwareSmokeReport: ASFWMCPHardwareSmokeReport?
 
     private let connector: ASFWDriverConnector
     private let defaults: UserDefaults
@@ -37,6 +38,10 @@ final class ASFWMCPControlViewModel: ObservableObject {
 
     var canEditPort: Bool {
         status.isRunning == false && isChangingState == false
+    }
+
+    var canRunReadOnlyHardwareSmoke: Bool {
+        status.isRunning && isChangingState == false
     }
 
     func applyEnabledState() {
@@ -93,6 +98,21 @@ final class ASFWMCPControlViewModel: ObservableObject {
         await host?.stop()
         host = nil
         status = .stopped
+        isChangingState = false
+    }
+
+    func runReadOnlyHardwareSmoke() async {
+        guard canRunReadOnlyHardwareSmoke else { return }
+
+        isChangingState = true
+        lastError = nil
+        let driver = LiveASFWDriverControl(backend: connector)
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)
+        let report = await ASFWMCPHardwareSmokeRunner(core: core).run(options: .readOnly)
+        hardwareSmokeReport = report
+        if report.failures.isEmpty == false {
+            lastError = "Hardware smoke found \(report.failures.count) failure(s): \(report.conciseSummary)"
+        }
         isChangingState = false
     }
 }
