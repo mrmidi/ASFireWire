@@ -31,6 +31,17 @@ constexpr uint8_t kBoolOff = 0x60;
 namespace {
 
 std::vector<ASFW::Protocols::AVC::FCPFrame> gSubmittedFCPFrames;
+uint8_t gDuetInputFrequency{0x02U};
+uint8_t gDuetOutputFrequency{0x02U};
+bool gFailNextOutputFormatControl{false};
+
+void ResetDuetFormatFixture(uint8_t inputFrequency = 0x02U,
+                            uint8_t outputFrequency = 0x02U) {
+    gSubmittedFCPFrames.clear();
+    gDuetInputFrequency = inputFrequency;
+    gDuetOutputFrequency = outputFrequency;
+    gFailNextOutputFormatControl = false;
+}
 
 class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
   public:
@@ -454,8 +465,8 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
     auto transport = std::make_shared<FCPTransport>();
-    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get());
-    gSubmittedFCPFrames.clear();
+    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), nullptr, nullptr, 0, 0);
+    ResetDuetFormatFixture(0x01U, 0x01U);
 
     IOReturn completionStatus = kIOReturnNotReady;
     protocol.ApplyClockConfig(
@@ -465,13 +476,23 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
         });
 
     ASSERT_EQ(completionStatus, kIOReturnSuccess);
-    ASSERT_EQ(gSubmittedFCPFrames.size(), 2U);
+    ASSERT_EQ(gSubmittedFCPFrames.size(), 6U);
+    // Read both initial formations, then apply the OXFW input/output order,
+    // and finally re-query both plugs before declaring the clock applied.
+    EXPECT_EQ(gSubmittedFCPFrames[0].Payload()[0], 0x01U);
+    EXPECT_EQ(gSubmittedFCPFrames[0].Payload()[2], 0x19U);
+    EXPECT_EQ(gSubmittedFCPFrames[1].Payload()[0], 0x01U);
+    EXPECT_EQ(gSubmittedFCPFrames[1].Payload()[2], 0x18U);
     constexpr std::array<uint8_t, 8> expectedInput{
         0x00, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF};
     constexpr std::array<uint8_t, 8> expectedOutput{
         0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF};
-    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[0].Payload(), expectedInput));
-    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[1].Payload(), expectedOutput));
+    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[2].Payload(), expectedInput));
+    EXPECT_TRUE(std::ranges::equal(gSubmittedFCPFrames[3].Payload(), expectedOutput));
+    EXPECT_EQ(gSubmittedFCPFrames[4].Payload()[2], 0x19U);
+    EXPECT_EQ(gSubmittedFCPFrames[5].Payload()[2], 0x18U);
+    EXPECT_EQ(gDuetInputFrequency, 0x02U);
+    EXPECT_EQ(gDuetOutputFrequency, 0x02U);
 
     // The same restart request must use the cached formation instead of
     // perturbing the OXFW device with another pair of AV/C controls.
@@ -481,15 +502,15 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
             completionStatus = status;
         });
     EXPECT_EQ(completionStatus, kIOReturnSuccess);
-    EXPECT_EQ(gSubmittedFCPFrames.size(), 2U);
+    EXPECT_EQ(gSubmittedFCPFrames.size(), 6U);
 }
 
 TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
     auto transport = std::make_shared<FCPTransport>();
-    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get());
-    gSubmittedFCPFrames.clear();
+    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), nullptr, nullptr, 0, 0);
+    ResetDuetFormatFixture();
 
     IOReturn completionStatus = kIOReturnNotReady;
     protocol.ApplyClockConfig(
@@ -499,9 +520,34 @@ TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
         });
 
     ASSERT_EQ(completionStatus, kIOReturnSuccess);
-    ASSERT_EQ(gSubmittedFCPFrames.size(), 2U);
-    EXPECT_EQ(gSubmittedFCPFrames[0].Payload()[5], 0x01U);
-    EXPECT_EQ(gSubmittedFCPFrames[1].Payload()[5], 0x01U);
+    ASSERT_EQ(gSubmittedFCPFrames.size(), 6U);
+    EXPECT_EQ(gSubmittedFCPFrames[2].Payload()[5], 0x01U);
+    EXPECT_EQ(gSubmittedFCPFrames[3].Payload()[5], 0x01U);
+}
+
+TEST(ApogeeDuetDuplexAdapter, RestoresInputFormationWhenOutputFormatControlFails) {
+    using namespace ASFW::Protocols::AVC;
+    RecordingAVCBus bus;
+    auto transport = std::make_shared<FCPTransport>();
+    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), nullptr, nullptr, 0, 0);
+    ResetDuetFormatFixture(0x01U, 0x01U);
+    gFailNextOutputFormatControl = true;
+
+    IOReturn completionStatus = kIOReturnSuccess;
+    protocol.ApplyClockConfig(
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
+        [&completionStatus](IOReturn status, ASFW::Audio::ClockApplyResult) {
+            completionStatus = status;
+        });
+
+    EXPECT_EQ(completionStatus, kIOReturnError);
+    ASSERT_EQ(gSubmittedFCPFrames.size(), 5U);
+    EXPECT_EQ(gSubmittedFCPFrames[2].Payload()[2], 0x19U);
+    EXPECT_EQ(gSubmittedFCPFrames[3].Payload()[2], 0x18U);
+    EXPECT_EQ(gSubmittedFCPFrames[4].Payload()[2], 0x19U);
+    EXPECT_EQ(gSubmittedFCPFrames[4].Payload()[5], 0x01U);
+    EXPECT_EQ(gDuetInputFrequency, 0x01U);
+    EXPECT_EQ(gDuetOutputFrequency, 0x01U);
 }
 
 TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
@@ -565,7 +611,7 @@ TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
     EXPECT_EQ(txStatus, kIOReturnError);
 }
 
-// Linker stub for FCPTransport::SubmitCommand (not invoked by tests)
+// Linker stub for the profile's FCP transition tests.
 namespace ASFW::Protocols::AVC {
 bool FCPTransport::init(Protocols::Ports::FireWireBusOps*,
                         Protocols::Ports::FireWireBusInfo*,
@@ -589,6 +635,26 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     gSubmittedFCPFrames.push_back(command);
     FCPFrame response = command;
     response.data[0] = static_cast<uint8_t>(AVCResponseType::kAccepted);
+    const auto payload = command.Payload();
+    if (payload.size() >= 6U && payload[1] == 0xFFU &&
+        (payload[2] == 0x18U || payload[2] == 0x19U)) {
+        const bool isInput = payload[2] == 0x19U;
+        if (payload[0] == static_cast<uint8_t>(AVCCommandType::kStatus)) {
+            response.data[4] = 0x90U;
+            response.data[5] = isInput ? gDuetInputFrequency : gDuetOutputFrequency;
+        } else if (payload[0] == static_cast<uint8_t>(AVCCommandType::kControl)) {
+            if (!isInput && gFailNextOutputFormatControl) {
+                gFailNextOutputFormatControl = false;
+                completion(FCPStatus::kTransportError, FCPFrame{});
+                return FCPHandle{.transactionID = static_cast<uint32_t>(gSubmittedFCPFrames.size())};
+            }
+            if (isInput) {
+                gDuetInputFrequency = payload[5];
+            } else {
+                gDuetOutputFrequency = payload[5];
+            }
+        }
+    }
     completion(FCPStatus::kOk, response);
     return FCPHandle{.transactionID = static_cast<uint32_t>(gSubmittedFCPFrames.size())};
 }
