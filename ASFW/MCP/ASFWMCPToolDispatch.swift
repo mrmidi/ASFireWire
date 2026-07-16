@@ -62,8 +62,10 @@ extension ASFWMCPCore {
             return await dispatchOhciWrite(name, decoder: decoder)
         case "asfw_read_ohci_register", "asfw_snapshot_ohci_registers":
             return notImplementedToolResult(name, reason: "OHCI read dispatch needs the live driver adapter from FW-94.")
-        case "asfw_irm_get_state", "asfw_irm_get_bandwidth", "asfw_irm_get_channels", "asfw_irm_list_allocations":
-            return notImplementedToolResult(name, reason: "IRM inspection dispatch needs the live driver adapter from FW-94.")
+        case "asfw_irm_get_state", "asfw_irm_get_bandwidth", "asfw_irm_get_channels":
+            return await dispatchIrmSnapshot(name, decoder: decoder)
+        case "asfw_irm_list_allocations":
+            return notImplementedToolResult(name, reason: "IRM allocation ownership is not exposed by the live driver adapter yet.")
         case "asfw_irm_allocate_channel", "asfw_irm_free_channel":
             return await dispatchIrmChannel(name, decoder: decoder, allocate: name == "asfw_irm_allocate_channel")
         case "asfw_irm_allocate_bandwidth", "asfw_irm_free_bandwidth":
@@ -257,6 +259,17 @@ extension ASFWMCPCore {
                 return malformedTransactionResult(name, kind: .compareSwap, generation: request.generation, code: error)
             }
             return policyOnlyMutationResult(name, kind: .compareSwap, generation: request.generation, policyRequest: request.policyRequest(currentGeneration: await currentGeneration(), dryRun: try decoder.bool("dryRun", default: false)))
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func dispatchIrmSnapshot(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let snapshot = await driver.executeIRMSnapshot(
+                ASFWMCPIrmSnapshotRequest(generation: try decoder.uint32("generation"))
+            )
+            return ASFWMCPToolCallResult(toolName: name, ok: snapshot.ok, data: snapshot.mcpValue, errors: [])
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }

@@ -11,6 +11,7 @@ protocol ASFWDriverControlling {
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
+    func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -251,6 +252,34 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             correlationId: correlationId,
             durationUsec: 500,
             policy: nil
+        )
+    }
+
+    func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot {
+        let correlationId = "mock-irm-snapshot"
+        guard request.generation == generation else {
+            return ASFWMCPIrmResourceSnapshot(
+                requestedGeneration: request.generation,
+                observedGeneration: generation,
+                irmNodeId: 2,
+                bandwidthAvailable: nil,
+                channelsAvailable31_0: nil,
+                channelsAvailable63_32: nil,
+                status: .staleGeneration,
+                correlationId: correlationId,
+                durationUsec: nil
+            )
+        }
+        return ASFWMCPIrmResourceSnapshot(
+            requestedGeneration: request.generation,
+            observedGeneration: generation,
+            irmNodeId: 2,
+            bandwidthAvailable: 0x0000_1333,
+            channelsAvailable31_0: 0xFFFF_FFFE,
+            channelsAvailable63_32: 0xFFFF_FFFF,
+            status: .ok,
+            correlationId: correlationId,
+            durationUsec: 300
         )
     }
 

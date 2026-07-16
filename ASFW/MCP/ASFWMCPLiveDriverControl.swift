@@ -341,6 +341,77 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
                                durationUsec: elapsedUsec(since: started))
     }
 
+    func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot {
+        let correlationId = "live-irm-snapshot-\(UUID().uuidString)"
+        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        guard backend.mcpIsConnected else {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: nil,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .unavailable, correlationId: correlationId, durationUsec: nil
+            )
+        }
+        guard request.generation == currentGeneration else {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: nil,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .staleGeneration, correlationId: correlationId, durationUsec: nil
+            )
+        }
+        guard let irmNodeId = backend.mcpControllerStatus()?.irmNodeID.map({ UInt32($0 & 0x003F) }) else {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: nil,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .unavailable, correlationId: correlationId, durationUsec: nil
+            )
+        }
+
+        // Keep the established IRMClient order: bandwidth, channels 31...0,
+        // then channels 63...32. Each CSR is independently read-only.
+        let started = Date()
+        let addresses: [UInt32] = [0xF000_0220, 0xF000_0224, 0xF000_0228]
+        var values: [UInt32] = []
+        for addressLow in addresses {
+            let result = await executeReadQuadlet(
+                ASFWMCPReadQuadletRequest(
+                    address: ASFWMCPAddress(
+                        nodeId: irmNodeId,
+                        generation: request.generation,
+                        addressHigh: 0xFFFF,
+                        addressLow: addressLow
+                    )
+                )
+            )
+            guard result.ok, let value = quadletValue(result.payload) else {
+                return irmSnapshot(
+                    request,
+                    observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
+                    irmNodeId: irmNodeId,
+                    bandwidthAvailable: values[safe: 0],
+                    channelsAvailable31_0: values[safe: 1],
+                    channelsAvailable63_32: nil,
+                    status: result.status,
+                    correlationId: correlationId,
+                    durationUsec: elapsedUsec(since: started)
+                )
+            }
+            values.append(value)
+        }
+
+        let observedGeneration = backend.mcpCurrentGeneration() ?? currentGeneration
+        return irmSnapshot(
+            request,
+            observedGeneration: observedGeneration,
+            irmNodeId: irmNodeId,
+            bandwidthAvailable: values[0],
+            channelsAvailable31_0: values[1],
+            channelsAvailable63_32: values[2],
+            status: observedGeneration == request.generation ? .ok : .busReset,
+            correlationId: correlationId,
+            durationUsec: elapsedUsec(since: started)
+        )
+    }
+
     private func executeTransaction(
         kind: ASFWMCPTransactionKind,
         address: ASFWMCPAddress,
@@ -584,6 +655,30 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         )
     }
 
+    private func irmSnapshot(
+        _ request: ASFWMCPIrmSnapshotRequest,
+        observedGeneration: UInt32,
+        irmNodeId: UInt32?,
+        bandwidthAvailable: UInt32?,
+        channelsAvailable31_0: UInt32?,
+        channelsAvailable63_32: UInt32?,
+        status: ASFWMCPTransactionStatus,
+        correlationId: String,
+        durationUsec: UInt64?
+    ) -> ASFWMCPIrmResourceSnapshot {
+        ASFWMCPIrmResourceSnapshot(
+            requestedGeneration: request.generation,
+            observedGeneration: observedGeneration,
+            irmNodeId: irmNodeId,
+            bandwidthAvailable: bandwidthAvailable,
+            channelsAvailable31_0: channelsAvailable31_0,
+            channelsAvailable63_32: channelsAvailable63_32,
+            status: status,
+            correlationId: correlationId,
+            durationUsec: durationUsec
+        )
+    }
+
     private func correlationId(_ kind: ASFWMCPTransactionKind) -> String {
         "live-\(kind.rawValue)-\(UUID().uuidString)"
     }
@@ -599,6 +694,20 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             UInt8((value >> 8) & 0xFF),
             UInt8(value & 0xFF)
         ]
+    }
+
+    private func quadletValue(_ payload: [UInt8]?) -> UInt32? {
+        guard let payload, payload.count == 4 else { return nil }
+        return (UInt32(payload[0]) << 24) |
+            (UInt32(payload[1]) << 16) |
+            (UInt32(payload[2]) << 8) |
+            UInt32(payload[3])
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

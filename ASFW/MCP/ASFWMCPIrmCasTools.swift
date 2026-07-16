@@ -22,6 +22,44 @@ extension ASFWMCPToolCatalog {
     ]
 }
 
+/// Read-only view of the three IRM resource CSRs. The values are collected as
+/// individual quadlet transactions in the same order as IRMClient's existing
+/// resource snapshot path, so this is observational rather than atomic.
+struct ASFWMCPIrmSnapshotRequest: Equatable {
+    let generation: UInt32
+}
+
+struct ASFWMCPIrmResourceSnapshot: Equatable {
+    let requestedGeneration: UInt32
+    let observedGeneration: UInt32
+    let irmNodeId: UInt32?
+    let bandwidthAvailable: UInt32?
+    let channelsAvailable31_0: UInt32?
+    let channelsAvailable63_32: UInt32?
+    let status: ASFWMCPTransactionStatus
+    let correlationId: String
+    let durationUsec: UInt64?
+
+    var ok: Bool { status == .ok }
+
+    var mcpValue: ASFWMCPValue {
+        .object([
+            "kind": .string("irmResourceSnapshot"),
+            "ok": .bool(ok),
+            "status": .string(status.rawValue),
+            "requestedGeneration": .int(Int(requestedGeneration)),
+            "observedGeneration": .int(Int(observedGeneration)),
+            "irmNodeId": irmNodeId.map { .int(Int($0)) } ?? .null,
+            "bandwidthAvailable": bandwidthAvailable.map { .uint64(UInt64($0)) } ?? .null,
+            "channelsAvailable31_0": channelsAvailable31_0.map { .uint64(UInt64($0)) } ?? .null,
+            "channelsAvailable63_32": channelsAvailable63_32.map { .uint64(UInt64($0)) } ?? .null,
+            "atomic": .bool(false),
+            "correlationId": .string(correlationId),
+            "durationUsec": durationUsec.map { .uint64($0) } ?? .null
+        ])
+    }
+}
+
 // MARK: - CAS bridge to write policy
 
 extension ASFWMCPCompareSwapRequest {
