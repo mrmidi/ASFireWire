@@ -26,6 +26,7 @@ class IRMClient;
 
 namespace ASFW::CMP {
 class CMPClient;
+struct CMPDevice;
 }
 
 namespace ASFW::Audio::Oxford::Apogee {
@@ -107,7 +108,8 @@ public:
                        uint16_t nodeId,
                        Protocols::AVC::FCPTransport* fcpTransport = nullptr,
                        IRM::IRMClient* irmClient = nullptr,
-                       CMP::CMPClient* cmpClient = nullptr);
+                       CMP::CMPClient* cmpClient = nullptr,
+                       uint64_t deviceGuid = 0);
     virtual ~ApogeeDuetProtocol() = default;
 
     // IDeviceProtocol implementation
@@ -231,8 +233,10 @@ private:
     Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
     IRM::IRMClient* irmClient_{nullptr};
     CMP::CMPClient* cmpClient_{nullptr};
+    uint64_t deviceGuid_{0};
     AudioDuplexChannels duplexChannels_{};
     AudioClockConfig appliedClock_{};
+    FW::Generation preparedGeneration_{0};
     bool clockConfigApplied_{false};
     bool outputConnected_{false};
     bool inputConnected_{false};
@@ -248,6 +252,8 @@ private:
     void ExecuteVendorSequence(const std::vector<VendorCommand>& commands,
                                bool isStatus,
                                VendorSequenceCallback callback);
+
+    [[nodiscard]] CMP::CMPDevice CurrentCMPDevice() const noexcept;
 
     static uint32_t ReadQuadletBE(const uint8_t* data) noexcept;
 

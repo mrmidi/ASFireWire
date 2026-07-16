@@ -51,7 +51,10 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
     const uint64_t guid = device->GetGUID();
-    dice_.OnDeviceRecordUpdated(guid);
+    auto* backend = BackendForGuid(guid);
+    if (backend == &dice_) {
+        dice_.OnDeviceRecordUpdated(guid);
+    }
 
     bool recoverActiveStream = false;
     if (lock_) {
@@ -64,10 +67,14 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
         return;
     }
 
-    ASFW_LOG(Audio,
-             "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
-             guid);
-    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
+    if (backend == &dice_) {
+        ASFW_LOG(Audio,
+                 "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
+                 guid);
+        dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
+    } else if (backend == &avc_) {
+        avc_.OnDeviceResumed(guid);
+    }
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {

@@ -17,6 +17,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,
     uint16_t nodeId,
+    uint64_t deviceGuid,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient
 ) {
@@ -74,7 +75,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         // Factory path intentionally does not bind FCP transport yet.
         // AVCDiscovery wires transport for live command execution.
         return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
-            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient);
+            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient, deviceGuid);
     }
     
     // Unknown device

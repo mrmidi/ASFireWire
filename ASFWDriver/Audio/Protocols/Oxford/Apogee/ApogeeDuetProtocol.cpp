@@ -361,13 +361,25 @@ ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        uint16_t nodeId,
                                        Protocols::AVC::FCPTransport* fcpTransport,
                                        IRM::IRMClient* irmClient,
-                                       CMP::CMPClient* cmpClient)
+                                       CMP::CMPClient* cmpClient,
+                                       uint64_t deviceGuid)
     : busOps_(busOps)
     , busInfo_(busInfo)
     , nodeId_(nodeId)
     , fcpTransport_(fcpTransport)
     , irmClient_(irmClient)
-    , cmpClient_(cmpClient) {
+    , cmpClient_(cmpClient)
+    , deviceGuid_(deviceGuid) {
+}
+
+CMP::CMPDevice ApogeeDuetProtocol::CurrentCMPDevice() const noexcept {
+    const uint16_t liveNodeId = fcpTransport_ ? fcpTransport_->GetTargetNodeID() : nodeId_;
+    return CMP::CMPDevice{
+        .guid = deviceGuid_,
+        .nodeId = FW::NodeId{liveNodeId <= 0x3FU ? static_cast<uint8_t>(liveNodeId)
+                                                  : static_cast<uint8_t>(0xFFU)},
+        .generation = busInfo_.GetGeneration(),
+    };
 }
 
 IOReturn ApogeeDuetProtocol::Initialize() {
@@ -387,6 +399,10 @@ void ApogeeDuetProtocol::UpdateRuntimeContext(uint16_t nodeId,
     // epoch. Do not carry the AV/C configuration cache across that boundary.
     if (nodeId_ != nodeId || fcpTransport_ != transport) {
         clockConfigApplied_ = false;
+        if (cmpClient_ && deviceGuid_ != 0) {
+            cmpClient_->InvalidateDevice(deviceGuid_);
+        }
+        preparedGeneration_ = FW::Generation{0};
     }
     nodeId_ = nodeId;
     fcpTransport_ = transport;
@@ -419,9 +435,21 @@ void ApogeeDuetProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
         return;
     }
 
+    const FW::Generation currentGeneration = busInfo_.GetGeneration();
+    if (preparedGeneration_ != currentGeneration) {
+        // PCR state and device stream formation are reset-scoped. Preserve no
+        // old connection as a candidate for BREAK/reuse; recovery must reserve
+        // fresh resources and establish fresh PCRs in the new generation.
+        if (cmpClient_ && deviceGuid_ != 0) {
+            cmpClient_->InvalidateDevice(deviceGuid_);
+        }
+        clockConfigApplied_ = false;
+        outputConnected_ = false;
+        inputConnected_ = false;
+        preparedGeneration_ = currentGeneration;
+    }
+
     duplexChannels_ = channels;
-    cmpClient_->SetDeviceNode(static_cast<uint8_t>(nodeId_),
-                              IRM::Generation{busInfo_.GetGeneration()});
     ApplyClockConfig(
         desiredClock,
         [this, channels, callback = std::move(callback)](IOReturn status,
@@ -558,7 +586,8 @@ void ApogeeDuetProtocol::ProgramRx(StageCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->ConnectOPCR(0, duplexChannels_.deviceToHostIsoChannel,
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->ConnectOPCR(device, 0, duplexChannels_.deviceToHostIsoChannel,
                             [state](CMP::CMPStatus status) {
         state->status.store(status, std::memory_order_release);
         state->done.store(true, std::memory_order_release);
@@ -586,7 +615,8 @@ void ApogeeDuetProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->ConnectIPCR(0, duplexChannels_.hostToDeviceIsoChannel,
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->ConnectIPCR(device, 0, duplexChannels_.hostToDeviceIsoChannel,
                             [state](CMP::CMPStatus status) {
                                 state->status.store(status, std::memory_order_release);
                                 state->done.store(true, std::memory_order_release);
@@ -641,7 +671,8 @@ void ApogeeDuetProtocol::DisconnectPlayback(VoidCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->DisconnectIPCR(0, [state](CMP::CMPStatus status) {
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->DisconnectIPCR(device, 0, [state](CMP::CMPStatus status) {
         state->status.store(status, std::memory_order_release);
         state->done.store(true, std::memory_order_release);
     });
@@ -659,7 +690,8 @@ void ApogeeDuetProtocol::DisconnectCapture(VoidCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->DisconnectOPCR(0, [state](CMP::CMPStatus status) {
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->DisconnectOPCR(device, 0, [state](CMP::CMPStatus status) {
         state->status.store(status, std::memory_order_release);
         state->done.store(true, std::memory_order_release);
     });

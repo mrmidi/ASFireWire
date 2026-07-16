@@ -35,9 +35,13 @@ std::vector<ASFW::Protocols::AVC::FCPFrame> gSubmittedFCPFrames;
 class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
   public:
     ASFW::Async::AsyncHandle ReadBlock(
-        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress, uint32_t,
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress address, uint32_t,
         ASFW::FW::FwSpeed, ASFW::Async::InterfaceCompletionCallback callback) override {
-        const uint32_t pcrBE = OSSwapHostToBigInt32(pcrValue);
+        const uint32_t value = (address.addressLo == ASFW::CMP::PCRRegisters::kOMPR ||
+                                address.addressLo == ASFW::CMP::PCRRegisters::kIMPR)
+                                   ? mprValue
+                                   : pcrValue;
+        const uint32_t pcrBE = OSSwapHostToBigInt32(value);
         std::array<uint8_t, 4> payload{};
         std::memcpy(payload.data(), &pcrBE, sizeof(pcrBE));
         callback(ASFW::Async::AsyncStatus::kSuccess, payload);
@@ -76,6 +80,7 @@ class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
 
     bool failCompareSwap{false};
     uint32_t pcrValue{0x80000000U};
+    uint32_t mprValue{0x80000001U}; // S400, one plug
     std::vector<uint8_t> lastLockOperand;
 
   private:
@@ -502,9 +507,8 @@ TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
 TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
     RecordingAVCBus bus;
     ASFW::IRM::IRMClient irm(bus);
-    ASFW::CMP::CMPClient cmp(bus);
-    cmp.SetDeviceNode(2, ASFW::IRM::Generation{1});
-    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp);
+    ASFW::CMP::CMPClient cmp(bus, bus);
+    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp, 1);
     ASFW::Audio::AudioDuplexChannels channels{};
     channels.deviceToHostIsoChannel = 5;
     protocol.SetAssignedChannels(channels);
@@ -518,7 +522,8 @@ TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
     ASSERT_EQ(bus.lastLockOperand.size(), 8U);
     uint32_t desiredBE = 0;
     std::memcpy(&desiredBE, bus.lastLockOperand.data() + 4, sizeof(desiredBE));
-    EXPECT_EQ(OSSwapBigToHostInt32(desiredBE), 0x81050000U);
+    // oPCR carries the negotiated S400 rate in bits 15:14.
+    EXPECT_EQ(OSSwapBigToHostInt32(desiredBE), 0x81058000U);
 }
 
 TEST(CMPClientPCRBits, UsesSixBitPointToPointConnectionCount) {
@@ -529,11 +534,11 @@ TEST(CMPClientPCRBits, UsesSixBitPointToPointConnectionCount) {
 TEST(CMPClientPCRBits, RejectsChangingChannelOfExistingPointToPointConnection) {
     RecordingAVCBus bus;
     bus.pcrValue = 0x81030000U; // online, one connection, channel 3
-    ASFW::CMP::CMPClient cmp(bus);
-    cmp.SetDeviceNode(2, ASFW::IRM::Generation{1});
+    ASFW::CMP::CMPClient cmp(bus, bus);
 
     ASFW::CMP::CMPStatus status = ASFW::CMP::CMPStatus::Success;
-    cmp.ConnectOPCR(0, 5, [&status](ASFW::CMP::CMPStatus result) {
+    cmp.ConnectOPCR({.guid = 1, .nodeId = ASFW::FW::NodeId{2}, .generation = ASFW::FW::Generation{1}},
+                    0, 5, [&status](ASFW::CMP::CMPStatus result) {
         status = result;
     });
 
@@ -544,9 +549,8 @@ TEST(CMPClientPCRBits, RejectsChangingChannelOfExistingPointToPointConnection) {
 TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
     RecordingAVCBus bus;
     ASFW::IRM::IRMClient irm(bus);
-    ASFW::CMP::CMPClient cmp(bus);
-    cmp.SetDeviceNode(2, ASFW::IRM::Generation{1});
-    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp);
+    ASFW::CMP::CMPClient cmp(bus, bus);
+    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp, 1);
 
     IOReturn rxStatus = kIOReturnNotReady;
     protocol.ProgramRx([&rxStatus](IOReturn status, ASFW::Audio::DuplexStageResult) {
@@ -566,6 +570,7 @@ namespace ASFW::Protocols::AVC {
 bool FCPTransport::init(Protocols::Ports::FireWireBusOps*,
                         Protocols::Ports::FireWireBusInfo*,
                         Discovery::FWDevice*,
+                        Scheduling::ITimerScheduler&,
                         const FCPTransportConfig&) {
     return true;
 }
@@ -575,6 +580,12 @@ FCPTransport::~FCPTransport() = default;
 void FCPTransport::Shutdown() {}
 
 FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command, FCPCompletion completion) {
+    return SubmitCommand(command, std::move(completion), {});
+}
+
+FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
+                                      FCPCompletion completion,
+                                      FCPCommandPolicy) {
     gSubmittedFCPFrames.push_back(command);
     FCPFrame response = command;
     response.data[0] = static_cast<uint8_t>(AVCResponseType::kAccepted);

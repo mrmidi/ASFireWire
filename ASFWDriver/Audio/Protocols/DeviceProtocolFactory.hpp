@@ -152,6 +152,7 @@ public:
         Protocols::Ports::FireWireBusOps& busOps,
         Protocols::Ports::FireWireBusInfo& busInfo,
         uint16_t nodeId,
+        uint64_t deviceGuid,
         ::ASFW::IRM::IRMClient* irmClient = nullptr,
         ::ASFW::CMP::CMPClient* cmpClient = nullptr
     );
