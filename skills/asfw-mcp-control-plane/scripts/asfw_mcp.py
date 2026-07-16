@@ -19,12 +19,21 @@ SAFE_TOOL_PREFIXES = (
     "asfw_get_",
     "asfw_list_",
     "asfw_snapshot_",
-    "asfw_avc_inquiry",
+    # AV/C inspection tools are read-only.  Keep this prefix separate from
+    # FCP: the developer FCP command may mutate device state.
+    "asfw_avc_",
     "asfw_cmp_get_",
     "asfw_sbp2_get_",
     "asfw_dice_read_",
     "asfw_irm_get_",
 )
+
+# Read-only FCP operations do not share a safe prefix with
+# `asfw_fcp_send_command_dev`, which is intentionally mutation-gated.
+SAFE_TOOL_NAMES = {
+    "asfw_fcp_send_command",
+    "asfw_fcp_get_recent_responses",
+}
 
 
 class MCPError(RuntimeError):
@@ -237,7 +246,7 @@ def command_health(client: MCPClient) -> Any:
 
 
 def is_safe_tool(name: str) -> bool:
-    return name.startswith(SAFE_TOOL_PREFIXES)
+    return name.startswith(SAFE_TOOL_PREFIXES) or name in SAFE_TOOL_NAMES
 
 
 def parse_arguments(raw: str) -> Any:
