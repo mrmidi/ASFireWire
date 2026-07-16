@@ -50,6 +50,19 @@ struct MCPSettingsView: View {
                         .foregroundStyle(viewModel.status.activeHTTPConnections > 0 ? .green : .secondary)
                 }
 
+                Toggle("Allow guarded FCP experiments", isOn: $viewModel.guardedFCPExperimentsEnabled)
+                    .disabled(!viewModel.canEditGuardedFCPExperiments)
+                    .onChange(of: viewModel.guardedFCPExperimentsEnabled) { _, enabled in
+                        viewModel.setGuardedFCPExperimentsEnabled(enabled)
+                    }
+
+                if viewModel.guardedFCPExperimentsEnabled {
+                    Label("Developer tools require a current GUID, node, and generation. The in-process MCP test gate must pass before startup.", systemImage: "exclamationmark.shield")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if let error = viewModel.lastError {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)

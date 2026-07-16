@@ -94,6 +94,45 @@ struct MCPLiveDriverControlTests {
         #expect(dice?.protocolHints == ["dice_tcat", "sbp2"])
     }
 
+    @Test func fcpCommandUsesGuidBoundRouteAndReturnsResponseReceipt() async {
+        let backend = FakeLiveDriverBackend()
+        backend.devices = [
+            FWDeviceInfo(
+                id: 0x0011_2233_4455_6677,
+                guid: 0x0011_2233_4455_6677,
+                vendorId: 0x0003DB,
+                modelId: 0x000001,
+                vendorName: "Apogee",
+                modelName: "Duet",
+                nodeId: 0,
+                generation: 17,
+                state: .ready,
+                units: [],
+                deviceKind: 0
+            )
+        ]
+        backend.avcUnits = [
+            AVCUnitInfo(guid: 0x0011_2233_4455_6677, nodeID: 0, vendorID: 0x0003DB,
+                        modelID: 1, subunits: [], isoInputPlugs: 1, isoOutputPlugs: 1,
+                        extInputPlugs: 1, extOutputPlugs: 1)
+        ]
+        backend.fcpResponse = Data([0x0C, 0xFF, 0x19])
+        let request = ASFWMCPFcpCommandRequest(
+            targetGUID: 0x0011_2233_4455_6677,
+            address: ASFWMCPAddress(nodeId: 0, generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000B00),
+            intent: .control,
+            payload: [0x00, 0xFF, 0x19]
+        )
+
+        let receipt = await LiveASFWDriverControl(backend: backend).executeFCPCommand(request)
+
+        #expect(receipt.ok)
+        #expect(receipt.observedNodeId == 0)
+        #expect(receipt.observedGeneration == 17)
+        #expect(receipt.response == [0x0C, 0xFF, 0x19])
+        #expect(backend.fcpCommands == 1)
+    }
+
     private func address(generation: UInt32) -> ASFWMCPAddress {
         ASFWMCPAddress(
             nodeId: 0xFFC1,
@@ -134,6 +173,8 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var blockWrites = 0
     var compareSwaps = 0
     var resultPolls = 0
+    var fcpCommands = 0
+    var fcpResponse: Data?
 
     func mcpCurrentGeneration() -> UInt32? { generation }
     func mcpControllerStatus() -> ControllerStatus? { nil }
@@ -169,5 +210,10 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult? {
         resultPolls += 1
         return results[handle]
+    }
+
+    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
+        fcpCommands += 1
+        return fcpResponse
     }
 }

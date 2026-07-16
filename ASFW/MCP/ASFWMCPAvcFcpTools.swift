@@ -39,6 +39,9 @@ enum ASFWMCPAvcCommandIntent: String, Equatable, CaseIterable {
 
 /// A raw FCP/AV/C command directed at a node's FCP command register.
 struct ASFWMCPFcpCommandRequest: Equatable {
+    /// Stable device identity selected by the caller. The live adapter resolves
+    /// it to `address.nodeId` immediately before issuing the command.
+    let targetGUID: UInt64
     /// Target node's FCP command register address.
     let address: ASFWMCPAddress
     let intent: ASFWMCPAvcCommandIntent
@@ -70,5 +73,44 @@ struct ASFWMCPFcpCommandRequest: Equatable {
             protocolSupported: protocolSupported,
             dryRun: dryRun
         )
+    }
+}
+
+/// Receipt for a developer FCP command. `observedNodeId` and
+/// `observedGeneration` describe the preflight route validated by this MCP
+/// slice. FW-100 will replace those observations with the transport's exact
+/// write-completion attempt context before this is used as a response matcher
+/// diagnostic.
+struct ASFWMCPFcpCommandReceipt: Equatable {
+    let targetGUID: UInt64
+    let expectedNodeId: UInt32
+    let expectedGeneration: UInt32
+    let observedNodeId: UInt32?
+    let observedGeneration: UInt32
+    let response: [UInt8]?
+    let status: ASFWMCPTransactionStatus
+    let correlationId: String
+    let durationUsec: UInt64?
+    let policy: ASFWMCPPolicyDecision?
+
+    var ok: Bool { status == .ok }
+}
+
+extension ASFWMCPFcpCommandReceipt {
+    var mcpValue: ASFWMCPValue {
+        .object([
+            "kind": .string("fcpCommand"),
+            "ok": .bool(ok),
+            "status": .string(status.rawValue),
+            "targetGuid": .string(String(format: "0x%016llX", targetGUID)),
+            "expectedNodeId": .int(Int(expectedNodeId)),
+            "expectedGeneration": .int(Int(expectedGeneration)),
+            "observedNodeId": observedNodeId.map { .int(Int($0)) } ?? .null,
+            "observedGeneration": .int(Int(observedGeneration)),
+            "correlationId": .string(correlationId),
+            "durationUsec": durationUsec.map { .uint64($0) } ?? .null,
+            "response": response.map { .array($0.map { .int(Int($0)) }) } ?? .null,
+            "policy": policy.map(\.mcpValue) ?? .null
+        ])
     }
 }

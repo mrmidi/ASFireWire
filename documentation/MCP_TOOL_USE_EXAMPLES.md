@@ -137,10 +137,22 @@ Read-only; returns cached bytes plus a parsed summary. Raw bytes are opt-in
 
 ### 3.7 FCP control command — `asfw_fcp_send_command_dev` (intent `control`)
 
-Mutating; policy-gated. In `readOnlyDeveloper`:
+Mutating; policy-gated. The caller must pin the command to the selected
+device GUID, its current node ID, and the current generation. A successful
+result is an FCP receipt with the validated routing observation and response;
+FW-100 upgrades that observation to the exact write-completion attempt context.
 
 ```json
-{ "kind": "writeBlock", "ok": false, "status": "denied",
+// developer-write request
+{ "targetGuid": 4822678189205111, "nodeId": 2, "generation": 17,
+  "addressHigh": 65535, "addressLow": 4026534656,
+  "intent": "control", "payload": [0, 255, 25] }
+```
+
+In `readOnlyDeveloper`:
+
+```json
+{ "kind": "fcpCommand", "ok": false, "status": "denied",
   "policy": { "decision": "requiresDeveloperMode", "requiredMode": "developerWriteEnabled",
               "reason": "Writes require developerWriteEnabled mode; current mode is readOnlyDeveloper." } }
 ```

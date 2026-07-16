@@ -104,6 +104,43 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
 
+    @Test func developerFcpCommandReturnsRouteBoundReceipt() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("control")
+        args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x19)])
+
+        let result = await transport.callTool("asfw_fcp_send_command_dev", arguments: .object(args))
+
+        let data = try object(result)
+        #expect(result.ok)
+        #expect(data["kind"] == .string("fcpCommand"))
+        #expect(data["status"] == .string("ok"))
+        #expect(data["targetGuid"] == .string("0x0011223344556677"))
+        #expect(data["expectedNodeId"] == .int(0))
+        #expect(data["expectedGeneration"] == .int(17))
+        #expect(data["observedNodeId"] == .int(0))
+        #expect(await driver.unexpectedWriteAttemptCount() == 1)
+    }
+
+    @Test func developerFcpCommandRefusesStaleGenerationBeforeDriverAccess() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+        var args = addressArgs(nodeId: 0, generation: 16, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("control")
+        args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x19)])
+
+        let result = await transport.callTool("asfw_fcp_send_command_dev", arguments: .object(args))
+
+        let data = try object(result)
+        #expect(result.ok == false)
+        #expect(data["status"] == .string("denied"))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func mockModeDryRunDoesNotReachDriverWritePath() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .mock, driver: driver))

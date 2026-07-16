@@ -17,6 +17,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpAsyncBlockWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16?
     func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16?
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult?
+    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data?
 }
 
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
@@ -71,6 +72,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult? {
         getTransactionResult(handle: handle, initialPayloadCapacity: initialPayloadCapacity)
+    }
+
+    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
+        sendRawFCPCommand(guid: guid, frame: frame, timeoutMs: timeoutMs)
     }
 }
 
@@ -240,6 +245,47 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
                     newValue: Data(quadletBytes(request.swap))
                 )
             }
+        )
+    }
+
+    func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {
+        let correlationId = "live-fcp-\(UUID().uuidString)"
+        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        guard backend.mcpIsConnected else {
+            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil)
+        }
+        guard currentGeneration == request.address.generation else {
+            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .staleGeneration, correlationId: correlationId, durationUsec: nil)
+        }
+
+        let guidText = String(format: "0x%016llX", request.targetGUID)
+        guard let node = listNodesFromBackend().first(where: {
+            $0.guid == guidText && $0.nodeId == request.address.nodeId && $0.protocolHints.contains("avc")
+        }) else {
+            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil)
+        }
+
+        let started = Date()
+        let response = backend.mcpSendRawFCPCommand(
+            guid: request.targetGUID,
+            frame: Data(request.payload),
+            timeoutMs: 15_000
+        )
+        let completedGeneration = backend.mcpCurrentGeneration() ?? currentGeneration
+        let status: ASFWMCPTransactionStatus = completedGeneration == currentGeneration
+            ? (response == nil ? .timeout : .ok)
+            : .busReset
+        return fcpReceipt(
+            request,
+            observedNodeId: node.nodeId,
+            observedGeneration: completedGeneration,
+            response: response.map(Array.init),
+            status: status,
+            correlationId: correlationId,
+            durationUsec: elapsedUsec(since: started)
         )
     }
 
@@ -440,6 +486,29 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             generation: generation,
             correlationId: correlationId,
             rCode: reason
+        )
+    }
+
+    private func fcpReceipt(
+        _ request: ASFWMCPFcpCommandRequest,
+        observedNodeId: UInt32?,
+        observedGeneration: UInt32,
+        response: [UInt8]?,
+        status: ASFWMCPTransactionStatus,
+        correlationId: String,
+        durationUsec: UInt64?
+    ) -> ASFWMCPFcpCommandReceipt {
+        ASFWMCPFcpCommandReceipt(
+            targetGUID: request.targetGUID,
+            expectedNodeId: request.address.nodeId,
+            expectedGeneration: request.address.generation,
+            observedNodeId: observedNodeId,
+            observedGeneration: observedGeneration,
+            response: response,
+            status: status,
+            correlationId: correlationId,
+            durationUsec: durationUsec,
+            policy: nil
         )
     }
 

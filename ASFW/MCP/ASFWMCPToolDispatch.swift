@@ -261,7 +261,12 @@ extension ASFWMCPCore {
     private func dispatchFcpDeveloperCommand(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
         do {
             let intent = try decoder.intent()
-            let request = ASFWMCPFcpCommandRequest(address: try decoder.address(), intent: intent, payload: try decoder.bytes("payload"))
+            let request = ASFWMCPFcpCommandRequest(
+                targetGUID: try decoder.uint64("targetGuid"),
+                address: try decoder.address(),
+                intent: intent,
+                payload: try decoder.bytes("payload")
+            )
             if let error = request.validationError {
                 return malformedTransactionResult(name, kind: .writeBlock, generation: request.address.generation, code: error)
             }
@@ -272,9 +277,36 @@ extension ASFWMCPCore {
             ) else {
                 return malformedToolResult(name, reason: "Developer FCP command requires a mutating intent.")
             }
-            return await dispatchMutatingTransaction(name, kind: .writeBlock, generation: request.address.generation, policyRequest: policyRequest) {
-                await driver.executeWriteBlock(ASFWMCPWriteBlockRequest(address: request.address, payload: request.payload))
+            let policy = evaluateWritePolicy(policyRequest)
+            guard policy.reachesDriverWritePath else {
+                let receipt = ASFWMCPFcpCommandReceipt(
+                    targetGUID: request.targetGUID,
+                    expectedNodeId: request.address.nodeId,
+                    expectedGeneration: request.address.generation,
+                    observedNodeId: nil,
+                    observedGeneration: await currentGeneration(),
+                    response: nil,
+                    status: policy.isDryRun ? .dryRun : .denied,
+                    correlationId: correlationId(name),
+                    durationUsec: nil,
+                    policy: policy
+                )
+                return ASFWMCPToolCallResult(toolName: name, ok: false, data: receipt.mcpValue, errors: [])
             }
+            var receipt = await driver.executeFCPCommand(request)
+            receipt = ASFWMCPFcpCommandReceipt(
+                targetGUID: receipt.targetGUID,
+                expectedNodeId: receipt.expectedNodeId,
+                expectedGeneration: receipt.expectedGeneration,
+                observedNodeId: receipt.observedNodeId,
+                observedGeneration: receipt.observedGeneration,
+                response: receipt.response,
+                status: receipt.status,
+                correlationId: receipt.correlationId,
+                durationUsec: receipt.durationUsec,
+                policy: policy
+            )
+            return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }
@@ -517,6 +549,10 @@ private struct ASFWMCPToolArgumentDecoder {
 
     func uint32(_ key: String) throws -> UInt32 {
         UInt32(try boundedUInt64(key, max: UInt64(UInt32.max)))
+    }
+
+    func uint64(_ key: String) throws -> UInt64 {
+        try boundedUInt64(key, max: UInt64.max)
     }
 
     func bool(_ key: String, default defaultValue: Bool) throws -> Bool {

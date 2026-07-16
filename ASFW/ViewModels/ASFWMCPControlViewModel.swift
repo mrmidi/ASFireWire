@@ -5,6 +5,7 @@ import Foundation
 final class ASFWMCPControlViewModel: ObservableObject {
     @Published var isEnabled: Bool
     @Published var portText: String
+    @Published var guardedFCPExperimentsEnabled: Bool
     @Published private(set) var status: ASFWMCPHostStatus = .stopped
     @Published private(set) var isChangingState = false
     @Published private(set) var lastError: String?
@@ -17,6 +18,7 @@ final class ASFWMCPControlViewModel: ObservableObject {
     private enum DefaultsKey {
         static let enabled = "asfw.mcp.enabled"
         static let port = "asfw.mcp.port"
+        static let guardedFCPExperimentsEnabled = "asfw.mcp.guarded-fcp-experiments-enabled"
     }
 
     init(connector: ASFWDriverConnector, defaults: UserDefaults = .standard) {
@@ -25,6 +27,7 @@ final class ASFWMCPControlViewModel: ObservableObject {
         let savedPort = defaults.integer(forKey: DefaultsKey.port)
         self.portText = savedPort > 0 ? "\(savedPort)" : "8765"
         self.isEnabled = defaults.bool(forKey: DefaultsKey.enabled)
+        self.guardedFCPExperimentsEnabled = defaults.bool(forKey: DefaultsKey.guardedFCPExperimentsEnabled)
     }
 
     var endpointText: String {
@@ -42,6 +45,15 @@ final class ASFWMCPControlViewModel: ObservableObject {
 
     var canRunReadOnlyHardwareSmoke: Bool {
         status.isRunning && isChangingState == false
+    }
+
+    var canEditGuardedFCPExperiments: Bool {
+        status.isRunning == false && isChangingState == false
+    }
+
+    func setGuardedFCPExperimentsEnabled(_ enabled: Bool) {
+        guardedFCPExperimentsEnabled = enabled
+        defaults.set(enabled, forKey: DefaultsKey.guardedFCPExperimentsEnabled)
     }
 
     func applyEnabledState() {
@@ -72,7 +84,25 @@ final class ASFWMCPControlViewModel: ObservableObject {
         defaults.set(Int(port), forKey: DefaultsKey.port)
 
         let driver = LiveASFWDriverControl(backend: connector)
-        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)
+        let provisionalConfiguration = runtimeConfiguration(swiftTestGatePassed: guardedFCPExperimentsEnabled)
+        let provisionalCore = ASFWMCPCore(configuration: provisionalConfiguration, driver: driver)
+        if guardedFCPExperimentsEnabled {
+            let testGate = await ASFWMCPTestGate.evaluate(core: provisionalCore)
+            guard ASFWMCPTestGate.allowsRealAgentHardwareAccess(testGate) else {
+                let failures = testGate.failedChecks.map(\.id).joined(separator: ", ")
+                lastError = "Guarded FCP experiments were not enabled: \(failures)"
+                status = .stopped
+                isEnabled = false
+                defaults.set(false, forKey: DefaultsKey.enabled)
+                isChangingState = false
+                return
+            }
+        }
+
+        let core = ASFWMCPCore(
+            configuration: runtimeConfiguration(swiftTestGatePassed: guardedFCPExperimentsEnabled),
+            driver: driver
+        )
         let nextHost = ASFWMCPHost(core: core)
         nextHost.onStatusChanged = { [weak self] status in
             self?.status = status
@@ -114,5 +144,15 @@ final class ASFWMCPControlViewModel: ObservableObject {
             lastError = "Hardware smoke found \(report.failures.count) failure(s): \(report.conciseSummary)"
         }
         isChangingState = false
+    }
+
+    private func runtimeConfiguration(swiftTestGatePassed: Bool) -> ASFWMCPRuntimeConfiguration {
+        guard guardedFCPExperimentsEnabled else { return .readOnlyDeveloper }
+        return ASFWMCPRuntimeConfiguration(
+            mode: .developerWriteEnabled,
+            writePolicyAvailable: true,
+            swiftTestGatePassed: swiftTestGatePassed,
+            rawDeveloperTierEnabled: false
+        )
     }
 }

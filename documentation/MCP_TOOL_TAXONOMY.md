@@ -229,7 +229,7 @@ Tools:
 | `asfw_avc_get_subunit_capabilities` | read-only | Return decoded subunit capabilities where available. |
 | `asfw_avc_get_subunit_descriptor` | read-only | Return bounded descriptor bytes and parsed summary when available. |
 | `asfw_fcp_send_command` | read-only by default | Send raw FCP/AV/C command that is inquiry/status-only by schema. |
-| `asfw_fcp_send_command_dev` | developer-write | Developer-tier raw FCP command for commands that may mutate device state. |
+| `asfw_fcp_send_command_dev` | developer-write | Developer-tier raw FCP command for commands that may mutate device state; requires target GUID, node ID, and generation and returns an FCP receipt. |
 | `asfw_fcp_get_recent_responses` | read-only | Inspect recent command/response records. |
 
 The raw FCP tool must require a declared command intent:

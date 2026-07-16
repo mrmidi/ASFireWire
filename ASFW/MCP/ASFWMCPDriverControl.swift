@@ -9,6 +9,7 @@ protocol ASFWDriverControlling {
     func executeWriteQuadlet(_ request: ASFWMCPWriteQuadletRequest) async -> ASFWMCPTransactionResult
     func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
+    func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -170,6 +171,55 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             rCode: comparePassed ? "complete" : "conflictError",
             durationUsec: 180,
             payload: quadletBytes(comparePassed ? request.swap : mockQuadletValue(for: request.address))
+        )
+    }
+
+    func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {
+        let matchingNode = nodes.first {
+            $0.nodeId == request.address.nodeId &&
+            $0.guid == String(format: "0x%016llX", request.targetGUID) &&
+            $0.protocolHints.contains("avc")
+        }
+        guard matchingNode != nil else {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: nil,
+                observedGeneration: generation,
+                response: nil,
+                status: .unavailable,
+                correlationId: "mock-fcp-route-missing",
+                durationUsec: nil,
+                policy: nil
+            )
+        }
+        guard request.address.generation == generation else {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: nil,
+                status: .staleGeneration,
+                correlationId: "mock-fcp-stale-generation",
+                durationUsec: nil,
+                policy: nil
+            )
+        }
+        attemptedWriteCount += 1
+        return ASFWMCPFcpCommandReceipt(
+            targetGUID: request.targetGUID,
+            expectedNodeId: request.address.nodeId,
+            expectedGeneration: request.address.generation,
+            observedNodeId: request.address.nodeId,
+            observedGeneration: generation,
+            response: [0x0C, request.payload.dropFirst().first ?? 0xFF, request.payload.dropFirst(2).first ?? 0xFF],
+            status: .ok,
+            correlationId: "mock-fcp-command",
+            durationUsec: 200,
+            policy: nil
         )
     }
 
