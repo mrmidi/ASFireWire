@@ -175,6 +175,23 @@ def compact_nodes(value: Any) -> Any:
     return [{key: node[key] for key in keys if key in node} for node in nodes if isinstance(node, dict)]
 
 
+def compact_health(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    data = unwrap(value)
+    if not isinstance(data, dict):
+        return value
+    keys = (
+        "status",
+        "reasons",
+        "expectedGeneration",
+        "allowReadOnlyQueries",
+        "allowTargetedReads",
+        "capabilities",
+    )
+    return {key: data[key] for key in keys if key in data}
+
+
 def read_resource(client: MCPClient, uri: str) -> Any:
     return resource_json(client.request("resources/read", {"uri": uri}))
 
@@ -195,7 +212,10 @@ def command_summary(client: MCPClient) -> Any:
         raise MCPError("resources/list returned an invalid resource list.")
     telemetry_uri = advertised_resource_uri(resources, "telemetry")
     nodes_uri = advertised_resource_uri(resources, "nodes")
+    health_uri = advertised_resource_uri(resources, "control-plane/health")
     output: dict[str, Any] = {"endpoint": client.endpoint}
+    if health_uri:
+        output["health"] = compact_health(read_resource(client, health_uri))
     if telemetry_uri:
         output["telemetry"] = compact_telemetry(read_resource(client, telemetry_uri))
     if nodes_uri:
@@ -203,6 +223,17 @@ def command_summary(client: MCPClient) -> Any:
     if not telemetry_uri and not nodes_uri:
         output["resources"] = [resource.get("uri") for resource in resources]
     return output
+
+
+def command_health(client: MCPClient) -> Any:
+    listing = client.request("resources/list")
+    resources = listing.get("resources", [])
+    if not isinstance(resources, list):
+        raise MCPError("resources/list returned an invalid resource list.")
+    health_uri = advertised_resource_uri(resources, "control-plane/health")
+    if health_uri is None:
+        raise MCPError("Server does not advertise asfw://control-plane/health; update ASFW and retry.")
+    return compact_health(read_resource(client, health_uri))
 
 
 def is_safe_tool(name: str) -> bool:
@@ -225,6 +256,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--allow-mutation", action="store_true")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("health")
     subparsers.add_parser("summary")
     subparsers.add_parser("tools")
     subparsers.add_parser("resources")
@@ -241,7 +273,9 @@ def main() -> int:
     try:
         client = MCPClient(args.endpoint, args.timeout)
         client.connect()
-        if args.command == "summary":
+        if args.command == "health":
+            output = command_health(client)
+        elif args.command == "summary":
             output = command_summary(client)
         elif args.command == "tools":
             output = client.request("tools/list")

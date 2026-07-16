@@ -39,6 +39,11 @@ struct MCPHostedEndToEndTests {
             let telemetryText = try #require(contents.first?.text)
             #expect(telemetryText.contains("\"schema\" : \"asfw.telemetry.snapshot.v1\""))
             #expect(telemetryText.contains("\"driverConnected\" : true"))
+
+            let healthContents = try await client.readResource(uri: "asfw://control-plane/health")
+            let healthText = try #require(healthContents.first?.text)
+            #expect(healthText.contains("\"schema\" : \"asfw.control_plane.health.v1\""))
+            #expect(healthText.contains("\"status\" : \"ready\""))
         } catch {
             await client.disconnect()
             await host.stop()

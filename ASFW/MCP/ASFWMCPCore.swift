@@ -42,6 +42,8 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
         }
 
         switch uri {
+        case "asfw://control-plane/health":
+            return await controlPlaneHealthEnvelope()
         case "asfw://telemetry/snapshot":
             return await telemetrySnapshotEnvelope()
         case "asfw://nodes":
@@ -53,6 +55,43 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
         default:
             return capabilityUnavailableEnvelope(uri: uri)
         }
+    }
+
+    private func controlPlaneHealthEnvelope() async -> ASFWMCPResourceEnvelope {
+        let snapshot = await driver.fetchTelemetrySnapshot(configuration: configuration)
+        let assessment = controlPlaneHealthAssessment(snapshot: snapshot)
+        return envelope(
+            schema: "asfw.control_plane.health.v1",
+            uri: "asfw://control-plane/health",
+            snapshot: snapshot,
+            data: .object([
+                "status": .string(assessment.status),
+                "reasons": .array(assessment.reasons.map { .string($0) }),
+                "expectedGeneration": .int(Int(snapshot.generation)),
+                "allowReadOnlyQueries": .bool(assessment.allowReadOnlyQueries),
+                "allowTargetedReads": .bool(assessment.allowTargetedReads),
+                "capabilities": .object([
+                    "readOnlyToolsAvailable": .bool(configuration.mode != .disabled),
+                    "developerWritesListed": .bool(snapshot.policy.writesListed),
+                    "protocols": .object([
+                        "avc": .bool(snapshot.protocols.avcUnits > 0),
+                        "cmp": .bool(snapshot.protocols.cmpCapableNodes > 0),
+                        "sbp2": .bool(snapshot.protocols.sbp2Units > 0),
+                        "diceTcat": .bool(snapshot.protocols.diceTcatNodes > 0)
+                    ])
+                ]),
+                "nextResources": .array([
+                    .string("asfw://telemetry/snapshot"),
+                    .string("asfw://nodes"),
+                    .string("asfw://controller/state")
+                ])
+            ]),
+            links: [
+                "asfw://telemetry/snapshot",
+                "asfw://nodes",
+                "asfw://controller/state"
+            ]
+        )
     }
 
     private func telemetrySnapshotEnvelope() async -> ASFWMCPResourceEnvelope {
@@ -203,6 +242,35 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
         )
     }
 
+    private func controlPlaneHealthAssessment(
+        snapshot: ASFWMCPTelemetrySnapshot
+    ) -> (status: String, reasons: [String], allowReadOnlyQueries: Bool, allowTargetedReads: Bool) {
+        guard snapshot.driverConnected else {
+            return ("unavailable", ["driverNotConnected"], false, false)
+        }
+
+        var reasons: [String] = []
+        if snapshot.controller.state != "Running" {
+            reasons.append("controllerNotRunning")
+        }
+        if !snapshot.controller.linkActive {
+            reasons.append("linkInactive")
+        }
+        if !snapshot.bus.topologyValid {
+            reasons.append("topologyInvalid")
+        }
+        if snapshot.async.droppedEventCount > 0 {
+            reasons.append("asyncEventsDropped")
+        }
+        if snapshot.async.timeouts > 0 {
+            reasons.append("asyncTimeoutsObserved")
+        }
+
+        return reasons.isEmpty
+            ? ("ready", [], true, true)
+            : ("degraded", reasons, true, false)
+    }
+
     private func disabledEnvelope(uri: String) -> ASFWMCPResourceEnvelope {
         ASFWMCPResourceEnvelope(
             schema: "asfw.telemetry.error.v1",
@@ -241,4 +309,3 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
         )
     }
 }
-

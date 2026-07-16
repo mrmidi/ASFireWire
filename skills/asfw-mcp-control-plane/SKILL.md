@@ -10,14 +10,25 @@ Use the bundled client instead of reconstructing MCP HTTP/SSE sessions or pastin
 ## Default workflow
 
 1. Confirm the app-hosted MCP server is enabled. Its default endpoint is `http://127.0.0.1:8766/mcp`.
-2. Run the compact read-only summary:
+2. Ask the versioned health resource whether deeper reads are trustworthy:
+
+   ```bash
+   python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py health
+   ```
+
+   `ready` permits targeted read-only diagnostics. `degraded` permits only
+   high-level inspection until its reasons are resolved. `unavailable` means
+   do not infer driver state. Preserve `expectedGeneration` for any follow-up
+   bus request.
+
+3. Run the compact read-only summary when node or protocol detail is needed:
 
    ```bash
    python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py summary
    ```
 
-3. Use `tools` or `resources` only when the summary lacks the needed detail.
-4. Call a read tool with typed JSON arguments only after checking its schema:
+4. Use `tools` or `resources` only when the summary lacks the needed detail.
+5. Call a read tool with typed JSON arguments only after checking its schema:
 
    ```bash
    python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py tools

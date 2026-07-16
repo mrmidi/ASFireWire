@@ -15,16 +15,34 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     private let nodes: [ASFWMCPNodeSummary]
     private let transactions: [ASFWMCPTransactionEvent]
     private let generation: UInt32
+    private let driverConnected: Bool
+    private let controllerState: String
+    private let linkActive: Bool
+    private let topologyValid: Bool
+    private let droppedEventCount: UInt32
+    private let timeoutCount: UInt32
     private var attemptedWriteCount: Int = 0
 
     init(
         generation: UInt32 = 17,
         nodes: [ASFWMCPNodeSummary] = MockASFWDriverControl.defaultNodes,
-        transactions: [ASFWMCPTransactionEvent] = MockASFWDriverControl.defaultTransactions
+        transactions: [ASFWMCPTransactionEvent] = MockASFWDriverControl.defaultTransactions,
+        driverConnected: Bool = true,
+        controllerState: String = "Running",
+        linkActive: Bool = true,
+        topologyValid: Bool = true,
+        droppedEventCount: UInt32 = 0,
+        timeoutCount: UInt32 = 0
     ) {
         self.generation = generation
         self.nodes = nodes
         self.transactions = transactions
+        self.driverConnected = driverConnected
+        self.controllerState = controllerState
+        self.linkActive = linkActive
+        self.topologyValid = topologyValid
+        self.droppedEventCount = droppedEventCount
+        self.timeoutCount = timeoutCount
     }
 
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot {
@@ -33,10 +51,10 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             capturedAt: nil,
             monotonicNs: 123_456_789_000,
             generation: generation,
-            driverConnected: true,
+            driverConnected: driverConnected,
             controller: ASFWMCPControllerTelemetry(
-                state: "Running",
-                linkActive: true,
+                state: controllerState,
+                linkActive: linkActive,
                 localNodeId: 0,
                 rootNodeId: 2,
                 irmNodeId: 2,
@@ -48,12 +66,12 @@ actor MockASFWDriverControl: ASFWDriverControlling {
                 nodeCount: UInt32(nodes.count),
                 busResetCount: 12,
                 gapCount: 63,
-                topologyValid: true
+                topologyValid: topologyValid
             ),
             async: ASFWMCPAsyncTelemetry(
                 recentEventCount: UInt32(transactions.count),
-                droppedEventCount: 0,
-                timeouts: 0,
+                droppedEventCount: droppedEventCount,
+                timeouts: timeoutCount,
                 lastCompletionNs: transactions.last?.timestampNs
             ),
             protocols: ASFWMCPProtocolTelemetry(

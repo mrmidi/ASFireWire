@@ -267,6 +267,7 @@ Key points:
 - It lives inside the existing Xcode project (no separate Swift package or CLI). The MCP layer talks to the driver through a narrow `ASFWDriverControlling` boundary over `ASFWDriverConnector`, so handlers can be unit-tested with mocks and later backed by the live connector.
 - A local HTTP/SSE endpoint exposes the tool surface, gated behind an explicit runtime mode plus a write-policy engine — read/inspection tools first, with raw register and CAS writes refused unless the policy and test gates allow them.
 - Tool surfaces include register access, AV/C and raw FCP, CMP, IRM/CAS, SBP-2, and DICE/TCAT inspection. Telemetry and transaction schemas are published as MCP resources.
+- `asfw://control-plane/health` is the versioned first query for agents. It reports `ready`, `degraded`, or `unavailable`, explicit reasons, the expected generation, and whether deeper read-only diagnostics are trustworthy.
 - The default endpoint is loopback-only: `http://127.0.0.1:8766/mcp`. Enable the control plane in the ASFW app before connecting an agent; do not expose it on the network.
 - The app's **Run read-only smoke** action is the preferred hardware check. It captures generation and node inventory, reads Config ROM data, identifies adapter gaps, and never embeds a device-specific write recipe.
 - Design and usage are documented under `documentation/MCP_*.md` (control-plane architecture, tool taxonomy, write policy, mock/smoke harness, telemetry resources, tool-use examples, and agent workflows).
@@ -287,10 +288,11 @@ cp -R skills/asfw-mcp-control-plane ~/.codex/skills/
 Then invoke `$asfw-mcp-control-plane`, or run its client directly:
 
 ```bash
+python3 ~/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py health
 python3 ~/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py summary
 ```
 
-`summary` is read-only and returns the driver state, current generation, compact node inventory, protocol availability, and write gate. Use `tools`, `resources`, and `read` for more detail. The helper refuses non-allowlisted tool calls unless `--allow-mutation` is supplied; that acknowledgement never bypasses the MCP server's developer and mutation gates. Use it only after explicit user authorization for the exact hardware action.
+`health` is read-only and determines whether deeper queries are safe; preserve its expected generation for any follow-up bus request. `summary` adds driver state, compact node inventory, protocol availability, and write gate. Use `tools`, `resources`, and `read` for more detail. The helper refuses non-allowlisted tool calls unless `--allow-mutation` is supplied; that acknowledgement never bypasses the MCP server's developer and mutation gates. Use it only after explicit user authorization for the exact hardware action.
 
 ## Code guidelines
 
