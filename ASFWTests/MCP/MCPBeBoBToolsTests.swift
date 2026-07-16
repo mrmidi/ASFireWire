@@ -32,4 +32,42 @@ struct MCPBeBoBToolsTests {
     @Test func refusesNonBridgeCoMagic() {
         #expect(ASFWMCPBeBoBBootRomInformation.decode(Array(repeating: 0, count: 80)) == nil)
     }
+
+    @Test func decodesLinuxStyleGenericUnitPlugInfoResponse() {
+        let information = ASFWMCPBeBoBUnitPlugInformation.decode(
+            [0x0c, 0xff, 0x02, 0x00, 0x01, 0x01, 0x02, 0x03]
+        )
+        #expect(information == ASFWMCPBeBoBUnitPlugInformation(
+            isochronousInputCount: 1,
+            isochronousOutputCount: 1,
+            externalInputCount: 2,
+            externalOutputCount: 3
+        ))
+        #expect(ASFWMCPBeBoBUnitPlugInformation.decode([0x0a, 0xff, 0x02, 0x00, 0, 0, 0, 0]) == nil)
+    }
+
+    @Test func unitPlugInfoMcpToolUsesTheFixedStatusCommand() async throws {
+        let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)
+
+        let result = await core.callTool(name: "asfw_bebob_get_unit_plug_info", arguments: .object([
+            "targetGuid": .uint64(0x000A_AC03_00B1_D1F7),
+            "nodeId": .int(3),
+            "generation": .int(17),
+        ]))
+
+        guard case .object(let data) = result.data,
+              case .object(let information)? = data["information"] else {
+            Issue.record("Expected structured BeBoB PLUG_INFO data.")
+            return
+        }
+        #expect(result.ok)
+        #expect(data["kind"] == .string("bebobUnitPlugInfo"))
+        #expect(data["recognized"] == .bool(true))
+        #expect(information["isochronousInput"] == .int(1))
+        #expect(information["isochronousOutput"] == .int(1))
+        #expect(information["externalInput"] == .int(0))
+        #expect(information["externalOutput"] == .int(0))
+        #expect(await driver.unexpectedWriteAttemptCount() == 1)
+    }
 }

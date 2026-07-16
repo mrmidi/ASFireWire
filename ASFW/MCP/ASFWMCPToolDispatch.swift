@@ -102,6 +102,8 @@ extension ASFWMCPCore {
             return await dispatchWriteBlock(name, decoder: decoder, protocolHint: "dice_tcat")
         case "asfw_bebob_read_bootrom_info":
             return await bebobBootRomResult(toolName: name, decoder: decoder)
+        case "asfw_bebob_get_unit_plug_info":
+            return await bebobUnitPlugInfoResult(toolName: name, decoder: decoder)
         default:
             return notImplementedToolResult(name, reason: "Catalog tool \(name) has no dispatch arm.")
         }
@@ -714,6 +716,65 @@ extension ASFWMCPCore {
 }
 
 private extension ASFWMCPCore {
+    func bebobUnitPlugInfoResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: try decoder.uint32("generation"),
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+            let receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .status,
+                    payload: ASFWMCPBeBoBUnitPlugInformation.statusCommand
+                )
+            )
+            guard receipt.ok else {
+                return ASFWMCPToolCallResult(
+                    toolName: toolName,
+                    ok: false,
+                    data: receipt.mcpValue,
+                    errors: []
+                )
+            }
+            guard let response = receipt.response,
+                  let information = ASFWMCPBeBoBUnitPlugInformation.decode(response) else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobUnitPlugInfo"),
+                    "recognized": .bool(false),
+                    "transaction": receipt.mcpValue,
+                    "reason": .string("Expected an AV/C STABLE unit PLUG_INFO response with four count operands.")
+                ]))
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("bebobUnitPlugInfo"),
+                "recognized": .bool(true),
+                "transaction": receipt.mcpValue,
+                "information": information.mcpValue
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
     func bebobBootRomResult(
         toolName: String,
         decoder: ASFWMCPToolArgumentDecoder

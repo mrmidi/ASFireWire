@@ -14,8 +14,59 @@ extension ASFWMCPToolCatalog {
             idempotent: false,
             summary: "Read and decode the BridgeCo BeBoB BootROM information block.",
             requiredProtocolHints: ["bebob"]
+        ),
+        ASFWMCPToolDefinition(
+            name: "asfw_bebob_get_unit_plug_info",
+            group: "bebob",
+            visibility: .readOnly,
+            readOnly: true,
+            idempotent: false,
+            summary: "Send the Linux-style AV/C unit PLUG_INFO STATUS query and decode ISO/external plug counts (targetGuid, nodeId, generation required).",
+            requiredProtocolHints: ["bebob"]
         )
     ]
+}
+
+/// The generic AV/C Unit PLUG_INFO STATUS command used before any BridgeCo
+/// extension command. The layout is behaviorally cross-checked with Linux
+/// `sound/firewire/bebob/bebob_stream.c:908-957`; this is a fresh implementation.
+///
+/// The FCP register address is intentionally fixed here. Callers cannot alter
+/// the command payload, ctype, or destination register through this diagnostic.
+struct ASFWMCPBeBoBUnitPlugInformation: Equatable {
+    static let fcpAddressHigh: UInt16 = 0xffff
+    static let fcpAddressLow: UInt32 = 0xf000_0b00
+    static let statusCommand: [UInt8] = [0x01, 0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+    let isochronousInputCount: UInt8
+    let isochronousOutputCount: UInt8
+    let externalInputCount: UInt8
+    let externalOutputCount: UInt8
+
+    static func decode(_ response: [UInt8]) -> ASFWMCPBeBoBUnitPlugInformation? {
+        guard response.count >= 8,
+              response[0] == 0x0c, // AV/C STABLE response to STATUS.
+              response[1] == 0xff,
+              response[2] == 0x02,
+              response[3] == 0x00 else {
+            return nil
+        }
+        return ASFWMCPBeBoBUnitPlugInformation(
+            isochronousInputCount: response[4],
+            isochronousOutputCount: response[5],
+            externalInputCount: response[6],
+            externalOutputCount: response[7]
+        )
+    }
+
+    var mcpValue: ASFWMCPValue {
+        .object([
+            "isochronousInput": .int(Int(isochronousInputCount)),
+            "isochronousOutput": .int(Int(isochronousOutputCount)),
+            "externalInput": .int(Int(externalInputCount)),
+            "externalOutput": .int(Int(externalOutputCount)),
+        ])
+    }
 }
 
 /// Decoder for the BridgeCo BootROM information block. The device memory is

@@ -266,6 +266,21 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         }
         attemptedWriteCount += 1
         let payload = request.payload
+        if request.intent == .status,
+           payload == ASFWMCPBeBoBUnitPlugInformation.statusCommand {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0xFF, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-unit-plug-info",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
         if payload.count >= 6, payload[1] == 0xFF, payload[2] == 0x18 || payload[2] == 0x19 {
             let isInput = payload[2] == 0x19
             if request.intent == .status {
@@ -417,6 +432,18 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         modelName: "Storage",
         configRomCached: true,
         protocolHints: ["sbp2"]
+    )
+
+    static let bebobNode = ASFWMCPNodeSummary(
+        nodeId: 3,
+        address16: "0xFFC3",
+        guid: "0x000AAC0300B1D1F7",
+        vendorId: "0x000AAC",
+        modelId: "0x000003",
+        vendorName: "TerraTec Electronic GmbH",
+        modelName: "PHASE 88 Rack FW",
+        configRomCached: true,
+        protocolHints: ["avc", "bebob", "cmp"]
     )
 
     static let defaultTransactions: [ASFWMCPTransactionEvent] = [

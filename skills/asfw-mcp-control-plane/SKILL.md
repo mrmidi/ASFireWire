@@ -58,6 +58,25 @@ python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py r
 
 # Inspect a read-only tool's full result when needed.
 python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_avc_list_units '{}'
+
+# BridgeCo/BeBoB generic unit PLUG_INFO (fixed, STATUS-only FCP command).
+python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_bebob_get_unit_plug_info '{"targetGuid":3003878663639543,"nodeId":0,"generation":2}'
 ```
 
 If the endpoint is unavailable, report the connection failure and ask the user to enable the MCP Control Plane in ASFW. Do not fall back to guessed driver state.
+
+## PHASE 88 / BeBoB discovery rule
+
+For the exact TerraTec PHASE 88 Rack FW identity (vendor `0x000AAC`, model
+`0x000003`), do **not** gate BeBoB discovery behind generic AV/C `UNIT_INFO`
+or `SUBUNIT_INFO`. Linux BeBoB begins with generic unit `PLUG_INFO`, then
+BridgeCo extended ISO-plug type and stream-format-list STATUS commands.
+
+- A generic AV/C inventory with zero subunits or zero ISO plugs is not evidence
+  that the device has no BeBoB capabilities.
+- Preserve the BridgeCo operand layout: its unit address is the AV/C subunit
+  byte (`0xff`); the extension operands begin with direction. Stream-format
+  list places support-status before entry index.
+- Before treating a BeBoB STATUS command as unsupported, distinguish an FCP
+  transport failure or bus reset from an AV/C `REJECTED`/`NOT IMPLEMENTED`
+  response. Include `[FCP]` in the user-provided unified-log predicate.
