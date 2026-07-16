@@ -1,0 +1,4 @@
+interface:
+  display_name: "ASFW MCP Control Plane"
+  short_description: "Use ASFW driver control-plane telemetry"
+  default_prompt: "Use $asfw-mcp-control-plane to inspect the connected ASFW FireWire driver safely."
