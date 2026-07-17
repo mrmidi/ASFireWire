@@ -493,6 +493,10 @@ void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
 }
 
+bool IsochService::IsReceiveReplayEstablished() const noexcept {
+    return isochReceiveContext_ && isochReceiveContext_->IsReplayEstablished();
+}
+
 void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noexcept {
     txPreparationCallback_ = std::move(callback);
     if (isochTransmitContext_) {

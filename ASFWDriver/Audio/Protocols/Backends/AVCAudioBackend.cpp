@@ -46,9 +46,15 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                        "AVCAudioBackend: Failed to create recovery queue (0x%x)",
                        queueStatus);
     }
+
+    // Subscribe to RX timing loss. Unlike DICE (which health-gates on a register
+    // probe), AV/C has no health register — HandleTimingLoss reads the RX replay
+    // cadence itself after a debounce. See AVC_STREAM_HEALTH_AND_RECOVERY.md §6.
+    hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleTimingLoss(guid); });
 }
 
 AVCAudioBackend::~AVCAudioBackend() noexcept {
+    hostTransport_.SetTimingLossCallback({});
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -91,6 +97,7 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
         IOLockLock(lock_);
         configByGuid_.erase(guid);
         recoveringGuids_.erase(guid);
+        timingLossAttempts_.erase(guid);
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }
@@ -155,12 +162,139 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     }
 }
 
+void AVCAudioBackend::FinishRecovery(uint64_t guid) noexcept {
+    if (lock_) {
+        IOLockLock(lock_);
+        recoveringGuids_.erase(guid);
+        IOLockUnlock(lock_);
+    }
+}
+
+void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
+    if (guid == 0 || stopping_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // Only the active CMP stream is recoverable. IsochService reports the duplex
+    // GUID it claimed; a mismatch means the loss belongs to no stream we own.
+    // recoveringGuids_ dedups against a bus-reset recovery already in flight
+    // (OnDeviceResumed) and against a second timing-loss for the same GUID.
+    bool armed = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        if (activeGuid_ == guid) {
+            armed = recoveringGuids_.insert(guid).second;
+        }
+        IOLockUnlock(lock_);
+    }
+    if (!armed) {
+        return;
+    }
+
+    // A duplex operation already running (start/stop/recovery) is itself the
+    // transition that tripped the replay-discontinuity detector; let it settle.
+    if (duplexCoordinator_.IsOperationInFlight(guid)) {
+        ASFW_LOG(Audio,
+                 "AVCAudioBackend: timing-loss dropped (duplex op in flight) GUID=0x%016llx",
+                 guid);
+        FinishRecovery(guid);
+        return;
+    }
+
+    auto recover = ^{
+        // FW-61: a block enqueued just before BeginTeardown's drain bails here
+        // before any PCR/MMIO work, so it cannot run after hardware detaches.
+        // Debounce off the RX queue: give the [TxAlign] self-heal its transient
+        // window. Poll stopping_ so teardown aborts within one tick.
+        for (uint32_t waited = 0; waited < kTimingLossSettleMs;
+             waited += kTimingLossPollMs) {
+            if (stopping_.load(std::memory_order_acquire)) {
+                FinishRecovery(guid);
+                return;
+            }
+            IOSleep(kTimingLossPollMs);
+        }
+        if (stopping_.load(std::memory_order_acquire)) {
+            FinishRecovery(guid);
+            return;
+        }
+
+        // AV/C health verdict = RX cadence (no register probe, doc §5/§6). If
+        // replay re-established during the settle window the gap was host-side
+        // (StartIO/StopIO churn, a brief RX gap) and already self-healed;
+        // suppress and reset the escalation budget.
+        if (hostTransport_.IsReceiveReplayEstablished()) {
+            if (lock_) {
+                IOLockLock(lock_);
+                timingLossAttempts_.erase(guid);
+                IOLockUnlock(lock_);
+            }
+            ASFW_LOG(Audio,
+                     "AVCAudioBackend: timing-loss self-healed (RX replay re-established) "
+                     "GUID=0x%016llx",
+                     guid);
+            FinishRecovery(guid);
+            return;
+        }
+
+        // Still stalled: a genuine device outage. Bound the escalations so a
+        // device that only partially returns cannot restart-loop forever.
+        uint8_t attempt = 0;
+        if (lock_) {
+            IOLockLock(lock_);
+            attempt = ++timingLossAttempts_[guid];
+            IOLockUnlock(lock_);
+        }
+        if (attempt > kTimingLossMaxAttempts) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCAudioBackend: timing-loss escalation budget exhausted "
+                           "(attempt=%u); leaving stream stopped GUID=0x%016llx",
+                           attempt, guid);
+            FinishRecovery(guid);
+            return;
+        }
+
+        // Escalate: coordinator restart re-establishes CMP/PCR (the wire-observable
+        // recovery — bebob break_both_connections + cmp_connection_establish; doc §2/§7).
+        ASFW_LOG_WARNING(Audio,
+                         "AVCAudioBackend: RX replay stalled past settle; restarting duplex "
+                         "attempt=%u GUID=0x%016llx",
+                         attempt, guid);
+        const IOReturn status = duplexCoordinator_.RecoverStreaming(
+            guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
+        if (status == kIOReturnSuccess) {
+            if (lock_) {
+                IOLockLock(lock_);
+                timingLossAttempts_.erase(guid); // fresh session; reset budget
+                IOLockUnlock(lock_);
+            }
+            ASFW_LOG(Audio,
+                     "AVCAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
+                     guid);
+        } else {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",
+                           guid, status);
+        }
+        FinishRecovery(guid);
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(recover);
+        return;
+    }
+    recover();
+}
+
 void AVCAudioBackend::BeginTeardown() noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
         return;
     }
 
     const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
+    // Stop new timing-loss escalations from being queued during teardown; any
+    // block already queued bails on the stopping_ latch below.
+    hostTransport_.SetTimingLossCallback({});
     // Drain queued recovery before hardware detaches. Each queued block checks
     // stopping_ before it can re-establish PCRs in the teardown window.
     if (workQueue_) {
@@ -298,6 +432,7 @@ IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }
+        timingLossAttempts_.erase(guid);
         IOLockUnlock(lock_);
     }
 
