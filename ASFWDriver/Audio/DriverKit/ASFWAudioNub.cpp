@@ -674,7 +674,7 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
              "ASFWAudioNub: RequestSampleRateChange %u Hz guid=0x%016llx",
              sampleRateHz, ivars->guid);
     const kern_return_t kr = coordinator->RequestClockConfig(
-        ivars->guid, desired, DuplexRestartReason::kSampleRateChange);
+        ivars->guid, desired, ASFW::Audio::DuplexRestartReason::kSampleRateChange);
     if (kr == kIOReturnSuccess) {
         ivars->currentSampleRateHz = sampleRateHz;
     }

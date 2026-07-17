@@ -68,7 +68,7 @@ const IAudioDeviceProfile* AudioProfileRegistry::RegisterBeBoBProfile(
     if (guid == 0 || discoveryModel == nullptr) return nullptr;
     auto& dynamic = DynamicProfiles();
     if (dynamic.find(guid) != dynamic.end()) return dynamic[guid].get();
-    const auto* model = static_cast<const Audio::BeBoB::DeviceModel*>(discoveryModel);
+    const auto* model = static_cast<const ::ASFW::Audio::BeBoB::DeviceModel*>(discoveryModel);
     dynamic[guid] = std::make_unique<AVC::Profiles::BeBoBProfile>(*model);
     return dynamic[guid].get();
 }
