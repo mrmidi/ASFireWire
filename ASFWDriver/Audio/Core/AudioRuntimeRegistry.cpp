@@ -106,7 +106,7 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // mode). No protocol is created, and nothing is logged, for unknown devices.
     auto created = DeviceProtocolFactory::Create(
         record.vendorId, record.modelId, *busOps, *busInfo, *operationalNodeId, record.guid, irmClient,
-        cmpClient_);
+        cmpClient_, timerScheduler_);
     if (!created) {
         return nullptr;
     }

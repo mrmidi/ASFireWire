@@ -23,6 +23,10 @@ namespace ASFW::IRM {
 class IRMClient;
 }
 
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+} // namespace ASFW::Scheduling
+
 namespace ASFW::Audio {
 
 /// Integration mode for a recognized device profile.
@@ -157,7 +161,8 @@ public:
         uint16_t nodeId,
         uint64_t deviceGuid,
         ::ASFW::IRM::IRMClient* irmClient = nullptr,
-        ::ASFW::CMP::CMPClient* cmpClient = nullptr
+        ::ASFW::CMP::CMPClient* cmpClient = nullptr,
+        Scheduling::ITimerScheduler* timerScheduler = nullptr
     );
 
 private:

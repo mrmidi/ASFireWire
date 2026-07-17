@@ -21,6 +21,10 @@ namespace ASFW::IRM {
 class IRMClient;
 }
 
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+} // namespace ASFW::Scheduling
+
 #include "../../../Protocols/AVC/IAVCCommandSubmitter.hpp"
 
 namespace ASFW::Audio::BeBoB {
@@ -32,7 +36,8 @@ public:
                     uint16_t nodeId,
                     IRM::IRMClient* irmClient,
                     CMP::CMPClient* cmpClient,
-                    uint64_t deviceGuid) noexcept;
+                    uint64_t deviceGuid,
+                    Scheduling::ITimerScheduler* timerScheduler) noexcept;
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -78,6 +83,7 @@ private:
     // epoch and used only for the profile's AV/C unit-plug format commands.
     Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
     uint64_t deviceGuid_{0};
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
     FW::Generation preparedGeneration_{0};
     AudioDuplexChannels duplexChannels_{};
     AudioClockConfig appliedClock_{.sampleRateHz = 48000};

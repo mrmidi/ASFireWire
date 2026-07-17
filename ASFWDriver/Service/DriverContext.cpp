@@ -182,6 +182,12 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         d.audioRuntimeRegistry = std::make_shared<ASFW::Audio::AudioRuntimeRegistry>();
     }
 
+    // Provide genuinely-deferred one-shot timers to protocol control planes.
+    // BeBoB uses this for the post-format settle delay instead of IOSleep.
+    if (d.audioRuntimeRegistry && d.sbp2SessionScheduler) {
+        d.audioRuntimeRegistry->SetTimerScheduler(d.sbp2SessionScheduler.get());
+    }
+
     if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware &&
         d.audioRuntimeRegistry) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
