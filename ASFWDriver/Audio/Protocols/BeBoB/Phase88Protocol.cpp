@@ -13,6 +13,7 @@
 #include "../../../Protocols/AVC/FCPTransport.hpp"
 #include "../../../Protocols/AVC/AVCCommand.hpp"
 #include "../../../Protocols/AVC/StreamFormats/AVCUnitPlugSignalFormatCommand.hpp"
+#include "../../../Protocols/AVC/AudioFunctionBlockCommand.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -241,14 +242,91 @@ void Phase88Protocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
             // reads it later for clock sync.
             // Cross-validated with linux-sound-firewire-stack/firewire/bebob/
             // bebob_stream.c:619 (read-only) and bebob_terratec.c:10-36.
-            IOSleep(kFormatSettleMs);
-            appliedClock_ = desiredClock;
-            ASFW_LOG(Audio, "[BeBoB] AV/C unit plugs set to AM824 48k GUID=0x%016llx",
-                     deviceGuid_);
-            callback(kIOReturnSuccess,
-                     ClockApplyResult{.generation = busInfo_.GetGeneration(),
-                                      .appliedClock = appliedClock_,
-                                      .runtimeCaps = Phase88Caps()});
+
+            // Configure the Phase 88 internal hardware mixer for stereo playback:
+            // 1. Set Mixer Destination (FB 0x06) to analog-output-1/2 (0x01)
+            auto setMixerDest = std::make_shared<Protocols::AVC::AudioFunctionBlockCommand>(
+                *this, 0x08,
+                Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
+                Protocols::AVC::AudioFunctionBlockCommand::BlockType::kSelector,
+                0x06, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kSelectorControl,
+                std::vector<uint8_t>{0x01}
+            );
+
+            setMixerDest->Submit([this, desiredClock, callback = std::move(callback), setMixerDest](
+                                     Protocols::AVC::AVCResult destResult,
+                                     const std::vector<uint8_t>&) mutable {
+                if (destResult != Protocols::AVC::AVCResult::kAccepted) {
+                    ASFW_LOG(Audio, "[BeBoB] Warning: failed to set Phase 88 mixer destination: result=%u",
+                             static_cast<uint32_t>(destResult));
+                }
+
+                // 2. Set Mixer Stream Source (FB 0x07) to stream-input-1/2 (0x01)
+                auto setMixerSrc = std::make_shared<Protocols::AVC::AudioFunctionBlockCommand>(
+                    *this, 0x08,
+                    Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
+                    Protocols::AVC::AudioFunctionBlockCommand::BlockType::kSelector,
+                    0x07, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kSelectorControl,
+                    std::vector<uint8_t>{0x01}
+                );
+                setMixerSrc->Submit([this, desiredClock, callback = std::move(callback), setMixerSrc](
+                                        Protocols::AVC::AVCResult srcResult,
+                                        const std::vector<uint8_t>&) mutable {
+                    if (srcResult != Protocols::AVC::AVCResult::kAccepted) {
+                        ASFW_LOG(Audio, "[BeBoB] Warning: failed to set Phase 88 mixer stream source: result=%u",
+                                 static_cast<uint32_t>(srcResult));
+                    }
+
+                    // Define helper structure to chain the volume/mute commands
+                    struct MixerInitStep {
+                        uint8_t fbId;
+                        Protocols::AVC::AudioFunctionBlockCommand::ControlSelector selector;
+                        std::vector<uint8_t> data;
+                    };
+
+                    auto steps = std::make_shared<std::vector<MixerInitStep>>(std::vector<MixerInitStep>{
+                        // Unmute Stream Playback Left/Right
+                        {0x07, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kMute, {0x01, 0x01, 0x60}},
+                        {0x07, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kMute, {0x02, 0x01, 0x60}},
+                        // Max Vol Stream Playback Left/Right
+                        {0x07, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kVolume, {0x01, 0x02, 0x00, 0x00}},
+                        {0x07, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kVolume, {0x02, 0x02, 0x00, 0x00}},
+                        // Unmute Mixer Output Left/Right (FB 0 & 1)
+                        {0x00, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kMute, {0x01, 0x01, 0x60}},
+                        {0x01, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kMute, {0x02, 0x01, 0x60}},
+                        // Max Vol Mixer Output Left/Right
+                        {0x00, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kVolume, {0x01, 0x02, 0x00, 0x00}},
+                        {0x01, Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kVolume, {0x02, 0x02, 0x00, 0x00}}
+                    });
+
+                    auto runNextStep = std::make_shared<std::function<void(size_t)>>();
+                    *runNextStep = [this, desiredClock, callback = std::move(callback), steps, runNextStep](size_t index) mutable {
+                        if (index >= steps->size()) {
+                            IOSleep(kFormatSettleMs);
+                            appliedClock_ = desiredClock;
+                            ASFW_LOG(Audio, "[BeBoB] Phase 88 hardware mixer configured and unmuted");
+                            callback(kIOReturnSuccess,
+                                     ClockApplyResult{.generation = busInfo_.GetGeneration(),
+                                                      .appliedClock = appliedClock_,
+                                                      .runtimeCaps = Phase88Caps()});
+                            return;
+                        }
+
+                        const auto& step = (*steps)[index];
+                        auto cmd = std::make_shared<Protocols::AVC::AudioFunctionBlockCommand>(
+                            *this, 0x08,
+                            Protocols::AVC::AudioFunctionBlockCommand::CommandType::kControl,
+                            Protocols::AVC::AudioFunctionBlockCommand::BlockType::kFeature,
+                            step.fbId, step.selector, step.data
+                        );
+                        cmd->Submit([index, runNextStep, cmd](Protocols::AVC::AVCResult res, const std::vector<uint8_t>&) mutable {
+                            (*runNextStep)(index + 1);
+                        });
+                    };
+
+                    (*runNextStep)(0);
+                });
+            });
         });
     });
 }
