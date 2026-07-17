@@ -16,8 +16,6 @@
 
 #include "../../../Logging/Logging.hpp"
 
-#include <DriverKit/IOLib.h>
-
 #include <memory>
 #include <vector>
 
@@ -50,57 +48,46 @@ namespace {
     return caps;
 }
 
-// Chains a sequence of async mixer FB commands. Steps are MixerMap entries; each
-// submits one FCP command and continues to the next on completion. On the final step,
-// invokes the caller's completion. failures are logged but do not abort the sequence
-// (kBestEffort policy — mixer init is best-effort for livability).
-void RunMixerSteps(const MixerMap& map, BeBoBProtocol& protocol,
-                   MixerFailurePolicy policy, IOReturnCallback finalCompletion) {
-    struct State {
-        std::vector<MixerStep> steps;
-        size_t index{0};
+// Chains a sequence of async FB mixer commands from a MixerMap. Each step submits
+// one FCP command and continues to the next on completion. Failures are logged but
+// do not abort the sequence (kBestEffort policy — mixer init is best-effort for
+// livability). Takes Phase88Protocol& because the FB helpers are protected in the
+// base class.
+void RunMixerSteps(Phase88Protocol& protocol, const MixerMap& map,
+                   MixerFailurePolicy policy, MixerCompletion finalCompletion) {
+    struct Step {
+        std::function<void(MixerCompletion)> submit;
     };
-    struct MixerStep {
-        std::function<void(IOReturnCallback)> submit;
-    };
+    std::vector<Step> steps;
+    steps.reserve(map.selectors.size() + map.mutes.size() + map.volumes.size());
 
-    // Build step list: selectors first, then features (mute + volume).
-    auto state = std::make_shared<State>();
     for (const auto& sel : map.selectors) {
-        const uint8_t fbId = sel.fbId;
-        const uint8_t value = sel.value;
-        state->steps.push_back({[&protocol, fbId, value](IOReturnCallback cb) {
+        steps.push_back({[&protocol, fbId = sel.fbId, value = sel.value](MixerCompletion cb) {
             protocol.SetSelectorBlock(fbId, value, std::move(cb));
         }});
     }
     for (const auto& mute : map.mutes) {
-        const uint8_t fbId = mute.fbId;
-        const uint8_t ch = mute.channel;
-        const bool unmute = mute.unmute;
-        state->steps.push_back({[&protocol, fbId, ch, unmute](IOReturnCallback cb) {
+        steps.push_back({[&protocol, fbId = mute.fbId, ch = mute.channel, unmute = mute.unmute](MixerCompletion cb) {
             protocol.SetFeatureMute(fbId, ch, unmute, std::move(cb));
         }});
     }
     for (const auto& vol : map.volumes) {
-        const uint8_t fbId = vol.fbId;
-        const uint8_t ch = vol.channel;
-        const uint16_t value = vol.value;
-        state->steps.push_back({[&protocol, fbId, ch, value](IOReturnCallback cb) {
+        steps.push_back({[&protocol, fbId = vol.fbId, ch = vol.channel, value = vol.value](MixerCompletion cb) {
             protocol.SetFeatureVolume(fbId, ch, value, std::move(cb));
         }});
     }
 
     auto runNext = std::make_shared<std::function<void(size_t, IOReturn)>>();
-    *runNext = [state, runNext, finalCompletion = std::move(finalCompletion), policy](size_t idx, IOReturn lastStatus) mutable {
+    *runNext = [steps = std::move(steps), runNext, finalCompletion = std::move(finalCompletion), policy](size_t idx, IOReturn lastStatus) mutable {
         if (lastStatus != kIOReturnSuccess && policy == MixerFailurePolicy::kRequired) {
             finalCompletion(lastStatus);
             return;
         }
-        if (idx >= state->steps.size()) {
+        if (idx >= steps.size()) {
             finalCompletion(kIOReturnSuccess);
             return;
         }
-        state->steps[idx].submit([runNext, idx](IOReturn status) {
+        steps[idx].submit([runNext, idx](IOReturn status) {
             (*runNext)(idx + 1, status);
         });
     };
@@ -133,7 +120,7 @@ void Phase88Protocol::ReadClockHealth(HealthCallback callback) {
 
 void Phase88Protocol::ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion) {
     ASFW_LOG(Audio, "[BeBoB] Phase88: configuring hardware mixer (unmute + max volume)");
-    RunMixerSteps(kPhase88MixerMap, *this, policy, std::move(completion));
+    RunMixerSteps(*this, kPhase88MixerMap, policy, std::move(completion));
 }
 
 } // namespace ASFW::Audio::BeBoB
