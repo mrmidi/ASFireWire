@@ -149,10 +149,12 @@ Audio-device support in tree today:
 - Focusrite Saffire Pro 24 DSP
 - PreSonus StudioLive 16.0.2
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
+- Terratec PHASE 88 Rack
 
 Personally tested with working audio:
 
 - Apogee Duet FireWire
+- Terratec PHASE 88 Rack
 - Focusrite Saffire Pro 24 DSP
 - PreSonus StudioLive 16.0.2
 - Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching)
