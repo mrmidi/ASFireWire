@@ -11,7 +11,7 @@
 #pragma once
 
 #include "../AudioStreamProfile.hpp"
-#include "../../Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 #include <vector>
 
