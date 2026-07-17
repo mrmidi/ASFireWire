@@ -13,7 +13,7 @@
 #include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
-#include "BridgeCo/BridgeCoReadOnlyProbe.hpp"
+#include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -299,26 +299,28 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // wire ordering instead of letting generic AV/C discovery consume or race
     // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
     // firewire/bebob/bebob_stream.c:908-940.
-    if (BridgeCo::IsTerraTecPhase88RackFw(device->GetVendorID(), device->GetModelID())) {
+    if (BeBoB::IsBeBoBDevice(device->GetVendorID(), device->GetModelID())) {
         ASFW_LOG(AVC,
-                 "AVCDiscovery: PHASE 88 matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
+                 "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
                  guid);
-        // The BeBoB path intentionally bypasses generic AV/C discovery, so it
-        // must publish its profile-owned configuration here.  Otherwise it
-        // never reaches AudioCoordinator/AudioNubPublisher and every start
-        // attempt is correctly rejected as not-ready before FCP/CMP.
+        // BeBoB intentionally bypasses generic AV/C discovery, so it must
+        // publish its profile-owned configuration here. Otherwise it never
+        // reaches AudioCoordinator/AudioNubPublisher and every start attempt
+        // is correctly rejected as not-ready before FCP/CMP.
+        // cross-validated: linux-sound-firewire-stack/firewire/bebob/bebob.c:184-260,
+        // bebob_stream.c:908-940.
         const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
         const uint32_t vendorId = device->GetVendorID();
         const uint32_t modelId = device->GetModelID();
         const std::string deviceName{device->GetModelName()};
-        BridgeCo::StartPhase88ReadOnlyProbe(
+        BeBoB::StartBeBoBPlug0Discovery(
             *avcUnit, guid,
-            [weakSelf, guid, vendorId, modelId, deviceName](const BridgeCo::DeviceModel& inventory) {
+            [weakSelf, guid, vendorId, modelId, deviceName](const BeBoB::DeviceModel& inventory) {
                 const auto self = weakSelf.lock();
                 if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
                     return;
                 }
-                self->PublishPhase88AudioConfig(guid, vendorId, modelId, deviceName, inventory);
+                self->PublishBeBoBAudioConfig(guid, vendorId, modelId, deviceName, inventory);
             });
         RebuildNodeIDMap();
         return;
@@ -414,11 +416,11 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
     PublishReadyAudioConfig(guid, audioDeviceConfig);
 }
 
-void AVCDiscovery::PublishPhase88AudioConfig(uint64_t guid,
-                                              uint32_t vendorId,
-                                              uint32_t modelId,
-                                              const std::string& deviceName,
-                                              const BridgeCo::DeviceModel& inventory) {
+void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
+                                             uint32_t vendorId,
+                                             uint32_t modelId,
+                                             const std::string& deviceName,
+                                             const BeBoB::DeviceModel& inventory) {
     constexpr uint8_t kPcmChannels = 10;
     constexpr uint8_t kMidiSlots = 1;
     constexpr uint32_t kSampleRateHz = 48000;
@@ -427,9 +429,10 @@ void AVCDiscovery::PublishPhase88AudioConfig(uint64_t guid,
     // It is intentionally independent of the BridgeCo formation rate code:
     // that list describes capabilities, while Phase88Protocol explicitly
     // programs FDF/SFC 48 kHz immediately before CMP connection.
+    // cross-validated: linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:96-115.
     if (!inventory.SupportsDuplexFormation(kPcmChannels, kMidiSlots)) {
         ASFW_LOG_ERROR(Audio,
-                       "[BeBoB] refusing PHASE 88 nub: inventory lacks duplex %u PCM + %u MIDI-slot formation GUID=0x%016llx",
+                       "[BeBoB] refusing BeBoB nub: inventory lacks duplex %u PCM + %u MIDI-slot formation GUID=0x%016llx",
                        static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots), guid);
         return;
     }
@@ -449,7 +452,7 @@ void AVCDiscovery::PublishPhase88AudioConfig(uint64_t guid,
     config.streamMode = Audio::Model::StreamMode::kBlocking;
 
     ASFW_LOG(Audio,
-             "[BeBoB] publishing PHASE 88 audio nub GUID=0x%016llx pcm=%u midiSlots=%u dbs=%u rate=%u mode=%{public}s",
+             "[BeBoB] publishing BeBoB audio nub GUID=0x%016llx pcm=%u midiSlots=%u dbs=%u rate=%u mode=%{public}s",
              guid, static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots),
              static_cast<unsigned>(kPcmChannels + kMidiSlots), kSampleRateHz, "blocking");
     PublishReadyAudioConfig(guid, config);
