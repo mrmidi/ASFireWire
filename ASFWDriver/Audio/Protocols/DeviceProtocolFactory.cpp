@@ -9,6 +9,7 @@
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../../Scheduling/ITimerScheduler.hpp"
 
 namespace ASFW::Audio {
 
@@ -20,7 +21,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     uint16_t nodeId,
     uint64_t deviceGuid,
     IRM::IRMClient* irmClient,
-    CMP::CMPClient* cmpClient
+    CMP::CMPClient* cmpClient,
+    Scheduling::ITimerScheduler* timerScheduler
 ) {
     if (vendorId == kFocusriteVendorId) {
         if (modelId == kSPro24DspModelId) {
@@ -84,7 +86,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  "Creating Phase88Protocol BeBoB/CMP backend vendor=0x%06x model=0x%06x node=0x%04x",
                  vendorId, modelId, nodeId);
         return std::make_unique<BeBoB::Phase88Protocol>(busOps, busInfo, nodeId, irmClient,
-                                                        cmpClient, deviceGuid);
+                                                        cmpClient, deviceGuid, timerScheduler);
     }
     
     // Unknown device

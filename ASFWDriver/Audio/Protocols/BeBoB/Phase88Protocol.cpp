@@ -110,9 +110,10 @@ Phase88Protocol::Phase88Protocol(Protocols::Ports::FireWireBusOps& busOps,
                                  uint16_t nodeId,
                                  IRM::IRMClient* irmClient,
                                  CMP::CMPClient* cmpClient,
-                                 uint64_t deviceGuid) noexcept
+                                 uint64_t deviceGuid,
+                                 Scheduling::ITimerScheduler* timerScheduler) noexcept
     : busInfo_(busInfo), nodeId_(nodeId), irmClient_(irmClient), cmpClient_(cmpClient),
-      deviceGuid_(deviceGuid) {
+      deviceGuid_(deviceGuid), timerScheduler_(timerScheduler) {
     // The BeBoB PCR path is CMP-only. Keep the common factory shape so this
     // protocol can participate in the same runtime registry as AV/C controls.
     (void)busOps;

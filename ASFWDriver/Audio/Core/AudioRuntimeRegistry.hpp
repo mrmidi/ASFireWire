@@ -36,6 +36,10 @@ namespace ASFW::Discovery {
 struct DeviceRecord;
 }
 
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+} // namespace ASFW::Scheduling
+
 namespace ASFW::Audio {
 
 class IDeviceProtocol;
@@ -59,6 +63,13 @@ public:
     // Set before discovery creates AV/C protocol instances. The registry does not
     // own the client; DriverContext owns it for the service lifetime.
     void SetCMPClient(CMP::CMPClient* cmpClient) noexcept { cmpClient_ = cmpClient; }
+
+    // Set before discovery creates protocol instances. Provides genuinely-deferred
+    // one-shot timers (no IOSleep) for protocol control planes such as BeBoB settle.
+    // The registry does not own the scheduler; DriverContext owns it.
+    void SetTimerScheduler(Scheduling::ITimerScheduler* timerScheduler) noexcept {
+        timerScheduler_ = timerScheduler;
+    }
 
     // Create-on-demand for a known device. Idempotent: an existing instance is
     // returned without re-creating (covers re-scan on device resume). Mirrors the
@@ -84,6 +95,7 @@ private:
     std::unordered_map<uint64_t, std::shared_ptr<IDeviceProtocol>> protocolsByGuid_;
     std::unordered_map<uint64_t, std::shared_ptr<AudioEndpointRuntime>> endpointsByGuid_;
     CMP::CMPClient* cmpClient_{nullptr};
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
 };
 
 } // namespace ASFW::Audio
