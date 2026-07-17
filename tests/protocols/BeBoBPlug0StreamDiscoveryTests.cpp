@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "Protocols/AVC/BridgeCo/BridgeCoReadOnlyProbe.hpp"
+#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 #include <optional>
 #include <utility>
@@ -10,15 +10,15 @@
 
 namespace {
 
-using ASFW::Protocols::AVC::BridgeCo::IsTerraTecPhase88RackFw;
-using ASFW::Protocols::AVC::BridgeCo::ParseStreamFormation;
-using ASFW::Protocols::AVC::BridgeCo::ParseExtendedStreamFormatListResponse;
-using ASFW::Protocols::AVC::BridgeCo::ParseExtendedStreamFormatSingleResponse;
-using ASFW::Protocols::AVC::BridgeCo::ParseChannelPositionSections;
-using ASFW::Protocols::AVC::BridgeCo::BuildReadOnlyProbeCommand;
-using ASFW::Protocols::AVC::BridgeCo::PlugDirection;
-using ASFW::Protocols::AVC::BridgeCo::ReadOnlyProbeCommand;
-using ASFW::Protocols::AVC::BridgeCo::StartPhase88ReadOnlyProbe;
+using ASFW::DeviceProfiles::Audio::BeBoB::IsBeBoBDevice;
+using ASFW::Audio::BeBoB::ParseStreamFormation;
+using ASFW::Audio::BeBoB::ParseExtendedStreamFormatListResponse;
+using ASFW::Audio::BeBoB::ParseExtendedStreamFormatSingleResponse;
+using ASFW::Audio::BeBoB::ParseChannelPositionSections;
+using ASFW::Audio::BeBoB::BuildReadOnlyProbeCommand;
+using ASFW::Audio::BeBoB::PlugDirection;
+using ASFW::Audio::BeBoB::ReadOnlyProbeCommand;
+using ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery;
 using ASFW::Protocols::AVC::AVCCdb;
 using ASFW::Protocols::AVC::AVCCompletion;
 using ASFW::Protocols::AVC::AVCResult;
@@ -63,9 +63,9 @@ private:
 };
 
 TEST(BridgeCoReadOnlyProbeTests, MatchesOnlyExactPhase88Identity) {
-    EXPECT_TRUE(IsTerraTecPhase88RackFw(0x000aac, 0x000003));
-    EXPECT_FALSE(IsTerraTecPhase88RackFw(0x000aac, 0x000004));
-    EXPECT_FALSE(IsTerraTecPhase88RackFw(0x000a92, 0x000003));
+    EXPECT_TRUE(IsBeBoBDevice(0x000aac, 0x000003));
+    EXPECT_FALSE(IsBeBoBDevice(0x000aac, 0x000004));
+    EXPECT_FALSE(IsBeBoBDevice(0x000a92, 0x000003));
 }
 
 TEST(BridgeCoReadOnlyProbeTests, BuildsLinuxGenericUnitPlugInfoBeforeBridgeCoExtensions) {
@@ -131,8 +131,8 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
          AVCResult::kNotImplemented, {}},
     });
 
-    std::optional<ASFW::Protocols::AVC::BridgeCo::DeviceModel> model;
-    StartPhase88ReadOnlyProbe(submitter, 0x000aac0300b1d1f7ULL,
+    std::optional<ASFW::Audio::BeBoB::DeviceModel> model;
+    StartBeBoBPlug0Discovery(submitter, 0x000aac0300b1d1f7ULL,
                               [&model](const auto& discovered) { model = discovered; });
 
     ASSERT_TRUE(submitter.Finished());

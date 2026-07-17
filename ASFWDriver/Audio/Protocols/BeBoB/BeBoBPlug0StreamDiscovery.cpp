@@ -1,19 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
+// BeBoBPlug0StreamDiscovery.cpp — Bounded, observational BeBoB discovery.
+//
+// STATUS-only inventory of a BeBoB device's isochronous plug 0 pair.
 // Wire behavior cross-validated with Linux sound/firewire/bebob/
 // bebob_command.c:91-107, 289-328 and bebob_stream.c:254-370, 705-820.
-// This is a fresh implementation; reference code was not copied.
+// Fresh implementation; no reference source is copied.
 
-#include "BridgeCoReadOnlyProbe.hpp"
+#include "BeBoBPlug0StreamDiscovery.hpp"
 
 #include "../../../Logging/Logging.hpp"
+
+using ::ASFW::Protocols::AVC::IAVCCommandSubmitter;
+using ::ASFW::Protocols::AVC::AVCCdb;
+using ::ASFW::Protocols::AVC::AVCResult;
+using ::ASFW::Protocols::AVC::AVCCompletion;
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-namespace ASFW::Protocols::AVC::BridgeCo {
+namespace ASFW::Audio::BeBoB {
 namespace {
 
 constexpr uint8_t kOpcodePlugInfo = 0x02;
@@ -54,7 +62,7 @@ public:
 
     void Start() {
         ASFW_LOG(AVC,
-                 "BeBoBProbe: PHASE 88 matched; starting STATUS-only BridgeCo inventory GUID=0x%016llx",
+                 "BeBoBProbe: BeBoB device matched; starting STATUS-only BridgeCo inventory GUID=0x%016llx",
                  guid_);
         SubmitNext();
     }
@@ -223,26 +231,22 @@ AVCCdb BuildReadOnlyProbeCommand(ReadOnlyProbeCommand command,
     cdb.subunit = kAVCSubunitUnit;
 
     if (command == ReadOnlyProbeCommand::kUnitPlugCounts) {
-        // Linux: avc_general_get_plug_info(unit, 0x1f, 0x07, 0x00, ...).
-        // Header + five operands = eight bytes on the wire.
         cdb.opcode = kOpcodePlugInfo;
-        cdb.operands[0] = 0x00; // Unit PLUG_INFO subfunction.
+        cdb.operands[0] = 0x00;
         cdb.operandLength = 5;
         return cdb;
     }
 
-    // BridgeCo BcoPlugAddr serializes to direction, addressing mode, unit
-    // plug class, plug id, reserved. Unit addressing itself is cdb.subunit.
     cdb.operands[1] = static_cast<uint8_t>(direction);
-    cdb.operands[2] = 0x00; // Unit plug addressing mode.
-    cdb.operands[3] = 0x00; // Isochronous unit plug class.
-    cdb.operands[4] = 0x00; // Plug 0.
-    cdb.operands[5] = 0xff; // Reserved.
+    cdb.operands[2] = 0x00;
+    cdb.operands[3] = 0x00;
+    cdb.operands[4] = 0x00;
+    cdb.operands[5] = 0xff;
 
     if (command == ReadOnlyProbeCommand::kStreamFormatList) {
         cdb.opcode = kOpcodeStreamFormatSupport;
         cdb.operands[0] = kExtendedFormatList;
-        cdb.operands[6] = 0xff; // BridgeCo support-status: not used for STATUS list.
+        cdb.operands[6] = 0xff;
         cdb.operands[7] = index;
         cdb.operandLength = 8;
         return cdb;
@@ -286,9 +290,6 @@ ParseStreamFormation(std::span<const uint8_t> formation) noexcept {
 std::optional<StreamFormation>
 ParseExtendedStreamFormatListResponse(uint8_t requestedIndex,
                                       std::span<const uint8_t> operands) noexcept {
-    // BridgeCo's response layout is validated against
-    // alsa-userspace-control-protocols-impl/protocols/bebob/src/bridgeco.rs:1703-1764
-    // and Linux sound/firewire/bebob/bebob_command.c:289-328.  No source is copied.
     if (operands.size() < 9 || operands[7] != requestedIndex) {
         return std::nullopt;
     }
@@ -297,9 +298,6 @@ ParseExtendedStreamFormatListResponse(uint8_t requestedIndex,
 
 std::optional<CurrentStreamFormat>
 ParseExtendedStreamFormatSingleResponse(std::span<const uint8_t> operands) noexcept {
-    // Extended stream format single has a support state at operand 6 and its
-    // formation begins at operand 7. Cross-validated with BridgeCo codec
-    // behavior in alsa-userspace-control-protocols-impl/protocols/bebob/src/bridgeco.rs:1631-1694.
     if (operands.size() < 7 || operands[0] != kExtendedPlugInfo) return std::nullopt;
     CurrentStreamFormat result{};
     switch (operands[6]) {
@@ -372,9 +370,9 @@ bool DeviceModel::SupportsDuplexFormation(uint8_t pcmChannels,
     return supports(input) && supports(output);
 }
 
-void StartPhase88ReadOnlyProbe(IAVCCommandSubmitter& submitter, uint64_t guid,
-                               ReadOnlyProbeCompletion completion) {
+void StartBeBoBPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
+                              ReadOnlyProbeCompletion completion) {
     std::make_shared<Probe>(submitter, guid, std::move(completion))->Start();
 }
 
-} // namespace ASFW::Protocols::AVC::BridgeCo
+} // namespace ASFW::Audio::BeBoB

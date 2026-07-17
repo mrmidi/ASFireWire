@@ -32,7 +32,7 @@ namespace ASFW::Discovery { struct DeviceRecord; }
 namespace ASFW::Audio::Model { struct ASFWAudioDevice; }
 namespace ASFW::Audio::Oxford::Apogee { class ApogeeDuetProtocol; }
 namespace ASFW::Protocols::AVC::Music { class MusicSubunit; }
-namespace ASFW::Protocols::AVC::BridgeCo { struct DeviceModel; }
+namespace ASFW::Audio::BeBoB { struct DeviceModel; }
 
 namespace ASFW::Protocols::AVC {
 
@@ -102,11 +102,11 @@ private:
     void RebuildNodeIDMap();
 
     void HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
-    void PublishPhase88AudioConfig(uint64_t guid,
-                                   uint32_t vendorId,
-                                   uint32_t modelId,
-                                   const std::string& deviceName,
-                                   const BridgeCo::DeviceModel& inventory);
+    void PublishBeBoBAudioConfig(uint64_t guid,
+                                  uint32_t vendorId,
+                                  uint32_t modelId,
+                                  const std::string& deviceName,
+                                  const BeBoB::DeviceModel& inventory);
     [[nodiscard]] Music::MusicSubunit* FindAudioMusicSubunit(const AVCUnit& avcUnit) const;
     void PopulateMusicSubunitCapabilities(uint64_t guid,
                                           const Discovery::FWDevice& device,
