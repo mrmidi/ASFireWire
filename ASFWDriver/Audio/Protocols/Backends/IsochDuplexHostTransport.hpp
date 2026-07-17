@@ -64,6 +64,10 @@ class IIsochDuplexHostTransport {
         return kIOReturnUnsupported;
     }
     [[nodiscard]] virtual kern_return_t StopAll() noexcept = 0;
+
+    // AV/C stream-health signal: is the master RX replay cadence established?
+    // Default false for mocks that don't model the RX layer.
+    [[nodiscard]] virtual bool IsReceiveReplayEstablished() const noexcept { return false; }
 };
 
 class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
@@ -105,6 +109,7 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     [[nodiscard]] kern_return_t StopPreparedReceive() noexcept override;
     [[nodiscard]] kern_return_t StopPreparedTransmit() noexcept override;
     [[nodiscard]] kern_return_t StopAll() noexcept override;
+    [[nodiscard]] bool IsReceiveReplayEstablished() const noexcept override;
 
   private:
     Driver::IsochService& isoch_;

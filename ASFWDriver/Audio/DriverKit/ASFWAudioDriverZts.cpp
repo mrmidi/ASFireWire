@@ -643,8 +643,12 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         if (stoppedShort || frameShort) {
             const uint64_t frameDeficit =
                 frameShort ? (targetFrameEnd - exposedFrameEndAfter) : 0;
-            ASFW_LOG(
-                DirectAudio,
+            // stoppedShort is rare and precedes an IT FATAL -> always log (interval
+            // 0). A frameShort-only wake is a persistent stall (e.g. RX outage
+            // NO-DATA) that otherwise floods at ~1 kHz -> rate-limit to ~1/s, with
+            // the suppressed-count preserving burst visibility. (doc §6)
+            ASFW_LOG_RL(
+                DirectAudio, "tx/prep-range", stoppedShort ? 0u : 1000u, OS_LOG_TYPE_DEFAULT,
                 "[TxPrepRange] retiredAbs=%llu prepareBaseAbs=%llu "
                 "prepareUntilAbs=%llu coverageTargetAbs=%llu limitTargetAbs=%llu reqSpan=%llu "
                 "prepared=%u short=%d firstMissingAbs=%lld marginAfter=%llu "

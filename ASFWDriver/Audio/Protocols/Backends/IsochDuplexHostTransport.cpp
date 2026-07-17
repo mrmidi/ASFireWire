@@ -110,4 +110,8 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
     return kIOReturnSuccess;
 }
 
+bool IsochDuplexHostTransport::IsReceiveReplayEstablished() const noexcept {
+    return isoch_.IsReceiveReplayEstablished();
+}
+
 } // namespace ASFW::Audio
