@@ -67,10 +67,10 @@ void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
                  guid, prevVendorId, device.vendorId, prevModelId, device.modelId);
     }
 
-    if (device.vendorName.empty() && identity->vendorName) {
+    if (identity->vendorName) {
         device.vendorName = identity->vendorName;
     }
-    if (device.modelName.empty() && identity->modelName) {
+    if (identity->modelName) {
         device.modelName = identity->modelName;
     }
 }
