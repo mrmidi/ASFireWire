@@ -1321,8 +1321,10 @@ void MusicSubunit::SetAudioVolume(ASFW::Protocols::AVC::IAVCCommandSubmitter& su
     // Target Audio Subunit 0 (0x01 << 3 | 0 = 0x08)
     uint8_t subunitAddr = (static_cast<uint8_t>(AVCSubunitType::kAudio) << 3) | 0;
     
-    // Volume data: 2 bytes, big endian
+    // Volume data: channel (0x00 Master), data length (0x02), and 2-byte volume
     std::vector<uint8_t> data;
+    data.push_back(0x00);
+    data.push_back(0x02);
     data.push_back(static_cast<uint8_t>((volume >> 8) & 0xFF));
     data.push_back(static_cast<uint8_t>(volume & 0xFF));
     

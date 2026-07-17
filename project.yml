@@ -156,8 +156,8 @@ targets:
         STRING_CATALOG_GENERATE_SYMBOLS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
         SWIFT_VERSION: "6.0"
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: 2
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: -Onone
@@ -184,7 +184,7 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
         COMBINE_HIDPI_IMAGES: YES
-        CURRENT_PROJECT_VERSION: 1
+        CURRENT_PROJECT_VERSION: 2
         DEVELOPMENT_TEAM: F6YA6B56LR
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: YES
@@ -198,7 +198,7 @@ targets:
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/../Frameworks"
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "0.2.0"
         REGISTER_APP_GROUPS: YES
         STRING_CATALOG_GENERATE_SYMBOLS: YES
         SWIFT_APPROACHABLE_CONCURRENCY: YES
