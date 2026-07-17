@@ -29,7 +29,7 @@ uint32_t RateCodeToHz(uint8_t code) noexcept {
 
 } // namespace
 
-BeBoBProfile::BeBoBProfile(const BeBoB::DeviceModel& discoveryModel) {
+BeBoBProfile::BeBoBProfile(const ::ASFW::Audio::BeBoB::DeviceModel& discoveryModel) {
     // Derive geometry from the first duplex formation.
     if (!discoveryModel.input.supportedFormations.empty()) {
         const auto& formation = discoveryModel.input.supportedFormations[0];

@@ -14,6 +14,7 @@
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
 #include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -299,7 +300,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     // wire ordering instead of letting generic AV/C discovery consume or race
     // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
     // firewire/bebob/bebob_stream.c:908-940.
-    if (BeBoB::IsBeBoBDevice(device->GetVendorID(), device->GetModelID())) {
+    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(device->GetVendorID(), device->GetModelID())) {
         ASFW_LOG(AVC,
                  "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
                  guid);
@@ -313,9 +314,9 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         const uint32_t vendorId = device->GetVendorID();
         const uint32_t modelId = device->GetModelID();
         const std::string deviceName{device->GetModelName()};
-        BeBoB::StartBeBoBPlug0Discovery(
+        ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
             *avcUnit, guid,
-            [weakSelf, guid, vendorId, modelId, deviceName](const BeBoB::DeviceModel& inventory) {
+            [weakSelf, guid, vendorId, modelId, deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
                 const auto self = weakSelf.lock();
                 if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
                     return;
@@ -420,7 +421,7 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
                                              uint32_t vendorId,
                                              uint32_t modelId,
                                              const std::string& deviceName,
-                                             const BeBoB::DeviceModel& inventory) {
+                                             const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
     // Register a per-GUID BeBoB profile from discovery data. For Phase88 this
     // is superseded by the static Phase88Profile in the registry; for generic
     // BeBoB devices it provides discovery-derived geometry.
@@ -442,7 +443,7 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
         return;
     }
 
-    Audio::Model::ASFWAudioDevice config{};
+    ::ASFW::Audio::Model::ASFWAudioDevice config{};
     config.guid = guid;
     config.vendorId = vendorId;
     config.modelId = modelId;
@@ -454,7 +455,7 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
     config.currentSampleRate = kSampleRateHz;
     config.inputPlugName = "PHASE 88 Inputs";
     config.outputPlugName = "PHASE 88 Outputs";
-    config.streamMode = Audio::Model::StreamMode::kBlocking;
+    config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
 
     ASFW_LOG(Audio,
              "[BeBoB] publishing BeBoB audio nub GUID=0x%016llx pcm=%u midiSlots=%u dbs=%u rate=%u mode=%{public}s",
@@ -620,7 +621,7 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     return config;
 }
 
-void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const Audio::Model::ASFWAudioDevice& config) {
+void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
     if (!audioConfigListener_) {
         ASFW_LOG_ERROR(Audio,
                        "AVCDiscovery: no audio config listener; dropping config for GUID=%llx",
@@ -634,7 +635,7 @@ void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const Audio::Model::AS
 void AVCDiscovery::PrefetchDuetStateAndCreateNub(
     uint64_t guid,
     const std::shared_ptr<AVCUnit>& avcUnit,
-    const Audio::Model::ASFWAudioDevice& config) {
+    const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
     if (!avcUnit) {
         if (!audioConfigListener_) {
             ASFW_LOG_ERROR(Audio,
@@ -658,7 +659,7 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
         return;
     }
 
-    auto protocol = std::make_shared<Audio::Oxford::Apogee::ApogeeDuetProtocol>(
+    auto protocol = std::make_shared<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>(
         busOps_,
         busInfo_,
         device->GetNodeID(),
@@ -728,7 +729,7 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
 
     protocol->GetInputParams([this, guid, protocol, state, completed, finish](
                                  IOReturn status,
-                                 Audio::Oxford::Apogee::InputParams params) {
+                                 ::ASFW::Audio::Oxford::Apogee::InputParams params) {
         if (completed->load()) {
             return;
         }
@@ -745,13 +746,13 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
 
 void AVCDiscovery::ContinueDuetPrefetchMixer(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
     protocol->GetMixerParams([this, guid, protocol, state, completed, finish](
                                  IOReturn mixerStatus,
-                                 Audio::Oxford::Apogee::MixerParams mixerParams) {
+                                 ::ASFW::Audio::Oxford::Apogee::MixerParams mixerParams) {
         if (completed->load()) {
             return;
         }
@@ -768,13 +769,13 @@ void AVCDiscovery::ContinueDuetPrefetchMixer(
 
 void AVCDiscovery::ContinueDuetPrefetchOutput(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
     protocol->GetOutputParams([this, guid, protocol, state, completed, finish](
                                   IOReturn outputStatus,
-                                  Audio::Oxford::Apogee::OutputParams outputParams) {
+                                  ::ASFW::Audio::Oxford::Apogee::OutputParams outputParams) {
         if (completed->load()) {
             return;
         }
@@ -791,13 +792,13 @@ void AVCDiscovery::ContinueDuetPrefetchOutput(
 
 void AVCDiscovery::ContinueDuetPrefetchDisplay(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
     protocol->GetDisplayParams([this, guid, protocol, state, completed, finish](
                                    IOReturn displayStatus,
-                                   Audio::Oxford::Apogee::DisplayParams displayParams) {
+                                   ::ASFW::Audio::Oxford::Apogee::DisplayParams displayParams) {
         if (completed->load()) {
             return;
         }
@@ -814,7 +815,7 @@ void AVCDiscovery::ContinueDuetPrefetchDisplay(
 
 void AVCDiscovery::ContinueDuetPrefetchFirmware(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
@@ -837,7 +838,7 @@ void AVCDiscovery::ContinueDuetPrefetchFirmware(
 
 void AVCDiscovery::ContinueDuetPrefetchHardware(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
@@ -1175,8 +1176,8 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 }
 
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == Audio::DeviceProtocolFactory::kApogeeVendorId &&
-           device.GetModelID() == Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId &&
+           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {

@@ -106,7 +106,7 @@ private:
                                   uint32_t vendorId,
                                   uint32_t modelId,
                                   const std::string& deviceName,
-                                  const BeBoB::DeviceModel& inventory);
+                                  const ::ASFW::Audio::BeBoB::DeviceModel& inventory);
     [[nodiscard]] Music::MusicSubunit* FindAudioMusicSubunit(const AVCUnit& avcUnit) const;
     void PopulateMusicSubunitCapabilities(uint64_t guid,
                                           const Discovery::FWDevice& device,

@@ -53,18 +53,11 @@ GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& bus
     : BeBoBProtocol(busOps, busInfo, nodeId, irmClient, cmpClient, deviceGuid, timerScheduler),
       supportedRates_(MakeSupportedRates(discoveryModel)) {
 
-    // Derive the identity string from the BeBoB profile table when available.
-    for (const auto& d : kBeBoBDevices) {
-        if (d.vendorId == 0 && d.modelId == 0) continue;
-        // Caller is expected to pass identity from the matching provider;
-        // fall back to a generic BeBoB name if unset.
-        break;
-    }
     deviceName_ = "Unknown BeBoB Device";
 
     // Conservative single-stream geometry from the first duplex formation.
-    uint32_t pcmChannels = 0;
-    uint32_t midiSlots = 0;
+    uint16_t pcmChannels = 0;
+    uint16_t midiSlots = 0;
     if (!discoveryModel.input.supportedFormations.empty()) {
         pcmChannels = discoveryModel.input.supportedFormations[0].pcmChannels;
         midiSlots = discoveryModel.input.supportedFormations[0].midiSlots;
@@ -80,9 +73,9 @@ GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& bus
     caps_.deviceToHostStreamCount = 1;
     caps_.hostToDeviceStreamCount = 1;
     caps_.deviceToHostStreams[0] = {.pcmChannels = pcmChannels,
-                                    .am824Slots = pcmChannels + midiSlots};
+                                    .am824Slots = static_cast<uint16_t>(pcmChannels + midiSlots)};
     caps_.hostToDeviceStreams[0] = {.pcmChannels = pcmChannels,
-                                    .am824Slots = pcmChannels + midiSlots};
+                                    .am824Slots = static_cast<uint16_t>(pcmChannels + midiSlots)};
 }
 
 std::vector<uint32_t>

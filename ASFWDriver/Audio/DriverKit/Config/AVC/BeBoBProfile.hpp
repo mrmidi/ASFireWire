@@ -19,7 +19,7 @@ namespace ASFW::Isoch::Audio::AVC::Profiles {
 
 class BeBoBProfile final : public IAudioStreamProfile {
 public:
-    explicit BeBoBProfile(const BeBoB::DeviceModel& discoveryModel);
+    explicit BeBoBProfile(const ::ASFW::Audio::BeBoB::DeviceModel& discoveryModel);
 
     [[nodiscard]] const char* Name() const noexcept override { return "BeBoB Device"; }
 

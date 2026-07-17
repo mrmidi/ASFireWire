@@ -20,9 +20,7 @@
 #include <vector>
 
 namespace ASFW::Audio::BeBoB {
-namespace {
-
-[[nodiscard]] AudioStreamRuntimeCaps Phase88Caps() noexcept {
+[[nodiscard]] AudioStreamRuntimeCaps Phase88Protocol::Phase88Caps() noexcept {
     // The exact PHASE 88 model map is ten PCM channels plus one AM824 MIDI
     // conformant-data block in each direction (DBS=11 at 48 kHz). The one
     // data block can multiplex the unit's two physical MIDI ports.
@@ -48,13 +46,8 @@ namespace {
     return caps;
 }
 
-// Chains a sequence of async FB mixer commands from a MixerMap. Each step submits
-// one FCP command and continues to the next on completion. Failures are logged but
-// do not abort the sequence (kBestEffort policy — mixer init is best-effort for
-// livability). Takes Phase88Protocol& because the FB helpers are protected in the
-// base class.
-void RunMixerSteps(Phase88Protocol& protocol, const MixerMap& map,
-                   MixerFailurePolicy policy, MixerCompletion finalCompletion) {
+void Phase88Protocol::RunMixerSteps(const MixerMap& map,
+                                    MixerFailurePolicy policy, MixerCompletion finalCompletion) {
     struct Step {
         std::function<void(MixerCompletion)> submit;
     };
@@ -62,18 +55,18 @@ void RunMixerSteps(Phase88Protocol& protocol, const MixerMap& map,
     steps.reserve(map.selectors.size() + map.mutes.size() + map.volumes.size());
 
     for (const auto& sel : map.selectors) {
-        steps.push_back({[&protocol, fbId = sel.fbId, value = sel.value](MixerCompletion cb) {
-            protocol.SetSelectorBlock(fbId, value, std::move(cb));
+        steps.push_back({[this, fbId = sel.fbId, value = sel.value](MixerCompletion cb) {
+            SetSelectorBlock(fbId, value, std::move(cb));
         }});
     }
     for (const auto& mute : map.mutes) {
-        steps.push_back({[&protocol, fbId = mute.fbId, ch = mute.channel, unmute = mute.unmute](MixerCompletion cb) {
-            protocol.SetFeatureMute(fbId, ch, unmute, std::move(cb));
+        steps.push_back({[this, fbId = mute.fbId, ch = mute.channel, unmute = mute.unmute](MixerCompletion cb) {
+            SetFeatureMute(fbId, ch, unmute, std::move(cb));
         }});
     }
     for (const auto& vol : map.volumes) {
-        steps.push_back({[&protocol, fbId = vol.fbId, ch = vol.channel, value = vol.value](MixerCompletion cb) {
-            protocol.SetFeatureVolume(fbId, ch, value, std::move(cb));
+        steps.push_back({[this, fbId = vol.fbId, ch = vol.channel, value = vol.value](MixerCompletion cb) {
+            SetFeatureVolume(fbId, ch, value, std::move(cb));
         }});
     }
 
@@ -93,8 +86,6 @@ void RunMixerSteps(Phase88Protocol& protocol, const MixerMap& map,
     };
     (*runNext)(0, kIOReturnSuccess);
 }
-
-} // namespace
 
 bool Phase88Protocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
     outCaps = Phase88Caps();
@@ -120,7 +111,7 @@ void Phase88Protocol::ReadClockHealth(HealthCallback callback) {
 
 void Phase88Protocol::ConfigureMixer(MixerFailurePolicy policy, MixerCompletion completion) {
     ASFW_LOG(Audio, "[BeBoB] Phase88: configuring hardware mixer (unmute + max volume)");
-    RunMixerSteps(*this, kPhase88MixerMap, policy, std::move(completion));
+    RunMixerSteps(kPhase88MixerMap, policy, std::move(completion));
 }
 
 } // namespace ASFW::Audio::BeBoB

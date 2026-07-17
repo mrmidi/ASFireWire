@@ -12,6 +12,8 @@
 
 namespace ASFW::Audio::BeBoB {
 
+struct MixerMap;
+
 class Phase88Protocol final : public BeBoBProtocol {
 public:
     using BeBoBProtocol::BeBoBProtocol;
@@ -31,6 +33,8 @@ protected:
 
 private:
     [[nodiscard]] static AudioStreamRuntimeCaps Phase88Caps() noexcept;
+
+    void RunMixerSteps(const MixerMap& map, MixerFailurePolicy policy, MixerCompletion finalCompletion);
 
     static constexpr uint32_t kPhase88PcmChannels = 10;
     static constexpr uint32_t kPhase88MidiDataBlocks = 1;

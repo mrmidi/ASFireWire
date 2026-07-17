@@ -10,7 +10,7 @@
 #include "BeBoB/Phase88Protocol.hpp"
 #include "BeBoB/GenericBeBoBProtocol.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../../Scheduling/ITimerScheduler.hpp"
+#include "../../Scheduling/ITimerScheduler.hpp"
 
 namespace ASFW::Audio {
 
@@ -92,7 +92,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     // Known BeBoB device without a verified custom protocol: generic fallback.
     // Conservative defaults — plug-0, CMP, no mixer programming. Discovery model
     // wiring (for derived geometry) lands with the per-GUID profile work.
-    if (BeBoB::IsBeBoBDevice(vendorId, modelId)) {
+    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(vendorId, modelId)) {
         ASFW_LOG(Audio,
                  "Creating GenericBeBoBProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
                  vendorId, modelId, nodeId);
