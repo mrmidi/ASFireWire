@@ -421,6 +421,11 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
                                              uint32_t modelId,
                                              const std::string& deviceName,
                                              const BeBoB::DeviceModel& inventory) {
+    // Register a per-GUID BeBoB profile from discovery data. For Phase88 this
+    // is superseded by the static Phase88Profile in the registry; for generic
+    // BeBoB devices it provides discovery-derived geometry.
+    ASFW::Isoch::Audio::AudioProfileRegistry::RegisterBeBoBProfile(guid, &inventory);
+
     constexpr uint8_t kPcmChannels = 10;
     constexpr uint8_t kMidiSlots = 1;
     constexpr uint32_t kSampleRateHz = 48000;
