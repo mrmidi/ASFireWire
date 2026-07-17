@@ -125,8 +125,10 @@ void AudioSubunit::SetAudioVolume(AVCUnit& unit, uint8_t plugId, int16_t volume,
     auto completionState = Common::ShareCallback(std::move(completion));
     uint8_t subunitAddr = (static_cast<uint8_t>(GetType()) << 3) | (GetID() & 0x07);
     
-    // Volume data: 2 bytes, big endian
+    // Volume data: channel (0x00 Master), data length (0x02), and 2-byte volume
     std::vector<uint8_t> data;
+    data.push_back(0x00);
+    data.push_back(0x02);
     data.push_back(static_cast<uint8_t>((volume >> 8) & 0xFF));
     data.push_back(static_cast<uint8_t>(volume & 0xFF));
     
