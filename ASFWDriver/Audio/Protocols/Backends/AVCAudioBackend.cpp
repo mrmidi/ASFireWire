@@ -123,7 +123,7 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
     auto recover = ^{
         if (!stopping_.load(std::memory_order_acquire)) {
             const IOReturn status = duplexCoordinator_.RecoverStreaming(
-                guid, DICE::DiceRestartReason::kBusResetRebind);
+                guid, DuplexRestartReason::kBusResetRebind);
             if (status != kIOReturnSuccess) {
                 ASFW_LOG_ERROR(Audio,
                                "AVCAudioBackend: post-reset recovery failed GUID=0x%016llx kr=0x%x",
