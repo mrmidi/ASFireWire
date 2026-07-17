@@ -231,6 +231,10 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
         ASFW_LOG(Controller, "[Controller] SBP2 session scheduler initialized");
     }
 
+    if (d.audioRuntimeRegistry && d.sbp2SessionScheduler) {
+        d.audioRuntimeRegistry->SetTimerScheduler(d.sbp2SessionScheduler.get());
+    }
+
     if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
         d.deviceManager && d.sbp2SessionScheduler) {
         auto& bus = ctx.controller->Bus();
