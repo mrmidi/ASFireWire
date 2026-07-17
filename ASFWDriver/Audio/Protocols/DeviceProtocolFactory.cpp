@@ -8,6 +8,7 @@
 #include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
+#include "BeBoB/GenericBeBoBProtocol.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../../Scheduling/ITimerScheduler.hpp"
 
@@ -88,7 +89,18 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         return std::make_unique<BeBoB::Phase88Protocol>(busOps, busInfo, nodeId, irmClient,
                                                         cmpClient, deviceGuid, timerScheduler);
     }
-    
+    // Known BeBoB device without a verified custom protocol: generic fallback.
+    // Conservative defaults — plug-0, CMP, no mixer programming. Discovery model
+    // wiring (for derived geometry) lands with the per-GUID profile work.
+    if (BeBoB::IsBeBoBDevice(vendorId, modelId)) {
+        ASFW_LOG(Audio,
+                 "Creating GenericBeBoBProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
+                 vendorId, modelId, nodeId);
+        return std::make_unique<BeBoB::GenericBeBoBProtocol>(
+            busOps, busInfo, nodeId, irmClient, cmpClient, deviceGuid, timerScheduler,
+            BeBoB::DeviceModel{});
+    }
+
     // Unknown device
     return nullptr;
 }
