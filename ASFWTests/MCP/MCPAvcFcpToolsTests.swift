@@ -2,6 +2,7 @@ import Testing
 @testable import ASFW
 
 struct MCPAvcFcpToolsTests {
+    private let duetGUID: UInt64 = 0x0011223344556677
     private func config(
         _ mode: ASFWMCPRuntimeMode,
         writePolicyAvailable: Bool = false,
@@ -61,26 +62,54 @@ struct MCPAvcFcpToolsTests {
     }
 
     @Test func payloadValidationCatchesEmptyAndOversize() {
-        #expect(ASFWMCPFcpCommandRequest(address: fcpAddress(), intent: .status, payload: [0x01, 0x02]).validationError == nil)
-        #expect(ASFWMCPFcpCommandRequest(address: fcpAddress(), intent: .status, payload: []).validationError == .malformedRequest)
+        #expect(ASFWMCPFcpCommandRequest(targetGUID: duetGUID, address: fcpAddress(), intent: .status, payload: [0x01, 0x02]).validationError == nil)
+        #expect(ASFWMCPFcpCommandRequest(targetGUID: duetGUID, address: fcpAddress(), intent: .status, payload: []).validationError == .malformedRequest)
         let oversize = [UInt8](repeating: 0, count: 513)
-        #expect(ASFWMCPFcpCommandRequest(address: fcpAddress(), intent: .control, payload: oversize).validationError == .payloadTooLarge)
+        #expect(ASFWMCPFcpCommandRequest(targetGUID: duetGUID, address: fcpAddress(), intent: .control, payload: oversize).validationError == .payloadTooLarge)
     }
 
     @Test func inquiryCommandsAreNotPolicyGated() {
-        let request = ASFWMCPFcpCommandRequest(address: fcpAddress(), intent: .inquiry, payload: [0x01])
+        let request = ASFWMCPFcpCommandRequest(targetGUID: duetGUID, address: fcpAddress(), intent: .inquiry, payload: [0x01])
         #expect(request.policyRequest(currentGeneration: 17) == nil)
     }
 
+    @Test func readOnlyIntentMustMatchAvcCType() {
+        // The MIT-licensed ALSA ta1394 general protocol tests independently
+        // exercise STATUS UnitInfo framing.  These are fresh policy tests that
+        // ensure the declared MCP intent cannot disguise a CONTROL frame.
+        let status = ASFWMCPFcpCommandRequest(
+            targetGUID: duetGUID,
+            address: fcpAddress(),
+            intent: .status,
+            payload: [0x01, 0xFF, 0x30, 0x00]
+        )
+        let inquiry = ASFWMCPFcpCommandRequest(
+            targetGUID: duetGUID,
+            address: fcpAddress(),
+            intent: .inquiry,
+            payload: [0x02, 0xFF, 0x30, 0x00]
+        )
+        let disguisedControl = ASFWMCPFcpCommandRequest(
+            targetGUID: duetGUID,
+            address: fcpAddress(),
+            intent: .status,
+            payload: [0x00, 0xFF, 0x30, 0x00]
+        )
+
+        #expect(status.hasMatchingReadOnlyCType)
+        #expect(inquiry.hasMatchingReadOnlyCType)
+        #expect(disguisedControl.hasMatchingReadOnlyCType == false)
+    }
+
     @Test func controlCommandsArePolicyGated() throws {
-        let request = ASFWMCPFcpCommandRequest(address: fcpAddress(), intent: .control, payload: [0x00, 0x11, 0x22, 0x33])
+        let request = ASFWMCPFcpCommandRequest(targetGUID: duetGUID, address: fcpAddress(), intent: .control, payload: [0x00, 0x11, 0x22, 0x33])
         let gated = try #require(request.policyRequest(currentGeneration: 17))
         #expect(decide(config(.readOnlyDeveloper), gated).decision == .requiresDeveloperMode)
         #expect(decide(gateOpen, gated).decision == .allowed)
     }
 
     @Test func controlCommandRefusedWhenProtocolUnsupported() {
-        let request = ASFWMCPFcpCommandRequest(address: fcpAddress(), intent: .control, payload: [0x00])
+        let request = ASFWMCPFcpCommandRequest(targetGUID: duetGUID, address: fcpAddress(), intent: .control, payload: [0x00])
         let gated = request.policyRequest(currentGeneration: 17, protocolSupported: false)!
         #expect(decide(gateOpen, gated).decision == .unsupportedProtocol)
     }

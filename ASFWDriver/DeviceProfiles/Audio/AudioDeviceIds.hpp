@@ -32,6 +32,10 @@ inline constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
 inline constexpr uint32_t kApogeeVendorId    = 0x0003db;
 inline constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
 
+// ---- TerraTec (BridgeCo / BeBoB family) ----
+inline constexpr uint32_t kTerraTecVendorId     = 0x000aac;
+inline constexpr uint32_t kPhase88RackFwModelId = 0x000003;
+
 // ---- Alesis (DICE / TCAT family) ----
 inline constexpr uint32_t kAlesisVendorId        = 0x000595;
 inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
@@ -63,6 +67,8 @@ inline constexpr const char* kSPro26ModelName         = "Saffire Pro 26";
 inline constexpr const char* kSPro40Tcd3070ModelName  = "Saffire Pro 40 (TCD3070)";
 inline constexpr const char* kApogeeVendorName        = "Apogee";
 inline constexpr const char* kApogeeDuetModelName     = "Duet";
+inline constexpr const char* kTerraTecVendorName      = "TerraTec Electronic GmbH";
+inline constexpr const char* kPhase88RackFwModelName  = "PHASE 88 Rack FW";
 inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
 inline constexpr const char* kMidasVendorName         = "Midas";

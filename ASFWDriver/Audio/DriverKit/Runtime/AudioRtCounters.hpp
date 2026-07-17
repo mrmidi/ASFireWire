@@ -12,6 +12,7 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txPackets{0};
     std::atomic<uint64_t> txDataPackets{0};
     std::atomic<uint64_t> txNoDataPackets{0};
+    std::atomic<uint64_t> txEmptyPackets{0};
     std::atomic<uint64_t> txSilenceSubstitutions{0};
     std::atomic<uint64_t> txUnderruns{0};
 
@@ -64,6 +65,7 @@ struct AudioRtCounters final {
         txPackets.store(0, std::memory_order_relaxed);
         txDataPackets.store(0, std::memory_order_relaxed);
         txNoDataPackets.store(0, std::memory_order_relaxed);
+        txEmptyPackets.store(0, std::memory_order_relaxed);
         txSilenceSubstitutions.store(0, std::memory_order_relaxed);
         txUnderruns.store(0, std::memory_order_relaxed);
 

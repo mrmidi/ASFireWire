@@ -696,7 +696,7 @@ void ControllerCore::EvaluateActivePolicies() noexcept {
             setContender = true;
         }
 
-        ASFW_LOG(Controller, "[BM Active Policy] Executing combined reset: root=%u gap=%s long=%d",
+        ASFW_LOG(Controller, "[BM Active Policy] Executing combined reset: root=%u gap=%{public}s long=%d",
                  pendingReset_->targetRoot,
                  pendingReset_->gapCount ? std::to_string(*pendingReset_->gapCount).c_str() : "none",
                  pendingReset_->longReset);

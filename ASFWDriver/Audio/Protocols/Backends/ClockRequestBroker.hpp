@@ -16,8 +16,7 @@
 //   * self-locking operations for ordinary producer/consumer/completion paths; and
 //   * *Locked operations for the coordinator's existing multi-domain critical sections.
 //
-// The restart/session Dice* names are intentional for now; a follow-up sweep (FW-73b) performs
-// the mechanical neutral rename of that vocabulary.
+// The shared restart/session contract uses protocol-neutral Duplex* names.
 
 #pragma once
 
@@ -167,7 +166,7 @@ public:
 
         // Preserve the established [FSM] clock-completion trace verbatim; runtime consumers use
         // these fields to correlate the synchronous clock request with restart progress.
-        ASFW_LOG_V2(DICE,
+        ASFW_LOG_V2(Audio,
                     "[FSM] clock token=%llu outcome=%{public}s status=0x%08x guid=0x%llx restartId=%llu gen=%u",
                     completion.token,
                     ToString(completion.outcome),

@@ -144,7 +144,8 @@ struct ASFWMCPWritePolicyEngine {
         // classifies, but resolves any authorized write to a dry run. Live modes
         // must clear the developer-write gate before classification proceeds.
         if configuration.mode != .mock {
-            guard configuration.mode == .developerWriteEnabled else {
+            guard configuration.mode == .developerWriteEnabled ||
+                    configuration.mode == .unrestrictedWrite else {
                 return ASFWMCPPolicyDecision(
                     decision: .requiresDeveloperMode,
                     reason: "Writes require developerWriteEnabled mode; current mode is \(configuration.mode.rawValue).",
@@ -152,7 +153,7 @@ struct ASFWMCPWritePolicyEngine {
                     requiredMode: .developerWriteEnabled
                 )
             }
-            guard configuration.canListDeveloperWriteTools else {
+            guard configuration.mode == .unrestrictedWrite || configuration.canListDeveloperWriteTools else {
                 return ASFWMCPPolicyDecision(
                     decision: .requiresDeveloperMode,
                     reason: "developerWriteEnabled requires an available write policy and a passing Swift test gate before writes are permitted.",

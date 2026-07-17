@@ -38,6 +38,8 @@ extension ASFWMCPCore {
             return await explainCapabilityResult(toolName: name, decoder: decoder)
         case "asfw_get_controller_state", "asfw_get_topology", "asfw_get_config_rom":
             return notImplementedToolResult(name, reason: "Read-only \(name) dispatch is reserved for the live telemetry adapter.")
+        case "asfw_bus_reset_dev":
+            return await dispatchBusReset(name, decoder: decoder)
         case "asfw_read_quadlet":
             return await dispatchReadQuadlet(name, decoder: decoder)
         case "asfw_read_block":
@@ -60,19 +62,30 @@ extension ASFWMCPCore {
             return await dispatchOhciWrite(name, decoder: decoder)
         case "asfw_read_ohci_register", "asfw_snapshot_ohci_registers":
             return notImplementedToolResult(name, reason: "OHCI read dispatch needs the live driver adapter from FW-94.")
-        case "asfw_irm_get_state", "asfw_irm_get_bandwidth", "asfw_irm_get_channels", "asfw_irm_list_allocations":
-            return notImplementedToolResult(name, reason: "IRM inspection dispatch needs the live driver adapter from FW-94.")
+        case "asfw_irm_get_state", "asfw_irm_get_bandwidth", "asfw_irm_get_channels":
+            return await dispatchIrmSnapshot(name, decoder: decoder)
+        case "asfw_irm_list_allocations":
+            return notImplementedToolResult(name, reason: "IRM allocation ownership is not exposed by the live driver adapter yet.")
         case "asfw_irm_allocate_channel", "asfw_irm_free_channel":
             return await dispatchIrmChannel(name, decoder: decoder, allocate: name == "asfw_irm_allocate_channel")
         case "asfw_irm_allocate_bandwidth", "asfw_irm_free_bandwidth":
             return await dispatchIrmBandwidth(name, decoder: decoder, allocate: name == "asfw_irm_allocate_bandwidth")
-        case "asfw_avc_list_units", "asfw_avc_get_subunit_capabilities", "asfw_avc_get_subunit_descriptor",
-             "asfw_fcp_send_command", "asfw_fcp_get_recent_responses":
-            return notImplementedToolResult(name, reason: "AV/C/FCP read dispatch needs protocol adapter support from FW-94.")
+        case "asfw_avc_list_units":
+            return await avcUnitInventoryResult(toolName: name)
+        case "asfw_avc_get_subunit_capabilities":
+            return await avcSubunitCapabilitiesResult(toolName: name, decoder: decoder)
+        case "asfw_avc_get_subunit_descriptor", "asfw_fcp_get_recent_responses":
+            return notImplementedToolResult(name, reason: "Recent FCP command/response records are not exposed by the live adapter yet.")
+        case "asfw_fcp_send_command":
+            return await dispatchFcpReadCommand(name, decoder: decoder)
+        case "asfw_apogee_duet_apply_format_dev":
+            return await dispatchApogeeDuetFormatTransition(name, decoder: decoder)
         case "asfw_fcp_send_command_dev":
             return await dispatchFcpDeveloperCommand(name, decoder: decoder)
-        case "asfw_cmp_list_plugs", "asfw_cmp_read_pcr":
-            return notImplementedToolResult(name, reason: "CMP inspection dispatch needs protocol adapter support from FW-94.")
+        case "asfw_cmp_list_plugs":
+            return await cmpListPlugsResult(toolName: name, decoder: decoder)
+        case "asfw_cmp_read_pcr":
+            return await cmpReadPcrResult(toolName: name, decoder: decoder)
         case "asfw_cmp_write_pcr":
             return await dispatchCmpWritePcr(name, decoder: decoder)
         case "asfw_cmp_establish_connection", "asfw_cmp_break_connection":
@@ -89,6 +102,19 @@ extension ASFWMCPCore {
             return await dispatchWriteQuadlet(name, decoder: decoder, protocolHint: "dice_tcat")
         case "asfw_tcat_write_application_block":
             return await dispatchWriteBlock(name, decoder: decoder, protocolHint: "dice_tcat")
+        case "asfw_bebob_read_bootrom_info":
+            return await bebobBootRomResult(toolName: name, decoder: decoder)
+        case "asfw_bebob_get_unit_plug_info":
+            return await bebobUnitPlugInfoResult(toolName: name, decoder: decoder)
+        case "asfw_bebob_get_clock_topology":
+            return await bebobClockTopologyResult(toolName: name, decoder: decoder)
+        case "asfw_phase88_get_clock":
+            return await phase88GetClockResult(toolName: name, decoder: decoder)
+        case "asfw_phase88_set_clock_internal":
+            return await phase88SetClockInternalResult(toolName: name, decoder: decoder)
+        case "asfw_phase88_start_48k", "asfw_phase88_stop":
+            return await phase88StreamingResult(toolName: name, decoder: decoder,
+                                                start: name == "asfw_phase88_start_48k")
         default:
             return notImplementedToolResult(name, reason: "Catalog tool \(name) has no dispatch arm.")
         }
@@ -258,10 +284,69 @@ extension ASFWMCPCore {
         }
     }
 
+    private func dispatchIrmSnapshot(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let snapshot = await driver.executeIRMSnapshot(
+                ASFWMCPIrmSnapshotRequest(generation: try decoder.uint32("generation"))
+            )
+            return ASFWMCPToolCallResult(toolName: name, ok: snapshot.ok, data: snapshot.mcpValue, errors: [])
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func dispatchBusReset(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let request = ASFWMCPBusResetRequest(
+                generation: try decoder.uint32("generation"),
+                shortReset: try decoder.bool("shortReset", default: false)
+            )
+            let policy = evaluateWritePolicy(
+                request.policyRequest(
+                    currentGeneration: await currentGeneration(),
+                    dryRun: try decoder.bool("dryRun", default: false)
+                )
+            )
+            guard policy.reachesDriverWritePath else {
+                let receipt = ASFWMCPBusResetReceipt(
+                    requestedGeneration: request.generation,
+                    acceptedGeneration: nil,
+                    observedGeneration: await currentGeneration(),
+                    shortReset: request.shortReset,
+                    status: policy.isDryRun ? .dryRun : .denied,
+                    correlationId: correlationId(name),
+                    durationUsec: nil,
+                    policy: policy
+                )
+                return ASFWMCPToolCallResult(toolName: name, ok: false, data: receipt.mcpValue, errors: [])
+            }
+
+            let liveReceipt = await driver.executeBusReset(request)
+            let receipt = ASFWMCPBusResetReceipt(
+                requestedGeneration: liveReceipt.requestedGeneration,
+                acceptedGeneration: liveReceipt.acceptedGeneration,
+                observedGeneration: liveReceipt.observedGeneration,
+                shortReset: liveReceipt.shortReset,
+                status: liveReceipt.status,
+                correlationId: liveReceipt.correlationId,
+                durationUsec: liveReceipt.durationUsec,
+                policy: policy
+            )
+            return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
     private func dispatchFcpDeveloperCommand(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
         do {
             let intent = try decoder.intent()
-            let request = ASFWMCPFcpCommandRequest(address: try decoder.address(), intent: intent, payload: try decoder.bytes("payload"))
+            let request = ASFWMCPFcpCommandRequest(
+                targetGUID: try decoder.uint64("targetGuid"),
+                address: try decoder.address(),
+                intent: intent,
+                payload: try decoder.bytes("payload")
+            )
             if let error = request.validationError {
                 return malformedTransactionResult(name, kind: .writeBlock, generation: request.address.generation, code: error)
             }
@@ -272,9 +357,212 @@ extension ASFWMCPCore {
             ) else {
                 return malformedToolResult(name, reason: "Developer FCP command requires a mutating intent.")
             }
-            return await dispatchMutatingTransaction(name, kind: .writeBlock, generation: request.address.generation, policyRequest: policyRequest) {
-                await driver.executeWriteBlock(ASFWMCPWriteBlockRequest(address: request.address, payload: request.payload))
+            let policy = evaluateWritePolicy(policyRequest)
+            guard policy.reachesDriverWritePath else {
+                let receipt = ASFWMCPFcpCommandReceipt(
+                    targetGUID: request.targetGUID,
+                    expectedNodeId: request.address.nodeId,
+                    expectedGeneration: request.address.generation,
+                    observedNodeId: nil,
+                    observedGeneration: await currentGeneration(),
+                    response: nil,
+                    status: policy.isDryRun ? .dryRun : .denied,
+                    correlationId: correlationId(name),
+                    durationUsec: nil,
+                    policy: policy
+                )
+                return ASFWMCPToolCallResult(toolName: name, ok: false, data: receipt.mcpValue, errors: [])
             }
+            var receipt = await driver.executeFCPCommand(request)
+            receipt = ASFWMCPFcpCommandReceipt(
+                targetGUID: receipt.targetGUID,
+                expectedNodeId: receipt.expectedNodeId,
+                expectedGeneration: receipt.expectedGeneration,
+                observedNodeId: receipt.observedNodeId,
+                observedGeneration: receipt.observedGeneration,
+                response: receipt.response,
+                status: receipt.status,
+                correlationId: receipt.correlationId,
+                durationUsec: receipt.durationUsec,
+                policy: policy
+            )
+            return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    // FW-103: This is intentionally a named, narrow operation rather than a
+    // convenience wrapper around raw FCP. It mirrors the profile's control
+    // sequence: capture both formations, set input then output, wait, and
+    // prove the resulting AM824/FDF state. Linux's OXFW stream implementation
+    // establishes that ordering and the 100 ms post-write delay
+    // (references/linux-sound-firewire-stack/firewire/oxfw/oxfw-stream.c:41-54,
+    // 93-100). The tool is developer-write gated and never used implicitly.
+    private func dispatchApogeeDuetFormatTransition(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        let targetGUID: UInt64
+        let address: ASFWMCPAddress
+        let sampleRateHz: UInt32
+        do {
+            targetGUID = try decoder.uint64("targetGuid")
+            address = try decoder.address()
+            sampleRateHz = try decoder.uint32("sampleRateHz")
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+
+        guard address.addressHigh == 0xFFFF, address.addressLow == 0xF0000B00 else {
+            return malformedToolResult(name, reason: "Apogee Duet format control is restricted to the FCP command register 0xFFFF_F0000B00.")
+        }
+        guard let fdf = Self.duetFdf(for: sampleRateHz), let discoveryRate = Self.duetDiscoveryRateCode(for: sampleRateHz) else {
+            return .failure(toolName: name, code: .capabilityUnavailable, reason: "Only 32000, 44100, and 48000 Hz have end-to-end ASFW clock geometry validation.")
+        }
+
+        let policyRequest = ASFWMCPPolicyRequest.forTransaction(
+            kind: .writeBlock,
+            address: address,
+            currentGeneration: await currentGeneration(),
+            protocolHint: "avc",
+            protocolSupported: await protocolSupported("avc"),
+            dryRun: (try? decoder.bool("dryRun", default: false)) ?? false
+        )
+        let policy = evaluateWritePolicy(policyRequest)
+        guard policy.reachesDriverWritePath else {
+            return .failure(toolName: name, code: policy.isDryRun ? .dryRunOnly : .policyDenied,
+                            reason: "The guarded Duet format operation did not pass the developer-write policy.",
+                            data: .object(["kind": .string("apogeeDuetFormatTransition"), "status": .string(policy.isDryRun ? "dryRun" : "denied"), "policy": policy.mcpValue]))
+        }
+
+        let units = await driver.listAVCUnits()
+        guard let unit = units.first(where: {
+            $0.guid == targetGUID && $0.nodeId == address.nodeId &&
+            $0.vendorId == 0x0003DB && $0.modelId == 0x01DDDD &&
+            $0.subunits.contains(where: { $0.type == 0x0C && $0.id == 0 })
+        }) else {
+            return .failure(toolName: name, code: .capabilityUnavailable, reason: "The requested target is not the discovered Apogee Duet Music subunit.")
+        }
+        guard let capabilities = await driver.avcSubunitCapabilities(guid: unit.guid, type: 0x0C, id: 0),
+              capabilities.hasAudio,
+              Self.duetCapabilitiesSupport(capabilities, discoveryRateCode: discoveryRate) else {
+            return .failure(toolName: name, code: .capabilityUnavailable, reason: "The discovered Duet capabilities do not advertise the requested stereo AM824 format.")
+        }
+
+        func command(_ intent: ASFWMCPAvcCommandIntent, _ opcode: UInt8, _ formatFdf: UInt8? = nil) -> ASFWMCPFcpCommandRequest {
+            let payload: [UInt8] = formatFdf.map { [0x00, 0xFF, opcode, 0x00, 0x90, $0, 0xFF, 0xFF] }
+                ?? [0x01, 0xFF, opcode, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]
+            return ASFWMCPFcpCommandRequest(targetGUID: targetGUID, address: address, intent: intent, payload: payload)
+        }
+        func observedFdf(_ receipt: ASFWMCPFcpCommandReceipt, opcode: UInt8) -> UInt8? {
+            guard receipt.ok, let response = receipt.response, response.count >= 6,
+                  response[0] == 0x0C, response[1] == 0xFF, response[2] == opcode,
+                  response[3] == 0x00, response[4] == 0x90 else { return nil }
+            return response[5]
+        }
+        func result(_ ok: Bool, _ status: String, _ inputFdf: UInt8?, _ outputFdf: UInt8?, _ rollbackAttempted: Bool = false) -> ASFWMCPToolCallResult {
+            let data: ASFWMCPValue = .object([
+                "kind": .string("apogeeDuetFormatTransition"),
+                "status": .string(status),
+                "targetGuid": .string(String(format: "0x%016llX", targetGUID)),
+                "nodeId": .int(Int(address.nodeId)),
+                "generation": .int(Int(address.generation)),
+                "sampleRateHz": .int(Int(sampleRateHz)),
+                "inputFdf": inputFdf.map { .int(Int($0)) } ?? .null,
+                "outputFdf": outputFdf.map { .int(Int($0)) } ?? .null,
+                "rollbackAttempted": .bool(rollbackAttempted),
+                "policy": policy.mcpValue,
+            ])
+            return ok ? .success(toolName: name, data: data) : .failure(toolName: name, code: .rcodeError, reason: "The Duet did not complete the requested OXFW format transition.", data: data)
+        }
+
+        let inputBeforeReceipt = await driver.executeFCPCommand(command(.status, 0x19))
+        guard let inputBefore = observedFdf(inputBeforeReceipt, opcode: 0x19) else {
+            return result(false, "inputPreflightFailed", nil, nil)
+        }
+        let outputBeforeReceipt = await driver.executeFCPCommand(command(.status, 0x18))
+        guard let outputBefore = observedFdf(outputBeforeReceipt, opcode: 0x18) else {
+            return result(false, "outputPreflightFailed", inputBefore, nil)
+        }
+
+        var inputChanged = false
+        var outputChanged = false
+        if inputBefore != fdf {
+            let receipt = await driver.executeFCPCommand(command(.control, 0x19, fdf))
+            guard receipt.ok else { return result(false, "inputControlFailed", inputBefore, outputBefore) }
+            inputChanged = true
+        }
+        if outputBefore != fdf {
+            let receipt = await driver.executeFCPCommand(command(.control, 0x18, fdf))
+            guard receipt.ok else {
+                if inputChanged, receipt.observedGeneration == address.generation {
+                    _ = await driver.executeFCPCommand(command(.control, 0x19, inputBefore))
+                }
+                return result(false, "outputControlFailed", inputBefore, outputBefore, inputChanged)
+            }
+            outputChanged = true
+        }
+        if inputChanged || outputChanged {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let inputAfterReceipt = await driver.executeFCPCommand(command(.status, 0x19))
+        let outputAfterReceipt = await driver.executeFCPCommand(command(.status, 0x18))
+        let inputAfter = observedFdf(inputAfterReceipt, opcode: 0x19)
+        let outputAfter = observedFdf(outputAfterReceipt, opcode: 0x18)
+        guard inputAfter == fdf && outputAfter == fdf else {
+            let canRollback = inputAfterReceipt.observedGeneration == address.generation &&
+                outputAfterReceipt.observedGeneration == address.generation
+            if canRollback {
+                if inputChanged { _ = await driver.executeFCPCommand(command(.control, 0x19, inputBefore)) }
+                if outputChanged { _ = await driver.executeFCPCommand(command(.control, 0x18, outputBefore)) }
+            }
+            return result(false, "verificationFailed", inputAfter, outputAfter, canRollback && (inputChanged || outputChanged))
+        }
+        return result(true, "verified", inputAfter, outputAfter)
+    }
+
+    private static func duetFdf(for sampleRateHz: UInt32) -> UInt8? {
+        switch sampleRateHz {
+        case 32000: return 0x00
+        case 44100: return 0x01
+        case 48000: return 0x02
+        default: return nil
+        }
+    }
+
+    private static func duetDiscoveryRateCode(for sampleRateHz: UInt32) -> UInt8? {
+        switch sampleRateHz {
+        case 32000: return 0x02
+        case 44100: return 0x03
+        case 48000: return 0x04
+        default: return nil
+        }
+    }
+
+    private static func duetCapabilitiesSupport(_ capabilities: ASFWMCPAVCSubunitCapabilities, discoveryRateCode: UInt8) -> Bool {
+        let audioPlugs = capabilities.plugs.filter { $0.type == 0x00 }
+        return audioPlugs.contains(where: { $0.isInput && $0.supportedFormats.contains { $0.sampleRateCode == discoveryRateCode && $0.formatCode == 0x06 && $0.channelCount == 2 } }) &&
+            audioPlugs.contains(where: { !$0.isInput && $0.supportedFormats.contains { $0.sampleRateCode == discoveryRateCode && $0.formatCode == 0x06 && $0.channelCount == 2 } })
+    }
+
+    private func dispatchFcpReadCommand(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let request = ASFWMCPFcpCommandRequest(
+                targetGUID: try decoder.uint64("targetGuid"),
+                address: try decoder.address(),
+                intent: try decoder.intent(),
+                payload: try decoder.bytes("payload")
+            )
+            if let error = request.validationError {
+                return malformedTransactionResult(name, kind: .writeBlock, generation: request.address.generation, code: error)
+            }
+            guard request.hasMatchingReadOnlyCType else {
+                return malformedToolResult(
+                    name,
+                    reason: "Read-only FCP accepts only STATUS (ctype 0x01) or SPECIFIC_INQUIRY (ctype 0x02) frames. Use asfw_fcp_send_command_dev for mutating commands."
+                )
+            }
+
+            let receipt = await driver.executeFCPCommand(request)
+            return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }
@@ -428,6 +716,682 @@ extension ASFWMCPCore {
 }
 
 private extension ASFWMCPCore {
+    func phase88StreamingResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder,
+        start: Bool
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGuid = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let targetGuidText = String(format: "0x%016llX", targetGuid)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText &&
+                $0.vendorId == "0x000AAC" && $0.modelId == "0x000003" &&
+                $0.protocolHints.contains("bebob") && $0.protocolHints.contains("cmp")
+            }) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "targetGuid/nodeId must identify the TerraTec PHASE 88 Rack FW BeBoB/CMP backend.")
+            }
+            let policy = evaluateWritePolicy(ASFWMCPPolicyRequest(
+                operationType: .write,
+                addressSpace: .unitsSpace,
+                requestedGeneration: generation,
+                currentGeneration: await currentGeneration(),
+                protocolHint: "bebob",
+                protocolSupported: await protocolSupported("bebob"),
+                dryRun: try decoder.bool("dryRun", default: false)
+            ))
+            guard policy.reachesDriverWritePath else {
+                return .failure(toolName: toolName,
+                                code: policy.isDryRun ? .dryRunOnly : (policy.errorCode ?? .policyDenied),
+                                reason: policy.reason,
+                                data: .object(["policy": policy.mcpValue]))
+            }
+            let receipt = await driver.executePhase88Streaming(targetGuid: targetGuid, start: start)
+            return receipt.ok
+                ? .success(toolName: toolName, data: .object([
+                    "kind": .string("phase88DuplexLifecycle"),
+                    "sampleRateHz": .int(48000),
+                    "choreography": .array(start ? [
+                        .string("set_unit_output_format_am824_48k"),
+                        .string("set_unit_input_format_am824_48k"),
+                        .string("reserve_irm_resources"),
+                        .string("connect_ipcr"),
+                        .string("connect_opcr"),
+                        .string("start_host_rx"),
+                        .string("start_host_tx"),
+                        .string("verify_remote_pcrs"),
+                    ] : [
+                        .string("stop_host_rx_tx"),
+                        .string("disconnect_ipcr"),
+                        .string("disconnect_opcr"),
+                        .string("release_irm_resources"),
+                    ]),
+                    "receipt": receipt.mcpValue,
+                    "policy": policy.mcpValue,
+                ]))
+                : .failure(toolName: toolName, code: .rcodeError,
+                           reason: "The driver rejected the PHASE 88 duplex lifecycle request.",
+                           data: .object(["receipt": receipt.mcpValue, "policy": policy.mcpValue]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func cmpReadPcrResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let plug = try decoder.uint32("plug")
+            guard let direction = ASFWMCPCmpPcrDirection(rawValue: try decoder.string("direction")),
+                  let addressLow = ASFWMCPCmpPcr.address(for: direction, plug: plug) else {
+                return malformedToolResult(toolName, reason: "direction must be input or output and plug must be in 0...30.")
+            }
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.protocolHints.contains("cmp")
+            }) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "nodeId must identify a currently discovered CMP-capable node.")
+            }
+
+            let address = ASFWMCPAddress(nodeId: nodeId, generation: generation,
+                                         addressHigh: 0xffff, addressLow: addressLow)
+            let transaction = await driver.executeReadQuadlet(ASFWMCPReadQuadletRequest(address: address))
+            guard transaction.ok else { return transactionToolResult(toolName, transaction) }
+            guard let rawValue = Self.bigEndianQuadlet(transaction.payload) else {
+                return .failure(toolName: toolName, code: .rcodeError,
+                                reason: "CMP PCR read completed without one quadlet of payload.",
+                                data: transaction.mcpValue)
+            }
+            let pcr = ASFWMCPCmpPcr(direction: direction, plug: plug, rawValue: rawValue)
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("cmpPcr"),
+                "target": .object([
+                    "nodeId": .int(Int(nodeId)),
+                    "generation": .int(Int(generation)),
+                    "address": .string(String(format: "0xFFFF%08X", addressLow)),
+                ]),
+                "pcr": pcr.mcpValue,
+                "transaction": transaction.mcpValue,
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func cmpListPlugsResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.protocolHints.contains("cmp")
+            }) else {
+                return .failure(toolName: toolName, code: .capabilityUnavailable,
+                                reason: "nodeId must identify a currently discovered CMP-capable node.")
+            }
+
+            func read(_ addressLow: UInt32) async -> ASFWMCPTransactionResult {
+                await driver.executeReadQuadlet(ASFWMCPReadQuadletRequest(address: .init(
+                    nodeId: nodeId, generation: generation, addressHigh: 0xffff, addressLow: addressLow
+                )))
+            }
+            let outputMpr = await read(0xf000_0900)
+            let inputMpr = await read(0xf000_0980)
+            guard outputMpr.ok, inputMpr.ok,
+                  let outputCount = Self.cmpPlugCount(outputMpr.payload),
+                  let inputCount = Self.cmpPlugCount(inputMpr.payload) else {
+                return .failure(toolName: toolName, code: .rcodeError,
+                                reason: "CMP OMPR/IMPR did not return valid quadlets.",
+                                data: .object(["outputMpr": outputMpr.mcpValue, "inputMpr": inputMpr.mcpValue]))
+            }
+
+            var plugs: [ASFWMCPValue] = []
+            for direction in [ASFWMCPCmpPcrDirection.output, .input] {
+                let count = direction == .output ? outputCount : inputCount
+                for plug in 0..<count {
+                    guard let addressLow = ASFWMCPCmpPcr.address(for: direction, plug: plug) else { continue }
+                    let transaction = await read(addressLow)
+                    var item: [String: ASFWMCPValue] = [
+                        "direction": .string(direction.rawValue),
+                        "plug": .int(Int(plug)),
+                        "transaction": transaction.mcpValue,
+                    ]
+                    if let rawValue = Self.bigEndianQuadlet(transaction.payload), transaction.ok {
+                        item["pcr"] = ASFWMCPCmpPcr(direction: direction, plug: plug, rawValue: rawValue).mcpValue
+                    }
+                    plugs.append(.object(item))
+                }
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("cmpPlugInventory"),
+                "nodeId": .int(Int(nodeId)),
+                "generation": .int(Int(generation)),
+                "outputPlugCount": .int(Int(outputCount)),
+                "inputPlugCount": .int(Int(inputCount)),
+                "outputMpr": outputMpr.mcpValue,
+                "inputMpr": inputMpr.mcpValue,
+                "plugs": .array(plugs),
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    static func bigEndianQuadlet(_ payload: [UInt8]?) -> UInt32? {
+        guard let payload, payload.count == 4 else { return nil }
+        return payload.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+    }
+
+    static func cmpPlugCount(_ payload: [UInt8]?) -> UInt32? {
+        guard let value = bigEndianQuadlet(payload) else { return nil }
+        return min(value & 0x1f, ASFWMCPCmpLimits.maxPlug + 1)
+    }
+
+    func bebobClockTopologyResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: try decoder.uint32("generation"),
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+            var transactions: [ASFWMCPValue] = []
+            func send(_ payload: [UInt8]) async -> ASFWMCPFcpCommandReceipt {
+                let receipt = await driver.executeFCPCommand(
+                    ASFWMCPFcpCommandRequest(
+                        targetGUID: targetGUID,
+                        address: address,
+                        intent: .status,
+                        payload: payload
+                    )
+                )
+                transactions.append(receipt.mcpValue)
+                return receipt
+            }
+            func incomplete(_ reason: String) -> ASFWMCPToolCallResult {
+                .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobClockTopology"),
+                    "recognized": .bool(false),
+                    "transactions": .array(transactions),
+                    "reason": .string(reason)
+                ]))
+            }
+
+            let musicPlugReceipt = await send(ASFWMCPBeBoBClockTopology.musicSubunitPlugInfoCommand())
+            guard musicPlugReceipt.ok,
+                  let musicPlugResponse = musicPlugReceipt.response,
+                  let inputPlugCount = ASFWMCPBeBoBClockTopology.musicSubunitInputPlugCount(musicPlugResponse) else {
+                return incomplete("Music Subunit PLUG_INFO did not return a stable input-plug count.")
+            }
+            guard inputPlugCount <= ASFWMCPBeBoBClockTopology.maxMusicSubunitInputPlugs else {
+                return incomplete("Music Subunit advertised more input plugs than the bounded diagnostic supports.")
+            }
+
+            var inputPlugs: [ASFWMCPValue] = []
+            var syncInputPlug: UInt8?
+            for plug in 0..<inputPlugCount {
+                let receipt = await send(ASFWMCPBeBoBClockTopology.musicSubunitInputPlugTypeCommand(plug))
+                guard receipt.ok, let response = receipt.response,
+                      let type = ASFWMCPBeBoBClockTopology.plugType(response) else {
+                    return incomplete("Music Subunit input plug \(plug) did not return a stable BridgeCo type.")
+                }
+                inputPlugs.append(.object([
+                    "id": .int(Int(plug)),
+                    "type": .int(Int(type)),
+                    "typeName": .string(ASFWMCPBeBoBClockTopology.plugTypeName(type))
+                ]))
+                if type == ASFWMCPBeBoBClockTopology.syncPlugType, syncInputPlug == nil {
+                    syncInputPlug = plug
+                }
+            }
+
+            guard let syncInputPlug else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobClockTopology"),
+                    "recognized": .bool(true),
+                    "musicSubunitInputPlugs": .array(inputPlugs),
+                    "syncInputPlug": .null,
+                    "clockSource": .object(["classification": .string("internalAssumedNoSyncInput")]),
+                    "transactions": .array(transactions)
+                ]))
+            }
+
+            let sourceReceipt = await send(ASFWMCPBeBoBClockTopology.musicSubunitInputSourceCommand(syncInputPlug))
+            guard sourceReceipt.ok, let sourceResponse = sourceReceipt.response,
+                  let descriptor = ASFWMCPBeBoBClockTopology.sourceDescriptor(sourceResponse) else {
+                return incomplete("Music Subunit SYNC input did not return a complete source descriptor.")
+            }
+
+            var clockSource: [String: ASFWMCPValue] = [
+                "descriptor": .array(descriptor.map { .int(Int($0)) }),
+                "classification": .string("unknown")
+            ]
+            if descriptor[0] == 0xff {
+                clockSource["classification"] = .string("internal")
+            } else if descriptor[0] == ASFWMCPBeBoBClockTopology.outputDirection,
+                      descriptor[1] == ASFWMCPBeBoBClockTopology.subunitMode,
+                      descriptor[2] == 0x0c {
+                clockSource["classification"] = .string("internal")
+            } else if descriptor[0] == ASFWMCPBeBoBClockTopology.inputDirection,
+                      descriptor[1] == ASFWMCPBeBoBClockTopology.unitMode,
+                      descriptor[2] == ASFWMCPBeBoBClockTopology.isochronousUnitClass {
+                clockSource["classification"] = .string(descriptor[3] == 0 ? "syt" : "externalIsochronous")
+            } else if descriptor[0] == ASFWMCPBeBoBClockTopology.inputDirection,
+                      descriptor[1] == ASFWMCPBeBoBClockTopology.unitMode,
+                      descriptor[2] == ASFWMCPBeBoBClockTopology.externalUnitClass {
+                let externalReceipt = await send(ASFWMCPBeBoBClockTopology.externalInputPlugTypeCommand(descriptor[3]))
+                guard externalReceipt.ok, let externalResponse = externalReceipt.response,
+                      let externalType = ASFWMCPBeBoBClockTopology.plugType(externalResponse) else {
+                    return incomplete("Clock source external plug did not return a stable BridgeCo type.")
+                }
+                clockSource["externalPlug"] = .object([
+                    "id": .int(Int(descriptor[3])),
+                    "type": .int(Int(externalType)),
+                    "typeName": .string(ASFWMCPBeBoBClockTopology.plugTypeName(externalType))
+                ])
+                switch externalType {
+                case ASFWMCPBeBoBClockTopology.digitalPlugType, ASFWMCPBeBoBClockTopology.syncPlugType:
+                    clockSource["classification"] = .string("external")
+                case ASFWMCPBeBoBClockTopology.additionalPlugType:
+                    clockSource["classification"] = .string("internal")
+                default:
+                    break
+                }
+            }
+
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("bebobClockTopology"),
+                "recognized": .bool(true),
+                "musicSubunitInputPlugs": .array(inputPlugs),
+                "syncInputPlug": .int(Int(syncInputPlug)),
+                "clockSource": .object(clockSource),
+                "transactions": .array(transactions)
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func bebobUnitPlugInfoResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: try decoder.uint32("generation"),
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+            let receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .status,
+                    payload: ASFWMCPBeBoBUnitPlugInformation.statusCommand
+                )
+            )
+            guard receipt.ok else {
+                return ASFWMCPToolCallResult(
+                    toolName: toolName,
+                    ok: false,
+                    data: receipt.mcpValue,
+                    errors: []
+                )
+            }
+            guard let response = receipt.response,
+                  let information = ASFWMCPBeBoBUnitPlugInformation.decode(response) else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobUnitPlugInfo"),
+                    "recognized": .bool(false),
+                    "transaction": receipt.mcpValue,
+                    "reason": .string("Expected an AV/C STABLE unit PLUG_INFO response with four count operands.")
+                ]))
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("bebobUnitPlugInfo"),
+                "recognized": .bool(true),
+                "transaction": receipt.mcpValue,
+                "information": information.mcpValue
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func bebobBootRomResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let address = ASFWMCPAddress(
+                nodeId: try decoder.uint32("nodeId"),
+                generation: try decoder.uint32("generation"),
+                addressHigh: ASFWMCPBeBoBBootRomInformation.addressHigh,
+                addressLow: ASFWMCPBeBoBBootRomInformation.addressLow
+            )
+            var transaction = await driver.executeReadBlock(
+                ASFWMCPReadBlockRequest(address: address,
+                                        length: UInt32(ASFWMCPBeBoBBootRomInformation.sizeWithDebugger))
+            )
+            // Older BridgeCo firmware exposes only the base 80-byte record.
+            if !transaction.ok {
+                transaction = await driver.executeReadBlock(
+                    ASFWMCPReadBlockRequest(address: address,
+                                            length: UInt32(ASFWMCPBeBoBBootRomInformation.sizeWithoutDebugger))
+                )
+            }
+            guard transaction.ok else { return transactionToolResult(toolName, transaction) }
+            guard let payload = transaction.payload,
+                  let information = ASFWMCPBeBoBBootRomInformation.decode(payload) else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("bebobBootRomInfo"),
+                    "recognized": .bool(false),
+                    "transaction": transaction.mcpValue,
+                    "reason": .string("BridgeCo BootROM magic/layout was not present at the read address.")
+                ]))
+            }
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("bebobBootRomInfo"),
+                "transaction": transaction.mcpValue,
+                "information": information.mcpValue
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func phase88GetClockResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: generation,
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+            
+            // FCP status query for FB 9 (External clock source / internal selector)
+            // operands: 
+            // [0]=0x80 (Selector type)
+            // [1]=0x09 (FB 9)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0xFF (Input Plug placeholder)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb9Cdb: [UInt8] = [
+                0x01, 0x08, 0xB8, 0x80, 0x09, 0x10, 0x02, 0xFF, 0x01, 0x00, 0x00, 0x00
+            ]
+            
+            // FCP status query for FB 8 (External clock source type: S/PDIF / WordClock)
+            // operands:
+            // [0]=0x80 (Selector type)
+            // [1]=0x08 (FB 8)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0xFF (Input Plug placeholder)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb8Cdb: [UInt8] = [
+                0x01, 0x08, 0xB8, 0x80, 0x08, 0x10, 0x02, 0xFF, 0x01, 0x00, 0x00, 0x00
+            ]
+
+            var transactions: [ASFWMCPValue] = []
+
+            let fb9Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .status,
+                    payload: fb9Cdb
+                )
+            )
+            transactions.append(fb9Receipt.mcpValue)
+
+            let fb8Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .status,
+                    payload: fb8Cdb
+                )
+            )
+            transactions.append(fb8Receipt.mcpValue)
+
+            guard fb9Receipt.ok, let fb9Response = fb9Receipt.response, fb9Response.count >= 9,
+                  fb8Receipt.ok, let fb8Response = fb8Receipt.response, fb8Response.count >= 9 else {
+                return .success(toolName: toolName, data: .object([
+                    "kind": .string("phase88ClockStatus"),
+                    "ok": .bool(false),
+                    "transactions": .array(transactions),
+                    "reason": .string("FCP status queries to Selector Function Blocks failed or returned incomplete payloads.")
+                ]))
+            }
+
+            // In FCP response, the modified operand is returned (Byte 7 is the selected input plug)
+            let fb9InputPlug = fb9Response[7]
+            let fb8InputPlug = fb8Response[7]
+
+            let sourceText: String
+            if fb9InputPlug == 0 {
+                sourceText = "internal"
+            } else if fb9InputPlug == 1 {
+                if fb8InputPlug == 0 {
+                    sourceText = "spdif"
+                } else if fb8InputPlug == 1 {
+                    sourceText = "wordclock"
+                } else {
+                    sourceText = "external_unknown"
+                }
+            } else {
+                sourceText = "unknown"
+            }
+
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("phase88ClockStatus"),
+                "ok": .bool(true),
+                "clockSource": .string(sourceText),
+                "fb9InputPlug": .int(Int(fb9InputPlug)),
+                "fb8InputPlug": .int(Int(fb8InputPlug)),
+                "transactions": .array(transactions)
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func phase88SetClockInternalResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGUID = try decoder.uint64("targetGuid")
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let targetGuidText = String(format: "0x%016llX", targetGUID)
+            guard await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
+            }) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                )
+            }
+
+            let address = ASFWMCPAddress(
+                nodeId: nodeId,
+                generation: generation,
+                addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
+                addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
+            )
+
+            // FCP control command to set FB 9 (External clock source selector) to Internal (0x00)
+            // operands: 
+            // [0]=0x80 (Selector type)
+            // [1]=0x09 (FB 9)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0x00 (Input Plug: 0 for Internal)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb9Control: [UInt8] = [
+                0x00, 0x08, 0xB8, 0x80, 0x09, 0x10, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00
+            ]
+
+            // FCP control command to set FB 8 (External clock source type) to S/PDIF (0x00)
+            // operands: 
+            // [0]=0x80 (Selector type)
+            // [1]=0x08 (FB 8)
+            // [2]=0x10 (Current status attribute)
+            // [3]=0x02 (Length)
+            // [4]=0x00 (Input Plug: 0 for S/PDIF)
+            // [5]=0x01 (SELECTOR_CONTROL)
+            let fb8Control: [UInt8] = [
+                0x00, 0x08, 0xB8, 0x80, 0x08, 0x10, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00
+            ]
+
+            var transactions: [ASFWMCPValue] = []
+
+            let fb9Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .control,
+                    payload: fb9Control
+                )
+            )
+            transactions.append(fb9Receipt.mcpValue)
+
+            let fb8Receipt = await driver.executeFCPCommand(
+                ASFWMCPFcpCommandRequest(
+                    targetGUID: targetGUID,
+                    address: address,
+                    intent: .control,
+                    payload: fb8Control
+                )
+            )
+            transactions.append(fb8Receipt.mcpValue)
+
+            let success = fb9Receipt.ok && fb9Receipt.response?[0] == 0x09 &&
+                          fb8Receipt.ok && fb8Receipt.response?[0] == 0x09
+
+            return .success(toolName: toolName, data: .object([
+                "kind": .string("phase88SetClockInternal"),
+                "ok": .bool(success),
+                "transactions": .array(transactions)
+            ]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func avcUnitInventoryResult(toolName: String) async -> ASFWMCPToolCallResult {
+        let units = await driver.listAVCUnits()
+        return .success(
+            toolName: toolName,
+            data: .object([
+                "kind": .string("avcUnitInventory"),
+                "units": .array(units.map(\.mcpValue)),
+            ])
+        )
+    }
+
+    func avcSubunitCapabilitiesResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let guid = try decoder.uint64("targetGuid")
+            let type = try decoder.uint32("subunitType")
+            let id = try decoder.uint32("subunitId")
+            guard type <= UInt32(UInt8.max), id <= UInt32(UInt8.max) else {
+                return malformedToolResult(toolName, reason: "subunitType and subunitId must fit in one byte")
+            }
+
+            let unit = await driver.listAVCUnits().first { $0.guid == guid }
+            guard unit?.subunits.contains(where: { $0.type == UInt8(type) && $0.id == UInt8(id) }) == true else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "The requested AV/C subunit is not present in the current discovery snapshot."
+                )
+            }
+            guard let capabilities = await driver.avcSubunitCapabilities(
+                guid: guid, type: UInt8(type), id: UInt8(id)
+            ) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "The driver could not provide decoded capabilities for the requested AV/C subunit."
+                )
+            }
+
+            return .success(
+                toolName: toolName,
+                data: .object([
+                    "kind": .string("avcSubunitCapabilities"),
+                    "targetGuid": .string(String(format: "0x%016llX", guid)),
+                    "subunitType": .int(Int(type)),
+                    "subunitId": .int(Int(id)),
+                    "capabilities": capabilities.mcpValue,
+                ])
+            )
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
     func capabilitiesResult(toolName: String) async -> ASFWMCPToolCallResult {
         let tools = await listTools()
         let groups = Set(tools.map(\.group)).sorted()
@@ -519,6 +1483,10 @@ private struct ASFWMCPToolArgumentDecoder {
         UInt32(try boundedUInt64(key, max: UInt64(UInt32.max)))
     }
 
+    func uint64(_ key: String) throws -> UInt64 {
+        try boundedUInt64(key, max: UInt64.max)
+    }
+
     func bool(_ key: String, default defaultValue: Bool) throws -> Bool {
         guard let value = object[key] else { return defaultValue }
         guard case .bool(let bool) = value else {
@@ -574,8 +1542,17 @@ private struct ASFWMCPToolArgumentDecoder {
             raw = UInt64(int)
         case .uint64(let uint):
             raw = uint
+        case .string(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isHex = trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X")
+            let digits = isHex ? String(trimmed.dropFirst(2)) : trimmed
+            guard !digits.isEmpty,
+                  let parsed = UInt64(digits, radix: isHex ? 16 : 10) else {
+                throw ASFWMCPToolArgumentError.malformed("\(key) must be an unsigned decimal integer or 0x-prefixed hexadecimal integer")
+            }
+            raw = parsed
         default:
-            throw ASFWMCPToolArgumentError.malformed("\(key) must be an unsigned integer")
+            throw ASFWMCPToolArgumentError.malformed("\(key) must be an unsigned decimal integer or 0x-prefixed hexadecimal integer")
         }
         guard raw <= max else {
             throw ASFWMCPToolArgumentError.malformed("\(key) exceeds \(max)")

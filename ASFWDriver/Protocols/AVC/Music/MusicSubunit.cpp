@@ -1258,7 +1258,12 @@ void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& sub
     format.formatHierarchy = FormatHierarchy::kAM824; // AM824
     format.subtype = AM824Subtype::kCompound; // Compound
     format.sampleRate = rateCode;
-    format.channelFormats.resize(0); // Don't care about channels for rate set? Or maybe we do?
+    
+    // Add a single channel to satisfy BuildCdb validation
+    ChannelFormatInfo channel;
+    channel.channelCount = 1;
+    channel.formatCode = StreamFormatCode::kMBLA;
+    format.channelFormats.push_back(channel);
 
     // Iterate all plugs and set format?
     // Or just the first one?

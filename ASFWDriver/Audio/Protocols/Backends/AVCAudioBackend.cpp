@@ -36,6 +36,16 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AVCAudioBackend: Failed to allocate lock");
     }
+
+    IODispatchQueue* queue = nullptr;
+    const kern_return_t queueStatus = IODispatchQueue::Create("com.asfw.audio.avc", 0, 0, &queue);
+    if (queueStatus == kIOReturnSuccess && queue) {
+        workQueue_ = OSSharedPtr(queue, OSNoRetain);
+    } else {
+        ASFW_LOG_ERROR(Audio,
+                       "AVCAudioBackend: Failed to create recovery queue (0x%x)",
+                       queueStatus);
+    }
 }
 
 AVCAudioBackend::~AVCAudioBackend() noexcept {
@@ -80,9 +90,67 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
     if (lock_) {
         IOLockLock(lock_);
         configByGuid_.erase(guid);
+        recoveringGuids_.erase(guid);
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }
+        IOLockUnlock(lock_);
+    }
+}
+
+void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
+    if (guid == 0 || stopping_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    bool queueRecovery = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        queueRecovery = (activeGuid_ == guid) && recoveringGuids_.insert(guid).second;
+        IOLockUnlock(lock_);
+    }
+    if (!queueRecovery) {
+        return;
+    }
+
+    // DeviceManager emits resume only after it refreshed the stable GUID's
+    // node/generation mapping. The coordinator stops stale host state, makes
+    // fresh IRM reservations, and lets the AV/C adapter establish fresh PCRs.
+    // This is the same reset-then-reconnect ordering as Linux cmp.c:294-334.
+    ASFW_LOG(Audio,
+             "AVCAudioBackend: device resumed; recovering active CMP stream GUID=0x%016llx",
+             guid);
+    auto recover = ^{
+        if (!stopping_.load(std::memory_order_acquire)) {
+            const IOReturn status = duplexCoordinator_.RecoverStreaming(
+                guid, DICE::DiceRestartReason::kBusResetRebind);
+            if (status != kIOReturnSuccess) {
+                ASFW_LOG_ERROR(Audio,
+                               "AVCAudioBackend: post-reset recovery failed GUID=0x%016llx kr=0x%x",
+                               guid,
+                               status);
+            }
+        }
+        if (lock_) {
+            IOLockLock(lock_);
+            recoveringGuids_.erase(guid);
+            IOLockUnlock(lock_);
+        }
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(recover);
+        return;
+    }
+
+    // Queue creation failure must not block DeviceManager's resume observer.
+    // A later explicit stream start will make a fresh connection instead.
+    ASFW_LOG_ERROR(Audio,
+                   "AVCAudioBackend: recovery queue unavailable; leaving stream stopped GUID=0x%016llx",
+                   guid);
+    if (lock_) {
+        IOLockLock(lock_);
+        recoveringGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
 }
@@ -92,19 +160,16 @@ void AVCAudioBackend::BeginTeardown() noexcept {
         return;
     }
 
-    uint64_t activeGuid = 0;
-    if (lock_) {
-        IOLockLock(lock_);
-        activeGuid = activeGuid_;
-        IOLockUnlock(lock_);
-    }
-    if (activeGuid != 0) {
-        // Quiesce while FCP/CMP and hardware are still alive. The AV/C profile
-        // preserves iPCR -> IT -> oPCR -> IR teardown ordering here too.
-        (void)duplexCoordinator_.StopStreaming(activeGuid);
-    }
-
     const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
+    // Drain queued recovery before hardware detaches. Each queued block checks
+    // stopping_ before it can re-establish PCRs in the teardown window.
+    if (workQueue_) {
+#ifdef ASFW_HOST_TEST
+        workQueue_->DispatchSync([] {});
+#else
+        workQueue_->DispatchSync(^{ });
+#endif
+    }
     (void)hostTransport_.StopAll();
     ASFW_LOG(Audio,
              "AVCAudioBackend: BeginTeardown stopping=true already=%u",

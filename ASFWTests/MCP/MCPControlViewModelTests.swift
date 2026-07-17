@@ -13,6 +13,9 @@ struct MCPControlViewModelTests {
             connector: ASFWDriverConnector(),
             defaults: defaults
         )
+        viewModel.setGuardedFCPExperimentsEnabled(true)
+        #expect(defaults.bool(forKey: "asfw.mcp.guarded-fcp-experiments-enabled"))
+        viewModel.setGuardedFCPExperimentsEnabled(false)
         viewModel.portText = "0"
 
         await viewModel.setEnabled(true)

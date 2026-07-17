@@ -40,7 +40,7 @@ void LogBIBCRCMismatch(uint8_t nodeId, uint16_t computed, uint16_t expected) {
 
 void LogConfigROMReadyRetry(uint8_t nodeId, const char* reason, uint8_t retriesLeft) {
     ASFW_LOG(ConfigROM,
-             "ROMScanSession: Node %u Config ROM not ready (%s), delayed retry scheduled "
+             "ROMScanSession: Node %u Config ROM not ready (%{public}s), delayed retry scheduled "
              "(remaining=%u)",
              nodeId, reason != nullptr ? reason : "unspecified", retriesLeft);
 }
@@ -291,7 +291,7 @@ bool ROMScanSession::TransitionNodeState(ROMScanNodeStateMachine& node,
         return true;
     }
 
-    ASFW_LOG(ConfigROM, "ROMScanSession: invalid node state transition node=%u from=%u to=%u (%s)",
+    ASFW_LOG(ConfigROM, "ROMScanSession: invalid node state transition node=%u from=%u to=%u (%{public}s)",
              node.NodeId(), static_cast<uint8_t>(node.CurrentState()), static_cast<uint8_t>(next),
              reason != nullptr ? reason : "unspecified");
     node.ForceState(ROMScanNodeStateMachine::State::Failed);

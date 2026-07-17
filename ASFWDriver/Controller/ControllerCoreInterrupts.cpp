@@ -65,6 +65,12 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         // invalidating all node IDs before resuming children
         // (IOFireWireController.cpp:1983-2019). GUID identity is retained and
         // rebound by the ensuing discovery scan.
+        // FCP must observe the reset before DeviceManager clears its routes.
+        // Idempotent commands remain pending only until the later discovery
+        // resume supplies a fresh `(node, generation)` route.
+        if (deps_.avcDiscovery) {
+            deps_.avcDiscovery->OnBusReset(generation);
+        }
         if (deps_.deviceRegistry) {
             deps_.deviceRegistry->InvalidateLiveMappingsForBusReset();
         }

@@ -130,6 +130,50 @@ void BuildMuteMode(OutputMuteMode mode, bool& mute, bool& unmute) noexcept {
 
 } // namespace
 
+using SignalFormatCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
+using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
+
+struct ApogeeDuetProtocol::ClockTransition {
+    enum class Phase : uint8_t {
+        kReadInputBefore,
+        kReadOutputBefore,
+        kSetInput,
+        kSetOutput,
+        kSettle,
+        kReadInputAfter,
+        kReadOutputAfter,
+        kRestoreInput,
+        kRestoreOutput,
+    };
+
+    AudioClockConfig desiredClock{};
+    SignalSampleRate desiredRate{SignalSampleRate::kUnknown};
+    SignalFormatCommand::SignalFormat inputBefore{};
+    SignalFormatCommand::SignalFormat outputBefore{};
+    SignalFormatCommand::SignalFormat inputAfter{};
+    SignalFormatCommand::SignalFormat outputAfter{};
+    IDuplexDeviceControl::ClockApplyCallback completion{};
+    Phase phase{Phase::kReadInputBefore};
+    IOReturn failureStatus{kIOReturnSuccess};
+    bool inputChanged{false};
+    bool outputChanged{false};
+};
+
+namespace {
+
+[[nodiscard]] bool IsAM824Format(const SignalFormatCommand::SignalFormat& format) noexcept {
+    return format.format == 0x90U &&
+           SignalFormatCommand::FrequencyToSampleRate(format.frequency) != SignalSampleRate::kUnknown;
+}
+
+[[nodiscard]] bool MatchesRequestedRate(const SignalFormatCommand::SignalFormat& format,
+                                        SignalSampleRate requestedRate) noexcept {
+    return IsAM824Format(format) &&
+           SignalFormatCommand::FrequencyToSampleRate(format.frequency) == requestedRate;
+}
+
+} // namespace
+
 ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::Bool(Code code, bool value) {
     VendorCommand command{};
     command.code = code;
@@ -361,13 +405,27 @@ ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        uint16_t nodeId,
                                        Protocols::AVC::FCPTransport* fcpTransport,
                                        IRM::IRMClient* irmClient,
-                                       CMP::CMPClient* cmpClient)
+                                       CMP::CMPClient* cmpClient,
+                                       uint64_t deviceGuid,
+                                       uint32_t formatSettleDelayMs)
     : busOps_(busOps)
     , busInfo_(busInfo)
     , nodeId_(nodeId)
     , fcpTransport_(fcpTransport)
     , irmClient_(irmClient)
-    , cmpClient_(cmpClient) {
+    , cmpClient_(cmpClient)
+    , deviceGuid_(deviceGuid)
+    , formatSettleDelayMs_(formatSettleDelayMs) {
+}
+
+CMP::CMPDevice ApogeeDuetProtocol::CurrentCMPDevice() const noexcept {
+    const uint16_t liveNodeId = fcpTransport_ ? fcpTransport_->GetTargetNodeID() : nodeId_;
+    return CMP::CMPDevice{
+        .guid = deviceGuid_,
+        .nodeId = FW::NodeId{liveNodeId <= 0x3FU ? static_cast<uint8_t>(liveNodeId)
+                                                  : static_cast<uint8_t>(0xFFU)},
+        .generation = busInfo_.GetGeneration(),
+    };
 }
 
 IOReturn ApogeeDuetProtocol::Initialize() {
@@ -387,6 +445,10 @@ void ApogeeDuetProtocol::UpdateRuntimeContext(uint16_t nodeId,
     // epoch. Do not carry the AV/C configuration cache across that boundary.
     if (nodeId_ != nodeId || fcpTransport_ != transport) {
         clockConfigApplied_ = false;
+        if (cmpClient_ && deviceGuid_ != 0) {
+            cmpClient_->InvalidateDevice(deviceGuid_);
+        }
+        preparedGeneration_ = FW::Generation{0};
     }
     nodeId_ = nodeId;
     fcpTransport_ = transport;
@@ -419,9 +481,21 @@ void ApogeeDuetProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
         return;
     }
 
+    const FW::Generation currentGeneration = busInfo_.GetGeneration();
+    if (preparedGeneration_ != currentGeneration) {
+        // PCR state and device stream formation are reset-scoped. Preserve no
+        // old connection as a candidate for BREAK/reuse; recovery must reserve
+        // fresh resources and establish fresh PCRs in the new generation.
+        if (cmpClient_ && deviceGuid_ != 0) {
+            cmpClient_->InvalidateDevice(deviceGuid_);
+        }
+        clockConfigApplied_ = false;
+        outputConnected_ = false;
+        inputConnected_ = false;
+        preparedGeneration_ = currentGeneration;
+    }
+
     duplexChannels_ = channels;
-    cmpClient_->SetDeviceNode(static_cast<uint8_t>(nodeId_),
-                              IRM::Generation{busInfo_.GetGeneration()});
     ApplyClockConfig(
         desiredClock,
         [this, channels, callback = std::move(callback)](IOReturn status,
@@ -466,62 +540,225 @@ void ApogeeDuetProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
         return;
     }
 
-    using SignalCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalFormatCommand;
-    using SampleRate = Protocols::AVC::StreamFormats::SampleRate;
-
-    const SampleRate sampleRate = [&desiredClock]() noexcept {
+    const SignalSampleRate sampleRate = [&desiredClock]() noexcept {
         switch (desiredClock.sampleRateHz) {
             case 32000U:
-                return SampleRate::k32000Hz;
+                return SignalSampleRate::k32000Hz;
             case 44100U:
-                return SampleRate::k44100Hz;
+                return SignalSampleRate::k44100Hz;
             case 48000U:
-                return SampleRate::k48000Hz;
+                return SignalSampleRate::k48000Hz;
             default:
-                return SampleRate::kUnknown;
+                return SignalSampleRate::kUnknown;
         }
     }();
 
-    // OXFW's assumed-format path programs INPUT first and OUTPUT second
-    // (Linux oxfw-stream.c:41-54). Re-sending these controls during every
-    // restart is not harmless: the reference only changes format when the
-    // requested formation changes (oxfw-stream.c:273-310), and some devices
-    // freeze on requests immediately after a format change.
-    auto input =
-        std::make_shared<SignalCommand>(*fcpTransport_, 0, true, sampleRate);
-    input->Submit(
-        [this, desiredClock, sampleRate, callback = std::move(callback), input](
-            Protocols::AVC::AVCResult inputResult, const SignalCommand::SignalFormat&) mutable {
-            const IOReturn inputStatus = MapAVCResultToIOReturn(inputResult);
-            if (inputStatus != kIOReturnSuccess) {
-                callback(inputStatus, {});
+    if (sampleRate == SignalSampleRate::kUnknown) {
+        callback(kIOReturnUnsupported, {});
+        return;
+    }
+
+    // The device-side format transition is deliberately profile-owned. Linux
+    // OXFW sets input before output (oxfw-stream.c:41-54), then waits after a
+    // format write before further traffic (oxfw-stream.c:93-100). We first
+    // capture both formations so an unsuccessful transition can restore the
+    // device state; the generic duplex coordinator owns host/CMP/IRM rollback
+    // because this method runs before those resources are committed.
+    auto transition = std::make_shared<ClockTransition>();
+    transition->desiredClock = desiredClock;
+    transition->desiredRate = sampleRate;
+    transition->completion = std::move(callback);
+    AdvanceClockTransition(transition);
+}
+
+void ApogeeDuetProtocol::AdvanceClockTransition(
+    const std::shared_ptr<ClockTransition>& transition) {
+    if (!transition || !fcpTransport_) {
+        if (transition) {
+            CompleteClockTransition(transition, kIOReturnNotReady);
+        }
+        return;
+    }
+
+    const auto submitStatus = [this, transition](bool isInput,
+                                                   bool captureBefore,
+                                                   ClockTransition::Phase nextPhase) {
+        auto command = std::make_shared<SignalFormatCommand>(*fcpTransport_, 0, isInput);
+        command->Submit([this, transition, isInput, captureBefore, nextPhase, command](
+                            Protocols::AVC::AVCResult result,
+                            const SignalFormatCommand::SignalFormat& format) {
+            const IOReturn status = MapAVCResultToIOReturn(result);
+            if (status != kIOReturnSuccess) {
+                FailClockTransition(transition, status);
                 return;
             }
+            if (isInput && captureBefore) {
+                transition->inputBefore = format;
+            } else if (isInput) {
+                transition->inputAfter = format;
+            } else if (captureBefore) {
+                transition->outputBefore = format;
+            } else {
+                transition->outputAfter = format;
+            }
+            transition->phase = nextPhase;
+            AdvanceClockTransition(transition);
+        });
+    };
 
-            auto output =
-                std::make_shared<SignalCommand>(*fcpTransport_, 0, false, sampleRate);
-            output->Submit(
-                [this, desiredClock, callback = std::move(callback), output](
-                    Protocols::AVC::AVCResult outputResult,
-                    const SignalCommand::SignalFormat&) mutable {
-                    const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
-                    if (outputStatus != kIOReturnSuccess) {
-                        callback(outputStatus, {});
+    switch (transition->phase) {
+        case ClockTransition::Phase::kReadInputBefore:
+            submitStatus(true, true, ClockTransition::Phase::kReadOutputBefore);
+            return;
+        case ClockTransition::Phase::kReadOutputBefore:
+            submitStatus(false, true, ClockTransition::Phase::kSetInput);
+            return;
+        case ClockTransition::Phase::kSetInput:
+            if (!IsAM824Format(transition->inputBefore) ||
+                !IsAM824Format(transition->outputBefore)) {
+                FailClockTransition(transition, kIOReturnUnsupported);
+                return;
+            }
+            if (MatchesRequestedRate(transition->inputBefore, transition->desiredRate)) {
+                transition->phase = ClockTransition::Phase::kSetOutput;
+                AdvanceClockTransition(transition);
+                return;
+            }
+            {
+                auto command = std::make_shared<SignalFormatCommand>(
+                    *fcpTransport_, 0, true, transition->desiredRate);
+                command->Submit([this, transition, command](
+                                    Protocols::AVC::AVCResult result,
+                                    const SignalFormatCommand::SignalFormat&) {
+                    const IOReturn status = MapAVCResultToIOReturn(result);
+                    if (status != kIOReturnSuccess) {
+                        FailClockTransition(transition, status);
                         return;
                     }
-
-                    appliedClock_ = desiredClock;
-                    clockConfigApplied_ = true;
-                    AudioStreamRuntimeCaps caps{};
-                    (void)GetRuntimeAudioStreamCaps(caps);
-                    callback(kIOReturnSuccess,
-                             ClockApplyResult{
-                                 .generation = busInfo_.GetGeneration(),
-                                 .appliedClock = appliedClock_,
-                                 .runtimeCaps = caps,
-                             });
+                    transition->inputChanged = true;
+                    transition->phase = ClockTransition::Phase::kSetOutput;
+                    AdvanceClockTransition(transition);
                 });
+            }
+            return;
+        case ClockTransition::Phase::kSetOutput:
+            if (MatchesRequestedRate(transition->outputBefore, transition->desiredRate)) {
+                transition->phase = ClockTransition::Phase::kSettle;
+                AdvanceClockTransition(transition);
+                return;
+            }
+            {
+                auto command = std::make_shared<SignalFormatCommand>(
+                    *fcpTransport_, 0, false, transition->desiredRate);
+                command->Submit([this, transition, command](
+                                    Protocols::AVC::AVCResult result,
+                                    const SignalFormatCommand::SignalFormat&) {
+                    const IOReturn status = MapAVCResultToIOReturn(result);
+                    if (status != kIOReturnSuccess) {
+                        FailClockTransition(transition, status);
+                        return;
+                    }
+                    transition->outputChanged = true;
+                    transition->phase = ClockTransition::Phase::kSettle;
+                    AdvanceClockTransition(transition);
+                });
+            }
+            return;
+        case ClockTransition::Phase::kSettle:
+            if (transition->inputChanged || transition->outputChanged) {
+                // Control-plane only; never runs on the packet hot path.
+                IOSleep(formatSettleDelayMs_);
+            }
+            transition->phase = ClockTransition::Phase::kReadInputAfter;
+            AdvanceClockTransition(transition);
+            return;
+        case ClockTransition::Phase::kReadInputAfter:
+            submitStatus(true, false, ClockTransition::Phase::kReadOutputAfter);
+            return;
+        case ClockTransition::Phase::kReadOutputAfter:
+            submitStatus(false, false, ClockTransition::Phase::kRestoreInput);
+            return;
+        case ClockTransition::Phase::kRestoreInput:
+            if (!MatchesRequestedRate(transition->inputAfter, transition->desiredRate) ||
+                !MatchesRequestedRate(transition->outputAfter, transition->desiredRate)) {
+                FailClockTransition(transition, kIOReturnError);
+                return;
+            }
+            CompleteClockTransition(transition, kIOReturnSuccess);
+            return;
+        case ClockTransition::Phase::kRestoreOutput:
+            if (transition->outputChanged) {
+                auto command = std::make_shared<SignalFormatCommand>(
+                    *fcpTransport_, 0, false,
+                    SignalFormatCommand::FrequencyToSampleRate(transition->outputBefore.frequency));
+                command->Submit([this, transition, command](Protocols::AVC::AVCResult,
+                                                              const SignalFormatCommand::SignalFormat&) {
+                    CompleteClockTransition(transition, transition->failureStatus);
+                });
+                return;
+            }
+            CompleteClockTransition(transition, transition->failureStatus);
+            return;
+    }
+}
+
+void ApogeeDuetProtocol::FailClockTransition(const std::shared_ptr<ClockTransition>& transition,
+                                             IOReturn status) {
+    if (!transition) {
+        return;
+    }
+    clockConfigApplied_ = false;
+    if (transition->failureStatus == kIOReturnSuccess) {
+        transition->failureStatus = status;
+    }
+
+    if (transition->phase == ClockTransition::Phase::kRestoreInput ||
+        transition->phase == ClockTransition::Phase::kRestoreOutput) {
+        CompleteClockTransition(transition, transition->failureStatus);
+        return;
+    }
+
+    if (transition->inputChanged) {
+        transition->phase = ClockTransition::Phase::kRestoreInput;
+        auto command = std::make_shared<SignalFormatCommand>(
+            *fcpTransport_, 0, true,
+            SignalFormatCommand::FrequencyToSampleRate(transition->inputBefore.frequency));
+        command->Submit([this, transition, command](Protocols::AVC::AVCResult,
+                                                      const SignalFormatCommand::SignalFormat&) {
+            transition->phase = ClockTransition::Phase::kRestoreOutput;
+            AdvanceClockTransition(transition);
         });
+        return;
+    }
+
+    transition->phase = ClockTransition::Phase::kRestoreOutput;
+    AdvanceClockTransition(transition);
+}
+
+void ApogeeDuetProtocol::CompleteClockTransition(
+    const std::shared_ptr<ClockTransition>& transition,
+    IOReturn status) {
+    if (!transition || !transition->completion) {
+        return;
+    }
+
+    auto completion = std::move(transition->completion);
+    if (status != kIOReturnSuccess) {
+        clockConfigApplied_ = false;
+        completion(status, {});
+        return;
+    }
+
+    appliedClock_ = transition->desiredClock;
+    clockConfigApplied_ = true;
+    AudioStreamRuntimeCaps caps{};
+    (void)GetRuntimeAudioStreamCaps(caps);
+    completion(kIOReturnSuccess,
+               ClockApplyResult{
+                   .generation = busInfo_.GetGeneration(),
+                   .appliedClock = appliedClock_,
+                   .runtimeCaps = caps,
+               });
 }
 
 namespace {
@@ -558,7 +795,8 @@ void ApogeeDuetProtocol::ProgramRx(StageCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->ConnectOPCR(0, duplexChannels_.deviceToHostIsoChannel,
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->ConnectOPCR(device, 0, duplexChannels_.deviceToHostIsoChannel,
                             [state](CMP::CMPStatus status) {
         state->status.store(status, std::memory_order_release);
         state->done.store(true, std::memory_order_release);
@@ -586,7 +824,8 @@ void ApogeeDuetProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->ConnectIPCR(0, duplexChannels_.hostToDeviceIsoChannel,
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->ConnectIPCR(device, 0, duplexChannels_.hostToDeviceIsoChannel,
                             [state](CMP::CMPStatus status) {
                                 state->status.store(status, std::memory_order_release);
                                 state->done.store(true, std::memory_order_release);
@@ -641,7 +880,8 @@ void ApogeeDuetProtocol::DisconnectPlayback(VoidCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->DisconnectIPCR(0, [state](CMP::CMPStatus status) {
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->DisconnectIPCR(device, 0, [state](CMP::CMPStatus status) {
         state->status.store(status, std::memory_order_release);
         state->done.store(true, std::memory_order_release);
     });
@@ -659,7 +899,8 @@ void ApogeeDuetProtocol::DisconnectCapture(VoidCallback callback) {
     }
 
     auto state = std::make_shared<CMPWaitState>();
-    cmpClient_->DisconnectOPCR(0, [state](CMP::CMPStatus status) {
+    const CMP::CMPDevice device = CurrentCMPDevice();
+    cmpClient_->DisconnectOPCR(device, 0, [state](CMP::CMPStatus status) {
         state->status.store(status, std::memory_order_release);
         state->done.store(true, std::memory_order_release);
     });

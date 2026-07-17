@@ -20,11 +20,13 @@ using namespace ASFW::Protocols::AVC;
 AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                  std::shared_ptr<Discovery::FWUnit> unit,
                  Protocols::Ports::FireWireBusOps& busOps,
-                 Protocols::Ports::FireWireBusInfo& busInfo)
+                 Protocols::Ports::FireWireBusInfo& busInfo,
+                 Scheduling::ITimerScheduler& timerScheduler)
     : device_(device),
       unit_(unit),
       busOps_(busOps),
-      busInfo_(busInfo) {
+      busInfo_(busInfo),
+      timerScheduler_(timerScheduler) {
 
     // Check for custom FCP addresses in Config ROM (optional)
     // For now, use standard addresses
@@ -39,7 +41,11 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     // Create FCP transport
     fcpTransport_ = std::make_shared<FCPTransport>();
     if (fcpTransport_) {
-        fcpTransport_->init(&busOps_, &busInfo_, device.get(), config);
+        if (!fcpTransport_->init(&busOps_, &busInfo_, device.get(), timerScheduler_, config)) {
+            ASFW_LOG_ERROR(AVC, "AVCUnit: Failed to initialize FCPTransport");
+            fcpTransport_.reset();
+            return;
+        }
 
         // Create DescriptorAccessor for unit-level descriptors (Phase 5)
         descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*fcpTransport_, kAVCSubunitUnit);
@@ -107,9 +113,13 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
         ProbeSignalFormat([this, completionState](bool signalFormatOk) {
             ProbeUnitInfo([this, completionState](bool unitOk) {
                 if (!unitOk) {
-                    ASFW_LOG_V1(AVC, "AVCUnit: UNIT_INFO probe failed");
-                    Common::InvokeSharedCallback(completionState, false);
-                    return;
+                    // UNIT_INFO is an optional AV/C discovery hint, not a prerequisite
+                    // for the independent SUBUNIT_INFO and PLUG_INFO probes below.
+                    // TerraTec PHASE 88 Rack FW acknowledges the FCP request but does
+                    // not return an FCP response for this opcode (FireBug capture,
+                    // 2026-07-16). Continue so its BridgeCo-specific probe can run.
+                    ASFW_LOG_V1(AVC,
+                                "AVCUnit: UNIT_INFO unavailable; continuing with subunit/plug discovery");
                 }
 
             ProbeSubunits([this, completionState](bool subunitOk) {
@@ -126,7 +136,7 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
                         ASFW_LOG_V1(AVC,
                                    "AVCUnit: Initialized - "
                                    "%zu subunits, %u/%u ISO plugs, "
-                                   "descriptor support: %s",
+                                   "descriptor support: %{public}s",
                                    subunits_.size(),
                                    plugCounts_.isoInputPlugs,
                                    plugCounts_.isoOutputPlugs,
@@ -614,13 +624,21 @@ void AVCUnit::OnBusReset(uint32_t newGeneration) {
                 newGeneration);
 
     // Forward to FCP transport (will handle pending commands)
-    fcpTransport_->OnBusReset(newGeneration);
+    if (fcpTransport_) {
+        fcpTransport_->OnBusReset(newGeneration);
+    }
 
     // v1: Keep cached state (subunits, plugs rarely change)
     // Caller can re-Initialize() if topology changed
 
     // v2 improvement: Could invalidate cache on topology change
     // and re-probe automatically
+}
+
+void AVCUnit::OnRouteRevalidated(uint32_t generation) {
+    if (fcpTransport_) {
+        fcpTransport_->OnRouteRevalidated(generation);
+    }
 }
 
 //==============================================================================

@@ -252,7 +252,7 @@ void SBP2TargetBridge::OnLoginStateChanged(uint64_t guid, bool loggedIn) {
     // UserCreateTargetForID/UserDestroyTargetForID (WI-4) are not wired yet.
     // Forward the raw event to the HBA, which logs it inertly — the static
     // phantom target still serves SCSI probes unchanged.
-    ASFW_LOG(Controller, "[SBP2Bridge] login %s guid=0x%016llx",
+    ASFW_LOG(Controller, "[SBP2Bridge] login %{public}s guid=0x%016llx",
              loggedIn ? "up" : "down", guid);
     SBP2BridgeHub::NotifyTargetState(guid, loggedIn);
 }

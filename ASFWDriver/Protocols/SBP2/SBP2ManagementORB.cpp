@@ -187,7 +187,7 @@ bool SBP2ManagementORB::Execute() noexcept {
 void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
                                          std::span<const uint8_t> response) noexcept {
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG(Async, "SBP2ManagementORB::OnWriteComplete: status=%s",
+        ASFW_LOG(Async, "SBP2ManagementORB::OnWriteComplete: status=%{public}s",
                  Async::ToString(status));
         Complete(-1);
         return;

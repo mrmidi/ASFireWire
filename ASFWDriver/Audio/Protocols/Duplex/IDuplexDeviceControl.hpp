@@ -63,6 +63,10 @@ public:
         callback(kIOReturnUnsupported);
     }
 
+    virtual void BreakBothConnections(VoidCallback callback) {
+        callback(kIOReturnUnsupported);
+    }
+
     virtual void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
         (void)cancel;
     }

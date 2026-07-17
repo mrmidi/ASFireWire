@@ -8,8 +8,10 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpCurrentGeneration() -> UInt32?
     func mcpControllerStatus() -> ControllerStatus?
     func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot
+    func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot?
     func mcpDiscoveredDevices() -> [FWDeviceInfo]?
     func mcpAVCUnits() -> [AVCUnitInfo]?
+    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities?
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16?
     func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16?
@@ -17,6 +19,9 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpAsyncBlockWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16?
     func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16?
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult?
+    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data?
+    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32
+    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
 }
 
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
@@ -35,12 +40,36 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
         try ASFWDiagnosticsClient(connector: self).fetchSnapshot()
     }
 
+    func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot? {
+        guard let diagnostics = try? mcpFetchDiagnostics(),
+              let localNodeId = diagnostics.busContract.localNode.nodeIdOrNil,
+              let irmNodeId = diagnostics.busContract.irmNode.nodeIdOrNil else {
+            return nil
+        }
+
+        let busManager = diagnostics.busManager
+        return ASFWMCPLocalIrmResourceSnapshot(
+            generation: diagnostics.busContract.header.generation,
+            localNodeId: localNodeId,
+            irmNodeId: irmNodeId,
+            isLocalIRM: busManager.localIsIRM != 0,
+            readbackValid: busManager.localIrmReadbackValid != 0,
+            bandwidthAvailable: busManager.localIrmBandwidthAvailable,
+            channelsAvailable31_0: busManager.localIrmChannelsAvailableLo,
+            channelsAvailable63_32: busManager.localIrmChannelsAvailableHi
+        )
+    }
+
     func mcpDiscoveredDevices() -> [FWDeviceInfo]? {
         getDiscoveredDevices()
     }
 
     func mcpAVCUnits() -> [AVCUnitInfo]? {
         getAVCUnits()
+    }
+
+    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
+        getSubunitCapabilities(guid: guid, type: type, id: id)
     }
 
     func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
@@ -72,6 +101,18 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult? {
         getTransactionResult(handle: handle, initialPayloadCapacity: initialPayloadCapacity)
     }
+
+    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
+        sendRawFCPCommand(guid: guid, frame: frame, timeoutMs: timeoutMs)
+    }
+
+    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32 {
+        Int32(setAudioStreaming(guid: guid, enabled: enabled))
+    }
+
+    func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
+        requestUserBusReset(expectedGeneration: expectedGeneration, shortReset: shortReset)
+    }
 }
 
 @MainActor
@@ -79,15 +120,18 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     private let backend: any ASFWLiveDriverBackend
     private let transactionTimeout: TimeInterval
     private let pollIntervalNs: UInt64
+    private let busResetTimeout: TimeInterval
 
     init(
         backend: any ASFWLiveDriverBackend,
         transactionTimeout: TimeInterval = 2.0,
-        pollIntervalNs: UInt64 = 25_000_000
+        pollIntervalNs: UInt64 = 25_000_000,
+        busResetTimeout: TimeInterval = 10.0
     ) {
         self.backend = backend
         self.transactionTimeout = transactionTimeout
         self.pollIntervalNs = pollIntervalNs
+        self.busResetTimeout = busResetTimeout
     }
 
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot {
@@ -139,6 +183,64 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func listNodes() async -> [ASFWMCPNodeSummary] {
         listNodesFromBackend()
+    }
+
+    func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {
+        (backend.mcpAVCUnits() ?? []).map { unit in
+            ASFWMCPAVCUnitSummary(
+                guid: unit.guid,
+                nodeId: physicalNodeId(unit.nodeID),
+                vendorId: unit.vendorID,
+                modelId: unit.modelID,
+                isoInputPlugCount: unit.isoInputPlugs,
+                isoOutputPlugCount: unit.isoOutputPlugs,
+                externalInputPlugCount: unit.extInputPlugs,
+                externalOutputPlugCount: unit.extOutputPlugs,
+                subunits: unit.subunits.map {
+                    .init(
+                        type: $0.type,
+                        id: $0.subunitID,
+                        sourcePlugCount: $0.numSrcPlugs,
+                        destinationPlugCount: $0.numDestPlugs
+                    )
+                }
+            )
+        }
+    }
+
+    func avcSubunitCapabilities(
+        guid: UInt64,
+        type: UInt8,
+        id: UInt8
+    ) async -> ASFWMCPAVCSubunitCapabilities? {
+        guard let capabilities = backend.mcpAVCSubunitCapabilities(guid: guid, type: type, id: id) else {
+            return nil
+        }
+        return ASFWMCPAVCSubunitCapabilities(
+            hasAudio: capabilities.hasAudioCapability,
+            hasMIDI: capabilities.hasMidiCapability,
+            hasSMPTE: capabilities.hasSmpteCapability,
+            currentRateCode: capabilities.currentRate,
+            supportedRatesMask: capabilities.supportedRatesMask,
+            plugs: capabilities.plugs.map { plug in
+                .init(
+                    id: plug.plugID,
+                    isInput: plug.isInput,
+                    type: plug.type,
+                    name: plug.name,
+                    signalBlocks: plug.signalBlocks.map {
+                        .init(formatCode: $0.formatCode, channelCount: $0.channelCount)
+                    },
+                    supportedFormats: plug.supportedFormats.map {
+                        .init(
+                            sampleRateCode: $0.sampleRateCode,
+                            formatCode: $0.formatCode,
+                            channelCount: $0.channelCount
+                        )
+                    }
+                )
+            }
+        )
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {
@@ -240,6 +342,217 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
                     newValue: Data(quadletBytes(request.swap))
                 )
             }
+        )
+    }
+
+    func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {
+        let correlationId = "live-fcp-\(UUID().uuidString)"
+        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        guard backend.mcpIsConnected else {
+            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil)
+        }
+        guard currentGeneration == request.address.generation else {
+            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .staleGeneration, correlationId: correlationId, durationUsec: nil)
+        }
+
+        let guidText = String(format: "0x%016llX", request.targetGUID)
+        guard let node = listNodesFromBackend().first(where: {
+            $0.guid == guidText && $0.nodeId == request.address.nodeId && $0.protocolHints.contains("avc")
+        }) else {
+            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil)
+        }
+
+        let started = Date()
+        let response = backend.mcpSendRawFCPCommand(
+            guid: request.targetGUID,
+            frame: Data(request.payload),
+            timeoutMs: 15_000
+        )
+        let completedGeneration = backend.mcpCurrentGeneration() ?? currentGeneration
+        let status: ASFWMCPTransactionStatus = completedGeneration == currentGeneration
+            ? (response == nil ? .timeout : .ok)
+            : .busReset
+        return fcpReceipt(
+            request,
+            observedNodeId: node.nodeId,
+            observedGeneration: completedGeneration,
+            response: response.map(Array.init),
+            status: status,
+            correlationId: correlationId,
+            durationUsec: elapsedUsec(since: started)
+        )
+    }
+
+    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {
+        guard backend.mcpIsConnected else {
+            return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: -536_870_201)
+        }
+        return ASFWMCPPhase88StreamingReceipt(
+            targetGuid: targetGuid,
+            started: start,
+            status: backend.mcpSetAudioStreaming(guid: targetGuid, enabled: start)
+        )
+    }
+
+    func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
+        let correlationId = "live-bus-reset-\(UUID().uuidString)"
+        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        guard backend.mcpIsConnected else {
+            return busResetReceipt(request, acceptedGeneration: nil, observedGeneration: currentGeneration,
+                                   status: .unavailable, correlationId: correlationId, durationUsec: nil)
+        }
+        guard currentGeneration == request.generation else {
+            return busResetReceipt(request, acceptedGeneration: nil, observedGeneration: currentGeneration,
+                                   status: .staleGeneration, correlationId: correlationId, durationUsec: nil)
+        }
+
+        let started = Date()
+        guard let acceptedGeneration = backend.mcpRequestUserBusReset(
+            expectedGeneration: request.generation,
+            shortReset: request.shortReset
+        ) else {
+            return busResetReceipt(request, acceptedGeneration: nil, observedGeneration: currentGeneration,
+                                   status: .unavailable, correlationId: correlationId,
+                                   durationUsec: elapsedUsec(since: started))
+        }
+
+        let deadline = started.addingTimeInterval(busResetTimeout)
+        while Date() < deadline {
+            guard backend.mcpIsConnected else {
+                return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+                                       observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
+                                       status: .unavailable, correlationId: correlationId,
+                                       durationUsec: elapsedUsec(since: started))
+            }
+            if let observedGeneration = backend.mcpCurrentGeneration(), observedGeneration != currentGeneration {
+                return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+                                       observedGeneration: observedGeneration, status: .ok,
+                                       correlationId: correlationId, durationUsec: elapsedUsec(since: started))
+            }
+            try? await Task.sleep(nanoseconds: pollIntervalNs)
+        }
+
+        return busResetReceipt(request, acceptedGeneration: acceptedGeneration,
+                               observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
+                               status: .timeout, correlationId: correlationId,
+                               durationUsec: elapsedUsec(since: started))
+    }
+
+    func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot {
+        let correlationId = "live-irm-snapshot-\(UUID().uuidString)"
+        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+        guard backend.mcpIsConnected else {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: nil,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .unavailable, correlationId: correlationId, durationUsec: nil
+            )
+        }
+        guard request.generation == currentGeneration else {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: nil,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .staleGeneration, correlationId: correlationId, durationUsec: nil
+            )
+        }
+
+        // A local IRM owns these CSRs through OHCI CSRControl. Reading them as
+        // an async transaction addressed to ourselves cannot yield a remote
+        // AR response, so consume the driver's generation-consistent local
+        // resource snapshot instead. This follows the local-CSR split owned
+        // by LocalIRMResourceController and cross-checked with Linux
+        // firewire-ohci's local CSRControl path.
+        let started = Date()
+        if let local = backend.mcpLocalIrmResourceSnapshot(),
+           local.localNodeId == local.irmNodeId {
+            guard local.generation == request.generation else {
+                return irmSnapshot(
+                    request, observedGeneration: currentGeneration, irmNodeId: local.irmNodeId,
+                    bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                    status: .unavailable, correlationId: correlationId, durationUsec: nil
+                )
+            }
+            guard local.isLocalIRM, local.readbackValid else {
+                return irmSnapshot(
+                    request, observedGeneration: currentGeneration, irmNodeId: local.irmNodeId,
+                    bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                    status: .unavailable, correlationId: correlationId, durationUsec: nil
+                )
+            }
+            return irmSnapshot(
+                request,
+                observedGeneration: currentGeneration,
+                irmNodeId: local.irmNodeId,
+                bandwidthAvailable: local.bandwidthAvailable,
+                channelsAvailable31_0: local.channelsAvailable31_0,
+                channelsAvailable63_32: local.channelsAvailable63_32,
+                status: .ok,
+                correlationId: correlationId,
+                durationUsec: elapsedUsec(since: started)
+            )
+        }
+
+        guard let controllerStatus = backend.mcpControllerStatus(),
+              let irmNodeId = controllerStatus.irmNodeID.map({ UInt32($0 & 0x003F) }) else {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: nil,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .unavailable, correlationId: correlationId, durationUsec: nil
+            )
+        }
+        if irmNodeId == controllerStatus.localNodeID.map({ UInt32($0 & 0x003F) }) {
+            return irmSnapshot(
+                request, observedGeneration: currentGeneration, irmNodeId: irmNodeId,
+                bandwidthAvailable: nil, channelsAvailable31_0: nil, channelsAvailable63_32: nil,
+                status: .unavailable, correlationId: correlationId, durationUsec: nil
+            )
+        }
+
+        // Keep the established IRMClient order: bandwidth, channels 31...0,
+        // then channels 63...32. Each CSR is independently read-only.
+        let addresses: [UInt32] = [0xF000_0220, 0xF000_0224, 0xF000_0228]
+        var values: [UInt32] = []
+        for addressLow in addresses {
+            let result = await executeReadQuadlet(
+                ASFWMCPReadQuadletRequest(
+                    address: ASFWMCPAddress(
+                        nodeId: irmNodeId,
+                        generation: request.generation,
+                        addressHigh: 0xFFFF,
+                        addressLow: addressLow
+                    )
+                )
+            )
+            guard result.ok, let value = quadletValue(result.payload) else {
+                return irmSnapshot(
+                    request,
+                    observedGeneration: backend.mcpCurrentGeneration() ?? currentGeneration,
+                    irmNodeId: irmNodeId,
+                    bandwidthAvailable: values[safe: 0],
+                    channelsAvailable31_0: values[safe: 1],
+                    channelsAvailable63_32: nil,
+                    status: result.status,
+                    correlationId: correlationId,
+                    durationUsec: elapsedUsec(since: started)
+                )
+            }
+            values.append(value)
+        }
+
+        let observedGeneration = backend.mcpCurrentGeneration() ?? currentGeneration
+        return irmSnapshot(
+            request,
+            observedGeneration: observedGeneration,
+            irmNodeId: irmNodeId,
+            bandwidthAvailable: values[0],
+            channelsAvailable31_0: values[1],
+            channelsAvailable63_32: values[2],
+            status: observedGeneration == request.generation ? .ok : .busReset,
+            correlationId: correlationId,
+            durationUsec: elapsedUsec(since: started)
         )
     }
 
@@ -354,6 +667,12 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     private func protocolHints(for device: FWDeviceInfo, avcNodeIds: Set<UInt32>) -> [String] {
         var hints = Set<String>()
+        // Exact Config-ROM identity, so BeBoB diagnostics remain visible even
+        // when a BridgeCo unit ignores generic AV/C UNIT_INFO.
+        if device.vendorId == 0x000AAC && device.modelId == 0x000003 {
+            hints.insert("bebob")
+            hints.insert("cmp")
+        }
         if avcNodeIds.contains(UInt32(device.nodeId)) {
             hints.insert("avc")
             hints.insert("cmp")
@@ -443,6 +762,73 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         )
     }
 
+    private func fcpReceipt(
+        _ request: ASFWMCPFcpCommandRequest,
+        observedNodeId: UInt32?,
+        observedGeneration: UInt32,
+        response: [UInt8]?,
+        status: ASFWMCPTransactionStatus,
+        correlationId: String,
+        durationUsec: UInt64?
+    ) -> ASFWMCPFcpCommandReceipt {
+        ASFWMCPFcpCommandReceipt(
+            targetGUID: request.targetGUID,
+            expectedNodeId: request.address.nodeId,
+            expectedGeneration: request.address.generation,
+            observedNodeId: observedNodeId,
+            observedGeneration: observedGeneration,
+            response: response,
+            status: status,
+            correlationId: correlationId,
+            durationUsec: durationUsec,
+            policy: nil
+        )
+    }
+
+    private func busResetReceipt(
+        _ request: ASFWMCPBusResetRequest,
+        acceptedGeneration: UInt32?,
+        observedGeneration: UInt32,
+        status: ASFWMCPTransactionStatus,
+        correlationId: String,
+        durationUsec: UInt64?
+    ) -> ASFWMCPBusResetReceipt {
+        ASFWMCPBusResetReceipt(
+            requestedGeneration: request.generation,
+            acceptedGeneration: acceptedGeneration,
+            observedGeneration: observedGeneration,
+            shortReset: request.shortReset,
+            status: status,
+            correlationId: correlationId,
+            durationUsec: durationUsec,
+            policy: nil
+        )
+    }
+
+    private func irmSnapshot(
+        _ request: ASFWMCPIrmSnapshotRequest,
+        observedGeneration: UInt32,
+        irmNodeId: UInt32?,
+        bandwidthAvailable: UInt32?,
+        channelsAvailable31_0: UInt32?,
+        channelsAvailable63_32: UInt32?,
+        status: ASFWMCPTransactionStatus,
+        correlationId: String,
+        durationUsec: UInt64?
+    ) -> ASFWMCPIrmResourceSnapshot {
+        ASFWMCPIrmResourceSnapshot(
+            requestedGeneration: request.generation,
+            observedGeneration: observedGeneration,
+            irmNodeId: irmNodeId,
+            bandwidthAvailable: bandwidthAvailable,
+            channelsAvailable31_0: channelsAvailable31_0,
+            channelsAvailable63_32: channelsAvailable63_32,
+            status: status,
+            correlationId: correlationId,
+            durationUsec: durationUsec
+        )
+    }
+
     private func correlationId(_ kind: ASFWMCPTransactionKind) -> String {
         "live-\(kind.rawValue)-\(UUID().uuidString)"
     }
@@ -458,6 +844,20 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             UInt8((value >> 8) & 0xFF),
             UInt8(value & 0xFF)
         ]
+    }
+
+    private func quadletValue(_ payload: [UInt8]?) -> UInt32? {
+        guard let payload, payload.count == 4 else { return nil }
+        return (UInt32(payload[0]) << 24) |
+            (UInt32(payload[1]) << 16) |
+            (UInt32(payload[2]) << 8) |
+            UInt32(payload[3])
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

@@ -11,6 +11,7 @@ enum ASFWMCPToolCatalog {
     static var all: [ASFWMCPToolDefinition] {
         coreTools
             + busTopologyTools
+            + busResetDeveloperTools
             + configRomTools
             + asyncTransactionTools
             + registerTools
@@ -19,6 +20,7 @@ enum ASFWMCPToolCatalog {
             + cmpTools
             + sbp2Tools
             + diceTcatTools
+            + bebobTools
     }
 
     static let coreTools: [ASFWMCPToolDefinition] = [

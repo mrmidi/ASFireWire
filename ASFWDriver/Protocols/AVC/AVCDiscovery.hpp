@@ -14,6 +14,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include "IAVCDiscovery.hpp"
@@ -24,12 +25,14 @@
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Audio/Core/IAVCAudioConfigListener.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
+#include "../../Scheduling/ITimerScheduler.hpp"
 
 // Forward declarations
 namespace ASFW::Discovery { struct DeviceRecord; }
 namespace ASFW::Audio::Model { struct ASFWAudioDevice; }
 namespace ASFW::Audio::Oxford::Apogee { class ApogeeDuetProtocol; }
 namespace ASFW::Protocols::AVC::Music { class MusicSubunit; }
+namespace ASFW::Protocols::AVC::BridgeCo { struct DeviceModel; }
 
 namespace ASFW::Protocols::AVC {
 
@@ -46,6 +49,7 @@ public:
                  Discovery::IDeviceManager& deviceManager,
                  Protocols::Ports::FireWireBusOps& busOps,
                  Protocols::Ports::FireWireBusInfo& busInfo,
+                 Scheduling::ITimerScheduler& timerScheduler,
                  ASFW::Audio::IAVCAudioConfigListener* audioConfigListener);
 
     ~AVCDiscovery() override;
@@ -75,6 +79,8 @@ public:
 
     FCPTransport* GetFCPTransportForNodeID(uint16_t nodeID) override;
 
+    std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t nodeID) override;
+
     void OnBusReset(uint32_t newGeneration);
 
 private:
@@ -96,13 +102,16 @@ private:
     void RebuildNodeIDMap();
 
     void HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
+    void PublishPhase88AudioConfig(uint64_t guid,
+                                   uint32_t vendorId,
+                                   uint32_t modelId,
+                                   const std::string& deviceName,
+                                   const BridgeCo::DeviceModel& inventory);
     [[nodiscard]] Music::MusicSubunit* FindAudioMusicSubunit(const AVCUnit& avcUnit) const;
     void PopulateMusicSubunitCapabilities(uint64_t guid,
                                           const Discovery::FWDevice& device,
                                           Music::MusicSubunit& musicSubunit) const;
     void UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) const;
-    void ApplyTargetSampleRateIfSupported(const std::shared_ptr<AVCUnit>& avcUnit,
-                                          Music::MusicSubunit& musicSubunit) const;
     [[nodiscard]] ::ASFW::Audio::Model::ASFWAudioDevice BuildAudioDeviceConfig(uint64_t guid,
                                                                        const Discovery::FWDevice& device,
                                                                        const Music::MusicSubunit& musicSubunit) const;
@@ -141,13 +150,14 @@ private:
     Discovery::IDeviceManager& deviceManager_;
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
+    Scheduling::ITimerScheduler& timerScheduler_;
     ASFW::Audio::IAVCAudioConfigListener* audioConfigListener_{nullptr};
 
     IOLock* lock_{nullptr};
 
     std::unordered_map<uint64_t, std::shared_ptr<AVCUnit>> units_;
 
-    std::unordered_map<uint16_t, FCPTransport*> fcpTransportsByNodeID_;
+    std::unordered_map<uint16_t, std::shared_ptr<FCPTransport>> fcpTransportsByNodeID_;
     std::unordered_map<uint64_t, uint8_t> rescanAttempts_;
     std::unordered_map<uint64_t, DuetPrefetchState> duetPrefetchByGuid_;
 

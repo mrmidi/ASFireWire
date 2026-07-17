@@ -30,6 +30,10 @@ struct DuplexStartOrderRecipe {
     // FW-72 can select the inverse interleave for a protocol that requires it.
     bool startReceiveBeforeDeviceRx{false};
     bool startTransmitBeforeDeviceTx{false};
+    // DICE reports an explicit GLOBAL clock-lock state before its stream
+    // enable. BeBoB with an internal clock has no equivalent pre-CMP state;
+    // validate its PCR leases and packet liveness after host RX/TX starts.
+    bool requiresPreStreamClockLock{true};
     std::array<DuplexHostDirection, 2> prepareOrder{
         DuplexHostDirection::kReceive,
         DuplexHostDirection::kTransmit,
@@ -185,6 +189,12 @@ class DuplexStreamProfileResolver final {
                record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId;
     }
 
+    [[nodiscard]] static constexpr bool
+    IsTerraTecPhase88(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kTerraTecVendorId &&
+               record.modelId == DeviceProfiles::Audio::kPhase88RackFwModelId;
+    }
+
     [[nodiscard]] static AudioDuplexChannels
     ResolveChannels(const Discovery::DeviceRecord& record,
                     const AudioStreamRuntimeCaps& caps) noexcept {
@@ -260,7 +270,9 @@ class DuplexStreamProfileResolver final {
             geometry.am824Slots = multiCapture ? stream.am824Slots : caps.deviceToHostAm824Slots;
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = IsApogeeDuet(record)
+            // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
+            // IRM selects one, which is then committed back to its PCR.
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsTerraTecPhase88(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
@@ -278,7 +290,7 @@ class DuplexStreamProfileResolver final {
                                       : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = IsApogeeDuet(record)
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsTerraTecPhase88(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }
@@ -301,6 +313,22 @@ class DuplexStreamProfileResolver final {
             profile.startOrder.postDeviceEnableDelayMs = 0;
             profile.stopOrder
                 .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
+        }
+        if (IsTerraTecPhase88(record)) {
+            // Linux BeBoB reserves both CMP resources, establishes remote
+            // iPCR then oPCR, and only then starts the AMDTP domain (RX before
+            // TX). Keep that wire-visible ordering explicit rather than
+            // inheriting an incidental generic/DICE default. Cross-validated:
+            // linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:525-590,
+            // 593-674. No reference implementation is copied.
+            profile.startOrder.startReceiveBeforeDeviceRx = false;
+            profile.startOrder.startTransmitBeforeDeviceTx = false;
+            profile.startOrder.requiresPreStreamClockLock = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kReceive,
+                DuplexHostDirection::kTransmit,
+            };
+            profile.startOrder.postDeviceEnableDelayMs = 0;
         }
         return profile;
     }

@@ -42,6 +42,7 @@ class FireWireBusImpl final : public IFireWireBus {
     // IFireWireBusInfo implementation
     FW::FwSpeed GetSpeed(FW::NodeId nodeId) const override;
     uint32_t HopCount(FW::NodeId nodeA, FW::NodeId nodeB) const override;
+    uint8_t GetGapCount() const override;
     FW::Generation GetGeneration() const override;
     FW::NodeId GetLocalNodeID() const override;
 

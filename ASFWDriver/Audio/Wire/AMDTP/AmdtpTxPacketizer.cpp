@@ -155,8 +155,11 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     }
     const uint32_t payloadBytes =
         static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
+
+    const bool isEmptyPacket = !isData && txPolicy_.emptyPacketsDuringIdle;
+
     const uint32_t byteCount =
-        isData ? (kCipHeaderBytes + payloadBytes) : kCipHeaderBytes;
+        isEmptyPacket ? 0 : (isData ? (kCipHeaderBytes + payloadBytes) : kCipHeaderBytes);
 
     if (slot.capacityBytes < byteCount) {
         return false; // no state advanced; caller may retry
@@ -191,11 +194,15 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     } else {
         outPacket.syt = IEC61883::SytFormatter::kNoInfo;
 
-        // CIP-header-only: no payload, even as padding (DICE-II rejects it).
-        WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
-
-        timeline_->MarkNoDataPacket(slot.packetIndex);
-        // DBC deliberately not advanced.
+        if (isEmptyPacket) {
+            // Emitting genuine empty packets: byteCount = 0. No CIP header or payload is written.
+            timeline_->MarkNoDataPacket(slot.packetIndex);
+        } else {
+            // CIP-header-only: no payload, even as padding (DICE-II rejects it).
+            WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
+            timeline_->MarkNoDataPacket(slot.packetIndex);
+            // DBC deliberately not advanced.
+        }
     }
 
     cadence_->AdvanceCycle();

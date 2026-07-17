@@ -86,7 +86,7 @@ bool LoginSession::Login() noexcept {
         return false;
     }
     if (state_ == LoginState::LoggingIn || state_ == LoginState::LoggedIn) {
-        ASFW_LOG_SBP2( "LoginSession::Login: state=%s, ignoring", ToString(state_));
+        ASFW_LOG_SBP2( "LoginSession::Login: state=%{public}s, ignoring", ToString(state_));
         return false;
     }
 
@@ -138,7 +138,7 @@ bool LoginSession::Login() noexcept {
 
 bool LoginSession::Logout() noexcept {
     if (state_ != LoginState::LoggedIn && state_ != LoginState::Suspended) {
-        ASFW_LOG_SBP2( "LoginSession::Logout: state=%s, ignoring", ToString(state_));
+        ASFW_LOG_SBP2( "LoginSession::Logout: state=%{public}s, ignoring", ToString(state_));
         return false;
     }
 
@@ -182,7 +182,7 @@ bool LoginSession::Logout() noexcept {
 
 bool LoginSession::Reconnect() noexcept {
     if (state_ != LoginState::Suspended && state_ != LoginState::LoggedIn) {
-        ASFW_LOG_SBP2( "LoginSession::Reconnect: state=%s, ignoring", ToString(state_));
+        ASFW_LOG_SBP2( "LoginSession::Reconnect: state=%{public}s, ignoring", ToString(state_));
         return false;
     }
 
@@ -232,7 +232,7 @@ bool LoginSession::Reconnect() noexcept {
 // ---------------------------------------------------------------------------
 
 void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
-    ASFW_LOG_SBP2( "LoginSession::HandleBusReset: state=%s newGen=%u loginGen=%u",
+    ASFW_LOG_SBP2( "LoginSession::HandleBusReset: state=%{public}s newGen=%u loginGen=%u",
              ToString(state_), newGeneration, loginGeneration_);
 
     switch (state_) {
@@ -621,7 +621,7 @@ void LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
     }
 
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%s, retrying",
+        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%{public}s, retrying",
                  Async::ToString(status));
         ArmManagementTimer(100, [this]() { (void)Reconnect(); });
         return;
@@ -694,7 +694,7 @@ void LoginSession::OnStatusBlockRemoteWrite(uint32_t offset,
     }
     std::memcpy(&block, payload.data(), len);
 
-    ASFW_LOG_SBP2( "LoginSession::OnStatusBlockRemoteWrite: state=%s offset=%u len=%u sbpStatus=%u",
+    ASFW_LOG_SBP2( "LoginSession::OnStatusBlockRemoteWrite: state=%{public}s offset=%u len=%u sbpStatus=%u",
              ToString(state_), offset, len, block.sbpStatus);
 
     switch (state_) {
@@ -714,7 +714,7 @@ void LoginSession::OnStatusBlockRemoteWrite(uint32_t offset,
             ProcessStatusBlock(block, len);
             break;
         default:
-            ASFW_LOG_SBP2( "LoginSession: unexpected status block in state %s", ToString(state_));
+            ASFW_LOG_SBP2( "LoginSession: unexpected status block in state %{public}s", ToString(state_));
             break;
     }
 }
@@ -886,7 +886,7 @@ void LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t l
 
 bool LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
     if (state_ != LoginState::LoggedIn) {
-        ASFW_LOG_SBP2( "LoginSession::SubmitORB: state=%s, rejecting", ToString(state_));
+        ASFW_LOG_SBP2( "LoginSession::SubmitORB: state=%{public}s, rejecting", ToString(state_));
         return false;
     }
     return fetchAgent_.Submit(orb);
@@ -927,7 +927,7 @@ void LoginSession::OnUnsolicitedStatusEnableComplete(uint16_t expectedGeneration
         return;
     }
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG_SBP2( "LoginSession::OnUnsolicitedStatusEnableComplete: status=%s",
+        ASFW_LOG_SBP2( "LoginSession::OnUnsolicitedStatusEnableComplete: status=%{public}s",
                  Async::ToString(status));
     }
 }
@@ -976,7 +976,7 @@ void LoginSession::OnBusyTimeoutComplete(uint16_t expectedGeneration,
     }
     busyTimeoutInProgress_ = false;
     if (status != Async::AsyncStatus::kSuccess && status != Async::AsyncStatus::kAborted) {
-        ASFW_LOG_SBP2( "LoginSession::OnBusyTimeoutComplete: status=%s", Async::ToString(status));
+        ASFW_LOG_SBP2( "LoginSession::OnBusyTimeoutComplete: status=%{public}s", Async::ToString(status));
     }
 }
 
@@ -986,7 +986,7 @@ void LoginSession::OnBusyTimeoutComplete(uint16_t expectedGeneration,
 
 void LoginSession::SetState(LoginState newState) noexcept {
     if (state_ != newState) {
-        ASFW_LOG_SBP2( "LoginSession: state %s -> %s", ToString(state_), ToString(newState));
+        ASFW_LOG_SBP2( "LoginSession: state %{public}s -> %{public}s", ToString(state_), ToString(newState));
         state_ = newState;
     }
 }

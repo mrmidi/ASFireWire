@@ -192,10 +192,17 @@ public:
              return;
         }
         
+        FCPCommandPolicy policy{};
+        // AV/C STATUS reads are observational; a CONTROL command can mutate
+        // device state and must not be replayed after a lost response.
+        if (cdb_.ctype == static_cast<uint8_t>(AVCCommandType::kStatus)) {
+            policy.retryClass = FCPRetryClass::kIdempotent;
+        }
+
         fcpHandle_ = transport_.SubmitCommand(frame,
             [self, completionState](FCPStatus fcpStatus, const FCPFrame& response) {
                 self->OnFCPComplete(fcpStatus, response, completionState);
-            });
+            }, std::move(policy));
     }
 
     /// Cancel command

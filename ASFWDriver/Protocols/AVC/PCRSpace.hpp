@@ -27,20 +27,22 @@ namespace ASFW::Protocols::AVC {
 /// Per IEC 61883-1 §10.7, PCR layout (32-bit register):
 /// ```
 /// bits 31:    online (1 = channel allocated)
-/// bits 30-24: broadcast_connection_counter (7 bits)
-/// bits 23-16: point_to_point_connection_counter (8 bits)
-/// bits 15-10: channel_number (6 bits, 0-63)
-/// bits 9-8:   reserved
-/// bits 7-6:   data_rate (2 bits: 0=S100, 1=S200, 2=S400, 3=S800)
-/// bits 5-0:   overhead_id (6 bits)
+/// bit 30:     broadcast connection
+/// bits 29-24: point-to-point connection counter (6 bits)
+/// bits 21-16: channel number (6 bits, 0-63)
+/// bits 15-14: oPCR data rate (2 bits)
+/// bits 13-10: oPCR overhead ID (4 bits)
+///
+/// Cross-validated with Linux sound/firewire/cmp.c:24-38. iPCR does not
+/// define the oPCR data-rate/overhead fields.
 /// ```
 struct PCRValue {
     bool online{false};              ///< Channel allocated
-    uint8_t broadcastCount{0};       ///< Broadcast connections (0-127)
-    uint8_t p2pCount{0};             ///< Point-to-point connections (0-255)
+    bool broadcastConnection{false};
+    uint8_t p2pCount{0};             ///< Point-to-point connections (0-63)
     uint8_t channel{63};             ///< Channel number (0-63, 63=none)
     SpeedCode dataRate{SpeedCode::kS400}; ///< Data rate
-    uint8_t overhead{0};             ///< Overhead ID (0-63)
+    uint8_t overhead{0};             ///< oPCR overhead ID (0-15)
 
     /// Encode to 32-bit PCR value
     uint32_t Encode() const {
@@ -49,11 +51,12 @@ struct PCRValue {
         if (online)
             value |= (1u << 31);
 
-        value |= (static_cast<uint32_t>(broadcastCount & 0x7F) << 24);
-        value |= (static_cast<uint32_t>(p2pCount) << 16);
-        value |= (static_cast<uint32_t>(channel & 0x3F) << 10);
-        value |= (static_cast<uint32_t>(dataRate) << 6);
-        value |= (static_cast<uint32_t>(overhead & 0x3F));
+        if (broadcastConnection)
+            value |= (1u << 30);
+        value |= (static_cast<uint32_t>(p2pCount & 0x3F) << 24);
+        value |= (static_cast<uint32_t>(channel & 0x3F) << 16);
+        value |= (static_cast<uint32_t>(dataRate) << 14);
+        value |= (static_cast<uint32_t>(overhead & 0x0F) << 10);
 
         return value;
     }
@@ -63,11 +66,11 @@ struct PCRValue {
         PCRValue pcr;
 
         pcr.online = (raw & (1u << 31)) != 0;
-        pcr.broadcastCount = (raw >> 24) & 0x7F;
-        pcr.p2pCount = (raw >> 16) & 0xFF;
-        pcr.channel = (raw >> 10) & 0x3F;
-        pcr.dataRate = static_cast<SpeedCode>((raw >> 6) & 0x03);
-        pcr.overhead = raw & 0x3F;
+        pcr.broadcastConnection = (raw & (1u << 30)) != 0;
+        pcr.p2pCount = (raw >> 24) & 0x3F;
+        pcr.channel = (raw >> 16) & 0x3F;
+        pcr.dataRate = static_cast<SpeedCode>((raw >> 14) & 0x03);
+        pcr.overhead = (raw >> 10) & 0x0F;
 
         return pcr;
     }
@@ -75,9 +78,9 @@ struct PCRValue {
     /// Check if valid
     bool IsValid() const {
         return channel < 64 &&
-               broadcastCount < 128 &&
+               p2pCount < 64 &&
                static_cast<uint8_t>(dataRate) <= 3 &&
-               overhead < 64;
+               overhead < 16;
     }
 };
 

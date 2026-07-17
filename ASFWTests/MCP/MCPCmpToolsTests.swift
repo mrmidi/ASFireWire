@@ -76,4 +76,45 @@ struct MCPCmpToolsTests {
         let decision = decide(gateOpen, request.policyRequest(currentGeneration: 17, protocolSupported: false))
         #expect(decision.decision == .unsupportedProtocol)
     }
+
+    @Test func livePcrReadDecodesOutputCmpFields() async {
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: MockASFWDriverControl())
+        let result = await core.callTool(name: "asfw_cmp_read_pcr", arguments: .object([
+            "nodeId": .int(0),
+            "generation": .int(17),
+            "direction": .string("output"),
+            "plug": .int(0),
+        ]))
+
+        guard case .object(let data) = result.data,
+              case .object(let pcr)? = data["pcr"] else {
+            Issue.record("Expected decoded CMP PCR data.")
+            return
+        }
+        #expect(result.ok)
+        #expect(pcr["streamDirection"] == .string("deviceToHost"))
+        #expect(pcr["online"] == .bool(true))
+        #expect(pcr["pointToPointConnections"] == .int(1))
+        #expect(pcr["channel"] == .int(5))
+        #expect(pcr["dataRate"] == .string("S400"))
+        #expect(pcr["overheadId"] == .int(3))
+    }
+
+    @Test func cmpPlugInventoryReadsMprsAndBothDirections() async {
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: MockASFWDriverControl())
+        let result = await core.callTool(name: "asfw_cmp_list_plugs", arguments: .object([
+            "nodeId": .int(0),
+            "generation": .int(17),
+        ]))
+
+        guard case .object(let data) = result.data,
+              case .array(let plugs)? = data["plugs"] else {
+            Issue.record("Expected a CMP plug inventory.")
+            return
+        }
+        #expect(result.ok)
+        #expect(data["outputPlugCount"] == .int(2))
+        #expect(data["inputPlugCount"] == .int(2))
+        #expect(plugs.count == 4)
+    }
 }

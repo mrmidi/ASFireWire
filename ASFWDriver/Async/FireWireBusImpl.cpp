@@ -206,6 +206,13 @@ uint32_t FireWireBusImpl::HopCount(FW::NodeId nodeA, FW::NodeId nodeB) const {
     return UINT32_MAX; // No path found
 }
 
+uint8_t FireWireBusImpl::GetGapCount() const {
+    const auto snapshot = topo_.LatestSnapshot();
+    // Linux uses the unoptimised gap count as the conservative fallback for
+    // isochronous overhead (sound/firewire/iso-resources.c:64-79).
+    return snapshot ? snapshot->gapCount : 63;
+}
+
 FW::Generation FireWireBusImpl::GetGeneration() const {
     const auto state = async_.GetBusStateSnapshot();
     return FW::Generation{state.generation16};

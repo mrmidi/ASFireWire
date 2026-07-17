@@ -106,6 +106,10 @@ public:
      */
     uint8_t GetAVCVerbosity() const;
     uint8_t GetDICEVerbosity() const;
+    /// Shared duplex lifecycle code now logs through the protocol-neutral
+    /// Audio category. Retain the established DICE verbosity knob until the
+    /// user-client configuration ABI grows a dedicated audio setting.
+    uint8_t GetAudioVerbosity() const { return GetDICEVerbosity(); }
     uint8_t GetIsochVerbosity() const;
     uint8_t GetDirectAudioVerbosity() const;
 

@@ -18,28 +18,14 @@
 // queue), so components need no extra locking beyond their existing generation +
 // weak-ownership guards.
 
-#include <cstdint>
-#include <functional>
+#include "../../../Scheduling/ITimerScheduler.hpp"
 
 namespace ASFW::Protocols::SBP2 {
 
-// Cancellation token for a scheduled callback. kInvalidSchedulerToken (0) is
-// never returned by ScheduleAfter and is always a safe no-op for Cancel().
-using SchedulerToken = uint64_t;
-inline constexpr SchedulerToken kInvalidSchedulerToken = 0;
-
-class ISessionScheduler {
-public:
-    virtual ~ISessionScheduler() = default;
-
-    // Schedule `fn` to run once, `delayNs` from now. Returns a token usable with
-    // Cancel(). A delay of 0 still defers (the callback never runs inline).
-    [[nodiscard]] virtual SchedulerToken ScheduleAfter(uint64_t delayNs,
-                                                       std::function<void()> fn) = 0;
-
-    // Cancel a pending callback. No-op if it already fired, was already canceled,
-    // or the token is invalid. After Cancel() returns, the callback will not run.
-    virtual void Cancel(SchedulerToken token) = 0;
-};
+// Compatibility aliases while SBP-2 migrates to the protocol-neutral timer
+// contract. New control planes include Scheduling/ITimerScheduler.hpp directly.
+using SchedulerToken = ASFW::Scheduling::TimerToken;
+inline constexpr SchedulerToken kInvalidSchedulerToken = ASFW::Scheduling::kInvalidTimerToken;
+using ISessionScheduler = ASFW::Scheduling::ITimerScheduler;
 
 } // namespace ASFW::Protocols::SBP2

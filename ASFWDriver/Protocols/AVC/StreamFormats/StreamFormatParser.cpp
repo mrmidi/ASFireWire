@@ -92,6 +92,14 @@ std::optional<AudioStreamFormat> StreamFormatParser::ParseCompoundAM824(
     // Reference: Apple AVCVideoServices MusicSubunitController.cpp line 1294
     uint8_t numFormatFields = data[4];
 
+    const size_t requiredLength = 5U + static_cast<size_t>(numFormatFields) * 2U;
+    if (length < requiredLength) {
+        ASFW_LOG_WARNING(Discovery,
+                         "StreamFormatParser: Compound AM824 truncated (fields=%u, length=%zu, need=%zu)",
+                         numFormatFields, length, requiredLength);
+        return std::nullopt;
+    }
+
     ASFW_LOG_V3(Discovery,
         "StreamFormatParser: Compound AM824 - rate=0x%02x (%u Hz), sync=%u, numFields=%u. Raw: %02x %02x %02x %02x %02x",
         data[2], format.GetSampleRateHz(),
@@ -99,7 +107,7 @@ std::optional<AudioStreamFormat> StreamFormatParser::ParseCompoundAM824(
         data[0], data[1], data[2], data[3], data[4]);
 
     // Parse channel formats if present
-    if (length > 5 && numFormatFields > 0) {
+    if (numFormatFields > 0) {
         format.channelFormats = ParseChannelFormats(
             data + 5,
             length - 5,
@@ -172,11 +180,13 @@ std::optional<AudioStreamFormat> StreamFormatParser::ParseSimpleAM824_6Byte(
     format.sampleRate = rate;
 
     format.syncMode = SyncMode::kNoSync; // Simple format doesn't specify sync
-    format.totalChannels = 2; // Simple format typically stereo
+    // Simple AM824 does not carry a channel-map/count. Treat it as unknown;
+    // publishing a guessed stereo stream makes generic discovery lie.
+    format.totalChannels = 0;
 
     ASFW_LOG_V3(Discovery,
-        "StreamFormatParser: Simple 6-byte AM824 - rateCode=0x%02x/0x%02x/0x%02x (%u Hz), channels=%u. Raw: %02x %02x %02x %02x %02x %02x",
-        data[2], data[5], data[4], format.GetSampleRateHz(), format.totalChannels,
+        "StreamFormatParser: Simple 6-byte AM824 - rateCode=0x%02x/0x%02x/0x%02x (%u Hz), channel count unavailable. Raw: %02x %02x %02x %02x %02x %02x",
+        data[2], data[5], data[4], format.GetSampleRateHz(),
         data[0], data[1], data[2], data[3], data[4], data[5]);
 
     // Store raw format block
@@ -209,11 +219,11 @@ std::optional<AudioStreamFormat> StreamFormatParser::ParseSimpleAM824_3Byte(
     format.subtype = AM824Subtype::kSimple;
     format.sampleRate = SampleRate::kDontCare;  // Rate not specified
     format.syncMode = SyncMode::kNoSync;
-    format.totalChannels = 2; // Simple format typically stereo
+    // A three-byte simple formation has neither a channel map nor a count.
+    format.totalChannels = 0;
 
     ASFW_LOG_V3(Discovery,
-        "StreamFormatParser: Simple 3-byte AM824 - rate=don't care, channels=%u",
-        format.totalChannels);
+        "StreamFormatParser: Simple 3-byte AM824 - rate=don't care, channel count unavailable");
 
     // Store raw format block
     format.rawFormatBlock.assign(data, data + length);

@@ -7,6 +7,7 @@
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "BeBoB/Phase88Protocol.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Audio {
@@ -17,6 +18,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,
     uint16_t nodeId,
+    uint64_t deviceGuid,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient
 ) {
@@ -74,7 +76,15 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         // Factory path intentionally does not bind FCP transport yet.
         // AVCDiscovery wires transport for live command execution.
         return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
-            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient);
+            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient, deviceGuid);
+    }
+
+    if (vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId) {
+        ASFW_LOG(Audio,
+                 "Creating Phase88Protocol BeBoB/CMP backend vendor=0x%06x model=0x%06x node=0x%04x",
+                 vendorId, modelId, nodeId);
+        return std::make_unique<BeBoB::Phase88Protocol>(busOps, busInfo, nodeId, irmClient,
+                                                        cmpClient, deviceGuid);
     }
     
     // Unknown device

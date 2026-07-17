@@ -19,10 +19,10 @@ namespace {
 // one per ~4 seconds while retaining the multi-second clock-drift measurement.
 constexpr uint32_t kZtsDrainIntervalTicks = 100;
 constexpr uint32_t kZtsRecordsPerDrain = 8;
-// Audio payload writer decisions arrive ~100/s, so drain every 100 ticks
-// (~100 ms) and emit up to 8 strided records.
+// Audio payload writer decisions arrive ~100/s. Drain every 100 ticks
+// (~100 ms) off the audio callback path; the receiver emits one aggregate
+// line only when counters advance anomalously.
 constexpr uint32_t kPayloadWriterDrainIntervalTicks = 100;
-constexpr uint32_t kPayloadWriterRecordsPerDrain = 8;
 // TX SYT decisions arrive ~6000/s; the trace is a single latest-value mailbox,
 // so log the most recent decision once per ~1 s (1000 ticks). The line carries
 // the total decision count so collapsed updates are still visible.
@@ -160,7 +160,7 @@ void WatchdogCoordinator::TickIsochReceive(
         }
         if (++payloadWriterLogDivider_ >= kPayloadWriterDrainIntervalTicks) {
             payloadWriterLogDivider_ = 0;
-            isochReceiveContext->DrainPayloadWriterTelemetry(kPayloadWriterRecordsPerDrain);
+            isochReceiveContext->DrainPayloadWriterTelemetry();
         }
         if (++txSytTraceDivider_ >= kTxSytTraceIntervalTicks) {
             txSytTraceDivider_ = 0;

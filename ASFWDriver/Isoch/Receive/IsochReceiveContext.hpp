@@ -120,10 +120,10 @@ class IsochReceiveContext final
     void DrainZtsTelemetry(uint32_t maxRecords);
 
     // Off-hot-path drain of the audio payload writer telemetry, captured by the
-    // audio driver into the shared AudioTransportControlBlock. Formats up to
-    // `maxRecords` strided records into the PayloadWriter log category.
-    // Called by the watchdog.
-    void DrainPayloadWriterTelemetry(uint32_t maxRecords);
+    // audio driver into the shared AudioTransportControlBlock. It consumes all
+    // retained records and logs only an aggregate anomaly summary. Called by
+    // the watchdog; the audio callback performs no I/O.
+    void DrainPayloadWriterTelemetry();
 
     // Off-hot-path log of the latest live replay TX SYT decision, published by
     // the audio driver into the shared AudioTransportControlBlock. Emits one
@@ -205,6 +205,11 @@ class IsochReceiveContext final
     bool replayResetForStart_{false};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
+
+    // Watchdog-drain-only state. Never touched by the audio callback or IR
+    // polling path, which only append fixed records to the shared ring.
+    ASFW::Audio::Runtime::PayloadWriterTelemetryAnomalyAggregator
+        payloadWriterTelemetryAggregator_{};
 
     // DBC tracking for device-domain frame count.
     // Updated on every packet in Poll(), exposed via rxDbcFrameCount in ATCB.

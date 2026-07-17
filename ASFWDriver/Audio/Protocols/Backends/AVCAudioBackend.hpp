@@ -19,6 +19,10 @@
 #include <atomic>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
+
+#include <DriverKit/IODispatchQueue.h>
+#include <DriverKit/OSSharedPtr.h>
 
 namespace ASFW::Audio {
 
@@ -40,6 +44,7 @@ public:
 
     void OnAudioConfigurationReady(uint64_t guid, const Model::ASFWAudioDevice& config) noexcept;
     void OnDeviceRemoved(uint64_t guid) noexcept;
+    void OnDeviceResumed(uint64_t guid) noexcept;
     void BeginTeardown() noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
@@ -55,7 +60,9 @@ private:
     AudioDuplexCoordinator duplexCoordinator_;
 
     IOLock* lock_{nullptr};
+    OSSharedPtr<IODispatchQueue> workQueue_{};
     std::unordered_map<uint64_t, Model::ASFWAudioDevice> configByGuid_{};
+    std::unordered_set<uint64_t> recoveringGuids_{};
     uint64_t activeGuid_{0};
 };
 

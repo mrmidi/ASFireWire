@@ -14,6 +14,7 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <memory>
 #include <span>
 
 namespace ASFW::Protocols::AVC {
@@ -26,6 +27,7 @@ class IRMClient;
 
 namespace ASFW::CMP {
 class CMPClient;
+struct CMPDevice;
 }
 
 namespace ASFW::Audio::Oxford::Apogee {
@@ -107,7 +109,9 @@ public:
                        uint16_t nodeId,
                        Protocols::AVC::FCPTransport* fcpTransport = nullptr,
                        IRM::IRMClient* irmClient = nullptr,
-                       CMP::CMPClient* cmpClient = nullptr);
+                       CMP::CMPClient* cmpClient = nullptr,
+                       uint64_t deviceGuid = 0,
+                       uint32_t formatSettleDelayMs = 100U);
     virtual ~ApogeeDuetProtocol() = default;
 
     // IDeviceProtocol implementation
@@ -225,17 +229,22 @@ public:
     }
 
 private:
+    struct ClockTransition;
+
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     uint16_t nodeId_;
     Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
     IRM::IRMClient* irmClient_{nullptr};
     CMP::CMPClient* cmpClient_{nullptr};
+    uint64_t deviceGuid_{0};
     AudioDuplexChannels duplexChannels_{};
     AudioClockConfig appliedClock_{};
+    FW::Generation preparedGeneration_{0};
     bool clockConfigApplied_{false};
     bool outputConnected_{false};
     bool inputConnected_{false};
+    uint32_t formatSettleDelayMs_{100U};
 
     // Helpers
     using VendorResultCallback = std::function<void(IOReturn, const VendorCommand&)>;
@@ -248,6 +257,14 @@ private:
     void ExecuteVendorSequence(const std::vector<VendorCommand>& commands,
                                bool isStatus,
                                VendorSequenceCallback callback);
+
+    [[nodiscard]] CMP::CMPDevice CurrentCMPDevice() const noexcept;
+
+    void AdvanceClockTransition(const std::shared_ptr<ClockTransition>& transition);
+    void FailClockTransition(const std::shared_ptr<ClockTransition>& transition,
+                             IOReturn status);
+    void CompleteClockTransition(const std::shared_ptr<ClockTransition>& transition,
+                                 IOReturn status);
 
     static uint32_t ReadQuadletBE(const uint8_t* data) noexcept;
 

@@ -24,6 +24,12 @@ constexpr uint64_t kFCPCommandAddress = 0xFFFFF0000B00ULL;
 /// FCP Response address (initiator receives responses here)
 constexpr uint64_t kFCPResponseAddress = 0xFFFFF0000D00ULL;
 
+// FCP response register space is 512 bytes. Cross-validated with Linux
+// sound/firewire/fcp.c:379-386 and Apple's IOFireWireAVCUnit.cpp:907-912.
+constexpr uint64_t kFCPResponseAddressSpaceSize = 0x200ULL;
+constexpr uint64_t kFCPResponseAddressEnd =
+    kFCPResponseAddress + kFCPResponseAddressSpaceSize;
+
 /// Legacy Apple FCP base (non-standard, some devices use this)
 constexpr uint64_t kFCPLegacyBase = 0xFFFFF0001000ULL;
 
@@ -38,13 +44,13 @@ constexpr uint64_t kPCRBaseAddress = 0xFFFFF0000900ULL;
 constexpr uint64_t kPCR_oMPR = kPCRBaseAddress + 0x00;
 
 /// Input Master Plug Register
-constexpr uint64_t kPCR_iMPR = kPCRBaseAddress + 0x04;
+constexpr uint64_t kPCR_iMPR = kPCRBaseAddress + 0x80;
 
 /// Output Plug Control Register array (0-30)
-constexpr uint64_t kPCR_oPCRBase = kPCRBaseAddress + 0x08;
+constexpr uint64_t kPCR_oPCRBase = kPCRBaseAddress + 0x04;
 
 /// Input Plug Control Register array (0-30)
-constexpr uint64_t kPCR_iPCRBase = kPCRBaseAddress + 0x80;
+constexpr uint64_t kPCR_iPCRBase = kPCRBaseAddress + 0x84;
 
 /// Get oPCR address for plug number
 inline constexpr uint64_t GetOPCRAddress(uint8_t plugNum) {
