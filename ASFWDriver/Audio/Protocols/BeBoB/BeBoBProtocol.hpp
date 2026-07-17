@@ -69,6 +69,7 @@ public:
     void ConfirmDuplexStart(ConfirmCallback callback) override;
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
                           ClockApplyCallback callback) override;
+    void ReadDuplexHealth(HealthCallback callback) override;
     void DisconnectPlayback(VoidCallback callback) override;
     void DisconnectCapture(VoidCallback callback) override;
     void BreakBothConnections(VoidCallback callback) override;

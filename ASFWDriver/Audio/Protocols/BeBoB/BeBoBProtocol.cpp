@@ -53,7 +53,7 @@ using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
            CMP::PCRBits::GetChannel(value) == expectedChannel;
 }
 
-[[nodiscard]] SampleRate RateToSignalRate(uint32_t hz) noexcept {
+[[nodiscard]] Protocols::AVC::StreamFormats::SampleRate RateToSignalRate(uint32_t hz) noexcept {
     switch (hz) {
         case 32000U: return SignalSampleRate::k32000Hz;
         case 44100U: return SignalSampleRate::k44100Hz;
@@ -217,25 +217,29 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
                                         std::function<void(IOReturn)> completion) {
     const uint8_t outPlug = StreamPlug(false);
     const auto rate = RateToSignalRate(desiredClock.sampleRateHz);
-    if (rate == SignalSampleRate::kUnknown) {
+    if (rate == Protocols::AVC::StreamFormats::SampleRate::kUnknown) {
         completion(kIOReturnUnsupported);
         return;
     }
     auto output = std::make_shared<SignalFormatCommand>(*fcpTransport_, outPlug, false, rate);
-    output->Submit([this, desiredClock, completion = std::move(output), completion](
+    output->Submit([this, completion = std::move(completion), output, rate](
                        Protocols::AVC::AVCResult outputResult,
-                       const SignalFormatCommand::SignalFormat& outputFormat) mutable {
+                       const SignalFormatCommand::SignalFormat& /*outputFormat*/) mutable {
         const IOReturn outputStatus = MapAVCResultToIOReturn(outputResult);
         if (outputStatus != kIOReturnSuccess) {
             completion(outputStatus);
             return;
         }
 
+        if (!fcpTransport_) {
+            completion(kIOReturnNotReady);
+            return;
+        }
         const uint8_t inPlug = StreamPlug(true);
         auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, inPlug, true, rate);
         input->Submit([completion = std::move(completion), input](
                            Protocols::AVC::AVCResult inputResult,
-                           const SignalFormatCommand::SignalFormat& inputFormat) mutable {
+                           const SignalFormatCommand::SignalFormat& /*inputFormat*/) mutable {
             completion(MapAVCResultToIOReturn(inputResult));
         });
     });
@@ -284,7 +288,7 @@ void BeBoBProtocol::SetFeatureMute(uint8_t fbId, uint8_t channel, bool unmute,
         Protocols::AVC::AudioFunctionBlockCommand::BlockType::kFeature,
         fbId,
         Protocols::AVC::AudioFunctionBlockCommand::ControlSelector::kMute,
-        std::vector<uint8_t>{channel, 0x01, unmute ? 0x60U : 0x00U});
+        std::vector<uint8_t>{channel, 0x01, static_cast<uint8_t>(unmute ? 0x60U : 0x00U)});
     cmd->Submit([completion = std::move(completion)](Protocols::AVC::AVCResult result, const std::vector<uint8_t>&) mutable {
         completion(MapAVCResultToIOReturn(result));
     });
@@ -428,6 +432,10 @@ void BeBoBProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
                                              .runtimeCaps = DeviceCaps()});
             });
     });
+}
+
+void BeBoBProtocol::ReadDuplexHealth(HealthCallback callback) {
+    ReadClockHealth(std::move(callback));
 }
 
 void BeBoBProtocol::DisconnectPlayback(VoidCallback callback) {

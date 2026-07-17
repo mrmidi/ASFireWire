@@ -60,6 +60,15 @@ add_device_test(DuplexStreamProfileTests
     DuplexStreamProfileTests.cpp
 )
 
+# BeBoBProtocol base-class: async ApplyClockConfig chain, timer settle, epoch cancel.
+add_device_test(BeBoBProtocolTests
+    BeBoBProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+)
+
 add_device_test(DiceRuntimeDeviceConfigTests
     DiceRuntimeDeviceConfigTests.cpp
 )
