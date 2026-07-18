@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
+#include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Audio/Engine/Direct/DirectInputWriter.hpp"
+#include "Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
 #include "Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
 #include "Isoch/Receive/IsochRxTiming.hpp"
 
@@ -25,6 +27,23 @@ void WriteBE32(uint8_t* dest, uint32_t value) {
     dest[2] = static_cast<uint8_t>(value >> 8);
     dest[3] = static_cast<uint8_t>(value);
 }
+
+class FixedDirectAudioBindingSource final
+    : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
+  public:
+    explicit FixedDirectAudioBindingSource(
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot) noexcept
+        : snapshot_(snapshot) {}
+
+    bool CopyDirectAudioBinding(
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
+        out = snapshot_;
+        return true;
+    }
+
+  private:
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot_{};
+};
 
 template <size_t PacketSize>
 void FillTwoChannelAmdtpPacket(std::array<uint8_t, PacketSize>& packet,
@@ -182,6 +201,51 @@ TEST(IsochRxTimingTests, PacketProcessorWritesAM824CaptureAsFloat32) {
     EXPECT_FLOAT_EQ(input[1], 1.0f);
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire),
               1u);
+}
+
+TEST(IsochRxTimingTests, DirectReceiveConsumerOwnsDecodeAcrossOpaqueIsochSeam) {
+    constexpr size_t kFrames = 1;
+    constexpr size_t kDbs = 2;
+    alignas(4) std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
+    packet[0] = 0x23;
+    packet[1] = 0xA1;
+    FillTwoChannelAmdtpPacket(packet, 0x40000000u, 0x407FFFFFu);
+
+    std::array<float, 8> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    FixedDirectAudioBindingSource source({
+        .generation = 1,
+        .inputBase = input.data(),
+        .inputBytes = sizeof(input),
+        .inputFrames = 4,
+        .inputChannels = 2,
+        .control = &control,
+        .sampleRateHz = 48000,
+        .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source, {.am824Slots = kDbs, .streamChannels = kDbs});
+    const ASFW::Isoch::IsochReceiveBatch batch{
+        .drainCycleTimer = EncodeCycleTimer(13, 300, 0),
+        .drainHostTicks = 1'000'000,
+    };
+    const ASFW::Isoch::IsochReceivePacket isochPacket{
+        .descriptorIndex = 7,
+        .payload = packet,
+    };
+
+    consumer.OnReceiveActivated();
+    consumer.BeginReceiveBatch(batch);
+    consumer.ConsumePacket(batch, isochPacket);
+
+    EXPECT_FLOAT_EQ(input[0], 0.0f);
+    EXPECT_FLOAT_EQ(input[1], 1.0f);
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
+    EXPECT_EQ(control.rxReplayEpochResets.load(std::memory_order_acquire), 1u);
+
+    consumer.OnReceiveQuiesced();
+    consumer.ConsumePacket(batch, isochPacket);
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
 }
 
 TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {

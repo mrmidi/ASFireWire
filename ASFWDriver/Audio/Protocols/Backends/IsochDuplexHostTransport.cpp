@@ -5,9 +5,49 @@
 
 #include "../../../Common/DriverKitOwnership.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include <new>
 #include <utility>
 
 namespace ASFW::Audio {
+
+kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
+    uint32_t streamIndex, ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+    Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t channelOffset,
+    uint32_t streamChannels, bool isSecondary) noexcept {
+    if (streamIndex >= Driver::IsochService::kMaxStreamsPerDirection) {
+        return kIOReturnBadArgument;
+    }
+
+    using Consumer = ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer;
+    Consumer::Configuration configuration{
+        .wireFormat = wireFormat,
+        .am824Slots = am824Slots,
+        .channelOffset = channelOffset,
+        .streamChannels = streamChannels,
+        .isSecondary = isSecondary,
+    };
+    // This is a DriverKit `noexcept` boundary: report allocation failure instead
+    // of allowing std::make_unique to terminate the driver process.
+    auto consumer = std::unique_ptr<Consumer>(new (std::nothrow) Consumer(bindingSource, configuration));
+    if (!consumer) {
+        return kIOReturnNoMemory;
+    }
+    consumer->SetTimingLossCallback([this] { isoch_.NotifyReceiveTimingLoss(); });
+    consumer->SetReplayReadyCallback([this] { isoch_.NotifyReceiveReplayEstablished(); });
+    consumer->SetZtsAnchorReadyCallback(
+        [this](uint64_t generation) { isoch_.NotifyReceiveZtsAnchor(generation); });
+    receiveConsumers_[streamIndex] = std::move(consumer);
+    isoch_.SetReceiveConsumer(streamIndex, receiveConsumers_[streamIndex].get());
+    return kIOReturnSuccess;
+}
+
+void IsochDuplexHostTransport::DetachReceiveConsumers() noexcept {
+    for (uint32_t streamIndex = 0;
+         streamIndex < Driver::IsochService::kMaxStreamsPerDirection; ++streamIndex) {
+        isoch_.SetReceiveConsumer(streamIndex, nullptr);
+        receiveConsumers_[streamIndex].reset();
+    }
+}
 
 void IsochDuplexHostTransport::SetTimingLossCallback(
     Driver::IsochService::TimingLossCallback callback) noexcept {
@@ -64,8 +104,17 @@ kern_return_t IsochDuplexHostTransport::PrepareReceive(
     uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels) noexcept {
-    return isoch_.PrepareReceive(channel, hardware, bindingSource, wireFormat, am824Slots,
-                                 /*packetCallback=*/nullptr, streamChannels);
+    const kern_return_t attached =
+        AttachReceiveConsumer(/*streamIndex=*/0, bindingSource, wireFormat, am824Slots,
+                              /*channelOffset=*/0, streamChannels, /*isSecondary=*/false);
+    if (attached != kIOReturnSuccess) {
+        return attached;
+    }
+    const kern_return_t status = isoch_.PrepareReceive(channel, hardware);
+    if (status != kIOReturnSuccess) {
+        DetachReceiveConsumers();
+    }
+    return status;
 }
 
 kern_return_t IsochDuplexHostTransport::PrepareTransmit(uint8_t channel,
@@ -78,8 +127,19 @@ kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
     uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) noexcept {
-    return isoch_.PrepareReceiveStream(streamIndex, channel, hardware, bindingSource, channelOffset,
-                                       streamChannels, wireFormat, am824Slots);
+    const kern_return_t attached =
+        AttachReceiveConsumer(streamIndex, bindingSource, wireFormat, am824Slots, channelOffset,
+                              streamChannels, /*isSecondary=*/true);
+    if (attached != kIOReturnSuccess) {
+        return attached;
+    }
+    const kern_return_t status = isoch_.PrepareReceiveStream(
+        streamIndex, channel, hardware, channelOffset, streamChannels);
+    if (status != kIOReturnSuccess) {
+        isoch_.SetReceiveConsumer(streamIndex, nullptr);
+        receiveConsumers_[streamIndex].reset();
+    }
+    return status;
 }
 
 kern_return_t IsochDuplexHostTransport::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
@@ -97,7 +157,11 @@ kern_return_t IsochDuplexHostTransport::StartPreparedTransmit() noexcept {
 }
 
 kern_return_t IsochDuplexHostTransport::StopPreparedReceive() noexcept {
-    return isoch_.StopReceive();
+    const kern_return_t status = isoch_.StopReceive();
+    if (status == kIOReturnSuccess) {
+        DetachReceiveConsumers();
+    }
+    return status;
 }
 
 kern_return_t IsochDuplexHostTransport::StopPreparedTransmit() noexcept {
@@ -109,6 +173,7 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
     if (status != kIOReturnSuccess) {
         return status;
     }
+    DetachReceiveConsumers();
     reservations_.ReleaseAll();
     return kIOReturnSuccess;
 }
