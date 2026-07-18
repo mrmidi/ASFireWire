@@ -29,6 +29,15 @@ struct MCPConsoleLogTests {
     }
 
     @Test
+    func escapesControlCharactersToKeepOneConsoleLine() {
+        let value = ASFWMCPValue.object(["reason\nkey": .string("line one\nline two\tend")])
+        #expect(
+            ASFWMCPConsoleLog.compactJSON(value, limit: 300) ==
+            "{\"reason\\nkey\":\"line one\\nline two\\tend\"}"
+        )
+    }
+
+    @Test
     func truncatesAtLimit() {
         let value = ASFWMCPValue.string(String(repeating: "a", count: 50))
         let rendered = ASFWMCPConsoleLog.compactJSON(value, limit: 10)

@@ -53,6 +53,12 @@ public:
     // Selector 1010: Post-Reset Timing (IEEE 1394-2008 §8.x) gate states
     kern_return_t GetPostResetTiming(IOUserClientMethodArguments* args);
 
+    // Selector 1011: filtered LogRing drain (packed wire records)
+    kern_return_t GetLogRecords(IOUserClientMethodArguments* args);
+
+    // Selector 1012: LogRing occupancy + per-category counters
+    kern_return_t GetLogStats(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};

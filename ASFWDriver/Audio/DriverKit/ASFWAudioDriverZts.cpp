@@ -643,8 +643,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         if (stoppedShort || frameShort) {
             const uint64_t frameDeficit =
                 frameShort ? (targetFrameEnd - exposedFrameEndAfter) : 0;
-            ASFW_LOG(
+            ASFW_LOG_RING_ONLY_RL(
                 DirectAudio,
+                "tx-prep-range",
+                1000,
+                ::ASFW::Logging::LogLevel::Warning,
                 "[TxPrepRange] retiredAbs=%llu prepareBaseAbs=%llu "
                 "prepareUntilAbs=%llu coverageTargetAbs=%llu limitTargetAbs=%llu reqSpan=%llu "
                 "prepared=%u short=%d firstMissingAbs=%lld marginAfter=%llu "

@@ -48,6 +48,10 @@ extension ASFWMCPCore {
             return await explainCapabilityResult(toolName: name, decoder: decoder)
         case "asfw_get_controller_state", "asfw_get_topology", "asfw_get_config_rom":
             return notImplementedToolResult(name, reason: "Read-only \(name) dispatch is reserved for the live telemetry adapter.")
+        case "asfw_log_query":
+            return await dispatchLogQuery(name, decoder: decoder)
+        case "asfw_log_stats":
+            return await logStatsResult(toolName: name)
         case "asfw_bus_reset_dev":
             return await dispatchBusReset(name, decoder: decoder)
         case "asfw_read_quadlet":
@@ -136,6 +140,59 @@ extension ASFWMCPCore {
             return transactionToolResult(name, await driver.executeReadQuadlet(request))
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func dispatchLogQuery(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let categories = try decoder.optionalStrings("categories")
+            guard let categoryMask = ASFWLogRingCategories.mask(for: categories) else {
+                return malformedToolResult(
+                    name,
+                    reason: "categories must contain only: \(ASFWLogRingCategories.names.joined(separator: ", "))."
+                )
+            }
+            let levelName = try decoder.string("maxLevel", default: "debug")
+            guard let maxLevel = Self.logLevel(named: levelName) else {
+                return malformedToolResult(name, reason: "maxLevel must be one of: error, warning, notice, info, debug.")
+            }
+            let contains = try decoder.string("contains", default: "")
+            guard contains.utf8.count < 48 else {
+                return malformedToolResult(name, reason: "contains must be at most 47 UTF-8 bytes.")
+            }
+            let maxRecords = try decoder.int("maxRecords", default: 200, range: 1...1_000)
+            let afterSequence = try decoder.uint64("afterSequence", default: 0)
+            let response = await driver.queryLogRecords(ASFWLogRingQuery(
+                afterSequence: afterSequence,
+                categoryMask: categoryMask,
+                maxLevel: maxLevel,
+                contains: contains,
+                maxRecords: maxRecords
+            ))
+            guard let response else {
+                return .failure(toolName: name, code: .driverNotConnected, reason: "Driver log ring is unavailable.")
+            }
+            return .success(toolName: name, data: response.mcpValue)
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    private func logStatsResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let stats = await driver.logRingStats() else {
+            return .failure(toolName: toolName, code: .driverNotConnected, reason: "Driver log ring is unavailable.")
+        }
+        return .success(toolName: toolName, data: stats.mcpValue)
+    }
+
+    private static func logLevel(named value: String) -> UInt8? {
+        switch value.lowercased() {
+        case "error": return 0
+        case "warning": return 1
+        case "notice": return 2
+        case "info": return 3
+        case "debug": return 4
+        default: return nil
         }
     }
 
@@ -1497,6 +1554,26 @@ private struct ASFWMCPToolArgumentDecoder {
         try boundedUInt64(key, max: UInt64.max)
     }
 
+    func uint64(_ key: String, default defaultValue: UInt64) throws -> UInt64 {
+        guard object[key] != nil else { return defaultValue }
+        return try uint64(key)
+    }
+
+    func int(_ key: String, default defaultValue: Int, range: ClosedRange<Int>) throws -> Int {
+        guard let value = object[key] else { return defaultValue }
+        let integer: Int
+        switch value {
+        case .int(let value): integer = value
+        case .uint64(let value) where value <= UInt64(Int.max): integer = Int(value)
+        default:
+            throw ASFWMCPToolArgumentError.malformed("\(key) must be an integer")
+        }
+        guard range.contains(integer) else {
+            throw ASFWMCPToolArgumentError.malformed("\(key) must be in \(range.lowerBound)...\(range.upperBound)")
+        }
+        return integer
+    }
+
     func bool(_ key: String, default defaultValue: Bool) throws -> Bool {
         guard let value = object[key] else { return defaultValue }
         guard case .bool(let bool) = value else {
@@ -1513,6 +1590,24 @@ private struct ASFWMCPToolArgumentDecoder {
             throw ASFWMCPToolArgumentError.malformed("\(key) must be a string")
         }
         return string
+    }
+
+    func string(_ key: String, default defaultValue: String) throws -> String {
+        guard object[key] != nil else { return defaultValue }
+        return try string(key)
+    }
+
+    func optionalStrings(_ key: String) throws -> [String]? {
+        guard let value = object[key] else { return nil }
+        guard case .array(let values) = value else {
+            throw ASFWMCPToolArgumentError.malformed("\(key) must be an array of strings")
+        }
+        return try values.map { value in
+            guard case .string(let text) = value else {
+                throw ASFWMCPToolArgumentError.malformed("\(key) must contain only strings")
+            }
+            return text
+        }
     }
 
     func intent() throws -> ASFWMCPAvcCommandIntent {

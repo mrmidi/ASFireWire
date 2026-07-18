@@ -187,3 +187,9 @@ add_core_test(HardwareInterfaceOrderTests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 target_link_libraries(HardwareInterfaceOrderTests PRIVATE GTest::gmock)
+
+# Driver-owned log ring (queryable ASFW_LOG backend; LogRing.cpp comes from
+# asfw_test_support so every target that logs links one copy)
+add_core_test(LogRingTests
+    LogRingTests.cpp
+)

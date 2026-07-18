@@ -42,6 +42,8 @@ SAFE_TOOL_NAMES = {
     "asfw_fcp_send_command",
     "asfw_fcp_get_recent_responses",
     "asfw_irm_list_allocations",
+    "asfw_log_query",
+    "asfw_log_stats",
     "asfw_phase88_get_clock",
 }
 

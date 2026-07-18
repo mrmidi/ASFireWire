@@ -22,6 +22,8 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data?
     func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
+    func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse?
+    func mcpLogRingStats() -> ASFWLogRingStats?
 }
 
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
@@ -112,6 +114,14 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
         requestUserBusReset(expectedGeneration: expectedGeneration, shortReset: shortReset)
+    }
+
+    func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse? {
+        queryLogRecords(query)
+    }
+
+    func mcpLogRingStats() -> ASFWLogRingStats? {
+        logRingStats()
     }
 }
 
@@ -554,6 +564,16 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             correlationId: correlationId,
             durationUsec: elapsedUsec(since: started)
         )
+    }
+
+    func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse? {
+        guard backend.mcpIsConnected else { return nil }
+        return backend.mcpQueryLogRecords(query)
+    }
+
+    func logRingStats() async -> ASFWLogRingStats? {
+        guard backend.mcpIsConnected else { return nil }
+        return backend.mcpLogRingStats()
     }
 
     private func executeTransaction(
