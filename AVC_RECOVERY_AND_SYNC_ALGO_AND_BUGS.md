@@ -311,7 +311,7 @@ The relevant buffers must not be conflated:
 
 - The host output ring is 1,536 frames (32 ms at 48 kHz).
 - A normal maximum CoreAudio callback is 512 frames (10.7 ms).
-- The reported data exposure lead is 576 frames (12 ms).
+- At the incident, the data exposure lead was 576 frames (12 ms).
 - The hardware descriptor queue can remain full of safe NODATA packets even
   while the data-bearing audio timeline is too short.
 
@@ -342,11 +342,12 @@ relationship, not a magic number: Apple's content target is roughly **half of
 an 800-cycle / 100-ms circular ring**, leaving the other half for in-flight
 transport and wrap/reuse slack.
 
-| Geometry | Current ASFW Duet run | Apple 48 kHz writer pattern |
-| --- | ---: | ---: |
-| Data-bearing horizon | 576 frames / 12 ms | ~2,400 frames / 50 ms (400 cycles) |
-| Hardware packet ring | 408 cycles / 51 ms | 800 cycles / 100 ms |
-| Layout | Data horizon is much shorter than the transport queue. | Content horizon is approximately half of the circular packet ring. |
+| Geometry | Incident ASFW Duet run | Attempted ASFW target (rejected below) | Apple 48 kHz writer pattern |
+| --- | ---: | ---: | ---: |
+| Data-bearing horizon | 576 frames / 12 ms | 400 cycles / 50 ms at 48 kHz | ~2,400 frames / 50 ms (400 cycles) |
+| Packet backing ring | 408 cycles / 51 ms | 912 cycles / 114 ms | 800 cycles / 100 ms |
+| Packet timeline | 512 slots | 1,024 slots | private NuDCL packet program |
+| Layout | Data horizon is much shorter than the transport queue. | Content target remains below half the backing ring; OHCI's 48-packet ring is unchanged. | Content horizon is approximately half of the circular packet ring. |
 
 This rules out treating 1,536 frames (32 ms) as a final target merely because
 it is the current host output-ring size.  A future ASFW implementation may
@@ -388,25 +389,78 @@ next fault must record the packetizer cursor/alignment state as well as the
 first deficit range, so that the transition back to overlap is attributable
 rather than inferred.
 
-### Required fix
+### Duet validation: deep preparation is not a valid content horizon
 
-Increasing the DMA descriptor count alone is insufficient.  ASFW must:
+The first Duet validation of the 400-cycle scheduler rejected the initial
+implementation. It started only after restoring a **full 912-slot NODATA
+prefill**: `ASFWAudioDevice::StartIO()` deliberately verifies
+`committedEnd == numSlots` before IT arm, so a 678-slot lead-only prefill fails
+fast at `ValidateTxPrefill`. That startup contract is transport-correct, but
+the full prefill alone puts the first reusable packet slot roughly 114 ms after
+IT start and is unsuitable as a live-instrument latency policy.
 
-1. Make TX preparation a data-horizon scheduler, not only a descriptor-refill
-   scheduler.  Every monotonic CoreAudio write-frontier update must publish a
-   neutral target; preparation must continue until `ExposedFrameEnd` reaches
-   that target as well as maintaining descriptor margin.
-2. For Duet at 48 kHz, design and validate toward an initial **400-cycle / ~50
-   ms** content target, not the present 576-frame / 12-ms lead.  Match the
-   Apple-derived half-ring relationship by enlarging the TX descriptor and
-   packet-timeline capacity (likely around 800+ and 1,024 slots respectively),
-   rather than placing a 400-cycle target at the unsafe edge of ASFW's
-   408-slot transport ring.
-3. Preserve a pending absolute host-frame range whenever a packet slot is not
+More importantly, the running stream developed periodic silence and then total
+silence even while TX SYT and descriptor coverage remained healthy. MCP ring
+evidence showed all of the following:
+
+- `[TxPrepRange]` repeatedly reached its packet limit with `short=0` and
+  `marginAfter=678`, yet was emitted because its frame target was short. This
+  rules out an OHCI refill hole.
+- No `[RxReplayReset]` record occurred, so the receive replay epoch was not
+  reset by a detected RX discontinuity.
+- `[TxAlign]` appeared repeatedly. A healthy stream emits it once at start;
+  this line is reached only after `txReplayReader.TryRead()` fails, re-arms the
+  packetizer cursor, and later receives a readable replay entry.
+
+The mechanism is now confirmed. `PrepareTransmitSlots()` consumes one
+`RxSequenceReplay` timing entry for every future TX slot it packetizes. If the
+read fails, it intentionally emits a legal NODATA packet rather than block
+the IT producer, then calls `ReArmFrameCursorAlignment()`. The next readable
+entry aligns the packetizer to a newer projected frame, abandoning the prior
+host-frame range. Repetition creates periodic holes; continuous failure creates
+only NODATA packets, i.e. complete silence, while FireWire/CIP/SYT and DMA
+continue normally.
+
+The first implementation combined a 678-packet preparation lead with a replay
+reader that starts only 256 entries behind a 512-entry RX history
+(`RxSequenceReplayState::kCapacity` / `kReadDelay`). That violates the required
+independence: a deep TX content reservation must not consume the finite
+RX-derived SYT replay history as though it were future timing. The immediate
+failure is `TryRead()`; whether a given miss is reader-ahead, overwritten slot,
+or epoch mismatch still needs compact first-fault telemetry
+(`readerNext`, `replayProducer`, `epoch`, packet index). It must be recorded
+before selecting the final timing-cache/prediction policy.
+
+**Do not treat the 912/678/400 implementation as a viable Duet configuration.**
+The correct design separates three horizons:
+
+1. Full transport prefill, solely to satisfy IT arm/ownership safety.
+2. PCM slot reservation, deep enough for the CoreAudio burst horizon.
+3. SYT replay/prediction, only as deep as valid RX timing is retained or can
+   be deterministically predicted.
+
+### Attempted scheduler change; remaining hardening
+
+Increasing the DMA descriptor count alone is insufficient. The following was
+implemented for the first Duet validation, but the preceding result means it
+must be redesigned rather than extended:
+
+1. TX preparation was made a data-horizon scheduler as well as a descriptor
+   refill scheduler. Every CoreAudio `WriteEnd` publishes an audio-owned
+   absolute `targetFrameEnd` and signals the existing preparation action
+   through a coalescing latch. Preparation drains the latest target on its
+   dedicated queue; the real-time callback never manipulates transport
+   cursors.
+2. The target was set to 400 FireWire cycles, converted at the active stream rate
+   (2,400 frames / 50 ms at 48 kHz; 2,205 frames / 50 ms at 44.1 kHz).
+   Packet backing is now 912 slots and the packet timeline is 1,024 slots.
+   The 48-packet OHCI descriptor ring and its 144-packet refill-coverage
+   budget are unchanged.
+3. A future hardening step may preserve a pending absolute host-frame range whenever a packet slot is not
    yet exposed, then flush it once the timeline exposes that range.  It may
    only discard a frame after proving the CoreAudio ring has overwritten it;
    it must account for that as an xrun.
-4. Keep descriptor/NODATA prefill separate from this guarantee.  A full DMA
+4. Descriptor/NODATA prefill remains separate from this guarantee. A full DMA
    queue is transport liveness, not audio-content liveness.
 5. Continue to report `framesWithoutPacket`, first deficit range, timeline
    exposure end, TX preparation latency, pending-range age, and packetizer
@@ -415,10 +469,36 @@ Increasing the DMA descriptor count alone is insufficient.  ASFW must:
 The first-deficit log now records the CoreAudio range, exposed end, deficit,
 completion cursor, playback range, packetizer absolute cursor/alignment epoch,
 and its last DATA packet range.  It also records total/DATA/NODATA preparation
-and slot-acquisition-failure counters.  These are lock-free, best-effort
-diagnostic snapshots across the callback/preparation boundary; they must never
-be used to control the stream.  The producer/pending-range redesign is still
-required for a real fix.
+and slot-acquisition-failure counters, plus the audio-frontier target,
+requested/handled generations, and coalesced-wake state. These are lock-free,
+best-effort diagnostic snapshots across the callback/preparation boundary;
+they must never be used to control the stream. The attempted scheduler cannot
+be the primary fix for the observed `W > E` loss until it stops consuming
+replay timing beyond the valid horizon. The pending-range redesign remains
+defense in depth for an exposure failure exceeding the eventual content horizon.
+
+The MCP driver ring retains only a short message prefix (about 256 bytes).
+Anomaly records are now deliberately split into independent compact records:
+`[TxReplay]` reports the exact `TryRead()` result; `[TxPrepRange]` reports
+packet coverage; `[TxPrepFrame]` reports frame exposure; and `[PayloadWriter]`
+reports deltas, last state, and (when present) the first deficit. Each puts its
+decision fields first and remains independently useful if the ring truncates a
+record.
+
+`[TxReplay] fail=` has the following precise meanings:
+
+- `inactive`: the reader could not begin because RX history is not established.
+- `epoch`: RX reset/discontinuity invalidated the reader's snapshot.
+- `ahead`: TX consumed the newest RX entry and requested one RX has not yet
+  published.
+- `overwritten`: TX stopped long enough for the 512-entry RX history to wrap
+  past its reader cursor.
+- `slot-seq`, `slot-epoch`, or `slot-changed`: the bounded lock-free slot was
+  unavailable or changed during its seqlock-style read.
+
+This separates a genuine RX interruption from the current, more likely design
+error: future TX packet preparation consuming a finite history of past RX SYT
+observations.
 
 ## Minimal anomaly-only telemetry for the next hardware run
 
