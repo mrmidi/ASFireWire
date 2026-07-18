@@ -56,7 +56,29 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void LogTransmitTimingTrace() override;
 
   private:
-    void ResetReplayEpochForDiscontinuity() noexcept;
+    enum class ReplayResetReason : uint8_t {
+        kPacketProcessorStatus,
+        kInvalidReceiveTimestamp,
+        kReceiveCycleGap,
+        kSytCadenceRejected,
+        kClockAnchorRejected,
+    };
+
+    struct ReplayResetContext final {
+        uint32_t descriptorIndex{0};
+        uint32_t payloadBytes{0};
+        uint32_t drainCycleTimer{0};
+        uint16_t receiveCycleTimestamp{0};
+        uint16_t syt{0xffff};
+        uint32_t expectedCycleOrdinal{0};
+        uint32_t observedCycleOrdinal{0};
+        uint32_t packetStatus{0};
+        uint64_t sampleFrame{0};
+    };
+
+    [[nodiscard]] static const char* ReplayResetReasonName(ReplayResetReason reason) noexcept;
+    void ResetReplayEpochForDiscontinuity(ReplayResetReason reason,
+                                          const ReplayResetContext& context) noexcept;
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};

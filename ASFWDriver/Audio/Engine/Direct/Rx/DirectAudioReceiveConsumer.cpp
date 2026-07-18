@@ -11,6 +11,23 @@
 
 namespace ASFW::AudioEngine::Direct::Rx {
 
+const char* DirectAudioReceiveConsumer::ReplayResetReasonName(
+    ReplayResetReason reason) noexcept {
+    switch (reason) {
+        case ReplayResetReason::kPacketProcessorStatus:
+            return "packet-status";
+        case ReplayResetReason::kInvalidReceiveTimestamp:
+            return "invalid-rx-timestamp";
+        case ReplayResetReason::kReceiveCycleGap:
+            return "receive-cycle-gap";
+        case ReplayResetReason::kSytCadenceRejected:
+            return "syt-cadence-rejected";
+        case ReplayResetReason::kClockAnchorRejected:
+            return "clock-anchor-rejected";
+    }
+    return "unknown";
+}
+
 DirectAudioReceiveConsumer::DirectAudioReceiveConsumer(
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Configuration configuration) noexcept
@@ -162,7 +179,17 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         result.status == DirectRxWriteStatus::kInvalidBinding) {
         absoluteFrameCursor_ += result.framesDecoded;
     } else {
-        ResetReplayEpochForDiscontinuity();
+        ResetReplayEpochForDiscontinuity(
+            ReplayResetReason::kPacketProcessorStatus,
+            {
+                .descriptorIndex = packet.descriptorIndex,
+                .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
+                .drainCycleTimer = batch.drainCycleTimer,
+                .receiveCycleTimestamp = result.receiveCycleTimestamp,
+                .syt = result.syt,
+                .packetStatus = static_cast<uint32_t>(result.status),
+                .sampleFrame = absoluteFrameCursor_,
+            });
         return;
     }
 
@@ -186,7 +213,16 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             result.receiveCycleTimestamp, batch.drainCycleTimer, timestamp);
     if (!validTimestamp) {
         ++timestampInvalidCount_;
-        ResetReplayEpochForDiscontinuity();
+        ResetReplayEpochForDiscontinuity(
+            ReplayResetReason::kInvalidReceiveTimestamp,
+            {
+                .descriptorIndex = packet.descriptorIndex,
+                .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
+                .drainCycleTimer = batch.drainCycleTimer,
+                .receiveCycleTimestamp = result.receiveCycleTimestamp,
+                .syt = result.syt,
+                .sampleFrame = absoluteFrameCursor_,
+            });
         return;
     }
 
@@ -198,7 +234,18 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         ::ASFW::Timing::kFWTimeWrapSeconds * ::ASFW::Timing::kCyclesPerSecond;
     if (replayCycleInitialized_ &&
         cycleOrdinal != (lastReplayCycleOrdinal_ + 1) % kCycleDomain) {
-        ResetReplayEpochForDiscontinuity();
+        ResetReplayEpochForDiscontinuity(
+            ReplayResetReason::kReceiveCycleGap,
+            {
+                .descriptorIndex = packet.descriptorIndex,
+                .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
+                .drainCycleTimer = batch.drainCycleTimer,
+                .receiveCycleTimestamp = result.receiveCycleTimestamp,
+                .syt = result.syt,
+                .expectedCycleOrdinal = (lastReplayCycleOrdinal_ + 1) % kCycleDomain,
+                .observedCycleOrdinal = cycleOrdinal,
+                .sampleFrame = absoluteFrameCursor_,
+            });
     }
     lastReplayCycleOrdinal_ = cycleOrdinal;
     replayCycleInitialized_ = true;
@@ -215,7 +262,17 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         const bool cadenceAccepted = inputView_.control->rxSytCadence.Observe(
             result.syt, timestamp.cycleTimer);
         if (!cadenceAccepted && inputView_.control->rxSequenceReplay.IsEstablished()) {
-            ResetReplayEpochForDiscontinuity();
+            ResetReplayEpochForDiscontinuity(
+                ReplayResetReason::kSytCadenceRejected,
+                {
+                    .descriptorIndex = packet.descriptorIndex,
+                    .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
+                    .drainCycleTimer = batch.drainCycleTimer,
+                    .receiveCycleTimestamp = result.receiveCycleTimestamp,
+                    .syt = result.syt,
+                    .observedCycleOrdinal = cycleOrdinal,
+                    .sampleFrame = absoluteFrameCursor_,
+                });
         }
         replayEntry.sytOffset = ::ASFW::Audio::Runtime::ComputeReplaySytOffset(
             result.syt, timestamp.cycleTimer,
@@ -266,7 +323,17 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         const auto publish = clockPublisher_.Publish(packetFirstFrame, packetHostTicks,
                                                      nanosPerSampleQ8);
         if (!publish.accepted) {
-            ResetReplayEpochForDiscontinuity();
+            ResetReplayEpochForDiscontinuity(
+                ReplayResetReason::kClockAnchorRejected,
+                {
+                    .descriptorIndex = packet.descriptorIndex,
+                    .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
+                    .drainCycleTimer = batch.drainCycleTimer,
+                    .receiveCycleTimestamp = result.receiveCycleTimestamp,
+                    .syt = result.syt,
+                    .observedCycleOrdinal = cycleOrdinal,
+                    .sampleFrame = packetFirstFrame,
+                });
         } else {
             ++ztsPublishCount_;
             if (publish.notifyConsumer && ztsAnchorReadyCallback_) {
@@ -294,7 +361,9 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     }
 }
 
-void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity() noexcept {
+void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
+    ReplayResetReason reason,
+    const ReplayResetContext& context) noexcept {
     auto* control = inputView_.control;
     if (!control || !replayResetForStart_) {
         replayCycleInitialized_ = false;
@@ -303,11 +372,23 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity() noexcept {
     const bool wasEstablished = control->rxSequenceReplay.IsEstablished();
     control->rxSytCadence.Reset();
     control->rxSequenceReplay.Reset();
-    control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t resetEpoch =
+        control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed) + 1;
     replayReadyNotified_ = false;
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
     dbcInitialized_ = false;
+    if (wasEstablished) {
+        ASFW_LOG_ERROR(
+            DirectAudio,
+            "[RxReplayReset] epoch=%llu reason=%{public}s desc=%u bytes=%u "
+            "drain=0x%08x rawTs=0x%04x syt=0x%04x expectedCycle=%u observedCycle=%u "
+            "status=%u frame=%llu validTs=%llu invalidTs=%llu",
+            resetEpoch, ReplayResetReasonName(reason), context.descriptorIndex,
+            context.payloadBytes, context.drainCycleTimer, context.receiveCycleTimestamp,
+            context.syt, context.expectedCycleOrdinal, context.observedCycleOrdinal,
+            context.packetStatus, context.sampleFrame, timestampValidCount_, timestampInvalidCount_);
+    }
     if (wasEstablished && timingLossCallback_) {
         timingLossCallback_();
     }
@@ -366,27 +447,76 @@ void DirectAudioReceiveConsumer::DrainPayloadTelemetry() {
     }
 
     payloadWriterTelemetryAggregator_.BeginDrain();
+    ::ASFW::Audio::Runtime::PayloadWriterTelemetryRecord firstDeficitRecord{};
     ::ASFW::Audio::Runtime::PayloadWriterTelemetryRecord lastRecord{};
+    bool haveFirstDeficitRecord = false;
     bool haveLastRecord = false;
     const uint64_t dropped = control->payloadWriterTelemetry.Drain(
-        [this, &lastRecord, &haveLastRecord](
+        [this, &firstDeficitRecord, &haveFirstDeficitRecord,
+         &lastRecord, &haveLastRecord](
             const ::ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& record) {
             payloadWriterTelemetryAggregator_.Observe(record);
+            if (!haveFirstDeficitRecord && record.exposureDeficitFrames != 0) {
+                firstDeficitRecord = record;
+                haveFirstDeficitRecord = true;
+            }
             lastRecord = record;
             haveLastRecord = true;
         });
     const auto& summary = payloadWriterTelemetryAggregator_.Summary();
     if (haveLastRecord && summary.HasAnomaly()) {
         ASFW_LOG(DirectAudio,
-                 "[PayloadWriter] anomaly lastSample=%llu completion=%llu deficitMax=%llu "
+                 "[PayloadWriter] anomaly firstSample=%llu firstRange=[%llu,%llu) "
+                 "firstExposedEnd=%llu firstDeficit=%llu firstCompletion=%llu "
+                 "firstPacketizer={next=%llu aligned=%u epoch=%llu lastPacket=%llu lastRange=[%llu,%llu) valid=%u} "
+                 "lastSample=%llu completion=%llu deficitMax=%llu "
                  "visitedDelta=%llu writtenDelta=%llu withoutPktDelta=%llu outsidePktDelta=%llu "
-                 "racedDelta=%llu transmittedDelta=%llu underExpCallsDelta=%llu underExpFramesDelta=%llu",
+                 "racedDelta=%llu transmittedDelta=%llu underExpCallsDelta=%llu underExpFramesDelta=%llu "
+                 "lastPacketizer={next=%llu aligned=%u epoch=%llu lastPacket=%llu lastRange=[%llu,%llu) valid=%u} "
+                 "prepared={all=%llu data=%llu noData=%llu acquireFail=%llu} playbackRange=[%llu,%llu)",
+                 haveFirstDeficitRecord ? firstDeficitRecord.sampleTime : 0,
+                 haveFirstDeficitRecord ? firstDeficitRecord.sampleTime : 0,
+                 haveFirstDeficitRecord ? firstDeficitRecord.writeEndFrame : 0,
+                 haveFirstDeficitRecord ? firstDeficitRecord.exposedFrameEnd : 0,
+                 haveFirstDeficitRecord ? firstDeficitRecord.exposureDeficitFrames : 0,
+                 haveFirstDeficitRecord ? firstDeficitRecord.completionCursor : 0,
+                 haveFirstDeficitRecord
+                     ? firstDeficitRecord.packetizerNextAudioFrame
+                     : 0,
+                 haveFirstDeficitRecord &&
+                         firstDeficitRecord.packetizerFrameCursorAligned
+                     ? 1u
+                     : 0u,
+                 haveFirstDeficitRecord ? firstDeficitRecord.packetizerCursorEpoch : 0,
+                 haveFirstDeficitRecord
+                     ? firstDeficitRecord.packetizerLastDataPacketIndex
+                     : 0,
+                 haveFirstDeficitRecord
+                     ? firstDeficitRecord.packetizerLastDataFirstAudioFrame
+                     : 0,
+                 haveFirstDeficitRecord
+                     ? firstDeficitRecord.packetizerLastDataEndAudioFrame
+                     : 0,
+                 haveFirstDeficitRecord &&
+                         firstDeficitRecord.packetizerHasLastDataPacket
+                     ? 1u
+                     : 0u,
                  lastRecord.sampleTime, lastRecord.completionCursor,
                  summary.maxExposureDeficitFrames, summary.visitedDelta,
                  summary.writtenDelta, summary.withoutPacketDelta,
                  summary.outsidePacketDelta, summary.racedReuseDelta,
                  summary.wroteIntoTransmittedDelta, summary.underExposureCallsDelta,
-                 summary.underExposureFramesDelta);
+                 summary.underExposureFramesDelta,
+                 lastRecord.packetizerNextAudioFrame,
+                 lastRecord.packetizerFrameCursorAligned ? 1u : 0u,
+                 lastRecord.packetizerCursorEpoch,
+                 lastRecord.packetizerLastDataPacketIndex,
+                 lastRecord.packetizerLastDataFirstAudioFrame,
+                 lastRecord.packetizerLastDataEndAudioFrame,
+                 lastRecord.packetizerHasLastDataPacket ? 1u : 0u,
+                 lastRecord.packetsPrepared, lastRecord.dataPacketsPrepared,
+                 lastRecord.noDataPacketsPrepared, lastRecord.slotAcquireFailures,
+                 lastRecord.playbackRingReadFrame, lastRecord.playbackRingWriteFrame);
     }
     if (dropped != 0) {
         ASFW_LOG(DirectAudio, "[PayloadWriter] drain overflow: dropped=%llu (capacity=%u)",

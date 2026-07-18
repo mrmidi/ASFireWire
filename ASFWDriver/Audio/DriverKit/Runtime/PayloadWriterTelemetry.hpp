@@ -25,6 +25,20 @@ struct PayloadWriterTelemetryRecord final {
     uint64_t underExposureFrames{0};
     float    maxAbsSample{0.0f};
 
+    // Snapshot of the TX packetizer state. This is published through atomic
+    // mirrors by the TX preparation side; it is diagnostic only.
+    uint64_t packetizerNextAudioFrame{0};
+    uint64_t packetizerLastDataFirstAudioFrame{0};
+    uint64_t packetizerLastDataEndAudioFrame{0};
+    uint64_t packetizerLastDataPacketIndex{0};
+    uint64_t packetizerCursorEpoch{0};
+    uint64_t packetsPrepared{0};
+    uint64_t dataPacketsPrepared{0};
+    uint64_t noDataPacketsPrepared{0};
+    uint64_t slotAcquireFailures{0};
+    bool packetizerFrameCursorAligned{false};
+    bool packetizerHasLastDataPacket{false};
+
     // Additional cursors and addresses for diagnosing buffer mapping / pointer alignment
     uint64_t playbackRingReadFrame{0};
     uint64_t playbackRingWriteFrame{0};
