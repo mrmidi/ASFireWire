@@ -10,6 +10,16 @@ import Foundation
 
 extension ASFWMCPCore {
     func callTool(name: String, arguments: ASFWMCPValue = .object([:])) async -> ASFWMCPToolCallResult {
+        // Mirror every tool call into the unified log so console captures can
+        // correlate control-plane requests with the driver traffic they cause.
+        let startedAt = ContinuousClock.now
+        ASFWMCPConsoleLog.toolRequested(name: name, arguments: arguments)
+        let result = await dispatchToolCall(name: name, arguments: arguments)
+        ASFWMCPConsoleLog.toolCompleted(name: name, result: result, startedAt: startedAt)
+        return result
+    }
+
+    private func dispatchToolCall(name: String, arguments: ASFWMCPValue) async -> ASFWMCPToolCallResult {
         guard configuration.mode != .disabled else {
             return .failure(toolName: name, code: .mcpDisabled, reason: "MCP is disabled.")
         }

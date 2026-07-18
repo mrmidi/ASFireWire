@@ -68,6 +68,19 @@ python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py c
 
 If the endpoint is unavailable, report the connection failure and ask the user to enable the MCP Control Plane in ASFW. Do not fall back to guessed driver state.
 
+## Console correlation
+
+Every tool call and resource read is mirrored into the unified log by the ASFW
+app with an `[MCP]` message prefix (`call`/`done`/`fail` lines carry the tool
+name, compact JSON arguments and result data, duration, and error codes; byte
+payloads render as quadlet-grouped hex). To correlate control-plane requests
+with the driver traffic they trigger, hand the user one predicate covering
+both sides (resource reads log at debug level, so keep `--debug`):
+
+```bash
+log stream --info --debug --predicate 'eventMessage CONTAINS "[MCP]" OR eventMessage CONTAINS "[UserClient]" OR eventMessage CONTAINS "[FCP]"'
+```
+
 ## PHASE 88 / BeBoB discovery rule
 
 For the exact TerraTec PHASE 88 Rack FW identity (vendor `0x000AAC`, model
