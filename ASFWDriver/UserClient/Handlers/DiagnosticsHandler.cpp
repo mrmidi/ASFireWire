@@ -150,6 +150,58 @@ kern_return_t DiagnosticsHandler::GetPostResetTiming(IOUserClientMethodArguments
     return CollectAndPack<ASFWDiagPostResetTiming>(service_, args, &Diagnostics::DiagnosticsService::CollectPostResetTiming);
 }
 
+kern_return_t DiagnosticsHandler::GetLogRecords(IOUserClientMethodArguments* args) {
+    if (!args) {
+        return kIOReturnBadArgument;
+    }
+
+    // Missing/short input keeps the zero-initialized defaults (drain
+    // everything from the oldest retained record).
+    ASFW::Logging::LogRingQueryRequestWire request{};
+    if (args->structureInput) {
+#ifdef ASFW_HOST_TEST
+        auto* input = static_cast<OSData*>(args->structureInput);
+#else
+        auto* input = OSDynamicCast(OSData, args->structureInput);
+#endif
+        if (input && input->getLength() >= sizeof(request)) {
+            memcpy(&request, input->getBytesNoCopy(), sizeof(request));
+        }
+    }
+
+    uint8_t buffer[kStructOutputLimit];
+    const size_t used = ASFW::Logging::PackLogRecords(
+        ASFW::Logging::LogRing::Shared(), request, buffer, sizeof(buffer));
+    if (used == 0) {
+        return kIOReturnNoSpace;
+    }
+
+    OSData* data = OSData::withBytes(buffer, static_cast<uint32_t>(used));
+    if (!data) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+kern_return_t DiagnosticsHandler::GetLogStats(IOUserClientMethodArguments* args) {
+    if (!args) {
+        return kIOReturnBadArgument;
+    }
+
+    ASFW::Logging::LogRingStatsWire stats{};
+    ASFW::Logging::PackLogStats(ASFW::Logging::LogRing::Shared(), stats);
+
+    OSData* data = OSData::withBytes(&stats, sizeof(stats));
+    if (!data) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
 kern_return_t DiagnosticsHandler::ClearAsyncTrace(IOUserClientMethodArguments* args) {
     if (!driver_) {
         return kIOReturnNotReady;

@@ -355,6 +355,10 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ctx.audioCoordinator->SetCMPClient(ctx.deps.cmpClient.get());
     }
 
+    // Allocate the queryable log ring before configuration so its
+    // initialization trace (and everything after) is captured. Appends
+    // before this point are silent no-ops by design.
+    ASFW::Logging::LogRing::Shared().Initialize();
     ASFW::LogConfig::Shared().Initialize(this);
 
     ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),

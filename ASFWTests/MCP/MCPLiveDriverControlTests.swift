@@ -340,6 +340,8 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var busResetRequests = 0
     var resetGenerationOnRequest = false
     var localIrmResourceSnapshot: ASFWMCPLocalIrmResourceSnapshot?
+    var logQueryResponse: ASFWLogRingQueryResponse?
+    var logStats: ASFWLogRingStats?
 
     func mcpCurrentGeneration() -> UInt32? { generation }
     func mcpControllerStatus() -> ControllerStatus? { nil }
@@ -400,5 +402,13 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
             generation &+= 1
         }
         return expectedGeneration
+    }
+
+    func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse? {
+        logQueryResponse
+    }
+
+    func mcpLogRingStats() -> ASFWLogRingStats? {
+        logStats
     }
 }

@@ -17,6 +17,7 @@
 		08694BE1C51DD14DB11CAB80 /* RomSummarizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9EFB67D49B05DCD5C9C661D /* RomSummarizer.swift */; };
 		0967826AD139F2ED9C7446A5 /* AVCAudioBackend.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 71B7F6E471C54E826CDFEF34 /* AVCAudioBackend.cpp */; };
 		0982EF3D75418E436E61F4FC /* CSRResponder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 60EEFC3AC7756D549E967D25 /* CSRResponder.cpp */; };
+		0AB0C833F3F66D9BAF12FEF4 /* DriverConnector+LogRing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D7C91E89F804C760390C3DA /* DriverConnector+LogRing.swift */; };
 		0BEADC6EFD1ECFE9C5460FFA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2963EFBE3CF88B19098DB640 /* Assets.xcassets */; };
 		0CB9E9932DEA395E4C22999E /* ControllerCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 070AC8A37A94176E7AACEFF0 /* ControllerCore.cpp */; };
 		0D45E9D5217493F2CA468B66 /* AmdtpPayloadWriter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0D97F81936B9E88427C69E25 /* AmdtpPayloadWriter.cpp */; };
@@ -189,6 +190,7 @@
 		855C860D37FFA942DB0938B1 /* MCPRegisterToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8B37D833E534E717518D363 /* MCPRegisterToolsTests.swift */; };
 		8627DA75B13D2FDBF0F9240C /* MCPSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC389C347FC4129A24CD6B55 /* MCPSettingsView.swift */; };
 		86AAAB1DA5BB95E96BAFFBB7 /* ASFWMCPBeBoBTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077468963C2F7E7BB91E28CB /* ASFWMCPBeBoBTools.swift */; };
+		87061D381FC697598C58D9DE /* LogRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 003D261C038E0434E7A8B214 /* LogRing.cpp */; };
 		871EA272C6D2FB5A892E3217 /* AudioNubPublisher.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B7E5492B36B350E48E9214A8 /* AudioNubPublisher.cpp */; };
 		8800EA1851CF85BCC46AD35E /* RomExplorerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA374405CB437F912867561 /* RomExplorerView.swift */; };
 		882F74E2DC7B5488763948AE /* CameraSubunit.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C39AFB21F207B36E8E333057 /* CameraSubunit.cpp */; };
@@ -199,6 +201,7 @@
 		8AC45CC4E10F3D3268E62A1B /* LocalIRMResourceCSRHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A4C9F8FE48511BE2BD69FC18 /* LocalIRMResourceCSRHandler.cpp */; };
 		8B239E61F8E6004E62388ECC /* RomInterpreter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D1898C56C850847761283D1 /* RomInterpreter.swift */; };
 		8B607C4A33AB6AFB5F584B30 /* LogConfig.cpp in Sources */ = {isa = PBXBuildFile; fileRef = ED4A3A1028716DA2733167A2 /* LogConfig.cpp */; };
+		8C7E23A3E98FE12C357AF0A1 /* MCPLogToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21B2F7CD6D1BBFF5031F82F0 /* MCPLogToolsTests.swift */; };
 		8C9B7C5FBE54D6D2DD413E01 /* DICEDuplexBringupController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3528E006418BDA71A6CEEF53 /* DICEDuplexBringupController.cpp */; };
 		8DD14AC382D9779CCD48EFAE /* DriverConnector+AudioStreaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5411A165B2096EC85E8F22D0 /* DriverConnector+AudioStreaming.swift */; };
 		8DE175C585FB7076FB7199B2 /* ARPacketParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 637612A8ADCEEB835E3C8E75 /* ARPacketParser.cpp */; };
@@ -242,6 +245,7 @@
 		A9D340317F946538F1D8F065 /* AsyncSubsystemCommandQueue.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 627F834434283E0C686EDB8D /* AsyncSubsystemCommandQueue.cpp */; };
 		A9F84140BB083A5EC645A217 /* StreamFormatParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E3B6658CB3B4247008CA3857 /* StreamFormatParser.cpp */; };
 		AB26C52B22F65434EA8E93A7 /* MCPAvcFcpToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A1B4F1B3B31E1211F65A8E /* MCPAvcFcpToolsTests.swift */; };
+		AD10DE7E6E52AA4D57B6BF40 /* ASFWMCPLogTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB8E7D6A09A310DA990C79D /* ASFWMCPLogTools.swift */; };
 		AE6B45BB973CF543649B851E /* PreSonusStudioLiveProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4DB5C96A84E71BA9F2E5835A /* PreSonusStudioLiveProfile.cpp */; };
 		AE8BE46329AA7AA47574A8DA /* PingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E03EB5573EA30EB8F2D42B /* PingView.swift */; };
 		AFC2E3AB6C936BA99AE2EA14 /* BeBoBProtocol.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3287F0F488601696A613BF7E /* BeBoBProtocol.cpp */; };
@@ -386,6 +390,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		003D261C038E0434E7A8B214 /* LogRing.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LogRing.cpp; sourceTree = "<group>"; };
 		00744EB824D48D9F716E153A /* PostResetTimingCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PostResetTimingCoordinator.hpp; sourceTree = "<group>"; };
 		00979778212761BF904386E6 /* AudioEndpointRuntime.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioEndpointRuntime.hpp; sourceTree = "<group>"; };
 		00D5EC5AEB7989BC5DBE3E15 /* BusResetHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetHandler.cpp; sourceTree = "<group>"; };
@@ -481,6 +486,7 @@
 		1FBCE23C33F1D62789320910 /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
 		2091230AA237991CD12A881E /* ROMScanSessionDetails.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ROMScanSessionDetails.cpp; sourceTree = "<group>"; };
 		20BC47A83718017AC79BEBDE /* ARPacketParser.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARPacketParser.hpp; sourceTree = "<group>"; };
+		21B2F7CD6D1BBFF5031F82F0 /* MCPLogToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPLogToolsTests.swift; sourceTree = "<group>"; };
 		2318CA8F9F8F559EA124AC2B /* MCPTestGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTestGateTests.swift; sourceTree = "<group>"; };
 		23A5EA0EE91F57F34AD6EB3B /* SelfIDTopologyNormalizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SelfIDTopologyNormalizer.hpp; sourceTree = "<group>"; };
 		23B5AED98E4C020648E7DAF9 /* ASFWDiagnosticsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWDiagnosticsClient.swift; sourceTree = "<group>"; };
@@ -542,6 +548,7 @@
 		3210D655C3118526E23B9C5F /* BusManagerElectionDriver.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusManagerElectionDriver.cpp; sourceTree = "<group>"; };
 		322ABB980F4E8B5D4EEEB718 /* DbcCounter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DbcCounter.cpp; sourceTree = "<group>"; };
 		323649CE26A7765896E013D5 /* BeBoBPlug0StreamDiscovery.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BeBoBPlug0StreamDiscovery.cpp; sourceTree = "<group>"; };
+		327B8204F97F18D01DAC98E3 /* LogRing.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LogRing.hpp; sourceTree = "<group>"; };
 		3287F0F488601696A613BF7E /* BeBoBProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BeBoBProtocol.cpp; sourceTree = "<group>"; };
 		32A761BA05FD598BFB22FD0C /* GenericBeBoBProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = GenericBeBoBProtocol.cpp; sourceTree = "<group>"; };
 		32CC29E09230667E7F45FE30 /* SpeedMapService.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SpeedMapService.hpp; sourceTree = "<group>"; };
@@ -852,6 +859,7 @@
 		9CFCDBBEAFF6591067556D82 /* MetricsSink.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MetricsSink.hpp; sourceTree = "<group>"; };
 		9D63937D5D5E665DA45C4D17 /* DICETransaction.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DICETransaction.hpp; sourceTree = "<group>"; };
 		9D6A93FFD51132B2A4F8B00E /* ASFWMCPBusResetTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPBusResetTools.swift; sourceTree = "<group>"; };
+		9D7C91E89F804C760390C3DA /* DriverConnector+LogRing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+LogRing.swift"; sourceTree = "<group>"; };
 		9D953AE0CF2E263F417ADAAB /* TransactionStorage.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TransactionStorage.cpp; sourceTree = "<group>"; };
 		9DF68FEB3C0FCEBFC05F8985 /* AudioDebugViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDebugViewModel.swift; sourceTree = "<group>"; };
 		9F69DB0BAE45F0F9A3F2590F /* AVCDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVCDebugView.swift; sourceTree = "<group>"; };
@@ -981,6 +989,7 @@
 		CB41555BE6AA442A24AD86D5 /* DmaContextManagerBase.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DmaContextManagerBase.hpp; sourceTree = "<group>"; };
 		CB6A77A3B24C6DCD15664650 /* PowerLinkPolicyCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PowerLinkPolicyCoordinator.cpp; sourceTree = "<group>"; };
 		CBA8F61AE70B8088DAEA9F92 /* ASFWAudioNub.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; path = ASFWAudioNub.iig; sourceTree = "<group>"; };
+		CBB8E7D6A09A310DA990C79D /* ASFWMCPLogTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPLogTools.swift; sourceTree = "<group>"; };
 		CBDE20CC919DA33A7DE57393 /* IsochRxDmaRing.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochRxDmaRing.hpp; sourceTree = "<group>"; };
 		CD72DF267F9204C367E8A973 /* ConfigROMConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMConstants.hpp; sourceTree = "<group>"; };
 		CDA4A76AF0336D8F0E016712 /* AsyncSubsystemDiagnostics.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemDiagnostics.cpp; sourceTree = "<group>"; };
@@ -1767,6 +1776,8 @@
 				70353FE22B6FC379ACA5F0D5 /* LogConfig.hpp */,
 				0BB2655AA61DF8D0D37E22FA /* Logging.cpp */,
 				90F7CC3CA3623E1DA8D4D98A /* Logging.hpp */,
+				003D261C038E0434E7A8B214 /* LogRing.cpp */,
+				327B8204F97F18D01DAC98E3 /* LogRing.hpp */,
 			);
 			path = Logging;
 			sourceTree = "<group>";
@@ -1824,6 +1835,7 @@
 				791D3F142C8E022EE27500B5 /* ASFWMCPHost.swift */,
 				746DA77C4A934EC1BB0D2BD9 /* ASFWMCPIrmCasTools.swift */,
 				D1391A71639068D8291B32AF /* ASFWMCPLiveDriverControl.swift */,
+				CBB8E7D6A09A310DA990C79D /* ASFWMCPLogTools.swift */,
 				A6D30FC4AF96CBDC4F5B068E /* ASFWMCPMockTransport.swift */,
 				71D5D0D779E109C9C34E2411 /* ASFWMCPModels.swift */,
 				47E488D2351E4FD559B0CDF0 /* ASFWMCPRegisterTools.swift */,
@@ -1926,6 +1938,7 @@
 				B5F55AC7D4EE9130D6F349A2 /* DriverConnector+LegacyIO.swift */,
 				29383D19EAC4373F75CBF552 /* DriverConnector+Lifecycle.swift */,
 				6FA63624C10EEF4E28C60EB7 /* DriverConnector+LoggingConfig.swift */,
+				9D7C91E89F804C760390C3DA /* DriverConnector+LogRing.swift */,
 				6A816C540C2BEB377CE294ED /* DriverConnector+Saffire.swift */,
 				264D4CD41FF948792F95E023 /* DriverConnector+Status.swift */,
 				487FFDBA8B98968F6A7E5DCB /* DriverConnectorLogStore.swift */,
@@ -2280,6 +2293,7 @@
 				E2D78CE8B9FA9B223B42FCC8 /* MCPIrmCasToolsTests.swift */,
 				A0819882432EF4A4BBBA44FC /* MCPIrmReadToolsTests.swift */,
 				C585AEE3BB2B09A798AB2E6D /* MCPLiveDriverControlTests.swift */,
+				21B2F7CD6D1BBFF5031F82F0 /* MCPLogToolsTests.swift */,
 				67FAC0642F9E1AC5D6CC4C88 /* MCPMockHarnessTests.swift */,
 				E8B37D833E534E717518D363 /* MCPRegisterToolsTests.swift */,
 				D052AC7D4757845AB77B75B1 /* MCPSbp2ToolsTests.swift */,
@@ -3102,6 +3116,7 @@
 				C21E6722E21042051434C9C5 /* LocalRequestWiring.cpp in Sources */,
 				9939EA3C38D005D2B1706109 /* LockCommand.cpp in Sources */,
 				8B607C4A33AB6AFB5F584B30 /* LogConfig.cpp in Sources */,
+				87061D381FC697598C58D9DE /* LogRing.cpp in Sources */,
 				C383A0E2BE9823CD5804D60A /* Logging.cpp in Sources */,
 				A1B3ABBBA299FFB8E0D40229 /* LoginSession.cpp in Sources */,
 				50919565F5D9A031D70542AC /* MetricsSink.cpp in Sources */,
@@ -3192,6 +3207,7 @@
 				639F1C3842793B06ED0B28FC /* MCPIrmCasToolsTests.swift in Sources */,
 				6DD673158C1F1ACF2E976DE7 /* MCPIrmReadToolsTests.swift in Sources */,
 				C733B13A8846F7E697E851F6 /* MCPLiveDriverControlTests.swift in Sources */,
+				8C7E23A3E98FE12C357AF0A1 /* MCPLogToolsTests.swift in Sources */,
 				17E38AE2298BF12B578FECF5 /* MCPMockHarnessTests.swift in Sources */,
 				855C860D37FFA942DB0938B1 /* MCPRegisterToolsTests.swift in Sources */,
 				6FA099D57133604A5FBE5006 /* MCPSDKBridgeTests.swift in Sources */,
@@ -3223,6 +3239,7 @@
 				39DAF3D1D17826A6F92DA729 /* ASFWMCPHost.swift in Sources */,
 				3CDCC6579E4AE32C96D9D64D /* ASFWMCPIrmCasTools.swift in Sources */,
 				48359CD69DF9A8F5868E12C0 /* ASFWMCPLiveDriverControl.swift in Sources */,
+				AD10DE7E6E52AA4D57B6BF40 /* ASFWMCPLogTools.swift in Sources */,
 				175B02794EA67CEE144AD254 /* ASFWMCPMockTransport.swift in Sources */,
 				6EA4F8D1E4044AFA2A5414F8 /* ASFWMCPModels.swift in Sources */,
 				2E0AE0970C1F1DBC2D67F55E /* ASFWMCPRegisterTools.swift in Sources */,
@@ -3266,6 +3283,7 @@
 				9A00ED30A11DABC7DD49E7BC /* DriverConnector+Isoch.swift in Sources */,
 				41F0AA350C27888799B44641 /* DriverConnector+LegacyIO.swift in Sources */,
 				43E9F7DBC8C68F163661ABE3 /* DriverConnector+Lifecycle.swift in Sources */,
+				0AB0C833F3F66D9BAF12FEF4 /* DriverConnector+LogRing.swift in Sources */,
 				2B63AD73E9E124C02A392F9C /* DriverConnector+LoggingConfig.swift in Sources */,
 				E07796C3FF28E4FF1CA3F467 /* DriverConnector+Saffire.swift in Sources */,
 				0267190E6597A8DA11482D7C /* DriverConnector+Status.swift in Sources */,

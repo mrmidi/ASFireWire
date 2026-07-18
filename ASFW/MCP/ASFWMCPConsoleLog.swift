@@ -61,10 +61,7 @@ nonisolated enum ASFWMCPConsoleLog {
         case .uint64(let number):
             return String(number)
         case .string(let text):
-            let escaped = text
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-            return "\"\(escaped)\""
+            return quotedJSON(text)
         case .array(let values):
             // Raw payloads arrive as byte arrays; render them as one hex
             // string ("hex:0009 00C8 …") instead of a wall of decimals so the
@@ -75,7 +72,7 @@ nonisolated enum ASFWMCPConsoleLog {
             return "[" + values.map(render).joined(separator: ",") + "]"
         case .object(let fields):
             let body = fields.keys.sorted()
-                .map { "\"\($0)\":\(render(fields[$0]!))" }
+                .map { "\(quotedJSON($0)):\(render(fields[$0]!))" }
                 .joined(separator: ",")
             return "{" + body + "}"
         }
@@ -84,6 +81,26 @@ nonisolated enum ASFWMCPConsoleLog {
     private static func truncated(_ text: String, limit: Int) -> String {
         guard text.count > limit else { return text }
         return text.prefix(limit) + "…"
+    }
+
+    /// JSON-quote an arbitrary tool argument without allowing control
+    /// characters to create additional unified-log lines.
+    private static func quotedJSON(_ text: String) -> String {
+        var escaped = "\""
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x22: escaped += "\\\""
+            case 0x5C: escaped += "\\\\"
+            case 0x08: escaped += "\\b"
+            case 0x0C: escaped += "\\f"
+            case 0x0A: escaped += "\\n"
+            case 0x0D: escaped += "\\r"
+            case 0x09: escaped += "\\t"
+            case 0...0x1F: escaped += String(format: "\\u%04X", scalar.value)
+            default: escaped.unicodeScalars.append(scalar)
+            }
+        }
+        return escaped + "\""
     }
 
     /// Collapses an all-byte integer array (>= 8 entries, every value in

@@ -203,6 +203,28 @@ bool BusResetCoordinator::BuildTopology() {
         ASFW_LOG_V2(BusReset, "Gap counts are inconsistent across validated Self-ID packet 0s");
     }
 
+    // Self-ID is the only authoritative post-reset attribution available to us.
+    // Do not infer a remote reset from a preceding local policy request: a device
+    // can reset after that request, as observed with the Apogee Duet.  Emit one
+    // compact record after topology is accepted so MCP can filter reset origin
+    // without reconstructing it from raw Self-ID packets.
+    const auto initiator = std::find_if(snapshot->physical.nodes.begin(),
+                                        snapshot->physical.nodes.end(),
+                                        [](const auto& node) { return node.initiatedReset; });
+    if (initiator == snapshot->physical.nodes.end()) {
+        ASFW_LOG(BusReset,
+                 "Reset provenance: gen=%u origin=unknown root=%u irm=%u local=%u",
+                 snapshot->generation, snapshot->rootNodeId, snapshot->irmNodeId,
+                 snapshot->localNodeId);
+    } else {
+        const bool localInitiator = initiator->physicalId == snapshot->localNodeId;
+        ASFW_LOG(BusReset,
+                 "Reset provenance: gen=%u origin=%{public}s initiator=node%u root=%u irm=%u local=%u",
+                 snapshot->generation, localInitiator ? "local" : "remote",
+                 initiator->physicalId, snapshot->rootNodeId, snapshot->irmNodeId,
+                 snapshot->localNodeId);
+    }
+
     return true;
 }
 
@@ -475,7 +497,7 @@ bool BusResetCoordinator::DispatchSoftwareReset(const ResetRequest& request) {
         request.phyConfig.has_value() &&
         (request.phyConfig->forceRootNodeID.has_value() || request.phyConfig->setContender.has_value());
 
-    ASFW_LOG(BusReset, "Issuing %{public}s %{public}s software reset (%{public}s)",
+    ASFW_LOG(BusReset, "Reset request: origin=local kind=%{public}s flavor=%{public}s reason=%{public}s",
              resetKindString(request.kind), resetFlavorString(request.flavor),
              request.reason.c_str());
     lastResetKind_ = request.kind;

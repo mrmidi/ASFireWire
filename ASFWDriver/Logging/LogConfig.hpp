@@ -119,6 +119,15 @@ public:
     bool IsHexDumpsEnabled() const;
 
     /**
+     * @brief Check if ASFW_LOG additionally mirrors to os_log.
+     *
+     * The LogRing is always fed; the os_log mirror is the expensive path and
+     * can be silenced at runtime once ring-based (MCP) debugging suffices.
+     * Info.plist seed: ASFWMirrorToOsLog (default true).
+     */
+    bool IsOsLogMirrorEnabled() const;
+
+    /**
      * @brief Check if aggregate statistics logging is enabled
      */
     bool IsStatisticsEnabled() const;
@@ -190,6 +199,7 @@ public:
     void SetIsochVerbosity(uint8_t level);
     void SetDirectAudioVerbosity(uint8_t level);
     void SetHexDumps(bool enable);
+    void SetOsLogMirrorEnabled(bool enable);
 
     /**
      * @brief Enable or disable CoreAudio-driven auto-start at runtime
@@ -240,6 +250,7 @@ private:
     std::atomic<uint8_t> isochVerbosity_;
     std::atomic<uint8_t> directAudioVerbosity_;
     std::atomic<bool> enableHexDumps_;
+    std::atomic<bool> osLogMirrorEnabled_{true};
     std::atomic<bool> audioAutoStartEnabled_;
     std::atomic<bool> logStatistics_;
     std::atomic<bool> initialized_;

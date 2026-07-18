@@ -15,6 +15,8 @@ protocol ASFWDriverControlling {
     func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
+    func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
+    func logRingStats() async -> ASFWLogRingStats?
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -430,6 +432,48 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             status: .ok,
             correlationId: correlationId,
             durationUsec: 300
+        )
+    }
+
+    func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse? {
+        let allRecords = [
+            ASFWLogRingRecord(
+                sequence: 40, timestampNs: 1_000, category: 13, level: 2,
+                message: "[CMP] iPCR connected channel=5"
+            ),
+            ASFWLogRingRecord(
+                sequence: 41, timestampNs: 1_100, category: 5, level: 0,
+                message: "[Async] AT Request context stopped"
+            ),
+            ASFWLogRingRecord(
+                sequence: 42, timestampNs: 1_200, category: 16, level: 3,
+                message: "[Audio] stream start complete"
+            ),
+        ]
+        let filtered = allRecords.filter { record in
+            record.sequence > query.afterSequence &&
+            (query.categoryMask & (UInt32(1) << UInt32(record.category))) != 0 &&
+            record.level <= query.maxLevel &&
+            (query.contains.isEmpty || record.message.contains(query.contains))
+        }
+        let records = Array(filtered.prefix(query.maxRecords))
+        return ASFWLogRingQueryResponse(
+            records: records,
+            nextSequence: records.last?.sequence ?? min(query.afterSequence + 8, 42),
+            latestSequence: 42,
+            oldestSequence: 1,
+            scannedCount: UInt32(min(8, allRecords.count))
+        )
+    }
+
+    func logRingStats() async -> ASFWLogRingStats? {
+        ASFWLogRingStats(
+            totalEmitted: 42,
+            droppedRecords: 0,
+            latestSequence: 42,
+            oldestSequence: 1,
+            capacityRecords: 40_000,
+            perCategory: ["CMP": 18, "Async": 9, "Audio": 15]
         )
     }
 

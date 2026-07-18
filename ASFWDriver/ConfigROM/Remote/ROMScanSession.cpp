@@ -394,6 +394,14 @@ void ROMScanSession::NotifyRootBIBSuccess(uint8_t nodeId, const BusInfoBlock& bi
 
     rootProbeStarted_ = true;
     rootProbeTerminal_ = true;
+    // Keep BIB capability claims distinct from the Self-ID role chosen by
+    // topology. Some legacy devices (the Duet is a confirmed example) assert
+    // Self-ID contender while advertising IRMC=0 in their BIB. This is evidence
+    // for diagnosis, not a reason to rewrite the elected IRM node.
+    ASFW_LOG(ConfigROM,
+             "[RoleEvidence] root-bib gen=%u node=%u bmc=%d irmc=%d cmc=%d isc=%d",
+             gen_.value, nodeId, bib.bmc ? 1 : 0, bib.irmc ? 1 : 0,
+             bib.cmc ? 1 : 0, bib.isc ? 1 : 0);
     Driver::Role::RootCapabilityEvidence evidence{};
     evidence.generation = gen_.value;
     evidence.rootNodeId = nodeId;

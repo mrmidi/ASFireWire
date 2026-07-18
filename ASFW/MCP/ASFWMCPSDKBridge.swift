@@ -63,10 +63,7 @@ extension ASFWMCPToolDefinition {
         Tool(
             name: name,
             description: summary,
-            inputSchema: .object([
-                "type": .string("object"),
-                "additionalProperties": .bool(true)
-            ]),
+            inputSchema: mcpInputSchema,
             annotations: Tool.Annotations(
                 readOnlyHint: readOnly,
                 destructiveHint: readOnly ? false : true,
@@ -74,6 +71,54 @@ extension ASFWMCPToolDefinition {
                 openWorldHint: false
             )
         )
+    }
+
+    private var mcpInputSchema: MCP.Value {
+        switch name {
+        case "asfw_log_query":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "afterSequence": .object([
+                        "type": .string("integer"), "minimum": .int(0),
+                        "description": .string("Exclusive sequence cursor; 0 starts at retained history.")
+                    ]),
+                    "categories": .object([
+                        "type": .string("array"),
+                        "items": .object([
+                            "type": .string("string"),
+                            "enum": .array(ASFWLogRingCategories.names.map(MCP.Value.string))
+                        ]),
+                        "description": .string("Optional category names; omitted or empty means all categories.")
+                    ]),
+                    "maxLevel": .object([
+                        "type": .string("string"),
+                        "enum": .array(["error", "warning", "notice", "info", "debug"].map(MCP.Value.string)),
+                        "default": .string("debug"),
+                        "description": .string("Include this severity and more severe records.")
+                    ]),
+                    "contains": .object([
+                        "type": .string("string"), "maxLength": .int(47),
+                        "description": .string("Optional case-sensitive substring, at most 47 UTF-8 bytes.")
+                    ]),
+                    "maxRecords": .object([
+                        "type": .string("integer"), "minimum": .int(1), "maximum": .int(1_000),
+                        "default": .int(200)
+                    ]),
+                ]),
+                "additionalProperties": .bool(false)
+            ])
+        case "asfw_log_stats":
+            return .object([
+                "type": .string("object"),
+                "additionalProperties": .bool(false)
+            ])
+        default:
+            return .object([
+                "type": .string("object"),
+                "additionalProperties": .bool(true)
+            ])
+        }
     }
 }
 
