@@ -1,6 +1,7 @@
 #include "IsochReceiveContext.hpp"
 #include "../Core/IsochEventGroup.hpp"
 #include "../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
+#include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 
 #include "../../Common/TimingUtils.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
@@ -555,6 +556,32 @@ uint32_t IsochReceiveContext::Poll() {
                                 result.fdf,
                                 result.dbs,
                                 result.receiveCycleTimestamp);
+                            // The stream FDF is the device's ground-truth
+                            // nominal rate. A mismatch against the session
+                            // rate means host and device stream at different
+                            // rates — audible as pitch shift/skew but
+                            // otherwise silent (observed: Apogee Duet
+                            // claiming 44.1 kHz over AV/C while streaming
+                            // FDF 0x02 = 48 kHz; BUGLIST.md Bug 5).
+                            const auto sessionGeometry =
+                                ASFW::Encoding::AmdtpRateGeometryForSampleRate(
+                                    directInputView_.sampleRateHz);
+                            if (sessionGeometry &&
+                                sessionGeometry->fdf != result.fdf) {
+                                const auto deviceGeometry =
+                                    ASFW::Encoding::AmdtpRateGeometryForFdf(
+                                        result.fdf);
+                                ASFW_LOG_ERROR(
+                                    Isoch,
+                                    "IR RATE MISMATCH sessionRate=%u (fdf=0x%02x) "
+                                    "deviceFdf=0x%02x (rate=%u) — device streams "
+                                    "at a different nominal rate than the session",
+                                    directInputView_.sampleRateHz,
+                                    sessionGeometry->fdf,
+                                    result.fdf,
+                                    deviceGeometry ? deviceGeometry->sampleRateHz
+                                                   : 0);
+                            }
                             rxCadenceEstablishedLogged_ = true;
                         }
                     }
