@@ -23,14 +23,11 @@ std::unordered_map<uint64_t, std::unique_ptr<IAudioDeviceProfile>>& AudioProfile
 const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
                                                              uint32_t modelId,
                                                              uint64_t guid) noexcept {
-    // Per-GUID BeBoB profiles take precedence (registered during discovery).
-    if (guid != 0) {
-        auto& dynamic = DynamicProfiles();
-        if (auto it = dynamic.find(guid); it != dynamic.end()) {
-            return it->second.get();
-        }
-    }
-
+    // Curated static profiles win over everything else: a discovery-derived
+    // per-GUID profile must never shadow a hand-validated device profile
+    // (curated name, warm-up/idle-packet policy, rate set). Shadowing Phase88
+    // this way reverted the wire-validated FW-105 startup recipe — see
+    // BUGLIST.md Bug 2a.
     static AVC::Profiles::ApogeeDuetProfile apogeeDuetProfile{};
     if (vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
         modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
@@ -56,6 +53,15 @@ const IAudioDeviceProfile* AudioProfileRegistry::FindProfile(uint32_t vendorId,
 
     if (const auto* profile = diceRegistry.FindProfile(identity)) {
         return profile;
+    }
+
+    // Per-GUID BeBoB profiles (registered during discovery) provide
+    // discovery-derived geometry for BeBoB devices without a curated profile.
+    if (guid != 0) {
+        auto& dynamic = DynamicProfiles();
+        if (auto it = dynamic.find(guid); it != dynamic.end()) {
+            return it->second.get();
+        }
     }
 
     // The generic profile is a DICE fallback only. Exact AV/C adapters above
