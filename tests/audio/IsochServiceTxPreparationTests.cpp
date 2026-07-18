@@ -20,6 +20,21 @@ using ASFW::IsochTransport::ExpectedCommitGen;
 using ASFW::IsochTransport::TxPacketMeta;
 using ASFW::IsochTransport::TxStreamControl;
 
+class RecordingReceiveConsumer final : public ASFW::Isoch::IIsochReceiveConsumer {
+  public:
+    void OnReceiveActivated() noexcept override { ++activated; }
+    void OnReceiveQuiesced() noexcept override { ++quiesced; }
+    void BeginReceiveBatch(const ASFW::Isoch::IsochReceiveBatch&) noexcept override {
+        ++batches;
+    }
+    void ConsumePacket(const ASFW::Isoch::IsochReceiveBatch&,
+                       const ASFW::Isoch::IsochReceivePacket&) noexcept override {}
+
+    uint32_t activated{0};
+    uint32_t quiesced{0};
+    uint32_t batches{0};
+};
+
 TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesStartTransmit) {
     IsochService service;
     HardwareInterface hardware;
@@ -146,6 +161,25 @@ TEST(IsochServiceTxPreparation, StopAllPropagatesActiveReceiveTimeoutAndRetainsC
     EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
     ASSERT_NE(service.ReceiveContext(0), nullptr);
     EXPECT_EQ(service.ReceiveContext(0)->GetState(), ASFW::Isoch::IRPolicy::State::Running);
+}
+
+TEST(IsochServiceTxPreparation, ReceiveConsumerAttachesBeforePreparedStart) {
+    IsochService service;
+    HardwareInterface hardware;
+    RecordingReceiveConsumer consumer;
+
+    service.SetReceiveConsumer(/*streamIndex=*/0, &consumer);
+    ASSERT_EQ(service.PrepareReceive(/*channel=*/2, hardware, /*bindingSource=*/nullptr),
+              kIOReturnSuccess);
+    ASSERT_EQ(service.StartPreparedReceive(), kIOReturnSuccess);
+    ASSERT_NE(service.ReceiveContext(), nullptr);
+    EXPECT_EQ(consumer.activated, 1u);
+
+    EXPECT_EQ(service.ReceiveContext()->Poll(), 0u);
+    EXPECT_EQ(consumer.batches, 1u);
+
+    EXPECT_EQ(service.StopReceive(), kIOReturnSuccess);
+    EXPECT_EQ(consumer.quiesced, 1u);
 }
 
 TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext) {

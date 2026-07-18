@@ -101,6 +101,11 @@ class IsochService {
     // Do not tear down a DirectAudio binding after a failed stop: an ACTIVE
     // OHCI context may still DMA into that mapping.
     [[nodiscard]] kern_return_t StopAll();
+    // The caller owns the consumer and must detach it only after StopReceive()
+    // has succeeded (ACTIVE clear). Stream 0 is the master; streams 1+ are
+    // secondary hardware contexts.
+    void SetReceiveConsumer(uint32_t streamIndex,
+                            ASFW::Isoch::IIsochReceiveConsumer* consumer) noexcept;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
 
     // AV/C stream-health signal (no device registers): is the master RX replay
@@ -185,6 +190,8 @@ class IsochService {
     // First host input channel each capture stream writes (de-interleave offset);
     // recorded here for the audio-engine pass. Index 0 == master (offset 0).
     uint32_t captureChannelOffset_[kMaxStreamsPerDirection]{0, 0, 0, 0};
+    ASFW::Isoch::IIsochReceiveConsumer*
+        receiveConsumers_[kMaxStreamsPerDirection]{nullptr, nullptr, nullptr, nullptr};
 
     // DV capture shared ring (see Receive/DVCaptureSink.hpp)
     struct DVRingMapping {

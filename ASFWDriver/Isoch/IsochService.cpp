@@ -61,6 +61,7 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
         isochReceiveContext_->SetReplayReadyCallback([this]() { StartDeferredTransmitIfReady(); });
     }
 
+    isochReceiveContext_->SetReceiveConsumer(receiveConsumers_[0]);
     isochReceiveContext_->SetDirectAudioBindingSource(bindingSource);
 
     // Master stream: contextIndex 0, channelOffset 0, isSecondary false.
@@ -116,6 +117,7 @@ kern_return_t IsochService::PrepareReceiveStream(
         // the master context, so no ZTS/replay/timing-loss callbacks here.
     }
 
+    slot->SetReceiveConsumer(receiveConsumers_[streamIndex]);
     // Bind to the SAME shared input buffer as the master so this stream can
     // write its de-interleaved slice; the context itself applies channelOffset.
     slot->SetDirectAudioBindingSource(bindingSource);
@@ -514,8 +516,15 @@ void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
 }
 
-bool IsochService::IsReceiveReplayEstablished() const noexcept {
-    return isochReceiveContext_ && isochReceiveContext_->IsReplayEstablished();
+void IsochService::SetReceiveConsumer(
+    uint32_t streamIndex, ASFW::Isoch::IIsochReceiveConsumer* consumer) noexcept {
+    if (streamIndex >= kMaxStreamsPerDirection) {
+        return;
+    }
+    receiveConsumers_[streamIndex] = consumer;
+    if (auto* context = ReceiveContext(streamIndex)) {
+        context->SetReceiveConsumer(consumer);
+    }
 }
 
 void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noexcept {
