@@ -122,6 +122,7 @@ struct PlugChannelSummary {
 /// 1394 Trade Association spec ID (24-bit)
 constexpr uint32_t kAVCSpecID = 0x00A02D;
 constexpr uint32_t kDuetPrefetchTimeoutMs = 1200;
+constexpr uint32_t kDuetFixedSampleRateHz = 48000;
 constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
 constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
 constexpr uint32_t kScopeInput = static_cast<uint32_t>('inpt');
@@ -637,25 +638,19 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
     const std::shared_ptr<AVCUnit>& avcUnit,
     const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
     if (!avcUnit) {
-        if (!audioConfigListener_) {
-            ASFW_LOG_ERROR(Audio,
-                           "AVCDiscovery: no audio config listener; dropping Duet fallback config for GUID=%llx",
-                           guid);
-            return;
-        }
-        audioConfigListener_->OnAVCAudioConfigurationReady(guid, config);
+        ASFW_LOG_ERROR(Audio,
+                       "AVCDiscovery: Deferring Duet audio nub GUID=%llx; no AV/C unit for fixed %u Hz prepublish",
+                       guid,
+                       kDuetFixedSampleRateHz);
         return;
     }
 
     auto device = avcUnit->GetDevice();
     if (!device) {
-        if (!audioConfigListener_) {
-            ASFW_LOG_ERROR(Audio,
-                           "AVCDiscovery: no audio config listener; dropping Duet fallback config for GUID=%llx",
-                           guid);
-            return;
-        }
-        audioConfigListener_->OnAVCAudioConfigurationReady(guid, config);
+        ASFW_LOG_ERROR(Audio,
+                       "AVCDiscovery: Deferring Duet audio nub GUID=%llx; no device for fixed %u Hz prepublish",
+                       guid,
+                       kDuetFixedSampleRateHz);
         return;
     }
 
@@ -680,7 +675,7 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
         }
 
         ASFW_LOG(Audio,
-                 "AVCDiscovery: Duet prefetch complete GUID=%llx reason=%{public}s input=%d mixer=%d output=%d display=%d fw=%d hw=%d timedOut=%d",
+                 "AVCDiscovery: Duet prepublish complete GUID=%llx reason=%{public}s input=%d mixer=%d output=%d display=%d fw=%d hw=%d clockVerified=%d clockStatus=0x%x timedOut=%d",
                  guid,
                  reason ? reason : "unknown",
                  state->inputParams.has_value(),
@@ -689,10 +684,28 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
                  state->displayParams.has_value(),
                  state->firmwareId.has_value(),
                  state->hardwareId.has_value(),
+                 state->clockVerified,
+                 state->clockStatus,
                  state->timedOut);
+
+        // A nub is immutable enough that CoreAudio may select its advertised
+        // rate before StartIO.  Publishing a Duet before both AV/C plug
+        // formations have been verified at 48 kHz creates a deterministic
+        // host/device clock split.  Defer rather than expose a broken device.
+        if (!state->clockVerified) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCDiscovery: Deferring Duet audio nub GUID=%llx; fixed %u Hz prepublish failed status=0x%x reason=%{public}s",
+                           guid,
+                           kDuetFixedSampleRateHz,
+                           state->clockStatus,
+                           reason ? reason : "unknown");
+            return;
+        }
 
         auto finalConfig = config;
         ConfigureDuetPhantomOverrides(finalConfig, state->inputParams);
+        finalConfig.sampleRates = {kDuetFixedSampleRateHz};
+        finalConfig.currentSampleRate = kDuetFixedSampleRateHz;
 
         if (!audioConfigListener_) {
             ASFW_LOG_ERROR(Audio,
@@ -842,7 +855,7 @@ void AVCDiscovery::ContinueDuetPrefetchHardware(
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
-    protocol->GetHardwareId([guid, state, completed, finish](
+    protocol->GetHardwareId([guid, protocol, state, completed, finish](
                                 IOReturn hwStatus,
                                 uint32_t hardwareId) {
         if (completed->load()) {
@@ -855,7 +868,23 @@ void AVCDiscovery::ContinueDuetPrefetchHardware(
                              "AVCDiscovery: Duet hardware-id prefetch failed GUID=%llx status=0x%x",
                              guid, hwStatus);
         }
-        (*finish)("complete");
+        // Linux OXFW configures the input formation before output and verifies
+        // the selected format before stream construction.  ApplyClockConfig
+        // implements that same control-plane sequence and readback; it owns no
+        // CMP/IRM resources, so this remains strictly pre-stream.
+        protocol->ApplyClockConfig(
+            ::ASFW::Audio::AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz},
+            [guid, protocol, state, completed, finish](IOReturn clockStatus,
+                                                        const ::ASFW::Audio::ClockApplyResult& result) {
+                if (completed->load()) {
+                    return;
+                }
+                state->clockStatus = clockStatus;
+                state->clockVerified =
+                    clockStatus == kIOReturnSuccess &&
+                    result.appliedClock.sampleRateHz == kDuetFixedSampleRateHz;
+                (*finish)(state->clockVerified ? "complete" : "clock-failed");
+            });
     });
 }
 
