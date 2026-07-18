@@ -19,6 +19,26 @@ using namespace ASFW::Async;
 using namespace ASFW::Isoch::Memory;
 using namespace testing;
 
+class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
+  public:
+    void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept override {
+        ++batchCount;
+        lastBatch = batch;
+    }
+
+    void ConsumePacket(const IsochReceiveBatch& batch,
+                       const IsochReceivePacket& packet) noexcept override {
+        ++packetCount;
+        lastBatch = batch;
+        lastPacketBytes = packet.payload.size();
+    }
+
+    uint32_t batchCount{0};
+    uint32_t packetCount{0};
+    uint32_t lastPacketBytes{0};
+    IsochReceiveBatch lastBatch{};
+};
+
 TEST(PayloadWriterTelemetryTests,
      HistoricalStartupCountersDoNotMakeTheHealthySteadyStateNoisy) {
     using ASFW::Audio::Runtime::PayloadWriterTelemetryAnomalyAggregator;
@@ -211,4 +231,15 @@ TEST_F(IsochReceiveContextTest, PollProcessesPackets) {
     // TODO: Advanced test - Write to FakeMemory to simulate packet arrival
     // This requires knowing the addresses allocated.
     // IsochReceiveContext doesn't expose rings directly.
+}
+
+TEST_F(IsochReceiveContextTest, PollPublishesTheBatchToAContentConsumer) {
+    RecordingReceiveConsumer consumer;
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+    context_->SetReceiveConsumer(&consumer);
+
+    EXPECT_EQ(context_->Poll(), 0);
+    EXPECT_EQ(consumer.batchCount, 1u);
+    EXPECT_EQ(consumer.packetCount, 0u);
 }

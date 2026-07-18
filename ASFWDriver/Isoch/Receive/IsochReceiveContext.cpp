@@ -298,12 +298,31 @@ uint32_t IsochReceiveContext::Poll() {
             : std::pair<uint32_t, uint64_t>{0, mach_absolute_time()};
     const uint32_t drainCycleTimer = cycleHostPair.first;
     const uint64_t drainHostTicks = cycleHostPair.second;
+    const IsochReceiveBatch receiveBatch{
+        .drainCycleTimer = drainCycleTimer,
+        .drainHostTicks = drainHostTicks,
+    };
+    if (receiveConsumer_) {
+        receiveConsumer_->BeginReceiveBatch(receiveBatch);
+    }
 
     const uint32_t processed = rxRing_.DrainCompleted(
         *dmaMemory_,
-        [this, drainHostTicks, drainCycleTimer](
+        [this, drainHostTicks, drainCycleTimer, receiveBatch](
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         uint64_t callbackTimestamp = 0;
+        if (receiveConsumer_) {
+            receiveConsumer_->ConsumePacket(
+                receiveBatch,
+                IsochReceivePacket{
+                    .descriptorIndex = pkt.descriptorIndex,
+                    .transferStatus = pkt.xferStatus,
+                    .residualCount = pkt.resCount,
+                    .payload = pkt.payload
+                        ? std::span<const uint8_t>(pkt.payload, pkt.actualLength)
+                        : std::span<const uint8_t>{},
+                });
+        }
         if (pkt.payload) {
             // Anchor a secondary slice to the master's published ring position
             // before writing. The master owns inputProducedEndFrame; this stream
@@ -750,6 +769,11 @@ bool IsochReceiveContext::IsReplayEstablished() const noexcept {
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
     callback_ = callback;
+}
+
+void IsochReceiveContext::SetReceiveConsumer(
+    IIsochReceiveConsumer* consumer) noexcept {
+    receiveConsumer_ = consumer;
 }
 
 void IsochReceiveContext::LogHardwareState() {
