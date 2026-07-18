@@ -1046,25 +1046,14 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel, uint32_t wireFormat
         return kIOReturnSuccess;
     }
 
-    const auto guid = ctx.audioCoordinator->GetSinglePublishedGuid();
-    if (!guid.has_value()) {
-        ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: no single audio nub published");
-        return kIOReturnNotReady;
-    }
-
-    auto endpoint = ctx.deps.audioRuntimeRegistry
-        ? ctx.deps.audioRuntimeRegistry->FindEndpointRuntime(*guid)
-        : nullptr;
-    auto* bindingSource = endpoint.get();
-    if (!bindingSource) {
-        ASFW_LOG(Controller,
-                 "[Isoch] ❌ StartIsochReceive: no endpoint runtime binding source GUID=0x%016llx",
-                 *guid);
-        return kIOReturnNotReady;
-    }
-
-    auto wireFormat = static_cast<ASFW::Encoding::AudioWireFormat>(wireFormatRaw);
-    return ctx.isoch.StartReceive(channel, *ctx.deps.hardware, bindingSource, wireFormat, am824Slots);
+    // Audio receive is owned by AudioDuplexCoordinator, which installs its
+    // content consumer before arming IR. This legacy driver entry point cannot
+    // safely synthesize that owner from a raw wire-format value.
+    (void)wireFormatRaw;
+    (void)am824Slots;
+    ASFW_LOG_ERROR(Controller,
+                   "[Isoch] StartIsochReceive is retired; use AudioDuplexCoordinator");
+    return kIOReturnUnsupported;
 }
 
 kern_return_t ASFWDriver::StopIsochReceive() {

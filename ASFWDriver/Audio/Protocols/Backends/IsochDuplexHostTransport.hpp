@@ -8,11 +8,13 @@
 #include "../../../Common/WireFormat.hpp"
 #include "../../../Hardware/HardwareInterface.hpp"
 #include "../../../Isoch/IsochService.hpp"
+#include "../../Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
 #include "DuplexIRMReservations.hpp"
 
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/OSSharedPtr.h>
+#include <memory>
 
 
 namespace ASFW::IRM {
@@ -107,7 +109,16 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     [[nodiscard]] kern_return_t StopAll() noexcept override;
 
   private:
+    [[nodiscard]] kern_return_t AttachReceiveConsumer(
+        uint32_t streamIndex,
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
+        uint32_t channelOffset, uint32_t streamChannels, bool isSecondary) noexcept;
+    void DetachReceiveConsumers() noexcept;
+
     Driver::IsochService& isoch_;
+    std::unique_ptr<ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer>
+        receiveConsumers_[Driver::IsochService::kMaxStreamsPerDirection]{};
     Backends::DuplexIRMReservationPair reservations_{};
 };
 

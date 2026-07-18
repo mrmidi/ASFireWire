@@ -36,7 +36,18 @@ struct ASFWLogRingQueryResponse: Sendable {
     let scannedCount: UInt32
     /// The requested cursor was from a newer/different ring instance; this
     /// response restarted from retained history.
-    let cursorReset: Bool = false
+    let cursorReset: Bool
+
+    init(records: [ASFWLogRingRecord], nextSequence: UInt64,
+         latestSequence: UInt64, oldestSequence: UInt64,
+         scannedCount: UInt32, cursorReset: Bool = false) {
+        self.records = records
+        self.nextSequence = nextSequence
+        self.latestSequence = latestSequence
+        self.oldestSequence = oldestSequence
+        self.scannedCount = scannedCount
+        self.cursorReset = cursorReset
+    }
 }
 
 struct ASFWLogRingStats: Sendable {

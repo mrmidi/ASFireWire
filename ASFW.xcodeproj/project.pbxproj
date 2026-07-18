@@ -206,6 +206,7 @@
 		8DD14AC382D9779CCD48EFAE /* DriverConnector+AudioStreaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5411A165B2096EC85E8F22D0 /* DriverConnector+AudioStreaming.swift */; };
 		8DE175C585FB7076FB7199B2 /* ARPacketParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 637612A8ADCEEB835E3C8E75 /* ARPacketParser.cpp */; };
 		8E4205A0D0AE5828E6BD320E /* ContextManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AB95BD41252ED1464259F79F /* ContextManager.cpp */; };
+		8EA55BB2495E4541902E6951 /* DirectAudioReceiveConsumer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2324330C8B2EA21FDFCB5FDC /* DirectAudioReceiveConsumer.cpp */; };
 		8F39B5DD0D4713AC7951AA3D /* DeviceDiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5894A84556C60E56D6EC81B /* DeviceDiscoveryView.swift */; };
 		8FD8B1B2BC205DBC24D2A9F0 /* AsyncSubsystemLifecycle.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2619EAC4CD6D9C6B97C6ED09 /* AsyncSubsystemLifecycle.cpp */; };
 		9049BDEF59881DF95E3F7E65 /* ASFWMCPSbp2Tools.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC76D117C15153F78867F3A4 /* ASFWMCPSbp2Tools.swift */; };
@@ -488,6 +489,7 @@
 		20BC47A83718017AC79BEBDE /* ARPacketParser.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARPacketParser.hpp; sourceTree = "<group>"; };
 		21B2F7CD6D1BBFF5031F82F0 /* MCPLogToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPLogToolsTests.swift; sourceTree = "<group>"; };
 		2318CA8F9F8F559EA124AC2B /* MCPTestGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTestGateTests.swift; sourceTree = "<group>"; };
+		2324330C8B2EA21FDFCB5FDC /* DirectAudioReceiveConsumer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DirectAudioReceiveConsumer.cpp; sourceTree = "<group>"; };
 		23A5EA0EE91F57F34AD6EB3B /* SelfIDTopologyNormalizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SelfIDTopologyNormalizer.hpp; sourceTree = "<group>"; };
 		23B5AED98E4C020648E7DAF9 /* ASFWDiagnosticsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWDiagnosticsClient.swift; sourceTree = "<group>"; };
 		24202F4C65E43DBC5A0951CC /* BusResetCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetCoordinator.cpp; sourceTree = "<group>"; };
@@ -794,6 +796,7 @@
 		8485E39E1457C2EA049F4DA7 /* ARContextBase.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARContextBase.hpp; sourceTree = "<group>"; };
 		84EE5D95253736515AA645E1 /* ASFWDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = ASFWDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		84FDA897B3726BA5E3BEF4FE /* IDiagSink.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IDiagSink.hpp; sourceTree = "<group>"; };
+		8548E1DA1006A1671CC85CF1 /* IsochDmaGeometry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochDmaGeometry.hpp; sourceTree = "<group>"; };
 		85B459C6BE789ECDDE3EE684 /* MCPSDKBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPSDKBridgeTests.swift; sourceTree = "<group>"; };
 		85B4DE4392632E634DFD1C4A /* StreamFormatTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StreamFormatTypes.hpp; sourceTree = "<group>"; };
 		85BE4E1075D0A3C564DC68F8 /* PacketBuilder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PacketBuilder.hpp; sourceTree = "<group>"; };
@@ -967,6 +970,7 @@
 		C35BEDE5A891EBC81C126E1D /* SharedDataModels.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SharedDataModels.hpp; sourceTree = "<group>"; };
 		C39AFB21F207B36E8E333057 /* CameraSubunit.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CameraSubunit.cpp; sourceTree = "<group>"; };
 		C3C3C0A53557FD4630647F63 /* DuetCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuetCodecTests.swift; sourceTree = "<group>"; };
+		C3CE3114E5A44F1CB692B127 /* DirectAudioReceiveConsumer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DirectAudioReceiveConsumer.hpp; sourceTree = "<group>"; };
 		C3D2851A216473089C454E06 /* ControllerCoreFacades.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCoreFacades.cpp; sourceTree = "<group>"; };
 		C401273251275E280E712124 /* AudioClientCursor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioClientCursor.hpp; sourceTree = "<group>"; };
 		C516291F7D576A9672B1D447 /* RootSelectionCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RootSelectionCoordinator.cpp; sourceTree = "<group>"; };
@@ -1506,6 +1510,7 @@
 		3FA7EA9210CEC5F5A50D47FE /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				8548E1DA1006A1671CC85CF1 /* IsochDmaGeometry.hpp */,
 				3DC0A6CF3AE91F3EF65A4BAB /* IsochEventGroup.hpp */,
 				72BE64F16BB205405D7F37A1 /* IsochTypes.hpp */,
 			);
@@ -1556,6 +1561,8 @@
 		46581CD68561B218FB42FF95 /* Rx */ = {
 			isa = PBXGroup;
 			children = (
+				2324330C8B2EA21FDFCB5FDC /* DirectAudioReceiveConsumer.cpp */,
+				C3CE3114E5A44F1CB692B127 /* DirectAudioReceiveConsumer.hpp */,
 				57FC72D395A005E060D93FFE /* DirectRxPacketDecoder.hpp */,
 				3F4984641130FA079EF36F9D /* DirectRxTypes.hpp */,
 				4156CF4854D29F046519DDED /* RxAudioPacketProcessor.cpp */,
@@ -3077,6 +3084,7 @@
 				6E23E4DD51970F6FB6E0A987 /* DiceAudioBackend.cpp in Sources */,
 				D60C99657C664DD450F5E0F6 /* DiceProfileRegistry.cpp in Sources */,
 				E0BF1007C341C1775C74F7D8 /* DiceTxStreamEngine.cpp in Sources */,
+				8EA55BB2495E4541902E6951 /* DirectAudioReceiveConsumer.cpp in Sources */,
 				252E8280E41C9F90F8756B66 /* DirectInputWriter.cpp in Sources */,
 				D261DD483669607D182DF164 /* DirectOutputReader.cpp in Sources */,
 				42ED41C966FB1C93702515DA /* DriverContext.cpp in Sources */,

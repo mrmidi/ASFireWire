@@ -17,10 +17,6 @@
 #include "Receive/DVCaptureSink.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 
-namespace ASFW::Audio::Runtime {
-class IDirectAudioBindingSource;
-}
-
 namespace ASFW::IRM {
 class IRMClient;
 }
@@ -44,27 +40,17 @@ class IsochService {
     // IR/IT hardware context backs each stream (contextIndex == streamIndex).
     static constexpr uint32_t kMaxStreamsPerDirection = 4;
 
-    kern_return_t StartReceive(
-        uint8_t channel, HardwareInterface& hardware,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
-    kern_return_t PrepareReceive(
-        uint8_t channel, HardwareInterface& hardware,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr,
-        uint32_t streamChannels = 0);
+    kern_return_t StartReceive(uint8_t channel, HardwareInterface& hardware,
+                               ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
+    kern_return_t PrepareReceive(uint8_t channel, HardwareInterface& hardware,
+                                 ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
     // Prepare a secondary capture stream (streamIndex >= 1) on its own OHCI IR
     // context. channelOffset is the first host input channel this stream writes
     // (e.g. 16 for the second 16-ch slice of a 32-ch device); it is recorded for
     // the audio-engine de-interleave pass and not yet applied to the decoder.
     kern_return_t PrepareReceiveStream(
         uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
-        uint32_t streamChannels,
-        ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0);
+        uint32_t channelOffset, uint32_t streamChannels);
     kern_return_t StartPreparedReceive();
 
     kern_return_t StopReceive();
@@ -106,6 +92,9 @@ class IsochService {
     // secondary hardware contexts.
     void SetReceiveConsumer(uint32_t streamIndex,
                             ASFW::Isoch::IIsochReceiveConsumer* consumer) noexcept;
+    void NotifyReceiveTimingLoss() noexcept;
+    void NotifyReceiveReplayEstablished() noexcept;
+    void NotifyReceiveZtsAnchor(uint64_t generation) noexcept;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
@@ -162,7 +151,6 @@ class IsochService {
 
   private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
-    void RefreshReceiveTimingLossCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
     void StartDeferredTransmitIfReady() noexcept;
 

@@ -48,6 +48,12 @@ class IIsochReceiveConsumer {
     virtual void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept = 0;
     virtual void ConsumePacket(const IsochReceiveBatch& batch,
                                const IsochReceivePacket& packet) noexcept = 0;
+
+    // Off-hot-path observability hooks.  They are optional because content
+    // formats decide which timing and payload facts are meaningful.
+    virtual void DrainReceiveTelemetry(uint32_t) {}
+    virtual void DrainPayloadTelemetry() {}
+    virtual void LogTransmitTimingTrace() {}
 };
 
 // Callback for received packets (Raw transport level)

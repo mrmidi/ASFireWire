@@ -2,6 +2,7 @@
 #include <gmock/gmock.h>
 
 #include "Isoch/IsochReceiveContext.hpp"
+#include "Isoch/Receive/ZtsTelemetry.hpp"
 #include "Isoch/Memory/IsochDMAMemoryManager.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/OHCIConstants.hpp"

@@ -18,6 +18,7 @@ add_executable(IsochReceiveContextTests
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"

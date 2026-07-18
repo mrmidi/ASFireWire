@@ -16,11 +16,8 @@ using namespace ASFW::Isoch;
 
 kern_return_t
 IsochService::StartReceive(uint8_t channel, HardwareInterface& hardware,
-                           ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                           ASFW::Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
                            ASFW::Isoch::IsochReceiveCallback packetCallback) {
-    const kern_return_t prepareKr = PrepareReceive(channel, hardware, bindingSource, wireFormat,
-                                                   am824Slots, std::move(packetCallback));
+    const kern_return_t prepareKr = PrepareReceive(channel, hardware, std::move(packetCallback));
     if (prepareKr != kIOReturnSuccess) {
         return prepareKr;
     }
@@ -29,10 +26,7 @@ IsochService::StartReceive(uint8_t channel, HardwareInterface& hardware,
 
 kern_return_t
 IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
-                             ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                             ASFW::Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
-                             ASFW::Isoch::IsochReceiveCallback packetCallback,
-                             uint32_t streamChannels) {
+                             ASFW::Isoch::IsochReceiveCallback packetCallback) {
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -56,20 +50,15 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
             ASFW_LOG(Isoch, "IsochService: Failed to create IR context");
             return kIOReturnNoMemory;
         }
-        RefreshReceiveTimingLossCallback();
-        isochReceiveContext_->SetZtsAnchorReadyCallback(ztsAnchorReadyCallback_);
-        isochReceiveContext_->SetReplayReadyCallback([this]() { StartDeferredTransmitIfReady(); });
     }
 
     isochReceiveContext_->SetReceiveConsumer(receiveConsumers_[0]);
-    isochReceiveContext_->SetDirectAudioBindingSource(bindingSource);
 
     // Master stream: contextIndex 0, channelOffset 0, isSecondary false.
     // streamChannels 0 == full binding width (single-stream back-compat);
     // multi-stream devices pass their first slice's PCM count.
     const kern_return_t kr =
-        isochReceiveContext_->Configure(channel, 0, wireFormat, am824Slots,
-                                        /*channelOffset=*/0, streamChannels, /*isSecondary=*/false);
+        isochReceiveContext_->Configure(channel, 0);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: IR Configure failed: 0x%08x", kr);
         return kr;
@@ -85,8 +74,7 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
 
 kern_return_t IsochService::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
-    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource, uint32_t channelOffset,
-    uint32_t streamChannels, ASFW::Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) {
+    uint32_t channelOffset, uint32_t streamChannels) {
     // Stream 0 is the master; callers use PrepareReceive() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -118,15 +106,11 @@ kern_return_t IsochService::PrepareReceiveStream(
     }
 
     slot->SetReceiveConsumer(receiveConsumers_[streamIndex]);
-    // Bind to the SAME shared input buffer as the master so this stream can
-    // write its de-interleaved slice; the context itself applies channelOffset.
-    slot->SetDirectAudioBindingSource(bindingSource);
 
     // contextIndex == streamIndex routes this stream to its own OHCI IR context.
     // isSecondary=true makes it write PCM only (no clock/replay/ZTS).
     const kern_return_t kr =
-        slot->Configure(channel, static_cast<uint8_t>(streamIndex), wireFormat, am824Slots,
-                        channelOffset, streamChannels, /*isSecondary=*/true);
+        slot->Configure(channel, static_cast<uint8_t>(streamIndex));
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
                  streamIndex, kr);
@@ -166,7 +150,6 @@ kern_return_t IsochService::StopReceive() {
     if (isochReceiveContext_) {
         const kern_return_t stopStatus = isochReceiveContext_->Stop();
         if (stopStatus == kIOReturnSuccess) {
-            isochReceiveContext_->SetDirectAudioBindingSource(nullptr);
             // Safe only after ACTIVE has cleared: Poll cannot be in flight.
             isochReceiveContext_->SetCallback(nullptr);
         } else {
@@ -177,7 +160,6 @@ kern_return_t IsochService::StopReceive() {
         if (ctx) {
             const kern_return_t stopStatus = ctx->Stop();
             if (stopStatus == kIOReturnSuccess) {
-                ctx->SetDirectAudioBindingSource(nullptr);
                 ctx->SetCallback(nullptr);
             } else if (result == kIOReturnSuccess) {
                 result = stopStatus;
@@ -247,8 +229,7 @@ kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& h
 
     auto* sink = &dvSink_;
     kr = StartReceive(
-        channel, hardware, /*bindingSource=*/nullptr, ASFW::Encoding::AudioWireFormat::kAM824,
-        /*am824Slots=*/0,
+        channel, hardware,
         [sink](std::span<const uint8_t> data, uint32_t status, uint64_t /*timestamp*/) {
             sink->OnPacket(data.data(), data.size(), status);
         });
@@ -527,6 +508,20 @@ void IsochService::SetReceiveConsumer(
     }
 }
 
+void IsochService::NotifyReceiveTimingLoss() noexcept {
+    OnReceiveTimingLossDetected();
+}
+
+void IsochService::NotifyReceiveReplayEstablished() noexcept {
+    StartDeferredTransmitIfReady();
+}
+
+void IsochService::NotifyReceiveZtsAnchor(uint64_t generation) noexcept {
+    if (ztsAnchorReadyCallback_) {
+        ztsAnchorReadyCallback_(generation);
+    }
+}
+
 void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noexcept {
     txPreparationCallback_ = std::move(callback);
     if (isochTransmitContext_) {
@@ -536,9 +531,6 @@ void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noex
 
 void IsochService::SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept {
     ztsAnchorReadyCallback_ = std::move(callback);
-    if (isochReceiveContext_) {
-        isochReceiveContext_->SetZtsAnchorReadyCallback(ztsAnchorReadyCallback_);
-    }
 }
 
 kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
@@ -550,12 +542,6 @@ kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
     return kIOReturnSuccess;
 }
 
-void IsochService::RefreshReceiveTimingLossCallback() noexcept {
-    if (isochReceiveContext_) {
-        isochReceiveContext_->SetTimingLossCallback([this]() { OnReceiveTimingLossDetected(); });
-    }
-}
-
 void IsochService::OnReceiveTimingLossDetected() noexcept {
     if (timingLossCallback_ && activeGuid_ != 0) {
         timingLossCallback_(activeGuid_);
@@ -563,8 +549,7 @@ void IsochService::OnReceiveTimingLossDetected() noexcept {
 }
 
 void IsochService::StartDeferredTransmitIfReady() noexcept {
-    if (!txStartPending_ || !isochTransmitContext_ || !isochReceiveContext_ ||
-        !isochReceiveContext_->IsReplayEstablished()) {
+    if (!txStartPending_ || !isochTransmitContext_ || !isochReceiveContext_) {
         return;
     }
 
