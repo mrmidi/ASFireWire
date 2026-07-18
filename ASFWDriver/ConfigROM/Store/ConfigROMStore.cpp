@@ -88,7 +88,25 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     }
 
     const auto key = MakeKey(romCopy.gen, *nodeIdForKey);
-    romsByGenNode_[key] = romCopy;
+    auto nodeIt = romsByGenNode_.find(key);
+    // A manual or retry scan can finish with only the BIB/root-prefix after a
+    // richer scan for this exact node/generation has already completed. Keep the
+    // richer node entry: ExportConfigROM uses this index, not the GUID cache.
+    // Without this guard the UI visibly regresses from (for example) 31 to 19
+    // quadlets without a bus-generation change.
+    const bool shouldUpdateNode =
+        nodeIt == romsByGenNode_.end() ||
+        (nodeIt->second.rawQuadlets.size() <= romCopy.rawQuadlets.size() &&
+         (HasParsedUnitProfile(romCopy) || !HasParsedUnitProfile(nodeIt->second)));
+    if (shouldUpdateNode) {
+        romsByGenNode_[key] = romCopy;
+    } else {
+        ASFW_LOG_V2(ConfigROM,
+                    "ConfigROMStore::Insert: retaining richer node cache node=%u gen=%u "
+                    "candidateQuadlets=%zu cachedQuadlets=%zu",
+                    romCopy.nodeId, romCopy.gen.value, romCopy.rawQuadlets.size(),
+                    nodeIt->second.rawQuadlets.size());
+    }
 
     auto it = romsByGuid_.find(romCopy.bib.guid);
     // Validated with Linux (core-device.c read_config_rom/fw_device_refresh) and Apple
