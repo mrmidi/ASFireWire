@@ -54,7 +54,11 @@ bool ApogeeDuetProfile::BuildDefaultRxStreamConfig(
 }
 
 std::vector<uint32_t> ApogeeDuetProfile::SupportedSampleRates() const {
-    return {44100u, 48000u};
+    // The generic AV/C capability scan can observe the Duet's idle 44.1 kHz
+    // formation, but this profile has only validated the fixed 48 kHz duplex
+    // recipe.  Do not let CoreAudio construct a 44.1 kHz device that the
+    // bring-up path must then move underneath it.
+    return {48000u};
 }
 
 uint32_t ApogeeDuetProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {

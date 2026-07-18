@@ -414,6 +414,11 @@ class FakeDiceProtocol final : public IDeviceProtocol, public IDuplexDeviceContr
         return lastChannels_;
     }
 
+    [[nodiscard]] AudioClockConfig LastDesiredClock() const noexcept {
+        std::scoped_lock lock(mutex_);
+        return lastDesiredClock_;
+    }
+
     void ProgramRx(StageCallback callback) override {
         log_.Add("device.program_rx");
         ++programRxCalls;
@@ -774,6 +779,37 @@ TEST_F(AudioDuplexCoordinatorTests,
                                  "host.stop",
                              }));
     EXPECT_EQ(protocol_->stopCalls, 0);
+}
+
+TEST_F(AudioDuplexCoordinatorTests,
+       ApogeeDuetStartForces48kBeforeDevicePreparationEvenAfterPersistedRate) {
+    registry_.UpsertFromROM(
+        MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
+
+    // A developer-only/manual rate request can leave an old value in the
+    // session. Until dynamic Duet rate changes exist, a subsequent normal
+    // start must not reuse it.
+    ASSERT_EQ(coordinator_.RequestClockConfig(
+                  kTestGuid, AudioClockConfig{.sampleRateHz = 44100U},
+                  DiceRestartReason::kManualReconfigure),
+              kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 44100U);
+
+    ClearLog();
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 48000U);
+    const auto session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->desiredClock.sampleRateHz, 48000U);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 48000U);
+
+    const auto log = LogSnapshot();
+    const auto prepare = std::find(log.begin(), log.end(), "device.prepare");
+    const auto reservePlayback = std::find(log.begin(), log.end(), "host.reserve_playback");
+    ASSERT_NE(prepare, log.end());
+    ASSERT_NE(reservePlayback, log.end());
+    EXPECT_LT(prepare, reservePlayback);
 }
 
 TEST_F(AudioDuplexCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {

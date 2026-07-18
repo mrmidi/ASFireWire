@@ -495,6 +495,10 @@ void ApogeeDuetProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
         preparedGeneration_ = currentGeneration;
     }
 
+    // A normal start is a control-plane boundary, not a packet hot path.  Do
+    // not trust a prior in-process success: re-read both device formations so
+    // the 48 kHz start contract is checked before IRM/CMP allocation.
+    clockConfigApplied_ = false;
     duplexChannels_ = channels;
     ApplyClockConfig(
         desiredClock,

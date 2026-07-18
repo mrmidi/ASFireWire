@@ -72,7 +72,7 @@ TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
     EXPECT_EQ(profile->TxChannelCount(), 2u);
     EXPECT_EQ(profile->RxChannelCount(), 2u);
-    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{44100u, 48000u}));
+    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{48000u}));
 }
 
 TEST(DiceProfileTests, ResolvesPhase88AsAvcWireProfileNotGenericDice) {

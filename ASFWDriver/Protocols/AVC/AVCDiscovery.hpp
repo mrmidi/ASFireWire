@@ -91,6 +91,8 @@ private:
         std::optional<::ASFW::Audio::Oxford::Apogee::DisplayParams> displayParams;
         std::optional<uint32_t> firmwareId;
         std::optional<uint32_t> hardwareId;
+        IOReturn clockStatus{kIOReturnNotReady};
+        bool clockVerified{false};
         bool timedOut{false};
     };
 
