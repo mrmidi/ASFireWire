@@ -669,8 +669,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             ivars.audioDevice->SetClockDomain(1))) {
         return error;
     }
-    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const double currentSampleRate = ivars.device.currentSampleRate;
+    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
+        static_cast<uint32_t>(currentSampleRate));
     const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
         ivars.device.vendorId, ivars.device.modelId, ivars.device.guid);
 
