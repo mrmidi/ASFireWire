@@ -210,6 +210,12 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         hostBuffer,
                         completionCursor);
 
+                    const auto packetizerSnapshot =
+                        driverIvars->runtime.txStreamEngine
+                            .PacketizerTelemetrySnapshot();
+                    const auto& txCounters =
+                        driverIvars->runtime.txStreamEngine.Counters();
+
                     // Fan out the same host buffer to the secondary stream; its
                     // payload writer reads channels [16, 32) via sourceChannelOffset.
                     if (driverIvars->runtime.txSecondaryActive) {
@@ -246,6 +252,28 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         cw.underExposureCalls.load(std::memory_order_relaxed);
                     rec.underExposureFrames =
                         cw.underExposureFrames.load(std::memory_order_relaxed);
+                    rec.packetizerNextAudioFrame =
+                        packetizerSnapshot.nextAudioFrame;
+                    rec.packetizerLastDataFirstAudioFrame =
+                        packetizerSnapshot.lastDataFirstAudioFrame;
+                    rec.packetizerLastDataEndAudioFrame =
+                        packetizerSnapshot.lastDataEndAudioFrame;
+                    rec.packetizerLastDataPacketIndex =
+                        packetizerSnapshot.lastDataPacketIndex;
+                    rec.packetizerCursorEpoch =
+                        packetizerSnapshot.cursorEpoch;
+                    rec.packetizerFrameCursorAligned =
+                        packetizerSnapshot.frameCursorAligned;
+                    rec.packetizerHasLastDataPacket =
+                        packetizerSnapshot.hasLastDataPacket;
+                    rec.packetsPrepared =
+                        txCounters.packetsPrepared.load(std::memory_order_relaxed);
+                    rec.dataPacketsPrepared =
+                        txCounters.dataPacketsPrepared.load(std::memory_order_relaxed);
+                    rec.noDataPacketsPrepared =
+                        txCounters.noDataPacketsPrepared.load(std::memory_order_relaxed);
+                    rec.slotAcquireFailures =
+                        txCounters.slotAcquireFailures.load(std::memory_order_relaxed);
                     const uint32_t bits = cw.maxAbsSampleBits.load(std::memory_order_relaxed);
                     std::memcpy(&rec.maxAbsSample, &bits, sizeof(bits));
 

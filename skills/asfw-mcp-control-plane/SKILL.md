@@ -9,11 +9,20 @@ Use the bundled client instead of reconstructing MCP HTTP/SSE sessions or pastin
 
 ## Default workflow
 
-1. Confirm the app-hosted MCP server is enabled. Its default endpoint is `http://127.0.0.1:8766/mcp`.
+Run these commands from the ASFireWire repository root.
+
+1. Confirm the app-hosted MCP server is enabled. The current local endpoint is
+   `http://127.0.0.1:8765/mcp` (do not rely on the stale `8766` default in old
+   examples). Set it explicitly for every investigation:
+
+   ```bash
+   export ASFW_MCP_ENDPOINT=http://127.0.0.1:8765/mcp
+   ```
+
 2. Ask the versioned health resource whether deeper reads are trustworthy:
 
    ```bash
-   python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py health
+   python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py health
    ```
 
    `ready` permits targeted read-only diagnostics. `degraded` permits only
@@ -24,15 +33,15 @@ Use the bundled client instead of reconstructing MCP HTTP/SSE sessions or pastin
 3. Run the compact read-only summary when node or protocol detail is needed:
 
    ```bash
-   python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py summary
+   python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py summary
    ```
 
 4. Use `tools` or `resources` only when the summary lacks the needed detail.
 5. Call a read tool with typed JSON arguments only after checking its schema:
 
    ```bash
-   python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py tools
-   python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_read_quadlet '{"nodeId":0,"generation":9,"addressHigh":65535,"addressLow":4026532864}'
+   python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py tools
+   python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_read_quadlet '{"nodeId":0,"generation":9,"addressHigh":65535,"addressLow":4026532864}'
    ```
 
 Pass `--endpoint` or set `ASFW_MCP_ENDPOINT` when the server uses a non-default loopback port.
@@ -60,14 +69,69 @@ Useful incident queries:
 
 ```bash
 # Was a reset requested locally, and which node's accepted Self-ID attributed it?
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["BusReset"],"contains":"Reset ","maxRecords":100}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["BusReset"],"contains":"Reset ","maxRecords":100}'
 
 # Compare the physical topology role with Config-ROM capability claims.
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["ConfigROM"],"contains":"[RoleEvidence]","maxRecords":50}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["ConfigROM"],"contains":"[RoleEvidence]","maxRecords":50}'
 
 # Inspect only CMP/FCP activity while audio is stopped or running.
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["CMP","FCP"],"maxLevel":"debug","maxRecords":200}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["CMP","FCP"],"maxLevel":"debug","maxRecords":200}'
 ```
+
+### Active audio-run rule
+
+During an active audio endurance or fault-reproduction run, do **not** call
+`health`, `summary`, discovery, or any control tool unless the user explicitly
+requests it.  They can perturb the app/control plane while the issue is being
+timed.  A small, targeted driver-ring query is permitted only when requested;
+it is read-only and never changes stream state.  Do not run broad or parallel
+queries while audio is playing.
+
+For a live TX-content incident, use the retained `DirectAudio` anomaly record:
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
+  '{"categories":["DirectAudio"],"contains":"[PayloadWriter] anomaly","maxLevel":"debug","maxRecords":20}'
+```
+
+`[PayloadWriter] anomaly` is already MCP-visible because `ASFW_LOG` writes to
+the driver-owned ring.  The first-deficit and last-callback sections include:
+
+- host range, exposed timeline end, and exposure deficit;
+- `firstPacketizer` / `lastPacketizer`: absolute `next` cursor, alignment bit,
+  cursor epoch, last DATA packet index, and its `[first,end)` audio range;
+- `prepared`: total, DATA, NODATA, and slot-acquisition-failure counters.
+
+The packetizer snapshot is intentionally best-effort and read-only across the
+audio callback/TX-preparation boundary.  Interpret a cursor mismatch or a
+cursor-epoch change as evidence for a timeline transition; do not treat the
+diagnostic snapshot as a synchronization primitive.
+
+### Audio timing-loss first-fault query
+
+For an AV/C duplex click, stall, or timing-loss recovery, query the driver ring
+before theorizing about SYT phase.  The driver emits `[RxReplayReset]` exactly
+when an already-established RX replay epoch is invalidated and before it calls
+the recovery callback.  It is anomaly-only; a healthy stream has no matching
+records.
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_stats '{}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
+  '{"afterSequence":0,"categories":["DirectAudio"],"contains":"[RxReplayReset]","maxLevel":"debug","maxRecords":20}'
+```
+
+The record's `reason` identifies the layer that failed:
+
+- `packet-status`: CIP/payload decoding or input-buffer writing rejected a packet.
+- `invalid-rx-timestamp`: descriptor timestamp could not be correlated with the drain cycle.
+- `receive-cycle-gap`: ASFW observed a gap in its one-received-packet-per-cycle model.
+- `syt-cadence-rejected`: a valid SYT produced an invalid cadence delta.
+- `clock-anchor-rejected`: RX could not publish a host clock anchor.
+
+Always report `droppedRecords` from `asfw_log_stats`.  A zero drop count makes
+the first matching record authoritative for the local reset; it does not by
+itself prove whether the original fault was device-side or host-side.
 
 After the reset-provenance change is installed, interpret the two records as a
 pair: `Reset request: origin=local ...` describes ASFW's outgoing action;
@@ -123,38 +187,36 @@ the device changed its ROM.
 
 ```bash
 # Discover tool/resource names without expanding every response in the prompt.
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py tools
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py resources
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py tools
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py resources
 
 # Read an advertised resource.
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py read asfw://telemetry/snapshot
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py read asfw://telemetry/snapshot
 
 # Inspect a read-only tool's full result when needed.
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_avc_list_units '{}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_avc_list_units '{}'
 
 # Query the bounded driver-owned log ring. `nextSequence` is an exclusive
 # cursor for the next call; an empty page can still advance it when a sparse
 # filter consumed its scan budget.
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["CMP"],"contains":"iPCR","maxLevel":"debug","maxRecords":200}'
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_stats '{}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query '{"categories":["CMP"],"contains":"iPCR","maxLevel":"debug","maxRecords":200}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_stats '{}'
 
 # BridgeCo/BeBoB generic unit PLUG_INFO (fixed, STATUS-only FCP command).
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_bebob_get_unit_plug_info '{"targetGuid":3003878663639543,"nodeId":0,"generation":2}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_bebob_get_unit_plug_info '{"targetGuid":3003878663639543,"nodeId":0,"generation":2}'
 
 # Music Subunit SYNC input and current BridgeCo clock-source topology.
-python3 /Users/mrmidi/.codex/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_bebob_get_clock_topology '{"targetGuid":3003878663639543,"nodeId":0,"generation":2}'
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_bebob_get_clock_topology '{"targetGuid":3003878663639543,"nodeId":0,"generation":2}'
 ```
 
 If the endpoint is unavailable, report the connection failure and ask the user to enable the MCP Control Plane in ASFW. Do not fall back to guessed driver state.
 
-## Console correlation
+## Optional Console correlation
 
-Every tool call and resource read is mirrored into the unified log by the ASFW
-app with an `[MCP]` message prefix (`call`/`done`/`fail` lines carry the tool
-name, compact JSON arguments and result data, duration, and error codes; byte
-payloads render as quadlet-grouped hex). To correlate control-plane requests
-with the driver traffic they trigger, hand the user one predicate covering
-both sides (resource reads log at debug level, so keep `--debug`):
+Do not use Console as the normal ASFW driver-diagnosis path: the MCP driver ring
+is retained, queryable, and gives the chronology needed for transport/audio
+incidents.  Unified-log correlation is optional only when the question lies
+outside the ring, such as app/UI behaviour around an MCP call.
 
 ```bash
 log stream --info --debug --predicate 'eventMessage CONTAINS "[MCP]" OR eventMessage CONTAINS "[UserClient]" OR eventMessage CONTAINS "[FCP]"'

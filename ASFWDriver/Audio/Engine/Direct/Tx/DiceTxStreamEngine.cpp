@@ -126,6 +126,11 @@ const AMDTP::AmdtpStreamConfig& DiceTxStreamEngine::StreamConfig() const noexcep
     return packetizer_.StreamConfig();
 }
 
+AMDTP::AmdtpTxPacketizerTelemetrySnapshot
+DiceTxStreamEngine::PacketizerTelemetrySnapshot() const noexcept {
+    return packetizer_.TelemetrySnapshot();
+}
+
 const DiceTxEngineCounters& DiceTxStreamEngine::Counters() const noexcept {
     return counters_;
 }

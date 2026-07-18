@@ -76,10 +76,12 @@ struct ASFWAudioDevice {
         auto inputPlugNameStr = OSSharedPtr(OSString::withCString(inputPlugName.c_str()), OSNoRetain);
         auto outputPlugNameStr = OSSharedPtr(OSString::withCString(outputPlugName.c_str()), OSNoRetain);
         auto currentRateNum = OSSharedPtr(OSNumber::withNumber(currentSampleRate, 32), OSNoRetain);
+        auto streamModeNum = OSSharedPtr(
+            OSNumber::withNumber(static_cast<uint32_t>(streamMode), 32), OSNoRetain);
 
         if (!deviceNameStr || !channelCountNum || !guidNum || !vendorIdNum || !modelIdNum ||
             !inputChannelCountNum || !outputChannelCountNum || !sampleRatesArray ||
-            !inputPlugNameStr || !outputPlugNameStr || !currentRateNum) {
+            !inputPlugNameStr || !outputPlugNameStr || !currentRateNum || !streamModeNum) {
             return false;
         }
 
@@ -101,6 +103,7 @@ struct ASFWAudioDevice {
         properties->setObject(PropertyKeys::kInputPlugName, inputPlugNameStr.get());
         properties->setObject(PropertyKeys::kOutputPlugName, outputPlugNameStr.get());
         properties->setObject(PropertyKeys::kCurrentSampleRate, currentRateNum.get());
+        properties->setObject(PropertyKeys::kStreamMode, streamModeNum.get());
 
         // Sample rates advertised to CoreAudio. The HAL builds a stream format
         // per entry (ASFWAudioDriverGraph), so this is what the user can select.
