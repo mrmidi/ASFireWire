@@ -32,7 +32,7 @@ local SYT, descriptor, or queue-accounting defect.
 | --- | --- | --- |
 | Duet driver-ring incident (the `AUDIO DUPLEX START` log supplied with this task) | The first stream start succeeds; later timing-loss recovery reaches `IT: Prime failed - committed prefill=13626402 must cover 48 descriptors within 408 slots`, then returns `0xe00002c9`. | It does not say why RX cadence initially stopped. |
 | Apple FireBug 2.3 trace supplied on 2026-07-18 (not committed) | The Duet emits on channels 0 and 1 every isochronous cycle, with 8-byte empty/no-info and 72-byte audio packets in each direction.  The capture reports 0 silent cycles on both active channels. | A FireBug packet trace alone does not label host-to-device versus device-to-host; map that through the CMP connection record. |
-| AppleFWAudio static inspection via the attached IDA MCP instance | Apple stops the direction, prepares/rebuilds stream state, reconnects it, then starts it; it is not a transport-only arm. | Decompiler field names and inferred structs are not a contract.  Do not copy Apple code. |
+| AppleFWAudio static inspection via the attached IDA MCP instance | Apple stops the direction, prepares/rebuilds stream state, reconnects it, then starts it; it is not a transport-only arm.  Its AM824 writer also maintains a 400-cycle (48 kHz) content horizon inside an 800-cycle default ring. | Decompiler field names and inferred structs are not a contract.  Do not copy Apple code. |
 | `references/linux-sound-firewire-stack` | Current Linux AMDTP/BeBoB/OXFW behaviour: separate direction state, SYT/DBC validation, no-data handling, restart/replay tolerances. | Linux implementation and naming are not an ASFW architecture template. |
 | `references/libffado-2.5.0/src` | FFADO keeps full per-direction timestamps, turns an RX SYT into full ticks, and uses a TX transfer delay plus a prebuffered timeline. | FFADO uses a different userspace/raw1394 mechanism. |
 
@@ -315,6 +315,46 @@ The relevant buffers must not be conflated:
 - The hardware descriptor queue can remain full of safe NODATA packets even
   while the data-bearing audio timeline is too short.
 
+### AppleFWAudio comparison: a half-ring content horizon
+
+The attached IDA database's `AM824NuDCLWrite` decompilation is strong
+behavioural evidence for the size and placement of a durable TX horizon.  This
+is a static comparison only: field names are decompiler inferences, and ASFW
+must not copy Apple implementation code.
+
+Apple configures a default circular NuDCL ring of 100 buffer groups with eight
+packets per group, i.e. 800 isochronous packet positions (local-only IDA
+export `/Users/mrmidi/.idapro/AM824NuDCLWrite_methods.txt:1878-1906`).  At
+stream start it derives the total packet count as their product (same export,
+`6143-6147`).
+
+Its normal-sync insert target is the live input/extract position plus measured
+cycle displacement plus a fixed **400 packet-cycle** lead for the 48 kHz
+family; 44.1-kHz-family rates use 450 (same export, `3758-3809`).  The
+Mac-sync initialization path uses 400 or 476 packet cycles (same export,
+`3818-3849`).
+`PerformClientIOOutput()` writes only until its sample-insert packet cursor
+reaches this target (same export, `3248-3253`).
+
+For 48 kHz, 400 bus cycles is 50 ms and corresponds to approximately 2,400
+audio frames (six frames/cycle on average).  The important property is the
+relationship, not a magic number: Apple's content target is roughly **half of
+an 800-cycle / 100-ms circular ring**, leaving the other half for in-flight
+transport and wrap/reuse slack.
+
+| Geometry | Current ASFW Duet run | Apple 48 kHz writer pattern |
+| --- | ---: | ---: |
+| Data-bearing horizon | 576 frames / 12 ms | ~2,400 frames / 50 ms (400 cycles) |
+| Hardware packet ring | 408 cycles / 51 ms | 800 cycles / 100 ms |
+| Layout | Data horizon is much shorter than the transport queue. | Content horizon is approximately half of the circular packet ring. |
+
+This rules out treating 1,536 frames (32 ms) as a final target merely because
+it is the current host output-ring size.  A future ASFW implementation may
+write packet frames for future absolute sample times before those samples
+arrive; the audio callback later fills those already-exposed packet images.
+The packet timeline must therefore be sized independently from the host sample
+ring, while preserving the audio-side ownership boundary.
+
 `AmdtpPayloadWriter::WriteFloat32Interleaved()` only writes a host frame when
 `SnapshotSlotForAudioFrame()` finds an already-exposed packet.  If not, it
 increments `framesWithoutPacket` and permanently skips that frame
@@ -352,17 +392,23 @@ rather than inferred.
 
 Increasing the DMA descriptor count alone is insufficient.  ASFW must:
 
-1. Maintain a data-bearing packet horizon greater than the maximum CoreAudio
-   callback span plus measured producer scheduling jitter, with explicit
-   cushion.  A 9.5 ms preparation stall cannot consume the entire usable
-   horizon.
-2. Preserve a pending absolute host-frame range whenever a packet slot is not
+1. Make TX preparation a data-horizon scheduler, not only a descriptor-refill
+   scheduler.  Every monotonic CoreAudio write-frontier update must publish a
+   neutral target; preparation must continue until `ExposedFrameEnd` reaches
+   that target as well as maintaining descriptor margin.
+2. For Duet at 48 kHz, design and validate toward an initial **400-cycle / ~50
+   ms** content target, not the present 576-frame / 12-ms lead.  Match the
+   Apple-derived half-ring relationship by enlarging the TX descriptor and
+   packet-timeline capacity (likely around 800+ and 1,024 slots respectively),
+   rather than placing a 400-cycle target at the unsafe edge of ASFW's
+   408-slot transport ring.
+3. Preserve a pending absolute host-frame range whenever a packet slot is not
    yet exposed, then flush it once the timeline exposes that range.  It may
    only discard a frame after proving the CoreAudio ring has overwritten it;
    it must account for that as an xrun.
-3. Keep descriptor/NODATA prefill separate from this guarantee.  A full DMA
+4. Keep descriptor/NODATA prefill separate from this guarantee.  A full DMA
    queue is transport liveness, not audio-content liveness.
-4. Continue to report `framesWithoutPacket`, first deficit range, timeline
+5. Continue to report `framesWithoutPacket`, first deficit range, timeline
    exposure end, TX preparation latency, pending-range age, and packetizer
    absolute cursor/alignment state as anomaly-only MCP-ring telemetry.
 
