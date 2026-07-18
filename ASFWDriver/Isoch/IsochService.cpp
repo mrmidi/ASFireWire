@@ -160,28 +160,37 @@ kern_return_t IsochService::StartPreparedReceive() {
 }
 
 kern_return_t IsochService::StopReceive() {
+    kern_return_t result = kIOReturnSuccess;
     if (isochReceiveContext_) {
-        isochReceiveContext_->Stop();
-        isochReceiveContext_->SetDirectAudioBindingSource(nullptr);
-        // Safe after Stop(): Poll no longer runs, so no callback is in flight.
-        isochReceiveContext_->SetCallback(nullptr);
+        const kern_return_t stopStatus = isochReceiveContext_->Stop();
+        if (stopStatus == kIOReturnSuccess) {
+            isochReceiveContext_->SetDirectAudioBindingSource(nullptr);
+            // Safe only after ACTIVE has cleared: Poll cannot be in flight.
+            isochReceiveContext_->SetCallback(nullptr);
+        } else {
+            result = stopStatus;
+        }
     }
     for (auto& ctx : secondaryReceiveContexts_) {
         if (ctx) {
-            ctx->Stop();
-            ctx->SetDirectAudioBindingSource(nullptr);
-            ctx->SetCallback(nullptr);
+            const kern_return_t stopStatus = ctx->Stop();
+            if (stopStatus == kIOReturnSuccess) {
+                ctx->SetDirectAudioBindingSource(nullptr);
+                ctx->SetCallback(nullptr);
+            } else if (result == kIOReturnSuccess) {
+                result = stopStatus;
+            }
         }
     }
 
-    if (dvCaptureActive_) {
+    if (dvCaptureActive_ && result == kIOReturnSuccess) {
         dvSink_.Detach();
         dvRing_.Reset();
         dvCaptureActive_ = false;
         ASFW_LOG(Isoch, "IsochService: DV capture stopped");
     }
 
-    return kIOReturnSuccess;
+    return result;
 }
 
 // ============================================================================
@@ -440,15 +449,19 @@ kern_return_t IsochService::StartPreparedTransmit() {
 
 kern_return_t IsochService::StopTransmit() {
     txStartPending_ = false;
+    kern_return_t result = kIOReturnSuccess;
     if (isochTransmitContext_) {
-        isochTransmitContext_->Stop();
+        result = isochTransmitContext_->Stop();
     }
     for (auto& ctx : secondaryTransmitContexts_) {
         if (ctx) {
-            ctx->Stop();
+            const kern_return_t stopStatus = ctx->Stop();
+            if (stopStatus != kIOReturnSuccess && result == kIOReturnSuccess) {
+                result = stopStatus;
+            }
         }
     }
-    return kIOReturnSuccess;
+    return result;
 }
 
 kern_return_t IsochService::BeginSplitDuplex(uint64_t guid) {
@@ -482,11 +495,19 @@ kern_return_t IsochService::ReserveCaptureResources(uint64_t guid, IRM::IRMClien
     return kIOReturnSuccess;
 }
 
-void IsochService::StopAll() {
-    StopReceive();
-    StopTransmit();
+kern_return_t IsochService::StopAll() {
+    const kern_return_t receiveStatus = StopReceive();
+    const kern_return_t transmitStatus = StopTransmit();
+    if (receiveStatus != kIOReturnSuccess || transmitStatus != kIOReturnSuccess) {
+        const kern_return_t failure = receiveStatus != kIOReturnSuccess ? receiveStatus : transmitStatus;
+        ASFW_LOG_ERROR(Isoch,
+                       "IsochService: StopAll did not quiesce every context kr=0x%08x; retaining reservations and DMA mappings",
+                       failure);
+        return failure;
+    }
     reserved_.Reset();
     activeGuid_ = 0;
+    return kIOReturnSuccess;
 }
 
 void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {

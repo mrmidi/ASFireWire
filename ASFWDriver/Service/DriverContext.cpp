@@ -69,7 +69,7 @@ void ServiceContext::Reset(ResetMode mode) {
         sbp2Bridge->Shutdown();
         sbp2Bridge.reset();
     }
-    isoch.StopAll();
+    (void)isoch.StopAll();
     controller.reset();
     audioCoordinator.reset();
     // Tear down the runtime audio protocols while the services they were built from
@@ -358,7 +358,7 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
         ctx.sbp2Bridge->Shutdown();
         ctx.sbp2Bridge.reset();
     }
-    ctx.isoch.StopAll();
+    (void)ctx.isoch.StopAll();
     if (ctx.deps.interrupts)
         ctx.deps.interrupts->Teardown();
     if (ctx.deps.selfId && ctx.deps.hardware)

@@ -32,7 +32,7 @@ std::unique_ptr<IsochReceiveContext> IsochReceiveContext::Create(::ASFW::Driver:
 // ============================================================================
 
 IsochReceiveContext::~IsochReceiveContext() {
-    Stop();
+    (void)Stop();
 }
 
 // ============================================================================
@@ -139,24 +139,52 @@ kern_return_t IsochReceiveContext::Start() {
     return kIOReturnSuccess;
 }
 
-void IsochReceiveContext::Stop() {
+kern_return_t IsochReceiveContext::Stop() {
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
     }
 
     if (GetState() == IRPolicy::State::Stopped) {
         rxLock_.clear(std::memory_order_release);
-        return;
+        return kIOReturnSuccess;
     }
-
-    hardware_->Write(registers_.ContextControlClear, Driver::ContextControl::kRun);
 
     const uint32_t contextMask = 1u << contextIndex_;
     hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskClear, contextMask);
+    // Flush RUN-clear and wait for ACTIVE to fall before dropping the direct
+    // audio binding.  See Linux firewire/ohci.c:1361-1378 for the same
+    // teardown ordering; freeing this mapping while ACTIVE is set can fault
+    // the host when OHCI completes a late DMA write.
+    hardware_->WriteAndFlush(registers_.ContextControlClear, Driver::ContextControl::kRun);
     ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
+
+    if ((hardware_->Read(registers_.ContextControlSet) & Driver::ContextControl::kActive) != 0) {
+        IODelay(5);
+        constexpr uint32_t kMaxIterations = 250;
+        constexpr uint32_t kBaseDelayMicros = 6;
+        for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
+            if ((hardware_->Read(registers_.ContextControlSet) & Driver::ContextControl::kActive) == 0) {
+                break;
+            }
+            IODelay(kBaseDelayMicros + iteration);
+        }
+    }
+
+    const uint32_t control = hardware_->Read(registers_.ContextControlSet);
+    if ((control & Driver::ContextControl::kActive) != 0) {
+        const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
+            ? kIOReturnDMAError
+            : kIOReturnTimeout;
+        ASFW_LOG_ERROR(Isoch,
+                       "IR: stop did not quiesce context=%u control=0x%08x kr=0x%08x; retaining direct binding",
+                       contextIndex_, control, failure);
+        rxLock_.clear(std::memory_order_release);
+        return failure;
+    }
 
     Transition(IRPolicy::State::Stopped, 0, "Stop");
 
     rxLock_.clear(std::memory_order_release);
+    return kIOReturnSuccess;
 }
 
 uint32_t IsochReceiveContext::Poll() {

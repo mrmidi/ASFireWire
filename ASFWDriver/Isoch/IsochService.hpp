@@ -98,7 +98,9 @@ class IsochService {
     kern_return_t ReserveCaptureResources(uint64_t guid, IRM::IRMClient& irmClient, uint8_t channel,
                                           uint32_t bandwidthUnits);
 
-    void StopAll();
+    // Do not tear down a DirectAudio binding after a failed stop: an ACTIVE
+    // OHCI context may still DMA into that mapping.
+    [[nodiscard]] kern_return_t StopAll();
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;

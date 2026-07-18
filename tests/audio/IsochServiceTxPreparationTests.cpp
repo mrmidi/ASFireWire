@@ -128,7 +128,24 @@ TEST(IsochServiceTxPreparation, SecondaryReceiveStreamCreatesContextAndRecordsOf
     EXPECT_EQ(service.CaptureStreamChannelOffset(1), 16u);
 
     // StopAll tears the whole service down without touching the (absent) master.
-    service.StopAll();
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
+}
+
+TEST(IsochServiceTxPreparation, StopAllPropagatesActiveReceiveTimeoutAndRetainsContext) {
+    IsochService service;
+    HardwareInterface hardware;
+
+    ASSERT_EQ(service.PrepareReceive(/*channel=*/2, hardware, /*bindingSource=*/nullptr),
+              kIOReturnSuccess);
+    ASSERT_EQ(service.StartPreparedReceive(), kIOReturnSuccess);
+
+    const Register32 controlSet =
+        static_cast<Register32>(DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware.SetTestRegister(controlSet, ASFW::Driver::ContextControl::kActive);
+
+    EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
+    ASSERT_NE(service.ReceiveContext(0), nullptr);
+    EXPECT_EQ(service.ReceiveContext(0)->GetState(), ASFW::Isoch::IRPolicy::State::Running);
 }
 
 TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext) {
@@ -154,7 +171,7 @@ TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext
     EXPECT_NE(service.TransmitContext(1), nullptr); // secondary created
     EXPECT_NE(service.TransmitContext(1), service.TransmitContext(0));
 
-    service.StopAll();
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
 
     if (payloadDescriptor)
         payloadDescriptor->release();

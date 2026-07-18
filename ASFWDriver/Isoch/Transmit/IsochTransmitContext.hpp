@@ -87,7 +87,9 @@ public:
         uint32_t ztsPeriodFrames) noexcept;
 
     kern_return_t Start() noexcept;
-    void Stop() noexcept;
+    // Clearing RUN only prevents new descriptor fetches.  The caller must not
+    // release any DMA-visible memory until this returns success (ACTIVE clear).
+    [[nodiscard]] kern_return_t Stop() noexcept;
     
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
