@@ -10,7 +10,8 @@
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../../Isoch/Core/IsochTxQueue.hpp"
+#include "../../Logging/Logging.hpp"
 #include "../../Common/TimingUtils.hpp"
 
 #include <AudioDriverKit/AudioDriverKit.h>
@@ -58,23 +59,23 @@ struct AudioDriverDeviceState {
 
 class DextTxExecutionTimeline final {
 public:
-    const ASFW::IsochTransport::TxStreamControl* controlBlock{nullptr};
+    const ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
 
     [[nodiscard]] bool AnchorForPacket(uint64_t packetIndex,
                                        int64_t& outTicks) const noexcept {
-        if (!controlBlock) {
+        if (!queueControl) {
             return false;
         }
 
         const uint64_t count =
-            controlBlock->completionStampCount.load(std::memory_order_acquire);
+            queueControl->completionStampCount.load(std::memory_order_acquire);
         if (count == 0) {
             return false;
         }
 
         uint64_t completedPacketIndex = 0;
         uint32_t timestamp = 0;
-        if (!controlBlock->ReadCompletionStamp(
+        if (!queueControl->ReadCompletionStamp(
                 count - 1, completedPacketIndex, timestamp) ||
             packetIndex < completedPacketIndex) {
             return false;
@@ -101,8 +102,9 @@ public:
 class DextTxSlotProvider final : public ASFW::Protocols::Audio::AMDTP::IAmdtpTxSlotProvider {
 public:
     uint8_t* payloadBase{nullptr};
-    ASFW::IsochTransport::TxPacketMeta* metadataRing{nullptr};
-    ASFW::IsochTransport::TxStreamControl* controlBlock{nullptr};
+    ASFW::Isoch::IsochTxPacketMeta* metadataRing{nullptr};
+    ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
+    ASFW::Audio::Runtime::AudioTransportControlBlock* audioControl{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
 
@@ -123,7 +125,7 @@ public:
     [[nodiscard]] bool PublishSlot(
         const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet)
         noexcept override {
-        if (!metadataRing || !controlBlock || numSlots == 0) {
+        if (!metadataRing || !queueControl || numSlots == 0) {
             return false;
         }
         const uint32_t slotIdx = packet.packetIndex % numSlots;
@@ -154,12 +156,37 @@ public:
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
-        // Compute expectedGen and release-store commitGen
-        const uint64_t gen = ASFW::IsochTransport::ExpectedCommitGen(packet.packetIndex, numSlots);
-        meta.commitGen.store(gen, std::memory_order_release);
+        // Content inspection belongs to Audio and runs immediately before the
+        // release commit. Transport receives only opaque bytes and metadata.
+        if (audioControl) {
+            const uint32_t slotIndex = packet.packetIndex % numSlots;
+            const auto observation = audioControl->txWirePayloadTelemetry.Observe(
+                packet.packetIndex,
+                payloadBase + static_cast<uint64_t>(slotIndex) * slotStrideBytes,
+                packet.byteCount);
+            if (observation.firstInfo || observation.dropout) {
+                ASFW_LOG_RING_ONLY_RL(
+                    DirectAudio,
+                    "tx-wire-payload",
+                    observation.firstInfo ? 0u : 1000u,
+                    ::ASFW::Logging::LogLevel::Warning,
+                    "[TxWire] packet=%u first=%d dropout=%d infoQuads=%u maxAbs24=%u lastQuad=0x%08x",
+                    packet.packetIndex,
+                    observation.firstInfo ? 1 : 0,
+                    observation.dropout ? 1 : 0,
+                    observation.infoQuads,
+                    observation.maxAbs24,
+                    observation.lastInfoQuad);
+            }
+        }
 
-        // Expose cursor progress to core
-        controlBlock->exposeCursor.store(packet.packetIndex + 1, std::memory_order_release);
+        // Compute expected generation and release-store it last.
+        const uint64_t generation =
+            ASFW::Isoch::ExpectedTxCommitGeneration(packet.packetIndex, numSlots);
+        meta.commitGeneration.store(generation, std::memory_order_release);
+
+        queueControl->committedEnd.store(packet.packetIndex + 1,
+                                         std::memory_order_release);
         return true;
     }
 

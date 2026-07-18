@@ -8,12 +8,12 @@
 #include "TxPayloadDmaMap.hpp"
 
 #include "../Core/IsochEventGroup.hpp"
+#include "../Core/IsochTxQueue.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/BarrierUtils.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
 
 #include <atomic>
 #include <array>
@@ -45,9 +45,8 @@ public:
         std::atomic<uint64_t> fatalDescriptorBounds{0};
         std::atomic<uint64_t> txUnderruns{0};
 
-        // High-water mark of a single refill's coalesced deltaConsumed. The
-        // committed lead (kTxPreparationSlackPackets) must cover this or the
-        // refill ISR holes (IT FATAL). Use it to size the slack empirically.
+        // High-water mark of a single coalesced completion. Content consumers
+        // own the policy that decides whether this is an unsafe cadence.
         std::atomic<uint32_t> maxDeltaConsumed{0};
 
         // DMA ring gap monitoring
@@ -55,18 +54,6 @@ public:
         std::atomic<uint32_t> minDmaGapPackets{Layout::kNumPackets};
         std::atomic<uint64_t> criticalGapEvents{0};
 
-        // Wire-truth payload gauges, sampled at refill time — the last point
-        // software sees the bytes the DMA engine will ship, after the
-        // producer's commit. Independent of writer-side claims. An "info"
-        // quadlet is any AM824 payload quadlet other than 0x00000000 and the
-        // 0x80000000 idle MIDI/no-info slot word.
-        std::atomic<uint64_t> wireDataPackets{0};
-        std::atomic<uint64_t> wireZeroPcmPackets{0};
-        std::atomic<uint64_t> wireInfoQuads{0};
-        std::atomic<uint64_t> wirePcmDropouts{0};
-        std::atomic<uint32_t> wireMaxAbs24{0};
-        std::atomic<uint32_t> wireLastInfoQuad{0};
-        std::atomic<uint64_t> wireFirstInfoAbsIdx{0};
     };
 
     struct PrimeStats {
@@ -77,7 +64,7 @@ public:
         None = 0,
         InvalidSharedContract,
         DeadContext,
-        ProducerFatalStatus,
+        ProducerFaultStatus,
         CommandPointerDecode,
         UncommittedSlot,
         InvalidPacketSize,
@@ -107,9 +94,7 @@ public:
         uint32_t firstRefillPacket{0};
         uint32_t refillPacketCount{0};
         uint64_t packetsFilled{0};
-        uint64_t preparationRequestGeneration{0};
-        bool producerFailureAvailable{false};
-        ASFW::IsochTransport::TxProducerFailureRecord producerFailure{};
+        uint64_t refillRequestGeneration{0};
     };
 
     IsochTxDmaRing() noexcept = default;
@@ -132,13 +117,13 @@ public:
     [[nodiscard]] PrimeStats Prime(const TxPayloadDmaMap& payloadDmaMap,
                                    uint32_t numSlots,
                                    uint32_t slotStrideBytes,
-                                   const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+                                   const IsochTxPacketMeta* metadataRing,
                                    uint64_t preFillCount) noexcept;
 
     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
                                        uint8_t contextIndex,
-                                       ASFW::IsochTransport::TxPacketMeta* metadataRing,
-                                       ASFW::IsochTransport::TxStreamControl* controlBlock,
+                                       IsochTxPacketMeta* metadataRing,
+                                       IsochTxQueueControl* controlBlock,
                                        uint32_t numSlots,
                                        uint8_t* payloadBase,
                                        const TxPayloadDmaMap& payloadDmaMap) noexcept;
@@ -168,9 +153,6 @@ private:
                                                  uint8_t contextIndex,
                                                  uint32_t& outPacketIndex,
                                                  uint32_t& outCmdPtr) noexcept;
-    void GaugeWirePayload(uint64_t fillAbsIdx,
-                          const uint8_t* packetBytes,
-                          uint32_t payloadLength) noexcept;
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};
@@ -185,10 +167,6 @@ private:
     uint32_t nextTransmitCycle_{0};
     bool cycleTrackingValid_{false};
     uint32_t lastHwTimestamp_{0};
-
-    // Wire-truth gauge state (refill is single-threaded)
-    bool wireLastPacketHadInfo_{false};
-    bool wireFirstInfoLogged_{false};
 
     Counters counters_{};
 };

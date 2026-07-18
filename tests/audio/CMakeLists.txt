@@ -106,6 +106,10 @@ add_audio_test(IsochTxDmaRingTests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
+add_audio_test(TransmitBoundaryTests
+    TransmitBoundaryTests.cpp
+)
+
 add_audio_test(IsochServiceTxPreparationTests
     IsochServiceTxPreparationTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/IsochService.cpp"

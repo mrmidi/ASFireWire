@@ -3,7 +3,7 @@
 //
 // TxRefillCoverageTests.cpp
 //
-// Decides whether the IT underrun ("slot N not committed, commitGen one lap
+// Decides whether the IT underrun ("slot N not committed, commitGeneration one lap
 // behind") is a refill RANGE/GENERATION-coverage problem or merely a scheduling
 // margin race. It models the exact producer/consumer generation contract from
 // IsochTxDmaRing::Refill + PrepareTransmitSlots. Steady-state coverage is
@@ -14,7 +14,7 @@
 // full-ring prefill:
 //   * Consumer refill checks slots [completion + ringAhead, +deltaConsumed),
 //     where ringAhead == kTxHardwareRingPackets steady-state, and requires
-//     commitGen[slot] == ExpectedCommitGen(absPacket) (IsochTxDmaRing.cpp:503).
+//     commitGeneration[slot] == ExpectedTxCommitGeneration(absPacket) (IsochTxDmaRing.cpp:503).
 //   * Producer tops the committed cursor to completion + lead each wake
 //     (PrepareTransmitSlots, linear in absolute index → no modulo split).
 //   * Coverage therefore holds iff a single coalesced deltaConsumed
@@ -22,7 +22,7 @@
 //     the committed region regardless of latency.
 
 #include "Shared/Isoch/AudioTimingGeometry.hpp"
-#include "Shared/Isoch/IsochAudioTransport.hpp"
+#include "Isoch/Core/IsochTxQueue.hpp"
 
 #include <gtest/gtest.h>
 
@@ -32,7 +32,7 @@
 namespace {
 
 using ASFW::IsochTransport::AudioTimingGeometry;
-using ASFW::IsochTransport::ExpectedCommitGen;
+using ASFW::Isoch::ExpectedTxCommitGeneration;
 
 constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 408
 constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 48
@@ -56,7 +56,7 @@ public:
         : numSlots_(numSlots),
           lead_(lead),
           ringAhead_(ringAhead),
-          commitGen_(numSlots, 0) {}
+          commitGeneration_(numSlots, 0) {}
 
     // Producer tops the committed cursor to completion + lead (one wake).
     void RunProducer() {
@@ -72,7 +72,7 @@ public:
 
     void CommitThrough(uint64_t target) {
         for (uint64_t abs = expose_; abs < target; ++abs) {
-            commitGen_[abs % numSlots_] = ExpectedCommitGen(abs, numSlots_);
+            commitGeneration_[abs % numSlots_] = ExpectedTxCommitGeneration(abs, numSlots_);
         }
         if (target > expose_) {
             expose_ = target;
@@ -87,8 +87,8 @@ public:
         uint64_t firstMiss = kNoMiss;
         for (uint32_t i = 0; i < deltaConsumed; ++i) {
             const uint64_t fillAbs = fillBase + i;
-            if (commitGen_[fillAbs % numSlots_] !=
-                ExpectedCommitGen(fillAbs, numSlots_)) {
+            if (commitGeneration_[fillAbs % numSlots_] !=
+                ExpectedTxCommitGeneration(fillAbs, numSlots_)) {
                 firstMiss = fillAbs;
                 break;
             }
@@ -107,7 +107,7 @@ private:
     uint32_t numSlots_;
     uint32_t lead_;
     uint32_t ringAhead_;
-    std::vector<uint64_t> commitGen_;
+    std::vector<uint64_t> commitGeneration_;
     uint64_t completion_{0};
     uint64_t expose_{0};
 };
@@ -200,7 +200,7 @@ TEST(TxRefillCoverage, TwoGroupCoalesceCoveredAtOldLead) {
 // -----------------------------------------------------------------------------
 // THE BUG (historical, at the pre-fix lead=60): a coalesced IT completion of
 // >=3 groups overruns the committed region even with zero producer latency.
-// This is the field FATAL ("slot N not committed, commitGen one lap behind").
+// This is the field FATAL ("slot N not committed, commitGeneration one lap behind").
 // -----------------------------------------------------------------------------
 
 TEST(TxRefillCoverage, ThreeGroupCoalesceHolesAtOldLead) {
