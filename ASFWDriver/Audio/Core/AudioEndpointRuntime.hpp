@@ -5,7 +5,7 @@
 
 #include "../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../Model/ASFWAudioDevice.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -430,8 +430,8 @@ private:
         const uint32_t inputChannels = ClampAudioChannels(
             config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
-        const uint32_t outputFrames = IsochTransport::kAudioRingBufferFrames;
-        const uint32_t inputFrames = IsochTransport::kAudioRingBufferFrames;
+        const uint32_t outputFrames = Isoch::Config::kAudioRingBufferFrames;
+        const uint32_t inputFrames = Isoch::Config::kAudioRingBufferFrames;
 
         if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0) {
             ASFW_LOG(DirectAudio,

@@ -12,7 +12,7 @@
 #include "../Config/TimingCursorPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../../Isoch/Core/IsochTxQueue.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
@@ -79,9 +79,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.txControlBuffer = nullptr;
             ivars.runtime.txSlotProvider.payloadBase = nullptr;
             ivars.runtime.txSlotProvider.metadataRing = nullptr;
-            ivars.runtime.txSlotProvider.controlBlock = nullptr;
+            ivars.runtime.txSlotProvider.queueControl = nullptr;
+            ivars.runtime.txSlotProvider.audioControl = nullptr;
             ivars.runtime.txSlotProvider.numSlots = 0;
-            ivars.runtime.txExecutionTimeline.controlBlock = nullptr;
+            ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
             // Secondary playback stream resources.
             ivars.txPayloadMapSecondary = nullptr;
@@ -92,7 +93,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.txControlBufferSecondary = nullptr;
             ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
             ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
-            ivars.runtime.txSlotProviderSecondary.controlBlock = nullptr;
+            ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
+            ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
             ivars.runtime.txSlotProviderSecondary.numSlots = 0;
             ivars.runtime.txSecondaryActive = false;
 
@@ -217,22 +219,23 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             }
 
             uint8_t* payloadBase = reinterpret_cast<uint8_t*>(ivars.txPayloadMap->GetAddress());
-            auto* metadataRing = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars.txMetadataMap->GetAddress());
-            auto* controlBlock = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars.txControlMap->GetAddress());
+            auto* metadataRing = reinterpret_cast<ASFW::Isoch::IsochTxPacketMeta*>(ivars.txMetadataMap->GetAddress());
+            auto* queueControl = reinterpret_cast<ASFW::Isoch::IsochTxQueueControl*>(ivars.txControlMap->GetAddress());
 
             // Clear stale runtime cursors before prefill: the shared slab can be
             // reused across StartIO/StopIO probes (CoreAudio re-probes on a
-            // sample-rate change), and a carried-over exposeCursor fails the IT
+            // sample-rate change), and a carried-over committed cursor fails the IT
             // prime ("committed prefill > slots").
-            controlBlock->ResetForStart();
+            queueControl->ResetProducerForStart();
 
             ivars.runtime.txSlotProvider.payloadBase = payloadBase;
             ivars.runtime.txSlotProvider.metadataRing = metadataRing;
-            ivars.runtime.txSlotProvider.controlBlock = controlBlock;
+            ivars.runtime.txSlotProvider.queueControl = queueControl;
+            ivars.runtime.txSlotProvider.audioControl = control;
             ivars.runtime.txSlotProvider.numSlots = numSlots;
             ivars.runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
 
-            ivars.runtime.txExecutionTimeline.controlBlock = controlBlock;
+            ivars.runtime.txExecutionTimeline.queueControl = queueControl;
 
             if (!ivars.runtime.txStreamEngine.Configure(*profile, txConfig)) {
                 ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
@@ -308,14 +311,15 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             if (allocKr2 != kIOReturnSuccess) { kr = failStart(allocKr2, "MapTxControl2"); return; }
 
             uint8_t* payloadBase2 = reinterpret_cast<uint8_t*>(ivars.txPayloadMapSecondary->GetAddress());
-            auto* metadataRing2 = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars.txMetadataMapSecondary->GetAddress());
-            auto* controlBlock2 = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars.txControlMapSecondary->GetAddress());
+            auto* metadataRing2 = reinterpret_cast<ASFW::Isoch::IsochTxPacketMeta*>(ivars.txMetadataMapSecondary->GetAddress());
+            auto* queueControl2 = reinterpret_cast<ASFW::Isoch::IsochTxQueueControl*>(ivars.txControlMapSecondary->GetAddress());
 
-            controlBlock2->ResetForStart();
+            queueControl2->ResetProducerForStart();
 
             ivars.runtime.txSlotProviderSecondary.payloadBase = payloadBase2;
             ivars.runtime.txSlotProviderSecondary.metadataRing = metadataRing2;
-            ivars.runtime.txSlotProviderSecondary.controlBlock = controlBlock2;
+            ivars.runtime.txSlotProviderSecondary.queueControl = queueControl2;
+            ivars.runtime.txSlotProviderSecondary.audioControl = control;
             ivars.runtime.txSlotProviderSecondary.numSlots = numSlots2;
             ivars.runtime.txSlotProviderSecondary.slotStrideBytes = maxPacketBytes2;
 
@@ -337,10 +341,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // --- Prefill TX ring ---
         ASFW::Audio::DriverKit::PrefillTxRingBeforeStart(ivars);
 
-        auto* prefillControl = ivars.runtime.txSlotProvider.controlBlock;
+        auto* prefillControl = ivars.runtime.txSlotProvider.queueControl;
         const uint64_t prefillExpose =
             prefillControl
-                ? prefillControl->exposeCursor.load(std::memory_order_acquire)
+                ? prefillControl->committedEnd.load(std::memory_order_acquire)
                 : 0;
         const uint32_t expectedPrefill =
             ivars.runtime.txSlotProvider.numSlots;
@@ -374,18 +378,20 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // StartAudioStreaming initializes the shared transport control block.
         // Validate it immediately afterward; failStart stops the partially
         // started stream before returning any mismatch to AudioDriverKit.
-        auto* txControl = ivars.runtime.txSlotProvider.controlBlock;
+        auto* txControl = ivars.runtime.txSlotProvider.queueControl;
         if (!txControl ||
-            txControl->abiVersion != ASFW::IsochTransport::kTransportAbiVersion ||
+            txControl->abiVersion != ASFW::Isoch::kTxQueueAbiVersion ||
             txControl->numSlots != ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets ||
-            txControl->interruptInterval != ASFW::IsochTransport::AudioTimingGeometry::kTxPacketsPerGroup ||
-            txControl->ztsPeriodFrames != ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames) {
+            txControl->slotStrideBytes != ivars.runtime.txSlotProvider.slotStrideBytes ||
+            txControl->maxPacketBytes != ivars.runtime.txSlotProvider.slotStrideBytes ||
+            txControl->interruptInterval != ASFW::IsochTransport::AudioTimingGeometry::kTxPacketsPerGroup) {
             ASFW_LOG(Audio,
-                     "ASFWAudioDevice: TX geometry/ABI mismatch abi=%u slots=%u group=%u zts=%u",
+                     "ASFWAudioDevice: TX queue ABI/geometry mismatch abi=%u slots=%u stride=%u max=%u group=%u",
                      txControl ? txControl->abiVersion : 0,
                      txControl ? txControl->numSlots : 0,
-                     txControl ? txControl->interruptInterval : 0,
-                     txControl ? txControl->ztsPeriodFrames : 0);
+                     txControl ? txControl->slotStrideBytes : 0,
+                     txControl ? txControl->maxPacketBytes : 0,
+                     txControl ? txControl->interruptInterval : 0);
             kr = failStart(
                 kIOReturnUnsupported, "ValidateTxTransportGeometry");
             return;
@@ -585,9 +591,10 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.txControlBuffer = nullptr;
         ivars.runtime.txSlotProvider.payloadBase = nullptr;
         ivars.runtime.txSlotProvider.metadataRing = nullptr;
-        ivars.runtime.txSlotProvider.controlBlock = nullptr;
+        ivars.runtime.txSlotProvider.queueControl = nullptr;
+        ivars.runtime.txSlotProvider.audioControl = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
-        ivars.runtime.txExecutionTimeline.controlBlock = nullptr;
+        ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
         // Secondary playback stream teardown. Drop txSecondaryActive first so the
         // RT pump/IO paths stop touching the secondary engine before its mapped
@@ -601,7 +608,8 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.txControlBufferSecondary = nullptr;
         ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
         ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
-        ivars.runtime.txSlotProviderSecondary.controlBlock = nullptr;
+        ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
+        ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
         ivars.runtime.txSlotProviderSecondary.numSlots = 0;
 
         if (ivars.device.audioNub) {

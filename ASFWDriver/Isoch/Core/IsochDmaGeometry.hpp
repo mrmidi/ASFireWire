@@ -11,6 +11,7 @@ namespace ASFW::Isoch {
 struct IsochDmaGeometry final {
     static constexpr uint32_t kPacketsPerInterrupt = 6;
     static constexpr uint32_t kReceiveDescriptorPackets = 504;
+    static constexpr uint32_t kTransmitDescriptorPackets = 48;
 };
 
 static_assert(IsochDmaGeometry::kPacketsPerInterrupt != 0);
@@ -18,5 +19,9 @@ static_assert(IsochDmaGeometry::kReceiveDescriptorPackets %
                   IsochDmaGeometry::kPacketsPerInterrupt ==
               0,
               "IR descriptor ring must contain complete interrupt groups");
+static_assert(IsochDmaGeometry::kTransmitDescriptorPackets %
+                  IsochDmaGeometry::kPacketsPerInterrupt ==
+              0,
+              "IT descriptor ring must contain complete interrupt groups");
 
 } // namespace ASFW::Isoch

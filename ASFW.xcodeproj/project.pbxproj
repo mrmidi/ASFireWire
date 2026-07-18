@@ -893,10 +893,10 @@
 		A6D30FC4AF96CBDC4F5B068E /* ASFWMCPMockTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPMockTransport.swift; sourceTree = "<group>"; };
 		A6F6F643214F7280A18611DC /* DiceProfileRegistry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceProfileRegistry.hpp; sourceTree = "<group>"; };
 		A7EFDA6CC5CB7D2153F013D3 /* FWTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FWTypes.hpp; sourceTree = "<group>"; };
+		A805D0AD31C67B2D10A9507A /* TxWirePayloadTelemetry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxWirePayloadTelemetry.hpp; sourceTree = "<group>"; };
 		A855F971A611AE8F859F3579 /* DICERestartSession.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DICERestartSession.hpp; sourceTree = "<group>"; };
 		A94CBEC3E242E8D452CA2EEF /* ZtsTelemetry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ZtsTelemetry.hpp; sourceTree = "<group>"; };
 		A9EFB67D49B05DCD5C9C661D /* RomSummarizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomSummarizer.swift; sourceTree = "<group>"; };
-		AA48E4986D21FB2A52856349 /* IsochAudioTransport.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochAudioTransport.hpp; sourceTree = "<group>"; };
 		AA497F39DA363DBDFD6C9CCE /* WriteCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WriteCommand.cpp; sourceTree = "<group>"; };
 		AA6636F29737F75466534B0E /* GapCountOptimizer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = GapCountOptimizer.cpp; sourceTree = "<group>"; };
 		AA6E283C66645521931AA351 /* StatusPublisher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StatusPublisher.hpp; sourceTree = "<group>"; };
@@ -1118,6 +1118,7 @@
 		F49607C2B6C75A5EACC56433 /* IAmdtpTxSlotProvider.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAmdtpTxSlotProvider.hpp; sourceTree = "<group>"; };
 		F4A7F52D42A80A09468F41F1 /* PayloadWriterTelemetry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PayloadWriterTelemetry.hpp; sourceTree = "<group>"; };
 		F50437CCB59475ED6F54FC52 /* MCPBusResetToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPBusResetToolsTests.swift; sourceTree = "<group>"; };
+		F5252BDAC15F6AA21DCD3E28 /* IsochTxQueue.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochTxQueue.hpp; sourceTree = "<group>"; };
 		F714F267E66F185F1C86F905 /* SBP2CommandORB.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2CommandORB.hpp; sourceTree = "<group>"; };
 		F71A638FD501761865722676 /* AudioCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioCoordinator.cpp; sourceTree = "<group>"; };
 		F7AAEEA6F540F467BB7E4B7D /* DeviceDiscoveryWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceDiscoveryWireFormats.hpp; sourceTree = "<group>"; };
@@ -1512,6 +1513,7 @@
 			children = (
 				8548E1DA1006A1671CC85CF1 /* IsochDmaGeometry.hpp */,
 				3DC0A6CF3AE91F3EF65A4BAB /* IsochEventGroup.hpp */,
+				F5252BDAC15F6AA21DCD3E28 /* IsochTxQueue.hpp */,
 				72BE64F16BB205405D7F37A1 /* IsochTypes.hpp */,
 			);
 			path = Core;
@@ -1913,7 +1915,6 @@
 				845D81D6F290A50E0EE157C1 /* AudioGeometryPolicy.hpp */,
 				D4073B97E1CA0CE1A021785D /* AudioHalBufferProfiles.hpp */,
 				F46044243554D4B325071905 /* AudioTimingGeometry.hpp */,
-				AA48E4986D21FB2A52856349 /* IsochAudioTransport.hpp */,
 			);
 			path = Isoch;
 			sourceTree = "<group>";
@@ -2706,6 +2707,7 @@
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
 				F4A7F52D42A80A09468F41F1 /* PayloadWriterTelemetry.hpp */,
 				C211D6E382A537B9689088FD /* TxSytTrace.hpp */,
+				A805D0AD31C67B2D10A9507A /* TxWirePayloadTelemetry.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";

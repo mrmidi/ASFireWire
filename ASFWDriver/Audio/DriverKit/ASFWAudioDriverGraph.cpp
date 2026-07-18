@@ -13,7 +13,7 @@
 #include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 

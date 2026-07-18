@@ -11,9 +11,9 @@
 #include "IsochTxDmaRing.hpp"
 #include "IsochTxLayout.hpp"
 
+#include "../Core/IsochTxQueue.hpp"
 #include "../Memory/IIsochDMAMemory.hpp"
 #include "../../Hardware/RegisterMap.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
 
 #include "../../Logging/Logging.hpp"
 #include <array>
@@ -46,7 +46,7 @@ enum class ITState {
  * @brief Orchestrator for an Isochronous Transmit (IT) context.
  * 
  * This class owns the OHCI DMA ring (IsochTxDmaRing) and manages the lifecycle 
- * of the transport. It does not interpret the payload bytes (AMDTP/CIP/Audio).
+ * of the transport. It treats packet headers and payload bytes as opaque.
  */
 class IsochTransmitContext final {
 public:
@@ -77,14 +77,12 @@ public:
      * @param metadataRing Shared memory descriptor containing packet metadata.
      * @param controlBlock Shared memory descriptor containing stream control states.
      * @param interruptInterval Interrupt interval in packets.
-     * @param ztsPeriodFrames Verification parameter for HAL ring wrap (passed through to control block).
      */
     kern_return_t SetSharedMemoryDescriptors(
         IOMemoryDescriptor* payloadSlab,
         IOMemoryDescriptor* metadataRing,
         IOMemoryDescriptor* controlBlock,
-        uint32_t interruptInterval,
-        uint32_t ztsPeriodFrames) noexcept;
+        uint32_t interruptInterval) noexcept;
 
     kern_return_t Start() noexcept;
     // Clearing RUN only prevents new descriptor fetches.  The caller must not
@@ -143,8 +141,8 @@ private:
     OSSharedPtr<IOMemoryMap> controlMap_{nullptr};
 
     uint8_t* payloadBase_{nullptr};
-    ASFW::IsochTransport::TxPacketMeta* metadataRing_{nullptr};
-    ASFW::IsochTransport::TxStreamControl* controlBlock_{nullptr};
+    IsochTxPacketMeta* metadataRing_{nullptr};
+    IsochTxQueueControl* controlBlock_{nullptr};
 
     Tx::TxPayloadDmaMap payloadDmaMap_{};
     OSSharedPtr<IODMACommand> payloadDmaCmd_{nullptr};

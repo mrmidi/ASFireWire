@@ -197,8 +197,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     hostBuffer.frameCapacity = memory.outputFrameCapacity;
                     hostBuffer.channels = channels;
 
-                    const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.controlBlock
-                        ? driverIvars->runtime.txSlotProvider.controlBlock->completionCursor.load(std::memory_order_acquire)
+                    const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.queueControl
+                        ? driverIvars->runtime.txSlotProvider.queueControl->completionCursor.load(std::memory_order_acquire)
                         : 0;
                     const uint64_t writeEndFrame =
                         sampleTime + ioBufferFrameSize;
@@ -214,8 +214,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     // payload writer reads channels [16, 32) via sourceChannelOffset.
                     if (driverIvars->runtime.txSecondaryActive) {
                         const uint64_t secondaryCompletion =
-                            driverIvars->runtime.txSlotProviderSecondary.controlBlock
-                                ? driverIvars->runtime.txSlotProviderSecondary.controlBlock
+                            driverIvars->runtime.txSlotProviderSecondary.queueControl
+                                ? driverIvars->runtime.txSlotProviderSecondary.queueControl
                                       ->completionCursor.load(std::memory_order_acquire)
                                 : 0;
                         driverIvars->runtime.txStreamEngineSecondary.WriteHostOutputFloat32(

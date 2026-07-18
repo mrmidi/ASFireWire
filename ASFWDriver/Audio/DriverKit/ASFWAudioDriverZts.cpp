@@ -100,12 +100,12 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     uint32_t preparedCount = 0;
 
     const auto failProducer =
-        [&](ASFW::IsochTransport::TxProducerStage stage,
-            ASFW::IsochTransport::TxProducerFailureReason producerReason,
+        [&](ASFW::Audio::Runtime::TxProducerFaultStage stage,
+            ASFW::Audio::Runtime::TxProducerFaultReason producerReason,
             ASFW::Audio::Runtime::FatalStreamReason runtimeReason,
             uint64_t packetIndex) noexcept {
             auto* txControl =
-                ivars.runtime.txSlotProvider.controlBlock;
+                ivars.runtime.txSlotProvider.queueControl;
             const uint64_t completionCursor =
                 txControl
                     ? txControl->completionCursor.load(
@@ -113,11 +113,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     : 0;
             const uint64_t exposeCursor =
                 txControl
-                    ? txControl->exposeCursor.load(
+                    ? txControl->committedEnd.load(
                           std::memory_order_acquire)
                     : 0;
 
-            ASFW::IsochTransport::TxProducerFailureRecord failure{
+            ASFW::Audio::Runtime::TxProducerFaultRecord failure{
                 .stage = stage,
                 .reason = producerReason,
                 .packetIndex = packetIndex,
@@ -125,16 +125,14 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 .rangeTarget = limitPacketIndex,
                 .preparedCount = preparedCount,
                 .completionCursor = completionCursor,
-                .exposeCursor = exposeCursor,
+                .committedEnd = exposeCursor,
                 .replayProducerCursor =
                     directControl->rxSequenceReplay.ProducerCursor(),
                 .replayEpoch =
                     directControl->rxSequenceReplay.Epoch(),
             };
             const uint64_t producerGeneration =
-                txControl
-                    ? txControl->producerFailure.Publish(failure)
-                    : 0;
+                directControl->txProducerFault.Publish(failure);
 
             directControl->fatalReason.store(
                 runtimeReason, std::memory_order_release);
@@ -150,10 +148,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 "[TxProducerFatal] stage=%{public}s reason=%{public}s "
                 "producerGen=%llu runtimeReason=%u runtimeGen=%llu "
                 "packet=%llu range=[%llu,%llu) prepared=%u "
-                "completion=%llu expose=%llu replayProducer=%llu "
+                "completion=%llu committedEnd=%llu replayProducer=%llu "
                 "replayEpoch=%u",
-                ASFW::IsochTransport::TxProducerStageName(stage),
-                ASFW::IsochTransport::TxProducerFailureReasonName(
+                ASFW::Audio::Runtime::TxProducerFaultStageName(stage),
+                ASFW::Audio::Runtime::TxProducerFaultReasonName(
                     producerReason),
                 producerGeneration,
                 static_cast<uint32_t>(runtimeReason),
@@ -169,8 +167,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 
             if (txControl) {
                 txControl->statusWord.store(
-                    ASFW::IsochTransport::TxStreamStatus::
-                        kUnderrunFatal,
+                    ASFW::Isoch::IsochTxQueueStatus::kProducerFault,
                     std::memory_order_release);
             }
             ivars.runtime.txActive.store(
@@ -178,10 +175,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         };
 
     if (numSlots == 0 || metadataRing == nullptr ||
-        ivars.runtime.txSlotProvider.controlBlock == nullptr) {
+        ivars.runtime.txSlotProvider.queueControl == nullptr) {
         failProducer(
-            ASFW::IsochTransport::TxProducerStage::kPreflight,
-            ASFW::IsochTransport::TxProducerFailureReason::
+            ASFW::Audio::Runtime::TxProducerFaultStage::kPreflight,
+            ASFW::Audio::Runtime::TxProducerFaultReason::
                 kInvalidTransport,
             ASFW::Audio::Runtime::FatalStreamReason::
                 InvalidGeometry,
@@ -215,9 +212,9 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 directControl->txReplayUnderflows.fetch_add(
                     1, std::memory_order_relaxed);
                 failProducer(
-                    ASFW::IsochTransport::TxProducerStage::
+                    ASFW::Audio::Runtime::TxProducerFaultStage::
                         kExecutionAnchor,
-                    ASFW::IsochTransport::TxProducerFailureReason::
+                    ASFW::Audio::Runtime::TxProducerFaultReason::
                         kReplayUnavailable,
                     ASFW::Audio::Runtime::FatalStreamReason::
                         TxReplayUnavailable,
@@ -281,10 +278,9 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     directControl->txReplayInvalidSyt.fetch_add(
                         1, std::memory_order_relaxed);
                     failProducer(
-                        ASFW::IsochTransport::TxProducerStage::
+                        ASFW::Audio::Runtime::TxProducerFaultStage::
                             kReplaySytValidation,
-                        ASFW::IsochTransport::
-                            TxProducerFailureReason::
+                        ASFW::Audio::Runtime::TxProducerFaultReason::
                                 kInvalidReplaySyt,
                         ASFW::Audio::Runtime::FatalStreamReason::
                             TxReplayInvalidSyt,
@@ -402,10 +398,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         if (prepareResult !=
             ASFW::Protocols::Audio::DICE::TxSlotPrepareResult::
                 kPrepared) {
-            ASFW::IsochTransport::TxProducerStage stage =
-                ASFW::IsochTransport::TxProducerStage::kSlotAcquire;
-            ASFW::IsochTransport::TxProducerFailureReason producerReason =
-                ASFW::IsochTransport::TxProducerFailureReason::
+            ASFW::Audio::Runtime::TxProducerFaultStage stage =
+                ASFW::Audio::Runtime::TxProducerFaultStage::kSlotAcquire;
+            ASFW::Audio::Runtime::TxProducerFaultReason producerReason =
+                ASFW::Audio::Runtime::TxProducerFaultReason::
                     kSlotUnavailable;
             ASFW::Audio::Runtime::FatalStreamReason runtimeReason =
                 ASFW::Audio::Runtime::FatalStreamReason::
@@ -415,11 +411,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 case ASFW::Protocols::Audio::DICE::
                     TxSlotPrepareResult::kPacketizerRejected:
                     stage =
-                        ASFW::IsochTransport::TxProducerStage::
+                        ASFW::Audio::Runtime::TxProducerFaultStage::
                             kPacketize;
                     producerReason =
-                        ASFW::IsochTransport::
-                            TxProducerFailureReason::
+                        ASFW::Audio::Runtime::TxProducerFaultReason::
                                 kPacketizerRejected;
                     runtimeReason =
                         ASFW::Audio::Runtime::FatalStreamReason::
@@ -428,11 +423,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 case ASFW::Protocols::Audio::DICE::
                     TxSlotPrepareResult::kSlotPublishFailed:
                     stage =
-                        ASFW::IsochTransport::TxProducerStage::
+                        ASFW::Audio::Runtime::TxProducerFaultStage::
                             kSlotPublish;
                     producerReason =
-                        ASFW::IsochTransport::
-                            TxProducerFailureReason::
+                        ASFW::Audio::Runtime::TxProducerFaultReason::
                                 kSlotPublishFailed;
                     break;
                 case ASFW::Protocols::Audio::DICE::
@@ -557,14 +551,14 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         return;
     }
 
-    auto* txControl = ivars->runtime.txSlotProvider.controlBlock;
+    auto* txControl = ivars->runtime.txSlotProvider.queueControl;
     const uint32_t numSlots = ivars->runtime.txSlotProvider.numSlots;
     if (!txControl || numSlots == 0) {
         return;
     }
 
     const uint64_t requested =
-        txControl->preparationRequestGeneration.load(
+        txControl->refillRequestGeneration.load(
             std::memory_order_acquire);
     if (generation > requested) {
         return;
@@ -573,7 +567,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     const uint64_t completionCursor =
         txControl->completionCursor.load(std::memory_order_acquire);
     const uint64_t exposeCursor =
-        txControl->exposeCursor.load(std::memory_order_acquire);
+        txControl->committedEnd.load(std::memory_order_acquire);
     const uint64_t packetCoverageTarget =
         completionCursor +
         ASFW::IsochTransport::AudioTimingGeometry::
@@ -682,7 +676,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     if (directControl) {
         const uint64_t now = mach_absolute_time();
         const uint64_t requestedAt =
-            txControl->preparationRequestHostTicks.load(
+            txControl->refillRequestHostTicks.load(
                 std::memory_order_relaxed);
         const uint64_t latency =
             now >= requestedAt ? now - requestedAt : 0;
@@ -802,13 +796,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         directControl->txPreparationRequests.requestHostTicks.store(
             requestedAt, std::memory_order_relaxed);
         directControl->counters.txPreparationWakeRequests.store(
-            txControl->preparationRequestCount.load(
+            txControl->refillRequestCount.load(
                 std::memory_order_relaxed),
             std::memory_order_relaxed);
         directControl->counters.txPreparationWakeDispatches.fetch_add(
             1, std::memory_order_relaxed);
         directControl->counters.txPreparationWakeCoalesced.store(
-            txControl->preparationCoalescedCount.load(
+            txControl->refillCoalescedCount.load(
                 std::memory_order_relaxed),
             std::memory_order_relaxed);
         directControl->counters.txPreparationDrainPasses.fetch_add(
@@ -817,5 +811,5 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             requested, now);
     }
 
-    txControl->MarkPreparationHandled(requested);
+    txControl->MarkRefillHandled(requested);
 }

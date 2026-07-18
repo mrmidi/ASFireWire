@@ -7,7 +7,7 @@
 #include "../ASFWDriver/Isoch/IsochService.hpp"
 #include "../ASFWDriver/Isoch/Transmit/IsochTxLayout.hpp"
 #include "../ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp"
-#include "../ASFWDriver/Shared/Isoch/IsochAudioTransport.hpp"
+#include "../ASFWDriver/Isoch/Core/IsochTxQueue.hpp"
 
 namespace {
 
@@ -16,9 +16,9 @@ using ASFW::Driver::IsochService;
 using ASFW::Driver::Register32;
 using ASFW::Isoch::Tx::Layout;
 using ASFW::IsochTransport::AudioTimingGeometry;
-using ASFW::IsochTransport::ExpectedCommitGen;
-using ASFW::IsochTransport::TxPacketMeta;
-using ASFW::IsochTransport::TxStreamControl;
+using ASFW::Isoch::ExpectedTxCommitGeneration;
+using ASFW::Isoch::IsochTxPacketMeta;
+using ASFW::Isoch::IsochTxQueueControl;
 
 class RecordingReceiveConsumer final : public ASFW::Isoch::IIsochReceiveConsumer {
   public:
@@ -61,22 +61,22 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
     IOAddressSegment metadataRange{};
     ASSERT_EQ(metadataDescriptor->GetAddressRange(&metadataRange), kIOReturnSuccess);
     std::memset(reinterpret_cast<void*>(metadataRange.address), 0, metadataRange.length);
-    auto* metadata = reinterpret_cast<TxPacketMeta*>(metadataRange.address);
+    auto* metadata = reinterpret_cast<IsochTxPacketMeta*>(metadataRange.address);
     for (uint64_t packetIndex = 0; packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
          ++packetIndex) {
         auto& meta = metadata[packetIndex % AudioTimingGeometry::kTxSharedSlotPackets];
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
-        meta.commitGen.store(
-            ExpectedCommitGen(packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
             std::memory_order_release);
     }
 
     IOAddressSegment controlRange{};
     ASSERT_EQ(controlDescriptor->GetAddressRange(&controlRange), kIOReturnSuccess);
     std::memset(reinterpret_cast<void*>(controlRange.address), 0, controlRange.length);
-    auto* control = reinterpret_cast<TxStreamControl*>(controlRange.address);
-    control->exposeCursor.store(AudioTimingGeometry::kTxPreparationLeadPackets,
+    auto* control = reinterpret_cast<IsochTxQueueControl*>(controlRange.address);
+    control->committedEnd.store(AudioTimingGeometry::kTxPreparationLeadPackets,
                                 std::memory_order_release);
 
     ASSERT_EQ(service.StartTransmit(/*channel=*/3, hardware,
@@ -99,7 +99,56 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
 
     EXPECT_EQ(callbackCount, 1U);
     EXPECT_EQ(callbackGeneration, 1U);
-    EXPECT_EQ(control->preparationRequestGeneration.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(control->refillRequestGeneration.load(std::memory_order_acquire), 1U);
+}
+
+TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuiesces) {
+    IsochService service;
+    HardwareInterface hardware;
+    IOMemoryDescriptor* payloadDescriptor = nullptr;
+    IOMemoryDescriptor* metadataDescriptor = nullptr;
+    IOMemoryDescriptor* controlDescriptor = nullptr;
+    ASSERT_EQ(service.AllocateTxIsochResources(
+                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor,
+                  &metadataDescriptor, &controlDescriptor),
+              kIOReturnSuccess);
+
+    IOAddressSegment metadataRange{};
+    ASSERT_EQ(metadataDescriptor->GetAddressRange(&metadataRange), kIOReturnSuccess);
+    auto* metadata = reinterpret_cast<IsochTxPacketMeta*>(metadataRange.address);
+    for (uint64_t packetIndex = 0;
+         packetIndex < AudioTimingGeometry::kTxSharedSlotPackets;
+         ++packetIndex) {
+        auto& meta = metadata[packetIndex % AudioTimingGeometry::kTxSharedSlotPackets];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(
+                packetIndex, AudioTimingGeometry::kTxSharedSlotPackets),
+            std::memory_order_release);
+    }
+    IOAddressSegment controlRange{};
+    ASSERT_EQ(controlDescriptor->GetAddressRange(&controlRange), kIOReturnSuccess);
+    auto* queue = reinterpret_cast<IsochTxQueueControl*>(controlRange.address);
+    queue->ResetProducerForStart();
+    queue->committedEnd.store(AudioTimingGeometry::kTxPreparationLeadPackets,
+                              std::memory_order_release);
+
+    ASSERT_EQ(service.StartTransmit(3, hardware, 0x3f), kIOReturnSuccess);
+    auto* context = service.TransmitContext();
+    ASSERT_NE(context, nullptr);
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Running);
+
+    const Register32 controlSet = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(0));
+    hardware.SetTestRegister(controlSet, ASFW::Driver::ContextControl::kActive);
+    EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Running);
+
+    hardware.SetTestRegister(controlSet, 0);
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
+    EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Stopped);
 }
 
 // Secondary-stream container: a multi-stream DICE device (Venice F32 = 2×16)

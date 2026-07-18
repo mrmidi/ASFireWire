@@ -11,7 +11,8 @@
 #include "Isoch/Memory/IsochDMAMemoryManager.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/OHCIConstants.hpp"
-#include "Shared/Isoch/IsochAudioTransport.hpp"
+#include "Isoch/Core/IsochTxQueue.hpp"
+#include "Shared/Isoch/AudioTimingGeometry.hpp"
 
 using ASFW::Isoch::Tx::IsochTxDmaRing;
 using ASFW::Isoch::Tx::Layout;
@@ -19,10 +20,10 @@ using ASFW::Isoch::Tx::TxPayloadDmaMap;
 using ASFW::Isoch::Tx::TxPayloadDmaSegment;
 using ASFW::Isoch::Memory::IsochDMAMemoryManager;
 using ASFW::Isoch::Memory::IsochMemoryConfig;
-using ASFW::IsochTransport::TxPacketMeta;
-using ASFW::IsochTransport::TxStreamControl;
-using ASFW::IsochTransport::TxStreamStatus;
-using ASFW::IsochTransport::ExpectedCommitGen;
+using ASFW::Isoch::IsochTxPacketMeta;
+using ASFW::Isoch::IsochTxQueueControl;
+using ASFW::Isoch::IsochTxQueueStatus;
+using ASFW::Isoch::ExpectedTxCommitGeneration;
 using ASFW::Async::HW::OHCIDescriptor;
 using ASFW::Async::HW::OHCIDescriptorImmediate;
 using ASFW::Driver::Register32;
@@ -55,15 +56,15 @@ protected:
     std::vector<uint8_t> sharedPayload_ =
         std::vector<uint8_t>(kSharedPayloadSlots * kSharedPayloadStride);
 
-    [[nodiscard]] static std::vector<TxPacketMeta> MakeMetadataRing() {
-        std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    [[nodiscard]] static std::vector<IsochTxPacketMeta> MakeMetadataRing() {
+        std::vector<IsochTxPacketMeta> metadataRing(kSharedPayloadSlots);
         for (uint32_t packetIndex = 0;
              packetIndex < metadataRing.size();
              ++packetIndex) {
             auto& meta = metadataRing[packetIndex];
             meta.packetIndex = packetIndex;
             meta.payloadLength = 8;
-            meta.commitGen.store(1, std::memory_order_release);
+            meta.commitGeneration.store(1, std::memory_order_release);
         }
         return metadataRing;
     }
@@ -333,13 +334,13 @@ TEST_F(IsochTxDmaRingTest, RefillUsesMappedIOVAAfterPageBoundary) {
     TxPayloadDmaMap segmentedMap;
     ASSERT_TRUE(segmentedMap.Configure(segments, sharedPayload_.size()));
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
     for (uint32_t i = 0; i < 9; ++i) {
         metadataRing[i].payloadLength = 296;
-        metadataRing[i].commitGen.store(1, std::memory_order_release);
+        metadataRing[i].commitGeneration.store(1, std::memory_order_release);
     }
 
     const uint32_t nextPacketIOVA =
@@ -385,7 +386,7 @@ TEST_F(IsochTxDmaRingTest,
     metadataRing[0].immediateHeader[0] =
         OSSwapHostToLittleInt32(kProducerHostHeader);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
@@ -433,12 +434,12 @@ TEST_F(IsochTxDmaRingTest, RefillProgramsPayloadCrossingDmaSegment) {
     TxPayloadDmaMap crossingMap;
     ASSERT_TRUE(crossingMap.Configure(segments, sharedPayload_.size()));
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
     metadataRing[0].payloadLength = 296;
-    metadataRing[0].commitGen.store(1, std::memory_order_release);
+    metadataRing[0].commitGeneration.store(1, std::memory_order_release);
 
     const uint32_t nextPacketIOVA =
         ring_.Slab().GetDescriptorIOVA(Layout::kBlocksPerPacket);
@@ -480,7 +481,7 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
     ring_.SeedCycleTracking(hardware_);
 
     // Allocate host buffers for metadata ring and control block
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
 
     const uint32_t numSlots = kSharedPayloadSlots;
     uint8_t* payloadBase = sharedPayload_.data();
@@ -491,7 +492,7 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
         metadataRing[i].immediateHeader[0] = 0x11110000 + i;
         metadataRing[i].immediateHeader[1] = 0x22220000 + i;
         metadataRing[i].payloadLength = 100 + i * 4;
-        metadataRing[i].commitGen.store(1, std::memory_order_release); // Lap 1
+        metadataRing[i].commitGeneration.store(1, std::memory_order_release); // Lap 1
     }
 
     // Set control block structure
@@ -532,9 +533,9 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
     // Verify completed stamps
     EXPECT_EQ(controlBlock.completionStampCount.load(), 8);
     EXPECT_EQ(controlBlock.completionCursor.load(), 8);
-    EXPECT_EQ(outcome.preparationRequestGeneration, 1U);
+    EXPECT_EQ(outcome.refillRequestGeneration, 1U);
     EXPECT_EQ(
-        controlBlock.preparationRequestGeneration.load(
+        controlBlock.refillRequestGeneration.load(
             std::memory_order_acquire),
         1U);
     for (uint32_t i = 0; i < 8; ++i) {
@@ -586,13 +587,13 @@ TEST_F(IsochTxDmaRingTest, CompletionNotificationCoalescesUntilHandled) {
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
     for (uint32_t i = 0; i < 24; ++i) {
         metadataRing[i].payloadLength = 8;
-        metadataRing[i].commitGen.store(1, std::memory_order_release);
+        metadataRing[i].commitGeneration.store(1, std::memory_order_release);
     }
     hardware_.SetTestRegister(
         static_cast<Register32>(
@@ -618,27 +619,27 @@ TEST_F(IsochTxDmaRingTest, CompletionNotificationCoalescesUntilHandled) {
 
     const auto first = refillTo(8);
     ASSERT_TRUE(first.ok);
-    EXPECT_EQ(first.preparationRequestGeneration, 1U);
+    EXPECT_EQ(first.refillRequestGeneration, 1U);
 
     const auto coalesced = refillTo(16);
     ASSERT_TRUE(coalesced.ok);
-    EXPECT_EQ(coalesced.preparationRequestGeneration, 0U);
+    EXPECT_EQ(coalesced.refillRequestGeneration, 0U);
 
-    controlBlock.preparationHandledGeneration.store(
+    controlBlock.refillHandledGeneration.store(
         1, std::memory_order_release);
     const auto next = refillTo(24);
     ASSERT_TRUE(next.ok);
-    EXPECT_EQ(next.preparationRequestGeneration, 2U);
+    EXPECT_EQ(next.refillRequestGeneration, 2U);
 }
 
 TEST_F(IsochTxDmaRingTest, PreparationAcknowledgementNeverMovesBackward) {
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
 
-    controlBlock.MarkPreparationHandled(2);
-    controlBlock.MarkPreparationHandled(1);
+    controlBlock.MarkRefillHandled(2);
+    controlBlock.MarkRefillHandled(1);
 
     EXPECT_EQ(
-        controlBlock.preparationHandledGeneration.load(
+        controlBlock.refillHandledGeneration.load(
             std::memory_order_acquire),
         2U);
 }
@@ -651,7 +652,7 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
@@ -664,8 +665,8 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
         meta.immediateHeader[0] = 0x11000000u + packetIndex;
         meta.immediateHeader[1] = 0x22000000u + packetIndex;
         meta.payloadLength = 64;
-        meta.commitGen.store(
-            ExpectedCommitGen(packetIndex, kSharedPayloadSlots),
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(packetIndex, kSharedPayloadSlots),
             std::memory_order_release);
     }
 
@@ -725,7 +726,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
         auto& meta = metadataRing[packetIndex];
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
-        meta.commitGen.store(1, std::memory_order_release);
+        meta.commitGeneration.store(1, std::memory_order_release);
     }
 
     const auto prime = ring_.Prime(
@@ -737,7 +738,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
     ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
@@ -778,7 +779,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
     }
 
     const auto commitBefore =
-        metadataRing[0].commitGen.load(std::memory_order_acquire);
+        metadataRing[0].commitGeneration.load(std::memory_order_acquire);
     const auto packetBefore = metadataRing[0].packetIndex;
     const std::array<uint8_t, 8> payloadBefore{
         0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87};
@@ -795,7 +796,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
                  Layout::kNumPackets);
     EXPECT_FALSE(firstSecondLapRefill.ok);
     EXPECT_EQ(firstSecondLapRefill.packetsFilled, 0U);
-    EXPECT_EQ(metadataRing[0].commitGen.load(std::memory_order_acquire),
+    EXPECT_EQ(metadataRing[0].commitGeneration.load(std::memory_order_acquire),
               commitBefore);
     EXPECT_EQ(metadataRing[0].packetIndex, packetBefore);
     EXPECT_EQ(
@@ -803,7 +804,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
                     payloadBefore.size()),
         0);
     EXPECT_EQ(controlBlock.statusWord.load(std::memory_order_acquire),
-              TxStreamStatus::kUnderrunFatal);
+              IsochTxQueueStatus::kProducerFault);
     EXPECT_EQ(controlBlock.streamGeneration.load(std::memory_order_acquire),
               1U);
     EXPECT_EQ(
@@ -819,7 +820,7 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
         auto& meta = metadataRing[packetIndex];
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
-        meta.commitGen.store(1, std::memory_order_release);
+        meta.commitGeneration.store(1, std::memory_order_release);
     }
 
     const auto prime = ring_.Prime(
@@ -831,7 +832,7 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
     ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
@@ -880,8 +881,8 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
         auto& meta = metadataRing[packetIndex % kSharedPayloadSlots];
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
-        meta.commitGen.store(
-            ExpectedCommitGen(packetIndex, kSharedPayloadSlots),
+        meta.commitGeneration.store(
+            ExpectedTxCommitGeneration(packetIndex, kSharedPayloadSlots),
             std::memory_order_release);
     }
 
@@ -898,7 +899,7 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
         ASFW::IsochTransport::AudioTimingGeometry::
             kTxPacketsPerGroup);
     EXPECT_EQ(metadataRing[0].packetIndex, kSharedPayloadSlots);
-    EXPECT_EQ(metadataRing[0].commitGen.load(std::memory_order_acquire), 2U);
+    EXPECT_EQ(metadataRing[0].commitGeneration.load(std::memory_order_acquire), 2U);
 }
 
 TEST_F(IsochTxDmaRingTest,
@@ -916,7 +917,7 @@ TEST_F(IsochTxDmaRingTest,
         auto& meta = metadataRing[packetIndex];
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
-        meta.commitGen.store(
+        meta.commitGeneration.store(
             packetIndex < kHistoricalCommittedPackets ? 1U : 0U,
             std::memory_order_release);
     }
@@ -930,7 +931,7 @@ TEST_F(IsochTxDmaRingTest,
     ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
@@ -963,7 +964,7 @@ TEST_F(IsochTxDmaRingTest,
         refillTo(3 * Geometry::kTxPacketsPerGroup);
     EXPECT_FALSE(third.ok);
     EXPECT_EQ(controlBlock.statusWord.load(std::memory_order_acquire),
-              TxStreamStatus::kUnderrunFatal);
+              IsochTxQueueStatus::kProducerFault);
     EXPECT_EQ(
         ring_.RTCounters().txUnderruns.load(std::memory_order_relaxed),
         1U);
@@ -977,14 +978,14 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
 
     metadataRing[0].packetIndex = 0;
     metadataRing[0].payloadLength = kSharedPayloadStride + 1;
-    metadataRing[0].commitGen.store(1, std::memory_order_release);
+    metadataRing[0].commitGeneration.store(1, std::memory_order_release);
 
     const uint32_t nextPacketIOVA =
         ring_.Slab().GetDescriptorIOVA(Layout::kBlocksPerPacket);
@@ -1006,7 +1007,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
     EXPECT_EQ(ring_.RTCounters().fatalPacketSize.load(std::memory_order_relaxed), 1u);
 }
 
-TEST_F(IsochTxDmaRingTest, RefillHonorsProducerFatalStatusImmediately) {
+TEST_F(IsochTxDmaRingTest, RefillHonorsProducerFaultStatusImmediately) {
     auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
         payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
@@ -1014,29 +1015,12 @@ TEST_F(IsochTxDmaRingTest, RefillHonorsProducerFatalStatusImmediately) {
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
-    const ASFW::IsochTransport::TxProducerFailureRecord producerFailure{
-        .stage =
-            ASFW::IsochTransport::TxProducerStage::kReplayRead,
-        .reason =
-            ASFW::IsochTransport::TxProducerFailureReason::
-                kReplayUnavailable,
-        .packetIndex = 192,
-        .rangeStart = 192,
-        .rangeTarget = 194,
-        .preparedCount = 0,
-        .completionCursor = 50,
-        .exposeCursor = 192,
-        .replayProducerCursor = 513,
-        .replayEpoch = 4,
-    };
-    EXPECT_EQ(
-        controlBlock.producerFailure.Publish(producerFailure), 1U);
     controlBlock.statusWord.store(
-        TxStreamStatus::kUnderrunFatal, std::memory_order_release);
+        IsochTxQueueStatus::kProducerFault, std::memory_order_release);
 
     const uint32_t nextPacketIOVA =
         ring_.Slab().GetDescriptorIOVA(Layout::kBlocksPerPacket);
@@ -1052,52 +1036,8 @@ TEST_F(IsochTxDmaRingTest, RefillHonorsProducerFatalStatusImmediately) {
     EXPECT_FALSE(outcome.ok);
     EXPECT_EQ(
         outcome.failureReason,
-        IsochTxDmaRing::RefillFailureReason::ProducerFatalStatus);
+        IsochTxDmaRing::RefillFailureReason::ProducerFaultStatus);
     EXPECT_EQ(outcome.packetsFilled, 0U);
-    ASSERT_TRUE(outcome.producerFailureAvailable);
-    EXPECT_EQ(outcome.producerFailure.generation, 1U);
-    EXPECT_EQ(
-        outcome.producerFailure.stage,
-        ASFW::IsochTransport::TxProducerStage::kReplayRead);
-    EXPECT_EQ(
-        outcome.producerFailure.reason,
-        ASFW::IsochTransport::TxProducerFailureReason::
-            kReplayUnavailable);
-    EXPECT_EQ(outcome.producerFailure.packetIndex, 192U);
-    EXPECT_EQ(outcome.producerFailure.rangeStart, 192U);
-    EXPECT_EQ(outcome.producerFailure.rangeTarget, 194U);
-    EXPECT_EQ(outcome.producerFailure.preparedCount, 0U);
-    EXPECT_EQ(outcome.producerFailure.completionCursor, 50U);
-    EXPECT_EQ(outcome.producerFailure.exposeCursor, 192U);
-    EXPECT_EQ(outcome.producerFailure.replayProducerCursor, 513U);
-    EXPECT_EQ(outcome.producerFailure.replayEpoch, 4U);
-}
-
-TEST(TxProducerFailureSnapshotTests, ResetClearsRecordAndNamesArePublic) {
-    ASFW::IsochTransport::TxProducerFailureSnapshot snapshot{};
-    const ASFW::IsochTransport::TxProducerFailureRecord failure{
-        .stage =
-            ASFW::IsochTransport::TxProducerStage::
-                kReplaySytValidation,
-        .reason =
-            ASFW::IsochTransport::TxProducerFailureReason::
-                kInvalidReplaySyt,
-        .packetIndex = 192,
-    };
-
-    EXPECT_EQ(snapshot.Publish(failure), 1U);
-    ASFW::IsochTransport::TxProducerFailureRecord observed{};
-    ASSERT_TRUE(snapshot.TryRead(observed));
-    EXPECT_STREQ(
-        ASFW::IsochTransport::TxProducerStageName(observed.stage),
-        "replay-syt-validation");
-    EXPECT_STREQ(
-        ASFW::IsochTransport::TxProducerFailureReasonName(
-            observed.reason),
-        "invalid-replay-syt");
-
-    snapshot.Reset();
-    EXPECT_FALSE(snapshot.TryRead(observed));
 }
 
 TEST_F(IsochTxDmaRingTest,
@@ -1109,12 +1049,12 @@ TEST_F(IsochTxDmaRingTest,
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    TxStreamControl controlBlock{};
+    IsochTxQueueControl controlBlock{};
 
     const uint32_t numSlots = kSharedPayloadSlots;
     uint8_t* payloadBase = sharedPayload_.data();
 
-    metadataRing[0].commitGen.store(0, std::memory_order_release);
+    metadataRing[0].commitGeneration.store(0, std::memory_order_release);
     metadataRing[0].immediateHeader[0] = 0x11110000;
     metadataRing[0].immediateHeader[1] = 0x22220000;
     std::array<uint8_t, 8> payloadBefore{
@@ -1138,9 +1078,9 @@ TEST_F(IsochTxDmaRingTest,
     EXPECT_FALSE(outcome.ok);
     EXPECT_EQ(outcome.packetsFilled, 0);
     EXPECT_EQ(controlBlock.statusWord.load(),
-              TxStreamStatus::kUnderrunFatal);
+              IsochTxQueueStatus::kProducerFault);
     EXPECT_EQ(controlBlock.streamGeneration.load(), 1);
-    EXPECT_EQ(metadataRing[0].commitGen.load(), 0);
+    EXPECT_EQ(metadataRing[0].commitGeneration.load(), 0);
 
     auto* desc0 = ring_.Slab().GetDescriptorPtr(0);
     auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(desc0);
@@ -1150,4 +1090,29 @@ TEST_F(IsochTxDmaRingTest,
         std::memcmp(payloadBase, payloadBefore.data(),
                     payloadBefore.size()),
         0);
+}
+
+TEST(IsochTxQueueControlTests, ProducerAndConsumerResetsHaveDisjointOwnership) {
+    IsochTxQueueControl queue{};
+    queue.abiVersion = ASFW::Isoch::kTxQueueAbiVersion;
+    queue.committedEnd.store(408, std::memory_order_release);
+    queue.completionCursor.store(144, std::memory_order_release);
+    queue.statusWord.store(IsochTxQueueStatus::kRunning,
+                           std::memory_order_release);
+
+    queue.ResetConsumerForArm();
+    EXPECT_EQ(queue.abiVersion, ASFW::Isoch::kTxQueueAbiVersion);
+    EXPECT_EQ(queue.committedEnd.load(std::memory_order_acquire), 408U);
+    EXPECT_EQ(queue.completionCursor.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(queue.statusWord.load(std::memory_order_acquire),
+              IsochTxQueueStatus::kStopped);
+
+    queue.statusWord.store(IsochTxQueueStatus::kRunning,
+                           std::memory_order_release);
+    queue.completionCursor.store(12, std::memory_order_release);
+    queue.ResetProducerForStart();
+    EXPECT_EQ(queue.committedEnd.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(queue.completionCursor.load(std::memory_order_acquire), 12U);
+    EXPECT_EQ(queue.statusWord.load(std::memory_order_acquire),
+              IsochTxQueueStatus::kRunning);
 }

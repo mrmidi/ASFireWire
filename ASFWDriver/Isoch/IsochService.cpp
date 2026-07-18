@@ -7,7 +7,7 @@
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
 #endif
-#include "../Shared/Isoch/IsochAudioTransport.hpp"
+#include "Core/IsochTxQueue.hpp"
 #include "Memory/IsochDMAMemoryManager.hpp"
 
 namespace ASFW::Driver {
@@ -315,8 +315,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
     if (txPayloadSlab_[0] && txMetadataRing_[0] && txControlBlock_[0]) {
         const kern_return_t memKr = isochTransmitContext_->SetSharedMemoryDescriptors(
             txPayloadSlab_[0].get(), txMetadataRing_[0].get(), txControlBlock_[0].get(),
-            interruptInterval_,
-            ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
+            interruptInterval_);
         if (memKr != kIOReturnSuccess) {
             ASFW_LOG(Isoch, "IsochService: IT shared-memory setup failed: 0x%08x", memKr);
             return memKr;
@@ -376,8 +375,7 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
         txControlBlock_[streamIndex]) {
         const kern_return_t memKr = slot->SetSharedMemoryDescriptors(
             txPayloadSlab_[streamIndex].get(), txMetadataRing_[streamIndex].get(),
-            txControlBlock_[streamIndex].get(), interruptInterval_,
-            ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
+            txControlBlock_[streamIndex].get(), interruptInterval_);
         if (memKr != kIOReturnSuccess) {
             ASFW_LOG(Isoch,
                      "IsochService: secondary IT shared-memory setup failed (stream %u): 0x%08x",
@@ -597,7 +595,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
 
     // 2. Allocate metadata ring (cacheline aligned)
     const size_t metadataRingBytes =
-        static_cast<size_t>(numSlots) * sizeof(ASFW::IsochTransport::TxPacketMeta);
+        static_cast<size_t>(numSlots) * sizeof(ASFW::Isoch::IsochTxPacketMeta);
     IOBufferMemoryDescriptor* metadataDescriptor = nullptr;
     kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, metadataRingBytes, 64,
                                           &metadataDescriptor);
@@ -610,7 +608,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
 
     // 3. Allocate control block (cacheline aligned)
-    const size_t controlBlockBytes = sizeof(ASFW::IsochTransport::TxStreamControl);
+    const size_t controlBlockBytes = sizeof(ASFW::Isoch::IsochTxQueueControl);
     IOBufferMemoryDescriptor* controlDescriptor = nullptr;
     kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, controlBlockBytes, 64,
                                           &controlDescriptor);

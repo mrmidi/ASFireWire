@@ -10,6 +10,9 @@ namespace {
 using ASFW::Audio::Runtime::AudioTransportControlBlock;
 using ASFW::Audio::Runtime::FatalStreamReason;
 using ASFW::Audio::Runtime::TxPreparationRequestState;
+using ASFW::Audio::Runtime::TxProducerFaultReason;
+using ASFW::Audio::Runtime::TxProducerFaultRecord;
+using ASFW::Audio::Runtime::TxProducerFaultStage;
 
 TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalescible) {
     TxPreparationRequestState requests{};
@@ -28,6 +31,60 @@ TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalesci
 
     EXPECT_EQ(requests.PublishRequest(300), 3U);
     EXPECT_TRUE(requests.NeedsHandling());
+}
+
+TEST(AudioTransportControlBlockTests, ProducerFaultDetailIsAudioOwnedAndResettable) {
+    AudioTransportControlBlock control{};
+    const TxProducerFaultRecord published{
+        .stage = TxProducerFaultStage::kReplaySytValidation,
+        .reason = TxProducerFaultReason::kInvalidReplaySyt,
+        .packetIndex = 192,
+        .rangeStart = 180,
+        .rangeTarget = 216,
+        .preparedCount = 12,
+        .completionCursor = 144,
+        .committedEnd = 192,
+        .replayProducerCursor = 480,
+        .replayEpoch = 4,
+    };
+
+    EXPECT_EQ(control.txProducerFault.Publish(published), 1U);
+    TxProducerFaultRecord observed{};
+    ASSERT_TRUE(control.txProducerFault.TryRead(observed));
+    EXPECT_EQ(observed.packetIndex, 192U);
+    EXPECT_EQ(observed.committedEnd, 192U);
+    EXPECT_STREQ(ASFW::Audio::Runtime::TxProducerFaultStageName(observed.stage),
+                 "replay-syt-validation");
+    EXPECT_STREQ(ASFW::Audio::Runtime::TxProducerFaultReasonName(observed.reason),
+                 "invalid-replay-syt");
+
+    control.ResetForStart();
+    EXPECT_FALSE(control.txProducerFault.TryRead(observed));
+}
+
+TEST(AudioTransportControlBlockTests, WirePayloadTelemetryStaysInAudioAndFlagsDropout) {
+    AudioTransportControlBlock control{};
+    const uint8_t dataPacket[] = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0x40, 0x00, 0x00, 0x01,
+    };
+    const uint8_t zeroPacket[] = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0,
+    };
+
+    const auto first = control.txWirePayloadTelemetry.Observe(
+        12, dataPacket, sizeof(dataPacket));
+    EXPECT_TRUE(first.firstInfo);
+    EXPECT_FALSE(first.dropout);
+    EXPECT_EQ(first.infoQuads, 1U);
+
+    const auto dropout = control.txWirePayloadTelemetry.Observe(
+        13, zeroPacket, sizeof(zeroPacket));
+    EXPECT_FALSE(dropout.firstInfo);
+    EXPECT_TRUE(dropout.dropout);
+    EXPECT_EQ(control.txWirePayloadTelemetry.firstInfoPacketIndex.load(), 12U);
+    EXPECT_EQ(control.txWirePayloadTelemetry.pcmDropouts.load(), 1U);
 }
 
 TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrementsGeneration) {

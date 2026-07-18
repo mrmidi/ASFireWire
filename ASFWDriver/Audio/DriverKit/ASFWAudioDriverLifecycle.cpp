@@ -292,9 +292,10 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
         ivars.txControlBuffer = nullptr;
         ivars.runtime.txSlotProvider.payloadBase = nullptr;
         ivars.runtime.txSlotProvider.metadataRing = nullptr;
-        ivars.runtime.txSlotProvider.controlBlock = nullptr;
+        ivars.runtime.txSlotProvider.queueControl = nullptr;
+        ivars.runtime.txSlotProvider.audioControl = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
-        ivars.runtime.txExecutionTimeline.controlBlock = nullptr;
+        ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
         // Secondary playback stream teardown (mirrors the master above).
         ivars.runtime.txSecondaryActive = false;
@@ -306,7 +307,8 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
         ivars.txControlBufferSecondary = nullptr;
         ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
         ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
-        ivars.runtime.txSlotProviderSecondary.controlBlock = nullptr;
+        ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
+        ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
         ivars.runtime.txSlotProviderSecondary.numSlots = 0;
 
         ivars.device.audioNub->FreeTxIsochResources();

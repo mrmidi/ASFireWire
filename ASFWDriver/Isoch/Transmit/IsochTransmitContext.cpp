@@ -79,8 +79,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     IOMemoryDescriptor* payloadSlab,
     IOMemoryDescriptor* metadataRing,
     IOMemoryDescriptor* controlBlock,
-    uint32_t interruptInterval,
-    uint32_t ztsPeriodFrames) noexcept {
+    uint32_t interruptInterval) noexcept {
 
     if (!payloadSlab || !metadataRing || !controlBlock) {
         return kIOReturnBadArgument;
@@ -193,7 +192,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         return kr;
     }
     metadataMap_ = OSSharedPtr<IOMemoryMap>(mMap, OSNoRetain);
-    metadataRing_ = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(metadataMap_->GetAddress());
+    metadataRing_ = reinterpret_cast<IsochTxPacketMeta*>(metadataMap_->GetAddress());
 
     // 3. Map Control Block
     IOMemoryMap* cMap = nullptr;
@@ -203,46 +202,45 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         return kr;
     }
     controlMap_ = OSSharedPtr<IOMemoryMap>(cMap, OSNoRetain);
-    controlBlock_ = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(controlMap_->GetAddress());
+    controlBlock_ = reinterpret_cast<IsochTxQueueControl*>(controlMap_->GetAddress());
 
     // Populate structural fields
     uint64_t metadataLen = 0;
     metadataRing->GetLength(&metadataLen);
     uint64_t payloadLen = 0;
     payloadSlab->GetLength(&payloadLen);
+    uint64_t controlLen = 0;
+    controlBlock->GetLength(&controlLen);
 
-    const uint32_t numSlots = static_cast<uint32_t>(metadataLen / sizeof(ASFW::IsochTransport::TxPacketMeta));
+    if (metadataLen == 0 ||
+        (metadataLen % sizeof(IsochTxPacketMeta)) != 0 ||
+        controlLen < sizeof(IsochTxQueueControl)) {
+        ASFW_LOG(Isoch,
+                 "IT: Invalid TX queue mapping metadataBytes=%llu controlBytes=%llu",
+                 metadataLen, controlLen);
+        return kIOReturnBadArgument;
+    }
+
+    const uint32_t numSlots = static_cast<uint32_t>(metadataLen / sizeof(IsochTxPacketMeta));
+    if (numSlots == 0 || payloadLen == 0 || payloadLen % numSlots != 0) {
+        ASFW_LOG(Isoch,
+                 "IT: Invalid TX queue geometry payloadBytes=%llu slots=%u",
+                 payloadLen, numSlots);
+        return kIOReturnBadArgument;
+    }
     const uint32_t maxPacketBytes = static_cast<uint32_t>(payloadLen / numSlots);
 
-    controlBlock_->abiVersion = ASFW::IsochTransport::kTransportAbiVersion;
+    controlBlock_->abiVersion = kTxQueueAbiVersion;
     controlBlock_->numSlots = numSlots;
     controlBlock_->slotStrideBytes = maxPacketBytes;
     controlBlock_->maxPacketBytes = maxPacketBytes;
     controlBlock_->interruptInterval = interruptInterval;
-    controlBlock_->ztsPeriodFrames = ztsPeriodFrames;
-
-    // Reset consumer-owned runtime counters / status only. exposeCursor is
-    // PRODUCER-owned (the audio side advances it as it commits slots) and the
-    // audio-side prefill has already run by the time this consumer maps the
-    // block — resetting it here would stomp the prefill's committed lead back to
-    // zero, desyncing the pump's lead math and starving the ring after the
-    // prefilled packets drain. The buffer is freshly allocated (zero-filled)
-    // each start, so exposeCursor is 0 unless the prefill legitimately set it.
-    controlBlock_->streamGeneration.store(0, std::memory_order_relaxed);
-    controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_relaxed);
-    controlBlock_->completionCursor.store(0, std::memory_order_relaxed);
-    controlBlock_->completionStampCount.store(0, std::memory_order_relaxed);
-    controlBlock_->preparationRequestGeneration.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationHandledGeneration.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationRequestHostTicks.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationRequestCount.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationCoalescedCount.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->producerFailure.Reset();
+    controlBlock_->ResetConsumerForArm();
+    if (controlBlock_->abiVersion != kTxQueueAbiVersion) {
+        ASFW_LOG(Isoch, "IT: TX queue ABI write validation failed abi=%u",
+                 controlBlock_->abiVersion);
+        return kIOReturnInternalError;
+    }
 
     ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadSegments=%zu metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
              payloadDmaMap_.SegmentCount(), metadataRing_, controlBlock_, numSlots, maxPacketBytes);
@@ -290,7 +288,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
 
-    const uint64_t preFillCount = controlBlock_->exposeCursor.load(std::memory_order_relaxed);
+    const uint64_t preFillCount = controlBlock_->committedEnd.load(std::memory_order_relaxed);
     const auto primeStats =
         ring_.Prime(payloadDmaMap_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, preFillCount);
     if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
@@ -299,7 +297,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     }
     packetsAssembled_ = primeStats.packetsAssembled;
     controlBlock_->statusWord.store(
-        ASFW::IsochTransport::TxStreamStatus::kRunning,
+        IsochTxQueueStatus::kRunning,
         std::memory_order_release);
     
     Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
@@ -391,23 +389,13 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         }
 
         if (controlBlock_) {
-            controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_release);
+            controlBlock_->statusWord.store(IsochTxQueueStatus::kStopped, std::memory_order_release);
         }
 
         state_ = State::Stopped;
         refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped. Stats: %llu pkts IRQs=%llu",
                  packetsAssembled_, interruptCount_.load(std::memory_order_relaxed));
-        const auto& rc = ring_.RTCounters();
-        ASFW_LOG(Isoch,
-                 "IT WIRE final data=%llu zeroPcm=%llu infoQuads=%llu dropouts=%llu maxAbs24=%u lastQuad=0x%08x firstInfoAbsIdx=%llu",
-                 rc.wireDataPackets.load(std::memory_order_relaxed),
-                 rc.wireZeroPcmPackets.load(std::memory_order_relaxed),
-                 rc.wireInfoQuads.load(std::memory_order_relaxed),
-                 rc.wirePcmDropouts.load(std::memory_order_relaxed),
-                 rc.wireMaxAbs24.load(std::memory_order_relaxed),
-                 rc.wireLastInfoQuad.load(std::memory_order_relaxed),
-                 rc.wireFirstInfoAbsIdx.load(std::memory_order_relaxed));
         return kIOReturnSuccess;
     }
 
@@ -441,31 +429,6 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         payloadDmaMap_);
     if (!outcome.ok) {
         const auto& counters = ring_.RTCounters();
-        if (outcome.failureReason ==
-                Tx::IsochTxDmaRing::RefillFailureReason::
-                    ProducerFatalStatus &&
-            outcome.producerFailureAvailable) {
-            const auto& failure = outcome.producerFailure;
-            ASFW_LOG(
-                Isoch,
-                "IT: Producer fatal stage=%{public}s reason=%{public}s "
-                "generation=%llu packet=%llu range=[%llu,%llu) "
-                "prepared=%u completion=%llu expose=%llu "
-                "replayProducer=%llu replayEpoch=%u",
-                ASFW::IsochTransport::TxProducerStageName(
-                    failure.stage),
-                ASFW::IsochTransport::TxProducerFailureReasonName(
-                    failure.reason),
-                failure.generation,
-                failure.packetIndex,
-                failure.rangeStart,
-                failure.rangeTarget,
-                failure.preparedCount,
-                failure.completionCursor,
-                failure.exposeCursor,
-                failure.replayProducerCursor,
-                failure.replayEpoch);
-        }
         ASFW_LOG(
             Isoch,
             "IT: Refill failed reason=%{public}s ctrl=0x%08x streamStatus=%u "
@@ -494,9 +457,9 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         if (outcome.packetsFilled > 0) {
             ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
         }
-        if (outcome.preparationRequestGeneration != 0 &&
+        if (outcome.refillRequestGeneration != 0 &&
             txPreparationCallback_) {
-            txPreparationCallback_(outcome.preparationRequestGeneration);
+            txPreparationCallback_(outcome.refillRequestGeneration);
         }
     }
 }
@@ -519,8 +482,8 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
     }
     if (controlBlock_) {
         const auto currentStatus = controlBlock_->statusWord.load(std::memory_order_acquire);
-        if (currentStatus != ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal) {
-            controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
+        if (currentStatus != IsochTxQueueStatus::kProducerFault) {
+            controlBlock_->statusWord.store(IsochTxQueueStatus::kDeadContext, std::memory_order_release);
         }
     }
     state_ = State::Stopped;
