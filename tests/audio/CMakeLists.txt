@@ -141,6 +141,10 @@ add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
 )
 
+add_audio_test(TimingCursorPolicyTests
+    TimingCursorPolicyTests.cpp
+)
+
 add_audio_test(RxDrivenTimingTests
     RxDrivenTimingTests.cpp
 )
