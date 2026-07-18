@@ -66,4 +66,20 @@ AmdtpRateGeometryForSampleRate(uint32_t sampleRateHz) noexcept {
     }
 }
 
+/// Inverse mapping: AM824 FDF (SFC code, IEC 61883-6) -> rate geometry.
+/// Returns nullopt for NO_DATA (0xFF) and any non-SFC value.
+[[nodiscard]] constexpr std::optional<AmdtpRateGeometry>
+AmdtpRateGeometryForFdf(uint8_t fdf) noexcept {
+    switch (fdf) {
+        case 0:  return AmdtpRateGeometryForSampleRate(32000);
+        case 1:  return AmdtpRateGeometryForSampleRate(44100);
+        case 2:  return AmdtpRateGeometryForSampleRate(48000);
+        case 3:  return AmdtpRateGeometryForSampleRate(88200);
+        case 4:  return AmdtpRateGeometryForSampleRate(96000);
+        case 5:  return AmdtpRateGeometryForSampleRate(176400);
+        case 6:  return AmdtpRateGeometryForSampleRate(192000);
+        default: return std::nullopt;
+    }
+}
+
 } // namespace ASFW::Encoding
