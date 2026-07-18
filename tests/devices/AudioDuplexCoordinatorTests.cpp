@@ -762,7 +762,10 @@ TEST_F(AudioDuplexCoordinatorTests,
     protocol_->disconnectCaptureStatus = kIOReturnError;
     hostTransport_.stopTransmitStatus = kIOReturnError;
     hostTransport_.stopReceiveStatus = kIOReturnTimeout;
-    ASSERT_EQ(coordinator_.StopStreaming(kTestGuid), kIOReturnSuccess);
+    // FW-61: cleanup still proceeds through both directions, but a context
+    // that fails to quiesce must be reported to the caller so its DMA-visible
+    // mapping is not treated as safely releasable.
+    ASSERT_EQ(coordinator_.StopStreaming(kTestGuid), kIOReturnError);
     EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{
                                  "device.disconnect_playback",
                                  "host.stop_transmit",
