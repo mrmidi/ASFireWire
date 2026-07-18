@@ -1,11 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// Bounded, observational BeBoB discovery for exact known devices.
+// BeBoBPlug0StreamDiscovery.hpp — Bounded, observational BeBoB discovery.
+//
+// STATUS-only inventory of a BeBoB device's isochronous plug 0 pair: unit plug
+// counts, ISO plug type, stream formations, channel positions, and section types.
+// Never changes device clock, rate, routing, CMP, PCR, or stream state.
+//
+// Scope: plug-0 + one-CMP-connection. Name is deliberate — this does NOT iterate
+// all advertised plugs. Generalize to BeBoBStreamDiscovery when multi-plug BeBoB
+// devices need discovery.
+//
+// Wire behavior cross-validated with Linux sound/firewire/bebob/
+// bebob_command.c:91-107, 289-328 and bebob_stream.c:254-370, 705-820.
+// Fresh implementation; no reference source is copied.
 
 #pragma once
 
-#include "../IAVCCommandSubmitter.hpp"
+#include "../../../Protocols/AVC/IAVCCommandSubmitter.hpp"
+#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
+
+using ::ASFW::Protocols::AVC::IAVCCommandSubmitter;
+using ::ASFW::Protocols::AVC::AVCCdb;
+using ::ASFW::Protocols::AVC::AVCResult;
+using ::ASFW::Protocols::AVC::AVCCompletion;
+using ::ASFW::Protocols::AVC::kAVCSubunitUnit;
+using ::ASFW::Protocols::AVC::AVCCommandType;
 
 #include <cstdint>
 #include <functional>
@@ -13,15 +33,7 @@
 #include <span>
 #include <vector>
 
-namespace ASFW::Protocols::AVC::BridgeCo {
-
-inline constexpr uint32_t kTerraTecVendorId = 0x000aac;
-inline constexpr uint32_t kPhase88RackFwModelId = 0x000003;
-
-[[nodiscard]] constexpr bool IsTerraTecPhase88RackFw(uint32_t vendorId,
-                                                       uint32_t modelId) noexcept {
-    return vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId;
-}
+namespace ASFW::Audio::BeBoB {
 
 struct StreamFormation {
     uint8_t rateCode{0};
@@ -33,7 +45,7 @@ enum class PlugDirection : uint8_t { kInput = 0x00, kOutput = 0x01 };
 enum class StreamFormatState : uint8_t { kActive = 0x00, kInactive = 0x01, kNoStreamFormat = 0x02 };
 
 // Linux BeBoB discovery starts with generic unit PLUG_INFO, then asks the
-// BridgeCo extension about ISO plug 0 in each direction.  Keep these commands
+// BridgeCo extension about ISO plug 0 in each direction. Keep these commands
 // explicit and testable so their CDB operand offsets cannot drift.
 enum class ReadOnlyProbeCommand : uint8_t {
     kUnitPlugCounts,
@@ -50,7 +62,7 @@ struct ChannelPosition {
 };
 
 struct ChannelSection {
-    // BridgeCo section type, e.g. 0x0a for MIDI. It remains unknown until the
+    // BridgeCo section type, e.g. 0x0a for MIDI. Remains unknown until the
     // independent section-info request succeeds.
     std::optional<uint8_t> type{};
     std::vector<ChannelPosition> positions{};
@@ -91,10 +103,6 @@ struct DeviceModel {
                                                 uint8_t midiSlots) const noexcept;
 };
 
-// A BridgeCo extended stream-format-list response echoes the requested list
-// index in operand 7; the AM824 formation begins at operand 8.  Keeping this
-// codec public makes the discovery trace and the BeBoB backend share exactly
-// one wire interpretation.
 [[nodiscard]] std::optional<StreamFormation>
 ParseExtendedStreamFormatListResponse(uint8_t requestedIndex,
                                       std::span<const uint8_t> operands) noexcept;
@@ -114,9 +122,9 @@ using ReadOnlyProbeCompletion = std::function<void(const DeviceModel&)>;
 [[nodiscard]] std::optional<StreamFormation>
 ParseStreamFormation(std::span<const uint8_t> formation) noexcept;
 
-/// Sends STATUS queries only. It never changes device clock, rate, routing,
-/// CMP, PCR, or stream state.
-void StartPhase88ReadOnlyProbe(IAVCCommandSubmitter& submitter, uint64_t guid,
-                               ReadOnlyProbeCompletion completion = {});
+/// Sends STATUS queries only. Never changes device clock, rate, routing, CMP,
+/// PCR, or stream state. Scopes to the ISO plug-0 pair.
+void StartBeBoBPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
+                              ReadOnlyProbeCompletion completion = {});
 
-} // namespace ASFW::Protocols::AVC::BridgeCo
+} // namespace ASFW::Audio::BeBoB

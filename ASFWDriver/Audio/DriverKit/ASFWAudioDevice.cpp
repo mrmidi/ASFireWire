@@ -424,7 +424,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ztsWaitMs);
 
         // --- Log timing policy ---
-        const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
+        const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
+            static_cast<uint32_t>(ivars.device.currentSampleRate));
         const auto policySnap = policy.Snapshot();
         ASFW_LOG(Audio,
                  "TimingCursorPolicy rate=%u mode=blocking framesPerPacket=%u outCursorOffset=%u inCursorOffset=%u reportedOutLatency=%u reportedInLatency=%u outSafety=%u inSafety=%u outLead=%u inLead=%u ztsPeriod=%u",

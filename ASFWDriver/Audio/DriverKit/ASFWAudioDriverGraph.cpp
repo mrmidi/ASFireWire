@@ -22,6 +22,7 @@
 #include <AudioDriverKit/IOUserAudioUtils.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <type_traits>
 #include <utility>
@@ -254,7 +255,15 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              ivars.device.outputChannelCount,
              ivars.device.channelCount);
 
-    auto deviceUID = OSSharedPtr(OSString::withCString("ASFWAudioDevice"), OSNoRetain);
+    // The device UID must be unique per physical device: macOS persists
+    // per-device audio state (Audio MIDI Setup speaker configuration incl. the
+    // preferred stereo pair, volumes) keyed by this UID. A shared constant UID
+    // let one device's stereo-pair setting silently remap the output channels
+    // of every ASFW device (BUGLIST.md Bug 1: "right channel only").
+    char deviceUidString[32] = {};
+    std::snprintf(deviceUidString, sizeof(deviceUidString), "ASFW-%016llX",
+                  static_cast<unsigned long long>(ivars.device.guid));
+    auto deviceUID = OSSharedPtr(OSString::withCString(deviceUidString), OSNoRetain);
     auto modelUID = OSSharedPtr(OSString::withCString(ivars.device.deviceName), OSNoRetain);
     auto manufacturerUID = OSSharedPtr(OSString::withCString("ASFireWire"), OSNoRetain);
     if (!deviceUID || !modelUID || !manufacturerUID) {
@@ -660,8 +669,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             ivars.audioDevice->SetClockDomain(1))) {
         return error;
     }
-    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const double currentSampleRate = ivars.device.currentSampleRate;
+    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
+        static_cast<uint32_t>(currentSampleRate));
     const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
         ivars.device.vendorId, ivars.device.modelId, ivars.device.guid);
 

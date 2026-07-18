@@ -69,7 +69,7 @@ void ServiceContext::Reset(ResetMode mode) {
         sbp2Bridge->Shutdown();
         sbp2Bridge.reset();
     }
-    isoch.StopAll();
+    (void)isoch.StopAll();
     controller.reset();
     audioCoordinator.reset();
     // Tear down the runtime audio protocols while the services they were built from
@@ -182,6 +182,12 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         d.audioRuntimeRegistry = std::make_shared<ASFW::Audio::AudioRuntimeRegistry>();
     }
 
+    // Provide genuinely-deferred one-shot timers to protocol control planes.
+    // BeBoB uses this for the post-format settle delay instead of IOSleep.
+    if (d.audioRuntimeRegistry && d.sbp2SessionScheduler) {
+        d.audioRuntimeRegistry->SetTimerScheduler(d.sbp2SessionScheduler.get());
+    }
+
     if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware &&
         d.audioRuntimeRegistry) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
@@ -223,6 +229,10 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
             return kr;
         }
         ASFW_LOG(Controller, "[Controller] SBP2 session scheduler initialized");
+    }
+
+    if (d.audioRuntimeRegistry && d.sbp2SessionScheduler) {
+        d.audioRuntimeRegistry->SetTimerScheduler(d.sbp2SessionScheduler.get());
     }
 
     if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
@@ -348,7 +358,7 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
         ctx.sbp2Bridge->Shutdown();
         ctx.sbp2Bridge.reset();
     }
-    ctx.isoch.StopAll();
+    (void)ctx.isoch.StopAll();
     if (ctx.deps.interrupts)
         ctx.deps.interrupts->Teardown();
     if (ctx.deps.selfId && ctx.deps.hardware)

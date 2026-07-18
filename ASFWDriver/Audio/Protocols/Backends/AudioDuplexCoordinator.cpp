@@ -10,6 +10,7 @@
 #include "../../../Logging/Logging.hpp"
 #include "../../Core/AudioRuntimeRegistry.hpp"
 #include "../../Model/ASFWAudioDevice.hpp"
+#include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -32,6 +33,21 @@ using ASFW::Audio::DICE::HasHostRestartState;
 using ASFW::Audio::DICE::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
+constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
+
+// The Duet format-control path is deliberately start-time only for now.  Do
+// not resurrect a rate retained in a restart session: the host geometry and
+// the device's unit-plug formation must enter the start transaction together
+// at the supported fixed rate.
+[[nodiscard]] AudioClockConfig EffectiveStartClockForProfile(
+    const Discovery::DeviceRecord& record,
+    const AudioClockConfig& requestedClock) noexcept {
+    if (record.vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
+        record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
+        return AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz};
+    }
+    return requestedClock;
+}
 
 [[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
     mach_timebase_info_data_t timebase{};
@@ -747,7 +763,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     Discovery::DeviceRecord& record = request.record;
     IDuplexDeviceControl& deviceControl = request.deviceControl;
     DuplexRestartSession& session = request.session;
-    const AudioClockConfig& desiredClock = request.desiredClock;
+    const AudioClockConfig desiredClock =
+        EffectiveStartClockForProfile(record, request.desiredClock);
     const DuplexRestartReason reason = request.reason;
     auto& runtime_ = dependencies_.runtime;
     auto& hostTransport_ = dependencies_.hostTransport;
@@ -1457,7 +1474,7 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
             },
             dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
         (void)disconnectPlayback;
-        (void)hostTransport_.StopPreparedTransmit();
+        const kern_return_t transmitStopStatus = hostTransport_.StopPreparedTransmit();
 
         const auto disconnectCapture = WaitForAsyncResult<bool>(
             [&](auto callback) {
@@ -1468,11 +1485,18 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
             },
             dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
         (void)disconnectCapture;
-        (void)hostTransport_.StopPreparedReceive();
+        const kern_return_t receiveStopStatus = hostTransport_.StopPreparedReceive();
 
         // Contexts are already stopped. StopAll performs the neutral ownership
         // cleanup (reserved profile + active GUID) without another wire action.
-        (void)hostTransport_.StopAll();
+        const kern_return_t cleanupStatus = hostTransport_.StopAll();
+        if (transmitStopStatus != kIOReturnSuccess) {
+            result = transmitStopStatus;
+        } else if (receiveStopStatus != kIOReturnSuccess) {
+            result = receiveStopStatus;
+        } else if (cleanupStatus != kIOReturnSuccess) {
+            result = cleanupStatus;
+        }
     } else {
         // DICE retains its original teardown contract unchanged.
         const kern_return_t hostStatus = hostTransport_.StopAll();

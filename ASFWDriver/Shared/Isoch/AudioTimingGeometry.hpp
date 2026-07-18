@@ -6,6 +6,11 @@
 
 namespace ASFW::IsochTransport {
 
+// AUDIO-ONLY CONTRACT.  Do not include this header from Hardware/, Bus/,
+// Async/, or Isoch/: those layers carry opaque isoch packets and must not
+// inherit audio cadence, frame, buffer, or clock policy.  Generic OHCI
+// descriptor geometry belongs in Isoch/Core/IsochDmaGeometry.hpp.
+
 // -----------------------------------------------------------------------------
 // UNIT DISCIPLINE: every constant carries its domain in the name --
 //   ...Packets  FireWire isoch packets (one per 125 us cycle, 8000/s)

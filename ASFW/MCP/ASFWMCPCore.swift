@@ -38,6 +38,12 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
     }
 
     func readResource(uri: String) async -> ASFWMCPResourceEnvelope {
+        let envelope = await resolveResource(uri: uri)
+        ASFWMCPConsoleLog.resourceRead(uri: uri, ok: envelope.errors.isEmpty)
+        return envelope
+    }
+
+    private func resolveResource(uri: String) async -> ASFWMCPResourceEnvelope {
         guard configuration.mode != .disabled else {
             return disabledEnvelope(uri: uri)
         }

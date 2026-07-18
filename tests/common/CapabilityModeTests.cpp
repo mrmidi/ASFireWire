@@ -107,6 +107,23 @@ TEST(CapabilityMode, HardwareValidationDefault_AdvertisesFullBMAndIRM) {
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
+TEST(CapabilityMode, LiveDefault_IsPassiveClient) {
+    const auto policy = ASFW::Driver::RolePolicy::MakeLiveDefault();
+    EXPECT_EQ(policy.roleMode, RoleMode::ClientOnly);
+    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::ObserveOnly);
+    EXPECT_EQ(policy.powerPolicyLevel, ASFW::Driver::PowerPolicyLevel::ObserveOnly);
+
+    // A passive client must not advertise management ownership, but it still
+    // preserves genuine controller content capabilities.  This is the live
+    // controller value observed on the FW643, including CMC/ISC.
+    const auto decoded = DecodeBusOptions(
+        NormalizeLocalBusOptions(0xF000B003u, policy.roleMode, policy.fullBMActivityLevel));
+    EXPECT_FALSE(decoded.bmc);
+    EXPECT_FALSE(decoded.irmc);
+    EXPECT_TRUE(decoded.cmc);
+    EXPECT_TRUE(decoded.isc);
+}
+
 TEST(CapabilityMode, ReservedAndNumericBitsPreservedInEveryMode) {
     for (auto mode : {RoleMode::LegacyBmcCleared, RoleMode::ClientOnly,
                       RoleMode::IRMResourceHost, RoleMode::FullBusManager}) {

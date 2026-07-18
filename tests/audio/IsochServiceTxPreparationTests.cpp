@@ -20,6 +20,21 @@ using ASFW::IsochTransport::ExpectedCommitGen;
 using ASFW::IsochTransport::TxPacketMeta;
 using ASFW::IsochTransport::TxStreamControl;
 
+class RecordingReceiveConsumer final : public ASFW::Isoch::IIsochReceiveConsumer {
+  public:
+    void OnReceiveActivated() noexcept override { ++activated; }
+    void OnReceiveQuiesced() noexcept override { ++quiesced; }
+    void BeginReceiveBatch(const ASFW::Isoch::IsochReceiveBatch&) noexcept override {
+        ++batches;
+    }
+    void ConsumePacket(const ASFW::Isoch::IsochReceiveBatch&,
+                       const ASFW::Isoch::IsochReceivePacket&) noexcept override {}
+
+    uint32_t activated{0};
+    uint32_t quiesced{0};
+    uint32_t batches{0};
+};
+
 TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesStartTransmit) {
     IsochService service;
     HardwareInterface hardware;
@@ -98,14 +113,13 @@ TEST(IsochServiceTxPreparation, SecondaryStreamRejectsIndexZeroAndOutOfRange) {
 
     // Index 0 is the master — must go through PrepareReceive/PrepareTransmit.
     EXPECT_EQ(service.PrepareReceiveStream(0, /*channel=*/1, hardware,
-                                           /*binding=*/nullptr, /*offset=*/0,
-                                           /*streamChannels=*/16),
+                                           /*offset=*/0, /*streamChannels=*/16),
               kIOReturnBadArgument);
     EXPECT_EQ(service.PrepareTransmitStream(0, /*channel=*/0, hardware, /*sid=*/0x3f),
               kIOReturnBadArgument);
     // Out of range.
     EXPECT_EQ(service.PrepareReceiveStream(IsochService::kMaxStreamsPerDirection, 2, hardware,
-                                           nullptr, 16, 16),
+                                           16, 16),
               kIOReturnBadArgument);
 }
 
@@ -116,9 +130,7 @@ TEST(IsochServiceTxPreparation, SecondaryReceiveStreamCreatesContextAndRecordsOf
     EXPECT_EQ(service.ReceiveContext(1), nullptr);
 
     ASSERT_EQ(service.PrepareReceiveStream(/*streamIndex=*/1, /*channel=*/2, hardware,
-                                           /*bindingSource=*/nullptr,
-                                           /*channelOffset=*/16,
-                                           /*streamChannels=*/16),
+                                           /*channelOffset=*/16, /*streamChannels=*/16),
               kIOReturnSuccess);
 
     // Master untouched; secondary now exists and its de-interleave offset is recorded.
@@ -128,7 +140,43 @@ TEST(IsochServiceTxPreparation, SecondaryReceiveStreamCreatesContextAndRecordsOf
     EXPECT_EQ(service.CaptureStreamChannelOffset(1), 16u);
 
     // StopAll tears the whole service down without touching the (absent) master.
-    service.StopAll();
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
+}
+
+TEST(IsochServiceTxPreparation, StopAllPropagatesActiveReceiveTimeoutAndRetainsContext) {
+    IsochService service;
+    HardwareInterface hardware;
+
+    ASSERT_EQ(service.PrepareReceive(/*channel=*/2, hardware),
+              kIOReturnSuccess);
+    ASSERT_EQ(service.StartPreparedReceive(), kIOReturnSuccess);
+
+    const Register32 controlSet =
+        static_cast<Register32>(DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware.SetTestRegister(controlSet, ASFW::Driver::ContextControl::kActive);
+
+    EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
+    ASSERT_NE(service.ReceiveContext(0), nullptr);
+    EXPECT_EQ(service.ReceiveContext(0)->GetState(), ASFW::Isoch::IRPolicy::State::Running);
+}
+
+TEST(IsochServiceTxPreparation, ReceiveConsumerAttachesBeforePreparedStart) {
+    IsochService service;
+    HardwareInterface hardware;
+    RecordingReceiveConsumer consumer;
+
+    service.SetReceiveConsumer(/*streamIndex=*/0, &consumer);
+    ASSERT_EQ(service.PrepareReceive(/*channel=*/2, hardware),
+              kIOReturnSuccess);
+    ASSERT_EQ(service.StartPreparedReceive(), kIOReturnSuccess);
+    ASSERT_NE(service.ReceiveContext(), nullptr);
+    EXPECT_EQ(consumer.activated, 1u);
+
+    EXPECT_EQ(service.ReceiveContext()->Poll(), 0u);
+    EXPECT_EQ(consumer.batches, 1u);
+
+    EXPECT_EQ(service.StopReceive(), kIOReturnSuccess);
+    EXPECT_EQ(consumer.quiesced, 1u);
 }
 
 TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext) {
@@ -154,7 +202,7 @@ TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext
     EXPECT_NE(service.TransmitContext(1), nullptr); // secondary created
     EXPECT_NE(service.TransmitContext(1), service.TransmitContext(0));
 
-    service.StopAll();
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
 
     if (payloadDescriptor)
         payloadDescriptor->release();

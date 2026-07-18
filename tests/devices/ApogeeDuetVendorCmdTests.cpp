@@ -505,6 +505,40 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
     EXPECT_EQ(gSubmittedFCPFrames.size(), 6U);
 }
 
+TEST(ApogeeDuetDuplexAdapter, PrepareDuplexRevalidates48kBeforeResourceAllocation) {
+    using namespace ASFW::Protocols::AVC;
+    RecordingAVCBus bus;
+    ASFW::IRM::IRMClient irm(bus);
+    ASFW::CMP::CMPClient cmp(bus, bus);
+    auto transport = std::make_shared<FCPTransport>();
+    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), &irm, &cmp, 1, 0);
+    ASFW::Audio::AudioDuplexChannels channels{};
+    IOReturn completionStatus = kIOReturnNotReady;
+
+    ResetDuetFormatFixture(0x01U, 0x01U);
+    protocol.PrepareDuplex(
+        channels, ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
+        [&completionStatus](IOReturn status, ASFW::Audio::DuplexPrepareResult) {
+            completionStatus = status;
+        });
+    ASSERT_EQ(completionStatus, kIOReturnSuccess);
+    ASSERT_EQ(gSubmittedFCPFrames.size(), 6U);
+
+    // Simulate an external format change while the driver is still in the
+    // same bus generation.  The next Start must not trust its old cache.
+    ResetDuetFormatFixture(0x01U, 0x01U);
+    completionStatus = kIOReturnNotReady;
+    protocol.PrepareDuplex(
+        channels, ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
+        [&completionStatus](IOReturn status, ASFW::Audio::DuplexPrepareResult) {
+            completionStatus = status;
+        });
+    EXPECT_EQ(completionStatus, kIOReturnSuccess);
+    ASSERT_EQ(gSubmittedFCPFrames.size(), 6U);
+    EXPECT_EQ(gDuetInputFrequency, 0x02U);
+    EXPECT_EQ(gDuetOutputFrequency, 0x02U);
+}
+
 TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;

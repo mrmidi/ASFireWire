@@ -9,6 +9,7 @@
 #endif
 
 #include "LogConfig.hpp"
+#include "LogRing.hpp"
 
 #ifndef OS_LOG_TYPE_DEFAULT
 #define OS_LOG_TYPE_DEFAULT static_cast<os_log_type_t>(0x00)
@@ -111,8 +112,11 @@ os_log_t PayloadWriter();
 // ----- time helpers (header-only, safe in DriverKit) -----
 namespace ASFW::LogDetail {
 inline uint64_t NowNs() {
-    static mach_timebase_info_data_t tb{0,0};
-    if (!tb.denom) mach_timebase_info(&tb);
+    static const mach_timebase_info_data_t tb = [] {
+        mach_timebase_info_data_t value{};
+        mach_timebase_info(&value);
+        return value;
+    }();
     const uint64_t t = mach_absolute_time();
     return (t * tb.numer) / tb.denom;
 }
@@ -123,11 +127,34 @@ struct RlState {
 } // namespace ASFW::LogDetail
 
 // ----- Plain logging (category-stable prefixes via your cpp) -----
-#define ASFW_LOG(cat, fmt, ...) \
-    os_log(::ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat, ##__VA_ARGS__)
+//
+// Every macro emits into the driver-owned LogRing (queryable via the user
+// client / MCP with category+level+substring filters) and, while the os_log
+// mirror is enabled, also to os_log for unified-log continuity. The ring is
+// the cheap path (one atomic claim + vsnprintf into driver memory); the
+// mirror is the expensive one and can be silenced at runtime per
+// LogConfig::SetOsLogMirrorEnabled once ring-based debugging is trusted.
+#define ASFW_LOG_RING_ONLY(cat, level, fmt, ...) \
+    ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, (level), \
+                             "[" #cat "] " fmt, ##__VA_ARGS__)
 
-#define ASFW_LOG_TYPE(cat, os_type, fmt, ...) \
-    os_log(::ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat, ##__VA_ARGS__)
+#define ASFW_LOG_LEVELED(cat, level, fmt, ...)                                    \
+    do {                                                                          \
+        ASFW_LOG_RING_ONLY(cat, level, fmt, ##__VA_ARGS__);                       \
+        if (::ASFW::LogConfig::Shared().IsOsLogMirrorEnabled()) {                 \
+            os_log(::ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat,     \
+                   ##__VA_ARGS__);                                                \
+        }                                                                         \
+    } while (0)
+
+#define ASFW_LOG(cat, fmt, ...) \
+    ASFW_LOG_LEVELED(cat, ::ASFW::Logging::LogLevel::Notice, fmt, ##__VA_ARGS__)
+
+#define ASFW_LOG_TYPE(cat, os_type, fmt, ...)                                     \
+    ASFW_LOG_LEVELED(cat,                                                         \
+                     ::ASFW::Logging::RingLevelForOsType(                         \
+                         static_cast<uint8_t>(os_type)),                          \
+                     fmt, ##__VA_ARGS__)
 
 // ----- Rate-limited logging -----
 // key: per-callsite stable string (e.g. "tx/ack_tardy"); interval_ms: throttle window
@@ -138,17 +165,52 @@ struct RlState {
         const uint64_t _intv = (uint64_t)(interval_ms) * 1000000ull;                            \
         uint64_t _last = _s.last_ns.load(std::memory_order_relaxed);                            \
         if (_now - _last >= _intv || _last==0) {                                                \
+            const auto _lvl = ::ASFW::Logging::RingLevelForOsType(                              \
+                static_cast<uint8_t>(os_type));                                                 \
+            const bool _mirror = ::ASFW::LogConfig::Shared().IsOsLogMirrorEnabled();            \
             if (_s.last_ns.exchange(_now, std::memory_order_relaxed) != 0) {                    \
                 uint64_t _lost = _s.suppressed.exchange(0, std::memory_order_relaxed);          \
                 if (_lost) {                                                                    \
-                    os_log(ASFW::Driver::Logging::cat(),                     \
-                        "[%{public}s][%{public}s] (suppressed=%llu prior)", #cat, key, _lost);  \
+                    ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, _lvl,           \
+                        "[" #cat "][%s] (suppressed=%llu prior)", key, _lost);                  \
+                    if (_mirror) {                                                              \
+                        os_log(ASFW::Driver::Logging::cat(),                                    \
+                            "[%{public}s][%{public}s] (suppressed=%llu prior)",                 \
+                            #cat, key, _lost);                                                  \
+                    }                                                                           \
                 }                                                                               \
             }                                                                                   \
-            os_log(ASFW::Driver::Logging::cat(),                             \
-                "[%{public}s][%{public}s] " fmt, #cat, key, ##__VA_ARGS__);                     \
+            ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, _lvl,                   \
+                "[" #cat "][%s] " fmt, key, ##__VA_ARGS__);                                     \
+            if (_mirror) {                                                                      \
+                os_log(ASFW::Driver::Logging::cat(),                                            \
+                    "[%{public}s][%{public}s] " fmt, #cat, key, ##__VA_ARGS__);                 \
+            }                                                                                   \
         } else {                                                                                \
             _s.suppressed.fetch_add(1, std::memory_order_relaxed);                              \
+        }                                                                                       \
+    } while (0)
+
+// Ring-only variant for a persistent anomaly on a real-time path.  It keeps
+// enough chronology for MCP while never trapping out to the unified-log path.
+#define ASFW_LOG_RING_ONLY_RL(cat, key, interval_ms, level, fmt, ...)                          \
+    do {                                                                                        \
+        static ASFW::LogDetail::RlState _s;                                                     \
+        const uint64_t _now = ASFW::LogDetail::NowNs();                                         \
+        const uint64_t _intv = (uint64_t)(interval_ms) * 1000000ull;                            \
+        const uint64_t _last = _s.last_ns.load(std::memory_order_relaxed);                      \
+        if (_now - _last >= _intv || _last == 0) {                                              \
+            if (_s.last_ns.exchange(_now, std::memory_order_relaxed) != 0) {                   \
+                const uint64_t _lost = _s.suppressed.exchange(0, std::memory_order_relaxed);   \
+                if (_lost) {                                                                    \
+                    ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, (level),       \
+                        "[" #cat "][%s] (suppressed=%llu prior)", key, _lost);               \
+                }                                                                               \
+            }                                                                                   \
+            ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, (level),               \
+                "[" #cat "][%s] " fmt, key, ##__VA_ARGS__);                                  \
+        } else {                                                                                \
+            _s.suppressed.fetch_add(1, std::memory_order_relaxed);                             \
         }                                                                                       \
     } while (0)
 
@@ -165,9 +227,17 @@ struct RlState {
 #define __FILE_NAME__ __FILE__
 #endif
 
-#define ASFW_LOG_SITE(cat, fmt, ...) \
-    os_log(ASFW::Driver::Logging::cat(), "[%{public}s] %{public}s:%d %{public}s | " fmt, \
-           #cat, __FILE_NAME__, __LINE__, __func__, ##__VA_ARGS__)
+#define ASFW_LOG_SITE(cat, fmt, ...)                                                     \
+    do {                                                                                 \
+        ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat,                      \
+            ::ASFW::Logging::LogLevel::Notice, "[" #cat "] %s:%d %s | " fmt,             \
+            __FILE_NAME__, __LINE__, __func__, ##__VA_ARGS__);                           \
+        if (::ASFW::LogConfig::Shared().IsOsLogMirrorEnabled()) {                        \
+            os_log(ASFW::Driver::Logging::cat(),                                         \
+                   "[%{public}s] %{public}s:%d %{public}s | " fmt,                       \
+                   #cat, __FILE_NAME__, __LINE__, __func__, ##__VA_ARGS__);              \
+        }                                                                                \
+    } while (0)
 
 // ----- Correlated logging with txid/gen (parseable k=v format) -----
 #define ASFW_LOG_KV(cat, ctxName, txid, gen, fmt, ...) \

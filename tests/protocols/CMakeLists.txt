@@ -30,10 +30,10 @@ target_link_libraries(FCPPacketParsingTests PRIVATE
 )
 gtest_discover_tests(FCPPacketParsingTests)
 
-# BridgeCo / BeBoB STATUS-only inventory codec tests
-add_protocols_test(BridgeCoReadOnlyProbeTests
-    BridgeCoReadOnlyProbeTests.cpp
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/BridgeCo/BridgeCoReadOnlyProbe.cpp"
+# BeBoB STATUS-only inventory codec tests (plug-0 scope)
+add_protocols_test(BeBoBPlug0StreamDiscoveryTests
+    BeBoBPlug0StreamDiscoveryTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
 )
 
 # FCP transport lifecycle tests (write completion, cancellable timeout, teardown)

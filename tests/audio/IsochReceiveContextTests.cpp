@@ -2,6 +2,7 @@
 #include <gmock/gmock.h>
 
 #include "Isoch/IsochReceiveContext.hpp"
+#include "Isoch/Receive/ZtsTelemetry.hpp"
 #include "Isoch/Memory/IsochDMAMemoryManager.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/OHCIConstants.hpp"
@@ -18,6 +19,31 @@ using namespace ASFW::Shared;
 using namespace ASFW::Async;
 using namespace ASFW::Isoch::Memory;
 using namespace testing;
+
+class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
+  public:
+    void OnReceiveActivated() noexcept override { ++activationCount; }
+    void OnReceiveQuiesced() noexcept override { ++quiesceCount; }
+
+    void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept override {
+        ++batchCount;
+        lastBatch = batch;
+    }
+
+    void ConsumePacket(const IsochReceiveBatch& batch,
+                       const IsochReceivePacket& packet) noexcept override {
+        ++packetCount;
+        lastBatch = batch;
+        lastPacketBytes = packet.payload.size();
+    }
+
+    uint32_t batchCount{0};
+    uint32_t packetCount{0};
+    uint32_t lastPacketBytes{0};
+    uint32_t activationCount{0};
+    uint32_t quiesceCount{0};
+    IsochReceiveBatch lastBatch{};
+};
 
 TEST(PayloadWriterTelemetryTests,
      HistoricalStartupCountersDoNotMakeTheHealthySteadyStateNoisy) {
@@ -122,7 +148,7 @@ protected:
 
     void TearDown() override {
         if (context_) {
-            context_->Stop();
+            (void)context_->Stop();
             context_.reset();
         }
         if (hardware_) {
@@ -170,6 +196,33 @@ TEST_F(IsochReceiveContextTest, StartProgramsRegisters) {
     // Ideally we'd use a MockHardwareInterface to verify ::Write calls.
 }
 
+TEST_F(IsochReceiveContextTest, StopFlushesRunClearAndOnlyThenMarksStopped) {
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(context_->GetState(), IRPolicy::State::Stopped);
+
+    const auto operations = hardware_->CopyTestOperations();
+    EXPECT_THAT(operations, Contains(::ASFW::Driver::HardwareInterface::TestOperation::WriteAndFlush));
+}
+
+TEST_F(IsochReceiveContextTest, StopRetainsBindingStateWhenActiveNeverClears) {
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, ::ASFW::Driver::ContextControl::kActive);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnTimeout);
+    EXPECT_EQ(context_->GetState(), IRPolicy::State::Running);
+}
+
 TEST_F(IsochReceiveContextTest, PollProcessesPackets) {
     context_->Configure(0, 0);
     context_->Start();
@@ -184,4 +237,22 @@ TEST_F(IsochReceiveContextTest, PollProcessesPackets) {
     // TODO: Advanced test - Write to FakeMemory to simulate packet arrival
     // This requires knowing the addresses allocated.
     // IsochReceiveContext doesn't expose rings directly.
+}
+
+TEST_F(IsochReceiveContextTest, PollPublishesTheBatchToAContentConsumer) {
+    RecordingReceiveConsumer consumer;
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    context_->SetReceiveConsumer(&consumer);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    EXPECT_EQ(context_->Poll(), 0);
+    EXPECT_EQ(consumer.batchCount, 1u);
+    EXPECT_EQ(consumer.packetCount, 0u);
+    EXPECT_EQ(consumer.activationCount, 1u);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(consumer.quiesceCount, 1u);
 }

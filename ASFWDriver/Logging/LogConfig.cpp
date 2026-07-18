@@ -90,6 +90,7 @@ void LogConfig::Initialize(IOService* service) {
     enableHexDumps_.store(ReadBoolProperty(service, "ASFWEnableHexDumps", false));
     audioAutoStartEnabled_.store(ReadBoolProperty(service, "ASFWAutoStartAudioStreams", true));
     logStatistics_.store(ReadBoolProperty(service, "ASFWLogStatistics", true));
+    osLogMirrorEnabled_.store(ReadBoolProperty(service, "ASFWMirrorToOsLog", true));
 
     initialized_.store(true);
 
@@ -169,6 +170,10 @@ uint8_t LogConfig::GetDirectAudioVerbosity() const {
 
 bool LogConfig::IsHexDumpsEnabled() const {
     return enableHexDumps_.load(std::memory_order_relaxed);
+}
+
+bool LogConfig::IsOsLogMirrorEnabled() const {
+    return osLogMirrorEnabled_.load(std::memory_order_relaxed);
 }
 
 bool LogConfig::IsStatisticsEnabled() const {
@@ -270,6 +275,13 @@ void LogConfig::SetDirectAudioVerbosity(uint8_t level) {
 void LogConfig::SetHexDumps(bool enable) {
     enableHexDumps_.store(enable, std::memory_order_relaxed);
     ASFW_LOG_INFO(Controller, "Hex dumps %{public}s", enable ? "enabled" : "disabled");
+}
+
+void LogConfig::SetOsLogMirrorEnabled(bool enable) {
+    osLogMirrorEnabled_.store(enable, std::memory_order_relaxed);
+    // Log after the store so disabling still emits its own trace into the
+    // ring (and, when re-enabling, into os_log immediately).
+    ASFW_LOG_INFO(Controller, "os_log mirror %{public}s", enable ? "enabled" : "disabled");
 }
 
 void LogConfig::SetAudioAutoStartEnabled(bool enable) {

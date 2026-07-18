@@ -31,8 +31,20 @@ SAFE_TOOL_PREFIXES = (
 # Read-only FCP operations do not share a safe prefix with
 # `asfw_fcp_send_command_dev`, which is intentionally mutation-gated.
 SAFE_TOOL_NAMES = {
+    # These names are verb-first rather than get/list, but MCP advertises them
+    # as read-only. Keep the exception set intentionally small; in particular
+    # it must not admit any CMP/FCP write or connection-establishment tool.
+    "asfw_bebob_read_bootrom_info",
+    "asfw_bebob_get_unit_plug_info",
+    "asfw_bebob_get_clock_topology",
+    "asfw_cmp_list_plugs",
+    "asfw_cmp_read_pcr",
     "asfw_fcp_send_command",
     "asfw_fcp_get_recent_responses",
+    "asfw_irm_list_allocations",
+    "asfw_log_query",
+    "asfw_log_stats",
+    "asfw_phase88_get_clock",
 }
 
 

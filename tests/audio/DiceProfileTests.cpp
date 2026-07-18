@@ -16,6 +16,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
+#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
 namespace {
 
@@ -71,7 +72,7 @@ TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
     EXPECT_EQ(profile->TxChannelCount(), 2u);
     EXPECT_EQ(profile->RxChannelCount(), 2u);
-    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{44100u, 48000u}));
+    EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{48000u}));
 }
 
 TEST(DiceProfileTests, ResolvesPhase88AsAvcWireProfileNotGenericDice) {
@@ -231,6 +232,60 @@ TEST(DiceProfileTests, GenericDiceDefaultOffsetsAndLatencies) {
     EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 64);
     EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 128);
     EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 128);
+}
+
+// Discovery-derived geometry for a BeBoB device without a curated profile.
+ASFW::Audio::BeBoB::DeviceModel MakeStereoBeBoBDiscoveryModel() {
+    ASFW::Audio::BeBoB::DeviceModel model{};
+    ASFW::Audio::BeBoB::StreamFormation formation{};
+    formation.pcmChannels = 2;
+    formation.midiSlots = 0;
+    formation.rateCode = 0x02; // 48 kHz
+    model.input.supportedFormations.push_back(formation);
+    model.output.supportedFormations.push_back(formation);
+    return model;
+}
+
+TEST(DiceProfileTests, DynamicBeBoBProfileNeverShadowsCuratedPhase88) {
+    // Regression for BUGLIST.md Bug 2a: AVCDiscovery registers a per-GUID
+    // generic BeBoBProfile for every BeBoB device it probes, including the
+    // PHASE 88. The curated Phase88Profile (name, emptyPacketsDuringIdle
+    // warm-up policy from FW-105) must still win the lookup.
+    const uint64_t kPhase88Guid = 0x000AAC0300B1D1F7ULL;
+    const auto model = MakeStereoBeBoBDiscoveryModel();
+    ASSERT_NE(AudioProfileRegistry::RegisterBeBoBProfile(kPhase88Guid, &model), nullptr);
+
+    const auto* profile = AudioProfileRegistry::FindProfile(0x000AAC, 0x000003, kPhase88Guid);
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "PHASE 88 Rack FW");
+    const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
+    EXPECT_TRUE(wireProfile->TxStreamPolicy().emptyPacketsDuringIdle);
+
+    AudioProfileRegistry::UnregisterProfile(kPhase88Guid);
+}
+
+TEST(DiceProfileTests, DynamicBeBoBProfileServesUncuratedBeBoBDevices) {
+    // For a BeBoB device with no curated/static match, the per-GUID
+    // discovery-derived profile is the resolver (before the DICE generic
+    // fallback).
+    const uint64_t kUnknownBeBoBGuid = 0x00089ABCDEF01234ULL;
+    const auto model = MakeStereoBeBoBDiscoveryModel();
+    ASSERT_NE(AudioProfileRegistry::RegisterBeBoBProfile(kUnknownBeBoBGuid, &model), nullptr);
+
+    const auto* profile =
+        AudioProfileRegistry::FindProfile(0x0089AB, 0x000042, kUnknownBeBoBGuid);
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "BeBoB Device");
+    EXPECT_EQ(profile->TxChannelCount(), 2U);
+
+    AudioProfileRegistry::UnregisterProfile(kUnknownBeBoBGuid);
+
+    // Without the dynamic registration the same identity falls back to the
+    // DICE generic profile.
+    const auto* fallback =
+        AudioProfileRegistry::FindProfile(0x0089AB, 0x000042, kUnknownBeBoBGuid);
+    ASSERT_NE(fallback, nullptr);
+    EXPECT_STREQ(fallback->Name(), "Generic DICE");
 }
 
 } // namespace

@@ -4,6 +4,7 @@
 // DeviceStreamModeQuirks.cpp - Vendor/model stream mode overrides
 
 #include "DeviceStreamModeQuirks.hpp"
+#include "../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 
 namespace ASFW::Audio::Quirks {
 
@@ -21,10 +22,6 @@ constexpr uint32_t kSPro24DspModelId  = 0x000008;
 constexpr uint32_t kMidasVendorId      = 0x10c73f;
 constexpr uint32_t kMidasVeniceModelId = 0x000001;
 
-// Linux's BeBoB path initializes AMDTP with CIP_BLOCKING
-// (sound/firewire/bebob/bebob_stream.c:400-465).
-constexpr uint32_t kTerraTecVendorId = 0x000aac;
-constexpr uint32_t kPhase88RackFwModelId = 0x000003;
 } // namespace
 
 std::optional<Model::StreamMode> LookupForcedStreamMode(
@@ -52,7 +49,9 @@ std::optional<Model::StreamMode> LookupForcedStreamMode(
         return Model::StreamMode::kBlocking;
     }
 
-    if (vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId) {
+    // Linux's BeBoB path initializes AMDTP with CIP_BLOCKING
+    // (sound/firewire/bebob/bebob_stream.c:400-465). Applies to all BeBoB devices.
+    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(vendorId, modelId)) {
         return Model::StreamMode::kBlocking;
     }
 

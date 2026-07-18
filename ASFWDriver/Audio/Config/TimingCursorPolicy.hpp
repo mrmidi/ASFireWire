@@ -12,7 +12,7 @@ enum class AudioDirection : uint8_t {
 };
 
 enum class AudioTimingMode : uint8_t {
-    Dice48kBlocking = 0,
+    Dice1xBlocking = 0,
 };
 
 struct TimingCursorPolicySnapshot {
@@ -33,14 +33,21 @@ struct TimingCursorPolicySnapshot {
 
 class TimingCursorPolicy {
 public:
-    static constexpr TimingCursorPolicy MakeDice48kBlocking() noexcept {
-        return TimingCursorPolicy(AudioTimingMode::Dice48kBlocking);
+    // 44.1 and 48 kHz share the DICE 1x packet geometry.  Keep the active
+    // rate with the policy so diagnostic snapshots describe the stream that
+    // is actually running, rather than the historical 48 kHz default.
+    static constexpr TimingCursorPolicy MakeDice1xBlocking(
+        uint32_t sampleRateHz) noexcept {
+        return TimingCursorPolicy(AudioTimingMode::Dice1xBlocking, sampleRateHz);
     }
 
-    constexpr explicit TimingCursorPolicy(AudioTimingMode mode) noexcept : mode_(mode) {}
+    constexpr explicit TimingCursorPolicy(
+        AudioTimingMode mode,
+        uint32_t sampleRateHz) noexcept
+        : mode_(mode), sampleRateHz_(sampleRateHz) {}
 
     [[nodiscard]] constexpr uint32_t SampleRateHz() const noexcept {
-        return ASFW::IsochTransport::AudioTimingGeometry::kSampleRateHz;
+        return sampleRateHz_;
     }
 
     [[nodiscard]] constexpr uint32_t FramesPerPacketMax() const noexcept {
@@ -127,6 +134,7 @@ public:
 
 private:
     AudioTimingMode mode_;
+    uint32_t sampleRateHz_{0};
 };
 
 } // namespace ASFW::Audio

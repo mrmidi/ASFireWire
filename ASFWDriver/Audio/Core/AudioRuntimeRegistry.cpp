@@ -106,7 +106,7 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // mode). No protocol is created, and nothing is logged, for unknown devices.
     auto created = DeviceProtocolFactory::Create(
         record.vendorId, record.modelId, *busOps, *busInfo, *operationalNodeId, record.guid, irmClient,
-        cmpClient_);
+        cmpClient_, timerScheduler_);
     if (!created) {
         return nullptr;
     }
@@ -116,7 +116,14 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
              created->GetName(),
              guid,
              record.nodeId);
-    created->Initialize();
+    const auto initKr = created->Initialize();
+    if (initKr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioRuntimeRegistry: protocol Initialize failed (0x%x) for GUID=0x%016llx",
+                       initKr,
+                       guid);
+        return nullptr;
+    }
 
     std::shared_ptr<IDeviceProtocol> shared = std::move(created);
     if (lock_) {

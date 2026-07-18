@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 #include "../../../Discovery/DiscoveryTypes.hpp"
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
@@ -190,9 +191,8 @@ class DuplexStreamProfileResolver final {
     }
 
     [[nodiscard]] static constexpr bool
-    IsTerraTecPhase88(const Discovery::DeviceRecord& record) noexcept {
-        return record.vendorId == DeviceProfiles::Audio::kTerraTecVendorId &&
-               record.modelId == DeviceProfiles::Audio::kPhase88RackFwModelId;
+    IsBeBoB(const Discovery::DeviceRecord& record) noexcept {
+        return DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(record.vendorId, record.modelId);
     }
 
     [[nodiscard]] static AudioDuplexChannels
@@ -272,7 +272,7 @@ class DuplexStreamProfileResolver final {
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
             // CMP (including BridgeCo/BeBoB) does not own a fixed channel;
             // IRM selects one, which is then committed back to its PCR.
-            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsTerraTecPhase88(record))
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
             captureChannelOffset += geometry.pcmChannels;
@@ -290,7 +290,7 @@ class DuplexStreamProfileResolver final {
                                       : (i == 0 ? caps.hostToDeviceAm824Slots : 0U);
             geometry.bandwidthUnits = AmdtpBandwidthUnits(
                 geometry.am824Slots, caps.sampleRateHz, record.link.localToNode);
-            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsTerraTecPhase88(record))
+            geometry.allowedIsoChannels = (IsApogeeDuet(record) || IsBeBoB(record))
                                               ? kAllIsoChannels
                                               : FixedChannelMask(geometry.isoChannel);
         }
@@ -314,7 +314,7 @@ class DuplexStreamProfileResolver final {
             profile.stopOrder
                 .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
         }
-        if (IsTerraTecPhase88(record)) {
+        if (IsBeBoB(record)) {
             // Linux BeBoB reserves both CMP resources, establishes remote
             // iPCR then oPCR, and only then starts the AMDTP domain (RX before
             // TX). Keep that wire-visible ordering explicit rather than
