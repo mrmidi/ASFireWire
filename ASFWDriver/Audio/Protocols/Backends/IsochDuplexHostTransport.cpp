@@ -179,7 +179,10 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
 }
 
 bool IsochDuplexHostTransport::IsReceiveReplayEstablished() const noexcept {
-    return isoch_.IsReceiveReplayEstablished();
+    // Replay cadence is content policy. The transport owns no audio state;
+    // this audio-side adapter owns the master receive consumer that does.
+    const auto& consumer = receiveConsumers_[0];
+    return consumer && consumer->IsReplayEstablished();
 }
 
 } // namespace ASFW::Audio

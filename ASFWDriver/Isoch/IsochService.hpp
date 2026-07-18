@@ -97,13 +97,6 @@ class IsochService {
     void NotifyReceiveZtsAnchor(uint64_t generation) noexcept;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
 
-    // AV/C stream-health signal (no device registers): is the master RX replay
-    // cadence currently established? False right after a discontinuity reset;
-    // returns to true once packets resume and Poll re-establishes cadence. Safe
-    // to call off the RX queue (IsReplayEstablished snapshots .control). Used by
-    // the audio backend's timing-loss debounce to tell a host-side gap that
-    // self-healed from a genuine device outage that must escalate to a restart.
-    [[nodiscard]] bool IsReceiveReplayEstablished() const noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
 
