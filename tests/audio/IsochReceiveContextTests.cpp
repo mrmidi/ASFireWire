@@ -21,6 +21,9 @@ using namespace testing;
 
 class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
   public:
+    void OnReceiveActivated() noexcept override { ++activationCount; }
+    void OnReceiveQuiesced() noexcept override { ++quiesceCount; }
+
     void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept override {
         ++batchCount;
         lastBatch = batch;
@@ -36,6 +39,8 @@ class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
     uint32_t batchCount{0};
     uint32_t packetCount{0};
     uint32_t lastPacketBytes{0};
+    uint32_t activationCount{0};
+    uint32_t quiesceCount{0};
     IsochReceiveBatch lastBatch{};
 };
 
@@ -236,10 +241,17 @@ TEST_F(IsochReceiveContextTest, PollProcessesPackets) {
 TEST_F(IsochReceiveContextTest, PollPublishesTheBatchToAContentConsumer) {
     RecordingReceiveConsumer consumer;
     ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
-    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
     context_->SetReceiveConsumer(&consumer);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
 
     EXPECT_EQ(context_->Poll(), 0);
     EXPECT_EQ(consumer.batchCount, 1u);
     EXPECT_EQ(consumer.packetCount, 0u);
+    EXPECT_EQ(consumer.activationCount, 1u);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(consumer.quiesceCount, 1u);
 }
