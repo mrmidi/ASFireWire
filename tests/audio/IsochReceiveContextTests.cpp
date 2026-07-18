@@ -122,7 +122,7 @@ protected:
 
     void TearDown() override {
         if (context_) {
-            context_->Stop();
+            (void)context_->Stop();
             context_.reset();
         }
         if (hardware_) {
@@ -168,6 +168,33 @@ TEST_F(IsochReceiveContextTest, StartProgramsRegisters) {
     // We would need to inspect HardwareInterface stub state to verify writes
     // Since we are using the simple Stub, we trust it returns success.
     // Ideally we'd use a MockHardwareInterface to verify ::Write calls.
+}
+
+TEST_F(IsochReceiveContextTest, StopFlushesRunClearAndOnlyThenMarksStopped) {
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(context_->GetState(), IRPolicy::State::Stopped);
+
+    const auto operations = hardware_->CopyTestOperations();
+    EXPECT_THAT(operations, Contains(::ASFW::Driver::HardwareInterface::TestOperation::WriteAndFlush));
+}
+
+TEST_F(IsochReceiveContextTest, StopRetainsBindingStateWhenActiveNeverClears) {
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, ::ASFW::Driver::ContextControl::kActive);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnTimeout);
+    EXPECT_EQ(context_->GetState(), IRPolicy::State::Running);
 }
 
 TEST_F(IsochReceiveContextTest, PollProcessesPackets) {

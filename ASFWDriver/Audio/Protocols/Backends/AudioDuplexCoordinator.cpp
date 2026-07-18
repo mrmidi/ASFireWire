@@ -1457,7 +1457,7 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
             },
             dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
         (void)disconnectPlayback;
-        (void)hostTransport_.StopPreparedTransmit();
+        const kern_return_t transmitStopStatus = hostTransport_.StopPreparedTransmit();
 
         const auto disconnectCapture = WaitForAsyncResult<bool>(
             [&](auto callback) {
@@ -1468,11 +1468,18 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
             },
             dependencies_.syncBridgeTimeoutMs, kIOReturnTimeout, dependencies_.cancel);
         (void)disconnectCapture;
-        (void)hostTransport_.StopPreparedReceive();
+        const kern_return_t receiveStopStatus = hostTransport_.StopPreparedReceive();
 
         // Contexts are already stopped. StopAll performs the neutral ownership
         // cleanup (reserved profile + active GUID) without another wire action.
-        (void)hostTransport_.StopAll();
+        const kern_return_t cleanupStatus = hostTransport_.StopAll();
+        if (transmitStopStatus != kIOReturnSuccess) {
+            result = transmitStopStatus;
+        } else if (receiveStopStatus != kIOReturnSuccess) {
+            result = receiveStopStatus;
+        } else if (cleanupStatus != kIOReturnSuccess) {
+            result = cleanupStatus;
+        }
     } else {
         // DICE retains its original teardown contract unchanged.
         const kern_return_t hostStatus = hostTransport_.StopAll();

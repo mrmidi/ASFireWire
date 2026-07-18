@@ -105,7 +105,10 @@ kern_return_t IsochDuplexHostTransport::StopPreparedTransmit() noexcept {
 }
 
 kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
-    isoch_.StopAll();
+    const kern_return_t status = isoch_.StopAll();
+    if (status != kIOReturnSuccess) {
+        return status;
+    }
     reservations_.ReleaseAll();
     return kIOReturnSuccess;
 }

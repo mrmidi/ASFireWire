@@ -139,7 +139,7 @@ TEST(IsochTransmitContext, StopTransitionsConfiguredContextToStopped) {
               kIOReturnSuccess);
     ASSERT_EQ(ctx.GetState(), ITState::Configured);
 
-    ctx.Stop();
+    (void)ctx.Stop();
     EXPECT_EQ(ctx.GetState(), ITState::Stopped);
 
     EXPECT_EQ(ctx.Configure(/*channel=*/0,

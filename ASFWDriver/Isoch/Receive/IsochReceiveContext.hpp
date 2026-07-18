@@ -96,7 +96,9 @@ class IsochReceiveContext final
               uint32_t am824Slots = 0, uint32_t channelOffset = 0, uint32_t streamChannels = 0,
               bool isSecondary = false);
     kern_return_t Start();
-    void Stop();
+    // Clearing RUN only prevents new descriptor fetches.  The caller must not
+    // release any DMA-visible memory until this returns success (ACTIVE clear).
+    [[nodiscard]] kern_return_t Stop();
     uint32_t Poll();
 
     void SetCallback(IsochReceiveCallback callback);

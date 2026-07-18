@@ -98,7 +98,9 @@ class IsochService {
     kern_return_t ReserveCaptureResources(uint64_t guid, IRM::IRMClient& irmClient, uint8_t channel,
                                           uint32_t bandwidthUnits);
 
-    void StopAll();
+    // Do not tear down a DirectAudio binding after a failed stop: an ACTIVE
+    // OHCI context may still DMA into that mapping.
+    [[nodiscard]] kern_return_t StopAll();
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
 
     // AV/C stream-health signal (no device registers): is the master RX replay

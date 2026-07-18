@@ -84,7 +84,16 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
     }
 
     if (shouldStop) {
-        (void)StopStreaming(guid);
+        const IOReturn stopStatus = StopStreaming(guid);
+        if (stopStatus != kIOReturnSuccess) {
+            // StopStreaming only succeeds after every OHCI context reports
+            // ACTIVE clear.  Removing the nub sooner can revoke the backing
+            // mapping while DMA still owns it, which is fatal on Apple silicon.
+            ASFW_LOG_ERROR(Audio,
+                           "AVCAudioBackend: retaining nub after unsafe device-removal stop GUID=0x%016llx kr=0x%08x",
+                           guid, stopStatus);
+            return;
+        }
     } else {
         ASFW_LOG(Audio,
                  "AVCAudioBackend: OnDeviceRemoved skipping stop for inactive GUID=0x%016llx",

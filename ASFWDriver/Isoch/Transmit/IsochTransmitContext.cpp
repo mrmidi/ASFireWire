@@ -347,12 +347,48 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     return kIOReturnSuccess;
 }
 
-void IsochTransmitContext::Stop() noexcept {
+kern_return_t IsochTransmitContext::Stop() noexcept {
     if (state_ == State::Running && hardware_) {
+        // This gate also covers watchdog Poll().  Acquire it before clearing
+        // RUN so an already-dispatched refill cannot retain a direct-audio
+        // mapping past the point this function reports quiesced.
+        while (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+            IODelay(5);
+        }
+
         Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
-        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+        const Register32 ctrlSetReg =
+            static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
 
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+        // A posted CLEAR must reach OHCI before ACTIVE is meaningful.  Linux
+        // firewire/ohci.c:1361-1378 follows this same RUN-clear/ACTIVE-clear
+        // barrier before it lets DMA resources go away.
+        hardware_->WriteAndFlush(ctrlClrReg, Driver::ContextControl::kRun);
+
+        if ((hardware_->Read(ctrlSetReg) & Driver::ContextControl::kActive) != 0) {
+            IODelay(5);
+            constexpr uint32_t kMaxIterations = 250;
+            constexpr uint32_t kBaseDelayMicros = 6;
+            for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
+                if ((hardware_->Read(ctrlSetReg) & Driver::ContextControl::kActive) == 0) {
+                    break;
+                }
+                IODelay(kBaseDelayMicros + iteration);
+            }
+        }
+
+        const uint32_t control = hardware_->Read(ctrlSetReg);
+        if ((control & Driver::ContextControl::kActive) != 0) {
+            const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
+                ? kIOReturnDMAError
+                : kIOReturnTimeout;
+            ASFW_LOG_ERROR(Isoch,
+                           "IT: stop did not quiesce context=%u control=0x%08x kr=0x%08x; retaining DMA bindings",
+                           contextIndex_, control, failure);
+            refillInProgress_.clear(std::memory_order_release);
+            return failure;
+        }
 
         if (controlBlock_) {
             controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_release);
@@ -372,6 +408,7 @@ void IsochTransmitContext::Stop() noexcept {
                  rc.wireMaxAbs24.load(std::memory_order_relaxed),
                  rc.wireLastInfoQuad.load(std::memory_order_relaxed),
                  rc.wireFirstInfoAbsIdx.load(std::memory_order_relaxed));
+        return kIOReturnSuccess;
     }
 
     if (state_ == State::Configured) {
@@ -379,6 +416,7 @@ void IsochTransmitContext::Stop() noexcept {
         refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped from configured state before hardware run");
     }
+    return kIOReturnSuccess;
 }
 
 void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
@@ -499,7 +537,14 @@ void IsochTransmitContext::Poll() noexcept {
         if (irqStallTicks_ >= 5) {
             irqStallTicks_ = 0;
             irqWatchdogKicks_.fetch_add(1, std::memory_order_relaxed);
-            DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/false);
+            if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+                // Stop() may have acquired the gate after the first state
+                // check. Re-check while holding it before touching the slab.
+                if (state_ == State::Running) {
+                    DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/false);
+                }
+                refillInProgress_.clear(std::memory_order_release);
+            }
         }
     } else {
         lastInterruptCountSeen_ = currentInterrupts;
@@ -512,6 +557,13 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
     interruptCount_.fetch_add(1, std::memory_order_relaxed);
 
     if (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        return;
+    }
+
+    // Stop() can acquire the gate between the initial state check and this
+    // point. Do not start a refill after it has fenced the stream.
+    if (state_ != State::Running) {
+        refillInProgress_.clear(std::memory_order_release);
         return;
     }
 

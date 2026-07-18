@@ -451,7 +451,7 @@ void ASFWDriver::QuiesceRuntime() {
             ctx.deps.interrupts->Disable();
         }
         ASFW_LOG(Controller, "Stop: audio quiesced - stopping isoch before Detach");
-        ctx.isoch.StopAll();
+        (void)ctx.isoch.StopAll();
 
         ctx.statusPublisher.BindListener(nullptr);
         ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
