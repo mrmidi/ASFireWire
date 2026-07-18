@@ -39,6 +39,12 @@ class IIsochReceiveConsumer {
   public:
     virtual ~IIsochReceiveConsumer() = default;
 
+    // Called only after the context has armed its DMA ring, and only after the
+    // context has quiesced it.  A consumer may release payload-derived views
+    // from OnReceiveQuiesced(); it must not retain `payload` past ConsumePacket.
+    virtual void OnReceiveActivated() noexcept {}
+    virtual void OnReceiveQuiesced() noexcept {}
+
     virtual void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept = 0;
     virtual void ConsumePacket(const IsochReceiveBatch& batch,
                                const IsochReceivePacket& packet) noexcept = 0;

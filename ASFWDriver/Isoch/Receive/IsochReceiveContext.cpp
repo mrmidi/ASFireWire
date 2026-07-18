@@ -135,6 +135,9 @@ kern_return_t IsochReceiveContext::Start() {
     prevLoggedAnchorValid_ = false;
     (void)ASFW::Timing::initializeHostTimebase();
 
+    if (receiveConsumer_) {
+        receiveConsumer_->OnReceiveActivated();
+    }
     rxLock_.clear(std::memory_order_release);
     return kIOReturnSuccess;
 }
@@ -182,6 +185,10 @@ kern_return_t IsochReceiveContext::Stop() {
     }
 
     Transition(IRPolicy::State::Stopped, 0, "Stop");
+
+    if (receiveConsumer_) {
+        receiveConsumer_->OnReceiveQuiesced();
+    }
 
     rxLock_.clear(std::memory_order_release);
     return kIOReturnSuccess;
