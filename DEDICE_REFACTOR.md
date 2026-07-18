@@ -78,6 +78,41 @@ Shared machinery (must be family-clean after this plan):
   Audio/Engine/Direct/**, Shared/Isoch/**
 ```
 
+### Dependency shape before and after
+
+```mermaid
+flowchart LR
+    subgraph Before["Before: DICE is the hidden shared core"]
+        direction TB
+        B1["BeBoB and Oxford"] --> B2["DuplexControlTypes"]
+        B2 --> B3["DICE restart types"]
+
+        B4["Shared duplex coordinator"] --> B5["DiceRecoveryPolicy"]
+        B6["All audio families"] --> B7["DiceTxStreamEngine"]
+        B8["Apogee profile"] --> B9["IDiceDeviceProfile"]
+        B10["Unknown device"] --> B11["GenericDiceProfile"]
+    end
+
+    subgraph After["After: neutral core, families as leaves"]
+        direction TB
+        A1["Composition roots<br/>Factory · Coordinator · ProfileRegistry"]
+        A2["DICE family"]
+        A3["BeBoB family"]
+        A4["Oxford family"]
+
+        A1 --> A2
+        A1 --> A3
+        A1 --> A4
+
+        A2 --> A5["Neutral shared surface<br/>Duplex · Recovery · Profiles"]
+        A3 --> A5
+        A4 --> A5
+
+        A5 --> A6["AmdtpTxStreamEngine"]
+        A5 --> A7["DefaultAmdtpProfile"]
+    end
+```
+
 ## Phase 0 — Baseline
 
 Green `./build.sh --test-only` + full `./build.sh` (IIG). Clean commit boundary
@@ -196,6 +231,28 @@ neutralizes **recovery dispatch only**:
       kCycleInconsistent,
       kTimingLoss,
   };
+  ```
+
+  ```mermaid
+  flowchart LR
+      E["External event<br/>bus reset · cycle inconsistency · timing loss"]
+      B["BackendRecoveryEvent"]
+      C["AudioCoordinator<br/>selects backend"]
+      H["Backend<br/>HandleRecoveryEvent"]
+      R["DuplexRestartReason"]
+      S["DuplexRestartSession"]
+      P["StreamRecoveryPolicy"]
+      D["RecoveryDisposition"]
+      W["RecoveryPolicyReason"]
+
+      E --> B
+      B --> C
+      C --> H
+      H -->|backend-specific mapping| R
+      R --> S
+      S --> P
+      P --> D
+      P --> W
   ```
 
 - New virtual `IAudioBackend::HandleRecoveryEvent(uint64_t guid,
