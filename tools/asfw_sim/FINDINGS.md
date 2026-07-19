@@ -318,3 +318,58 @@ input — no FireBug trace, no full ring dump.
 **Limit.** This classifies; it does not observe. The sim still cannot tell you
 whether *your* hardware drops packets — it tells you what to conclude once you
 have two deficit samples from the ring.
+
+## F8 — hardware confirmation, and a self-inflicted reproduction
+
+### F6 confirmed on hardware: 22.6 frames/s ramp
+
+A 58-minute Duet session, sampled from the MCP ring at two points 23 minutes
+apart within the *same* session (`comp` is a packet counter at 8000/s, so it
+gives exact elapsed time):
+
+```
+comp 17,033,508  d =  77,124        <- W - E, frames
+comp 28,092,828  d = 108,292
+                 slope = +22.6 frames/s
+```
+
+Classifier verdict: `rx-observation-loss (F6)`, estimated **3.3 lost RX
+packets/s = 0.042 %**. One packet in 2400. At that rate the 2400-frame horizon is
+spent in **107 seconds** — which is exactly "cold start is perfect, dies soon
+enough".
+
+Supporting evidence from the same records: `w=0 noPkt=6656 outside=0` (100 %
+silence, none of it slot reuse); `prepared=21077837/7037485/28115322` →
+DATA fraction **0.7497**, a textbook 48 kHz blocking cadence, i.e. transport
+perfectly healthy; `aligned=1 epoch=3`, the cursor never re-arming.
+
+`gen=197462/131096` is the predicted `MarkHandled` divergence: the handled
+generation is frozen while the requested one climbs, because `audioTargetSatisfied`
+is never true (`ASFWAudioDriverZts.cpp:884-896`).
+
+> **Window-length caveat, learned the hard way.** The first 2.7-second sample of
+> this same stream showed a slope of **−2.9 frames/s** — flat, which the
+> classifier calls a *stall*. The ramp is only visible over minutes. A short
+> capture will confidently misclassify F6 as F2. Sample over ≥ 5 minutes, or use
+> `comp` deltas to reconstruct a long baseline from two records.
+
+### AVC-RECOVERY-001 reproduced live
+
+An `asfw://telemetry/snapshot` MCP read during the active run issued
+`GetAVCUnits` plus a full PHY dump; `PHY Read reg 0` **timed out for 115 ms** —
+past the 78 ms cliff of F2. The AV/C backend escalated and the recovery failed
+exactly as the triage documents predicted:
+
+```
+IT: Prime failed - committed prefill=306582 must cover 48 descriptors within 912 slots
+[FSM] terminal state=Failed cause=StartTransmit status=0xe00002c9
+```
+
+Full timeline: `captures/2026-07-19-duet-avc-recovery-001.md`. This confirms
+`AVC-RECOVERY-001` (stale `committedEnd` reaches `Prime`) and `AVC-RECOVERY-002`
+(a 115 ms transient, with `busResetCount=0` and a healthy device, escalated into
+CMP teardown, IRM release, and a terminal `Failed` state).
+
+**Operational rule: during an active audio run use only `asfw_log_query`.**
+`read asfw://telemetry/snapshot`, `health`, `summary`, and discovery all issue
+MMIO on the driver's queue, and a single PHY timeout exceeds the stall cliff.
