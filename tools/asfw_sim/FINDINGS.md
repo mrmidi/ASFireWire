@@ -193,3 +193,82 @@ The larger horizon that a 4096-frame IO budget forces *also* raises stall
 tolerance 82 → 119 ms as a side effect. Pairing it with `kReadDelay = 2048`
 (343 ms) makes the stall path a non-issue — the buffer-size work and the F3 fix
 are complementary, not competing.
+
+## F6 — the direct answer: why `W > E` in the current implementation
+
+`W > E` does **not** require a stall, a bus reset, or an RX epoch change. It is
+produced by a **monotonic ratchet** that any RX observation loss drives, and that
+the design has no path back from.
+
+### The chain, each link in code
+
+1. `DirectAudioReceiveConsumer::ConsumePacket` early-returns on
+   `packet.payload.empty()` (`DirectAudioReceiveConsumer.cpp:150`). An errored or
+   zero-length IR descriptor therefore publishes **no** replay entry — while the
+   device really did send those frames, so the true audio timeline advanced.
+2. `PrepareTransmitSlots` consumes exactly **one** replay entry per prepared
+   packet (`ASFWAudioDriverZts.cpp:241`). One fewer entry published means the
+   reader reaches the producer and returns `kAheadOfProducer`.
+3. `ahead` ships a NODATA packet and holds the reader
+   (`ASFWAudioDriverZts.cpp:308-317`), and **NODATA never advances
+   `exposedFrameEnd_`** (`AmdtpTxPacketizer.cpp:209-219`). `E` stands still for
+   that packet.
+4. `W` is continuously re-anchored to the device clock through the ZTS anchor, so
+   it keeps advancing at the true frame rate regardless.
+5. `AlignFrameCursorOnce` is **one-shot** (`AmdtpTxPacketizer.cpp:126-135`) and
+   `ahead` deliberately does not re-arm it — correctly, since commit `81aab17`,
+   because re-arming orphans host frames. **But that leaves no path back.**
+
+Each lost RX observation therefore costs `E` **~6.8 frames** of ground against
+`W`, permanently and cumulatively.
+
+### Measured (48 kHz, 1 RX observation lost per 200 cycles = 0.5 %)
+
+```
+ t(s)         W         E      W-E    ahead  align  state
+    4    191488    193888    -2400        0      1  ok      <- E leads by exactly the horizon
+    8    383488    385600    -2112      328      1  ok
+   12    575488    576304     -816      488      1  ok
+   16    767488    767048     +440      648      1  SILENT  <- W crosses E
+   20    959488    957760    +1728      808      1  SILENT
+   36   1727488   1720624    +6864     1448      1  SILENT
+```
+
+Linear, unbounded, never recovers. `align` stays 1 throughout.
+
+| RX loss | lost/s | W−E after 30 s | frames written |
+|---:|---:|---:|---:|
+| 0 % | 0 | −2400 (healthy) | 99.6 % |
+| 0.125 % | 10 | −1520 | 99.6 % |
+| 0.5 % | 40 | **+5200** | 45.6 % |
+| 1.25 % | 100 | +18640 | 22.0 % |
+| 5 % | 400 | +85840 | 10.2 % |
+
+### The load-bearing consequence
+
+`kTxExposureLeadFrames = 2400` is **not a steady-state cushion. It is a one-time
+budget of ~320 lost RX observations for the entire life of the stream.** Nothing
+ever replenishes it.
+
+At 8000 packets/s that is 0.04 % of an hour's traffic. A device or controller that
+drops one packet in 800 kills audio in ~64 s; one in 200 kills it in ~16 s. This
+is exactly "cold start is perfect, dies soon enough", and it explains the observed
+zombie without invoking `TX-IRQ-001` at all — though a stall (F2) reaches the same
+end state faster.
+
+> The §5 finding in `AVC_RECOVERY_TRIAGE_FINDINGS.pdf` flagged this same
+> early-return, but as a `receive-cycle-gap` mis-attribution. The real damage is
+> larger and quieter: it silently steals the exposure budget.
+
+### What the fix has to do
+
+- **Necessary:** never let a lost observation cost the timeline frames. Publish a
+  replay entry for a dropped/errored descriptor using the deterministic blocking
+  cadence for `dataBlocks` (the frame count is knowable even when the SYT is not),
+  so `E` keeps pace with the device.
+- **Sufficient on its own only if loss is the sole source.** The general cure
+  remains a **bounded, counted re-projection**: when `W − E` exceeds a threshold,
+  re-align once, count it, and log it — one audible glitch instead of permanent
+  silence.
+- Growing `kCapacity` (F4) does **not** help here: the entries were never
+  published, so no amount of history contains them.

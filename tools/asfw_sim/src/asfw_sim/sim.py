@@ -50,6 +50,12 @@ class SimConfig:
     #: Diagnostic control for P2 -- let the reader see unbounded future history.
     #: Physically impossible; it exists only to isolate R as the cause.
     unbounded_replay_history: bool = False
+    #: Sample (cycle, W, E, misses) every N cycles into SimResult.trace.
+    trace_every_cycles: int = 0
+    #: Drop one RX observation every N cycles (0 = never).  Models an errored or
+    #: zero-length IR descriptor: DirectAudioReceiveConsumer::ConsumePacket
+    #: early-returns on packet.payload.empty() (:150) without publishing.
+    rx_drop_every_cycles: int = 0
 
 
 @dataclass
@@ -80,6 +86,10 @@ class SimResult:
     frames_without_packet: int = 0
     frames_outside_packet: int = 0
     max_deficit_frames: int = 0
+
+    #: (cycle, W, E, ahead, reclamped, align_count) samples.
+    trace: list[tuple[int, int, int, int, int, int]] = field(default_factory=list)
+    rx_dropped: int = 0
 
     # scheduler
     wakes: int = 0
@@ -167,8 +177,32 @@ def run(config: SimConfig) -> SimResult:
     min_distance = 0
 
     for cycle in range(config.duration_cycles):
+        # Sampled first: any `continue` below would otherwise alias the trace
+        # against an injection cadence that shares a factor with the interval.
+        if config.trace_every_cycles and cycle % config.trace_every_cycles == 0:
+            result.trace.append(
+                (
+                    cycle,
+                    write_frontier,
+                    timeline.exposed_frame_end,
+                    result.replay_failures.get(ReplayFailure.AHEAD_OF_PRODUCER, 0),
+                    result.reclamped,
+                    packetizer.align_count,
+                )
+            )
+
         # 1. RX publishes one observation per cycle.
         data_blocks = rx_cadence.next_packet_frames()
+        if (
+            config.rx_drop_every_cycles
+            and cycle % config.rx_drop_every_cycles == 0
+            and cycle > WARMUP_CYCLES
+        ):
+            # The frame cursor still advances (the device sent those frames);
+            # only our observation of them is lost.
+            rx_frame_cursor += data_blocks
+            result.rx_dropped += 1
+            continue
         replay.publish(
             ReplayEntry(
                 first_audio_frame=rx_frame_cursor,

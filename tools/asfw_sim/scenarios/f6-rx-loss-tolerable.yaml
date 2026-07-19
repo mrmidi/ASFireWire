@@ -1,0 +1,16 @@
+name: f6-rx-loss-tolerable
+description: >
+  F6, the other side. At 0.125% RX loss (10 packets/s) the same 30 s run stays
+  healthy -- the ratchet is running, but the 2400-frame budget has not been spent
+  yet. Together with f6-rx-loss-ratchet this shows the failure is a budget being
+  consumed, not a rate being exceeded: extend this run far enough and it dies too.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 30
+  rx_drop_every_cycles: 800
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.95

@@ -66,6 +66,8 @@ _SCENARIO_KEYS = {
     "stall_at_s",
     "wake_latency_cycles",
     "unbounded_replay_history",
+    "rx_drop_every_cycles",
+    "trace_every_cycles",
 }
 _TOP_LEVEL_KEYS = {
     "name",
@@ -139,6 +141,8 @@ class Scenario:
             unbounded_replay_history=bool(
                 merged.get("unbounded_replay_history", False)
             ),
+            rx_drop_every_cycles=int(merged.get("rx_drop_every_cycles", 0)),
+            trace_every_cycles=int(merged.get("trace_every_cycles", 0)),
         )
 
     @property
