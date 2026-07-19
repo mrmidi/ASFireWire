@@ -1,0 +1,283 @@
+"""Command line entry point for asfw_sim.
+
+With no arguments it prints the complete live geometry of the driver in the
+working tree -- every header constant, everything derived from it, and the
+budgets that are not written down anywhere.
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from .derive import derive, solve_for_io_budget
+from .geometry import SUPPORTED_RATES, Geometry
+from .headers import DriverHeaders, load_driver_headers
+from .sim import SimConfig, run
+
+CYCLES = 8_000
+
+
+# --- helpers ------------------------------------------------------------------
+
+
+def _rule(title: str) -> None:
+    print(f"\n\033[1m{title}\033[0m")
+    print("-" * max(len(title), 68))
+
+
+def _row(name: str, value, unit: str = "", note: str = "") -> None:
+    tail = f"  {note}" if note else ""
+    print(f"  {name:<36} {str(value):>10} {unit:<10}{tail}")
+
+
+def _ms(packets: int) -> str:
+    return f"{packets / 8:.1f} ms"
+
+
+def _geometry(args) -> Geometry:
+    g = Geometry.from_headers(args.rate)
+    changes = {}
+    if getattr(args, "read_delay", 0):
+        changes["replay_read_delay"] = args.read_delay
+        changes["replay_capacity"] = max(512, 2 * args.read_delay)
+    if getattr(args, "capacity", 0):
+        changes["replay_capacity"] = args.capacity
+    if getattr(args, "horizon", 0):
+        changes["tx_data_horizon_packets"] = args.horizon
+    return g.evolve(**changes) if changes else g
+
+
+def _run(geometry: Geometry, seconds: int, stall_ms: float, stall_at_s: int = 4):
+    return run(
+        SimConfig(
+            geometry=geometry,
+            duration_cycles=CYCLES * seconds,
+            stall_at_cycle=CYCLES * stall_at_s,
+            stall_cycles=int(stall_ms * 8),
+        )
+    )
+
+
+def _cliff(geometry: Geometry, seconds: int = 15, hi: int = 6_000) -> int:
+    lo = 0
+    while lo < hi - 1:
+        mid = (lo + hi) // 2
+        if _run(geometry, seconds, mid / 8).collapsed:
+            hi = mid
+        else:
+            lo = mid
+    return lo
+
+
+# --- the default report -------------------------------------------------------
+
+
+def cmd_geometry(args) -> int:
+    h: DriverHeaders = load_driver_headers()
+    t, r = h.timing, h.replay
+
+    print("\033[1mASFireWire live geometry\033[0m")
+    print(f"  source: {t.path.parent}")
+    print(f"  active HAL buffer profile: {h.profile_name}")
+
+    _rule("HAL / CoreAudio buffers")
+    _row("kFrameRingFrames", t["kFrameRingFrames"], "frames",
+         f"{t['kFrameRingFrames'] / 48:.1f} ms @48k -- shared stream ring")
+    _row("kHalIoPeriodFrames", t["kHalIoPeriodFrames"], "frames",
+         "client IO budget (max CoreAudio callback)")
+    _row("kHalZeroTimestampPeriodFrames", t["kHalZeroTimestampPeriodFrames"], "frames",
+         "ZTS anchor period")
+    _row("kFrameAlignment", t["kFrameAlignment"], "frames")
+    _row("kSchedulingJitterFrames", t["kSchedulingJitterFrames"], "frames",
+         "single-queue contention cushion")
+
+    _rule("Blocking AMDTP cadence")
+    _row("kSampleRateHz", t["kSampleRateHz"], "Hz", "geometry reference rate")
+    _row("kFramesPerDataPacket", t["kFramesPerDataPacket"], "frames", "SYT interval @1x")
+    _row("kCadenceBlockPackets", t["kCadenceBlockPackets"], "packets")
+    _row("kCadenceBlockFrames", t["kCadenceBlockFrames"], "frames")
+    _row("kMinAvgCadencePackets", t["kMinAvgCadencePackets"], "packets",
+         "worst-case (44.1k) cadence:")
+    _row("kMinAvgCadenceFrames", t["kMinAvgCadenceFrames"], "frames",
+         f"{t['kMinAvgCadenceFrames'] / t['kMinAvgCadencePackets']:.4f} frames/packet")
+
+    _rule("Interrupt / DMA cadence")
+    _row("kTxPacketsPerGroup", t["kTxPacketsPerGroup"], "packets", _ms(t["kTxPacketsPerGroup"]))
+    _row("kRxPacketsPerGroup", t["kRxPacketsPerGroup"], "packets", _ms(t["kRxPacketsPerGroup"]))
+    _row("kRxDescriptorPackets", t["kRxDescriptorPackets"], "packets", _ms(t["kRxDescriptorPackets"]))
+    _row("kTxHardwareRingPackets", t["kTxHardwareRingPackets"], "packets",
+         f"{_ms(t['kTxHardwareRingPackets'])} OHCI IT ring")
+
+    _rule("TX packet budgets")
+    _row("kTxDataHorizonPackets", t["kTxDataHorizonPackets"], "packets",
+         f"{_ms(t['kTxDataHorizonPackets'])} content horizon")
+    _row("kTxExposureLeadFrames", t["kTxExposureLeadFrames"], "frames",
+         f"{t['kTxExposureLeadFrames'] / 48:.1f} ms @48k")
+    _row("kTxExposureLeadPackets", t["kTxExposureLeadPackets"], "packets")
+    _row("kTxPreparationSlackPackets", t["kTxPreparationSlackPackets"], "packets")
+    _row("kTxCoverageLeadPackets", t["kTxCoverageLeadPackets"], "packets",
+         f"{_ms(t['kTxCoverageLeadPackets'])} refill safety")
+    _row("kTxFrameExposureWindowPackets", t["kTxFrameExposureWindowPackets"], "packets",
+         f"{_ms(t['kTxFrameExposureWindowPackets'])} content exposure")
+    _row("kTxPreparationLeadPackets", t["kTxPreparationLeadPackets"], "packets",
+         f"{_ms(t['kTxPreparationLeadPackets'])} = coverage + exposure")
+    _row("kTxMaxCoveredDeltaConsumedPackets", t["kTxMaxCoveredDeltaConsumedPackets"],
+         "packets", "largest absorbable coalesced refill")
+    _row("kTxSharedSlotPackets", t["kTxSharedSlotPackets"], "packets",
+         f"{_ms(t['kTxSharedSlotPackets'])} backing ring")
+    _row("kTimelineSlots", t["kTimelineSlots"], "packets", "timeline slot array")
+
+    _rule("RX replay ring (RxSequenceReplay.hpp)")
+    _row("kCapacity", r["kCapacity"], "entries", f"{_ms(r['kCapacity'])} of RX history")
+    _row("kReadDelay", r["kReadDelay"], "entries",
+         f"{_ms(r['kReadDelay'])} -- PRODUCER-STALL RECOVERY BUDGET")
+
+    _rule("Derived budgets (not written down in any header)")
+    lead = t["kTxPreparationLeadPackets"]
+    read_delay = r["kReadDelay"]
+    horizon = t["kTxDataHorizonPackets"]
+    _row("stall tolerance (law)", f"{(read_delay + horizon) / 8:.1f}", "ms",
+         "(kReadDelay + horizon) / 8 -- see FINDINGS.md F3")
+    _row("replay headroom", read_delay - lead, "packets",
+         "kReadDelay - lead; NOT the failure mechanism (F1)")
+    _row("prefill before IT arm", t["kTxSharedSlotPackets"], "packets",
+         f"{_ms(t['kTxSharedSlotPackets'])} of NODATA at StartIO")
+    _row("first reusable slot", t["kTxSharedSlotPackets"], "packets",
+         f"{_ms(t['kTxSharedSlotPackets'])} after IT start")
+
+    _rule("Per-rate view")
+    print(f"  {'rate':>8} {'frames/pkt':>11} {'DATA share':>11} {'horizon':>10} {'io period':>11}")
+    for rate in SUPPORTED_RATES:
+        g = Geometry.from_headers(rate, h)
+        print(
+            f"  {rate:>8} {g.frames_per_data_packet:>11} "
+            f"{g.data_packet_fraction:>11.4f} "
+            f"{g.data_horizon_frames:>7} fr {t['kHalIoPeriodFrames'] * 1000 / rate:>8.2f} ms"
+        )
+
+    _rule("CoreAudio buffer-size range")
+    print(
+        "  The HAL derives kAudioDevicePropertyBufferFrameSizeRange from the stream\n"
+        "  IOMemoryDescriptor; AudioDriverKit exposes no explicit range setter. The\n"
+        "  binding input is the compile-time profile below."
+    )
+    _row("ring", t["kFrameRingFrames"], "frames")
+    _row("client IO budget", t["kHalIoPeriodFrames"], "frames")
+    print("\n  Run 'asfw-sim plan-io --frames N' to cost a larger buffer size.")
+    print()
+    return 0
+
+
+# --- other commands -----------------------------------------------------------
+
+
+def cmd_plan_io(args) -> int:
+    h = load_driver_headers()
+    current = derive(h, io_budget_frames=h.timing["kHalIoPeriodFrames"])
+    target = solve_for_io_budget(h, args.frames, ring_multiple=args.ring_multiple)
+
+    print(f"\033[1mIO budget {current.io_budget_frames} -> {args.frames} frames\033[0m\n")
+    print(f"  {'constant':<34} {'current':>10} {'proposed':>10}")
+    print("  " + "-" * 56)
+    for label, a, b in [
+        ("kHalIoPeriodFrames", current.io_budget_frames, target.io_budget_frames),
+        ("kFrameRingFrames", current.frame_ring_frames, target.frame_ring_frames),
+        ("kHalZeroTimestampPeriodFrames", current.zts_period_frames, target.zts_period_frames),
+        ("kTxDataHorizonPackets", h.timing["kTxDataHorizonPackets"],
+         (target.exposure_lead_frames * 8000) // h.timing["kSampleRateHz"]),
+        ("kTxExposureLeadFrames", current.exposure_lead_frames, target.exposure_lead_frames),
+        ("kTxFrameExposureWindowPackets", current.frame_exposure_window_packets,
+         target.frame_exposure_window_packets),
+        ("kTxPreparationLeadPackets", current.preparation_lead_packets,
+         target.preparation_lead_packets),
+        ("kTxSharedSlotPackets", current.shared_slot_packets, target.shared_slot_packets),
+        ("kTimelineSlots", current.timeline_slots, target.timeline_slots),
+    ]:
+        mark = " " if a == b else "*"
+        print(f"  {mark}{label:<33} {a:>10} {b:>10}")
+
+    print(f"\n  all header static_asserts hold: {'YES' if target.ok else 'NO'}")
+    for failure in target.failures:
+        print(f"    FAIL {failure.name}: {failure.detail}")
+
+    shared_bytes = target.shared_slot_packets * (8 + 8 * 64 * 4)
+    print(
+        f"\n  cost: shared TX slab ~{shared_bytes / 1024:.0f} KiB/stream "
+        f"(was ~{current.shared_slot_packets * (8 + 8 * 64 * 4) / 1024:.0f} KiB), "
+        f"\n        prefill before IT arm {target.shared_slot_packets / 8:.1f} ms "
+        f"(was {current.shared_slot_packets / 8:.1f} ms)"
+    )
+    print(
+        "\n  NOTE: prefill latency scales with kTxSharedSlotPackets because StartIO\n"
+        "  validates committedEnd == numSlots before IT arm "
+        "(ASFWAudioDevice.cpp:341-345).\n"
+    )
+    return 0
+
+
+def cmd_run(args) -> int:
+    print(_run(_geometry(args), args.seconds, args.stall_ms).summary())
+    return 0
+
+
+def cmd_cliff(args) -> int:
+    g = _geometry(args)
+    cycles = _cliff(g, args.seconds)
+    predicted = (g.replay_read_delay + g.tx_data_horizon_packets) / 8
+    print(
+        f"rate={g.sample_rate} readDelay={g.replay_read_delay} "
+        f"horizon={g.tx_data_horizon_packets}\n"
+        f"  survivable producer stall: {cycles / 8:.1f} ms ({cycles} cycles)\n"
+        f"  kReadDelay+horizon law predicts: {predicted:.1f} ms"
+    )
+    return 0
+
+
+def cmd_sweep(args) -> int:
+    base = Geometry.from_headers(args.rate)
+    print(f"  {'readDelay':>9} {'horizon':>8} {'cliff':>9} {'law':>9}")
+    for read_delay, horizon in [(256, 400), (512, 400), (1024, 400), (256, 160), (1024, 800)]:
+        g = base.evolve(
+            replay_read_delay=read_delay,
+            replay_capacity=max(512, 2 * read_delay),
+            tx_data_horizon_packets=horizon,
+        )
+        print(
+            f"  {read_delay:>9} {horizon:>8} {_cliff(g, args.seconds) / 8:>8.1f}ms "
+            f"{(read_delay + horizon) / 8:>8.1f}ms"
+        )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="asfw-sim", description=__doc__)
+    parser.add_argument("--rate", type=int, default=48_000, choices=SUPPORTED_RATES)
+    parser.add_argument("--seconds", type=int, default=15)
+    parser.add_argument("--read-delay", type=int, default=0)
+    parser.add_argument("--capacity", type=int, default=0)
+    parser.add_argument("--horizon", type=int, default=0)
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("geometry", help="print the live driver geometry (default)")
+    plan = sub.add_parser("plan-io", help="cost a larger CoreAudio IO buffer")
+    plan.add_argument("--frames", type=int, required=True)
+    plan.add_argument("--ring-multiple", type=int, default=4)
+    run_p = sub.add_parser("run", help="run one scenario")
+    run_p.add_argument("--stall-ms", type=float, default=0.0)
+    sub.add_parser("cliff", help="bisect the stall-tolerance cliff")
+    sub.add_parser("sweep", help="compare readDelay/horizon variants")
+
+    args = parser.parse_args(argv)
+    handler = {
+        None: cmd_geometry,
+        "geometry": cmd_geometry,
+        "plan-io": cmd_plan_io,
+        "run": cmd_run,
+        "cliff": cmd_cliff,
+        "sweep": cmd_sweep,
+    }[args.command]
+    return handler(args)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
