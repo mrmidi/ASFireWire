@@ -38,8 +38,6 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     nextTransmitCycle_ = 0;
     cycleTrackingValid_ = false;
     lastHwTimestamp_ = 0;
-    lastLapTimestamp_ = 0;
-    lapTimestampValid_ = false;
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
@@ -120,41 +118,6 @@ void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
     const uint32_t aheadCount =
         (softwareFillIndex + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
     nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
-}
-
-uint32_t IsochTxDmaRing::DetectLostLapPackets(
-    const uint32_t hwPacketIndex, const uint32_t deltaConsumed) noexcept {
-    if (!cycleTrackingValid_) {
-        return 0;
-    }
-    // Read the completion timestamp of the most recently executed packet.
-    // This must run even when the modulo delta is zero: a stall of exactly
-    // whole ring laps leaves the command pointer where it was while the
-    // timestamp has moved by kNumPackets * laps cycles.
-    const uint32_t lastProcessedPkt =
-        (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
-    auto* completionDesc = slab_.GetDescriptorPtr(
-        lastProcessedPkt * Layout::kBlocksPerPacket +
-        Layout::kCompletionBlock);
-    if (dmaMemory_) {
-        dmaMemory_->FetchFromDevice(
-            reinterpret_cast<const std::byte*>(completionDesc),
-            sizeof(*completionDesc));
-    }
-    if (completionDesc->statusWord == 0) {
-        return 0;
-    }
-    const uint16_t rawTimestamp =
-        static_cast<uint16_t>(completionDesc->statusWord & 0xFFFF);
-    const bool hadPrevious = lapTimestampValid_;
-    const uint16_t previousTimestamp = lastLapTimestamp_;
-    lastLapTimestamp_ = rawTimestamp;
-    lapTimestampValid_ = true;
-    if (!hadPrevious) {
-        return 0;
-    }
-    return ComputeLostLapPackets(previousTimestamp, rawTimestamp,
-                                 deltaConsumed);
 }
 
 void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
@@ -355,8 +318,6 @@ const char* IsochTxDmaRing::RefillFailureReasonName(
             return "uncommitted-slot";
         case RefillFailureReason::InvalidPacketSize:
             return "invalid-packet-size";
-        case RefillFailureReason::ContextStalled:
-            return "context-stalled";
         case RefillFailureReason::PayloadMapping:
             return "payload-mapping";
     }
@@ -443,68 +404,6 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     UpdateGapCounters(gap);
     ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
 
-    // The free-running ring only exposes progress modulo kNumPackets through
-    // the command pointer. The completion timestamps recover the unaccounted
-    // whole ring laps, but they cannot say which of two faults produced them:
-    // free-running stale re-transmission (2026-07-19 Duet zombie: 71% of wire
-    // packets were stale re-sends) or a stalled context whose sparse crawl
-    // stamps late timestamps (2026-07-19 Saffire freeze: 13 wire packets
-    // while the timestamps implied 64k). Classify by coverage: a jump the
-    // producer's committed lead can absorb is reconciled so pacing returns to
-    // true bus time; a larger jump can only end at an uncommitted slot, so
-    // fault immediately with untouched cursors instead of corrupting the
-    // accounting on the way to the same stop.
-    const uint32_t lostPackets =
-        DetectLostLapPackets(hwPacketIndex, deltaConsumed);
-    if (lostPackets != 0) {
-        const uint64_t completedRaw =
-            controlBlock->completionCursor.load(std::memory_order_relaxed);
-        const uint64_t consumedEnd = completedRaw + deltaConsumed;
-        const uint64_t committedNow =
-            controlBlock->committedEnd.load(std::memory_order_acquire);
-        const uint64_t committedHeadroom =
-            committedNow > consumedEnd ? committedNow - consumedEnd : 0;
-        const uint32_t latchedIntEvents = hw.Read(Register32::kIntEvent);
-        if (lostPackets > committedHeadroom) {
-            counters_.contextStallFatals.fetch_add(1,
-                                                   std::memory_order_relaxed);
-            ASFW_LOG(
-                Isoch,
-                "IT FATAL: context stalled - unaccounted progress %u packets "
-                "exceeds committed lead %llu (delta=%u completion=%llu "
-                "committed=%llu ctrl=0x%08x intEvent=0x%08x)",
-                lostPackets,
-                committedHeadroom,
-                deltaConsumed,
-                completedRaw,
-                committedNow,
-                ctrl,
-                latchedIntEvents);
-            out.failureReason = RefillFailureReason::ContextStalled;
-            out.failurePacketAbs = consumedEnd;
-            return out;
-        }
-        counters_.lapLossEvents.fetch_add(1, std::memory_order_relaxed);
-        counters_.lapLossPacketsTotal.fetch_add(lostPackets,
-                                                std::memory_order_relaxed);
-        ASFW_LOG(
-            Isoch,
-            "IT LAP LOSS: %u packets of unaccounted hardware progress "
-            "(stale re-send or brief stall) delta=%u completion=%llu "
-            "committed=%llu fill=%llu ctrl=0x%08x intEvent=0x%08x",
-            lostPackets,
-            deltaConsumed,
-            completedRaw,
-            committedNow,
-            softwareFillAbsIdx_,
-            ctrl,
-            latchedIntEvents);
-        if (softwareFillAbsIdx_ != 0) {
-            softwareFillAbsIdx_ += lostPackets;
-        }
-        ringPacketsAhead_ = 0;
-    }
-
     // Publish a neutral completion-delta high-water. Content consumers decide
     // whether their own frame/lead policy can tolerate the observed cadence.
     {
@@ -528,12 +427,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         }
     }
 
-    // Fetch and publish completed stamps. Lost laps shift the absolute index
-    // base: the descriptors read below were last executed in the newest lap,
-    // so their stamps belong to the reconciled indices, not the stale window.
-    const uint64_t completedAbsIdx =
-        controlBlock->completionCursor.load(std::memory_order_relaxed) +
-        lostPackets;
+    // Fetch and publish completed stamps
+    const uint64_t completedAbsIdx = controlBlock->completionCursor.load(std::memory_order_relaxed);
     for (uint32_t i = 0; i < deltaConsumed; ++i) {
         const uint64_t currentAbsIdx = completedAbsIdx + i;
         const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
@@ -556,7 +451,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         controlBlock->PushCompletionStamp(currentAbsIdx,
                                           completionCycleTimer);
     }
-    if (deltaConsumed > 0 || lostPackets > 0) {
+    if (deltaConsumed > 0) {
         controlBlock->completionCursor.store(completedAbsIdx + deltaConsumed, std::memory_order_release);
 
         const uint64_t requested =

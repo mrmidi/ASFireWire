@@ -49,18 +49,6 @@ public:
         // own the policy that decides whether this is an unsafe cadence.
         std::atomic<uint32_t> maxDeltaConsumed{0};
 
-        // Full descriptor-ring laps of unaccounted hardware progress between
-        // two refills (either free-running stale re-transmission or a brief
-        // context stall). The completion cursor is reconciled forward so
-        // producer pacing stays on true bus time instead of dilating.
-        std::atomic<uint64_t> lapLossEvents{0};
-        std::atomic<uint64_t> lapLossPacketsTotal{0};
-
-        // Unaccounted progress exceeded the producer's committed lead: the
-        // context stalled or wedged beyond anything reconciliation can cover
-        // (2026-07-19 Saffire freeze). Fatal; the stream must stop honestly.
-        std::atomic<uint64_t> contextStallFatals{0};
-
         // DMA ring gap monitoring
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
         std::atomic<uint32_t> minDmaGapPackets{Layout::kNumPackets};
@@ -81,7 +69,6 @@ public:
         UncommittedSlot,
         InvalidPacketSize,
         PayloadMapping,
-        ContextStalled,
     };
 
     [[nodiscard]] static const char* RefillFailureReasonName(
@@ -150,46 +137,6 @@ public:
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
     [[nodiscard]] uint32_t LastHwTimestamp() const noexcept { return lastHwTimestamp_; }
 
-    // The IT descriptor ring is circular and free-running: hardware keeps
-    // executing it whether or not software refilled, so per-refill progress
-    // measured from the command pointer is only known modulo kNumPackets.
-    // The OUTPUT_LAST completion timestamps (3-bit seconds + 13-bit cycle,
-    // OHCI §9.4.2) recover true progress: the context transmits exactly one
-    // packet per cycle, so cycles elapsed between the last-processed packets
-    // of two refills equals packets truly consumed. Any surplus over the
-    // modulo delta is whole ring laps of unaccounted execution: free-running
-    // stale re-transmission, or a stalled context whose sparse crawl stamps
-    // late completion timestamps (2026-07-19 Saffire freeze — the wire showed
-    // 13 packets while the timestamps implied 64k). The two are
-    // indistinguishable here; the caller classifies by whether the producer's
-    // committed lead can cover the jump. Rounding to whole laps absorbs
-    // single-cycle jitter (missed cycle / cycle-master correction). Valid for
-    // refill gaps below the 8-second timestamp wrap; the transmit context
-    // faults out long before that horizon.
-    [[nodiscard]] static constexpr uint32_t ComputeLostLapPackets(
-        uint16_t previousTimestamp,
-        uint16_t currentTimestamp,
-        uint32_t deltaConsumed) noexcept {
-        constexpr uint32_t kCyclesPerSecond = 8000u;
-        constexpr uint32_t kTimestampDomainCycles = 8u * kCyclesPerSecond;
-        const uint32_t previousOrdinal =
-            ((previousTimestamp >> 13) & 0x7u) * kCyclesPerSecond +
-            ((previousTimestamp & 0x1FFFu) % kCyclesPerSecond);
-        const uint32_t currentOrdinal =
-            ((currentTimestamp >> 13) & 0x7u) * kCyclesPerSecond +
-            ((currentTimestamp & 0x1FFFu) % kCyclesPerSecond);
-        const uint32_t elapsedCycles =
-            (currentOrdinal + kTimestampDomainCycles - previousOrdinal) %
-            kTimestampDomainCycles;
-        if (elapsedCycles <= deltaConsumed) {
-            return 0;
-        }
-        const uint32_t surplus = elapsedCycles - deltaConsumed;
-        const uint32_t lostLaps =
-            (surplus + Layout::kNumPackets / 2) / Layout::kNumPackets;
-        return lostLaps * Layout::kNumPackets;
-    }
-
     // Expose slab for audio injection.
     [[nodiscard]] IsochTxDescriptorSlab& Slab() noexcept { return slab_; }
     [[nodiscard]] const IsochTxDescriptorSlab& Slab() const noexcept { return slab_; }
@@ -202,8 +149,6 @@ private:
                              uint32_t deltaConsumed,
                              RefillOutcome& out) noexcept;
     void CommitRefill(uint32_t toFill) noexcept;
-    [[nodiscard]] uint32_t DetectLostLapPackets(uint32_t hwPacketIndex,
-                                                uint32_t deltaConsumed) noexcept;
     [[nodiscard]] bool DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
                                                  uint8_t contextIndex,
                                                  uint32_t& outPacketIndex,
@@ -222,11 +167,6 @@ private:
     uint32_t nextTransmitCycle_{0};
     bool cycleTrackingValid_{false};
     uint32_t lastHwTimestamp_{0};
-
-    // Previous refill's last-processed completion timestamp; anchors the
-    // true-cycle lap-loss detection across refills.
-    uint16_t lastLapTimestamp_{0};
-    bool lapTimestampValid_{false};
 
     Counters counters_{};
 };
