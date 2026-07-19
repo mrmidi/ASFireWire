@@ -39,6 +39,14 @@ struct PayloadWriterTelemetryRecord final {
     bool packetizerFrameCursorAligned{false};
     bool packetizerHasLastDataPacket{false};
 
+    // Audio-frontier preparation state. This identifies whether a deficit
+    // occurred before the 400-cycle target was requested, while it was queued,
+    // or after a supposedly drained request.
+    uint64_t txPreparationTargetFrameEnd{0};
+    uint64_t txPreparationRequestedGeneration{0};
+    uint64_t txPreparationHandledGeneration{0};
+    bool txPreparationWakeScheduled{false};
+
     // Additional cursors and addresses for diagnosing buffer mapping / pointer alignment
     uint64_t playbackRingReadFrame{0};
     uint64_t playbackRingWriteFrame{0};

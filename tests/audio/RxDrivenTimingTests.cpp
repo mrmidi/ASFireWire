@@ -12,6 +12,8 @@ namespace {
 
 using ASFW::Audio::Runtime::RxSequenceEntry;
 using ASFW::Audio::Runtime::RxSequenceReplayReader;
+using ASFW::Audio::Runtime::RxSequenceReplayReadDiagnostic;
+using ASFW::Audio::Runtime::RxSequenceReplayReadFailure;
 using ASFW::Audio::Runtime::RxSequenceReplayState;
 using ASFW::IsochTransport::AudioTimingGeometry;
 
@@ -175,8 +177,37 @@ TEST(RxDrivenTimingTests, ReplayEpochChangeInvalidatesActiveReader) {
     replay.Reset();
 
     RxSequenceEntry entry{};
-    EXPECT_FALSE(reader.TryRead(replay, entry));
+    RxSequenceReplayReadDiagnostic diagnostic{};
+    EXPECT_FALSE(reader.TryRead(replay, entry, &diagnostic));
+    EXPECT_EQ(diagnostic.failure, RxSequenceReplayReadFailure::kEpochChanged);
+    EXPECT_EQ(diagnostic.readerEpoch, 1U);
+    EXPECT_EQ(diagnostic.replayEpoch, 2U);
     EXPECT_FALSE(replay.IsEstablished());
+}
+
+TEST(RxDrivenTimingTests, ReplayReadReportsInactiveAndAheadOfProducer) {
+    RxSequenceReplayState replay{};
+    replay.Reset();
+
+    RxSequenceReplayReader reader{};
+    RxSequenceEntry entry{};
+    RxSequenceReplayReadDiagnostic diagnostic{};
+    EXPECT_FALSE(reader.TryRead(replay, entry, &diagnostic));
+    EXPECT_EQ(diagnostic.failure, RxSequenceReplayReadFailure::kReaderInactive);
+    EXPECT_FALSE(diagnostic.replayEstablished);
+
+    for (uint64_t cycle = 0;
+         cycle < RxSequenceReplayState::kReadDelay;
+         ++cycle) {
+        replay.Publish(RxSequenceEntry{});
+    }
+    ASSERT_TRUE(replay.MarkEstablished());
+    ASSERT_TRUE(reader.Begin(replay));
+    while (reader.TryRead(replay, entry)) {
+    }
+    EXPECT_FALSE(reader.TryRead(replay, entry, &diagnostic));
+    EXPECT_EQ(diagnostic.failure, RxSequenceReplayReadFailure::kAheadOfProducer);
+    EXPECT_EQ(diagnostic.readerCursor, diagnostic.producerCursor);
 }
 
 TEST(RxDrivenTimingTests, ReplayCannotEstablishWithoutHalfRingHistory) {
@@ -204,10 +235,12 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
-    // Worst-case (44.1k) cadence sizing: exposure lead 108 packets.
-    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 216U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 360U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 408U);
+    // 400-cycle content horizon at worst-case 44.1k cadence, plus one full
+    // 512-frame client write window.
+    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 438U);
+    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 534U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 678U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 912U);
 }
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {

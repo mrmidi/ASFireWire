@@ -239,10 +239,61 @@ Linux and FFADO, without copying their mechanisms.
 | ID | Status | Finding | Required action |
 | --- | --- | --- | --- |
 | `AVC-RECOVERY-001` | **Confirmed** | Stale `committedEnd` makes IT prime reject timing-loss recovery. | Implement the producer-owned recovery epoch above, then test a forced RX-cadence loss. |
+| `AUDIO-RECOVERY-ROUTING-001` | **Confirmed critical defect** | FW-64 / merge `e9ea6ce` added a second registration to `IsochService`'s single `timingLossCallback_`. `AudioCoordinator` constructs `dice_` before `avc_`; AV/C therefore overwrites DICE's callback. A DICE/Focusrite replay reset is routed to AV/C, whose `activeGuid_` does not match and which drops the event. | Replace the single backend-owned callback with one AudioCoordinator-owned router which selects the backend by GUID. Carry the fault reason and session epoch; do not register directly from either backend. |
+| `AVC-RECOVERY-002` | **Confirmed critical defect** | FW-64 treats every *established* replay reset as an eventual destructive `RecoverStreaming()`. A reset can mean a malformed RX packet, one cycle gap, rejected cadence, or rejected clock anchor—not necessarily a device outage. The coordinator stops/restarts transport while CoreAudio remains running with its old TX producer state. | Disable AV/C automatic transport restart until recovery atomically quiesces/resets/re-primes the audio producer and transport under one recovery epoch. Report the fault and request an audio-side xrun/controlled restart instead. |
 | `AVC-PROPERTY-001` | **Fixed; requires hardware confirmation** | `AudioNubPublisher` sets stream mode on the nub, but `ASFWAudioDevice::PopulateNubProperties()` did not publish `ASFWStreamMode`; the driver parser consequently defaulted to non-blocking.  The model default is also non-blocking ([`ASFWAudioDevice.hpp:52-60`](ASFWDriver/Audio/Model/ASFWAudioDevice.hpp#L52-L60)); parsing only changes it if the property exists ([`AudioDriverConfig.cpp:67-84`](ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp#L67-L84)).  The matching dictionary now publishes the selected mode. | On the next Duet/BeBoB start, confirm the AudioDriver reports `Stream mode from nub: blocking`; the property path is shared by all published audio nubs. |
 | `AVC-TX-EXPOSURE-001` | **Confirmed audio-path defect; root scheduling cause open** | The payload writer skips CoreAudio frames which arrive beyond `Timeline().ExposedFrameEnd()` (`framesWithoutPacket`); `TxAlign` later repositions the producer cursor to close the deficit.  This can produce audible corruption while DMA/CMP and the TX descriptor lead remain healthy, then self-heal without a stream restart ([`AmdtpPayloadWriter.cpp:90-126`](ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126), [`ASFWAudioDriverZts.cpp:360-389`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)). | Retain pending host frames until slots exist and maintain a data-bearing packet horizon beyond the maximum IO callback plus measured scheduling jitter; never discard a running stream's host frames because their packet is not yet exposed. |
 | `AVC-SYNC-001` | **Not proven** | Treating raw RX/TX SYT inequality as a fault would be wrong for the captured duplex stream. | Add the normalized, per-direction trace below before adjusting delays or cadence. |
 | `AVC-HEALTH-001` | **Instrumented; root cause open** | The original RX timing loss occurred without a bus reset in the observed driver ring; successful restart was then masked by `AVC-RECOVERY-001`. | Reproduce with the first-fault record below; it distinguishes a local RX validation failure from a real no-RX/CMP outage. |
+
+### FW-64 callback overwrite and unsafe recovery escalation
+
+Commit [`e9ea6ce`](https://github.com/mrmidi/ASFireWire/commit/e9ea6ce2fd60fc1e76efaf47fe9fa6feb3ddfaf4)
+introduced AV/C timing-loss recovery. Its fault signal is global, but its
+handlers are backend-specific:
+
+```text
+AudioCoordinator construction order
+  dice_ constructor -> IsochService::SetTimingLossCallback(DICE handler)
+  avc_ constructor  -> IsochService::SetTimingLossCallback(AV/C handler)
+                         ^ overwrites the DICE handler
+
+RX replay reset -> IsochService::OnReceiveTimingLossDetected(active GUID)
+                -> AV/C handler only
+                -> DICE GUID is not AV/C active GUID -> event dropped
+```
+
+This is a direct DICE stream-killer *after* an RX replay reset: the receive
+side has discarded its timing history, but the DICE backend never receives the
+recovery event. It does not itself create the initial RX reset. The independent
+TX replay-horizon failure described below can also produce NODATA/clicks/silence
+without any `[RxReplayReset]`; both failures must be fixed.
+
+The AV/C path is unsafe in the opposite direction. An established replay reset
+is raised for packet-processor failure, invalid RX timestamp, receive-cycle
+gap, rejected SYT cadence, or rejected clock anchor
+([`DirectAudioReceiveConsumer.cpp:178-336`](ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L178-L336)).
+FW-64 waits 256 ms and, if the same replay has not re-established, calls
+`RecoverStreaming()` ([`AVCAudioBackend.cpp:213-288`](ASFWDriver/Audio/Protocols/Backends/AVCAudioBackend.cpp#L213-L288)).
+That operation stops and starts the duplex transport
+([`AudioDuplexCoordinator.cpp:560-635`](ASFWDriver/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp#L560-L635)),
+but does not run the CoreAudio `StopIO`/`StartIO` producer reset and prefill
+protocol. It can therefore turn a local timing anomaly into a stale-cursor,
+half-running stream.
+
+The repair boundary is architectural:
+
+1. `AudioCoordinator` must own the only timing-loss subscription and dispatch
+   by active GUID/backend; `IsochService` must not be a last-writer-wins
+   backend callback slot.
+2. The event must carry reset reason, RX epoch, and the active duplex session
+   epoch so a delayed callback cannot act on a newer session.
+3. Until the audio-side and transport-side recovery are one atomic epoch,
+   AV/C timing loss is telemetry plus controlled xrun/explicit restart—not a
+   background `RecoverStreaming()` call.
+4. Callback replace/clear/invoke must be serialized with service teardown;
+   the current unsynchronized `std::function` slot risks a callback into a
+   destroying backend.
 
 ## Implemented first-fault MCP instrumentation
 
@@ -499,6 +550,47 @@ record.
 This separates a genuine RX interruption from the current, more likely design
 error: future TX packet preparation consuming a finite history of past RX SYT
 observations.
+
+### The actual TX failure: content reaches an unprepared region
+
+The primary fault model is a cursor/geometry violation, not necessarily an
+OHCI DMA read of random memory. The transport ring is deliberately prefilled
+with legal NODATA packets, so OHCI can remain healthy while it transmits no
+audio content. Four independent cursors currently lack one enforced contract:
+
+```text
+W = CoreAudio write end          host frames which exist
+E = exposed frame end            host frames mapped into prepared TX packets
+C = completion/committed end     packet slots safe for OHCI ownership/reuse
+R = RX replay read/producer      observed timing history available for TX SYT
+```
+
+The invalid states are:
+
+```text
+W > E                 payload writer reaches a host frame with no packet slot
+R.read >= R.producer  TX requests an RX timing observation that does not exist
+```
+
+Today both violations are treated as recoverable branches: the payload writer
+counts `withoutPacket` and permanently skips the samples; `TryRead()` emits a
+legal NODATA packet and re-arms `TxAlign`. When replay becomes readable again,
+alignment jumps to a newer frame range. The transport survives, but the
+unprepared interval is lost; repetition sounds like clicks/periodic silence and
+continuous failure is complete silence.
+
+The required contract is non-negotiable:
+
+1. Never consume a CoreAudio frame until an exposed TX packet owns that frame.
+   Retain it pending, or declare an explicit xrun only after its host-ring
+   storage is proven overwritten.
+2. Never consume RX replay beyond valid observed history. Future TX packet
+   reservation requires a timing cache/predictor with an explicit validity
+   horizon, not direct consumption of a finite historical ring.
+3. `C` protects DMA ownership only; NODATA prefill is not evidence that audio
+   content is prepared.
+4. On recovery, reset/re-prime W/E/C/R under one epoch before transport runs;
+   do not use `TxAlign` to silently abandon the old interval.
 
 ## Minimal anomaly-only telemetry for the next hardware run
 

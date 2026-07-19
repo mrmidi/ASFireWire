@@ -380,6 +380,15 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
     return kIOReturnSuccess;
 }
 
+kern_return_t IMPL(ASFWAudioNub, RequestTxPreparation)
+{
+    if (!ivars || !ivars->txPreparationAction) {
+        return kIOReturnNotReady;
+    }
+    TxPreparationReady(ivars->txPreparationAction, generation);
+    return kIOReturnSuccess;
+}
+
 void IMPL(ASFWAudioNub, TxPreparationReady)
 {
     (void)action;

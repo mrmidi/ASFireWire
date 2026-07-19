@@ -239,13 +239,40 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             }
 
             ASFW::Audio::Runtime::RxSequenceEntry replay{};
-            if (ivars.runtime.txReplayReader.IsActive() &&
-                ivars.runtime.txReplayReader.TryRead(
-                    directControl->rxSequenceReplay, replay)) {
+            ASFW::Audio::Runtime::RxSequenceReplayReadDiagnostic replayDiagnostic{};
+            if (ivars.runtime.txReplayReader.TryRead(
+                    directControl->rxSequenceReplay, replay,
+                    &replayDiagnostic)) {
                 directControl->txReplayEntries.fetch_add(
                     1, std::memory_order_relaxed);
                 timing.replayDataBlocks = replay.dataBlocks;
             } else {
+                const int64_t replayDistance =
+                    replayDiagnostic.readerCursor >= replayDiagnostic.producerCursor
+                        ? static_cast<int64_t>(replayDiagnostic.readerCursor -
+                                               replayDiagnostic.producerCursor)
+                        : -static_cast<int64_t>(replayDiagnostic.producerCursor -
+                                                replayDiagnostic.readerCursor);
+                // This is the primary discriminator for a TX silence: it says
+                // whether RX had not produced this entry yet, had overwritten it,
+                // reset its epoch, or changed the slot while it was being read.
+                ASFW_LOG_RING_ONLY_RL(
+                    DirectAudio,
+                    "tx-replay-read",
+                    1000u,
+                    ::ASFW::Logging::LogLevel::Warning,
+                    "[TxReplay] fail=%s pkt=%llu cur=%llu prod=%llu d=%lld ep=%u/%u slot=%llu/%u est=%u",
+                    ASFW::Audio::Runtime::RxSequenceReplayReadFailureName(
+                        replayDiagnostic.failure),
+                    nextPacketToPrepare,
+                    replayDiagnostic.readerCursor,
+                    replayDiagnostic.producerCursor,
+                    replayDistance,
+                    replayDiagnostic.readerEpoch,
+                    replayDiagnostic.replayEpoch,
+                    replayDiagnostic.slotSequence,
+                    replayDiagnostic.slotEpoch,
+                    replayDiagnostic.replayEstablished ? 1u : 0u);
                 // Reader stale (epoch moved) or ahead of the producer: count it,
                 // drop the reader so the next packet re-Begins on the live epoch,
                 // and fall through with the NO-DATA disposition set above. Also
@@ -490,11 +517,10 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
         return;
     }
 
-    // Commit one complete shared-ring lap before IT RUN. TxPreparationReady
-    // has a dedicated queue, but action delivery and the startup handoff can
-    // still be delayed. A lead-only prefill can therefore be consumed before
-    // the producer gets its first turn. Steady state still targets completion
-    // + kTxPreparationLeadPackets.
+    // Commit one complete shared-ring lap before IT RUN. The transport's arm
+    // contract validates this exact prefill so that a delayed first producer
+    // action cannot expose an uncommitted slot to IT DMA. Steady state still
+    // targets completion + kTxPreparationLeadPackets.
     ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
     timing.replayValid = true;
     timing.txClockValid = false;
@@ -545,6 +571,7 @@ void IMPL(ASFWAudioDriver, ZtsAnchorReady)
 void IMPL(ASFWAudioDriver, TxPreparationReady)
 {
     (void)action;
+    (void)generation;
     if (!ivars ||
         !ivars->runtime.txActive.load(
             std::memory_order_acquire)) {
@@ -560,9 +587,10 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     const uint64_t requested =
         txControl->refillRequestGeneration.load(
             std::memory_order_acquire);
-    if (generation > requested) {
-        return;
-    }
+    const uint64_t refillHandled =
+        txControl->refillHandledGeneration.load(
+            std::memory_order_acquire);
+    const bool hardwareWakePending = requested != refillHandled;
 
     const uint64_t completionCursor =
         txControl->completionCursor.load(std::memory_order_acquire);
@@ -580,15 +608,28 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     auto* directControl = ivars->runtime.directAudioGraph.control;
     const bool replayEstablished =
         directControl && directControl->rxSequenceReplay.IsEstablished();
+    const uint64_t audioRequested = directControl
+        ? directControl->txPreparationRequests.RequestedGeneration()
+        : 0;
+    const uint64_t requestedAudioTarget = directControl
+        ? directControl->txPreparationRequests.requestedTargetFrameEnd.load(
+              std::memory_order_acquire)
+        : 0;
     const uint64_t outputWrittenEndFrame =
         directControl ? directControl->client.OutputWrittenEndFrame() : 0;
-    const uint64_t targetFrameEnd =
+    const uint32_t dataHorizonFrames =
+        ASFW::IsochTransport::AudioTimingGeometry::TxDataHorizonFrames(
+            ivars->runtime.txStreamEngine.StreamConfig().sampleRate);
+    const uint64_t outputTargetFrameEnd =
         outputWrittenEndFrame != 0
             ? ASFW::Audio::DriverKit::SaturatingAdd(
                   outputWrittenEndFrame,
-                  ASFW::IsochTransport::AudioTimingGeometry::
-                      kTxExposureLeadFrames)
+                  dataHorizonFrames)
             : 0;
+    const uint64_t targetFrameEnd =
+        requestedAudioTarget > outputTargetFrameEnd
+            ? requestedAudioTarget
+            : outputTargetFrameEnd;
     const uint64_t exposedFrameEndBefore =
         ivars->runtime.txStreamEngine.Timeline().ExposedFrameEnd();
     const uint32_t slotsPrepared =
@@ -608,20 +649,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     // question: did the producer's range reach `target` this wake, or stop
     // short and leave a hole the IT refill ISR will later trip on? The producer
     // loop is linear in absolute packet index, so `prepareUntil` is exactly
-    // `base + slotsPrepared`; `firstMissingAbs` is the first slot NOT covered
-    // when it stopped short of target (UINT64_MAX = fully covered).
+    // `base + slotsPrepared`.
     {
         const uint64_t prepareBaseAbs = exposeCursor;
         const uint64_t prepareUntilAbs = exposeCursor + slotsPrepared;
-        const uint64_t requestedSpan =
-            packetLimitTarget > prepareBaseAbs
-                ? packetLimitTarget - prepareBaseAbs
-                : 0;
         const bool stoppedShort = prepareUntilAbs < packetCoverageTarget;
         const bool frameShort =
             targetFrameEnd != 0 && exposedFrameEndAfter < targetFrameEnd;
-        const uint64_t firstMissingAbs =
-            stoppedShort ? prepareUntilAbs : UINT64_MAX;
         const uint64_t committedMargin =
             prepareUntilAbs > completionCursor
                 ? prepareUntilAbs - completionCursor
@@ -647,63 +681,69 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 "tx-prep-range",
                 stoppedShort ? 0u : 1000u,
                 ::ASFW::Logging::LogLevel::Warning,
-                "[TxPrepRange] retiredAbs=%llu prepareBaseAbs=%llu "
-                "prepareUntilAbs=%llu coverageTargetAbs=%llu limitTargetAbs=%llu reqSpan=%llu "
-                "prepared=%u short=%d firstMissingAbs=%lld marginAfter=%llu "
-                "frameTarget=%llu exposedBefore=%llu exposedAfter=%llu "
-                "frameShort=%d frameDeficit=%llu writeEnd=%llu replay=%d",
+                "[TxPrepRange] short=%u frame=%u ret=%llu base=%llu until=%llu cov=%llu lim=%llu n=%u margin=%llu",
+                stoppedShort ? 1u : 0u,
+                frameShort ? 1u : 0u,
                 completionCursor,
                 prepareBaseAbs,
                 prepareUntilAbs,
                 packetCoverageTarget,
                 packetLimitTarget,
-                requestedSpan,
                 slotsPrepared,
-                stoppedShort ? 1 : 0,
-                stoppedShort ? static_cast<int64_t>(firstMissingAbs)
-                             : static_cast<int64_t>(-1),
-                committedMargin,
-                targetFrameEnd,
-                exposedFrameEndBefore,
-                exposedFrameEndAfter,
-                frameShort ? 1 : 0,
-                frameDeficit,
-                outputWrittenEndFrame,
-                replayEstablished ? 1 : 0);
+                committedMargin);
+            if (frameShort) {
+                ASFW_LOG_RING_ONLY_RL(
+                    DirectAudio,
+                    "tx-prep-frame",
+                    1000u,
+                    ::ASFW::Logging::LogLevel::Warning,
+                    "[TxPrepFrame] target=%llu before=%llu after=%llu deficit=%llu write=%llu replay=%u",
+                    targetFrameEnd,
+                    exposedFrameEndBefore,
+                    exposedFrameEndAfter,
+                    frameDeficit,
+                    outputWrittenEndFrame,
+                    replayEstablished ? 1u : 0u);
+            }
         }
     }
 
+    bool scheduleAudioFollowUp = false;
     if (directControl) {
         const uint64_t now = mach_absolute_time();
         const uint64_t requestedAt =
-            txControl->refillRequestHostTicks.load(
-                std::memory_order_relaxed);
+            hardwareWakePending
+                ? txControl->refillRequestHostTicks.load(
+                      std::memory_order_relaxed)
+                : now;
         const uint64_t latency =
             now >= requestedAt ? now - requestedAt : 0;
         const uint64_t latencyNanos =
             ASFW::Timing::hostTicksToNanos(latency);
-        directControl->txLastPreparationLatencyTicks.store(
-            latency, std::memory_order_relaxed);
-        directControl->txPreparationLatencySamples.fetch_add(
-            1, std::memory_order_relaxed);
-        if (latencyNanos <= 750000) {
-            directControl->txPreparationAtMost750Us.fetch_add(
+        if (hardwareWakePending) {
+            directControl->txLastPreparationLatencyTicks.store(
+                latency, std::memory_order_relaxed);
+            directControl->txPreparationLatencySamples.fetch_add(
                 1, std::memory_order_relaxed);
-        }
-        if (latencyNanos >= 1500000) {
-            directControl->txPreparationAtLeast1500Us.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        uint64_t previousMax =
-            directControl->txMaxPreparationLatencyTicks.load(
-                std::memory_order_relaxed);
-        while (latency > previousMax &&
-               !directControl->txMaxPreparationLatencyTicks
-                    .compare_exchange_weak(
-                        previousMax,
-                        latency,
-                        std::memory_order_relaxed,
-                        std::memory_order_relaxed)) {
+            if (latencyNanos <= 750000) {
+                directControl->txPreparationAtMost750Us.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            if (latencyNanos >= 1500000) {
+                directControl->txPreparationAtLeast1500Us.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            uint64_t previousMax =
+                directControl->txMaxPreparationLatencyTicks.load(
+                    std::memory_order_relaxed);
+            while (latency > previousMax &&
+                   !directControl->txMaxPreparationLatencyTicks
+                        .compare_exchange_weak(
+                            previousMax,
+                            latency,
+                            std::memory_order_relaxed,
+                            std::memory_order_relaxed)) {
+            }
         }
         const uint64_t distance =
             packetLimitTarget > exposeCursor
@@ -766,7 +806,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             boundedMargin < committedMarginFloorBefore;
         const bool slackBudgetExceeded = latencyNanos >= 1500000;
         if (newCommittedMarginLow || slackBudgetExceeded ||
-            (wakeSamples % 1024) == 0) {
+            (wakeSamples != 0 && (wakeSamples % 1024) == 0)) {
             ASFW_LOG(
                 DirectAudio,
                 "[TxPrep] margin=%u min=%u lead=%u distMin=%u lastLatUs=%llu "
@@ -783,18 +823,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 directControl->txPreparationAtLeast1500Us.load(
                     std::memory_order_relaxed),
                 wakeSamples,
-                ASFW::IsochTransport::AudioTimingGeometry::
-                    kTxExposureLeadFrames,
+                dataHorizonFrames,
                 ASFW::IsochTransport::AudioTimingGeometry::
                     kTxCoverageLeadPackets,
                 boundedMargin <= kCommittedMarginDangerPackets ? " DANGER"
                                                                : "");
         }
 
-        directControl->txPreparationRequests.requestedGeneration.store(
-            requested, std::memory_order_relaxed);
-        directControl->txPreparationRequests.requestHostTicks.store(
-            requestedAt, std::memory_order_relaxed);
         directControl->counters.txPreparationWakeRequests.store(
             txControl->refillRequestCount.load(
                 std::memory_order_relaxed),
@@ -807,9 +842,29 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             std::memory_order_relaxed);
         directControl->counters.txPreparationDrainPasses.fetch_add(
             1, std::memory_order_relaxed);
-        directControl->txPreparationRequests.MarkHandled(
-            requested, now);
+        const bool audioTargetSatisfied =
+            targetFrameEnd == 0 || exposedFrameEndAfter >= targetFrameEnd;
+        if (audioTargetSatisfied) {
+            directControl->txPreparationRequests.MarkHandled(
+                audioRequested, now);
+        }
+        directControl->txPreparationRequests.FinishWake();
+        // A CoreAudio callback can publish while this action is preparing
+        // slots. It saw wakeScheduled=true and deliberately did not enqueue a
+        // second action; hand it one now after draining the latest target.
+        scheduleAudioFollowUp = audioTargetSatisfied &&
+            directControl->txPreparationRequests.NeedsHandling() &&
+            directControl->txPreparationRequests.TryScheduleWake();
     }
 
     txControl->MarkRefillHandled(requested);
+
+    if (scheduleAudioFollowUp && ivars->device.audioNub) {
+        const kern_return_t requestKr =
+            ivars->device.audioNub->RequestTxPreparation(
+                directControl->txPreparationRequests.RequestedGeneration());
+        if (requestKr != kIOReturnSuccess) {
+            directControl->txPreparationRequests.FinishWake();
+        }
+    }
 }

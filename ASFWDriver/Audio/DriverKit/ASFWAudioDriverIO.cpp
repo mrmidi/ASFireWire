@@ -186,6 +186,32 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
 
+                // Keep packet preparation driven by the CoreAudio write
+                // frontier as well as the OHCI refill path. The target is a
+                // 400-cycle content horizon (about 50 ms at 48 kHz), not a
+                // request for transport to manipulate audio cursors. The
+                // coalescing latch ensures this RT callback produces at most
+                // one outstanding action.
+                const uint64_t writeEndFrame = sampleTime + ioBufferFrameSize;
+                const uint64_t targetFrameEnd =
+                    writeEndFrame +
+                    ASFW::IsochTransport::AudioTimingGeometry::
+                        TxDataHorizonFrames(
+                            driverIvars->runtime.txStreamEngine.StreamConfig()
+                                .sampleRate);
+                const uint64_t requestGeneration =
+                    control->txPreparationRequests.PublishRequest(
+                        hostTime, targetFrameEnd);
+                if (driverIvars->device.audioNub &&
+                    control->txPreparationRequests.TryScheduleWake()) {
+                    const kern_return_t requestKr =
+                        driverIvars->device.audioNub->RequestTxPreparation(
+                            requestGeneration);
+                    if (requestKr != kIOReturnSuccess) {
+                        control->txPreparationRequests.FinishWake();
+                    }
+                }
+
                 const uint32_t channels = driverIvars->runtime.directAudioGraph.memory.outputChannels;
                 const auto& memory =
                     driverIvars->runtime.directAudioGraph.memory;
@@ -200,8 +226,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.queueControl
                         ? driverIvars->runtime.txSlotProvider.queueControl->completionCursor.load(std::memory_order_acquire)
                         : 0;
-                    const uint64_t writeEndFrame =
-                        sampleTime + ioBufferFrameSize;
                     const uint64_t exposedFrameEnd =
                         driverIvars->runtime.txStreamEngine.Timeline()
                             .ExposedFrameEnd();
@@ -266,6 +290,17 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         packetizerSnapshot.frameCursorAligned;
                     rec.packetizerHasLastDataPacket =
                         packetizerSnapshot.hasLastDataPacket;
+                    rec.txPreparationTargetFrameEnd =
+                        control->txPreparationRequests.requestedTargetFrameEnd.load(
+                            std::memory_order_acquire);
+                    rec.txPreparationRequestedGeneration =
+                        control->txPreparationRequests.RequestedGeneration();
+                    rec.txPreparationHandledGeneration =
+                        control->txPreparationRequests.handledGeneration.load(
+                            std::memory_order_acquire);
+                    rec.txPreparationWakeScheduled =
+                        control->txPreparationRequests.wakeScheduled.load(
+                            std::memory_order_acquire);
                     rec.packetsPrepared =
                         txCounters.packetsPrepared.load(std::memory_order_relaxed);
                     rec.dataPacketsPrepared =

@@ -170,9 +170,19 @@ struct TxPreparationRequestState final {
     std::atomic<uint64_t> handledGeneration{0};
     std::atomic<uint64_t> requestHostTicks{0};
     std::atomic<uint64_t> handledHostTicks{0};
+    // Audio-owned target: the packetizer must expose content through this
+    // absolute host frame before the request is considered drained. Transport
+    // only carries packet cursors and never interprets or resets this value.
+    std::atomic<uint64_t> requestedTargetFrameEnd{0};
+    // CoreAudio can publish every IO period while TxPreparation runs on a
+    // different queue. This latch makes action delivery edge-triggered and
+    // coalesces those writes into one follow-up action.
+    std::atomic<bool> wakeScheduled{false};
 
-    [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks) noexcept {
+    [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks,
+                                          uint64_t targetFrameEnd = 0) noexcept {
         requestHostTicks.store(hostTicks, std::memory_order_relaxed);
+        requestedTargetFrameEnd.store(targetFrameEnd, std::memory_order_relaxed);
         return requestedGeneration.fetch_add(1, std::memory_order_release) + 1;
     }
 
@@ -185,9 +195,22 @@ struct TxPreparationRequestState final {
                requestedGeneration.load(std::memory_order_acquire);
     }
 
+    [[nodiscard]] bool TryScheduleWake() noexcept {
+        return !wakeScheduled.exchange(true, std::memory_order_acq_rel);
+    }
+
+    void FinishWake() noexcept {
+        wakeScheduled.store(false, std::memory_order_release);
+    }
+
     void MarkHandled(uint64_t generation, uint64_t hostTicks) noexcept {
+        uint64_t handled = handledGeneration.load(std::memory_order_relaxed);
+        while (handled < generation &&
+               !handledGeneration.compare_exchange_weak(
+                   handled, generation, std::memory_order_release,
+                   std::memory_order_relaxed)) {
+        }
         handledHostTicks.store(hostTicks, std::memory_order_relaxed);
-        handledGeneration.store(generation, std::memory_order_release);
     }
 
     void Reset() noexcept {
@@ -195,6 +218,8 @@ struct TxPreparationRequestState final {
         handledGeneration.store(0, std::memory_order_relaxed);
         requestHostTicks.store(0, std::memory_order_relaxed);
         handledHostTicks.store(0, std::memory_order_relaxed);
+        requestedTargetFrameEnd.store(0, std::memory_order_relaxed);
+        wakeScheduled.store(false, std::memory_order_relaxed);
     }
 };
 
