@@ -272,3 +272,49 @@ end state faster.
   silence.
 - Growing `kCapacity` (F4) does **not** help here: the entries were never
   published, so no amount of history contains them.
+
+## F7 — the sim can classify a real run without another hardware session
+
+RX loss (F6) and a producer stall (F2) reach the **same end state**: `W > E`,
+`align == 1`, `ahead` in the hundreds, transport perfectly healthy, near-total
+silence. Counters alone cannot separate them. The **slope of `W − E`** can:
+
+| cause | written | `ahead` | `reclamp` | `W−E` | **slope/s** |
+|---|---:|---:|---:|---:|---:|
+| healthy | 99.6 % | 0 | 1 | −2400 | **0** |
+| rx-observation-loss (F6) | 45.6 % | 1208 | 1 | +5200 | **+311** |
+| producer-stall (F2) | 16.4 % | 886 | 2 | +1032 | **−9 (flat)** |
+| replay-ring-churn | 99.6 % | 299 | 1 | −2400 | −2 |
+| scheduler-latency | 99.6 % | 0 | 1 | −2400 | 0 |
+
+Two things fall out:
+
+- **`ahead` is not diagnostic.** A small replay ring emits 299 of them with audio
+  fully intact. Any triage that treats `fail=ahead` as the fault will chase the
+  wrong defect.
+- **A budget being *consumed* ramps; a budget *spent once* goes flat.** That is
+  the whole classifier.
+
+The ramp also inverts to a rate: at a measured 6.79 frames of `E` forfeited per
+lost observation, slope ÷ 6.79 = lost RX packets/s.
+
+```bash
+uv run asfw-sim fingerprint          # the table above, recomputed from live geometry
+uv run asfw-sim diagnose --deficit-start -2400 --deficit-end 380 --elapsed-s 60
+#   rx-observation-loss (F6)  (confidence: high)
+#   estimated RX loss: 6.8 packets/s (0.085% of 8000/s)
+```
+
+Two `[PayloadWriter]` deficit values and the seconds between them are the entire
+input — no FireBug trace, no full ring dump.
+
+> **Threshold note.** An earlier revision used a noise floor of one IO period per
+> second (51 frames/s) and classified a −2400 → +380 ramp as a *stall*. That
+> hides the dangerous case: a leak slow enough to look stable in a short capture
+> still spends the horizon eventually — 2400 frames over an hour is only
+> 0.67 frames/s. The floor is now 1 frame/s and any positive slope reports a
+> time-to-silence instead of a verdict implying safety.
+
+**Limit.** This classifies; it does not observe. The sim still cannot tell you
+whether *your* hardware drops packets — it tells you what to conclude once you
+have two deficit samples from the ring.

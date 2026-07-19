@@ -11,6 +11,7 @@ import argparse
 from pathlib import Path
 
 from .derive import derive, solve_for_io_budget
+from .diagnose import diagnose, fingerprints, frames_lost_per_drop
 from .geometry import SUPPORTED_RATES, Geometry
 from .headers import DriverHeaders, load_driver_headers
 from .scenarios import Scenario, load_scenario, load_scenario_dir, run_scenario
@@ -270,6 +271,66 @@ def cmd_scenario(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_fingerprint(args) -> int:
+    g = Geometry.from_headers(args.rate)
+    print("Simulated failure fingerprints. The discriminator is the DEFICIT SLOPE,")
+    print("not any counter: `ahead` appears in healthy runs too.\n")
+    print(
+        f"  {'cause':<22}{'written':>9}{'ahead':>8}{'reclamp':>9}"
+        f"{'align':>7}{'W-E':>9}{'slope/s':>9}"
+    )
+    print("  " + "-" * 73)
+    for f in fingerprints(g):
+        print(
+            f"  {f.cause:<22}{f.written_fraction * 100:>8.1f}%{f.ahead:>8}"
+            f"{f.reclamped:>9}{f.align_count:>7}{f.deficit_frames:>9}"
+            f"{f.deficit_slope_per_s:>9.0f}"
+        )
+        print(f"  {'':<22}\033[2m{f.note}\033[0m")
+    print(
+        f"\n  calibration: E forfeits {frames_lost_per_drop(g):.2f} frames per lost "
+        f"RX observation\n  exposure horizon: {g.data_horizon_frames} frames "
+        f"(~{g.data_horizon_frames / max(frames_lost_per_drop(g), 1e-9):.0f} lost "
+        "observations, for the life of the stream)\n"
+    )
+    return 0
+
+
+def cmd_diagnose(args) -> int:
+    g = Geometry.from_headers(args.rate)
+    d = diagnose(
+        deficit_start_frames=args.deficit_start,
+        deficit_end_frames=args.deficit_end,
+        elapsed_s=args.elapsed_s,
+        geometry=g,
+        ahead=args.ahead,
+        align_count=args.align,
+    )
+    print(f"\n  \033[1m{d.cause}\033[0m  (confidence: {d.confidence})\n")
+    for line in _wrap(d.reasoning, 72):
+        print(f"  {line}")
+    if d.estimated_rx_loss_per_s is not None:
+        print(
+            f"\n  estimated RX loss: {d.estimated_rx_loss_per_s:.1f} packets/s "
+            f"({d.estimated_rx_loss_percent:.3f}% of 8000/s)"
+        )
+    print()
+    return 0
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def cmd_run(args) -> int:
     print(_run(_geometry(args), args.seconds, args.stall_ms).summary())
     return 0
@@ -326,6 +387,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     scen.add_argument("paths", nargs="*", help="scenario .yaml files or directories")
     scen.add_argument("--quiet", action="store_true", help="omit descriptions")
+    sub.add_parser(
+        "fingerprint", help="counter signature of each simulated failure cause"
+    )
+    diag = sub.add_parser(
+        "diagnose", help="classify a real run from two [PayloadWriter] deficits"
+    )
+    diag.add_argument("--deficit-start", type=int, required=True,
+                      help="W-E in frames at the first sample (negative = healthy)")
+    diag.add_argument("--deficit-end", type=int, required=True)
+    diag.add_argument("--elapsed-s", type=float, required=True)
+    diag.add_argument("--ahead", type=int, default=None,
+                      help="cumulative [TxReplay] fail=ahead count")
+    diag.add_argument("--align", type=int, default=None,
+                      help="cumulative [TxAlign] count")
 
     args = parser.parse_args(argv)
     handler = {
@@ -336,6 +411,8 @@ def main(argv: list[str] | None = None) -> int:
         "cliff": cmd_cliff,
         "sweep": cmd_sweep,
         "scenario": cmd_scenario,
+        "fingerprint": cmd_fingerprint,
+        "diagnose": cmd_diagnose,
     }[args.command]
     return handler(args)
 
