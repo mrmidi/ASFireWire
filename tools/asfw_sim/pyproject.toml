@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Four-cursor TX geometry simulator for ASFireWire: W (CoreAudio write), E (exposure), C (completion), R (RX replay reader)."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.3",
+]
 
 [project.optional-dependencies]
 dev = [

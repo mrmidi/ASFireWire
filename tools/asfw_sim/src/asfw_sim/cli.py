@@ -8,13 +8,20 @@ budgets that are not written down anywhere.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from .derive import derive, solve_for_io_budget
 from .geometry import SUPPORTED_RATES, Geometry
 from .headers import DriverHeaders, load_driver_headers
+from .scenarios import Scenario, load_scenario, load_scenario_dir, run_scenario
 from .sim import SimConfig, run
 
 CYCLES = 8_000
+
+
+def _default_scenario_dir() -> Path:
+    """The scenarios shipped alongside the package."""
+    return Path(__file__).resolve().parents[2] / "scenarios"
 
 
 # --- helpers ------------------------------------------------------------------
@@ -215,6 +222,54 @@ def cmd_plan_io(args) -> int:
     return 0
 
 
+def cmd_scenario(args) -> int:
+    paths = [Path(p) for p in args.paths] or [_default_scenario_dir()]
+    scenarios: list[Scenario] = []
+    for path in paths:
+        if path.is_dir():
+            scenarios.extend(load_scenario_dir(path))
+        else:
+            scenarios.append(load_scenario(path))
+
+    headers = load_driver_headers()
+    failures = 0
+    for scenario in scenarios:
+        print(f"\n\033[1m{scenario.name}\033[0m")
+        if scenario.description and not args.quiet:
+            for line in scenario.description.strip().splitlines():
+                print(f"  \033[2m{line.strip()}\033[0m")
+
+        for outcome in run_scenario(scenario, headers):
+            r = outcome.result
+            status = (
+                "\033[32mPASS\033[0m"
+                if outcome.ok
+                else "\033[31mFAIL\033[0m"
+            )
+            verdict = "COLLAPSED" if r.collapsed else "healthy"
+            detail = (
+                " ".join(f"{k}={v}" for k, v in sorted(outcome.point.items()))
+                or "-"
+            )
+            marker = status if (scenario.expect or scenario.require_valid) else "    "
+            print(
+                f"  {marker} {detail:<52} written={r.written_fraction * 100:5.1f}% "
+                f"data={r.data_packet_fraction:.3f} align={r.align_count} "
+                f"{verdict}"
+            )
+            for warning in outcome.warnings:
+                print(f"         \033[33mwarn\033[0m {warning}")
+            for failure in outcome.failures:
+                print(f"         \033[31m{failure}\033[0m")
+            if not outcome.ok:
+                failures += 1
+
+    print()
+    if failures:
+        print(f"\033[31m{failures} scenario point(s) failed\033[0m")
+    return 1 if failures else 0
+
+
 def cmd_run(args) -> int:
     print(_run(_geometry(args), args.seconds, args.stall_ms).summary())
     return 0
@@ -266,6 +321,11 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--stall-ms", type=float, default=0.0)
     sub.add_parser("cliff", help="bisect the stall-tolerance cliff")
     sub.add_parser("sweep", help="compare readDelay/horizon variants")
+    scen = sub.add_parser(
+        "scenario", help="run YAML hypothesis files (default: shipped scenarios/)"
+    )
+    scen.add_argument("paths", nargs="*", help="scenario .yaml files or directories")
+    scen.add_argument("--quiet", action="store_true", help="omit descriptions")
 
     args = parser.parse_args(argv)
     handler = {
@@ -275,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": cmd_run,
         "cliff": cmd_cliff,
         "sweep": cmd_sweep,
+        "scenario": cmd_scenario,
     }[args.command]
     return handler(args)
 

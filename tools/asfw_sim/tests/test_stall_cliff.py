@@ -6,8 +6,11 @@ These lock in the Phase A result:
   the triage reports is NOT the failure mechanism.
 * F2 a producer stall past a hard cliff kills audio content permanently while
   transport stays perfectly healthy.
-* F3 the cliff is set by ``kReadDelay + kTxDataHorizonPackets``, so ``kReadDelay``
-  is a producer-stall recovery budget, not a history depth.
+* F3 ``kCapacity`` -- not ``kReadDelay`` -- is the producer-stall recovery
+  budget.  An earlier version of this file asserted an additive
+  ``kReadDelay + horizon`` law; it was fitted along a diagonal where every case
+  set ``kCapacity = 2 * kReadDelay`` and is falsified once the two vary
+  independently (see FINDINGS.md F3).
 """
 
 from __future__ import annotations
@@ -114,32 +117,43 @@ def test_post_collapse_deficit_is_small_and_does_not_grow(g48):
 # --- F3 -----------------------------------------------------------------------
 
 
-def test_cliff_matches_read_delay_plus_horizon(g48):
-    predicted = (g48.replay_read_delay + g48.tx_data_horizon_packets) / 8
-    measured = _cliff_cycles(g48) / 8
-    assert measured == pytest.approx(predicted, abs=8), (
-        f"stall tolerance {measured:.1f} ms deviates from the "
-        f"kReadDelay+horizon law ({predicted:.1f} ms)"
+def test_head_cliff_is_78ms(g48):
+    """The value every other row in the F3 table is compared against."""
+    assert _cliff_cycles(g48) / 8 == pytest.approx(78.0, abs=4)
+
+
+@pytest.mark.parametrize(
+    "capacity,expected_ms", [(512, 78.0), (2048, 179.1), (4096, 435.1)]
+)
+def test_capacity_is_the_stall_recovery_budget(g48, capacity, expected_ms):
+    """kCapacity dominates: kReadDelay held at HEAD's 256 throughout."""
+    geometry = g48.evolve(replay_capacity=capacity)
+    assert _cliff_cycles(geometry, hi=8_000) / 8 == pytest.approx(
+        expected_ms, rel=0.05
     )
 
 
-@pytest.mark.parametrize("read_delay", [256, 512, 1024])
-def test_read_delay_is_the_stall_recovery_budget(g48, read_delay):
-    geometry = g48.evolve(
-        replay_read_delay=read_delay, replay_capacity=max(512, 2 * read_delay)
+@pytest.mark.parametrize("read_delay,expected_ms", [(128, 195.4), (1024, 173.9)])
+def test_read_delay_effect_is_mildly_inverse(g48, read_delay, expected_ms):
+    """At fixed capacity a LARGER read delay lowers tolerance -- the opposite of
+    the original law, because the reader starts closer to the overwrite edge."""
+    geometry = g48.evolve(replay_read_delay=read_delay, replay_capacity=2048)
+    assert _cliff_cycles(geometry, hi=8_000) / 8 == pytest.approx(
+        expected_ms, rel=0.05
     )
-    measured = _cliff_cycles(geometry) / 8
-    predicted = (read_delay + g48.tx_data_horizon_packets) / 8
-    assert measured == pytest.approx(predicted, abs=8)
 
 
-def test_proposed_fix_survives_the_observed_watchdog_cadence(g48):
-    """68 ms was the Duet's watchdog cadence; HEAD's budget is 32 ms."""
-    watchdog_stall = int(0.068 * CYCLES)
-    assert _run(g48, stall_cycles=watchdog_stall).collapsed is False, (
-        "68 ms alone is under the 78 ms cliff"
-    )
-    # ...but a 100 ms excursion is not, and only the widened budget survives it.
+def test_capacity_alone_dominates_the_two_constant_proposal(g48):
+    """F4: the recommended one-constant fix beats the original proposal on
+    tolerance AND avoids its 32 -> 128 ms bring-up regression."""
+    recommended = g48.evolve(replay_capacity=2048)                       # rd 256
+    superseded = g48.evolve(replay_read_delay=1024, replay_capacity=2048)
+    assert _cliff_cycles(recommended, hi=8_000) > _cliff_cycles(superseded, hi=8_000)
+    assert recommended.replay_read_delay < superseded.replay_read_delay
+
+
+def test_head_dies_at_the_watchdog_cadence_plus_an_excursion(g48):
+    """68 ms alone is inside HEAD's 78 ms cliff; a 100 ms excursion is not."""
+    assert not _run(g48, stall_cycles=int(0.068 * CYCLES)).collapsed
     assert _run(g48, stall_cycles=800).collapsed
-    fixed = g48.evolve(replay_read_delay=1024, replay_capacity=2048)
-    assert not _run(fixed, stall_cycles=800).collapsed
+    assert not _run(g48.evolve(replay_capacity=2048), stall_cycles=800).collapsed

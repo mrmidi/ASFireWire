@@ -67,53 +67,80 @@ That is the zombie precisely: transport perfectly alive, one packet per cycle,
 valid CIP/SYT, DBC continuous, ~1 % of a buffer's worth of phase error — and 100 %
 silence. No counter looks alarming.
 
-## F3 — the governing law
+## F3 — capacity, not read delay, is the recovery budget
 
-```
-survivable producer stall (ms)  ≈  (kReadDelay + kTxDataHorizonPackets) / 8
-```
+> **Corrected 2026-07-19 by `scenarios/f3-readdelay-sweep.yaml`.** The first
+> version of F3 claimed `survivable stall ≈ (kReadDelay + horizon)/8`. That law
+> was fitted along a diagonal where every sweep happened to set
+> `kCapacity = 2 × kReadDelay`, so it silently attributed to `kReadDelay` an
+> effect that belongs to `kCapacity`. Varying them independently — which the YAML
+> scenario did on its first run — falsifies it.
 
-| variant | readDelay | horizon | predicted | measured |
+Measured stall-tolerance cliff (ms), 48 kHz, horizon 400:
+
+| `kReadDelay` \ `kCapacity` | 512 | 1024 | 2048 | 4096 |
 |---|---:|---:|---:|---:|
-| **HEAD** | 256 | 400 | 82.0 ms | **78.0 ms** |
-| readDelay 512 | 512 | 400 | 114.0 ms | 110.0 ms |
-| readDelay 1024 | 1024 | 400 | 178.0 ms | 173.9 ms |
-| horizon 160 | 256 | 160 | 52.0 ms | 56.4 ms |
-| horizon 1200 | 256 | 1200 | 182.0 ms | 123.0 ms* |
-| readDelay 1024 + horizon 800 | 1024 | 800 | 228.0 ms | 218.9 ms |
+| **128** | 62.0 | 67.4 | 195.4 | **451.4** |
+| **256 (HEAD)** | **78.0** | 78.0 | 179.1 | 435.1 |
+| **512** | – | 110.0 | 146.9 | 402.9 |
+| **1024** | – | – | 173.9 | 339.1 |
 
-\* the horizon row saturates because this sweep varies `kTxDataHorizonPackets`
-without the `kTxPreparationLeadPackets` it derives in the real header; E cannot
-lead further than the 678-packet lead allows. In the driver the two move together.
+Two things the diagonal hid:
 
-**`kReadDelay` is not a history depth — it is the producer-stall recovery budget.**
-It sets how many packets of catch-up burst can still be fed real RX timing after a
-stall. HEAD's 256 packets = **32 ms** of tolerance, against an observed 68 ms
-watchdog cadence: the Duet was running at **more than double** its budget, so
-permanent audio death was guaranteed the first time the IT IRQ path went silent.
+1. **`kCapacity` dominates.** It sets how far the reader may fall behind before
+   its history is overwritten. During a stall the producer keeps publishing while
+   the reader is frozen, so the lag grows by the stall length; survival requires
+   the lag to stay inside the ring.
+2. **`kReadDelay` is mildly *inverse*.** At a fixed capacity, a *larger* read
+   delay lowers tolerance (4096: 451 ms at 128 → 339 ms at 1024), because the
+   reader starts closer to the overwrite boundary and has less room to absorb the
+   stall.
+
+No clean closed form fits the whole surface — the earlier additive law holds only
+on the diagonal it was fitted on. Treat the table as the result and re-measure
+with `asfw-sim scenario` when any related constant moves.
+
+HEAD's 78 ms tolerance still sits below the 68 ms watchdog cadence plus any
+excursion, which is what made the Duet's dead-IRQ path fatal.
 
 ## F4 — consequences for the fix
 
-- The planned change (`kReadDelay` 256→1024, `kCapacity` 512→2048) **is correct** and
-  raises tolerance 32 ms → 128 ms (measured cliff 173.9 ms with the horizon). But the
-  justification in the plan was wrong; the drift argument is irrelevant and the
-  "structurally unfillable" argument is false. Rewrite the comment around F3.
-- It is a **mitigation, not a cure**. It buys margin against `TX-IRQ-001`; it does not
-  stop a longer stall from killing the stream permanently and silently.
-- The cure is a **bounded, counted re-projection**: when the exposure frontier falls
-  behind the write frontier, the frame cursor must re-align (one audible glitch)
-  instead of staying permanently offset (total silence). Commit `81aab17` removed the
-  realign-on-`overwritten` path to stop it orphaning frames — correct for that case,
-  but it left no path back from a stall. Both behaviours are needed, discriminated by
-  cause.
-- Pending-frame retention (`AVC-TX-EXPOSURE-001`) does **not** help here: after the
-  cliff no packet ever covers those frames again, so a pending range grows without
-  bound and ends in an xrun.
+The originally planned change (`kReadDelay` 256→1024, `kCapacity` 512→2048) is
+**strictly dominated**. Ranked candidates:
+
+| `kReadDelay` | `kCapacity` | stall tolerance | bring-up to `established` | slab |
+|---:|---:|---:|---:|---:|
+| 256 | 512 (**HEAD**) | 78.0 ms | 32.0 ms | 16 KiB |
+| 1024 | 2048 (*first proposal*) | 173.9 ms | **128.0 ms** | 64 KiB |
+| **256** | **2048** | **179.1 ms** | **32.0 ms** | 64 KiB |
+| 128 | 2048 | 195.4 ms | 16.0 ms | 64 KiB |
+| **128** | **4096** | **451.4 ms** | **16.0 ms** | 128 KiB |
+
+**Recommendation: leave `kReadDelay` at 256 and raise `kCapacity` alone.**
+It is a one-constant change, gives *more* tolerance than the original two-constant
+proposal, and avoids the 32→128 ms bring-up regression that raising `kReadDelay`
+would cause (`MarkEstablished()` requires `producer >= kReadDelay`, and that gates
+deferred IT start). `kCapacity = 4096` buys 451 ms for 128 KiB of shared memory if
+the extra margin is wanted.
+
+Still true regardless of the constant chosen:
+
+- This is a **mitigation, not a cure**. A stall past the (now larger) cliff still
+  kills the stream permanently and silently.
+- The cure is a **bounded, counted re-projection**: when the exposure frontier
+  falls behind the write frontier, re-align the frame cursor (one audible glitch)
+  instead of leaving it permanently offset (total silence). Commit `81aab17`
+  removed realign-on-`overwritten` to stop it orphaning frames — right for that
+  case, but it left no path back from a stall. Both behaviours are needed,
+  discriminated by cause.
+- Pending-frame retention (`AVC-TX-EXPOSURE-001`) does **not** help: after the
+  cliff no packet ever covers those frames again.
 
 ## Reproduce
 
 ```bash
-cd tools/asfw_sim && uv sync && uv run pytest -v
+cd tools/asfw_sim && uv sync --extra dev && uv run pytest -v
+uv run asfw-sim scenario          # the shipped hypotheses
 ```
 
 ## F5 — the CoreAudio buffer-size range (15–576) is a geometry consequence

@@ -37,7 +37,43 @@ uv run asfw-sim plan-io --frames 4096     # cost a larger CoreAudio buffer size
 uv run asfw-sim run --stall-ms 100        # one scenario
 uv run asfw-sim cliff                     # bisect the stall-tolerance cliff
 uv run asfw-sim sweep                     # readDelay / horizon comparison
+uv run asfw-sim scenario                  # run the shipped YAML hypotheses
+uv run asfw-sim scenario my-idea.yaml     # ...or your own
 ```
+
+## Scenarios
+
+A scenario is a hypothesis you can run, not a config file. It names a claim,
+states the geometry the claim is about, and declares what must hold if the claim
+is true -- so a wrong hypothesis fails loudly instead of producing a number
+someone reads optimistically. `tests/test_scenarios.py` runs every shipped one.
+
+```yaml
+name: f3-capacity-2048-fix
+description: kCapacity alone, 512 -> 2048; kReadDelay untouched.
+base: driver          # inherit the live headers; `none` demands a full geometry
+rate: 48000
+
+geometry:             # overrides on top of `base`
+  replay_capacity: 2048
+
+scenario:
+  duration_s: 20
+  stall_ms: 100
+  stall_at_s: 5
+
+expect:               # or `sweep:` to explore instead of assert
+  collapsed: false
+  written_fraction_min: 0.95
+```
+
+`sweep:` takes lists for any geometry or scenario field and runs the cartesian
+product. Overrides are checked against the header's own `static_assert` set;
+an uncompilable geometry warns, or fails if you set `require_valid: true`.
+
+This paid for itself immediately: `f3-readdelay-sweep.yaml` falsified the first
+version of the F3 law on its first run, by varying `kReadDelay` and `kCapacity`
+independently where every earlier sweep had moved them together.
 
 ## Fidelity
 
