@@ -274,6 +274,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     interruptCount_.store(0, std::memory_order_relaxed);
     lastInterruptCountSeen_ = 0;
     irqStallTicks_ = 0;
+    irqSilentKickStreak_ = 0;
     refillInProgress_.clear(std::memory_order_release);
 
     latencyBucket0_.store(0, std::memory_order_relaxed);
@@ -500,6 +501,48 @@ void IsochTransmitContext::Poll() noexcept {
         if (irqStallTicks_ >= 5) {
             irqStallTicks_ = 0;
             irqWatchdogKicks_.fetch_add(1, std::memory_order_relaxed);
+            ++irqSilentKickStreak_;
+            // Snapshot context + latched interrupt state on the anomaly path
+            // only. kIntEvent latches raised events even when masked, so a
+            // cycleInconsistent/cycleTooLong the dispatcher never serviced is
+            // still visible here (first-fault evidence for the 2026-07-19
+            // Saffire dual-context freeze, whose trigger left no interrupt
+            // record).
+            if (irqSilentKickStreak_ == 1 && hardware_) {
+                const uint32_t ctrl = hardware_->Read(static_cast<Register32>(
+                    DMAContextHelpers::IsoXmitContextControl(contextIndex_)));
+                const uint32_t latchedIntEvents =
+                    hardware_->Read(Register32::kIntEvent);
+                ASFW_LOG(Isoch,
+                         "IT: refill watchdog engaged (no IT interrupts "
+                         "observed; kicks=%llu ctrl=0x%08x intEvent=0x%08x)",
+                         irqWatchdogKicks_.load(std::memory_order_relaxed),
+                         ctrl,
+                         latchedIntEvents);
+            }
+            if (irqSilentKickStreak_ >= kIrqSilentKickFatalThreshold) {
+                // Watchdog-carried streaming re-transmits stale descriptor
+                // laps between kicks (observed Duet zombie, 2026-07-19: the
+                // interrupt path died mid-session and the watchdog fed the
+                // wire for 35 minutes of corrupt audio). Sustained interrupt
+                // silence is a transport fault, not jitter.
+                const uint32_t ctrl = hardware_
+                    ? hardware_->Read(static_cast<Register32>(
+                          DMAContextHelpers::IsoXmitContextControl(
+                              contextIndex_)))
+                    : 0;
+                const uint32_t latchedIntEvents =
+                    hardware_ ? hardware_->Read(Register32::kIntEvent) : 0;
+                ASFW_LOG(Isoch,
+                         "IT FATAL: interrupt path silent across %u "
+                         "consecutive watchdog kicks; stopping context "
+                         "(ctrl=0x%08x intEvent=0x%08x)",
+                         irqSilentKickStreak_,
+                         ctrl,
+                         latchedIntEvents);
+                StopImmediatelyForTxFault();
+                return;
+            }
             if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
                 // Stop() may have acquired the gate after the first state
                 // check. Re-check while holding it before touching the slab.
@@ -512,6 +555,7 @@ void IsochTransmitContext::Poll() noexcept {
     } else {
         lastInterruptCountSeen_ = currentInterrupts;
         irqStallTicks_ = 0;
+        irqSilentKickStreak_ = 0;
     }
 }
 
