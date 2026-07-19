@@ -27,6 +27,7 @@ IsochService::StartReceive(uint8_t channel, HardwareInterface& hardware,
 kern_return_t
 IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
                              ASFW::Isoch::IsochReceiveCallback packetCallback) {
+    hardware_ = &hardware;
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -75,6 +76,7 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
 kern_return_t IsochService::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
     uint32_t channelOffset, uint32_t streamChannels) {
+    hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareReceive() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -138,10 +140,12 @@ kern_return_t IsochService::StartPreparedReceive() {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
                 ASFW_LOG(Isoch, "IsochService: secondary IR start failed: 0x%08x", skr);
+                UpdateStreamingActiveState();
                 return skr;
             }
         }
     }
+    UpdateStreamingActiveState();
     return kIOReturnSuccess;
 }
 
@@ -174,6 +178,7 @@ kern_return_t IsochService::StopReceive() {
         ASFW_LOG(Isoch, "IsochService: DV capture stopped");
     }
 
+    UpdateStreamingActiveState();
     return result;
 }
 
@@ -182,6 +187,7 @@ kern_return_t IsochService::StopReceive() {
 // ============================================================================
 
 kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& hardware) {
+    hardware_ = &hardware;
     if (dvCaptureActive_) {
         ASFW_LOG(Isoch, "IsochService: DV capture already active; StartDVCapture is idempotent");
         return kIOReturnSuccess;
@@ -242,6 +248,7 @@ kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& h
     dvCaptureActive_ = true;
     ASFW_LOG(Isoch, "IsochService: DV capture started on channel %u (ring=%llu bytes)", channel,
              ringBytes);
+    UpdateStreamingActiveState();
     return kIOReturnSuccess;
 }
 
@@ -279,6 +286,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel, HardwareInterface& ha
 
 kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& hardware,
                                             uint8_t sid) {
+    hardware_ = &hardware;
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
@@ -328,6 +336,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
 
 kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                                   HardwareInterface& hardware, uint8_t sid) {
+    hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareTransmit() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -421,10 +430,12 @@ kern_return_t IsochService::StartPreparedTransmit() {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
                 ASFW_LOG(Isoch, "IsochService: secondary IT start failed: 0x%08x", skr);
+                UpdateStreamingActiveState();
                 return skr;
             }
         }
     }
+    UpdateStreamingActiveState();
     return kIOReturnSuccess;
 }
 
@@ -442,6 +453,7 @@ kern_return_t IsochService::StopTransmit() {
             }
         }
     }
+    UpdateStreamingActiveState();
     return result;
 }
 
@@ -660,6 +672,33 @@ kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t*
     *outHostTimeMid = hostTime;
     *outCycleTimer = cycleTimer;
     return kIOReturnSuccess;
+}
+
+void IsochService::UpdateStreamingActiveState() noexcept {
+    if (!hardware_) {
+        return;
+    }
+    bool active = false;
+    if (isochReceiveContext_ && isochReceiveContext_->GetState() == IRPolicy::State::Running) {
+        active = true;
+    }
+    for (auto& ctx : secondaryReceiveContexts_) {
+        if (ctx && ctx->GetState() == IRPolicy::State::Running) {
+            active = true;
+        }
+    }
+    if (isochTransmitContext_ && isochTransmitContext_->GetState() == ITState::Running) {
+        active = true;
+    }
+    for (auto& ctx : secondaryTransmitContexts_) {
+        if (ctx && ctx->GetState() == ITState::Running) {
+            active = true;
+        }
+    }
+    if (dvCaptureActive_) {
+        active = true;
+    }
+    hardware_->SetIsochStreamingActive(active);
 }
 
 } // namespace ASFW::Driver
