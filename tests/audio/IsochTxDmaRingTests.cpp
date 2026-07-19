@@ -1116,3 +1116,176 @@ TEST(IsochTxQueueControlTests, ProducerAndConsumerResetsHaveDisjointOwnership) {
     EXPECT_EQ(queue.statusWord.load(std::memory_order_acquire),
               IsochTxQueueStatus::kRunning);
 }
+
+// --- Lap-loss detection: the IT descriptor ring is free-running, so the
+// command pointer exposes progress only modulo Layout::kNumPackets. The
+// completion timestamps recover true progress; a surplus is whole ring laps
+// of stale re-transmission that must reconcile every absolute cursor.
+
+TEST(IsochTxLapLossMath, ExactLapSurplusYieldsWholeLap) {
+    const uint16_t prev = static_cast<uint16_t>((3u << 13) | 3007u);
+    const uint16_t cur = static_cast<uint16_t>((3u << 13) | 3063u);
+    EXPECT_EQ(IsochTxDmaRing::ComputeLostLapPackets(prev, cur, 8),
+              Layout::kNumPackets);
+}
+
+TEST(IsochTxLapLossMath, SecondsFieldWrapIsUnambiguous) {
+    const uint16_t prev = static_cast<uint16_t>((7u << 13) | 7990u);
+    const uint16_t cur = static_cast<uint16_t>((0u << 13) | 50u);
+    // 60 cycles elapsed across the 8-second wrap, 12 accounted by the
+    // command-pointer delta: one lost lap.
+    EXPECT_EQ(IsochTxDmaRing::ComputeLostLapPackets(prev, cur, 12),
+              Layout::kNumPackets);
+}
+
+TEST(IsochTxLapLossMath, SmallSurplusIsTimestampJitterNotALap) {
+    const uint16_t prev = static_cast<uint16_t>((3u << 13) | 3000u);
+    const uint16_t cur = static_cast<uint16_t>((3u << 13) | 3011u);
+    EXPECT_EQ(IsochTxDmaRing::ComputeLostLapPackets(prev, cur, 8), 0u);
+}
+
+TEST(IsochTxLapLossMath, NoProgressNoLoss) {
+    const uint16_t ts = static_cast<uint16_t>((2u << 13) | 100u);
+    EXPECT_EQ(IsochTxDmaRing::ComputeLostLapPackets(ts, ts, 0), 0u);
+}
+
+TEST(IsochTxLapLossMath, MultipleLapsAccumulate) {
+    const uint16_t prev = static_cast<uint16_t>((1u << 13) | 1000u);
+    const uint16_t cur = static_cast<uint16_t>(
+        (1u << 13) | (1000u + 8u + 2u * Layout::kNumPackets));
+    EXPECT_EQ(IsochTxDmaRing::ComputeLostLapPackets(prev, cur, 8),
+              2u * Layout::kNumPackets);
+}
+
+TEST_F(IsochTxDmaRingTest, RefillReconcilesLostLapForward) {
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), Layout::kNumPackets);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+
+    IsochTxQueueControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    // Refill 1: hardware consumed packets 0..7, completing at cycles
+    // 3000..3007. This anchors the lap-loss timestamp baseline.
+    for (uint32_t i = 0; i < 8; ++i) {
+        auto* desc = ring_.Slab().GetDescriptorPtr(
+            i * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        desc->statusWord =
+            (0x8000u << 16) | ((3u << 13) | (3000u + i));
+    }
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring_.Slab().GetDescriptorIOVA(8 * Layout::kBlocksPerPacket) |
+            Layout::kBlocksPerPacket);
+    auto first = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(first.ok);
+    ASSERT_EQ(controlBlock.completionCursor.load(), 8u);
+
+    // Refill 2: the command pointer moved 8 positions (mod-48 delta = 8),
+    // but the completion timestamps show 56 elapsed cycles: the hardware
+    // lapped the whole ring once, re-transmitting 48 stale packets.
+    for (uint32_t i = 8; i < 16; ++i) {
+        auto* desc = ring_.Slab().GetDescriptorPtr(
+            i * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        desc->statusWord =
+            (0x8000u << 16) | ((3u << 13) | (3048u + i));
+    }
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring_.Slab().GetDescriptorIOVA(16 * Layout::kBlocksPerPacket) |
+            Layout::kBlocksPerPacket);
+    auto second = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(second.ok);
+
+    // Completion reconciled: 8 consumed + 48 lost + 8 consumed = 64.
+    EXPECT_EQ(controlBlock.completionCursor.load(), 64u);
+    EXPECT_EQ(ring_.RTCounters().lapLossEvents.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().lapLossPacketsTotal.load(),
+              Layout::kNumPackets);
+
+    // Stamps carry the reconciled absolute indices (56..63), so downstream
+    // packet-to-cycle anchoring stays on true bus time.
+    for (uint32_t i = 0; i < 8; ++i) {
+        uint64_t pktIdx = 0;
+        uint32_t ts = 0;
+        ASSERT_TRUE(controlBlock.ReadCompletionStamp(8 + i, pktIdx, ts));
+        EXPECT_EQ(pktIdx, 56u + i);
+    }
+
+    // The refill mapped the reconciled absolute window (slots 56..63), not
+    // the stale pre-lap window (slots 8..15).
+    for (uint32_t i = 0; i < 8; ++i) {
+        auto* desc2 = ring_.Slab().GetDescriptorPtr(
+            (8 + i) * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+        EXPECT_EQ(desc2->dataAddress,
+                  kSharedPayloadIOVA + (56u + i) * kSharedPayloadStride);
+    }
+}
+
+TEST_F(IsochTxDmaRingTest, RefillDetectsWholeLapStallWithUnmovedPointer) {
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), Layout::kNumPackets);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+
+    IsochTxQueueControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    for (uint32_t i = 0; i < 8; ++i) {
+        auto* desc = ring_.Slab().GetDescriptorPtr(
+            i * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        desc->statusWord =
+            (0x8000u << 16) | ((3u << 13) | (3000u + i));
+    }
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring_.Slab().GetDescriptorIOVA(8 * Layout::kBlocksPerPacket) |
+            Layout::kBlocksPerPacket);
+    auto first = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(first.ok);
+    ASSERT_EQ(controlBlock.completionCursor.load(), 8u);
+
+    // The command pointer has not moved (mod-48 delta = 0), but packet 7's
+    // completion timestamp advanced exactly one ring lap: the stall was an
+    // invisible whole-lap re-transmission.
+    {
+        auto* desc = ring_.Slab().GetDescriptorPtr(
+            7 * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        desc->statusWord =
+            (0x8000u << 16) |
+            ((3u << 13) | (3007u + Layout::kNumPackets));
+    }
+    auto second = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(second.ok);
+
+    EXPECT_EQ(controlBlock.completionCursor.load(),
+              8u + Layout::kNumPackets);
+    EXPECT_EQ(ring_.RTCounters().lapLossEvents.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().lapLossPacketsTotal.load(),
+              Layout::kNumPackets);
+}

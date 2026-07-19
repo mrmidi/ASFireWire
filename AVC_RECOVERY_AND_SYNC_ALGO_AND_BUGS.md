@@ -243,6 +243,8 @@ Linux and FFADO, without copying their mechanisms.
 | `AVC-RECOVERY-002` | **Confirmed critical defect** | FW-64 treats every *established* replay reset as an eventual destructive `RecoverStreaming()`. A reset can mean a malformed RX packet, one cycle gap, rejected cadence, or rejected clock anchor—not necessarily a device outage. The coordinator stops/restarts transport while CoreAudio remains running with its old TX producer state. | Disable AV/C automatic transport restart until recovery atomically quiesces/resets/re-primes the audio producer and transport under one recovery epoch. Report the fault and request an audio-side xrun/controlled restart instead. |
 | `AVC-PROPERTY-001` | **Fixed; requires hardware confirmation** | `AudioNubPublisher` sets stream mode on the nub, but `ASFWAudioDevice::PopulateNubProperties()` did not publish `ASFWStreamMode`; the driver parser consequently defaulted to non-blocking.  The model default is also non-blocking ([`ASFWAudioDevice.hpp:52-60`](ASFWDriver/Audio/Model/ASFWAudioDevice.hpp#L52-L60)); parsing only changes it if the property exists ([`AudioDriverConfig.cpp:67-84`](ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp#L67-L84)).  The matching dictionary now publishes the selected mode. | On the next Duet/BeBoB start, confirm the AudioDriver reports `Stream mode from nub: blocking`; the property path is shared by all published audio nubs. |
 | `AVC-TX-EXPOSURE-001` | **Confirmed audio-path defect; root scheduling cause open** | The payload writer skips CoreAudio frames which arrive beyond `Timeline().ExposedFrameEnd()` (`framesWithoutPacket`); `TxAlign` later repositions the producer cursor to close the deficit.  This can produce audible corruption while DMA/CMP and the TX descriptor lead remain healthy, then self-heal without a stream restart ([`AmdtpPayloadWriter.cpp:90-126`](ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126), [`ASFWAudioDriverZts.cpp:360-389`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)). | Retain pending host frames until slots exist and maintain a data-bearing packet horizon beyond the maximum IO callback plus measured scheduling jitter; never discard a running stream's host frames because their packet is not yet exposed. |
+| `TX-LAPLOSS-001` | **Confirmed; fixed 2026-07-19, requires hardware confirmation** | IT completion accounting measured hardware progress modulo the 48-packet free-running ring; refill gaps > 6 ms silently discarded whole laps, dilating producer time and re-transmitting stale packets (the 2026-07-19 all-zero Duet zombie). | Validate the lap-loss reconciliation and `IT LAP LOSS` telemetry on hardware; see "2026-07-19 zombie stream" below. |
+| `TX-IRQ-001` | **Open** | The IT interrupt path went permanently silent ~10 minutes into the 2026-07-19 session; the refill watchdog carried the stream. Cause unknown (mask write, storm mitigation, dispatch loss). | Reproduce with the new watchdog-engagement log; correlate with `IsoXmitIntMask` writes. The 16-kick fatal now bounds the damage. |
 | `AVC-SYNC-001` | **Not proven** | Treating raw RX/TX SYT inequality as a fault would be wrong for the captured duplex stream. | Add the normalized, per-direction trace below before adjusting delays or cadence. |
 | `AVC-HEALTH-001` | **Instrumented; root cause open** | The original RX timing loss occurred without a bus reset in the observed driver ring; successful restart was then masked by `AVC-RECOVERY-001`. | Reproduce with the first-fault record below; it distinguishes a local RX validation failure from a real no-RX/CMP outage. |
 
@@ -592,6 +594,97 @@ The required contract is non-negotiable:
 4. On recovery, reset/re-prime W/E/C/R under one epoch before transport runs;
    do not use `TxAlign` to silently abandon the old interval.
 
+## 2026-07-19 zombie stream: transport lap loss confirmed as the driver
+
+The 44-minute Duet run of 2026-07-19 (FireBug capture `!duet-fubar.txt` plus
+the full MCP driver ring) finally attributed the "transport-alive,
+audio-all-zero" state to a transport accounting defect underneath everything
+in this document.  The wire showed both channels at one packet per cycle with
+0 silent cycles and channel 0 carrying 72-byte DATA packets whose SYT tracked
+channel 1 exactly — with every PCM sample zero.
+
+Measured from the retained ring (17.3-minute window, zero dropped records):
+
+| Quantity | Expected | Measured |
+| --- | ---: | ---: |
+| RX replay entries published | 8,000/s | 7,995/s (healthy) |
+| TX completion cursor advance | 8,000/s | ~575/s |
+| TX packets prepared | 8,000/s | ~575/s |
+| `[TxAlign]` realignments | 1 per stream | every prepare batch (~28,000 total) |
+| `[TxReplay] fail=overwritten` | none | ~13/s at `d=-547..-920`, `ep=4/4` |
+| PayloadWriter frames written | ~all | ~0 (`outside` ≈ all visited) |
+
+At stop, the context reported `6,228,647 pkts IRQs=810214` against ~21.4 M
+wire packets: the IT interrupt path ran at its healthy ~1,333/s for roughly
+the first ten minutes, then went permanently silent; the `Poll()` watchdog
+(~68 ms cadence) carried the stream for the remaining half hour.
+
+The causal chain, each link now confirmed in code:
+
+1. The IT descriptor ring is circular and free-running; hardware never stops.
+   `ComputeDeltaConsumed()` measured progress from the command pointer, which
+   is only defined **modulo the 48-packet ring**.  Any refill gap longer than
+   6 ms silently discards whole laps: the wire re-transmits the stale 48
+   slots (a DBC seam per lap, invisible in SYT because 48 ≡ 0 mod 16 cycles)
+   while `completionCursor` under-advances with no fault raised.  Under the
+   watchdog cadence this lost ~10 laps per kick — 71% of the session's wire
+   packets were stale re-sends.
+2. The producer paces itself from `completionCursor`, so producer time
+   dilated to ~7% of bus time.  The replay reader consumed ~575 entries/s
+   against RX's 8,000/s and fell out of its 512-entry window every few tens
+   of milliseconds (`fail=overwritten` with `ep` unchanged — no RX reset).
+3. Every replay miss reset the reader **and re-armed frame-cursor
+   alignment**; the next DATA read re-projected the cursor ahead of the host
+   write frontier, so the payload writer classified essentially every host
+   frame `outside` and the pre-zeroed DATA payloads shipped as silence.  The
+   loop is self-sustaining: transport looks healthy, audio is permanently
+   dead.
+
+### Implemented fixes (2026-07-19)
+
+1. **True-cycle completion accounting** (`IsochTxDmaRing`):
+   `ComputeLostLapPackets()` recovers true progress from the OUTPUT_LAST
+   completion timestamps (the context transmits exactly one packet per
+   cycle), detects whole lost laps — including the pointer-unmoved
+   exactly-one-lap stall — and reconciles `completionCursor`,
+   `softwareFillAbsIdx_`, and the completion stamps forward.  New counters
+   `lapLossEvents`/`lapLossPacketsTotal` plus an `IT LAP LOSS` ring record
+   make every event attributable.  The stale packets already on the wire are
+   acknowledged as a bounded glitch, not silently converted into permanent
+   time dilation.
+2. **Sustained interrupt-silence fault** (`IsochTransmitContext::Poll()`):
+   the watchdog now logs its first engagement and, after 16 consecutive
+   IRQ-silent kicks (~1 s), stops the context via the existing TX-fault path.
+   Watchdog-carried streaming re-transmits stale laps between kicks and is
+   never a valid steady state.
+3. **Failure-class replay handling** (`PrepareTransmitSlots()`):
+   `overwritten` re-anchors the reader via `Begin()` and retries in place
+   (`[TxReplay] reclamped`, no alignment re-arm — skipped entries only shift
+   NODATA placement, which IEC 61883-6 blocking permits); `ahead` holds the
+   reader and ships one NODATA; only a genuine RX-domain transition (epoch
+   change, establishment loss, seqlock miss) resets the reader and re-arms
+   alignment.  This removes the realign churn that orphaned host frames.
+
+Host-side regression coverage: `IsochTxLapLossMath.*`,
+`IsochTxDmaRingTest.RefillReconcilesLostLapForward`,
+`IsochTxDmaRingTest.RefillDetectsWholeLapStallWithUnmovedPointer`,
+`RxDrivenTimingTests.ReaderReBeginReanchorsAfterHistoryOverwritten`.
+
+### Still open after these fixes
+
+- `TX-IRQ-001` — **why the IT interrupt path died ~10 minutes in.** The ring
+  had already wrapped past the transition.  The new first-engagement log and
+  lap-loss counters will timestamp the next occurrence; correlate against
+  `IsoXmitIntMask` writes (the stop/fault paths mask IT interrupts).
+- The FW-64 items (`AUDIO-RECOVERY-ROUTING-001` callback overwrite,
+  `AVC-RECOVERY-002` unsafe background restart) are unchanged by this work
+  and remain confirmed defects; they were not required to produce this
+  incident.
+- The pending-frame model of `AVC-TX-EXPOSURE-001` (retain host frames until
+  slots exist) remains the durable repair for exposure lag; with the
+  transport clock no longer dilating it is defense in depth rather than the
+  first-order fault.
+
 ## Minimal anomaly-only telemetry for the next hardware run
 
 Keep the MCP ring as the primary evidence path; no Console logging is needed
@@ -619,3 +712,42 @@ clock failure; a DBC/cycle discontinuity, invalid valid-SYT cadence, or a
 timeout without a fresh valid RX anchor is.  The implemented first-fault record
 identifies the present reset path; add the remaining normalized RX/TX phase and
 recovery-epoch records only after that result identifies the layer at fault.
+
+## Duet discovery: FCP clock prepublish must not hide a usable device
+
+### Evidence
+
+During the 2026-07-19 no-nub incident, discovery read Duet's live rate as
+44.1 kHz, then started the optional fixed-48-kHz prepublish sequence. The
+discovery watchdog completed it after 1,200 ms, while FCP's first response
+deadline is 2,000 ms. The failure path then deferred the nub entirely, so no
+AudioDriverKit device could reach Audio MIDI Setup.
+
+The FireBug trace shows that Duet uses the standard, expected choreography:
+an 8-byte `STATUS` or `CONTROL` Unit Plug Signal Format command (opcodes
+`0x19` input then `0x18` output) is answered by an 8-byte FCP block write to
+the initiator's `0xfffff0000d00` response register. This matches the command
+form used by ASFW and Linux OXFW's input-before-output ordering
+(`references/linux-upstream/sound/firewire/oxfw/oxfw-stream.c:41-54`). The
+device does not reject the standard format sequence.
+
+### Root cause and implemented fix
+
+ASFW drains AR Request before AR Response. The FCP payload is a block write in
+AR Request; the write acknowledgement for our preceding command is in AR
+Response. `FCPTransport::OnFCPResponse()` previously rejected a valid FCP
+payload until the latter callback had set `successfulWriteAttempt`. The exact
+Duet wire order therefore became:
+
+```text
+Duet FCP response arrives in AR Request  → dropped as "before write completion"
+our write acknowledgement arrives in AR Response → start a 2 s FCP timer
+no second FCP payload exists             → timeout, no verified 48 kHz, no nub
+```
+
+The FCP response itself proves that the target received and processed the
+command. The transport now accepts a validated response for its active
+node/generation/write-attempt even if the local write-completion callback has
+not run yet. A later write callback is safely stale after the FCP command has
+completed. The Duet remains fixed to 48 kHz: no fallback rate is advertised or
+published.

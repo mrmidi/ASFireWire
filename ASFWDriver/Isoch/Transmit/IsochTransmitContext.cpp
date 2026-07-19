@@ -274,6 +274,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     interruptCount_.store(0, std::memory_order_relaxed);
     lastInterruptCountSeen_ = 0;
     irqStallTicks_ = 0;
+    irqSilentKickStreak_ = 0;
     refillInProgress_.clear(std::memory_order_release);
 
     latencyBucket0_.store(0, std::memory_order_relaxed);
@@ -500,6 +501,26 @@ void IsochTransmitContext::Poll() noexcept {
         if (irqStallTicks_ >= 5) {
             irqStallTicks_ = 0;
             irqWatchdogKicks_.fetch_add(1, std::memory_order_relaxed);
+            ++irqSilentKickStreak_;
+            if (irqSilentKickStreak_ == 1) {
+                ASFW_LOG(Isoch,
+                         "IT: refill watchdog engaged (no IT interrupts "
+                         "observed; kicks=%llu)",
+                         irqWatchdogKicks_.load(std::memory_order_relaxed));
+            }
+            if (irqSilentKickStreak_ >= kIrqSilentKickFatalThreshold) {
+                // Watchdog-carried streaming re-transmits stale descriptor
+                // laps between kicks (observed Duet zombie, 2026-07-19: the
+                // interrupt path died mid-session and the watchdog fed the
+                // wire for 35 minutes of corrupt audio). Sustained interrupt
+                // silence is a transport fault, not jitter.
+                ASFW_LOG(Isoch,
+                         "IT FATAL: interrupt path silent across %u "
+                         "consecutive watchdog kicks; stopping context",
+                         irqSilentKickStreak_);
+                StopImmediatelyForTxFault();
+                return;
+            }
             if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
                 // Stop() may have acquired the gate after the first state
                 // check. Re-check while holding it before touching the slab.
@@ -512,6 +533,7 @@ void IsochTransmitContext::Poll() noexcept {
     } else {
         lastInterruptCountSeen_ = currentInterrupts;
         irqStallTicks_ = 0;
+        irqSilentKickStreak_ = 0;
     }
 }
 

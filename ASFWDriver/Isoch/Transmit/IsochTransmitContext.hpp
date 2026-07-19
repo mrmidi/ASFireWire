@@ -126,6 +126,14 @@ private:
     uint64_t lastInterruptCountSeen_{0};
     uint32_t irqStallTicks_{0};
 
+    // Consecutive watchdog kicks with zero interrupts observed. The watchdog
+    // bridges interrupt-delivery jitter only: its cadence is far coarser than
+    // the 48-packet descriptor ring, so a stream carried by the watchdog
+    // re-transmits stale ring laps between kicks. A sustained silent streak
+    // is a dead interrupt path and the context must stop honestly.
+    static constexpr uint32_t kIrqSilentKickFatalThreshold = 16;
+    uint32_t irqSilentKickStreak_{0};
+
     // Refill Latency Histogram (buckets: <50us, 50-200us, 200-500us, >500us)
     std::atomic<uint64_t> latencyBucket0_{0};
     std::atomic<uint64_t> latencyBucket1_{0};

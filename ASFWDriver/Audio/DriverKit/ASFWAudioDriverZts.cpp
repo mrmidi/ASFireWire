@@ -228,11 +228,9 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             // can momentarily outrun the producer. Killing TX here would leave the
             // stream permanently silent -- the timing-loss recovery is health-gated
             // when the device clock is fine (see DiceAudioBackend), and even ungated
-            // a coordinator restart cannot re-prime TX. Instead, re-sync the reader
-            // to RX's current epoch and ship a NO-DATA (silence) packet for this
-            // slot; DATA replay resumes as soon as RX republishes kReadDelay
-            // entries. Persistent unavailability degrades to silence, which is the
-            // correct "nothing to send yet" state, not a stream death.
+            // a coordinator restart cannot re-prime TX. Persistent unavailability
+            // degrades to silence, which is the correct "nothing to send yet"
+            // state, not a stream death.
             if (!ivars.runtime.txReplayReader.IsActive()) {
                 (void)ivars.runtime.txReplayReader.Begin(
                     directControl->rxSequenceReplay);
@@ -240,9 +238,40 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 
             ASFW::Audio::Runtime::RxSequenceEntry replay{};
             ASFW::Audio::Runtime::RxSequenceReplayReadDiagnostic replayDiagnostic{};
-            if (ivars.runtime.txReplayReader.TryRead(
-                    directControl->rxSequenceReplay, replay,
-                    &replayDiagnostic)) {
+            bool replayReadable = ivars.runtime.txReplayReader.TryRead(
+                directControl->rxSequenceReplay, replay,
+                &replayDiagnostic);
+            // A reader that fell out of the bounded 512-entry RX history is
+            // repositionable, not faulted: Begin() re-anchors kReadDelay
+            // behind the live producer and the skipped entries only shift
+            // NODATA placement, which IEC 61883-6 blocking permits (DBC
+            // continuity is packetizer-owned; the SYT offset drifts sub-tick
+            // across the skipped span). Frame-cursor alignment must NOT
+            // re-arm for this: re-projecting abandons the established
+            // host-frame mapping and orphans every host frame behind the new
+            // cursor (the all-zero-payload Duet zombie of 2026-07-19).
+            if (!replayReadable &&
+                replayDiagnostic.failure ==
+                    ASFW::Audio::Runtime::RxSequenceReplayReadFailure::
+                        kHistoryOverwritten) {
+                if (ivars.runtime.txReplayReader.Begin(
+                        directControl->rxSequenceReplay)) {
+                    replayReadable = ivars.runtime.txReplayReader.TryRead(
+                        directControl->rxSequenceReplay, replay,
+                        &replayDiagnostic);
+                }
+                ASFW_LOG_RING_ONLY_RL(
+                    DirectAudio,
+                    "tx-replay-reclamp",
+                    1000u,
+                    ::ASFW::Logging::LogLevel::Warning,
+                    "[TxReplay] reclamped pkt=%llu cur=%llu prod=%llu ok=%u",
+                    nextPacketToPrepare,
+                    replayDiagnostic.readerCursor,
+                    replayDiagnostic.producerCursor,
+                    replayReadable ? 1u : 0u);
+            }
+            if (replayReadable) {
                 directControl->txReplayEntries.fetch_add(
                     1, std::memory_order_relaxed);
                 timing.replayDataBlocks = replay.dataBlocks;
@@ -273,26 +302,36 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     replayDiagnostic.slotSequence,
                     replayDiagnostic.slotEpoch,
                     replayDiagnostic.replayEstablished ? 1u : 0u);
-                // Reader stale (epoch moved) or ahead of the producer: count it,
-                // drop the reader so the next packet re-Begins on the live epoch,
-                // and fall through with the NO-DATA disposition set above. Also
-                // re-arm the frame-cursor alignment: while stalled we emit NO-DATA
-                // packets, which do NOT advance the content-frame cursor, so it
-                // freezes at its pre-stall frame while CoreAudio keeps writing. If
-                // the stall outlasts one playback ring the cursor is stranded on
-                // overwritten (silent) frames forever. Re-arming makes the first
-                // DATA packet after replay recovers re-project the cursor to the
-                // live frame, closing the gap. Only reached on a genuine replay
-                // stall (churn), never during normal cadence NO-DATA.
                 directControl->txReplayUnderflows.fetch_add(
                     1, std::memory_order_relaxed);
-                ivars.runtime.txReplayReader.Reset();
-                ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
-                if (ivars.runtime.txSecondaryActive) {
-                    ivars.runtime.txStreamEngineSecondary
-                        .ReArmFrameCursorAlignment();
-                }
                 timing.replayDataBlocks = 0;
+                if (replayDiagnostic.failure ==
+                    ASFW::Audio::Runtime::RxSequenceReplayReadFailure::
+                        kAheadOfProducer) {
+                    // RX simply has not published this entry yet (a deep
+                    // preparation burst outran real-time RX). Hold the reader
+                    // where it is and ship one NODATA packet; the same cursor
+                    // reads successfully once RX catches up. Resetting the
+                    // reader or re-arming alignment here turns a transient,
+                    // self-resolving condition into a frame-cursor jump that
+                    // abandons host frames.
+                } else {
+                    // Epoch change, establishment loss, or a seqlock miss: the
+                    // RX timing domain itself moved. Drop the reader so the
+                    // next packet re-Begins on the live epoch and re-arm the
+                    // frame-cursor alignment: while stalled we emit NO-DATA
+                    // packets, which do NOT advance the content-frame cursor,
+                    // so it freezes at its pre-stall frame while CoreAudio
+                    // keeps writing. Re-arming makes the first DATA packet
+                    // after replay recovers re-project the cursor to the live
+                    // frame, closing the gap.
+                    ivars.runtime.txReplayReader.Reset();
+                    ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
+                    if (ivars.runtime.txSecondaryActive) {
+                        ivars.runtime.txStreamEngineSecondary
+                            .ReArmFrameCursorAlignment();
+                    }
+                }
             }
 
             if (replay.dataBlocks != 0) {

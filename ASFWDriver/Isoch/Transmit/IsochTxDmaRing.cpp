@@ -38,6 +38,8 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     nextTransmitCycle_ = 0;
     cycleTrackingValid_ = false;
     lastHwTimestamp_ = 0;
+    lastLapTimestamp_ = 0;
+    lapTimestampValid_ = false;
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
@@ -118,6 +120,41 @@ void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
     const uint32_t aheadCount =
         (softwareFillIndex + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
     nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
+}
+
+uint32_t IsochTxDmaRing::DetectLostLapPackets(
+    const uint32_t hwPacketIndex, const uint32_t deltaConsumed) noexcept {
+    if (!cycleTrackingValid_) {
+        return 0;
+    }
+    // Read the completion timestamp of the most recently executed packet.
+    // This must run even when the modulo delta is zero: a stall of exactly
+    // whole ring laps leaves the command pointer where it was while the
+    // timestamp has moved by kNumPackets * laps cycles.
+    const uint32_t lastProcessedPkt =
+        (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
+    auto* completionDesc = slab_.GetDescriptorPtr(
+        lastProcessedPkt * Layout::kBlocksPerPacket +
+        Layout::kCompletionBlock);
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(
+            reinterpret_cast<const std::byte*>(completionDesc),
+            sizeof(*completionDesc));
+    }
+    if (completionDesc->statusWord == 0) {
+        return 0;
+    }
+    const uint16_t rawTimestamp =
+        static_cast<uint16_t>(completionDesc->statusWord & 0xFFFF);
+    const bool hadPrevious = lapTimestampValid_;
+    const uint16_t previousTimestamp = lastLapTimestamp_;
+    lastLapTimestamp_ = rawTimestamp;
+    lapTimestampValid_ = true;
+    if (!hadPrevious) {
+        return 0;
+    }
+    return ComputeLostLapPackets(previousTimestamp, rawTimestamp,
+                                 deltaConsumed);
 }
 
 void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
@@ -404,6 +441,37 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     UpdateGapCounters(gap);
     ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
 
+    // The free-running ring only exposes progress modulo kNumPackets through
+    // the command pointer. Recover whole ring laps the hardware executed
+    // between refills from the completion timestamps and reconcile every
+    // absolute cursor forward, or the producer/completion clock dilates
+    // against the bus while the wire re-transmits stale slots indefinitely
+    // (observed Duet zombie, 2026-07-19: 71% of wire packets were stale
+    // re-sends with the audio side dragged out of its replay window).
+    const uint32_t lostPackets =
+        DetectLostLapPackets(hwPacketIndex, deltaConsumed);
+    if (lostPackets != 0) {
+        counters_.lapLossEvents.fetch_add(1, std::memory_order_relaxed);
+        counters_.lapLossPacketsTotal.fetch_add(lostPackets,
+                                                std::memory_order_relaxed);
+        // The stale re-transmissions already left the wire (a DBC seam per
+        // lap); descriptors still queued keep at most one more stale lap.
+        // Reconciliation restores true bus-time pacing from this refill on.
+        ASFW_LOG(
+            Isoch,
+            "IT LAP LOSS: ring lapped %u packets between refills "
+            "delta=%u completion=%llu committed=%llu fill=%llu",
+            lostPackets,
+            deltaConsumed,
+            controlBlock->completionCursor.load(std::memory_order_relaxed),
+            controlBlock->committedEnd.load(std::memory_order_acquire),
+            softwareFillAbsIdx_);
+        if (softwareFillAbsIdx_ != 0) {
+            softwareFillAbsIdx_ += lostPackets;
+        }
+        ringPacketsAhead_ = 0;
+    }
+
     // Publish a neutral completion-delta high-water. Content consumers decide
     // whether their own frame/lead policy can tolerate the observed cadence.
     {
@@ -427,8 +495,12 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         }
     }
 
-    // Fetch and publish completed stamps
-    const uint64_t completedAbsIdx = controlBlock->completionCursor.load(std::memory_order_relaxed);
+    // Fetch and publish completed stamps. Lost laps shift the absolute index
+    // base: the descriptors read below were last executed in the newest lap,
+    // so their stamps belong to the reconciled indices, not the stale window.
+    const uint64_t completedAbsIdx =
+        controlBlock->completionCursor.load(std::memory_order_relaxed) +
+        lostPackets;
     for (uint32_t i = 0; i < deltaConsumed; ++i) {
         const uint64_t currentAbsIdx = completedAbsIdx + i;
         const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
@@ -451,7 +523,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         controlBlock->PushCompletionStamp(currentAbsIdx,
                                           completionCycleTimer);
     }
-    if (deltaConsumed > 0) {
+    if (deltaConsumed > 0 || lostPackets > 0) {
         controlBlock->completionCursor.store(completedAbsIdx + deltaConsumed, std::memory_order_release);
 
         const uint64_t requested =
