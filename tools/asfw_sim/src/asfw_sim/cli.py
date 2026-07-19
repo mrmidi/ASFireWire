@@ -8,8 +8,10 @@ budgets that are not written down anywhere.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from .capture import capture_from_responses, load_capture
 from .derive import derive, solve_for_io_budget
 from .diagnose import diagnose, fingerprints, frames_lost_per_drop
 from .geometry import SUPPORTED_RATES, Geometry
@@ -331,6 +333,53 @@ def _wrap(text: str, width: int) -> list[str]:
     return lines
 
 
+def cmd_capture(args) -> int:
+    if args.action == "import":
+        payloads = []
+        for raw in args.paths:
+            for path in sorted(Path(raw).glob("*.json")) if Path(raw).is_dir() else [Path(raw)]:
+                payloads.append(json.loads(path.read_text(encoding="utf-8")))
+        cap = capture_from_responses(
+            payloads, device=args.device, sample_rate=args.rate, notes=args.notes
+        )
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        cap.save(out)
+        print(f"wrote {out}  ({len(cap.records)} records)\n")
+        print(cap.summary())
+        return 0
+
+    cap = load_capture(args.paths[0])
+    print(cap.summary())
+    if args.action == "diagnose":
+        slope = cap.deficit_slope_per_s()
+        pts = cap.cursor_series()
+        if slope is None or len(pts) < 2:
+            print("\n  not enough cursor points to classify")
+            return 1
+        span = pts[-1][0] - pts[0][0]
+        d = diagnose(
+            deficit_start_frames=pts[0][1] - pts[0][2],
+            deficit_end_frames=pts[-1][1] - pts[-1][2],
+            elapsed_s=span,
+            geometry=cap.geometry_object(),
+        )
+        print(f"\n  \033[1m{d.cause}\033[0m  (confidence: {d.confidence})")
+        for line in _wrap(d.reasoning, 72):
+            print(f"  {line}")
+        if d.estimated_rx_loss_per_s is not None:
+            print(
+                f"\n  estimated RX loss: {d.estimated_rx_loss_per_s:.1f} packets/s "
+                f"({d.estimated_rx_loss_percent:.3f}%)"
+            )
+        if span < 300:
+            print(
+                f"\n  \033[33mwarning\033[0m: {span:.0f} s window. A ramp needs "
+                "minutes to separate from a step (FINDINGS F8); prefer >= 300 s."
+            )
+    return 0
+
+
 def cmd_run(args) -> int:
     print(_run(_geometry(args), args.seconds, args.stall_ms).summary())
     return 0
@@ -390,6 +439,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "fingerprint", help="counter signature of each simulated failure cause"
     )
+    cap = sub.add_parser("capture", help="import / inspect MCP ring captures")
+    cap.add_argument("action", choices=["import", "summary", "diagnose"])
+    cap.add_argument("paths", nargs="+", help="raw MCP json files/dir, or a capture")
+    cap.add_argument("-o", "--out", default="capture.json")
+    cap.add_argument("--device", default="unknown")
+    cap.add_argument("--notes", default="")
     diag = sub.add_parser(
         "diagnose", help="classify a real run from two [PayloadWriter] deficits"
     )
@@ -412,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
         "sweep": cmd_sweep,
         "scenario": cmd_scenario,
         "fingerprint": cmd_fingerprint,
+        "capture": cmd_capture,
         "diagnose": cmd_diagnose,
     }[args.command]
     return handler(args)

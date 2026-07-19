@@ -373,3 +373,42 @@ CMP teardown, IRM release, and a terminal `Failed` state).
 **Operational rule: during an active audio run use only `asfw_log_query`.**
 `read asfw://telemetry/snapshot`, `health`, `summary`, and discovery all issue
 MMIO on the driver's queue, and a single PHY timeout exceeds the stall cliff.
+
+## F9 — a THIRD mechanism: E advances at a slower *rate* than W
+
+The 2026-07-19 cold-start capture (`captures/2026-07-19-duet-coldstart-to-silence.json`,
+192 s, 337 cursor points) does not match F6 or F2.
+
+```
+lead E-W:  +1352  ->  -39,860 frames     crossed zero at ~57 s
+W rate:    48,000.0 frames/s
+E rate:    47,785.1 frames/s             <- 4,478 ppm slow
+replay failures: ahead=19, reclamped=22  <- FAR too few for F6
+```
+
+Nineteen `ahead` events cannot account for ~40,000 frames of lost ground at
+~6.8 frames each. This is not the event ratchet. **`E` simply advances at a
+slower rate than `W`, continuously.**
+
+An independent cross-check from the earlier 58-minute session's cumulative
+counters: `prepared=21077837/7037485/28115322` gives a DATA fraction of
+**0.749692** against the 0.750000 that 48 kHz blocking requires — **410 ppm
+slow** on its own, from cadence alone.
+
+Three mechanisms now reach the same silent end state, and they are separable:
+
+| | driver | `W-E` shape | signature |
+|---|---|---|---|
+| **F2** | producer stall > cliff | one step, then flat | burst of `ahead`, `align=1` |
+| **F6** | lost RX observations | linear ramp | `ahead` count ∝ deficit |
+| **F9** | E/W rate mismatch | linear ramp | **`ahead` count ≪ deficit** |
+
+F6 and F9 both ramp, so the slope alone does not separate them — the
+discriminator is whether the `ahead` count can *pay for* the lost frames at
+~6.8 frames each. In this capture it cannot, by three orders of magnitude.
+
+**Open:** why the TX cadence under-produces. Candidates, none yet tested — the
+replayed RX cadence itself being short of 0.75; NODATA emitted on paths that do
+not increment `ahead`; or `dataBlocks` being taken from an entry whose frame
+count does not match what the device sent. `asfw-sim capture` now makes this
+measurable per run instead of per shell one-liner.
