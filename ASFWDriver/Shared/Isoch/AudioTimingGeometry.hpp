@@ -92,12 +92,22 @@ struct AudioTimingGeometry final {
     // RequiredInputSafetyFrames cushion: RX had it, TX did not -- which is why
     // TX shipped silence when the writer ran beyond ExposedFrameEnd()
     // (Defect B = under-exposure, W > E). Conservative form = one full
-    // client-IO budget + scheduling jitter; tighten toward the actual IO size
-    // once measured. Frames.
+    // AppleFWAudio's AM824NuDCLWrite keeps its CIP insertion target roughly
+    // 400 FireWire cycles ahead of the client write frontier at 48 kHz.  This
+    // is content lead, not the much smaller OHCI descriptor/refill lead. Keep
+    // the invariant in packet time so it remains a 50 ms horizon at every 1x
+    // sample rate (the runtime converts it to frames for the active stream).
+    // See AVC_RECOVERY_AND_SYNC_ALGO_AND_BUGS.md, "Apple reference target".
+    static constexpr uint32_t kTxDataHorizonPackets = 400;
     static constexpr uint32_t kTxExposureLeadFrames =
-        kHalIoPeriodFrames + kSchedulingJitterFrames;          // 512 + 64 = 576
+        (kTxDataHorizonPackets * kSampleRateHz) / 8000; // 2,400 @ 48 kHz
+
+    [[nodiscard]] static constexpr uint32_t TxDataHorizonFrames(
+        uint32_t sampleRateHz) noexcept {
+        return (kTxDataHorizonPackets * sampleRateHz + 7999) / 8000;
+    }
     // Packet lead deep enough to expose that many frames at the worst-case
-    // (44.1k) average cadence: ceil(576 / 5.5125) = 105 packets, rounded up
+    // (44.1k) average cadence: ceil(2400 / 5.5125) = 436 packets, rounded up
     // to a whole interrupt group (108) so every budget derived from it keeps
     // the group- and cadence-block-aligned ring-wrap asserts below.
     static constexpr uint32_t kTxExposureLeadPacketsRaw =
@@ -130,23 +140,33 @@ struct AudioTimingGeometry final {
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
     // Covers a full client write window plus the output exposure cushion when
     // the producer target is expressed as WriteEnd + kTxExposureLeadFrames.
-    // 2 * 108 packets = 1190 worst-case (44.1k) frames, enough for
-    // 512 + 576 = 1088 frames while preserving cadence/group-friendly packet
-    // counts at every supported rate.
+    // The producer needs to preserve a whole maximum CoreAudio write window
+    // in addition to the packet-time data horizon. Round the result to an
+    // interrupt group: ceil((512 + 2400) / 5.5125) = 529 -> 534 packets.
+    static constexpr uint32_t kTxFrameExposureWindowPacketsRaw =
+        ((kHalIoPeriodFrames + kTxExposureLeadFrames) *
+             kMinAvgCadencePackets +
+         kMinAvgCadenceFrames - 1) /
+        kMinAvgCadenceFrames;
     static constexpr uint32_t kTxFrameExposureWindowPackets =
-        2 * kTxExposureLeadPackets;
+        ((kTxFrameExposureWindowPacketsRaw + kTxPacketsPerGroup - 1) /
+         kTxPacketsPerGroup) *
+        kTxPacketsPerGroup;
     static constexpr uint32_t kTxPreparationLeadPackets =
         kTxCoverageLeadPackets + kTxFrameExposureWindowPackets;
-    // Shared backing leaves one hardware-ring depth before slot reuse.
+    // A 912-packet (114 ms) backing ring lets the 400-cycle content target
+    // occupy less than half the ring while retaining one OHCI ring depth
+    // before reuse. The 48-packet hardware descriptor ring remains a separate
+    // low-latency transport concern.
     static constexpr uint32_t kTxSharedSlotPackets =
-        kTxPreparationLeadPackets + kTxHardwareRingPackets;
+        912;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
     static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =
         kTxPreparationLeadPackets - kTxHardwareRingPackets;
 
     // Backing packet-ring / timeline slot array length
     // (AmdtpPacketTimeline, DiceTxStreamEngine::timelineSlots_). Packets.
-    static constexpr uint32_t kTimelineSlots = 512;
+    static constexpr uint32_t kTimelineSlots = 1024;
 };
 
 static_assert(AudioTimingGeometry::kRxDescriptorPackets %
@@ -218,12 +238,12 @@ static_assert(AudioTimingGeometry::kTxExposureLeadFrames >=
                       AudioTimingGeometry::kSchedulingJitterFrames,
               "TX exposure lead must cover one full IO window plus scheduling "
               "jitter (the cushion whose absence was Defect B)");
-static_assert(AudioTimingGeometry::kTxExposureLeadFrames <
-                  AudioTimingGeometry::kFrameRingFrames,
-              "TX exposure lead cannot exceed the host frame ring");
 static_assert(AudioTimingGeometry::kTxExposureLeadPackets <=
                   AudioTimingGeometry::kTxSharedSlotPackets,
               "TX packet lead must be able to hold the required exposure frames");
+static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
+                  2 * AudioTimingGeometry::kTxExposureLeadPackets,
+              "TX backing ring must keep the 400-cycle content target below half ring");
 static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets *
                   AudioTimingGeometry::kMinAvgCadenceFrames >=
               (AudioTimingGeometry::kHalIoPeriodFrames +

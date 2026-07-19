@@ -4,9 +4,9 @@ Buffer-geometry invariant verifier (FW-53 / safety-offset + ring-bump work).
 
 PURPOSE
 -------
-Before we enlarge the shared audio ring (to advertise a larger CoreAudio buffer
-size than the current 576-frame ceiling) or change the HAL safety offsets, the
-proposed numbers must satisfy EVERY compile-time invariant baked into
+Before changing the 400-cycle TX content horizon, packet backing, advertised
+CoreAudio buffer size, or HAL safety offsets, the proposed numbers must satisfy
+EVERY compile-time invariant baked into
 ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp as a static_assert. A bump that
 "looks fine" routinely breaks one of:
 
@@ -25,12 +25,9 @@ invariant as a named check, and:
 It does NOT touch any source. Run it, read the table, THEN edit the header.
 
 The exposure cushion is the Defect-B guard: the producer's exposure frontier E
-must lead CoreAudio's write frontier W by one full IO window + scheduling
-jitter. If CoreAudio is allowed to pick an IO size larger than the budget the
-cushion was built on, W jumps past E => silence. So the advertised max IO must
-equal the io-budget the cushion is sized for: bumping the buffer ceiling and
-sizing the cushion are the SAME change, which is the whole point of verifying
-them together.
+must lead CoreAudio's write frontier W by the 400-cycle content horizon. The
+packet window also has to contain one maximum IO burst; the host frame ring is
+not the limit for this packet-domain horizon.
 
 Usage:
     python3 buffer_geometry_verify.py verify                 # current + 1024 candidate
@@ -57,36 +54,36 @@ HW_RING_PKTS = 48               # kTxHardwareRingPackets
 JITTER_FRAMES = 64              # kSchedulingJitterFrames
 MAX_FRAMES_PER_INTERRUPT = 40   # kMaximumNominalFramesPerInterrupt
 MIN_DISPATCH_GROUPS = 16        # coverage target: 16 six-packet groups (~12 ms)
+MIN_CADENCE_PACKETS = 80         # 44.1 kHz average cadence numerator
+MIN_CADENCE_FRAMES = 441         # 44.1 kHz average cadence denominator
+CONTENT_HORIZON_PACKETS = 400    # kTxDataHorizonPackets
 
 
 @dataclass(frozen=True)
 class Geometry:
     """One candidate HAL buffer profile + the derived TX packet geometry.
 
-    io_budget_frames == kHalIoPeriodFrames is BOTH the advertised CoreAudio max
-    IO size and the basis of the exposure cushion (see module docstring).
+    io_budget_frames == kHalIoPeriodFrames is the advertised CoreAudio max IO.
+    The content horizon is independent and remains packet-time based.
     """
     name: str
     ring_frames: int            # frameRingFrames  (shared IOMemoryDescriptor)
     io_budget_frames: int       # kHalIoPeriodFrames == advertised max IO
     zts_frames: int             # kHalZeroTimestampPeriodFrames
     timeline_slots: int         # kTimelineSlots (AmdtpPacketTimeline length)
+    shared_slots: int = 912     # kTxSharedSlotPackets
 
     # --- derived: exposure cushion (frames) ---------------------------------
     @property
     def exposure_lead_frames(self) -> int:          # kTxExposureLeadFrames
-        return self.io_budget_frames + JITTER_FRAMES
+        return CONTENT_HORIZON_PACKETS * 48_000 // 8_000
 
     @property
     def exposure_lead_pkts(self) -> int:            # kTxExposureLeadPackets
-        # ceil(frames * blockPkts / blockFrames) == ceil(frames / 6), THEN round
-        # up to a whole timing group so the downstream sharedSlot stays a
-        # multiple of both 6 (group) and 4 (cadence block). The shipping header
-        # omits this round-up and is only accidentally aligned at ioBudget=512
-        # (576/6 == 96 exactly); any other budget needs it. This is part of the
-        # proposed header change.
-        raw = (self.exposure_lead_frames * CADENCE_BLOCK_PKTS +
-               CADENCE_BLOCK_FRAMES - 1) // CADENCE_BLOCK_FRAMES
+        # Exact header derivation: worst supported cadence is 44.1 kHz,
+        # ceil(frames * 80 / 441), then round to a six-packet group.
+        raw = (self.exposure_lead_frames * MIN_CADENCE_PACKETS +
+               MIN_CADENCE_FRAMES - 1) // MIN_CADENCE_FRAMES
         return ((raw + PKTS_PER_GROUP - 1) // PKTS_PER_GROUP) * PKTS_PER_GROUP
 
     # --- derived: packet-domain TX ownership --------------------------------
@@ -100,7 +97,9 @@ class Geometry:
 
     @property
     def frame_exposure_window_pkts(self) -> int:    # kTxFrameExposureWindowPackets
-        return 2 * self.exposure_lead_pkts
+        raw = ((self.io_budget_frames + self.exposure_lead_frames) *
+               MIN_CADENCE_PACKETS + MIN_CADENCE_FRAMES - 1) // MIN_CADENCE_FRAMES
+        return ((raw + PKTS_PER_GROUP - 1) // PKTS_PER_GROUP) * PKTS_PER_GROUP
 
     @property
     def preparation_lead_pkts(self) -> int:         # kTxPreparationLeadPackets
@@ -108,7 +107,7 @@ class Geometry:
 
     @property
     def shared_slot_pkts(self) -> int:              # kTxSharedSlotPackets
-        return self.preparation_lead_pkts + HW_RING_PKTS
+        return self.shared_slots
 
     @property
     def max_covered_delta_pkts(self) -> int:        # kTxMaxCoveredDeltaConsumedPackets
@@ -152,12 +151,12 @@ INVARIANTS = [
     ("exposureLead >= ioBudget + jitter",
      lambda g: g.exposure_lead_frames >= g.io_budget_frames + JITTER_FRAMES,
      lambda g: f"{g.exposure_lead_frames} >= {g.io_budget_frames + JITTER_FRAMES}"),
-    ("exposureLead < ring",
-     lambda g: g.exposure_lead_frames < g.ring_frames,
-     lambda g: f"{g.exposure_lead_frames} < {g.ring_frames}"),
     ("exposureLeadPkts <= sharedSlot",
      lambda g: g.exposure_lead_pkts <= g.shared_slot_pkts,
      lambda g: f"{g.exposure_lead_pkts} <= {g.shared_slot_pkts}"),
+    ("sharedSlot keeps content target below half ring",
+     lambda g: g.shared_slot_pkts >= 2 * g.exposure_lead_pkts,
+     lambda g: f"{g.shared_slot_pkts} >= {2 * g.exposure_lead_pkts}"),
     ("frameExposureWindow covers WriteEnd + cushion",
      lambda g: g.frame_exposure_window_pkts * CADENCE_BLOCK_FRAMES >=
                (g.io_budget_frames + g.exposure_lead_frames) * CADENCE_BLOCK_PKTS,
@@ -176,7 +175,8 @@ def check(g: Geometry) -> List[Tuple[str, bool, str]]:
 def derived_table(g: Geometry) -> str:
     return (f"    ring={g.ring_frames}fr  ioBudget/maxIO={g.io_budget_frames}fr  "
             f"zts={g.zts_frames}fr  timeline={g.timeline_slots}slots\n"
-            f"    exposureLead={g.exposure_lead_frames}fr ({g.exposure_lead_pkts}pkt)  "
+            f"    contentHorizon={CONTENT_HORIZON_PACKETS}pkt "
+            f"exposureLead={g.exposure_lead_frames}fr ({g.exposure_lead_pkts}pkt)  "
             f"frameWindow={g.frame_exposure_window_pkts}pkt  "
             f"prepLead={g.preparation_lead_pkts}pkt  "
             f"sharedSlot={g.shared_slot_pkts}pkt  "
@@ -205,38 +205,35 @@ CURRENT = Geometry(
     ring_frames=1536,
     io_budget_frames=512,
     zts_frames=1536,
-    timeline_slots=512,
+    timeline_slots=1024,
+    shared_slots=912,
 )
 
 
 def solve(max_io: int, zts: int = 1536) -> Geometry:
     """Smallest cadence-aligned profile that advertises `max_io` frames.
 
-    Strategy: io_budget = max_io (cushion basis). Round the derived shared-slot
-    packet count up to a multiple of lcm(6,4)=12 by nudging the timeline; size
-    the ring to the least common multiple structure that holds maxIO + cushion.
+    Strategy: io_budget = max_io. Keep the 400-cycle content horizon, choose a
+    shared packet backing that covers the preparation lead and keeps that
+    horizon below half ring, then size the timeline to contain it.
     We do not mutate the header derivation — we just pick a timeline_slots and
     ring_frames large enough that every invariant passes.
     """
     g = Geometry(name=f"CANDIDATE (max IO {max_io})",
                  ring_frames=zts, io_budget_frames=max_io,
-                 zts_frames=zts, timeline_slots=512)
+                 zts_frames=zts, timeline_slots=1024)
 
-    # Timeline must hold the derived shared-slot count (which is already a
-    # multiple of 12 because frameExposureWindow = 2*ceil(.) and the +192 base
-    # is %12==0 only when exposure_lead_pkts is %6==0). If the derived
-    # shared_slot is not %12, the header's own asserts would fail, so we round
-    # the timeline up to the next multiple of the group size and report the
-    # shared-slot alignment separately.
-    timeline = ((g.shared_slot_pkts + PKTS_PER_GROUP - 1) // PKTS_PER_GROUP) * PKTS_PER_GROUP
-    timeline = max(timeline, 512)
-    g = replace(g, timeline_slots=timeline)
+    required_shared = max(
+        g.preparation_lead_pkts + HW_RING_PKTS,
+        2 * g.exposure_lead_pkts)
+    shared = max(912, ((required_shared + 11) // 12) * 12)
+    timeline = max(1024, ((shared + 11) // 12) * 12)
+    g = replace(g, shared_slots=shared, timeline_slots=timeline)
 
-    # Ring: multiple of both io_budget and zts, strictly greater than the
-    # exposure lead, and >= maxIO. lcm(maxIO, zts) stepped until > exposureLead.
+    # Frame ring: multiple of both IO and ZTS periods, and holds one max IO.
     step = math.lcm(max_io, zts)
     ring = step
-    while ring <= g.exposure_lead_frames or ring < max_io:
+    while ring < max_io:
         ring += step
     ring = max(ring, zts)
     while ring % FRAME_ALIGNMENT != 0:
@@ -302,8 +299,9 @@ def cmd_verify(args) -> None:
               f"clientIoBudgetFrames = {cand.io_budget_frames}  "
               f"zeroTimestampPeriodFrames = {cand.zts_frames}")
         print(f"  AudioTimingGeometry  kTimelineSlots = {cand.timeline_slots}")
-        print(f"  (exposure lead, packet windows, shared-slot ring all derive "
-              f"automatically and stay green)")
+        print(f"  AudioTimingGeometry  kTxSharedSlotPackets = {cand.shared_slot_pkts}")
+        print("  (content horizon stays packet-time based; verify burst behavior with "
+              "tx_data_horizon_burst_sim.py)")
 
 
 def cmd_solve(args) -> None:

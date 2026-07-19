@@ -23,6 +23,47 @@ inline constexpr uint8_t kValidSyt = 1u << 1;
 inline constexpr uint8_t kDiscontinuity = 1u << 2;
 } // namespace RxSequenceFlags
 
+// A false replay read is recoverable, but its cause is not interchangeable:
+// future consumption means TX is ahead of RX; a stale cursor means history was
+// overwritten; an epoch change is an RX discontinuity.  Preserve that boundary
+// at the reader so the TX recovery path can report what it actually saw.
+enum class RxSequenceReplayReadFailure : uint8_t {
+    kNone,
+    kReaderInactive,
+    kEpochChanged,
+    kAheadOfProducer,
+    kHistoryOverwritten,
+    kSlotSequenceMismatch,
+    kSlotEpochMismatch,
+    kSlotChanged,
+};
+
+[[nodiscard]] constexpr const char* RxSequenceReplayReadFailureName(
+    RxSequenceReplayReadFailure failure) noexcept {
+    switch (failure) {
+    case RxSequenceReplayReadFailure::kNone: return "none";
+    case RxSequenceReplayReadFailure::kReaderInactive: return "inactive";
+    case RxSequenceReplayReadFailure::kEpochChanged: return "epoch";
+    case RxSequenceReplayReadFailure::kAheadOfProducer: return "ahead";
+    case RxSequenceReplayReadFailure::kHistoryOverwritten: return "overwritten";
+    case RxSequenceReplayReadFailure::kSlotSequenceMismatch: return "slot-seq";
+    case RxSequenceReplayReadFailure::kSlotEpochMismatch: return "slot-epoch";
+    case RxSequenceReplayReadFailure::kSlotChanged: return "slot-changed";
+    }
+    return "unknown";
+}
+
+struct RxSequenceReplayReadDiagnostic final {
+    RxSequenceReplayReadFailure failure{RxSequenceReplayReadFailure::kNone};
+    uint64_t readerCursor{0};
+    uint64_t producerCursor{0};
+    uint64_t slotSequence{0};
+    uint32_t readerEpoch{0};
+    uint32_t replayEpoch{0};
+    uint32_t slotEpoch{0};
+    bool replayEstablished{false};
+};
+
 [[nodiscard]] inline uint32_t ComputeReplaySytOffset(
     uint16_t syt,
     uint32_t sourceCycleTimer,
@@ -157,15 +198,32 @@ public:
 
     [[nodiscard]] bool Read(uint64_t cursor,
                             uint32_t expectedEpoch,
-                            RxSequenceEntry& out) const noexcept {
+                            RxSequenceEntry& out,
+                            RxSequenceReplayReadDiagnostic* diagnostic = nullptr) const noexcept {
         const Slot& slot = slots_[cursor % kCapacity];
         const uint64_t expectedSequence = cursor + 1;
-        if (slot.sequence.load(std::memory_order_acquire) !=
-            expectedSequence) {
+        const uint64_t firstSequence =
+            slot.sequence.load(std::memory_order_acquire);
+        if (diagnostic) {
+            diagnostic->slotSequence = firstSequence;
+        }
+        if (firstSequence != expectedSequence) {
+            if (diagnostic) {
+                diagnostic->failure =
+                    RxSequenceReplayReadFailure::kSlotSequenceMismatch;
+            }
             return false;
         }
-        if (slot.epoch.load(std::memory_order_relaxed) !=
-            expectedEpoch) {
+        const uint32_t firstEpoch =
+            slot.epoch.load(std::memory_order_relaxed);
+        if (diagnostic) {
+            diagnostic->slotEpoch = firstEpoch;
+        }
+        if (firstEpoch != expectedEpoch) {
+            if (diagnostic) {
+                diagnostic->failure =
+                    RxSequenceReplayReadFailure::kSlotEpochMismatch;
+            }
             return false;
         }
 
@@ -181,10 +239,22 @@ public:
         entry.dbc = slot.dbc.load(std::memory_order_relaxed);
         entry.flags = slot.flags.load(std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_acquire);
-        if (slot.sequence.load(std::memory_order_relaxed) !=
-                expectedSequence ||
-            slot.epoch.load(std::memory_order_relaxed) !=
-                expectedEpoch) {
+        const uint64_t finalSequence =
+            slot.sequence.load(std::memory_order_relaxed);
+        const uint32_t finalEpoch =
+            slot.epoch.load(std::memory_order_relaxed);
+        if (diagnostic) {
+            diagnostic->slotSequence = finalSequence;
+            diagnostic->slotEpoch = finalEpoch;
+        }
+        if (finalSequence != expectedSequence ||
+            finalEpoch != expectedEpoch) {
+            if (diagnostic) {
+                diagnostic->failure =
+                    finalEpoch != expectedEpoch
+                        ? RxSequenceReplayReadFailure::kSlotEpochMismatch
+                        : RxSequenceReplayReadFailure::kSlotChanged;
+            }
             return false;
         }
 
@@ -224,9 +294,36 @@ public:
 
     [[nodiscard]] bool TryRead(
         const RxSequenceReplayState& replay,
-        RxSequenceEntry& out) noexcept {
-        if (!active_ || replay.Epoch() != epoch_ ||
-            !replay.Read(nextCursor_, epoch_, out)) {
+        RxSequenceEntry& out,
+        RxSequenceReplayReadDiagnostic* diagnostic = nullptr) noexcept {
+        RxSequenceReplayReadDiagnostic ignoredDiagnostic{};
+        RxSequenceReplayReadDiagnostic* const observed =
+            diagnostic ? diagnostic : &ignoredDiagnostic;
+        *observed = {
+            .readerCursor = nextCursor_,
+            .producerCursor = replay.ProducerCursor(),
+            .readerEpoch = epoch_,
+            .replayEpoch = replay.Epoch(),
+            .replayEstablished = replay.IsEstablished(),
+        };
+        if (!active_) {
+            observed->failure = RxSequenceReplayReadFailure::kReaderInactive;
+            return false;
+        }
+        if (observed->replayEpoch != epoch_) {
+            observed->failure = RxSequenceReplayReadFailure::kEpochChanged;
+            return false;
+        }
+        if (nextCursor_ >= observed->producerCursor) {
+            observed->failure = RxSequenceReplayReadFailure::kAheadOfProducer;
+            return false;
+        }
+        if (observed->producerCursor - nextCursor_ >
+            RxSequenceReplayState::kCapacity) {
+            observed->failure = RxSequenceReplayReadFailure::kHistoryOverwritten;
+            return false;
+        }
+        if (!replay.Read(nextCursor_, epoch_, out, observed)) {
             return false;
         }
         ++nextCursor_;

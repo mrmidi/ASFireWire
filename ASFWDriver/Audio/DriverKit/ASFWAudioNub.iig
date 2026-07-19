@@ -88,6 +88,10 @@ public:
                                     uint64_t generation);
     virtual kern_return_t RegisterTxPreparationAction(
         OSAction* action TYPE(TxPreparationReady));
+    // Audio-owned write-frontier request. It reuses the registered action so
+    // packet preparation is dispatched on ASFWAudioDriver's TxPreparation
+    // queue rather than on the CoreAudio real-time callback.
+    virtual kern_return_t RequestTxPreparation(uint64_t generation);
 
     virtual void ZtsAnchorReady(OSAction* action TARGET,
                                 uint64_t generation);

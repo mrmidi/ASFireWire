@@ -18,18 +18,24 @@ TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalesci
     TxPreparationRequestState requests{};
 
     EXPECT_FALSE(requests.NeedsHandling());
-    EXPECT_EQ(requests.PublishRequest(100), 1U);
-    EXPECT_EQ(requests.PublishRequest(200), 2U);
+    EXPECT_EQ(requests.PublishRequest(100, 600), 1U);
+    EXPECT_EQ(requests.PublishRequest(200, 1200), 2U);
     EXPECT_TRUE(requests.NeedsHandling());
     EXPECT_EQ(requests.RequestedGeneration(), 2U);
     EXPECT_EQ(requests.requestHostTicks.load(std::memory_order_relaxed), 200U);
+    EXPECT_EQ(requests.requestedTargetFrameEnd.load(std::memory_order_acquire), 1200U);
+    EXPECT_TRUE(requests.TryScheduleWake());
+    EXPECT_FALSE(requests.TryScheduleWake());
 
     requests.MarkHandled(2, 250);
     EXPECT_FALSE(requests.NeedsHandling());
     EXPECT_EQ(requests.handledGeneration.load(std::memory_order_acquire), 2U);
     EXPECT_EQ(requests.handledHostTicks.load(std::memory_order_relaxed), 250U);
+    requests.FinishWake();
+    EXPECT_TRUE(requests.TryScheduleWake());
+    requests.FinishWake();
 
-    EXPECT_EQ(requests.PublishRequest(300), 3U);
+    EXPECT_EQ(requests.PublishRequest(300, 1800), 3U);
     EXPECT_TRUE(requests.NeedsHandling());
 }
 
