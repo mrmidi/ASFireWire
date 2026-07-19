@@ -781,6 +781,24 @@ tick domain (`% 0xBB80000`) that tolerates a standing RX/TX offset and only
 re-anchors past a threshold — behavioural proof that a constant SYT offset is
 normal (the "SYT OOS" capture was healthy), never a fault.
 
+`references/libffado-2.5.0` confirms the same boundary in the idiom ASFW
+actually uses — C++ virtual dispatch, not C file-per-family. Every device is
+a `FFADODevice` subclass (`Dice::DiceAvDevice`, `BeBoB::AvDevice`,
+`Motu::MotuDevice`, `GenericAVC::AvDevice`, `Rme::RmeDevice`), and the
+streaming/recovery lifecycle is a set of **per-family virtuals** —
+`lock()=0`, `unlock()=0`, `prepare()=0`, `resetForStreaming()`,
+`enableStreaming()`/`disableStreaming()` (ffadodevice.h:318-413). The generic
+`libstreaming` manager has no family branching (the lone family name in it is
+a comment noting where a speed constant came from), and the seam is one
+`StreamProcessor` per stream that the device hands up via
+`getStreamProcessorByIndex()` (ffadodevice.h:413) — the manager drives
+transport generically. Transport bus-reset (`IsoHandlerManager::handleBusReset`)
+and device recovery (`FFADODevice::handleBusReset` → per-family virtuals) are
+separate layers, neither reaching into the other. The lesson for ASFW is
+concrete: **recovery belongs as a per-backend virtual/override dispatched
+polymorphically**, which is how the backends are already structured — not a
+shared `timingLossCallback_` slot one backend overwrites.
+
 ### Where ASFW leaks across the boundary
 
 - **A single shared `IsochService::timingLossCallback_`** that both
@@ -803,9 +821,10 @@ normal (the "SYT OOS" capture was healthy), never a fault.
 2. **Delete the shared `timingLossCallback_` slot.** Transport exposes a
    state the backends poll (the existing `statusWord`/`fatalGeneration` is the
    `amdtp_streaming_error` analog). No cross-backend callback.
-3. **Each backend owns its own recovery.** DICE recovery keyed off DICE
-   notifications (both references agree); AV/C and BeBoB separate. No
-   backend's recovery reachable from another's signal.
+3. **Each backend owns its own recovery, as a per-backend override** (FFADO's
+   virtual model). DICE recovery keyed off DICE notifications (all three
+   references agree); AV/C and BeBoB separate. No backend's recovery reachable
+   from another's signal.
 
 Sequence: (a) revert lap-loss, (b) sever the shared slot and make transport
 report-only, (c) re-home DICE recovery onto DICE notifications.
