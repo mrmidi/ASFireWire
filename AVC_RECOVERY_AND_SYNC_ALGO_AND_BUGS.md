@@ -243,7 +243,8 @@ Linux and FFADO, without copying their mechanisms.
 | `AVC-RECOVERY-002` | **Confirmed critical defect** | FW-64 treats every *established* replay reset as an eventual destructive `RecoverStreaming()`. A reset can mean a malformed RX packet, one cycle gap, rejected cadence, or rejected clock anchor—not necessarily a device outage. The coordinator stops/restarts transport while CoreAudio remains running with its old TX producer state. | Disable AV/C automatic transport restart until recovery atomically quiesces/resets/re-primes the audio producer and transport under one recovery epoch. Report the fault and request an audio-side xrun/controlled restart instead. |
 | `AVC-PROPERTY-001` | **Fixed; requires hardware confirmation** | `AudioNubPublisher` sets stream mode on the nub, but `ASFWAudioDevice::PopulateNubProperties()` did not publish `ASFWStreamMode`; the driver parser consequently defaulted to non-blocking.  The model default is also non-blocking ([`ASFWAudioDevice.hpp:52-60`](ASFWDriver/Audio/Model/ASFWAudioDevice.hpp#L52-L60)); parsing only changes it if the property exists ([`AudioDriverConfig.cpp:67-84`](ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp#L67-L84)).  The matching dictionary now publishes the selected mode. | On the next Duet/BeBoB start, confirm the AudioDriver reports `Stream mode from nub: blocking`; the property path is shared by all published audio nubs. |
 | `AVC-TX-EXPOSURE-001` | **Confirmed audio-path defect; root scheduling cause open** | The payload writer skips CoreAudio frames which arrive beyond `Timeline().ExposedFrameEnd()` (`framesWithoutPacket`); `TxAlign` later repositions the producer cursor to close the deficit.  This can produce audible corruption while DMA/CMP and the TX descriptor lead remain healthy, then self-heal without a stream restart ([`AmdtpPayloadWriter.cpp:90-126`](ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126), [`ASFWAudioDriverZts.cpp:360-389`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)). | Retain pending host frames until slots exist and maintain a data-bearing packet horizon beyond the maximum IO callback plus measured scheduling jitter; never discard a running stream's host frames because their packet is not yet exposed. |
-| `TX-LAPLOSS-001` | **Confirmed; fixed 2026-07-19, requires hardware confirmation** | IT completion accounting measured hardware progress modulo the 48-packet free-running ring; refill gaps > 6 ms silently discarded whole laps, dilating producer time and re-transmitting stale packets (the 2026-07-19 all-zero Duet zombie). | Validate the lap-loss reconciliation and `IT LAP LOSS` telemetry on hardware; see "2026-07-19 zombie stream" below. |
+| `TX-LAPLOSS-001` | **Withdrawn — the fix was the regression** | The timestamp-based lap-loss detector double-counted a stale completion baseline under coalesced interrupts and phantom-killed a healthy Saffire stream (all mod-48 deltas were < 48; FireBug showed 2.24 M continuous packets). It also treated a symptom of `TX-IRQ-001` and violated the transport boundary. To be reverted. | Revert the reconciliation; keep the watchdog-silence fatal + `ctrl`/`intEvent` snapshot. See "backend boundary leakage" below. |
+| `AUDIO-BACKEND-BOUNDARY-001` | **Confirmed (Linux + Focusrite validated)** | AV/C resync machinery leaks into DICE: a single shared `IsochService::timingLossCallback_` (AV/C overwrites DICE) and cross-backend `RecoverStreaming`. Reference stacks keep recovery strictly per-family; the shared core is family-blind. | Sever the shared callback slot; make transport report-only state; re-home DICE recovery onto DICE notifications. |
 | `TX-IRQ-001` | **Open** | The IT interrupt path went permanently silent ~10 minutes into the 2026-07-19 session; the refill watchdog carried the stream. Cause unknown (mask write, storm mitigation, dispatch loss). | Reproduce with the new watchdog-engagement log; correlate with `IsoXmitIntMask` writes. The 16-kick fatal now bounds the damage. |
 | `TX-STALL-001` | **Open root cause; detection fixed 2026-07-19** | Saffire Pro 24 DSP (cycle master) run: both OHCI isoch contexts froze ~8 s at ~67 s while the wire, async, and host stayed healthy; no bus reset or `cycleInconsistent` fired. IR recovered alone; IT crawled 13 packets and died. Trigger unknown (cycle-start recognition, controller wedge, DMA stall). | Refill now faults `context-stalled` (untouched cursors) when unaccounted progress exceeds the committed lead, and records `ContextControl` + latched `IntEvent` at detection/watchdog time. Use those on the next occurrence. |
 | `TX-FAULT-PROP-001` | **Confirmed** | After `IT FATAL STOP`/`[TxProducerFatal]`, nothing stops the ADK stream, notifies the backend, or releases CMP/IRM resources: CoreAudio runs IO against a dead stream indefinitely while the DICE backend keeps reporting the device healthy. | Propagate the transport/producer fault to a terminal, user-visible stream state (controlled stop/xrun) and release resources. Interim slice of the single-recovery-epoch design. |
@@ -719,6 +720,96 @@ bandwidth/channels were never released.
   slots exist) remains the durable repair for exposure lag; with the
   transport clock no longer dilating it is defense in depth rather than the
   first-order fault.
+
+## 2026-07-19 architectural root cause: backend boundary leakage (dice ≠ avc ≠ bebob)
+
+The Saffire Pro 24 DSP run with the lap-loss detector installed forced a
+reassessment of the whole 2026-07-19 line of work. Two facts collapsed it:
+
+1. **The lap-loss detector was killing a healthy Saffire stream.** Every
+   `IT LAP LOSS` event on that run reported a mod-48 `delta` **below 48**
+   (`0, 3, 5, 8, 9, 11, 18, 19, 23, 26, 27, 31, 40`), so the hardware never
+   advanced a full ring between refills — mod-48 accounting was *correct the
+   entire time*. The timestamp-based detector was double-counting a stale
+   completion baseline under coalesced interrupts and inventing laps that
+   were never on the wire; the `delta=0 → "2832 packets"` fatal is that bug
+   run away (59 phantom laps). FireBug confirms the stream was continuous —
+   2,241,634 packets with real PCM — until *our own* fatal fired. The
+   detector is the regression.
+2. **DICE was stable before any of this.** PR #41 (merge `1bbb70e`,
+   2026-07-14) had no lap-loss logic at all — pure mod-48
+   `ComputeDeltaConsumed` — and DICE streamed cleanly. The zombie only
+   appeared after the 2026-07-18 receive-seam / FW-64 refactors.
+
+So the lap-loss reconciliation treats a *symptom* of `TX-IRQ-001` (the Duet's
+dead interrupt path, where 68 ms watchdog gaps genuinely exceed the 6 ms
+ring) and actively breaks the healthy-coalescing case. It is also a
+**boundary violation**: content/timing reconciliation shoved into the
+payload-opaque transport (`IsochTxDmaRing`). It should be reverted.
+
+### The real defect is cross-backend leakage, and the reference stacks prove the boundary
+
+`references/linux-sound-firewire-stack` enforces `dice ≠ avc ≠ bebob` with
+three rules ASFW currently breaks:
+
+1. **Each family is its own driver; recovery is per-family policy.** `dice/`,
+   `bebob/`, `oxfw/`, `fireworks/`, `motu/`, `tascam/`, `digi00x/` each own a
+   `*_stream.c` with their own recovery entry point —
+   `snd_dice_stream_update_duplex()` (dice-stream.c:587),
+   `snd_oxfw_stream_update_duplex()` (oxfw-stream.c:472),
+   `snd_efw_stream_update_duplex()` (fireworks). DICE's is pure DICE
+   semantics (force-stop on bus reset because the firmware stalls for
+   hundreds of ms, then let the app restart) — meaningless for AV/C or BeBoB.
+   There is no shared `recover_streaming`.
+2. **The shared core is mechanism and family-blind.** `amdtp-stream.c`,
+   `cmp.c`, `fcp.c`, `iso-resources.c` contain no backend branching — only
+   device-*quirk* flags (OXFW970 packet-skip, Dice high-rate). The engine
+   moves packets and does not know who owns the stream.
+3. **The seam is one content callback; errors flow up as state.** The backend
+   injects `process_ctx_payloads` + an opaque `protocol` pointer
+   (amdtp-stream.h:205-207). On trouble the engine sets its own state and the
+   family **polls** `amdtp_streaming_error(s)` (amdtp-stream.h:256) and
+   decides. Reporting is upward; policy stays in the family. The mechanism
+   never calls a backend's recovery.
+
+The Focusrite DICE kext (IDA, `Saffire.i64`) corroborates rule 1 from the
+Apple side: its `NotificationWriteCallback` (0x9620) decodes the DICE
+notification register and calls `RequestStreamingRestart` — DICE recovery is
+driven by **DICE notifications**, guarded against re-entrancy. Its
+`adjustOutputPhase` (0xc9c2) is a bounded phase servo in the full 8-second
+tick domain (`% 0xBB80000`) that tolerates a standing RX/TX offset and only
+re-anchors past a threshold — behavioural proof that a constant SYT offset is
+normal (the "SYT OOS" capture was healthy), never a fault.
+
+### Where ASFW leaks across the boundary
+
+- **A single shared `IsochService::timingLossCallback_`** that both
+  `DiceAudioBackend` and `AVCAudioBackend` write (last-writer-wins). AV/C
+  overwrites DICE's, so a DICE discontinuity is routed to AV/C's non-matching
+  GUID and dropped. Linux never shares a recovery callback.
+- **`RecoverStreaming` as cross-backend machinery** driven by an RX-replay-
+  reset signal common to both backends, instead of each backend's own device
+  semantics.
+- **The lap-loss detector** — content/timing policy inside the transport
+  mechanism, the inverse leak.
+
+### Corrective boundary (Linux- and Focusrite-validated)
+
+1. Transport (`Isoch/`, `IsochService`, `IsochTxDmaRing`) is family-agnostic:
+   move packets, publish own fault state, stop. No backend knowledge, no
+   `RecoverStreaming` dispatch, no replay/timing reconciliation. → **revert
+   the lap-loss detector**; keep only the transport-state pieces (watchdog-
+   silence fatal + `ctrl`/`intEvent` snapshot).
+2. **Delete the shared `timingLossCallback_` slot.** Transport exposes a
+   state the backends poll (the existing `statusWord`/`fatalGeneration` is the
+   `amdtp_streaming_error` analog). No cross-backend callback.
+3. **Each backend owns its own recovery.** DICE recovery keyed off DICE
+   notifications (both references agree); AV/C and BeBoB separate. No
+   backend's recovery reachable from another's signal.
+
+Sequence: (a) revert lap-loss, (b) sever the shared slot and make transport
+report-only, (c) re-home DICE recovery onto DICE notifications.
+`TX-IRQ-001` (why Duet interrupts die) remains an independent open root cause.
 
 ## Minimal anomaly-only telemetry for the next hardware run
 
