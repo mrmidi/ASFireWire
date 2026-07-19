@@ -355,6 +355,8 @@ const char* IsochTxDmaRing::RefillFailureReasonName(
             return "uncommitted-slot";
         case RefillFailureReason::InvalidPacketSize:
             return "invalid-packet-size";
+        case RefillFailureReason::ContextStalled:
+            return "context-stalled";
         case RefillFailureReason::PayloadMapping:
             return "payload-mapping";
     }
@@ -442,30 +444,61 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
 
     // The free-running ring only exposes progress modulo kNumPackets through
-    // the command pointer. Recover whole ring laps the hardware executed
-    // between refills from the completion timestamps and reconcile every
-    // absolute cursor forward, or the producer/completion clock dilates
-    // against the bus while the wire re-transmits stale slots indefinitely
-    // (observed Duet zombie, 2026-07-19: 71% of wire packets were stale
-    // re-sends with the audio side dragged out of its replay window).
+    // the command pointer. The completion timestamps recover the unaccounted
+    // whole ring laps, but they cannot say which of two faults produced them:
+    // free-running stale re-transmission (2026-07-19 Duet zombie: 71% of wire
+    // packets were stale re-sends) or a stalled context whose sparse crawl
+    // stamps late timestamps (2026-07-19 Saffire freeze: 13 wire packets
+    // while the timestamps implied 64k). Classify by coverage: a jump the
+    // producer's committed lead can absorb is reconciled so pacing returns to
+    // true bus time; a larger jump can only end at an uncommitted slot, so
+    // fault immediately with untouched cursors instead of corrupting the
+    // accounting on the way to the same stop.
     const uint32_t lostPackets =
         DetectLostLapPackets(hwPacketIndex, deltaConsumed);
     if (lostPackets != 0) {
+        const uint64_t completedRaw =
+            controlBlock->completionCursor.load(std::memory_order_relaxed);
+        const uint64_t consumedEnd = completedRaw + deltaConsumed;
+        const uint64_t committedNow =
+            controlBlock->committedEnd.load(std::memory_order_acquire);
+        const uint64_t committedHeadroom =
+            committedNow > consumedEnd ? committedNow - consumedEnd : 0;
+        const uint32_t latchedIntEvents = hw.Read(Register32::kIntEvent);
+        if (lostPackets > committedHeadroom) {
+            counters_.contextStallFatals.fetch_add(1,
+                                                   std::memory_order_relaxed);
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL: context stalled - unaccounted progress %u packets "
+                "exceeds committed lead %llu (delta=%u completion=%llu "
+                "committed=%llu ctrl=0x%08x intEvent=0x%08x)",
+                lostPackets,
+                committedHeadroom,
+                deltaConsumed,
+                completedRaw,
+                committedNow,
+                ctrl,
+                latchedIntEvents);
+            out.failureReason = RefillFailureReason::ContextStalled;
+            out.failurePacketAbs = consumedEnd;
+            return out;
+        }
         counters_.lapLossEvents.fetch_add(1, std::memory_order_relaxed);
         counters_.lapLossPacketsTotal.fetch_add(lostPackets,
                                                 std::memory_order_relaxed);
-        // The stale re-transmissions already left the wire (a DBC seam per
-        // lap); descriptors still queued keep at most one more stale lap.
-        // Reconciliation restores true bus-time pacing from this refill on.
         ASFW_LOG(
             Isoch,
-            "IT LAP LOSS: ring lapped %u packets between refills "
-            "delta=%u completion=%llu committed=%llu fill=%llu",
+            "IT LAP LOSS: %u packets of unaccounted hardware progress "
+            "(stale re-send or brief stall) delta=%u completion=%llu "
+            "committed=%llu fill=%llu ctrl=0x%08x intEvent=0x%08x",
             lostPackets,
             deltaConsumed,
-            controlBlock->completionCursor.load(std::memory_order_relaxed),
-            controlBlock->committedEnd.load(std::memory_order_acquire),
-            softwareFillAbsIdx_);
+            completedRaw,
+            committedNow,
+            softwareFillAbsIdx_,
+            ctrl,
+            latchedIntEvents);
         if (softwareFillAbsIdx_ != 0) {
             softwareFillAbsIdx_ += lostPackets;
         }

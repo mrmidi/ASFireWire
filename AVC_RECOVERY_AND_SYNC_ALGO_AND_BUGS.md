@@ -245,6 +245,8 @@ Linux and FFADO, without copying their mechanisms.
 | `AVC-TX-EXPOSURE-001` | **Confirmed audio-path defect; root scheduling cause open** | The payload writer skips CoreAudio frames which arrive beyond `Timeline().ExposedFrameEnd()` (`framesWithoutPacket`); `TxAlign` later repositions the producer cursor to close the deficit.  This can produce audible corruption while DMA/CMP and the TX descriptor lead remain healthy, then self-heal without a stream restart ([`AmdtpPayloadWriter.cpp:90-126`](ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126), [`ASFWAudioDriverZts.cpp:360-389`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)). | Retain pending host frames until slots exist and maintain a data-bearing packet horizon beyond the maximum IO callback plus measured scheduling jitter; never discard a running stream's host frames because their packet is not yet exposed. |
 | `TX-LAPLOSS-001` | **Confirmed; fixed 2026-07-19, requires hardware confirmation** | IT completion accounting measured hardware progress modulo the 48-packet free-running ring; refill gaps > 6 ms silently discarded whole laps, dilating producer time and re-transmitting stale packets (the 2026-07-19 all-zero Duet zombie). | Validate the lap-loss reconciliation and `IT LAP LOSS` telemetry on hardware; see "2026-07-19 zombie stream" below. |
 | `TX-IRQ-001` | **Open** | The IT interrupt path went permanently silent ~10 minutes into the 2026-07-19 session; the refill watchdog carried the stream. Cause unknown (mask write, storm mitigation, dispatch loss). | Reproduce with the new watchdog-engagement log; correlate with `IsoXmitIntMask` writes. The 16-kick fatal now bounds the damage. |
+| `TX-STALL-001` | **Open root cause; detection fixed 2026-07-19** | Saffire Pro 24 DSP (cycle master) run: both OHCI isoch contexts froze ~8 s at ~67 s while the wire, async, and host stayed healthy; no bus reset or `cycleInconsistent` fired. IR recovered alone; IT crawled 13 packets and died. Trigger unknown (cycle-start recognition, controller wedge, DMA stall). | Refill now faults `context-stalled` (untouched cursors) when unaccounted progress exceeds the committed lead, and records `ContextControl` + latched `IntEvent` at detection/watchdog time. Use those on the next occurrence. |
+| `TX-FAULT-PROP-001` | **Confirmed** | After `IT FATAL STOP`/`[TxProducerFatal]`, nothing stops the ADK stream, notifies the backend, or releases CMP/IRM resources: CoreAudio runs IO against a dead stream indefinitely while the DICE backend keeps reporting the device healthy. | Propagate the transport/producer fault to a terminal, user-visible stream state (controlled stop/xrun) and release resources. Interim slice of the single-recovery-epoch design. |
 | `AVC-SYNC-001` | **Not proven** | Treating raw RX/TX SYT inequality as a fault would be wrong for the captured duplex stream. | Add the normalized, per-direction trace below before adjusting delays or cadence. |
 | `AVC-HEALTH-001` | **Instrumented; root cause open** | The original RX timing loss occurred without a bus reset in the observed driver ring; successful restart was then masked by `AVC-RECOVERY-001`. | Reproduce with the first-fault record below; it distinguishes a local RX validation failure from a real no-RX/CMP outage. |
 
@@ -669,6 +671,39 @@ Host-side regression coverage: `IsochTxLapLossMath.*`,
 `IsochTxDmaRingTest.RefillReconcilesLostLapForward`,
 `IsochTxDmaRingTest.RefillDetectsWholeLapStallWithUnmovedPointer`,
 `RxDrivenTimingTests.ReaderReBeginReanchorsAfterHistoryOverwritten`.
+
+### 2026-07-19 Saffire Pro 24 DSP run: dual-context freeze and honest death
+
+The first DICE validation of the lap-loss work (Saffire Pro 24 DSP, 48 kHz,
+DICE backend) both validated and corrected it.  The stream started cleanly
+and reconciled five single-lap losses in its first 35 seconds.  At ~67 s —
+shortly after the device issued `ExtStatus`/clock notifications — **both of
+our OHCI isoch contexts froze for ~8 seconds** while the wire and async
+traffic stayed alive (FireBug `!saffire-wire.txt`: channel 1 never missed a
+cycle; no bus reset; no `cycleInconsistent` interrupt; host latencies were
+double-digit microseconds up to the freeze).  The IR side later recovered on
+its own; the IT side crawled 13 packets, then died via
+`IT FATAL: uncommitted slot` at ~75 s.
+
+The wire capture corrected the lap-loss interpretation: channel 0 carried
+exactly 533,821 packets — the freeze transmitted **nothing**, while the
+completion timestamps implied 64,032 packets of progress.  A stalled context
+whose sparse crawl stamps late timestamps is indistinguishable, at the
+timestamp level, from free-running stale re-transmission.  The 2026-07-19
+follow-up therefore classifies by coverage: unaccounted progress within the
+producer's committed lead is reconciled (the Duet case); progress beyond it
+can only end at an uncommitted slot, so the refill now faults immediately as
+`context-stalled` with untouched cursors, and both paths record
+`ContextControl` plus the latched `IntEvent` bits (visible even when masked)
+as first-fault evidence for the freeze trigger.
+
+The fatal also demonstrated the missing upward propagation
+(`TX-FAULT-PROP-001`): after `IT FATAL STOP` + `[TxProducerFatal]`, CoreAudio
+kept running IO against the dead stream indefinitely (the `[PayloadWriter]`
+deficit passed 1.5 M frames), the DICE backend read the device's next
+notification and confirmed it "healthy", no `[RxReplayReset]` ever fired
+(total RX silence produces no next packet to detect a gap on), and the IRM
+bandwidth/channels were never released.
 
 ### Still open after these fixes
 

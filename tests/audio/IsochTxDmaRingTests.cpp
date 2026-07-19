@@ -1169,6 +1169,9 @@ TEST_F(IsochTxDmaRingTest, RefillReconcilesLostLapForward) {
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
+    // The producer runs at its full committed lead; the lap-loss
+    // classification reconciles only jumps this lead can cover.
+    controlBlock.committedEnd.store(912, std::memory_order_release);
 
     hardware_.SetTestRegister(
         static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
@@ -1247,6 +1250,7 @@ TEST_F(IsochTxDmaRingTest, RefillDetectsWholeLapStallWithUnmovedPointer) {
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
+    controlBlock.committedEnd.store(912, std::memory_order_release);
 
     hardware_.SetTestRegister(
         static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
@@ -1288,4 +1292,63 @@ TEST_F(IsochTxDmaRingTest, RefillDetectsWholeLapStallWithUnmovedPointer) {
     EXPECT_EQ(ring_.RTCounters().lapLossEvents.load(), 1u);
     EXPECT_EQ(ring_.RTCounters().lapLossPacketsTotal.load(),
               Layout::kNumPackets);
+}
+
+TEST_F(IsochTxDmaRingTest, RefillFaultsWhenStallExceedsCommittedLead) {
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), Layout::kNumPackets);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+
+    IsochTxQueueControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    // A shallow committed lead: the producer has content for 60 packets.
+    controlBlock.committedEnd.store(60, std::memory_order_release);
+
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    for (uint32_t i = 0; i < 8; ++i) {
+        auto* desc = ring_.Slab().GetDescriptorPtr(
+            i * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        desc->statusWord =
+            (0x8000u << 16) | ((3u << 13) | (3000u + i));
+    }
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring_.Slab().GetDescriptorIOVA(8 * Layout::kBlocksPerPacket) |
+            Layout::kBlocksPerPacket);
+    auto first = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(first.ok);
+    ASSERT_EQ(controlBlock.completionCursor.load(), 8u);
+
+    // The command pointer never moves again, but packet 7's completion
+    // timestamp advances two whole ring laps: 96 packets of unaccounted
+    // progress against a 52-packet committed headroom. Reconciliation cannot
+    // cover the jump — the context stalled/wedged and must fault with the
+    // completion accounting untouched.
+    {
+        auto* desc = ring_.Slab().GetDescriptorPtr(
+            7 * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        desc->statusWord =
+            (0x8000u << 16) |
+            ((3u << 13) | (3007u + 2u * Layout::kNumPackets));
+    }
+    auto second = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+
+    EXPECT_FALSE(second.ok);
+    EXPECT_EQ(second.failureReason,
+              IsochTxDmaRing::RefillFailureReason::ContextStalled);
+    EXPECT_EQ(controlBlock.completionCursor.load(), 8u);
+    EXPECT_EQ(ring_.RTCounters().contextStallFatals.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().lapLossEvents.load(), 0u);
 }

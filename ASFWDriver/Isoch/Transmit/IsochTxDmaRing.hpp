@@ -49,12 +49,17 @@ public:
         // own the policy that decides whether this is an unsafe cadence.
         std::atomic<uint32_t> maxDeltaConsumed{0};
 
-        // Full descriptor-ring laps the free-running hardware executed between
-        // two refills. Every lost lap is kNumPackets stale packets re-sent on
-        // the wire; the completion cursor is reconciled forward so producer
-        // pacing stays on true bus time instead of dilating.
+        // Full descriptor-ring laps of unaccounted hardware progress between
+        // two refills (either free-running stale re-transmission or a brief
+        // context stall). The completion cursor is reconciled forward so
+        // producer pacing stays on true bus time instead of dilating.
         std::atomic<uint64_t> lapLossEvents{0};
         std::atomic<uint64_t> lapLossPacketsTotal{0};
+
+        // Unaccounted progress exceeded the producer's committed lead: the
+        // context stalled or wedged beyond anything reconciliation can cover
+        // (2026-07-19 Saffire freeze). Fatal; the stream must stop honestly.
+        std::atomic<uint64_t> contextStallFatals{0};
 
         // DMA ring gap monitoring
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
@@ -76,6 +81,7 @@ public:
         UncommittedSlot,
         InvalidPacketSize,
         PayloadMapping,
+        ContextStalled,
     };
 
     [[nodiscard]] static const char* RefillFailureReasonName(
@@ -151,10 +157,15 @@ public:
     // OHCI §9.4.2) recover true progress: the context transmits exactly one
     // packet per cycle, so cycles elapsed between the last-processed packets
     // of two refills equals packets truly consumed. Any surplus over the
-    // modulo delta is whole ring laps of stale re-transmission. Rounding to
-    // whole laps absorbs single-cycle jitter (missed cycle / cycle-master
-    // correction). Valid for refill gaps below the 8-second timestamp wrap;
-    // the transmit context faults out long before that horizon.
+    // modulo delta is whole ring laps of unaccounted execution: free-running
+    // stale re-transmission, or a stalled context whose sparse crawl stamps
+    // late completion timestamps (2026-07-19 Saffire freeze — the wire showed
+    // 13 packets while the timestamps implied 64k). The two are
+    // indistinguishable here; the caller classifies by whether the producer's
+    // committed lead can cover the jump. Rounding to whole laps absorbs
+    // single-cycle jitter (missed cycle / cycle-master correction). Valid for
+    // refill gaps below the 8-second timestamp wrap; the transmit context
+    // faults out long before that horizon.
     [[nodiscard]] static constexpr uint32_t ComputeLostLapPackets(
         uint16_t previousTimestamp,
         uint16_t currentTimestamp,
