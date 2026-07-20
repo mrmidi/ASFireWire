@@ -87,6 +87,60 @@ public:
         uint32_t ztsPeriodFrames) noexcept;
 
     kern_return_t Start() noexcept;
+
+    // Stage 5E descriptor safety seam: build and validate the complete OHCI IT descriptor
+    // program against the already-prefilled shared packet ring, but do not
+    // write CommandPtr, set RUN, enable interrupts, or transmit a bus packet.
+    kern_return_t PrimeForPreflight() noexcept;
+
+    // Stage 5E safety seam: program and read back the inert OHCI CommandPtr for
+    // the already-validated descriptor ring. RUN and interrupts remain clear,
+    // so the controller cannot fetch or transmit a packet.
+    kern_return_t ProgramCommandPtrForPreflight() noexcept;
+
+    // Stage 5E: replace the validated packet ring with a finite chain of 48
+    // true skip descriptors, start the OHCI IT context with interrupts masked,
+    // and prove execution from descriptor completion status. ACTIVE is sampled
+    // only for diagnostics because a completed finite program normally becomes
+    // dormant with RUN=1, ACTIVE=0 and DEAD=0. No bus packet descriptor exists.
+    kern_return_t RunAllSkipForPreflight(uint32_t durationMs) noexcept;
+
+    // Stage 5F: reduce the already-validated FF800 ring to one finite, silent,
+    // no-CIP packet, run it with interrupts masked, require ack_complete, and
+    // stop the context. This emits exactly one isochronous packet on the
+    // protocol-held IRM channel; the FF800 communication engine remains stopped.
+    kern_return_t RunSingleSilencePacketForPreflight(uint32_t timeoutMs) noexcept;
+
+    // Stage 5G: prepare one finite 48-cycle D-D-D-S silent cadence while RUN
+    // is clear, publish all payload/descriptor DMA state, and program/read back
+    // CommandPtr. The caller starts the FF800 engine only after this succeeds.
+    kern_return_t PrepareFiniteSilenceCadenceForPreflight() noexcept;
+
+    // Stage 5G: execute the previously prepared finite cadence once with
+    // interrupts masked, validate descriptor writeback and 1,1,2 cycle timing,
+    // then stop the OHCI context cleanly. No descriptor refill or live stream.
+    kern_return_t RunPreparedFiniteSilenceCadenceForPreflight(
+        uint32_t timeoutMs) noexcept;
+
+    // Stage 5G unconditional teardown seam. Clear RUN even when preparation or
+    // device start failed before the normal RUN path, wait boundedly for ACTIVE
+    // to drain, verify DEAD is clear, and discard all finite-cadence state.
+    kern_return_t CleanupFiniteSilenceCadenceForPreflight() noexcept;
+
+    // Stage 5H: prepare the same verified 48-cycle D-D-D-S silence cadence as
+    // a circular immutable ring. RUN, interrupts, and refill remain disabled
+    // until the FF800 engine has been started by the protocol layer.
+    kern_return_t PrepareBoundedCircularSilenceCadenceForPreflight() noexcept;
+
+    // Stage 5H: run the immutable circular ring for a strictly bounded window,
+    // prove repeated wraps from anchor-descriptor timestamp changes, reject
+    // DEAD/ACTIVE loss, and stop synchronously.
+    kern_return_t RunPreparedBoundedCircularSilenceCadenceForPreflight(
+        uint32_t durationMs) noexcept;
+
+    // Stage 5H unconditional teardown seam used on success and every partial
+    // failure before the protocol stops the device and releases IRM.
+    kern_return_t CleanupBoundedCircularSilenceCadenceForPreflight() noexcept;
     void Stop() noexcept;
     
     void Poll() noexcept;
@@ -146,6 +200,14 @@ private:
 
     Tx::TxPayloadDmaMap payloadDmaMap_{};
     OSSharedPtr<IODMACommand> payloadDmaCmd_{nullptr};
+
+    Tx::IsochTxDmaRing::FiniteSilenceCadenceProgram
+        finiteCadenceProgram_{};
+    bool finiteCadencePrepared_{false};
+
+    Tx::IsochTxDmaRing::BoundedCircularSilenceCadenceProgram
+        boundedCircularCadenceProgram_{};
+    bool boundedCircularCadencePrepared_{false};
 };
 
 } // namespace Isoch

@@ -89,6 +89,18 @@ class IsochService {
     kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                         HardwareInterface& hardware, uint8_t sid);
     kern_return_t StartPreparedTransmit();
+    kern_return_t PrimePreparedTransmitForPreflight();
+    kern_return_t ProgramPreparedTransmitCommandPtrForPreflight();
+    kern_return_t RunPreparedTransmitAllSkipForPreflight(uint32_t durationMs);
+    kern_return_t RunPreparedTransmitSingleSilencePacketForPreflight(uint32_t timeoutMs);
+    kern_return_t PrepareTransmitFiniteSilenceCadenceForPreflight();
+    kern_return_t RunPreparedTransmitFiniteSilenceCadenceForPreflight(
+        uint32_t timeoutMs);
+    kern_return_t CleanupPreparedTransmitFiniteSilenceCadenceForPreflight();
+    kern_return_t PrepareTransmitBoundedCircularSilenceCadenceForPreflight();
+    kern_return_t RunPreparedTransmitBoundedCircularSilenceCadenceForPreflight(
+        uint32_t durationMs);
+    kern_return_t CleanupPreparedTransmitBoundedCircularSilenceCadenceForPreflight();
 
     kern_return_t StopTransmit();
 

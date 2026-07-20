@@ -403,6 +403,109 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochService::PrimePreparedTransmitForPreflight() {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5E priming prepared IT before inert CommandPtr and all-skip RUN tests");
+    return isochTransmitContext_->PrimeForPreflight();
+}
+
+kern_return_t IsochService::ProgramPreparedTransmitCommandPtrForPreflight() {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5E programming inert IT CommandPtr with RUN clear");
+    return isochTransmitContext_->ProgramCommandPtrForPreflight();
+}
+
+kern_return_t IsochService::RunPreparedTransmitAllSkipForPreflight(
+    uint32_t durationMs) {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5E running prepared IT with 48 skip-only descriptors for %u ms",
+             durationMs);
+    return isochTransmitContext_->RunAllSkipForPreflight(durationMs);
+}
+
+kern_return_t IsochService::RunPreparedTransmitSingleSilencePacketForPreflight(
+    uint32_t timeoutMs) {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5F running one finite silent no-CIP packet; completion timeout=%u ms",
+             timeoutMs);
+    return isochTransmitContext_->RunSingleSilencePacketForPreflight(timeoutMs);
+}
+
+kern_return_t IsochService::PrepareTransmitFiniteSilenceCadenceForPreflight() {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5G preparing finite 48-cycle D-D-D-S silent cadence with RUN clear");
+    return isochTransmitContext_->PrepareFiniteSilenceCadenceForPreflight();
+}
+
+kern_return_t
+IsochService::RunPreparedTransmitFiniteSilenceCadenceForPreflight(
+    uint32_t timeoutMs) {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5G executing prepared finite silent cadence; completion timeout=%u ms",
+             timeoutMs);
+    return isochTransmitContext_->RunPreparedFiniteSilenceCadenceForPreflight(
+        timeoutMs);
+}
+
+kern_return_t
+IsochService::CleanupPreparedTransmitFiniteSilenceCadenceForPreflight() {
+    if (!isochTransmitContext_) {
+        return kIOReturnSuccess;
+    }
+    return isochTransmitContext_->CleanupFiniteSilenceCadenceForPreflight();
+}
+
+kern_return_t
+IsochService::PrepareTransmitBoundedCircularSilenceCadenceForPreflight() {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5H preparing immutable circular 48-cycle D-D-D-S silence ring with RUN clear");
+    return isochTransmitContext_
+        ->PrepareBoundedCircularSilenceCadenceForPreflight();
+}
+
+kern_return_t
+IsochService::RunPreparedTransmitBoundedCircularSilenceCadenceForPreflight(
+    uint32_t durationMs) {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: Stage 5H executing bounded circular silence ring durationMs=%u interrupts=0 refill=0",
+             durationMs);
+    return isochTransmitContext_
+        ->RunPreparedBoundedCircularSilenceCadenceForPreflight(durationMs);
+}
+
+kern_return_t
+IsochService::CleanupPreparedTransmitBoundedCircularSilenceCadenceForPreflight() {
+    if (!isochTransmitContext_) {
+        return kIOReturnSuccess;
+    }
+    return isochTransmitContext_
+        ->CleanupBoundedCircularSilenceCadenceForPreflight();
+}
+
 kern_return_t IsochService::StartPreparedTransmit() {
     if (!isochTransmitContext_) {
         return kIOReturnNotReady;

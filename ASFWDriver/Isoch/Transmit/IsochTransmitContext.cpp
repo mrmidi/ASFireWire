@@ -10,6 +10,7 @@
 #include "../../Logging/LogConfig.hpp"
 #include "../../Common/TimingUtils.hpp"
 
+#include <DriverKit/IOLib.h>
 #include <algorithm>
 #include <cstring>
 
@@ -58,6 +59,10 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid) noex
 
     channel_ = channel;
     ring_.SetChannel(channel_);
+    finiteCadencePrepared_ = false;
+    finiteCadenceProgram_ = {};
+    boundedCircularCadencePrepared_ = false;
+    boundedCircularCadenceProgram_ = {};
 
     if (dmaMemory_) {
         // Allocate-once policy
@@ -98,6 +103,10 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         payloadDmaCmd_ = nullptr;
     }
     payloadDmaMap_.Reset();
+    finiteCadencePrepared_ = false;
+    finiteCadenceProgram_ = {};
+    boundedCircularCadencePrepared_ = false;
+    boundedCircularCadenceProgram_ = {};
 
     // 1. Map Payload Slab
     IOMemoryMap* pMap = nullptr;
@@ -249,6 +258,1050 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochTransmitContext::PrimeForPreflight() noexcept {
+    if (state_ != State::Configured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E descriptor preflight rejected - state=%{public}s",
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || !ring_.HasRings()) {
+        ASFW_LOG(Isoch, "IT: Stage 5E descriptor preflight missing hardware/ring");
+        return kIOReturnNoResources;
+    }
+    if (!payloadBase_ || !payloadDmaMap_.IsValid() || !metadataRing_ || !controlBlock_ ||
+        controlBlock_->numSlots == 0 || controlBlock_->slotStrideBytes == 0 ||
+        controlBlock_->maxPacketBytes == 0) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E descriptor preflight shared TX contract incomplete");
+        return kIOReturnNotReady;
+    }
+
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(*hardware_);
+
+    const uint64_t exposeCursor =
+        controlBlock_->exposeCursor.load(std::memory_order_acquire);
+    const auto primeStats = ring_.Prime(payloadDmaMap_,
+                                        controlBlock_->numSlots,
+                                        controlBlock_->slotStrideBytes,
+                                        metadataRing_,
+                                        exposeCursor);
+    if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E descriptor preflight prime failed assembled=%llu expected=%u expose=%llu",
+                 primeStats.packetsAssembled,
+                 Tx::Layout::kNumPackets,
+                 exposeCursor);
+        return kIOReturnInternalError;
+    }
+
+    constexpr uint32_t kExpectedDataPackets = 36U;
+    constexpr uint32_t kExpectedSkipPackets = 12U;
+    constexpr uint32_t kExpectedDataBytes = 1536U;
+
+    uint32_t dataPackets = 0;
+    uint32_t skipPackets = 0;
+    bool metadataValid = true;
+    bool payloadShapeValid = true;
+    for (uint32_t packet = 0; packet < Tx::Layout::kNumPackets; ++packet) {
+        const uint32_t slot = packet % controlBlock_->numSlots;
+        const auto& meta = metadataRing_[slot];
+        const uint32_t q0 = OSSwapLittleToHostInt32(meta.immediateHeader[0]);
+        const auto tag = ASFW::IsochTransport::DecodeIsochTxHeaderTag(q0);
+        const bool skip = ASFW::IsochTransport::ShouldSkipIsochTxPacket(
+            tag, meta.payloadLength);
+        if (skip) {
+            ++skipPackets;
+            payloadShapeValid = payloadShapeValid && meta.payloadLength == 0U;
+        } else {
+            ++dataPackets;
+            payloadShapeValid = payloadShapeValid &&
+                                meta.payloadLength == kExpectedDataBytes;
+        }
+        if (tag != ASFW::IsochTransport::IsochPacketTag::kNoCipHeader ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(q0) !=
+                ASFW::IsochTransport::kIsochSpeedS400 ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderTCode(q0) !=
+                ASFW::IsochTransport::kIsochDataBlockTCode ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(
+                OSSwapLittleToHostInt32(meta.immediateHeader[1])) !=
+                meta.payloadLength) {
+            metadataValid = false;
+            break;
+        }
+    }
+
+    const bool cadenceValid =
+        dataPackets == kExpectedDataPackets &&
+        skipPackets == kExpectedSkipPackets;
+    const uint64_t descriptorIOVA = ring_.Slab().DescriptorRegion().deviceBase;
+    if (!metadataValid || !payloadShapeValid || !cadenceValid ||
+        descriptorIOVA == 0 || descriptorIOVA > 0xFFFFFFFFULL) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E descriptor preflight validation failed metadata=%u payloadShape=%u cadence=%u data=%u/%u skip=%u/%u descriptorIOVA=0x%llx",
+                 metadataValid ? 1U : 0U,
+                 payloadShapeValid ? 1U : 0U,
+                 cadenceValid ? 1U : 0U,
+                 dataPackets,
+                 kExpectedDataPackets,
+                 skipPackets,
+                 kExpectedSkipPackets,
+                 descriptorIOVA);
+        return kIOReturnInternalError;
+    }
+
+    packetsAssembled_ = primeStats.packetsAssembled;
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5E FF800 descriptor ring primed packets=%u data=%u skip=%u descriptorIOVA=0x%08x expose=%llu noCommandPtr=1 noRun=1",
+             Tx::Layout::kNumPackets,
+             dataPackets,
+             skipPackets,
+             static_cast<uint32_t>(descriptorIOVA),
+             exposeCursor);
+    ring_.DumpDescriptorRing(0, 8);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochTransmitContext::ProgramCommandPtrForPreflight() noexcept {
+    if (state_ != State::Configured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E CommandPtr preflight rejected - state=%{public}s",
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || !ring_.HasRings()) {
+        ASFW_LOG(Isoch, "IT: Stage 5E CommandPtr preflight missing hardware/ring");
+        return kIOReturnNoResources;
+    }
+
+    const uint64_t descriptorIOVA = ring_.Slab().DescriptorRegion().deviceBase;
+    if (descriptorIOVA == 0 || descriptorIOVA > 0xFFFFFFFFULL) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E invalid descriptor IOVA 0x%llx",
+                 descriptorIOVA);
+        return kIOReturnInternalError;
+    }
+
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlClrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+
+    // Make the safety invariant explicit before touching CommandPtr. No IT
+    // interrupt is enabled and RUN is forced clear; a CommandPtr by itself is
+    // inert and cannot launch DMA.
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+    hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+
+    const uint32_t expectedCmd =
+        static_cast<uint32_t>(descriptorIOVA) | Tx::Layout::kBlocksPerPacket;
+    hardware_->Write(cmdPtrReg, expectedCmd);
+
+    // The readbacks also flush posted MMIO writes.
+    const uint32_t readCmd = hardware_->Read(cmdPtrReg);
+    const uint32_t readCtl = hardware_->Read(ctrlReg);
+    const bool commandMatches = readCmd == expectedCmd;
+    const bool runClear = (readCtl & Driver::ContextControl::kRun) == 0;
+    const bool activeClear = (readCtl & Driver::ContextControl::kActive) == 0;
+    const bool deadClear = (readCtl & Driver::ContextControl::kDead) == 0;
+
+    if (!commandMatches || !runClear || !activeClear || !deadClear) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E CommandPtr validation failed expected=0x%08x actual=0x%08x control=0x%08x runClear=%u activeClear=%u deadClear=%u",
+                 expectedCmd,
+                 readCmd,
+                 readCtl,
+                 runClear ? 1U : 0U,
+                 activeClear ? 1U : 0U,
+                 deadClear ? 1U : 0U);
+        return kIOReturnInternalError;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5E inert CommandPtr programmed expected=0x%08x actual=0x%08x descriptorIOVA=0x%08x Z=%u control=0x%08x noRun=1 noInterrupt=1 noPacket=1",
+             expectedCmd,
+             readCmd,
+             static_cast<uint32_t>(descriptorIOVA),
+             Tx::Layout::kBlocksPerPacket,
+             readCtl);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochTransmitContext::RunAllSkipForPreflight(
+    uint32_t durationMs) noexcept {
+    if (state_ != State::Configured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E finite all-skip completion rejected - state=%{public}s",
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || !ring_.HasRings()) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E finite all-skip completion missing hardware/ring");
+        return kIOReturnNoResources;
+    }
+    if (durationMs == 0U || durationMs > 20U) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E finite all-skip completion invalid timeout=%u ms",
+                 durationMs);
+        return kIOReturnBadArgument;
+    }
+    if (!ring_.ProgramAllSkipPacketsForRunPreflight()) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E could not construct/publish finite 48-skip descriptor chain");
+        return kIOReturnInternalError;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5E finite all-skip descriptor chain published descriptors=48 terminalBranch=0 bytes=%zu dmaPublish=1",
+             ring_.Slab().DescriptorRegion().size);
+
+    const uint64_t descriptorIOVA = ring_.Slab().DescriptorRegion().deviceBase;
+    if (descriptorIOVA == 0U || descriptorIOVA > 0xFFFFFFFFULL) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E invalid descriptor IOVA 0x%llx",
+                 descriptorIOVA);
+        return kIOReturnInternalError;
+    }
+
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlSetReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
+    const Register32 ctrlClrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+
+    // The finite skip program begins with one descriptor, not the four
+    // physical slots reserved for a normal FF800 packet program.
+    const uint32_t expectedCmd =
+        static_cast<uint32_t>(descriptorIOVA) | 1U;
+    hardware_->Write(cmdPtrReg, expectedCmd);
+    const uint32_t commandBeforeRun = hardware_->Read(cmdPtrReg);
+    const uint32_t controlBeforeRun = hardware_->Read(ctrlReg);
+    if (commandBeforeRun != expectedCmd ||
+        (controlBeforeRun & Driver::ContextControl::kRun) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kActive) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kDead) != 0U) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E finite pre-RUN validation failed expectedCmd=0x%08x actualCmd=0x%08x control=0x%08x",
+                 expectedCmd,
+                 commandBeforeRun,
+                 controlBeforeRun);
+        return kIOReturnInternalError;
+    }
+
+    hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
+
+    const uint32_t maxPolls = durationMs * 100U; // 10 us per poll.
+    bool activeObserved = false;
+    uint32_t completionPolls = 0U;
+    uint32_t controlAfterRun = hardware_->Read(ctrlReg);
+    auto completion = ring_.FetchAllSkipCompletionForRunPreflight();
+    for (;
+         completionPolls < maxPolls &&
+         completion.completedDescriptors < Tx::Layout::kNumPackets &&
+         (controlAfterRun & Driver::ContextControl::kDead) == 0U;
+         ++completionPolls) {
+        activeObserved = activeObserved ||
+            ((controlAfterRun & Driver::ContextControl::kActive) != 0U);
+        IODelay(10U);
+        controlAfterRun = hardware_->Read(ctrlReg);
+        completion = ring_.FetchAllSkipCompletionForRunPreflight();
+    }
+    activeObserved = activeObserved ||
+        ((controlAfterRun & Driver::ContextControl::kActive) != 0U);
+
+    const bool deadSet =
+        (controlAfterRun & Driver::ContextControl::kDead) != 0U;
+    const bool completionProved =
+        completion.completedDescriptors == Tx::Layout::kNumPackets &&
+        completion.lastTransferStatus != 0U;
+    if (deadSet || !completionProved) {
+        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+        (void)hardware_->Read(ctrlReg);
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E finite all-skip completion failed control=0x%08x dead=%u completed=%u/48 lastStatus=0x%04x lastTimestamp=0x%04x activeObserved=%u polls=%u",
+                 controlAfterRun,
+                 deadSet ? 1U : 0U,
+                 completion.completedDescriptors,
+                 completion.lastTransferStatus,
+                 completion.lastTimestamp,
+                 activeObserved ? 1U : 0U,
+                 completionPolls);
+        return deadSet ? kIOReturnNotPermitted : kIOReturnTimeout;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5E finite all-skip DMA completion proved cmd=0x%08x control=0x%08x completed=48/48 lastStatus=0x%04x lastTimestamp=0x%04x activeObserved=%u dormantAccepted=%u polls=%u noInterrupt=1 noPacketDescriptor=1",
+             commandBeforeRun,
+             controlAfterRun,
+             completion.lastTransferStatus,
+             completion.lastTimestamp,
+             activeObserved ? 1U : 0U,
+             (controlAfterRun & Driver::ContextControl::kActive) == 0U ? 1U : 0U,
+             completionPolls);
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+    uint32_t controlStopped = hardware_->Read(ctrlReg);
+    for (uint32_t poll = 0;
+         poll < 1000U &&
+         (controlStopped & Driver::ContextControl::kActive) != 0U;
+         ++poll) {
+        IODelay(10U);
+        controlStopped = hardware_->Read(ctrlReg);
+    }
+
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+
+    const bool runClear =
+        (controlStopped & Driver::ContextControl::kRun) == 0U;
+    const bool activeClear =
+        (controlStopped & Driver::ContextControl::kActive) == 0U;
+    const bool deadClear =
+        (controlStopped & Driver::ContextControl::kDead) == 0U;
+    if (!runClear || !activeClear || !deadClear) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5E finite all-skip stop validation failed control=0x%08x runClear=%u activeClear=%u deadClear=%u",
+                 controlStopped,
+                 runClear ? 1U : 0U,
+                 activeClear ? 1U : 0U,
+                 deadClear ? 1U : 0U);
+        return kIOReturnTimeout;
+    }
+
+    state_ = State::Stopped;
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5E finite all-skip context stopped cleanly control=0x%08x runClear=1 activeClear=1 deadClear=1 completed=48 busPacketDescriptors=0",
+             controlStopped);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochTransmitContext::RunSingleSilencePacketForPreflight(
+    const uint32_t timeoutMs) noexcept {
+    if (state_ != State::Configured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5F finite silent packet rejected - state=%{public}s",
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || !ring_.HasRings() || !payloadBase_ ||
+        !metadataRing_ || !controlBlock_) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5F finite silent packet missing hardware/ring/shared memory");
+        return kIOReturnNoResources;
+    }
+    if (timeoutMs == 0U || timeoutMs > 20U) {
+        return kIOReturnBadArgument;
+    }
+
+    Tx::IsochTxDmaRing::SingleSilencePacketProgram program{};
+    if (!ring_.ProgramSingleSilencePacketForRunPreflight(
+            payloadBase_,
+            controlBlock_->numSlots,
+            controlBlock_->slotStrideBytes,
+            metadataRing_,
+            program)) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5F could not construct verified finite silent packet program");
+        return kIOReturnInternalError;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5F finite silent packet published packet=%u producerSlot=%u cmd=0x%08x channel=%u payloadBytes=%u tag=0 noCIP=1 allZero=1 terminalBranch=0 dmaPublish=1",
+             program.packetSlot,
+             program.producerSlot,
+             program.commandPtr,
+             channel_,
+             program.payloadLength);
+
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlSetReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
+    const Register32 ctrlClrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+    hardware_->Write(cmdPtrReg, program.commandPtr);
+
+    const uint32_t commandBeforeRun = hardware_->Read(cmdPtrReg);
+    const uint32_t controlBeforeRun = hardware_->Read(ctrlReg);
+    if (commandBeforeRun != program.commandPtr ||
+        (controlBeforeRun & Driver::ContextControl::kRun) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kActive) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kDead) != 0U) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5F finite silent packet pre-RUN validation failed expectedCmd=0x%08x actualCmd=0x%08x control=0x%08x",
+                 program.commandPtr,
+                 commandBeforeRun,
+                 controlBeforeRun);
+        return kIOReturnInternalError;
+    }
+
+    hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
+
+    const uint32_t maxPolls = timeoutMs * 100U; // 10 us per poll.
+    uint32_t polls = 0U;
+    uint32_t controlAfterRun = hardware_->Read(ctrlReg);
+    auto completion =
+        ring_.FetchSingleSilencePacketCompletionForRunPreflight(
+            program.packetSlot);
+    while (polls < maxPolls && completion.transferStatus == 0U &&
+           (controlAfterRun & Driver::ContextControl::kDead) == 0U) {
+        IODelay(10U);
+        ++polls;
+        controlAfterRun = hardware_->Read(ctrlReg);
+        completion =
+            ring_.FetchSingleSilencePacketCompletionForRunPreflight(
+                program.packetSlot);
+    }
+
+    const bool dead =
+        (controlAfterRun & Driver::ContextControl::kDead) != 0U;
+    const uint8_t eventCode =
+        static_cast<uint8_t>(completion.transferStatus & 0x1FU);
+    const bool ackComplete = eventCode == 0x11U;
+    if (dead || completion.transferStatus == 0U || !ackComplete) {
+        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+        (void)hardware_->Read(ctrlReg);
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5F finite silent packet completion failed control=0x%08x dead=%u xferStatus=0x%04x event=0x%02x timestamp=0x%04x polls=%u",
+                 controlAfterRun,
+                 dead ? 1U : 0U,
+                 completion.transferStatus,
+                 eventCode,
+                 completion.timestamp,
+                 polls);
+        return dead ? kIOReturnNotPermitted : kIOReturnTimeout;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5F finite silent packet DMA/transmit completed cmd=0x%08x control=0x%08x xferStatus=0x%04x event=ack_complete timestamp=0x%04x packet=%u channel=%u payloadBytes=%u actualBusPackets=1 payload=silence deviceEngineStopped=1 interrupts=0",
+             commandBeforeRun,
+             controlAfterRun,
+             completion.transferStatus,
+             completion.timestamp,
+             program.packetSlot,
+             channel_,
+             program.payloadLength);
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+    uint32_t controlStopped = hardware_->Read(ctrlReg);
+    for (uint32_t poll = 0U;
+         poll < 1000U &&
+         (controlStopped & Driver::ContextControl::kActive) != 0U;
+         ++poll) {
+        IODelay(10U);
+        controlStopped = hardware_->Read(ctrlReg);
+    }
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+
+    const bool runClear =
+        (controlStopped & Driver::ContextControl::kRun) == 0U;
+    const bool activeClear =
+        (controlStopped & Driver::ContextControl::kActive) == 0U;
+    const bool deadClear =
+        (controlStopped & Driver::ContextControl::kDead) == 0U;
+    if (!runClear || !activeClear || !deadClear) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5F finite silent packet stop validation failed control=0x%08x runClear=%u activeClear=%u deadClear=%u",
+                 controlStopped,
+                 runClear ? 1U : 0U,
+                 activeClear ? 1U : 0U,
+                 deadClear ? 1U : 0U);
+        return kIOReturnTimeout;
+    }
+
+    state_ = State::Stopped;
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5F finite silent packet context stopped cleanly control=0x%08x runClear=1 activeClear=1 deadClear=1 actualBusPackets=1",
+             controlStopped);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochTransmitContext::PrepareFiniteSilenceCadenceForPreflight()
+    noexcept {
+    finiteCadencePrepared_ = false;
+    finiteCadenceProgram_ = {};
+
+    if (state_ != State::Configured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence preparation rejected - state=%{public}s",
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || !ring_.HasRings()) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence preparation missing hardware/ring");
+        return kIOReturnNoResources;
+    }
+    if (!payloadBase_ || !metadataRing_ || !controlBlock_ ||
+        controlBlock_->numSlots == 0U ||
+        controlBlock_->slotStrideBytes == 0U) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence preparation shared TX contract incomplete");
+        return kIOReturnNotReady;
+    }
+
+    Tx::IsochTxDmaRing::FiniteSilenceCadenceProgram program{};
+    if (!ring_.ProgramFiniteSilenceCadenceForRunPreflight(
+            payloadBase_,
+            controlBlock_->numSlots,
+            controlBlock_->slotStrideBytes,
+            metadataRing_,
+            program)) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G could not construct verified finite D-D-D-S silence cadence");
+        return kIOReturnInternalError;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5G descriptor chain published descriptors=%u dataPackets=%u skip=%u payloadBytes=%u pattern=DDD-S terminalBranch=0 dmaPublish=1",
+             program.descriptorCount,
+             program.dataPacketCount,
+             program.skipPacketCount,
+             program.payloadLength);
+
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlClrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+    hardware_->Write(cmdPtrReg, program.commandPtr);
+
+    const uint32_t commandReadback = hardware_->Read(cmdPtrReg);
+    const uint32_t controlReadback = hardware_->Read(ctrlReg);
+    const bool runClear =
+        (controlReadback & Driver::ContextControl::kRun) == 0U;
+    const bool activeClear =
+        (controlReadback & Driver::ContextControl::kActive) == 0U;
+    const bool deadClear =
+        (controlReadback & Driver::ContextControl::kDead) == 0U;
+    if (commandReadback != program.commandPtr || !runClear ||
+        !activeClear || !deadClear) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence pre-RUN validation failed expectedCmd=0x%08x actualCmd=0x%08x control=0x%08x runClear=%u activeClear=%u deadClear=%u",
+                 program.commandPtr,
+                 commandReadback,
+                 controlReadback,
+                 runClear ? 1U : 0U,
+                 activeClear ? 1U : 0U,
+                 deadClear ? 1U : 0U);
+        return kIOReturnInternalError;
+    }
+
+    finiteCadenceProgram_ = program;
+    finiteCadencePrepared_ = true;
+    return kIOReturnSuccess;
+}
+
+kern_return_t
+IsochTransmitContext::RunPreparedFiniteSilenceCadenceForPreflight(
+    const uint32_t timeoutMs) noexcept {
+    if (!finiteCadencePrepared_ ||
+        (state_ != State::Configured && state_ != State::Stopped)) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence run rejected prepared=%u state=%{public}s",
+                 finiteCadencePrepared_ ? 1U : 0U,
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || timeoutMs == 0U || timeoutMs > 50U) {
+        finiteCadencePrepared_ = false;
+        finiteCadenceProgram_ = {};
+        return hardware_ ? kIOReturnBadArgument : kIOReturnNoResources;
+    }
+
+    const auto program = finiteCadenceProgram_;
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlSetReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
+
+    const uint32_t commandBeforeRun = hardware_->Read(cmdPtrReg);
+    const uint32_t controlBeforeRun = hardware_->Read(ctrlReg);
+    if (commandBeforeRun != program.commandPtr ||
+        (controlBeforeRun & Driver::ContextControl::kRun) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kActive) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kDead) != 0U) {
+        finiteCadencePrepared_ = false;
+        finiteCadenceProgram_ = {};
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence RUN gate failed expectedCmd=0x%08x actualCmd=0x%08x control=0x%08x",
+                 program.commandPtr,
+                 commandBeforeRun,
+                 controlBeforeRun);
+        return kIOReturnInternalError;
+    }
+
+    hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
+
+    const uint32_t maxPolls = timeoutMs * 100U; // 10 us per poll.
+    uint32_t polls = 0U;
+    bool deadObserved = false;
+    bool activeObserved = false;
+    uint32_t controlAfterRun = hardware_->Read(ctrlReg);
+    auto completion =
+        ring_.FetchFiniteSilenceCadenceCompletionForRunPreflight(
+            program.startPacketSlot);
+    while (polls < maxPolls &&
+           completion.completedDescriptors < program.descriptorCount) {
+        deadObserved = deadObserved ||
+            (controlAfterRun & Driver::ContextControl::kDead) != 0U;
+        activeObserved = activeObserved ||
+            (controlAfterRun & Driver::ContextControl::kActive) != 0U;
+        if (deadObserved) {
+            break;
+        }
+        IODelay(10U);
+        ++polls;
+        controlAfterRun = hardware_->Read(ctrlReg);
+        completion =
+            ring_.FetchFiniteSilenceCadenceCompletionForRunPreflight(
+                program.startPacketSlot);
+    }
+    deadObserved = deadObserved ||
+        (controlAfterRun & Driver::ContextControl::kDead) != 0U;
+    activeObserved = activeObserved ||
+        (controlAfterRun & Driver::ContextControl::kActive) != 0U;
+
+    const bool completionValid =
+        !deadObserved &&
+        completion.completedDescriptors == program.descriptorCount &&
+        completion.completedDataDescriptors == program.dataPacketCount &&
+        completion.actualBusPackets == program.dataPacketCount &&
+        completion.eventErrors == 0U &&
+        completion.cadenceValid;
+
+    if (completionValid) {
+        ASFW_LOG(Isoch,
+                 "IT: ✅ Stage 5G finite cadence burst completed descriptors=%u/%u dataCompleted=%u/%u actualBusPackets=%u eventErrors=0 deadObserved=0 activeObserved=%u polls=%u",
+                 completion.completedDescriptors,
+                 program.descriptorCount,
+                 completion.completedDataDescriptors,
+                 program.dataPacketCount,
+                 completion.actualBusPackets,
+                 activeObserved ? 1U : 0U,
+                 polls);
+        ASFW_LOG(Isoch,
+                 "IT: ✅ Stage 5G cadence verification passed timestampPattern=1,1,2");
+    } else {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence burst failed control=0x%08x descriptors=%u/%u dataCompleted=%u/%u actualBusPackets=%u eventErrors=%u deadObserved=%u cadenceValid=%u lastStatus=0x%04x lastTimestamp=0x%04x polls=%u",
+                 controlAfterRun,
+                 completion.completedDescriptors,
+                 program.descriptorCount,
+                 completion.completedDataDescriptors,
+                 program.dataPacketCount,
+                 completion.actualBusPackets,
+                 completion.eventErrors,
+                 deadObserved ? 1U : 0U,
+                 completion.cadenceValid ? 1U : 0U,
+                 completion.lastTransferStatus,
+                 completion.lastTimestamp,
+                 polls);
+    }
+
+    const kern_return_t cleanupKr =
+        CleanupFiniteSilenceCadenceForPreflight();
+    if (cleanupKr != kIOReturnSuccess) {
+        return cleanupKr;
+    }
+    if (!completionValid) {
+        return deadObserved ? kIOReturnNotPermitted : kIOReturnTimeout;
+    }
+    return kIOReturnSuccess;
+}
+
+kern_return_t
+IsochTransmitContext::CleanupFiniteSilenceCadenceForPreflight() noexcept {
+    finiteCadencePrepared_ = false;
+    finiteCadenceProgram_ = {};
+
+    if (!hardware_) {
+        if (state_ != State::Unconfigured) {
+            state_ = State::Stopped;
+        }
+        return kIOReturnNoResources;
+    }
+
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlClrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+    uint32_t controlStopped = hardware_->Read(ctrlReg);
+    for (uint32_t poll = 0U;
+         poll < 1000U &&
+         (controlStopped & Driver::ContextControl::kActive) != 0U;
+         ++poll) {
+        IODelay(10U);
+        controlStopped = hardware_->Read(ctrlReg);
+    }
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+
+    const bool runClear =
+        (controlStopped & Driver::ContextControl::kRun) == 0U;
+    const bool activeClear =
+        (controlStopped & Driver::ContextControl::kActive) == 0U;
+    const bool deadClear =
+        (controlStopped & Driver::ContextControl::kDead) == 0U;
+    if (state_ != State::Unconfigured) {
+        state_ = State::Stopped;
+    }
+    refillInProgress_.clear(std::memory_order_release);
+
+    if (!runClear || !activeClear || !deadClear) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G finite cadence stop validation failed control=0x%08x runClear=%u activeClear=%u deadClear=%u",
+                 controlStopped,
+                 runClear ? 1U : 0U,
+                 activeClear ? 1U : 0U,
+                 deadClear ? 1U : 0U);
+        return deadClear ? kIOReturnTimeout : kIOReturnNotPermitted;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5G transmit context stopped cleanly control=0x%08x runClear=1 activeClear=1 deadClear=1",
+             controlStopped);
+    return kIOReturnSuccess;
+}
+
+kern_return_t
+IsochTransmitContext::PrepareBoundedCircularSilenceCadenceForPreflight()
+    noexcept {
+    boundedCircularCadencePrepared_ = false;
+    boundedCircularCadenceProgram_ = {};
+    finiteCadencePrepared_ = false;
+    finiteCadenceProgram_ = {};
+
+    if (state_ != State::Configured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H circular cadence preparation rejected state=%{public}s",
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || !ring_.HasRings()) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H circular cadence preparation missing hardware/ring");
+        return kIOReturnNoResources;
+    }
+    if (!payloadBase_ || !metadataRing_ || !controlBlock_ ||
+        controlBlock_->numSlots == 0U ||
+        controlBlock_->slotStrideBytes == 0U) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H circular cadence shared TX contract incomplete");
+        return kIOReturnNotReady;
+    }
+
+    Tx::IsochTxDmaRing::BoundedCircularSilenceCadenceProgram program{};
+    if (!ring_.ProgramBoundedCircularSilenceCadenceForPreflight(
+            payloadBase_,
+            controlBlock_->numSlots,
+            controlBlock_->slotStrideBytes,
+            metadataRing_,
+            program)) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H could not construct verified circular D-D-D-S silence cadence");
+        return kIOReturnInternalError;
+    }
+
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlClrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+    hardware_->Write(cmdPtrReg, program.commandPtr);
+
+    const uint32_t commandReadback = hardware_->Read(cmdPtrReg);
+    const uint32_t controlReadback = hardware_->Read(ctrlReg);
+    const bool runClear =
+        (controlReadback & Driver::ContextControl::kRun) == 0U;
+    const bool activeClear =
+        (controlReadback & Driver::ContextControl::kActive) == 0U;
+    const bool deadClear =
+        (controlReadback & Driver::ContextControl::kDead) == 0U;
+    if (commandReadback != program.commandPtr || !runClear ||
+        !activeClear || !deadClear) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H circular cadence pre-RUN validation failed expectedCmd=0x%08x actualCmd=0x%08x control=0x%08x runClear=%u activeClear=%u deadClear=%u",
+                 program.commandPtr,
+                 commandReadback,
+                 controlReadback,
+                 runClear ? 1U : 0U,
+                 activeClear ? 1U : 0U,
+                 deadClear ? 1U : 0U);
+        return kIOReturnInternalError;
+    }
+
+    boundedCircularCadenceProgram_ = program;
+    boundedCircularCadencePrepared_ = true;
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5H circular cadence armed with RUN clear cmd=0x%08x startSlot=%u durationPending=1",
+             program.commandPtr,
+             program.startPacketSlot);
+    return kIOReturnSuccess;
+}
+
+kern_return_t
+IsochTransmitContext::RunPreparedBoundedCircularSilenceCadenceForPreflight(
+    const uint32_t durationMs) noexcept {
+    if (!boundedCircularCadencePrepared_ ||
+        (state_ != State::Configured && state_ != State::Stopped)) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H circular cadence run rejected prepared=%u state=%{public}s",
+                 boundedCircularCadencePrepared_ ? 1U : 0U,
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_ || durationMs < 50U || durationMs > 250U) {
+        return hardware_ ? kIOReturnBadArgument : kIOReturnNoResources;
+    }
+
+    const auto program = boundedCircularCadenceProgram_;
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlSetReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
+
+    const uint32_t commandBeforeRun = hardware_->Read(cmdPtrReg);
+    const uint32_t controlBeforeRun = hardware_->Read(ctrlReg);
+    if (commandBeforeRun != program.commandPtr ||
+        (controlBeforeRun & Driver::ContextControl::kRun) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kActive) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kDead) != 0U) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H circular cadence RUN gate failed expectedCmd=0x%08x actualCmd=0x%08x control=0x%08x",
+                 program.commandPtr,
+                 commandBeforeRun,
+                 controlBeforeRun);
+        return kIOReturnInternalError;
+    }
+
+    hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
+
+    constexpr uint32_t kPollDelayUs = 250U;
+    const uint32_t maxPolls = (durationMs * 1000U) / kPollDelayUs;
+    uint32_t polls = 0U;
+    bool deadObserved = false;
+    bool activeObserved = false;
+    uint32_t consecutiveInactiveAfterActive = 0U;
+    uint32_t maxInactiveAfterActive = 0U;
+    uint32_t anchorExecutions = 0U;
+    uint32_t anchorEventErrors = 0U;
+    uint16_t previousAnchorTimestamp = 0U;
+    bool anchorSeen = false;
+
+    for (; polls < maxPolls; ++polls) {
+        const uint32_t control = hardware_->Read(ctrlReg);
+        const bool active =
+            (control & Driver::ContextControl::kActive) != 0U;
+        const bool dead =
+            (control & Driver::ContextControl::kDead) != 0U;
+        deadObserved = deadObserved || dead;
+        if (active) {
+            activeObserved = true;
+            consecutiveInactiveAfterActive = 0U;
+        } else if (activeObserved) {
+            ++consecutiveInactiveAfterActive;
+            maxInactiveAfterActive = std::max(
+                maxInactiveAfterActive, consecutiveInactiveAfterActive);
+        }
+
+        const auto anchor =
+            ring_.FetchCadenceAnchorCompletionForPreflight(
+                program.startPacketSlot);
+        if (anchor.transferStatus != 0U) {
+            const uint8_t eventCode = static_cast<uint8_t>(
+                anchor.transferStatus & 0x1FU);
+            if (eventCode != 0x11U) {
+                ++anchorEventErrors;
+            } else if (!anchorSeen) {
+                anchorSeen = true;
+                previousAnchorTimestamp = anchor.timestamp;
+                anchorExecutions = 1U;
+            } else if (anchor.timestamp != previousAnchorTimestamp) {
+                previousAnchorTimestamp = anchor.timestamp;
+                ++anchorExecutions;
+            }
+        }
+
+        if (dead) {
+            break;
+        }
+        IODelay(kPollDelayUs);
+    }
+
+    // Stop the immutable ring synchronously before the protocol sends the
+    // FF800 stop command. The cleanup callback remains idempotent and will
+    // repeat this gate on every partial-failure path.
+    const kern_return_t stopStatus =
+        CleanupBoundedCircularSilenceCadenceForPreflight();
+    const auto completion =
+        ring_.FetchFiniteSilenceCadenceCompletionForRunPreflight(
+            program.startPacketSlot);
+
+    const uint32_t completedSweeps =
+        anchorExecutions > 0U ? anchorExecutions - 1U : 0U;
+    const uint32_t minimumBusPackets =
+        completedSweeps * program.dataPacketCount;
+    const uint32_t nominalSweeps = durationMs / 6U;
+    const uint32_t minimumRequiredSweeps =
+        std::max(4U, nominalSweeps / 2U);
+
+    // Tolerate at most three consecutive inactive samples (750 us) to avoid
+    // treating a single asynchronous register read as a lost circular run.
+    const bool activeContinuous = maxInactiveAfterActive < 4U;
+    const bool repeatedRunValid =
+        stopStatus == kIOReturnSuccess &&
+        !deadObserved &&
+        activeObserved &&
+        activeContinuous &&
+        anchorEventErrors == 0U &&
+        completedSweeps >= minimumRequiredSweeps &&
+        completion.completedDescriptors == program.descriptorCount &&
+        completion.completedDataDescriptors == program.dataPacketCount &&
+        completion.actualBusPackets == program.dataPacketCount &&
+        completion.eventErrors == 0U;
+
+    if (!repeatedRunValid) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H bounded circular run failed durationMs=%u controlPolls=%u activeObserved=%u maxInactivePolls=%u deadObserved=%u anchorExecutions=%u completedSweeps=%u/%u minimumBusPackets=%u anchorEventErrors=%u descriptors=%u/%u dataCompleted=%u/%u eventErrors=%u stopKr=0x%x",
+                 durationMs,
+                 polls,
+                 activeObserved ? 1U : 0U,
+                 maxInactiveAfterActive,
+                 deadObserved ? 1U : 0U,
+                 anchorExecutions,
+                 completedSweeps,
+                 minimumRequiredSweeps,
+                 minimumBusPackets,
+                 anchorEventErrors,
+                 completion.completedDescriptors,
+                 program.descriptorCount,
+                 completion.completedDataDescriptors,
+                 program.dataPacketCount,
+                 completion.eventErrors,
+                 stopStatus);
+        if (stopStatus != kIOReturnSuccess) {
+            return stopStatus;
+        }
+        return deadObserved ? kIOReturnNotPermitted : kIOReturnTimeout;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5H bounded circular silence sustained durationMs=%u anchorExecutions=%u completedSweeps=%u minimumBusPackets=%u activeContinuous=1 eventErrors=0 deadObserved=0 interrupts=0 refill=0",
+             durationMs,
+             anchorExecutions,
+             completedSweeps,
+             minimumBusPackets);
+    return kIOReturnSuccess;
+}
+
+kern_return_t
+IsochTransmitContext::CleanupBoundedCircularSilenceCadenceForPreflight()
+    noexcept {
+    boundedCircularCadencePrepared_ = false;
+    boundedCircularCadenceProgram_ = {};
+
+    if (!hardware_) {
+        if (state_ != State::Unconfigured) {
+            state_ = State::Stopped;
+        }
+        return kIOReturnNoResources;
+    }
+
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlClrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+    uint32_t controlStopped = hardware_->Read(ctrlReg);
+    for (uint32_t poll = 0U;
+         poll < 2000U &&
+         (controlStopped & Driver::ContextControl::kActive) != 0U;
+         ++poll) {
+        IODelay(10U);
+        controlStopped = hardware_->Read(ctrlReg);
+    }
+    hardware_->Write(Register32::kIsoXmitIntMaskClear,
+                     (1U << contextIndex_));
+    hardware_->Write(Register32::kIsoXmitIntEventClear,
+                     (1U << contextIndex_));
+
+    const bool runClear =
+        (controlStopped & Driver::ContextControl::kRun) == 0U;
+    const bool activeClear =
+        (controlStopped & Driver::ContextControl::kActive) == 0U;
+    const bool deadClear =
+        (controlStopped & Driver::ContextControl::kDead) == 0U;
+    if (state_ != State::Unconfigured) {
+        state_ = State::Stopped;
+    }
+    refillInProgress_.clear(std::memory_order_release);
+
+    if (!runClear || !activeClear || !deadClear) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H circular context stop validation failed control=0x%08x runClear=%u activeClear=%u deadClear=%u",
+                 controlStopped,
+                 runClear ? 1U : 0U,
+                 activeClear ? 1U : 0U,
+                 deadClear ? 1U : 0U);
+        return deadClear ? kIOReturnTimeout : kIOReturnNotPermitted;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5H circular transmit context stopped cleanly control=0x%08x runClear=1 activeClear=1 deadClear=1",
+             controlStopped);
+    return kIOReturnSuccess;
+}
+
 kern_return_t IsochTransmitContext::Start() noexcept {
     if (state_ != State::Configured && state_ != State::Stopped) {
         ASFW_LOG(Isoch, "IT: Start rejected - state=%{public}s", TxStateName(state_));
@@ -348,6 +1401,10 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 }
 
 void IsochTransmitContext::Stop() noexcept {
+    finiteCadencePrepared_ = false;
+    finiteCadenceProgram_ = {};
+    boundedCircularCadencePrepared_ = false;
+    boundedCircularCadenceProgram_ = {};
     if (state_ == State::Running && hardware_) {
         Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
         hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);

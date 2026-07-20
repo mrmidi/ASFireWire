@@ -135,6 +135,109 @@ public:
                                    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
                                    uint64_t preFillCount) noexcept;
 
+    struct SingleSilencePacketProgram final {
+        uint32_t packetSlot{0U};
+        uint32_t producerSlot{0U};
+        uint32_t commandPtr{0U};
+        uint32_t payloadLength{0U};
+    };
+
+    struct SingleSilencePacketCompletion final {
+        uint16_t transferStatus{0U};
+        uint16_t timestamp{0U};
+    };
+
+    // Stage 5F safety seam: select one already-primed no-CIP FF800 data packet,
+    // verify that its 1536-byte payload is entirely zero, terminate its normal
+    // four-descriptor OHCI program, publish payload + descriptors, and return
+    // the exact CommandPtr. This is the first preflight that can emit a packet.
+    [[nodiscard]] bool ProgramSingleSilencePacketForRunPreflight(
+        uint8_t* payloadBase,
+        uint32_t numSlots,
+        uint32_t slotStrideBytes,
+        const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+        SingleSilencePacketProgram& outProgram) noexcept;
+    [[nodiscard]] SingleSilencePacketCompletion
+    FetchSingleSilencePacketCompletionForRunPreflight(
+        uint32_t packetSlot) noexcept;
+
+    struct FiniteSilenceCadenceProgram final {
+        uint32_t commandPtr{0U};
+        uint32_t startPacketSlot{0U};
+        uint32_t descriptorCount{0U};
+        uint32_t dataPacketCount{0U};
+        uint32_t skipPacketCount{0U};
+        uint32_t payloadLength{0U};
+    };
+
+    struct FiniteSilenceCadenceCompletion final {
+        uint32_t completedDescriptors{0U};
+        uint32_t completedDataDescriptors{0U};
+        uint32_t actualBusPackets{0U};
+        uint32_t eventErrors{0U};
+        uint16_t lastTransferStatus{0U};
+        uint16_t lastTimestamp{0U};
+        bool cadenceValid{false};
+        std::array<uint16_t, 36U> dataTimestamps{};
+    };
+
+    // Stage 5G safety seam: convert the already-primed 48-cycle FF800 ring
+    // into one finite D-D-D-S cadence burst. All 36 data payloads must be
+    // 1536-byte no-CIP silence packets; all 12 idle cycles remain true OHCI
+    // skip programs. Queue branches are finite and the final skip terminates.
+    [[nodiscard]] bool ProgramFiniteSilenceCadenceForRunPreflight(
+        uint8_t* payloadBase,
+        uint32_t numSlots,
+        uint32_t slotStrideBytes,
+        const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+        FiniteSilenceCadenceProgram& outProgram) noexcept;
+    [[nodiscard]] FiniteSilenceCadenceCompletion
+    FetchFiniteSilenceCadenceCompletionForRunPreflight(
+        uint32_t startPacketSlot) noexcept;
+
+    struct BoundedCircularSilenceCadenceProgram final {
+        uint32_t commandPtr{0U};
+        uint32_t startPacketSlot{0U};
+        uint32_t descriptorCount{0U};
+        uint32_t dataPacketCount{0U};
+        uint32_t skipPacketCount{0U};
+        uint32_t payloadLength{0U};
+    };
+
+    struct CadenceAnchorCompletion final {
+        uint16_t transferStatus{0U};
+        uint16_t timestamp{0U};
+    };
+
+    // Stage 5H safety seam: reuse the Stage 5G-validated 48-cycle D-D-D-S
+    // silence program, then connect its final skip back to the first data
+    // descriptor. The ring remains immutable while RUN is set; the caller
+    // must stop it after a strictly bounded interval.
+    [[nodiscard]] bool ProgramBoundedCircularSilenceCadenceForPreflight(
+        uint8_t* payloadBase,
+        uint32_t numSlots,
+        uint32_t slotStrideBytes,
+        const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+        BoundedCircularSilenceCadenceProgram& outProgram) noexcept;
+    [[nodiscard]] CadenceAnchorCompletion
+    FetchCadenceAnchorCompletionForPreflight(
+        uint32_t startPacketSlot) noexcept;
+
+    struct AllSkipCompletionSnapshot final {
+        uint32_t completedDescriptors{0};
+        uint16_t lastTransferStatus{0};
+        uint16_t lastTimestamp{0};
+    };
+
+    // Stage 5E safety seam: replace every packet program with a true OHCI
+    // transmit skip descriptor. The chain is deliberately finite: descriptors
+    // 0..46 branch forward and descriptor 47 terminates with branchAddress=0.
+    // This mirrors the normal OHCI queue model and lets completion status,
+    // rather than the transient ACTIVE bit, prove that DMA executed.
+    [[nodiscard]] bool ProgramAllSkipPacketsForRunPreflight() noexcept;
+    [[nodiscard]] AllSkipCompletionSnapshot
+    FetchAllSkipCompletionForRunPreflight() noexcept;
+
     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
                                        uint8_t contextIndex,
                                        ASFW::IsochTransport::TxPacketMeta* metadataRing,
@@ -164,13 +267,18 @@ private:
                              uint32_t deltaConsumed,
                              RefillOutcome& out) noexcept;
     void CommitRefill(uint32_t toFill) noexcept;
+    void ProgramSkipPacket(uint32_t packetSlot) noexcept;
+    [[nodiscard]] bool IsSkipDescriptor(uint32_t packetSlot) const noexcept;
+    [[nodiscard]] OHCIDescriptor* CompletionDescriptorForPacket(
+        uint32_t packetSlot) noexcept;
     [[nodiscard]] bool DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
                                                  uint8_t contextIndex,
                                                  uint32_t& outPacketIndex,
                                                  uint32_t& outCmdPtr) noexcept;
     void GaugeWirePayload(uint64_t fillAbsIdx,
                           const uint8_t* packetBytes,
-                          uint32_t payloadLength) noexcept;
+                          uint32_t payloadLength,
+                          uint32_t immediateHeaderQ0LE) noexcept;
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};

@@ -5,6 +5,7 @@
 #include "../../Common/TimingUtils.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <DriverKit/IOLib.h>
 
 namespace ASFW::Isoch::Tx {
@@ -27,6 +28,21 @@ namespace {
     h = (h & ~(static_cast<uint32_t>(0x3F) << 8)) |
         (static_cast<uint32_t>(channel & 0x3F) << 8);
     return OSSwapHostToLittleInt32(h);
+}
+
+// The generic AT helper intentionally rejects Z=1 because the normal ASFW
+// packet program always occupies four descriptor blocks. Stage 5E proved that
+// a true OHCI skip program is exactly one descriptor, so Stage 5G needs a
+// narrowly-scoped encoder that permits only the two program sizes used by the
+// finite cadence: Z=4 for data and Z=1 for skip.
+[[nodiscard]] inline uint32_t MakeFiniteCadenceBranchWord(
+    const uint32_t descriptorIOVA,
+    const uint32_t zBlocks) noexcept {
+    if (descriptorIOVA == 0U || (descriptorIOVA & 0xFU) != 0U ||
+        (zBlocks != 1U && zBlocks != Layout::kBlocksPerPacket)) {
+        return 0U;
+    }
+    return (descriptorIOVA & 0xFFFFFFF0U) | (zBlocks & 0xFU);
 }
 } // namespace
 
@@ -55,11 +71,16 @@ void IsochTxDmaRing::ResetForStart() noexcept {
 
 void IsochTxDmaRing::GaugeWirePayload(uint64_t fillAbsIdx,
                                       const uint8_t* packetBytes,
-                                      uint32_t payloadLength) noexcept {
+                                      uint32_t payloadLength,
+                                      uint32_t immediateHeaderQ0LE) noexcept {
     constexpr uint32_t kCipHeaderBytes = 8;
     constexpr uint32_t kIdleSlotWord = 0x80000000u; // AM824 no-info / idle MIDI
-    if (payloadLength <= kCipHeaderBytes) {
-        return; // NO-DATA packet: CIP header only
+    const uint32_t headerQ0 = OSSwapLittleToHostInt32(immediateHeaderQ0LE);
+    const auto tag = ASFW::IsochTransport::DecodeIsochTxHeaderTag(headerQ0);
+    const uint32_t streamHeaderBytes =
+        tag == ASFW::IsochTransport::IsochPacketTag::kCip ? kCipHeaderBytes : 0U;
+    if (payloadLength <= streamHeaderBytes) {
+        return; // CIP header-only or a true empty no-CIP cycle.
     }
 
     const uint64_t dataPackets =
@@ -75,8 +96,8 @@ void IsochTxDmaRing::GaugeWirePayload(uint64_t fillAbsIdx,
                  counters_.wireLastInfoQuad.load(std::memory_order_relaxed));
     }
 
-    const uint32_t quadCount = (payloadLength - kCipHeaderBytes) / 4;
-    const uint8_t* quadBytes = packetBytes + kCipHeaderBytes;
+    const uint32_t quadCount = (payloadLength - streamHeaderBytes) / 4;
+    const uint8_t* quadBytes = packetBytes + streamHeaderBytes;
     uint32_t infoQuads = 0;
     uint32_t lastInfoQuad = 0;
     uint32_t maxAbs24 = 0;
@@ -183,18 +204,26 @@ void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
     const uint32_t lastProcessedPkt = (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
     out.completedPacketIndex = lastProcessedPkt;
     out.completedPacketCount = deltaConsumed;
-    auto* processedOL = slab_.GetDescriptorPtr(
-        lastProcessedPkt * Layout::kBlocksPerPacket +
-        Layout::kCompletionBlock);
-
+    auto* processedFirst = slab_.GetDescriptorPtr(
+        lastProcessedPkt * Layout::kBlocksPerPacket);
     if (dmaMemory_) {
-        dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(processedOL), sizeof(*processedOL));
+        dmaMemory_->FetchFromDevice(
+            reinterpret_cast<const std::byte*>(processedFirst),
+            sizeof(*processedFirst));
+    }
+    auto* processedCompletion =
+        CompletionDescriptorForPacket(lastProcessedPkt);
+    if (dmaMemory_ && processedCompletion != processedFirst) {
+        dmaMemory_->FetchFromDevice(
+            reinterpret_cast<const std::byte*>(processedCompletion),
+            sizeof(*processedCompletion));
     }
 
-    const uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
+    const uint16_t hwTimestamp = static_cast<uint16_t>(
+        processedCompletion->statusWord & 0xFFFFU);
     out.hwTimestamp = hwTimestamp;
 
-    if (processedOL->statusWord == 0) {
+    if (processedCompletion->statusWord == 0) {
         return;
     }
 
@@ -216,6 +245,861 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
     ASFW::Driver::WriteBarrier();
 
     counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
+}
+
+void IsochTxDmaRing::ProgramSkipPacket(const uint32_t packetSlot) noexcept {
+    const uint32_t descBase = packetSlot * Layout::kBlocksPerPacket;
+    for (uint32_t block = 0; block < Layout::kBlocksPerPacket; ++block) {
+        auto* desc = slab_.GetDescriptorPtr(descBase + block);
+        std::memset(desc, 0, sizeof(OHCIDescriptor));
+    }
+
+    // A no-CIP idle cycle is a true OHCI skip: one zero-length standard
+    // OUTPUT_LAST descriptor and no immediate isoch header. Keep the fixed
+    // four-block slot geometry by branching directly to the next slot with
+    // Z=4; the remaining three descriptors in this slot stay zeroed.
+    auto* skip = slab_.GetDescriptorPtr(descBase);
+    const uint32_t nextPacketSlot =
+        (packetSlot + 1U) % Layout::kNumPackets;
+    ITDescriptorBuilder::BuildOutputLast(
+        *skip,
+        {
+            .dataIOVA = 0,
+            .payloadSize = 0,
+            .branchIOVA = slab_.GetDescriptorIOVA(
+                nextPacketSlot * Layout::kBlocksPerPacket),
+            .zValue = Layout::kBlocksPerPacket,
+            .interruptBits =
+                Core::IsTimingGroupBoundary(packetSlot)
+                    ? OHCIDescriptor::kIntAlways
+                    : OHCIDescriptor::kIntNever,
+        });
+}
+
+bool IsochTxDmaRing::ProgramSingleSilencePacketForRunPreflight(
+    uint8_t* payloadBase,
+    const uint32_t numSlots,
+    const uint32_t slotStrideBytes,
+    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+    SingleSilencePacketProgram& outProgram) noexcept {
+    outProgram = {};
+    if (!slab_.IsValid() || payloadBase == nullptr || metadataRing == nullptr ||
+        numSlots == 0U || slotStrideBytes == 0U) {
+        return false;
+    }
+
+    constexpr uint32_t kExpectedPayloadBytes = 1536U;
+    for (uint32_t packetSlot = 0U;
+         packetSlot < Layout::kNumPackets;
+         ++packetSlot) {
+        const uint32_t producerSlot = packetSlot % numSlots;
+        const auto& meta = metadataRing[producerSlot];
+        const uint32_t metaQ0 =
+            OSSwapLittleToHostInt32(meta.immediateHeader[0]);
+        const auto tag = ASFW::IsochTransport::DecodeIsochTxHeaderTag(metaQ0);
+        if (ASFW::IsochTransport::ShouldSkipIsochTxPacket(
+                tag, meta.payloadLength)) {
+            continue;
+        }
+        if (tag != ASFW::IsochTransport::IsochPacketTag::kNoCipHeader ||
+            meta.payloadLength != kExpectedPayloadBytes ||
+            meta.payloadLength > slotStrideBytes) {
+            return false;
+        }
+
+        const uint8_t* payload = payloadBase +
+            static_cast<size_t>(producerSlot) * slotStrideBytes;
+        for (uint32_t byte = 0U; byte < meta.payloadLength; ++byte) {
+            if (payload[byte] != 0U) {
+                ASFW_LOG(Isoch,
+                         "IT: Stage 5F single-packet safety check rejected nonzero payload packet=%u slot=%u byte=%u value=0x%02x",
+                         packetSlot,
+                         producerSlot,
+                         byte,
+                         payload[byte]);
+                return false;
+            }
+        }
+
+        const uint32_t descBase = packetSlot * Layout::kBlocksPerPacket;
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
+            slab_.GetDescriptorPtr(descBase));
+        auto* desc2 = slab_.GetDescriptorPtr(
+            descBase + Layout::kFirstPayloadBlock);
+        auto* completion = slab_.GetDescriptorPtr(
+            descBase + Layout::kCompletionBlock);
+
+        const uint32_t wireQ0 =
+            OSSwapLittleToHostInt32(immDesc->immediateData[0]);
+        const uint32_t wireQ1 =
+            OSSwapLittleToHostInt32(immDesc->immediateData[1]);
+        const uint8_t wireChannel =
+            static_cast<uint8_t>((wireQ0 >> 8U) & 0x3FU);
+        if (ASFW::IsochTransport::DecodeIsochTxHeaderTag(wireQ0) !=
+                ASFW::IsochTransport::IsochPacketTag::kNoCipHeader ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(wireQ0) !=
+                ASFW::IsochTransport::kIsochSpeedS400 ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderTCode(wireQ0) !=
+                ASFW::IsochTransport::kIsochDataBlockTCode ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(wireQ1) !=
+                meta.payloadLength ||
+            wireChannel != channel_) {
+            ASFW_LOG(Isoch,
+                     "IT: Stage 5F single-packet header validation failed packet=%u tag=%u speed=%u tcode=0x%x channel=%u/%u dataLength=%u/%u",
+                     packetSlot,
+                     static_cast<uint32_t>(
+                         ASFW::IsochTransport::DecodeIsochTxHeaderTag(wireQ0)),
+                     ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(wireQ0),
+                     ASFW::IsochTransport::DecodeIsochTxHeaderTCode(wireQ0),
+                     wireChannel,
+                     channel_,
+                     ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(wireQ1),
+                     meta.payloadLength);
+            return false;
+        }
+
+        // Convert the normal circular packet program to a finite one-packet
+        // program. The immediate descriptor's self-link remains the OHCI skip
+        // address for a missed cycle; the OUTPUT_LAST branch is the queue tail.
+        const uint32_t intMask = 0x3U <<
+            (OHCIDescriptor::kIntShift + OHCIDescriptor::kControlHighShift);
+        completion->control &= ~intMask;
+        completion->branchWord = 0U;
+        AR_init_status(*completion, 0U);
+        desc2->statusWord = 0U;
+        immDesc->common.statusWord = 0U;
+
+        if (dmaMemory_) {
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(payload),
+                meta.payloadLength);
+            dmaMemory_->PublishBarrier();
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(immDesc),
+                sizeof(OHCIDescriptorImmediate));
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(desc2),
+                sizeof(OHCIDescriptor));
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(completion),
+                sizeof(OHCIDescriptor));
+        } else {
+            ASFW::Driver::WriteBarrier();
+        }
+
+        const uint64_t descriptorIOVA =
+            slab_.GetDescriptorIOVA(descBase);
+        if (descriptorIOVA == 0U || descriptorIOVA > 0xFFFFFFFFULL) {
+            return false;
+        }
+
+        outProgram.packetSlot = packetSlot;
+        outProgram.producerSlot = producerSlot;
+        outProgram.commandPtr =
+            static_cast<uint32_t>(descriptorIOVA) |
+            Layout::kBlocksPerPacket;
+        outProgram.payloadLength = meta.payloadLength;
+        return true;
+    }
+    return false;
+}
+
+IsochTxDmaRing::SingleSilencePacketCompletion
+IsochTxDmaRing::FetchSingleSilencePacketCompletionForRunPreflight(
+    const uint32_t packetSlot) noexcept {
+    SingleSilencePacketCompletion out{};
+    if (!slab_.IsValid() || packetSlot >= Layout::kNumPackets) {
+        return out;
+    }
+
+    auto* completion = slab_.GetDescriptorPtr(
+        packetSlot * Layout::kBlocksPerPacket +
+        Layout::kCompletionBlock);
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(
+            reinterpret_cast<const std::byte*>(completion),
+            sizeof(*completion));
+    } else {
+        ASFW::Driver::ReadBarrier();
+    }
+    out.transferStatus = AT_xferStatus(*completion);
+    out.timestamp = AT_timeStamp(*completion);
+    return out;
+}
+
+bool IsochTxDmaRing::ProgramFiniteSilenceCadenceForRunPreflight(
+    uint8_t* payloadBase,
+    const uint32_t numSlots,
+    const uint32_t slotStrideBytes,
+    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+    FiniteSilenceCadenceProgram& outProgram) noexcept {
+    outProgram = {};
+    if (!slab_.IsValid() || payloadBase == nullptr || metadataRing == nullptr ||
+        numSlots == 0U || slotStrideBytes == 0U) {
+        return false;
+    }
+
+    static_assert(Layout::kNumPackets == 48U);
+    constexpr uint32_t kExpectedPayloadBytes = 1536U;
+    constexpr uint32_t kExpectedDataPackets = 36U;
+    constexpr uint32_t kExpectedSkipPackets = 12U;
+
+    // The FF800 packetizer's valid 192 kHz cadence may be committed with any
+    // of the four phase rotations.  Stage 5G requires the finite command list
+    // itself to begin D-D-D-S, so select the phase whose first three physical
+    // slots are data and whose fourth is a skip.  The previous implementation
+    // assumed physical slot zero was always data; on the real run it was the
+    // skip phase (S-D-D-D), causing packet 0 to be rejected before DMA.
+    uint32_t cadenceStartSlot = Layout::kNumPackets;
+    for (uint32_t candidate = 0U; candidate < 4U; ++candidate) {
+        bool candidateValid = true;
+        for (uint32_t logicalSlot = 0U;
+             logicalSlot < Layout::kNumPackets;
+             ++logicalSlot) {
+            const uint32_t physicalSlot =
+                (candidate + logicalSlot) % Layout::kNumPackets;
+            const uint32_t producerSlot = physicalSlot % numSlots;
+            const auto& meta = metadataRing[producerSlot];
+            const uint32_t metaQ0 =
+                OSSwapLittleToHostInt32(meta.immediateHeader[0]);
+            const uint32_t metaQ1 =
+                OSSwapLittleToHostInt32(meta.immediateHeader[1]);
+            const auto tag =
+                ASFW::IsochTransport::DecodeIsochTxHeaderTag(metaQ0);
+            const bool actualSkip =
+                ASFW::IsochTransport::ShouldSkipIsochTxPacket(
+                    tag, meta.payloadLength);
+            const bool expectedSkip = (logicalSlot & 0x3U) == 0x3U;
+            if (actualSkip != expectedSkip ||
+                tag != ASFW::IsochTransport::IsochPacketTag::kNoCipHeader ||
+                ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(metaQ0) !=
+                    ASFW::IsochTransport::kIsochSpeedS400 ||
+                ASFW::IsochTransport::DecodeIsochTxHeaderTCode(metaQ0) !=
+                    ASFW::IsochTransport::kIsochDataBlockTCode ||
+                ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(metaQ1) !=
+                    meta.payloadLength) {
+                candidateValid = false;
+                break;
+            }
+        }
+        if (candidateValid) {
+            cadenceStartSlot = candidate;
+            break;
+        }
+    }
+
+    if (cadenceStartSlot >= Layout::kNumPackets) {
+        uint32_t observedSkipMask = 0U;
+        for (uint32_t physicalSlot = 0U; physicalSlot < 4U; ++physicalSlot) {
+            const auto& meta = metadataRing[physicalSlot % numSlots];
+            const uint32_t metaQ0 =
+                OSSwapLittleToHostInt32(meta.immediateHeader[0]);
+            const auto tag =
+                ASFW::IsochTransport::DecodeIsochTxHeaderTag(metaQ0);
+            if (ASFW::IsochTransport::ShouldSkipIsochTxPacket(
+                    tag, meta.payloadLength)) {
+                observedSkipMask |= (1U << physicalSlot);
+            }
+        }
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5G could not phase-align committed cadence observedFirst4SkipMask=0x%x expectedRotatedDDD-S=1",
+                 observedSkipMask);
+        return false;
+    }
+
+    ASFW_LOG(Isoch,
+             "IT: Stage 5G cadence phase aligned physicalStartSlot=%u logicalPattern=DDD-S",
+             cadenceStartSlot);
+
+    uint32_t dataPackets = 0U;
+    uint32_t skipPackets = 0U;
+    for (uint32_t logicalSlot = 0U;
+         logicalSlot < Layout::kNumPackets;
+         ++logicalSlot) {
+        const bool expectedSkip = (logicalSlot & 0x3U) == 0x3U;
+        const uint32_t physicalSlot =
+            (cadenceStartSlot + logicalSlot) % Layout::kNumPackets;
+        const uint32_t producerSlot = physicalSlot % numSlots;
+        const auto& meta = metadataRing[producerSlot];
+        const uint32_t metaQ0 =
+            OSSwapLittleToHostInt32(meta.immediateHeader[0]);
+        const uint32_t metaQ1 =
+            OSSwapLittleToHostInt32(meta.immediateHeader[1]);
+        const auto tag = ASFW::IsochTransport::DecodeIsochTxHeaderTag(metaQ0);
+        const bool actualSkip =
+            ASFW::IsochTransport::ShouldSkipIsochTxPacket(
+                tag, meta.payloadLength);
+
+        if (actualSkip != expectedSkip ||
+            tag != ASFW::IsochTransport::IsochPacketTag::kNoCipHeader ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(metaQ0) !=
+                ASFW::IsochTransport::kIsochSpeedS400 ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderTCode(metaQ0) !=
+                ASFW::IsochTransport::kIsochDataBlockTCode ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(metaQ1) !=
+                meta.payloadLength) {
+            ASFW_LOG(Isoch,
+                     "IT: Stage 5G cadence metadata rejected logical=%u physical=%u expectedSkip=%u actualSkip=%u tag=%u speed=%u tcode=0x%x dataLength=%u/%u",
+                     logicalSlot,
+                     physicalSlot,
+                     expectedSkip ? 1U : 0U,
+                     actualSkip ? 1U : 0U,
+                     static_cast<uint32_t>(tag),
+                     ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(metaQ0),
+                     ASFW::IsochTransport::DecodeIsochTxHeaderTCode(metaQ0),
+                     ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(metaQ1),
+                     meta.payloadLength);
+            return false;
+        }
+
+        const uint32_t descBase =
+            physicalSlot * Layout::kBlocksPerPacket;
+        const bool isLast = logicalSlot + 1U == Layout::kNumPackets;
+        const bool nextIsSkip = !isLast &&
+            (((logicalSlot + 1U) & 0x3U) == 0x3U);
+        const uint32_t nextZ =
+            nextIsSkip ? 1U : Layout::kBlocksPerPacket;
+        const uint32_t nextPhysicalSlot = isLast
+            ? 0U
+            : ((cadenceStartSlot + logicalSlot + 1U) %
+               Layout::kNumPackets);
+        const uint32_t nextDescriptorIOVA = isLast
+            ? 0U
+            : slab_.GetDescriptorIOVA(
+                nextPhysicalSlot * Layout::kBlocksPerPacket);
+
+        if (expectedSkip) {
+            ++skipPackets;
+            if (meta.payloadLength != 0U) {
+                return false;
+            }
+
+            for (uint32_t block = 0U;
+                 block < Layout::kBlocksPerPacket;
+                 ++block) {
+                auto* desc = slab_.GetDescriptorPtr(descBase + block);
+                std::memset(desc, 0, sizeof(OHCIDescriptor));
+            }
+
+            auto* skip = slab_.GetDescriptorPtr(descBase);
+            skip->control = OHCIDescriptor::BuildControl({
+                .reqCount = 0U,
+                .command = OHCIDescriptor::kCmdOutputLast,
+                .key = OHCIDescriptor::kKeyStandard,
+                .interruptBits = OHCIDescriptor::kIntNever,
+                .branchBits = OHCIDescriptor::kBranchAlways,
+            });
+            skip->control |=
+                (1U << (OHCIDescriptor::kStatusShift +
+                        OHCIDescriptor::kControlHighShift));
+            skip->dataAddress = 0U;
+            skip->branchWord = isLast
+                ? 0U
+                : MakeFiniteCadenceBranchWord(nextDescriptorIOVA, nextZ);
+            if (!isLast && skip->branchWord == 0U) {
+                return false;
+            }
+            AR_init_status(*skip, 0U);
+            continue;
+        }
+
+        ++dataPackets;
+        if (meta.payloadLength != kExpectedPayloadBytes ||
+            meta.payloadLength > slotStrideBytes) {
+            ASFW_LOG(Isoch,
+                     "IT: Stage 5G data shape rejected logical=%u physical=%u producer=%u payloadBytes=%u/%u stride=%u",
+                     logicalSlot,
+                     physicalSlot,
+                     producerSlot,
+                     meta.payloadLength,
+                     kExpectedPayloadBytes,
+                     slotStrideBytes);
+            return false;
+        }
+
+        const uint8_t* payload = payloadBase +
+            static_cast<size_t>(producerSlot) * slotStrideBytes;
+        for (uint32_t byte = 0U; byte < meta.payloadLength; ++byte) {
+            if (payload[byte] != 0U) {
+                ASFW_LOG(Isoch,
+                         "IT: Stage 5G silence safety check rejected logical=%u physical=%u producer=%u byte=%u value=0x%02x",
+                         logicalSlot,
+                         physicalSlot,
+                         producerSlot,
+                         byte,
+                         payload[byte]);
+                return false;
+            }
+        }
+
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
+            slab_.GetDescriptorPtr(descBase));
+        auto* payloadDesc = slab_.GetDescriptorPtr(
+            descBase + Layout::kFirstPayloadBlock);
+        auto* completion = slab_.GetDescriptorPtr(
+            descBase + Layout::kCompletionBlock);
+        const uint32_t wireQ0 =
+            OSSwapLittleToHostInt32(immDesc->immediateData[0]);
+        const uint32_t wireQ1 =
+            OSSwapLittleToHostInt32(immDesc->immediateData[1]);
+        const uint8_t wireChannel =
+            static_cast<uint8_t>((wireQ0 >> 8U) & 0x3FU);
+        const uint32_t firstFragmentBytes =
+            payloadDesc->control & 0xFFFFU;
+        const uint32_t lastFragmentBytes =
+            completion->control & 0xFFFFU;
+        if (ASFW::IsochTransport::DecodeIsochTxHeaderTag(wireQ0) !=
+                ASFW::IsochTransport::IsochPacketTag::kNoCipHeader ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(wireQ0) !=
+                ASFW::IsochTransport::kIsochSpeedS400 ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderTCode(wireQ0) !=
+                ASFW::IsochTransport::kIsochDataBlockTCode ||
+            ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(wireQ1) !=
+                kExpectedPayloadBytes ||
+            wireChannel != channel_ ||
+            firstFragmentBytes + lastFragmentBytes != kExpectedPayloadBytes ||
+            payloadDesc->dataAddress == 0U ||
+            completion->dataAddress == 0U) {
+            ASFW_LOG(Isoch,
+                     "IT: Stage 5G primed descriptor validation failed logical=%u physical=%u tag=%u speed=%u tcode=0x%x channel=%u/%u dataLength=%u fragments=%u+%u",
+                     logicalSlot,
+                     physicalSlot,
+                     static_cast<uint32_t>(
+                         ASFW::IsochTransport::DecodeIsochTxHeaderTag(wireQ0)),
+                     ASFW::IsochTransport::DecodeIsochTxHeaderSpeed(wireQ0),
+                     ASFW::IsochTransport::DecodeIsochTxHeaderTCode(wireQ0),
+                     wireChannel,
+                     channel_,
+                     ASFW::IsochTransport::DecodeIsochTxHeaderDataLength(wireQ1),
+                     firstFragmentBytes,
+                     lastFragmentBytes);
+            return false;
+        }
+
+        const uint32_t intMask = 0x3U <<
+            (OHCIDescriptor::kIntShift +
+             OHCIDescriptor::kControlHighShift);
+        completion->control &= ~intMask;
+        completion->branchWord = isLast
+            ? 0U
+            : MakeFiniteCadenceBranchWord(nextDescriptorIOVA, nextZ);
+        if (!isLast && completion->branchWord == 0U) {
+            return false;
+        }
+        AR_init_status(*completion, 0U);
+        payloadDesc->statusWord = 0U;
+        immDesc->common.statusWord = 0U;
+
+        if (dmaMemory_) {
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(payload),
+                meta.payloadLength);
+        }
+    }
+
+    if (dataPackets != kExpectedDataPackets ||
+        skipPackets != kExpectedSkipPackets) {
+        return false;
+    }
+
+    if (dmaMemory_) {
+        dmaMemory_->PublishBarrier();
+        dmaMemory_->PublishToDevice(
+            slab_.DescriptorRegion().virtualBase,
+            slab_.DescriptorRegion().size);
+    } else {
+        ASFW::Driver::WriteBarrier();
+    }
+
+    const uint64_t descriptorIOVA = slab_.GetDescriptorIOVA(
+        cadenceStartSlot * Layout::kBlocksPerPacket);
+    if (descriptorIOVA == 0U || descriptorIOVA > 0xFFFFFFFFULL) {
+        return false;
+    }
+
+    for (uint32_t logicalSlot = 0U;
+         logicalSlot < Layout::kNumPackets;
+         ++logicalSlot) {
+        const bool isSkip = (logicalSlot & 0x3U) == 0x3U;
+        const uint32_t physicalSlot =
+            (cadenceStartSlot + logicalSlot) % Layout::kNumPackets;
+        const auto* branchOwner = isSkip
+            ? slab_.GetDescriptorPtr(
+                physicalSlot * Layout::kBlocksPerPacket)
+            : slab_.GetDescriptorPtr(
+                physicalSlot * Layout::kBlocksPerPacket +
+                Layout::kCompletionBlock);
+        const bool isLast = logicalSlot + 1U == Layout::kNumPackets;
+        const bool nextIsSkip = !isLast &&
+            (((logicalSlot + 1U) & 0x3U) == 0x3U);
+        const uint32_t nextPhysicalSlot = isLast
+            ? 0U
+            : ((cadenceStartSlot + logicalSlot + 1U) %
+               Layout::kNumPackets);
+        const uint32_t expectedBranch = isLast
+            ? 0U
+            : MakeFiniteCadenceBranchWord(
+                slab_.GetDescriptorIOVA(
+                    nextPhysicalSlot * Layout::kBlocksPerPacket),
+                nextIsSkip ? 1U : Layout::kBlocksPerPacket);
+        if (branchOwner->branchWord != expectedBranch ||
+            (!isLast && expectedBranch == 0U)) {
+            ASFW_LOG(Isoch,
+                     "IT: Stage 5G finite branch validation failed logical=%u physical=%u skip=%u actual=0x%08x expected=0x%08x",
+                     logicalSlot,
+                     physicalSlot,
+                     isSkip ? 1U : 0U,
+                     branchOwner->branchWord,
+                     expectedBranch);
+            return false;
+        }
+    }
+
+    outProgram.commandPtr =
+        static_cast<uint32_t>(descriptorIOVA) |
+        Layout::kBlocksPerPacket;
+    outProgram.startPacketSlot = cadenceStartSlot;
+    outProgram.descriptorCount = Layout::kNumPackets;
+    outProgram.dataPacketCount = dataPackets;
+    outProgram.skipPacketCount = skipPackets;
+    outProgram.payloadLength = kExpectedPayloadBytes;
+    return true;
+}
+
+bool IsochTxDmaRing::ProgramBoundedCircularSilenceCadenceForPreflight(
+    uint8_t* payloadBase,
+    const uint32_t numSlots,
+    const uint32_t slotStrideBytes,
+    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+    BoundedCircularSilenceCadenceProgram& outProgram) noexcept {
+    outProgram = {};
+
+    FiniteSilenceCadenceProgram finite{};
+    if (!ProgramFiniteSilenceCadenceForRunPreflight(
+            payloadBase,
+            numSlots,
+            slotStrideBytes,
+            metadataRing,
+            finite)) {
+        ASFW_LOG(Isoch,
+                 "IT: Stage 5H could not construct the Stage 5G-validated silence cadence");
+        return false;
+    }
+
+    if (finite.descriptorCount != Layout::kNumPackets ||
+        finite.dataPacketCount != 36U ||
+        finite.skipPacketCount != 12U ||
+        finite.payloadLength != 1536U ||
+        finite.startPacketSlot >= Layout::kNumPackets) {
+        return false;
+    }
+
+    // Logical slot 47 is always the skip in the twelfth D-D-D-S group. Its
+    // one-descriptor program must advertise Z=4 when branching back to the
+    // first logical slot, which is guaranteed to be a normal data program.
+    const uint32_t lastPhysicalSlot =
+        (finite.startPacketSlot + Layout::kNumPackets - 1U) %
+        Layout::kNumPackets;
+    auto* lastSkip = slab_.GetDescriptorPtr(
+        lastPhysicalSlot * Layout::kBlocksPerPacket);
+    const uint32_t firstDescriptorIOVA = slab_.GetDescriptorIOVA(
+        finite.startPacketSlot * Layout::kBlocksPerPacket);
+    const uint32_t circularBranch = MakeFiniteCadenceBranchWord(
+        firstDescriptorIOVA, Layout::kBlocksPerPacket);
+    if (circularBranch == 0U) {
+        return false;
+    }
+    lastSkip->branchWord = circularBranch;
+
+    if (dmaMemory_) {
+        dmaMemory_->PublishBarrier();
+        dmaMemory_->PublishToDevice(
+            slab_.DescriptorRegion().virtualBase,
+            slab_.DescriptorRegion().size);
+    } else {
+        ASFW::Driver::WriteBarrier();
+    }
+
+    // Re-read every branch owner after publication. The first 47 links retain
+    // Stage 5G's phase-correct Z values; only the final skip is now circular.
+    for (uint32_t logicalSlot = 0U;
+         logicalSlot < Layout::kNumPackets;
+         ++logicalSlot) {
+        const bool isSkip = (logicalSlot & 0x3U) == 0x3U;
+        const uint32_t physicalSlot =
+            (finite.startPacketSlot + logicalSlot) % Layout::kNumPackets;
+        const auto* branchOwner = isSkip
+            ? slab_.GetDescriptorPtr(
+                physicalSlot * Layout::kBlocksPerPacket)
+            : slab_.GetDescriptorPtr(
+                physicalSlot * Layout::kBlocksPerPacket +
+                Layout::kCompletionBlock);
+        const uint32_t nextLogicalSlot =
+            (logicalSlot + 1U) % Layout::kNumPackets;
+        const uint32_t nextPhysicalSlot =
+            (finite.startPacketSlot + nextLogicalSlot) %
+            Layout::kNumPackets;
+        const bool nextIsSkip = (nextLogicalSlot & 0x3U) == 0x3U;
+        const uint32_t expectedBranch = MakeFiniteCadenceBranchWord(
+            slab_.GetDescriptorIOVA(
+                nextPhysicalSlot * Layout::kBlocksPerPacket),
+            nextIsSkip ? 1U : Layout::kBlocksPerPacket);
+        if (expectedBranch == 0U ||
+            branchOwner->branchWord != expectedBranch) {
+            ASFW_LOG(Isoch,
+                     "IT: Stage 5H circular branch validation failed logical=%u physical=%u skip=%u actual=0x%08x expected=0x%08x",
+                     logicalSlot,
+                     physicalSlot,
+                     isSkip ? 1U : 0U,
+                     branchOwner->branchWord,
+                     expectedBranch);
+            return false;
+        }
+    }
+
+    outProgram.commandPtr = finite.commandPtr;
+    outProgram.startPacketSlot = finite.startPacketSlot;
+    outProgram.descriptorCount = finite.descriptorCount;
+    outProgram.dataPacketCount = finite.dataPacketCount;
+    outProgram.skipPacketCount = finite.skipPacketCount;
+    outProgram.payloadLength = finite.payloadLength;
+
+    ASFW_LOG(Isoch,
+             "IT: ✅ Stage 5H bounded circular descriptor ring published descriptors=%u dataPackets=%u skip=%u payloadBytes=%u pattern=DDD-S finalBranchToStart=1 interrupts=0 refill=0 dmaPublish=1",
+             outProgram.descriptorCount,
+             outProgram.dataPacketCount,
+             outProgram.skipPacketCount,
+             outProgram.payloadLength);
+    return true;
+}
+
+IsochTxDmaRing::CadenceAnchorCompletion
+IsochTxDmaRing::FetchCadenceAnchorCompletionForPreflight(
+    const uint32_t startPacketSlot) noexcept {
+    CadenceAnchorCompletion out{};
+    if (!slab_.IsValid() || startPacketSlot >= Layout::kNumPackets) {
+        return out;
+    }
+    const auto* completion = slab_.GetDescriptorPtr(
+        startPacketSlot * Layout::kBlocksPerPacket +
+        Layout::kCompletionBlock);
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(
+            reinterpret_cast<const std::byte*>(completion),
+            sizeof(*completion));
+    } else {
+        ASFW::Driver::ReadBarrier();
+    }
+    out.transferStatus = AT_xferStatus(*completion);
+    out.timestamp = AT_timeStamp(*completion);
+    return out;
+}
+
+IsochTxDmaRing::FiniteSilenceCadenceCompletion
+IsochTxDmaRing::FetchFiniteSilenceCadenceCompletionForRunPreflight(
+    const uint32_t startPacketSlot) noexcept {
+    FiniteSilenceCadenceCompletion out{};
+    if (!slab_.IsValid() || startPacketSlot >= Layout::kNumPackets) {
+        return out;
+    }
+
+    const auto region = slab_.DescriptorRegion();
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(region.virtualBase, region.size);
+    } else {
+        ASFW::Driver::ReadBarrier();
+    }
+
+    uint32_t dataIndex = 0U;
+    for (uint32_t logicalSlot = 0U;
+         logicalSlot < Layout::kNumPackets;
+         ++logicalSlot) {
+        const bool isSkip = (logicalSlot & 0x3U) == 0x3U;
+        const uint32_t physicalSlot =
+            (startPacketSlot + logicalSlot) % Layout::kNumPackets;
+        const auto* completion = isSkip
+            ? slab_.GetDescriptorPtr(
+                physicalSlot * Layout::kBlocksPerPacket)
+            : slab_.GetDescriptorPtr(
+                physicalSlot * Layout::kBlocksPerPacket +
+                Layout::kCompletionBlock);
+        const uint16_t transferStatus = AT_xferStatus(*completion);
+        const uint16_t timestamp = AT_timeStamp(*completion);
+        if (transferStatus != 0U) {
+            ++out.completedDescriptors;
+            const uint8_t eventCode =
+                static_cast<uint8_t>(transferStatus & 0x1FU);
+            if (eventCode != 0x11U) {
+                ++out.eventErrors;
+            }
+            if (!isSkip) {
+                ++out.completedDataDescriptors;
+                ++out.actualBusPackets;
+                if (dataIndex < out.dataTimestamps.size()) {
+                    out.dataTimestamps[dataIndex] = timestamp;
+                }
+                ++dataIndex;
+            }
+        }
+        if (logicalSlot + 1U == Layout::kNumPackets) {
+            out.lastTransferStatus = transferStatus;
+            out.lastTimestamp = timestamp;
+        }
+    }
+
+    if (out.completedDataDescriptors == out.dataTimestamps.size()) {
+        out.cadenceValid = true;
+        uint32_t previousCycle =
+            (out.dataTimestamps[0] & 0x1FFFU) % 8000U;
+        for (uint32_t data = 1U;
+             data < out.dataTimestamps.size();
+             ++data) {
+            const uint32_t cycle =
+                (out.dataTimestamps[data] & 0x1FFFU) % 8000U;
+            const uint32_t gap =
+                (cycle + 8000U - previousCycle) % 8000U;
+            const uint32_t expectedGap =
+                (data % 3U) == 0U ? 2U : 1U;
+            if (gap != expectedGap) {
+                out.cadenceValid = false;
+                break;
+            }
+            previousCycle = cycle;
+        }
+    }
+    return out;
+}
+
+bool IsochTxDmaRing::ProgramAllSkipPacketsForRunPreflight() noexcept {
+    if (!slab_.IsValid()) {
+        return false;
+    }
+
+    for (uint32_t packetSlot = 0;
+         packetSlot < Layout::kNumPackets;
+         ++packetSlot) {
+        const uint32_t descBase = packetSlot * Layout::kBlocksPerPacket;
+        for (uint32_t block = 0; block < Layout::kBlocksPerPacket; ++block) {
+            auto* desc = slab_.GetDescriptorPtr(descBase + block);
+            std::memset(desc, 0, sizeof(OHCIDescriptor));
+        }
+
+        auto* skip = slab_.GetDescriptorPtr(descBase);
+        const bool isLast = packetSlot + 1U == Layout::kNumPackets;
+        const uint32_t nextDescriptorIOVA = isLast
+            ? 0U
+            : slab_.GetDescriptorIOVA(
+                (packetSlot + 1U) * Layout::kBlocksPerPacket);
+
+        // A queued OHCI transmit skip is a one-descriptor program (Z=1),
+        // even though ASFW reserves four physical descriptor slots per audio
+        // cycle.  Advertising Z=4 made the controller consume the first
+        // OUTPUT_LAST and then interpret the three zero padding descriptors as
+        // part of the same program, so only descriptor 0 ever completed.
+        skip->control = OHCIDescriptor::BuildControl({
+            .reqCount = 0,
+            .command = OHCIDescriptor::kCmdOutputLast,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchAlways,
+        });
+        skip->control |=
+            (1u << (OHCIDescriptor::kStatusShift +
+                    OHCIDescriptor::kControlHighShift));
+        skip->dataAddress = 0U;
+        skip->branchWord = isLast
+            ? 0U
+            : ((nextDescriptorIOVA & 0xFFFFFFF0U) | 1U);
+        AR_init_status(*skip, 0U);
+    }
+
+    // Publish the complete finite descriptor chain before CommandPtr/RUN.
+    if (dmaMemory_) {
+        dmaMemory_->PublishToDevice(
+            slab_.DescriptorRegion().virtualBase,
+            slab_.DescriptorRegion().size);
+    } else {
+        ASFW::Driver::WriteBarrier();
+    }
+
+    for (uint32_t packetSlot = 0;
+         packetSlot < Layout::kNumPackets;
+         ++packetSlot) {
+        if (!IsSkipDescriptor(packetSlot)) {
+            return false;
+        }
+        const auto* desc = slab_.GetDescriptorPtr(
+            packetSlot * Layout::kBlocksPerPacket);
+        const bool isLast = packetSlot + 1U == Layout::kNumPackets;
+        if (isLast) {
+            if (desc->branchWord != 0U) {
+                return false;
+            }
+        } else if (desc->branchWord == 0U ||
+                   (desc->branchWord & 0xFU) != 1U) {
+            return false;
+        }
+    }
+    return true;
+}
+
+IsochTxDmaRing::AllSkipCompletionSnapshot
+IsochTxDmaRing::FetchAllSkipCompletionForRunPreflight() noexcept {
+    AllSkipCompletionSnapshot out{};
+    if (!slab_.IsValid()) {
+        return out;
+    }
+
+    const auto region = slab_.DescriptorRegion();
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(region.virtualBase, region.size);
+    } else {
+        ASFW::Driver::ReadBarrier();
+    }
+
+    for (uint32_t packetSlot = 0;
+         packetSlot < Layout::kNumPackets;
+         ++packetSlot) {
+        const auto* desc = slab_.GetDescriptorPtr(
+            packetSlot * Layout::kBlocksPerPacket);
+        if (AT_xferStatus(*desc) != 0U) {
+            ++out.completedDescriptors;
+        }
+        if (packetSlot + 1U == Layout::kNumPackets) {
+            out.lastTransferStatus = AT_xferStatus(*desc);
+            out.lastTimestamp = AT_timeStamp(*desc);
+        }
+    }
+    return out;
+}
+
+bool IsochTxDmaRing::IsSkipDescriptor(
+    const uint32_t packetSlot) const noexcept {
+    const auto* desc = slab_.GetDescriptorPtr(
+        packetSlot * Layout::kBlocksPerPacket);
+    const uint32_t controlHigh =
+        desc->control >> OHCIDescriptor::kControlHighShift;
+    const uint8_t command = static_cast<uint8_t>(
+        (controlHigh >> OHCIDescriptor::kCmdShift) & 0xFU);
+    const uint8_t key = static_cast<uint8_t>(
+        (controlHigh >> OHCIDescriptor::kKeyShift) & 0x7U);
+    const uint16_t requestCount =
+        static_cast<uint16_t>(desc->control & 0xFFFFU);
+    return command == OHCIDescriptor::kCmdOutputLast &&
+           key == OHCIDescriptor::kKeyStandard &&
+           requestCount == 0U;
+}
+
+IsochTxDmaRing::OHCIDescriptor*
+IsochTxDmaRing::CompletionDescriptorForPacket(
+    const uint32_t packetSlot) noexcept {
+    if (IsSkipDescriptor(packetSlot)) {
+        return slab_.GetDescriptorPtr(
+            packetSlot * Layout::kBlocksPerPacket);
+    }
+    return slab_.GetDescriptorPtr(
+        packetSlot * Layout::kBlocksPerPacket +
+        Layout::kCompletionBlock);
 }
 
 IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
@@ -275,6 +1159,16 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
                 meta.payloadLength,
                 slotStrideBytes);
             return stats;
+        }
+
+        const uint32_t headerQ0 =
+            OSSwapLittleToHostInt32(meta.immediateHeader[0]);
+        const auto packetTag =
+            ASFW::IsochTransport::DecodeIsochTxHeaderTag(headerQ0);
+        if (ASFW::IsochTransport::ShouldSkipIsochTxPacket(
+                packetTag, meta.payloadLength)) {
+            ProgramSkipPacket(pktIdx);
+            continue;
         }
 
         std::array<TxPayloadDmaFragment, 2> payloadFragments{};
@@ -525,15 +1419,23 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint64_t currentAbsIdx = completedAbsIdx + i;
         const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
 
-        auto* desc2 = slab_.GetDescriptorPtr(
-            completedPktSlot * Layout::kBlocksPerPacket +
-            Layout::kCompletionBlock);
+        auto* firstDesc = slab_.GetDescriptorPtr(
+            completedPktSlot * Layout::kBlocksPerPacket);
         if (dmaMemory_) {
-            dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(*desc2));
+            dmaMemory_->FetchFromDevice(
+                reinterpret_cast<const std::byte*>(firstDesc),
+                sizeof(*firstDesc));
+        }
+        auto* completionDesc =
+            CompletionDescriptorForPacket(completedPktSlot);
+        if (dmaMemory_ && completionDesc != firstDesc) {
+            dmaMemory_->FetchFromDevice(
+                reinterpret_cast<const std::byte*>(completionDesc),
+                sizeof(*completionDesc));
         }
 
-        const uint16_t hwTimestamp =
-            static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
+        const uint16_t hwTimestamp = static_cast<uint16_t>(
+            completionDesc->statusWord & 0xFFFFU);
 
         // OHCI OUTPUT_LAST reports sec[2:0]:cycle[12:0] and omits the
         // intra-cycle offset. Reconstruct the packet cycle at offset zero.
@@ -671,10 +1573,33 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             return out;
         }
 
+        const uint32_t headerQ0 =
+            OSSwapLittleToHostInt32(meta.immediateHeader[0]);
+        const auto packetTag =
+            ASFW::IsochTransport::DecodeIsochTxHeaderTag(headerQ0);
+        if (ASFW::IsochTransport::ShouldSkipIsochTxPacket(
+                packetTag, payloadLength)) {
+            ProgramSkipPacket(hwSlot);
+            if (dmaMemory_) {
+                for (uint32_t block = 0;
+                     block < Layout::kBlocksPerPacket;
+                     ++block) {
+                    const auto* desc = slab_.GetDescriptorPtr(
+                        hwSlot * Layout::kBlocksPerPacket + block);
+                    dmaMemory_->PublishToDevice(
+                        reinterpret_cast<const std::byte*>(desc),
+                        sizeof(*desc));
+                }
+            }
+            ++packetsFilled;
+            continue;
+        }
+
         if (payloadBase) {
             GaugeWirePayload(fillAbsIdx,
                              payloadBase + payloadOffset,
-                             payloadLength);
+                             payloadLength,
+                             meta.immediateHeader[0]);
         }
 
         std::array<TxPayloadDmaFragment, 2> payloadFragments{};
@@ -703,6 +1628,14 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint32_t descBase = hwSlot * Layout::kBlocksPerPacket;
         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
             slab_.GetDescriptorPtr(descBase));
+        std::memset(immDesc, 0, sizeof(OHCIDescriptorImmediate));
+        immDesc->common.control = OHCIDescriptor::BuildControl({
+            .reqCount = 8,
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyImmediate,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
         immDesc->immediateData[0] =
             StampHeaderChannel(meta.immediateHeader[0], channel_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
@@ -712,6 +1645,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         auto* desc2 =
             slab_.GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
+        std::memset(desc2, 0, sizeof(OHCIDescriptor));
         desc2->control = OHCIDescriptor::BuildControl({
             .reqCount = static_cast<uint16_t>(payloadFragments[0].length),
             .command = OHCIDescriptor::kCmdOutputMore,
@@ -725,6 +1659,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         auto* desc3 =
             slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        std::memset(desc3, 0, sizeof(OHCIDescriptor));
         desc3->control = OHCIDescriptor::BuildControl({
             .reqCount = static_cast<uint16_t>(payloadFragments[1].length),
             .command = OHCIDescriptor::kCmdOutputLast,
