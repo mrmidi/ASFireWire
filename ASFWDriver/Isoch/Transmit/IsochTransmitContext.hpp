@@ -141,6 +141,35 @@ public:
     // Stage 5H unconditional teardown seam used on success and every partial
     // failure before the protocol stops the device and releases IRM.
     kern_return_t CleanupBoundedCircularSilenceCadenceForPreflight() noexcept;
+
+    // Stage 6 (dev-only continuous silence): reuses the exact same immutable
+    // self-looping ring PrepareBoundedCircularSilenceCadenceForPreflight()
+    // already built for Stage 5H -- that ring has no notion of "bounded", the
+    // duration limit lives entirely in the Stage 5H run/poll loop below. This
+    // sets RUN once, confirms one anchor execution, and returns immediately;
+    // the hardware keeps looping the ring with zero interrupts/software
+    // involvement until StopContinuousCircularSilenceCadence() is called.
+    kern_return_t StartContinuousCircularSilenceCadence() noexcept;
+
+    struct ContinuousCadenceHealth final {
+        bool running{false};
+        bool dead{false};
+        bool eventError{false};
+        uint32_t anchorExecutions{0U};
+        uint16_t lastAnchorTimestamp{0U};
+    };
+
+    // Non-blocking single-shot status read (one register read + one anchor
+    // fetch, no IODelay/poll loop) -- safe to call from a periodic watchdog
+    // tick. Returns a default (running=false) snapshot when no continuous
+    // cadence is active.
+    [[nodiscard]] ContinuousCadenceHealth
+    PollContinuousCircularSilenceCadenceHealth() noexcept;
+
+    // Stops the ring via the same CleanupBoundedCircularSilenceCadenceForPreflight()
+    // teardown Stage 5H already uses (RUN clear, ACTIVE-drain poll, DEAD check).
+    kern_return_t StopContinuousCircularSilenceCadence() noexcept;
+
     void Stop() noexcept;
     
     void Poll() noexcept;
@@ -208,6 +237,14 @@ private:
     Tx::IsochTxDmaRing::BoundedCircularSilenceCadenceProgram
         boundedCircularCadenceProgram_{};
     bool boundedCircularCadencePrepared_{false};
+
+    // Stage 6 continuous-silence state. Mutually exclusive with the Stage 5H
+    // bounded run by construction (one OHCI IT context); reuses
+    // boundedCircularCadenceProgram_/boundedCircularCadencePrepared_ above.
+    bool continuousCadenceRunning_{false};
+    bool continuousAnchorSeen_{false};
+    uint32_t continuousAnchorExecutions_{0U};
+    uint16_t continuousPreviousAnchorTimestamp_{0U};
 };
 
 } // namespace Isoch

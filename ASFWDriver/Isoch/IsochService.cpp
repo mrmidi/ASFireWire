@@ -506,6 +506,32 @@ IsochService::CleanupPreparedTransmitBoundedCircularSilenceCadenceForPreflight()
         ->CleanupBoundedCircularSilenceCadenceForPreflight();
 }
 
+kern_return_t
+IsochService::StartTransmitContinuousCircularSilenceCadence() {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch,
+             "IsochService: starting continuous circular silence ring (dev) interrupts=0 refill=0");
+    return isochTransmitContext_->StartContinuousCircularSilenceCadence();
+}
+
+IsochTransmitContext::ContinuousCadenceHealth
+IsochService::PollTransmitContinuousCircularSilenceCadenceHealth() {
+    if (!isochTransmitContext_) {
+        return {};
+    }
+    return isochTransmitContext_
+        ->PollContinuousCircularSilenceCadenceHealth();
+}
+
+kern_return_t IsochService::StopTransmitContinuousCircularSilenceCadence() {
+    if (!isochTransmitContext_) {
+        return kIOReturnSuccess;
+    }
+    return isochTransmitContext_->StopContinuousCircularSilenceCadence();
+}
+
 kern_return_t IsochService::StartPreparedTransmit() {
     if (!isochTransmitContext_) {
         return kIOReturnNotReady;

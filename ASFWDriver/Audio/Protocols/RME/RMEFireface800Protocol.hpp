@@ -39,6 +39,15 @@ public:
         BoundedPlaybackStep runHostBurst,
         BoundedPlaybackStep cleanupHost) override;
 
+    IOReturn StartContinuousPlaybackIntegration(
+        const PlaybackPreflightRoute& route,
+        BoundedPlaybackStep prepareHost,
+        BoundedPlaybackStep startHostRing) override;
+    IOReturn StopContinuousPlaybackIntegration(
+        BoundedPlaybackStep stopHostRing) override;
+    IOReturn GetContinuousPlaybackIntegrationHealth(
+        ContinuousHealthStep pollHealth) override;
+
 private:
     void ProbeClockConfig() noexcept;
     void ValidateStfWritePath(uint32_t rate) noexcept;
@@ -55,6 +64,17 @@ private:
     void BestEffortStopDeviceCommunication() noexcept;
     void ReleaseReservedResources() noexcept;
     void LogStreamCaps(uint32_t rate) const noexcept;
+
+    // Shared FF800-stop + IRM-release tail used by both the Stage 5H bounded
+    // burst and the Stage 6 continuous stream. Sends the FF800 isoch-comm
+    // stop command, clears device-TX-allocation state, then releases the
+    // held IRM reservation (consuming playbackResourcesReserved_/
+    // reservedPlaybackChannel_/reservedPlaybackBandwidthUnits_). Returns
+    // kIOReturnSuccess only if both steps were accepted.
+    IOReturn StopDeviceEngineAndReleaseIrm(bool& outStopAccepted,
+                                           bool& outReleaseAccepted,
+                                           uint8_t& outReleasedChannel,
+                                           uint32_t& outReleasedBandwidth) noexcept;
 
     static uint32_t ReadLE32(const uint8_t* bytes) noexcept;
     static uint32_t DecodeSampleRate(uint32_t value) noexcept;
@@ -88,6 +108,17 @@ private:
     bool deviceTxAllocated_{false};
     uint8_t deviceTxChannel_{0xFF};
     std::atomic<bool> stage5hInFlight_{false};
+
+    // Stage 6 (dev-only continuous silence): separate in-flight guard from
+    // stage5hInFlight_ so Stage 5H's existing guard/call sites stay
+    // untouched. RunBoundedPlaybackIntegrationPreflight and
+    // StartContinuousPlaybackIntegration each check BOTH flags before
+    // proceeding -- they drive the same OHCI context/IRM route and must
+    // never run concurrently. Reuses reservedPlaybackChannel_/
+    // reservedPlaybackBandwidthUnits_/playbackResourcesReserved_ above to
+    // hold state across the Start/Stop call gap (safe: mutually exclusive
+    // with Stage 5H by the two-flag guard).
+    std::atomic<bool> continuousPlaybackInFlight_{false};
 };
 
 } // namespace ASFW::Audio::RME

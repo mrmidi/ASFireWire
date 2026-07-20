@@ -1302,6 +1302,140 @@ IsochTransmitContext::CleanupBoundedCircularSilenceCadenceForPreflight()
     return kIOReturnSuccess;
 }
 
+kern_return_t
+IsochTransmitContext::StartContinuousCircularSilenceCadence() noexcept {
+    if (!boundedCircularCadencePrepared_ ||
+        (state_ != State::Configured && state_ != State::Stopped)) {
+        ASFW_LOG(Isoch,
+                 "IT: Continuous cadence start rejected prepared=%u state=%{public}s",
+                 boundedCircularCadencePrepared_ ? 1U : 0U,
+                 TxStateName(state_));
+        return kIOReturnNotReady;
+    }
+    if (!hardware_) {
+        return kIOReturnNoResources;
+    }
+
+    const auto program = boundedCircularCadenceProgram_;
+    const Register32 cmdPtrReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const Register32 ctrlSetReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
+
+    const uint32_t commandBeforeRun = hardware_->Read(cmdPtrReg);
+    const uint32_t controlBeforeRun = hardware_->Read(ctrlReg);
+    if (commandBeforeRun != program.commandPtr ||
+        (controlBeforeRun & Driver::ContextControl::kRun) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kActive) != 0U ||
+        (controlBeforeRun & Driver::ContextControl::kDead) != 0U) {
+        ASFW_LOG(Isoch,
+                 "IT: Continuous cadence RUN gate failed expectedCmd=0x%08x actualCmd=0x%08x control=0x%08x",
+                 program.commandPtr,
+                 commandBeforeRun,
+                 controlBeforeRun);
+        return kIOReturnInternalError;
+    }
+
+    continuousAnchorSeen_ = false;
+    continuousAnchorExecutions_ = 0U;
+    continuousPreviousAnchorTimestamp_ = 0U;
+
+    hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
+
+    // One settle delay + single readback/anchor-fetch to confirm the ring
+    // actually started -- not a sustain-and-verify loop like Stage 5H's run
+    // method. The hardware keeps looping on its own from here.
+    IODelay(250U);
+    const uint32_t controlAfterRun = hardware_->Read(ctrlReg);
+    const bool active =
+        (controlAfterRun & Driver::ContextControl::kActive) != 0U;
+    const bool dead =
+        (controlAfterRun & Driver::ContextControl::kDead) != 0U;
+    const auto anchor = ring_.FetchCadenceAnchorCompletionForPreflight(
+        program.startPacketSlot);
+    if (anchor.transferStatus != 0U) {
+        const uint8_t eventCode =
+            static_cast<uint8_t>(anchor.transferStatus & 0x1FU);
+        if (eventCode == 0x11U) {
+            continuousAnchorSeen_ = true;
+            continuousAnchorExecutions_ = 1U;
+            continuousPreviousAnchorTimestamp_ = anchor.timestamp;
+        }
+    }
+
+    if (dead || !active) {
+        ASFW_LOG(Isoch,
+                 "IT: Continuous cadence start failed to sustain control=0x%08x active=%u dead=%u",
+                 controlAfterRun,
+                 active ? 1U : 0U,
+                 dead ? 1U : 0U);
+        (void)CleanupBoundedCircularSilenceCadenceForPreflight();
+        return dead ? kIOReturnNotPermitted : kIOReturnTimeout;
+    }
+
+    continuousCadenceRunning_ = true;
+    ASFW_LOG(Isoch,
+             "IT: ✅ Continuous circular silence cadence started channel/descriptors=%u dataPackets=%u skip=%u anchorConfirmed=%u",
+             program.descriptorCount,
+             program.dataPacketCount,
+             program.skipPacketCount,
+             continuousAnchorSeen_ ? 1U : 0U);
+    return kIOReturnSuccess;
+}
+
+IsochTransmitContext::ContinuousCadenceHealth
+IsochTransmitContext::PollContinuousCircularSilenceCadenceHealth() noexcept {
+    ContinuousCadenceHealth health{};
+    if (!continuousCadenceRunning_ || !hardware_) {
+        return health;
+    }
+    health.running = true;
+
+    const auto program = boundedCircularCadenceProgram_;
+    const Register32 ctrlReg = static_cast<Register32>(
+        DMAContextHelpers::IsoXmitContextControl(contextIndex_));
+    const uint32_t control = hardware_->Read(ctrlReg);
+    health.dead = (control & Driver::ContextControl::kDead) != 0U;
+
+    const auto anchor = ring_.FetchCadenceAnchorCompletionForPreflight(
+        program.startPacketSlot);
+    if (anchor.transferStatus != 0U) {
+        const uint8_t eventCode =
+            static_cast<uint8_t>(anchor.transferStatus & 0x1FU);
+        if (eventCode != 0x11U) {
+            health.eventError = true;
+        } else if (!continuousAnchorSeen_) {
+            continuousAnchorSeen_ = true;
+            continuousAnchorExecutions_ = 1U;
+            continuousPreviousAnchorTimestamp_ = anchor.timestamp;
+        } else if (anchor.timestamp != continuousPreviousAnchorTimestamp_) {
+            continuousPreviousAnchorTimestamp_ = anchor.timestamp;
+            ++continuousAnchorExecutions_;
+        }
+    }
+
+    health.anchorExecutions = continuousAnchorExecutions_;
+    health.lastAnchorTimestamp = continuousPreviousAnchorTimestamp_;
+    return health;
+}
+
+kern_return_t
+IsochTransmitContext::StopContinuousCircularSilenceCadence() noexcept {
+    const bool wasRunning = continuousCadenceRunning_;
+    continuousCadenceRunning_ = false;
+    const kern_return_t status =
+        CleanupBoundedCircularSilenceCadenceForPreflight();
+    if (wasRunning) {
+        ASFW_LOG(Isoch,
+                 "IT: Continuous circular silence cadence stopped anchorExecutions=%u stopKr=0x%x",
+                 continuousAnchorExecutions_,
+                 status);
+    }
+    return status;
+}
+
 kern_return_t IsochTransmitContext::Start() noexcept {
     if (state_ != State::Configured && state_ != State::Stopped) {
         ASFW_LOG(Isoch, "IT: Start rejected - state=%{public}s", TxStateName(state_));
@@ -1401,6 +1535,15 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 }
 
 void IsochTransmitContext::Stop() noexcept {
+    // Safety net: a Stage 6 continuous cadence deliberately never enters
+    // State::Running (see StartContinuousCircularSilenceCadence), so the
+    // RUN-clear block below would otherwise never fire for it. Without this,
+    // a driver teardown/unload while a continuous stream is active would
+    // leave the OHCI IT context spinning in RUN state.
+    if (continuousCadenceRunning_) {
+        (void)StopContinuousCircularSilenceCadence();
+    }
+
     finiteCadencePrepared_ = false;
     finiteCadenceProgram_ = {};
     boundedCircularCadencePrepared_ = false;

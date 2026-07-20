@@ -34,6 +34,17 @@ struct PlaybackPreflightRoute final {
     bool deviceCommunicationStopped{false};
 };
 
+/// Protocol-neutral snapshot of a continuous host transmit ring's health.
+/// Mirrors (but does not include/depend on) the transport-layer health
+/// struct -- IDeviceProtocol must not reach into Isoch/OHCI types.
+struct ContinuousPlaybackHealth final {
+    bool running{false};
+    bool dead{false};
+    bool eventError{false};
+    uint32_t anchorExecutions{0U};
+    uint16_t lastAnchorTimestamp{0U};
+};
+
 /// Interface for device-specific protocol handlers
 ///
 /// Device protocols are instantiated by DeviceProtocolFactory when a
@@ -138,6 +149,40 @@ public:
         (void)prepareHost;
         (void)runHostBurst;
         (void)cleanupHost;
+        return kIOReturnUnsupported;
+    }
+
+    using ContinuousHealthStep = std::function<IOReturn(ContinuousPlaybackHealth&)>;
+
+    /// Optional dev-only continuous variant of the staged integration hook
+    /// above: arms the device engine and starts the host ring, then returns
+    /// immediately -- the ring keeps running until StopContinuousPlaybackIntegration
+    /// is called. Never reachable from Core Audio StartIO; must never make
+    /// StartIO succeed.
+    virtual IOReturn StartContinuousPlaybackIntegration(
+        const PlaybackPreflightRoute& route,
+        BoundedPlaybackStep prepareHost,
+        BoundedPlaybackStep startHostRing) {
+        (void)route;
+        (void)prepareHost;
+        (void)startHostRing;
+        return kIOReturnUnsupported;
+    }
+
+    /// Stops a continuous stream started above: stops the host ring, then
+    /// stops the device engine and releases its held IRM route. Idempotent
+    /// -- returns kIOReturnNotReady if nothing is in flight.
+    virtual IOReturn StopContinuousPlaybackIntegration(
+        BoundedPlaybackStep stopHostRing) {
+        (void)stopHostRing;
+        return kIOReturnUnsupported;
+    }
+
+    /// Non-blocking health snapshot of an in-flight continuous stream.
+    /// Returns kIOReturnNotReady if nothing is in flight.
+    virtual IOReturn GetContinuousPlaybackIntegrationHealth(
+        ContinuousHealthStep pollHealth) {
+        (void)pollHealth;
         return kIOReturnUnsupported;
     }
 

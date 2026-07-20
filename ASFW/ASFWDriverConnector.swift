@@ -60,6 +60,10 @@ final class ASFWDriverConnector: ObservableObject {
         case requestUserBusReset = 61
         case startAudioStreaming = 62
         case stopAudioStreaming = 63
+        // Stage 6 (dev-only): continuous silent isoch TX cadence.
+        case startContinuousIsochTxSilence = 64
+        case stopContinuousIsochTxSilence = 65
+        case getContinuousIsochTxHealth = 66
     }
 
     // MARK: - Re-exported Models

@@ -335,6 +335,7 @@
 		F118D01B178AD54981507B90 /* ROMScanSessionIRM.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3D1606D8DEE1120C1646AB8D /* ROMScanSessionIRM.cpp */; };
 		F193984E9950C4C137BFAD6D /* MCPDiceTcatToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26B7F3D2FEC0DA11D8D9F0AC /* MCPDiceTcatToolsTests.swift */; };
 		F302759145BDF336C186D2BC /* HardwareInterface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9F7E564F41599A92B7D55B12 /* HardwareInterface.cpp */; };
+		F34A587E2B103749D7490B97 /* ASFWMCPContinuousTxTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CE56C6DD9B345116DD0699B /* ASFWMCPContinuousTxTools.swift */; };
 		F3EC20E3CDECF9FD90E56995 /* ASFWSCSIController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3558EAA4E19D859BC8594170 /* ASFWSCSIController.cpp */; };
 		F4A99690858D37ACCC9CECB6 /* SystemLogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB2E35051CCCFD3E4CD6E2F /* SystemLogsView.swift */; };
 		F576426B7995BB3474228911 /* ASFWDriverUserClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5364BA023A0C10D7791261A1 /* ASFWDriverUserClient.cpp */; };
@@ -561,6 +562,7 @@
 		3BA650C15D778F327D36918D /* RMEAudioProfiles.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RMEAudioProfiles.hpp; sourceTree = "<group>"; };
 		3BC1BCBC9E52B53B87DEEA69 /* CIPHeader.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CIPHeader.hpp; sourceTree = "<group>"; };
 		3CCCE7A077DAD59020AD49F2 /* BusResetCoordinatorActions.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetCoordinatorActions.cpp; sourceTree = "<group>"; };
+		3CE56C6DD9B345116DD0699B /* ASFWMCPContinuousTxTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPContinuousTxTools.swift; sourceTree = "<group>"; };
 		3CF6AA538A8321AEB7DDB655 /* MCPHardwareSmokeRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPHardwareSmokeRunnerTests.swift; sourceTree = "<group>"; };
 		3D1606D8DEE1120C1646AB8D /* ROMScanSessionIRM.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ROMScanSessionIRM.cpp; sourceTree = "<group>"; };
 		3D26D51E676FCE0D7C7747FD /* InterruptDispatcher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = InterruptDispatcher.hpp; sourceTree = "<group>"; };
@@ -1812,6 +1814,7 @@
 				077468963C2F7E7BB91E28CB /* ASFWMCPBeBoBTools.swift */,
 				9D6A93FFD51132B2A4F8B00E /* ASFWMCPBusResetTools.swift */,
 				969C58B339AB3E30DB3B3E45 /* ASFWMCPCmpTools.swift */,
+				3CE56C6DD9B345116DD0699B /* ASFWMCPContinuousTxTools.swift */,
 				0417EE4C83805D8B15818D95 /* ASFWMCPCore.swift */,
 				EE503DDF07D0510DECCEBD3B /* ASFWMCPDiceTcatTools.swift */,
 				42FD0F9803524954295461C0 /* ASFWMCPDriverControl.swift */,
@@ -3207,6 +3210,7 @@
 				86AAAB1DA5BB95E96BAFFBB7 /* ASFWMCPBeBoBTools.swift in Sources */,
 				6FA31DB6C2C615B5E0AFBB7C /* ASFWMCPBusResetTools.swift in Sources */,
 				963574C5C0B791D8C9BC3322 /* ASFWMCPCmpTools.swift in Sources */,
+				F34A587E2B103749D7490B97 /* ASFWMCPContinuousTxTools.swift in Sources */,
 				7A904CEDE54313921506AFCB /* ASFWMCPControlViewModel.swift in Sources */,
 				EE252C976DEC6C30E860638C /* ASFWMCPCore.swift in Sources */,
 				960F055B6D7B32200D416CDB /* ASFWMCPDiceTcatTools.swift in Sources */,

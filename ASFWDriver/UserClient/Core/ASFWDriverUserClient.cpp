@@ -73,6 +73,12 @@ enum {
     kMethodRequestUserBusReset = 61,
     kMethodStartAudioStreaming = 62,
     kMethodStopAudioStreaming = 63,
+
+    // Stage 6 (dev-only): continuous silent isoch TX cadence, reached only
+    // via this UserClient/MCP path -- never through real CoreAudio StartIO.
+    kMethodStartContinuousIsochTxSilence = 64,
+    kMethodStopContinuousIsochTxSilence = 65,
+    kMethodGetContinuousIsochTxHealth = 66,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -339,6 +345,45 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
         return MethodDispatchResult{selector == kMethodStartAudioStreaming
                                         ? driver.StartAudioStreaming(*guid)
                                         : driver.StopAudioStreaming(*guid)};
+    }
+    case kMethodStartContinuousIsochTxSilence:
+    case kMethodStopContinuousIsochTxSilence: {
+        // Full 64-bit GUID -- GetFirstScalarInput() above truncates to
+        // uint32_t, which real Fireface 800 GUIDs (e.g. 0x000a3500f021a1b4)
+        // do not fit in.
+        if (!arguments || !arguments->scalarInput ||
+            arguments->scalarInputCount < 1 || arguments->scalarInput[0] == 0) {
+            return MethodDispatchResult{kIOReturnBadArgument};
+        }
+        const uint64_t guid = arguments->scalarInput[0];
+        return MethodDispatchResult{
+            selector == kMethodStartContinuousIsochTxSilence
+                ? driver.StartContinuousIsochTxSilence(guid)
+                : driver.StopContinuousIsochTxSilence(guid)};
+    }
+    case kMethodGetContinuousIsochTxHealth: {
+        if (!arguments || !arguments->scalarInput ||
+            arguments->scalarInputCount < 1 || arguments->scalarInput[0] == 0) {
+            return MethodDispatchResult{kIOReturnBadArgument};
+        }
+        const uint64_t guid = arguments->scalarInput[0];
+        bool running = false;
+        bool dead = false;
+        bool eventError = false;
+        uint32_t anchorExecutions = 0U;
+        uint16_t lastAnchorTimestamp = 0U;
+        const kern_return_t kr = driver.GetContinuousIsochTxHealth(
+            guid, &running, &dead, &eventError, &anchorExecutions,
+            &lastAnchorTimestamp);
+        if (arguments->scalarOutput && arguments->scalarOutputCount >= 5) {
+            arguments->scalarOutput[0] = running ? 1U : 0U;
+            arguments->scalarOutput[1] = dead ? 1U : 0U;
+            arguments->scalarOutput[2] = eventError ? 1U : 0U;
+            arguments->scalarOutput[3] = anchorExecutions;
+            arguments->scalarOutput[4] = lastAnchorTimestamp;
+            arguments->scalarOutputCount = 5;
+        }
+        return MethodDispatchResult{kr};
     }
     case kMethodGetAudioAutoStart:
         return HandleGetAudioAutoStart(driver, arguments);

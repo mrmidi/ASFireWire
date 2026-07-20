@@ -1022,6 +1022,117 @@ kern_return_t ASFWDriver::StopAudioStreaming(uint64_t guid) {
     return ivars->context->audioCoordinator->StopStreaming(guid);
 }
 
+kern_return_t ASFWDriver::StartContinuousIsochTxSilence(uint64_t guid) {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    auto& ctx = *ivars->context;
+    if (!ctx.deps.deviceRegistry || !ctx.deps.audioRuntimeRegistry ||
+        !ctx.deps.hardware) {
+        return kIOReturnNotReady;
+    }
+    auto* record = ctx.deps.deviceRegistry->FindByGuid(guid);
+    auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
+    if (!record || !protocol) {
+        return kIOReturnNotReady;
+    }
+
+    ASFW::Audio::PlaybackPreflightRoute route{};
+    if (!protocol->GetPlaybackPreflightRoute(route)) {
+        ASFW_LOG_WARNING(Audio,
+                         "[RME] Continuous TX silence start refused: no verified playback route GUID=0x%016llx",
+                         guid);
+        return kIOReturnNotReady;
+    }
+
+    ASFW_LOG(Audio, "[RME] Continuous TX silence start (dev) GUID=0x%016llx", guid);
+    return protocol->StartContinuousPlaybackIntegration(
+        route,
+        [&ctx, route]() -> IOReturn {
+            IOReturn kr = ctx.isoch.PrepareTransmit(
+                route.channel, *ctx.deps.hardware, 0U);
+            if (kr == kIOReturnSuccess) {
+                kr = ctx.isoch.PrimePreparedTransmitForPreflight();
+            }
+            if (kr == kIOReturnSuccess) {
+                kr = ctx.isoch
+                    .PrepareTransmitBoundedCircularSilenceCadenceForPreflight();
+            }
+            return kr;
+        },
+        [&ctx]() -> IOReturn {
+            return ctx.isoch.StartTransmitContinuousCircularSilenceCadence();
+        });
+}
+
+kern_return_t ASFWDriver::StopContinuousIsochTxSilence(uint64_t guid) {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    auto& ctx = *ivars->context;
+    if (!ctx.deps.audioRuntimeRegistry) {
+        return kIOReturnNotReady;
+    }
+    auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
+    if (!protocol) {
+        return kIOReturnNotReady;
+    }
+
+    ASFW_LOG(Audio, "[RME] Continuous TX silence stop (dev) GUID=0x%016llx", guid);
+    return protocol->StopContinuousPlaybackIntegration(
+        [&ctx]() -> IOReturn {
+            return ctx.isoch.StopTransmitContinuousCircularSilenceCadence();
+        });
+}
+
+kern_return_t ASFWDriver::GetContinuousIsochTxHealth(
+    uint64_t guid,
+    bool* running,
+    bool* dead,
+    bool* eventError,
+    uint32_t* anchorExecutions,
+    uint16_t* lastAnchorTimestamp) {
+    if (!running || !dead || !eventError || !anchorExecutions ||
+        !lastAnchorTimestamp) {
+        return kIOReturnBadArgument;
+    }
+    *running = false;
+    *dead = false;
+    *eventError = false;
+    *anchorExecutions = 0U;
+    *lastAnchorTimestamp = 0U;
+
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    auto& ctx = *ivars->context;
+    if (!ctx.deps.audioRuntimeRegistry) {
+        return kIOReturnNotReady;
+    }
+    auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
+    if (!protocol) {
+        return kIOReturnNotReady;
+    }
+
+    return protocol->GetContinuousPlaybackIntegrationHealth(
+        [&ctx, running, dead, eventError, anchorExecutions,
+         lastAnchorTimestamp](ASFW::Audio::ContinuousPlaybackHealth& health) -> IOReturn {
+            const auto txHealth =
+                ctx.isoch.PollTransmitContinuousCircularSilenceCadenceHealth();
+            health.running = txHealth.running;
+            health.dead = txHealth.dead;
+            health.eventError = txHealth.eventError;
+            health.anchorExecutions = txHealth.anchorExecutions;
+            health.lastAnchorTimestamp = txHealth.lastAnchorTimestamp;
+            *running = health.running;
+            *dead = health.dead;
+            *eventError = health.eventError;
+            *anchorExecutions = health.anchorExecutions;
+            *lastAnchorTimestamp = health.lastAnchorTimestamp;
+            return kIOReturnSuccess;
+        });
+}
+
 kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;

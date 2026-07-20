@@ -115,6 +115,11 @@ extension ASFWMCPCore {
         case "asfw_phase88_start_48k", "asfw_phase88_stop":
             return await phase88StreamingResult(toolName: name, decoder: decoder,
                                                 start: name == "asfw_phase88_start_48k")
+        case "asfw_continuous_tx_start_dev", "asfw_continuous_tx_stop_dev":
+            return await continuousTxStreamingResult(toolName: name, decoder: decoder,
+                                                      start: name == "asfw_continuous_tx_start_dev")
+        case "asfw_continuous_tx_health_dev":
+            return await continuousTxHealthResult(toolName: name, decoder: decoder)
         default:
             return notImplementedToolResult(name, reason: "Catalog tool \(name) has no dispatch arm.")
         }
@@ -775,6 +780,63 @@ private extension ASFWMCPCore {
                 : .failure(toolName: toolName, code: .rcodeError,
                            reason: "The driver rejected the PHASE 88 duplex lifecycle request.",
                            data: .object(["receipt": receipt.mcpValue, "policy": policy.mcpValue]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func continuousTxStreamingResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder,
+        start: Bool
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGuid = try decoder.uint64("targetGuid")
+            let currentGen = await currentGeneration()
+            // No bus-generation pin applies to this GUID-keyed dev control (it
+            // drives a held OHCI/IRM session, not a node address) -- pin
+            // requested == current so the policy engine's staleness check is a
+            // no-op and only the developer-mode/address-space gate applies.
+            let policy = evaluateWritePolicy(ASFWMCPPolicyRequest(
+                operationType: .write,
+                addressSpace: .ohciController,
+                requestedGeneration: currentGen,
+                currentGeneration: currentGen,
+                dryRun: try decoder.bool("dryRun", default: false)
+            ))
+            guard policy.reachesDriverWritePath else {
+                return .failure(toolName: toolName,
+                                code: policy.isDryRun ? .dryRunOnly : (policy.errorCode ?? .policyDenied),
+                                reason: policy.reason,
+                                data: .object(["policy": policy.mcpValue]))
+            }
+            let receipt = await driver.executeContinuousTxSilence(targetGuid: targetGuid, start: start)
+            return receipt.ok
+                ? .success(toolName: toolName, data: .object([
+                    "kind": .string("continuousTxSilenceCadence"),
+                    "receipt": receipt.mcpValue,
+                    "policy": policy.mcpValue,
+                ]))
+                : .failure(toolName: toolName, code: .rcodeError,
+                           reason: "The driver rejected the continuous TX silence \(start ? "start" : "stop") request.",
+                           data: .object(["receipt": receipt.mcpValue, "policy": policy.mcpValue]))
+        } catch {
+            return malformedToolResult(toolName, reason: error.localizedDescription)
+        }
+    }
+
+    func continuousTxHealthResult(
+        toolName: String,
+        decoder: ASFWMCPToolArgumentDecoder
+    ) async -> ASFWMCPToolCallResult {
+        do {
+            let targetGuid = try decoder.uint64("targetGuid")
+            let receipt = await driver.executeContinuousTxHealth(targetGuid: targetGuid)
+            return receipt.ok
+                ? .success(toolName: toolName, data: receipt.mcpValue)
+                : .failure(toolName: toolName, code: .capabilityUnavailable,
+                           reason: "No continuous TX silence cadence is active for this GUID.",
+                           data: receipt.mcpValue)
         } catch {
             return malformedToolResult(toolName, reason: error.localizedDescription)
         }

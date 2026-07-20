@@ -56,6 +56,7 @@ class WatchdogCoordinator {
     uint32_t ztsLogDivider_{0};
     uint32_t payloadWriterLogDivider_{0};
     uint32_t txSytTraceDivider_{0};
+    uint32_t continuousCadenceHeartbeatDivider_{0};
 };
 
 } // namespace ASFW::Driver

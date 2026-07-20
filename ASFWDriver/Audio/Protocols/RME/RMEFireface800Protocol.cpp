@@ -241,96 +241,13 @@ IOReturn RMEFireface800Protocol::RunBoundedPlaybackIntegrationPreflight(
                        hostCleanupStatus);
     }
 
-    const std::array<uint8_t, 4> stopLE = {0x00U, 0x00U, 0x00U, 0x80U};
-    const auto stopGeneration = busInfo_.GetGeneration();
-    const auto stopNode = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3FU)};
-    const auto stopResult = ASFW::Audio::WaitForAsyncResult<bool>(
-        [this, stopGeneration, stopNode, stopLE](auto done) {
-            probeHandle_ = busOps_.WriteBlock(
-                stopGeneration,
-                stopNode,
-                MakeAddress(kIsochCommStopAddress),
-                std::span<const uint8_t>{stopLE},
-                FW::FwSpeed::S400,
-                [done](Async::AsyncStatus status,
-                       std::span<const uint8_t> payload) mutable {
-                    (void)payload;
-                    const bool accepted =
-                        status == Async::AsyncStatus::kSuccess;
-                    done(accepted ? kIOReturnSuccess : kIOReturnIOError,
-                         accepted);
-                });
-            if (!probeHandle_.IsValid()) {
-                done(kIOReturnNoResources, false);
-            }
-        },
-        500U,
-        kIOReturnTimeout);
-    stopAccepted =
-        stopResult.status == kIOReturnSuccess && stopResult.value;
-    if (!stopAccepted && finalStatus == kIOReturnSuccess) {
-        finalStatus = stopResult.status == kIOReturnSuccess
-            ? kIOReturnIOError
-            : stopResult.status;
-    }
-    if (!stopAccepted) {
-        ASFW_LOG_ERROR(Audio,
-                       "[RME] Stage 5H FF800 stop command failed kr=0x%x gen=%u",
-                       stopResult.status,
-                       stopGeneration.value);
-    }
-
-    deviceTxAllocationRequested_ = false;
-    deviceTxAllocated_ = false;
-    deviceTxChannel_ = 0xFFU;
-
-    const bool hadReservation = playbackResourcesReserved_;
-    const uint8_t reservedChannel = reservedPlaybackChannel_;
-    const uint32_t reservedBandwidth = reservedPlaybackBandwidthUnits_;
-    playbackResourcesReserved_ = false;
-    reservedPlaybackChannel_ = 0xFFU;
-    reservedPlaybackBandwidthUnits_ = 0U;
-
-    if (!hadReservation || irmClient_ == nullptr || reservedChannel > 63U ||
-        reservedBandwidth == 0U) {
-        ASFW_LOG_ERROR(Audio,
-                       "[RME] Stage 5H cleanup missing held IRM route expectedChannel=%u expectedBandwidth=%u actualChannel=%u actualBandwidth=%u",
-                       route.channel,
-                       route.bandwidthUnits,
-                       reservedChannel,
-                       reservedBandwidth);
-        if (finalStatus == kIOReturnSuccess) {
-            finalStatus = kIOReturnNotReady;
-        }
-    } else {
-        const auto releaseResult = ASFW::Audio::WaitForAsyncResult<bool>(
-            [this, reservedChannel, reservedBandwidth](auto done) {
-                irmClient_->ReleaseResources(
-                    reservedChannel,
-                    reservedBandwidth,
-                    [done](IRM::AllocationStatus status) mutable {
-                        const bool accepted =
-                            status == IRM::AllocationStatus::Success;
-                        done(accepted ? kIOReturnSuccess : kIOReturnIOError,
-                             accepted);
-                    });
-            },
-            1000U,
-            kIOReturnTimeout);
-        releaseAccepted =
-            releaseResult.status == kIOReturnSuccess && releaseResult.value;
-        if (!releaseAccepted && finalStatus == kIOReturnSuccess) {
-            finalStatus = releaseResult.status == kIOReturnSuccess
-                ? kIOReturnIOError
-                : releaseResult.status;
-        }
-        if (!releaseAccepted) {
-            ASFW_LOG_ERROR(Audio,
-                           "[RME] Stage 5H IRM release failed kr=0x%x channel=%u bandwidth=%u",
-                           releaseResult.status,
-                           reservedChannel,
-                           reservedBandwidth);
-        }
+    uint8_t reservedChannel = 0xFFU;
+    uint32_t reservedBandwidth = 0U;
+    const IOReturn stopReleaseStatus = StopDeviceEngineAndReleaseIrm(
+        stopAccepted, releaseAccepted, reservedChannel, reservedBandwidth);
+    if (stopReleaseStatus != kIOReturnSuccess &&
+        finalStatus == kIOReturnSuccess) {
+        finalStatus = stopReleaseStatus;
     }
 
     stage5hInFlight_.store(false, std::memory_order_release);
@@ -357,6 +274,301 @@ IOReturn RMEFireface800Protocol::RunBoundedPlaybackIntegrationPreflight(
                        finalStatus);
     }
     return finalStatus;
+}
+
+IOReturn RMEFireface800Protocol::StopDeviceEngineAndReleaseIrm(
+    bool& outStopAccepted,
+    bool& outReleaseAccepted,
+    uint8_t& outReleasedChannel,
+    uint32_t& outReleasedBandwidth) noexcept {
+    outStopAccepted = false;
+    outReleaseAccepted = false;
+    outReleasedChannel = 0xFFU;
+    outReleasedBandwidth = 0U;
+
+    IOReturn status = kIOReturnSuccess;
+
+    const std::array<uint8_t, 4> stopLE = {0x00U, 0x00U, 0x00U, 0x80U};
+    const auto stopGeneration = busInfo_.GetGeneration();
+    const auto stopNode = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3FU)};
+    const auto stopResult = ASFW::Audio::WaitForAsyncResult<bool>(
+        [this, stopGeneration, stopNode, stopLE](auto done) {
+            probeHandle_ = busOps_.WriteBlock(
+                stopGeneration,
+                stopNode,
+                MakeAddress(kIsochCommStopAddress),
+                std::span<const uint8_t>{stopLE},
+                FW::FwSpeed::S400,
+                [done](Async::AsyncStatus status,
+                       std::span<const uint8_t> payload) mutable {
+                    (void)payload;
+                    const bool accepted =
+                        status == Async::AsyncStatus::kSuccess;
+                    done(accepted ? kIOReturnSuccess : kIOReturnIOError,
+                         accepted);
+                });
+            if (!probeHandle_.IsValid()) {
+                done(kIOReturnNoResources, false);
+            }
+        },
+        500U,
+        kIOReturnTimeout);
+    outStopAccepted =
+        stopResult.status == kIOReturnSuccess && stopResult.value;
+    if (!outStopAccepted) {
+        status = stopResult.status == kIOReturnSuccess
+            ? kIOReturnIOError
+            : stopResult.status;
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] FF800 stop command failed kr=0x%x gen=%u",
+                       stopResult.status,
+                       stopGeneration.value);
+    }
+
+    deviceTxAllocationRequested_ = false;
+    deviceTxAllocated_ = false;
+    deviceTxChannel_ = 0xFFU;
+
+    const bool hadReservation = playbackResourcesReserved_;
+    const uint8_t reservedChannel = reservedPlaybackChannel_;
+    const uint32_t reservedBandwidth = reservedPlaybackBandwidthUnits_;
+    playbackResourcesReserved_ = false;
+    reservedPlaybackChannel_ = 0xFFU;
+    reservedPlaybackBandwidthUnits_ = 0U;
+    outReleasedChannel = reservedChannel;
+    outReleasedBandwidth = reservedBandwidth;
+
+    if (!hadReservation || irmClient_ == nullptr || reservedChannel > 63U ||
+        reservedBandwidth == 0U) {
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] cleanup missing held IRM route actualChannel=%u actualBandwidth=%u",
+                       reservedChannel,
+                       reservedBandwidth);
+        if (status == kIOReturnSuccess) {
+            status = kIOReturnNotReady;
+        }
+        return status;
+    }
+
+    const auto releaseResult = ASFW::Audio::WaitForAsyncResult<bool>(
+        [this, reservedChannel, reservedBandwidth](auto done) {
+            irmClient_->ReleaseResources(
+                reservedChannel,
+                reservedBandwidth,
+                [done](IRM::AllocationStatus status) mutable {
+                    const bool accepted =
+                        status == IRM::AllocationStatus::Success;
+                    done(accepted ? kIOReturnSuccess : kIOReturnIOError,
+                         accepted);
+                });
+        },
+        1000U,
+        kIOReturnTimeout);
+    outReleaseAccepted =
+        releaseResult.status == kIOReturnSuccess && releaseResult.value;
+    if (!outReleaseAccepted) {
+        if (status == kIOReturnSuccess) {
+            status = releaseResult.status == kIOReturnSuccess
+                ? kIOReturnIOError
+                : releaseResult.status;
+        }
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] IRM release failed kr=0x%x channel=%u bandwidth=%u",
+                       releaseResult.status,
+                       reservedChannel,
+                       reservedBandwidth);
+    }
+
+    return status;
+}
+
+IOReturn RMEFireface800Protocol::StartContinuousPlaybackIntegration(
+    const PlaybackPreflightRoute& route,
+    BoundedPlaybackStep prepareHost,
+    BoundedPlaybackStep startHostRing) {
+    if (!active_.load(std::memory_order_acquire) || !prepareHost ||
+        !startHostRing ||
+        route.channel > 63U || route.bandwidthUnits != 1286U ||
+        route.sampleRateHz != 192000U ||
+        !route.deviceCommunicationStopped) {
+        return kIOReturnBadArgument;
+    }
+
+    PlaybackPreflightRoute heldRoute{};
+    if (!GetPlaybackPreflightRoute(heldRoute) ||
+        heldRoute.channel != route.channel ||
+        heldRoute.bandwidthUnits != route.bandwidthUnits ||
+        heldRoute.sampleRateHz != route.sampleRateHz ||
+        !heldRoute.deviceCommunicationStopped) {
+        return kIOReturnNotReady;
+    }
+
+    bool expectedStage5h = false;
+    bool expectedContinuous = false;
+    if (stage5hInFlight_.load(std::memory_order_acquire) ||
+        !continuousPlaybackInFlight_.compare_exchange_strong(
+            expectedContinuous, true, std::memory_order_acq_rel)) {
+        ASFW_LOG_WARNING(Audio,
+                         "[RME] Continuous integration start refused: already in flight (stage5h=%u continuous=%u) GUID=0x%016llx",
+                         expectedStage5h ? 1U : 0U,
+                         expectedContinuous ? 1U : 0U,
+                         deviceGuid_);
+        return kIOReturnBusy;
+    }
+
+    // Consume the held route, mirroring RunBoundedPlaybackIntegrationPreflight:
+    // repeated Start calls while a session is live must not re-enter here.
+    playbackPreflightRoute_.store(0U, std::memory_order_release);
+
+    IOReturn finalStatus = prepareHost();
+    const bool hostPrepared = finalStatus == kIOReturnSuccess;
+    if (!hostPrepared) {
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] Continuous integration host cadence preparation failed kr=0x%x",
+                       finalStatus);
+        continuousPlaybackInFlight_.store(false, std::memory_order_release);
+        return finalStatus;
+    }
+
+    const uint32_t dataBlockQuadlets = DecodeChannelCount(route.sampleRateHz);
+    if (dataBlockQuadlets == 0U) {
+        continuousPlaybackInFlight_.store(false, std::memory_order_release);
+        return kIOReturnBadArgument;
+    }
+
+    // Exact Stage 4D/5F/5H FF800 begin-session value: communication enable,
+    // S800 flag, and the 192 kHz data-block-quadlet count.
+    const uint32_t startValue =
+        0x80000000U | 0x00000800U | dataBlockQuadlets;
+    const std::array<uint8_t, 4> startLE = {
+        static_cast<uint8_t>(startValue & 0xFFU),
+        static_cast<uint8_t>((startValue >> 8U) & 0xFFU),
+        static_cast<uint8_t>((startValue >> 16U) & 0xFFU),
+        static_cast<uint8_t>((startValue >> 24U) & 0xFFU),
+    };
+    const auto generation = busInfo_.GetGeneration();
+    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3FU)};
+    const auto startResult = ASFW::Audio::WaitForAsyncResult<bool>(
+        [this, generation, node, startLE](auto done) {
+            probeHandle_ = busOps_.WriteBlock(
+                generation,
+                node,
+                MakeAddress(kIsochCommStartAddress),
+                std::span<const uint8_t>{startLE},
+                FW::FwSpeed::S400,
+                [done](Async::AsyncStatus status,
+                       std::span<const uint8_t> payload) mutable {
+                    (void)payload;
+                    const bool accepted =
+                        status == Async::AsyncStatus::kSuccess;
+                    done(accepted ? kIOReturnSuccess : kIOReturnIOError,
+                         accepted);
+                });
+            if (!probeHandle_.IsValid()) {
+                done(kIOReturnNoResources, false);
+            }
+        },
+        500U,
+        kIOReturnTimeout);
+    const bool startAccepted =
+        startResult.status == kIOReturnSuccess && startResult.value;
+    if (!startAccepted) {
+        if (startResult.status == kIOReturnTimeout &&
+            probeHandle_.IsValid()) {
+            (void)busOps_.Cancel(probeHandle_);
+        }
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] Continuous integration FF800 playback-engine start failed kr=0x%x gen=%u value=0x%08x",
+                       startResult.status,
+                       generation.value,
+                       startValue);
+        bool stopAccepted = false;
+        bool releaseAccepted = false;
+        uint8_t releasedChannel = 0xFFU;
+        uint32_t releasedBandwidth = 0U;
+        (void)StopDeviceEngineAndReleaseIrm(
+            stopAccepted, releaseAccepted, releasedChannel, releasedBandwidth);
+        continuousPlaybackInFlight_.store(false, std::memory_order_release);
+        return startResult.status == kIOReturnSuccess ? kIOReturnIOError
+                                                        : startResult.status;
+    }
+
+    ASFW_LOG(Audio,
+             "[RME] ✅ Continuous integration FF800 playback engine started channel=%u rate=%u value=0x%08x",
+             route.channel,
+             route.sampleRateHz,
+             startValue);
+
+    finalStatus = startHostRing();
+    if (finalStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] Continuous integration host ring start failed kr=0x%x; stopping device engine",
+                       finalStatus);
+        bool stopAccepted = false;
+        bool releaseAccepted = false;
+        uint8_t releasedChannel = 0xFFU;
+        uint32_t releasedBandwidth = 0U;
+        (void)StopDeviceEngineAndReleaseIrm(
+            stopAccepted, releaseAccepted, releasedChannel, releasedBandwidth);
+        continuousPlaybackInFlight_.store(false, std::memory_order_release);
+        return finalStatus;
+    }
+
+    ASFW_LOG(Audio,
+             "[RME] ✅ Continuous circular silent playback integration started; Core Audio StartIO remains rejected GUID=0x%016llx",
+             deviceGuid_);
+    return kIOReturnSuccess;
+}
+
+IOReturn RMEFireface800Protocol::StopContinuousPlaybackIntegration(
+    BoundedPlaybackStep stopHostRing) {
+    bool expected = true;
+    if (!continuousPlaybackInFlight_.compare_exchange_strong(
+            expected, false, std::memory_order_acq_rel)) {
+        return kIOReturnNotReady;
+    }
+
+    const IOReturn hostStopStatus = stopHostRing ? stopHostRing()
+                                                  : kIOReturnUnsupported;
+    if (hostStopStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] Continuous integration host ring stop failed kr=0x%x; proceeding with device/IRM teardown",
+                       hostStopStatus);
+    }
+
+    bool stopAccepted = false;
+    bool releaseAccepted = false;
+    uint8_t releasedChannel = 0xFFU;
+    uint32_t releasedBandwidth = 0U;
+    const IOReturn stopReleaseStatus = StopDeviceEngineAndReleaseIrm(
+        stopAccepted, releaseAccepted, releasedChannel, releasedBandwidth);
+
+    if (stopAccepted && releaseAccepted) {
+        ASFW_LOG(Audio,
+                 "[RME] ✅ Continuous integration FF800 playback engine stopped and IRM route released channel=%u bandwidth=%u",
+                 releasedChannel,
+                 releasedBandwidth);
+    } else {
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] Continuous integration cleanup completed with errors stopAccepted=%u releaseAccepted=%u",
+                       stopAccepted ? 1U : 0U,
+                       releaseAccepted ? 1U : 0U);
+    }
+
+    return hostStopStatus != kIOReturnSuccess ? hostStopStatus
+                                               : stopReleaseStatus;
+}
+
+IOReturn RMEFireface800Protocol::GetContinuousPlaybackIntegrationHealth(
+    ContinuousHealthStep pollHealth) {
+    if (!continuousPlaybackInFlight_.load(std::memory_order_acquire)) {
+        return kIOReturnNotReady;
+    }
+    if (!pollHealth) {
+        return kIOReturnBadArgument;
+    }
+    ContinuousPlaybackHealth health{};
+    return pollHealth(health);
 }
 
 void RMEFireface800Protocol::ProbeClockConfig() noexcept {
@@ -1270,6 +1482,7 @@ void RMEFireface800Protocol::BestEffortStopDeviceCommunication() noexcept {
 void RMEFireface800Protocol::ReleaseReservedResources() noexcept {
     playbackPreflightRoute_.store(0U, std::memory_order_release);
     stage5hInFlight_.store(false, std::memory_order_release);
+    continuousPlaybackInFlight_.store(false, std::memory_order_release);
     if (!playbackResourcesReserved_ || irmClient_ == nullptr) {
         return;
     }

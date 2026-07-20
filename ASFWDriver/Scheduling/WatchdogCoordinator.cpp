@@ -10,6 +10,7 @@
 #include "../Isoch/IsochReceiveContext.hpp"
 #include "../Isoch/Transmit/IsochTransmitContext.hpp"
 #include "../Logging/LogConfig.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace ASFW::Driver {
 namespace {
@@ -27,6 +28,10 @@ constexpr uint32_t kPayloadWriterDrainIntervalTicks = 100;
 // so log the most recent decision once per ~1 s (1000 ticks). The line carries
 // the total decision count so collapsed updates are still visible.
 constexpr uint32_t kTxSytTraceIntervalTicks = 1000;
+// Stage 6 (dev-only continuous silence) coarse heartbeat. The ring runs with
+// zero interrupts by design, so this is the only liveness signal for it;
+// anomalies (DEAD/event error) log immediately and independently below.
+constexpr uint32_t kContinuousCadenceHeartbeatIntervalTicks = 1000;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -187,6 +192,32 @@ void WatchdogCoordinator::TickIsochTransmit(
         isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running;
     if (isRunning) {
         isochTransmitContext->Poll();
+    }
+
+    // Stage 6 continuous silence cadence never enters State::Running (see
+    // IsochTransmitContext::StartContinuousCircularSilenceCadence), so it is
+    // independent of the isRunning/Poll() path above. Cheap no-op when no
+    // continuous cadence is active (single bool check inside the poll call).
+    const auto continuousHealth =
+        isochTransmitContext->PollContinuousCircularSilenceCadenceHealth();
+    if (continuousHealth.running) {
+        if (continuousHealth.dead || continuousHealth.eventError) {
+            ASFW_LOG(Isoch,
+                     "IT: ⚠️ Continuous cadence anomaly dead=%u eventError=%u anchorExecutions=%u",
+                     continuousHealth.dead ? 1U : 0U,
+                     continuousHealth.eventError ? 1U : 0U,
+                     continuousHealth.anchorExecutions);
+        }
+        if (++continuousCadenceHeartbeatDivider_ >=
+            kContinuousCadenceHeartbeatIntervalTicks) {
+            continuousCadenceHeartbeatDivider_ = 0;
+            ASFW_LOG(Isoch,
+                     "IT: Continuous cadence heartbeat anchorExecutions=%u lastAnchorTimestamp=%u",
+                     continuousHealth.anchorExecutions,
+                     continuousHealth.lastAnchorTimestamp);
+        }
+    } else {
+        continuousCadenceHeartbeatDivider_ = 0;
     }
 
     if (++itLogDivider_ < 1000) {

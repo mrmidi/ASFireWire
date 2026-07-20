@@ -22,6 +22,8 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data?
     func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
+    func mcpSetContinuousIsochTxSilence(guid: UInt64, enabled: Bool) -> Int32
+    func mcpGetContinuousIsochTxHealth(guid: UInt64) -> ASFWDriverConnector.ContinuousIsochTxHealth?
 }
 
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
@@ -112,6 +114,16 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
         requestUserBusReset(expectedGeneration: expectedGeneration, shortReset: shortReset)
+    }
+
+    func mcpSetContinuousIsochTxSilence(guid: UInt64, enabled: Bool) -> Int32 {
+        let ok = enabled ? startContinuousIsochTxSilence(guid: guid)
+                          : stopContinuousIsochTxSilence(guid: guid)
+        return ok ? 0 : -1
+    }
+
+    func mcpGetContinuousIsochTxHealth(guid: UInt64) -> ContinuousIsochTxHealth? {
+        getContinuousIsochTxHealth(guid: guid)
     }
 }
 
@@ -384,6 +396,25 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             correlationId: correlationId,
             durationUsec: elapsedUsec(since: started)
         )
+    }
+
+    func executeContinuousTxSilence(targetGuid: UInt64, start: Bool) async -> ASFWMCPContinuousTxReceipt {
+        guard backend.mcpIsConnected else {
+            return ASFWMCPContinuousTxReceipt(targetGuid: targetGuid, started: start, status: -536_870_201)
+        }
+        return ASFWMCPContinuousTxReceipt(
+            targetGuid: targetGuid,
+            started: start,
+            status: backend.mcpSetContinuousIsochTxSilence(guid: targetGuid, enabled: start)
+        )
+    }
+
+    func executeContinuousTxHealth(targetGuid: UInt64) async -> ASFWMCPContinuousTxHealthReceipt {
+        guard backend.mcpIsConnected,
+              let health = backend.mcpGetContinuousIsochTxHealth(guid: targetGuid) else {
+            return ASFWMCPContinuousTxHealthReceipt(targetGuid: targetGuid, health: nil, status: -536_870_201)
+        }
+        return ASFWMCPContinuousTxHealthReceipt(targetGuid: targetGuid, health: health, status: 0)
     }
 
     func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {

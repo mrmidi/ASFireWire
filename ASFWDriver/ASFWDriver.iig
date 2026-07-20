@@ -111,6 +111,19 @@ public:
     kern_return_t StartAudioStreaming(uint64_t guid) LOCALONLY;
     kern_return_t StopAudioStreaming(uint64_t guid) LOCALONLY;
 
+    // Stage 6 (dev-only): continuous silent isoch TX cadence for a device
+    // protocol that implements IDeviceProtocol's continuous-playback hooks
+    // (currently only RME Fireface 800). Never reachable from Core Audio
+    // StartIO -- reached only via this UserClient/MCP path.
+    kern_return_t StartContinuousIsochTxSilence(uint64_t guid) LOCALONLY;
+    kern_return_t StopContinuousIsochTxSilence(uint64_t guid) LOCALONLY;
+    kern_return_t GetContinuousIsochTxHealth(uint64_t guid,
+                                             bool* running,
+                                             bool* dead,
+                                             bool* eventError,
+                                             uint32_t* anchorExecutions,
+                                             uint16_t* lastAnchorTimestamp) LOCALONLY;
+
     // Isochronous Receive Control
     kern_return_t StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) LOCALONLY;
     kern_return_t StopIsochReceive() LOCALONLY;

@@ -221,4 +221,97 @@ extension ASFWDriverConnector {
         }
         return message
     }
+
+    // MARK: - Stage 6 (dev-only continuous silence)
+
+    /// Starts a continuous (not bounded-to-100ms) silent isoch TX cadence for
+    /// a device protocol that implements it (currently only RME Fireface
+    /// 800). Never reachable through real CoreAudio StartIO.
+    func startContinuousIsochTxSilence(guid: UInt64) -> Bool {
+        guard isConnected else {
+            log("startContinuousIsochTxSilence: Not connected", level: .warning)
+            return false
+        }
+
+        var input: [UInt64] = [guid]
+        let kr = IOConnectCallScalarMethod(
+            connection,
+            Method.startContinuousIsochTxSilence.rawValue,
+            &input,
+            UInt32(input.count),
+            nil,
+            nil
+        )
+        guard kr == KERN_SUCCESS else {
+            let message = "startContinuousIsochTxSilence failed: \(interpretIOReturn(kr))"
+            log(message, level: .error)
+            lastError = message
+            return false
+        }
+        return true
+    }
+
+    func stopContinuousIsochTxSilence(guid: UInt64) -> Bool {
+        guard isConnected else {
+            log("stopContinuousIsochTxSilence: Not connected", level: .warning)
+            return false
+        }
+
+        var input: [UInt64] = [guid]
+        let kr = IOConnectCallScalarMethod(
+            connection,
+            Method.stopContinuousIsochTxSilence.rawValue,
+            &input,
+            UInt32(input.count),
+            nil,
+            nil
+        )
+        guard kr == KERN_SUCCESS else {
+            let message = "stopContinuousIsochTxSilence failed: \(interpretIOReturn(kr))"
+            log(message, level: .error)
+            lastError = message
+            return false
+        }
+        return true
+    }
+
+    struct ContinuousIsochTxHealth: Equatable {
+        let running: Bool
+        let dead: Bool
+        let eventError: Bool
+        let anchorExecutions: UInt32
+        let lastAnchorTimestamp: UInt16
+    }
+
+    func getContinuousIsochTxHealth(guid: UInt64) -> ContinuousIsochTxHealth? {
+        guard isConnected else {
+            log("getContinuousIsochTxHealth: Not connected", level: .warning)
+            return nil
+        }
+
+        var input: [UInt64] = [guid]
+        var output = [UInt64](repeating: 0, count: 5)
+        var outputCount: UInt32 = 5
+        let kr = IOConnectCallScalarMethod(
+            connection,
+            Method.getContinuousIsochTxHealth.rawValue,
+            &input,
+            UInt32(input.count),
+            &output,
+            &outputCount
+        )
+        guard kr == KERN_SUCCESS, outputCount == 5 else {
+            let message = "getContinuousIsochTxHealth failed: \(interpretIOReturn(kr))"
+            log(message, level: .error)
+            lastError = message
+            return nil
+        }
+        return ContinuousIsochTxHealth(
+            running: output[0] != 0,
+            dead: output[1] != 0,
+            eventError: output[2] != 0,
+            anchorExecutions: UInt32(truncatingIfNeeded: output[3]),
+            lastAnchorTimestamp: UInt16(truncatingIfNeeded: output[4])
+        )
+    }
 }

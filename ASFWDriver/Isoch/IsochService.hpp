@@ -102,6 +102,13 @@ class IsochService {
         uint32_t durationMs);
     kern_return_t CleanupPreparedTransmitBoundedCircularSilenceCadenceForPreflight();
 
+    // Stage 6 (dev-only continuous silence): same immutable ring as above,
+    // run indefinitely instead of for a bounded duration.
+    kern_return_t StartTransmitContinuousCircularSilenceCadence();
+    ASFW::Isoch::IsochTransmitContext::ContinuousCadenceHealth
+    PollTransmitContinuousCircularSilenceCadenceHealth();
+    kern_return_t StopTransmitContinuousCircularSilenceCadence();
+
     kern_return_t StopTransmit();
 
     kern_return_t BeginSplitDuplex(uint64_t guid);

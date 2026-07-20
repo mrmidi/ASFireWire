@@ -21,6 +21,7 @@ enum ASFWMCPToolCatalog {
             + sbp2Tools
             + diceTcatTools
             + bebobTools
+            + continuousTxTools
     }
 
     static let coreTools: [ASFWMCPToolDefinition] = [

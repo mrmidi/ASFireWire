@@ -13,6 +13,8 @@ protocol ASFWDriverControlling {
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
     func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt
+    func executeContinuousTxSilence(targetGuid: UInt64, start: Bool) async -> ASFWMCPContinuousTxReceipt
+    func executeContinuousTxHealth(targetGuid: UInt64) async -> ASFWMCPContinuousTxHealthReceipt
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
 }
@@ -31,6 +33,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     private var duetInputFdf: UInt8 = 0x02
     private var duetOutputFdf: UInt8 = 0x02
     private var phase88Streaming = false
+    private var continuousTxSilenceRunning = false
 
     init(
         generation: UInt32 = 17,
@@ -373,6 +376,25 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         }
         phase88Streaming = start
         return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: 0)
+    }
+
+    func executeContinuousTxSilence(targetGuid: UInt64, start: Bool) async -> ASFWMCPContinuousTxReceipt {
+        attemptedWriteCount += 1
+        continuousTxSilenceRunning = start
+        return ASFWMCPContinuousTxReceipt(targetGuid: targetGuid, started: start, status: 0)
+    }
+
+    func executeContinuousTxHealth(targetGuid: UInt64) async -> ASFWMCPContinuousTxHealthReceipt {
+        guard continuousTxSilenceRunning else {
+            return ASFWMCPContinuousTxHealthReceipt(targetGuid: targetGuid, health: nil, status: -536_870_213)
+        }
+        return ASFWMCPContinuousTxHealthReceipt(
+            targetGuid: targetGuid,
+            health: ASFWDriverConnector.ContinuousIsochTxHealth(
+                running: true, dead: false, eventError: false,
+                anchorExecutions: 42, lastAnchorTimestamp: 1234),
+            status: 0
+        )
     }
 
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
