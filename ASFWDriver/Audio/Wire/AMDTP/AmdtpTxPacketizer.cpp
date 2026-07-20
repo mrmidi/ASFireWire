@@ -135,6 +135,9 @@ bool AmdtpTxPacketizer::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
 }
 
 void AmdtpTxPacketizer::ReArmFrameCursorAlignment() noexcept {
+    if (!frameCursorAligned_) {
+        return;
+    }
     frameCursorAligned_ = false;
     ++cursorEpoch_;
     PublishTelemetrySnapshot();

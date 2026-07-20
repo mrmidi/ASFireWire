@@ -1,0 +1,1824 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 4356,\n    \"nextSequence\" : 200,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 200,\n    \"records\" : [\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWAsyncVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 1,\n        \"timestampNs\" : 94780892533791\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWControllerVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 2,\n        \"timestampNs\" : 94780892613916\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWHardwareVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 3,\n        \"timestampNs\" : 94780892653750\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWDiscoveryVerbosity' = 2 (default, not in Info.plist)\",\n        \"sequence\" : 4,\n        \"timestampNs\" : 94780892682458\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWConfigROMVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 5,\n        \"timestampNs\" : 94780892707666\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWUserClientVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 6,\n        \"timestampNs\" : 94780892733666\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWMusicSubunitVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 7,\n        \"timestampNs\" : 94780892758250\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWFCPVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 8,\n        \"timestampNs\" : 94780892785333\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWCMPVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 9,\n        \"timestampNs\" : 94780892812083\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWIRMVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 10,\n        \"timestampNs\" : 94780892835375\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWAVCVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 11,\n        \"timestampNs\" : 94780892858250\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWDICEVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 12,\n        \"timestampNs\" : 94780892880541\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWIsochVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 13,\n        \"timestampNs\" : 94780892903333\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWDirectAudioVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 14,\n        \"timestampNs\" : 94780892925500\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWEnableHexDumps' = false (from Info.plist)\",\n        \"sequence\" : 15,\n        \"timestampNs\" : 94780892949750\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWAutoStartAudioStreams' = true (from Info.plist)\",\n        \"sequence\" : 16,\n        \"timestampNs\" : 94780892974833\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWLogStatistics' = true (from Info.plist)\",\n        \"sequence\" : 17,\n        \"timestampNs\" : 94780893000458\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWMirrorToOsLog' = true (default, not in Info.plist)\",\n        \"sequence\" : 18,\n        \"timestampNs\" : 94780893022458\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] LogConfig initialized: Async=1 Controller=1 Hardware=1 Discovery=2 ConfigROM=1 UserClient=1 Music=1 FCP=1 CMP=1 IRM=1 AVC=1 DICE=1 Isoch=1 DirectAudio=1 HexDumps=0 AutoStart=1 Stats=1\",\n        \"sequence\" : 19,\n        \"timestampNs\" : 94780893027916\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] ASFWSBP2Nub::Start \u2014 registering (phase-0)\",\n        \"sequence\" : 20,\n        \"timestampNs\" : 94780893148083\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] ASFWDriver::Start() complete\",\n        \"sequence\" : 21,\n        \"timestampNs\" : 94780893185083\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Bus reset: invalidated 0 live GUID-to-node mappings pending ROM rescan\",\n        \"sequence\" : 22,\n        \"timestampNs\" : 94780893722416\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Bus reset: suspended 0 published devices pending discovery\",\n        \"sequence\" : 23,\n        \"timestampNs\" : 94780893727708\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd25 SYNTHETIC BUS-RESET PACKET via PacketRouter: gen=0 event=0x09 xferStatus=0x8409\",\n        \"sequence\" : 24,\n        \"timestampNs\" : 94780893820041\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] RxPath: Synthetic bus reset packet: tCode=0x0 gen=0 (controller=0)\",\n        \"sequence\" : 25,\n        \"timestampNs\" : 94780893887166\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] RxPath: Bus reset packet captured (total: 1), packet gen=0 (informational only)\",\n        \"sequence\" : 26,\n        \"timestampNs\" : 94780893891625\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] Bus reset detected @ 94780744601875 ns\",\n        \"sequence\" : 27,\n        \"timestampNs\" : 94780893898625\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID Complete (bit16)\",\n        \"sequence\" : 28,\n        \"timestampNs\" : 94780893901375\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID Complete2 (bit15, sticky)\",\n        \"sequence\" : 29,\n        \"timestampNs\" : 94780893903541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID buffer armed: paddr=0x80198000 size=2048 bytes\",\n        \"sequence\" : 30,\n        \"timestampNs\" : 94780893958500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID Complete (bit16)\",\n        \"sequence\" : 31,\n        \"timestampNs\" : 94780893989291\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] SetPowerState: powerFlags=0x00000002 (on)\",\n        \"sequence\" : 32,\n        \"timestampNs\" : 94780894005208\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] SetPowerState: pin desire On -> 0x00000000, override -> 0x00000000\",\n        \"sequence\" : 33,\n        \"timestampNs\" : 94780894020166\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID generation VALIDATED: 1\",\n        \"sequence\" : 34,\n        \"timestampNs\" : 94780895180041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID decode complete: valid=1 quads=4 sequences=3 enumeratorError=0\",\n        \"sequence\" : 35,\n        \"timestampNs\" : 94780895551541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] \ud83e\uddf5 Sequences: start=1 count=1, start=2 count=1, start=3 count=1\",\n        \"sequence\" : 36,\n        \"timestampNs\" : 94780895794000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] \u2705 Self-ID decode valid\",\n        \"sequence\" : 37,\n        \"timestampNs\" : 94780895798500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] === End Self-ID Debug ===\",\n        \"sequence\" : 38,\n        \"timestampNs\" : 94780895800583\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] ConfirmBusGeneration: Confirmed generation 1 (from SelfIDCount register)\",\n        \"sequence\" : 39,\n        \"timestampNs\" : 94780895810916\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] GenerationTracker: Synthetic bus reset detected. New generation: 1\",\n        \"sequence\" : 40,\n        \"timestampNs\" : 94780895814791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] Bus generation update (synthetic-packet): prev8=0, new8=1 -> prev16=0x0000, new16=0x0001\",\n        \"sequence\" : 41,\n        \"timestampNs\" : 94780895817500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] GenerationTracker updated: 0\u21921\",\n        \"sequence\" : 42,\n        \"timestampNs\" : 94780895821583\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] Generation confirmed via Tracking actor (no redundant cancel)\",\n        \"sequence\" : 43,\n        \"timestampNs\" : 94780895823625\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] PayloadRegistry: canceled epoch <= 0 and set epoch=1\",\n        \"sequence\" : 44,\n        \"timestampNs\" : 94780895844375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] ConfirmBusGeneration complete - async subsystem coordinated for new generation\",\n        \"sequence\" : 45,\n        \"timestampNs\" : 94780895847791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u2705 CancelAllAndFreeLabels: cancelled 0 transactions\",\n        \"sequence\" : 46,\n        \"timestampNs\" : 94780895857458\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 CancelByGeneration: gen=1 (will extract and free labels)\",\n        \"sequence\" : 47,\n        \"timestampNs\" : 94780895859833\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u2705 CancelByGeneration: Cancelled 0 transactions\",\n        \"sequence\" : 48,\n        \"timestampNs\" : 94780895862291\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] LabelAllocator::ClearBitmap: bitmap=0x0000000000000000\u21920x0000000000000000\",\n        \"sequence\" : 49,\n        \"timestampNs\" : 94780895865000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnBusResetBegin: cancelled oldGen=1 transactions, payload epoch\u21922 (hw will set gen)\",\n        \"sequence\" : 50,\n        \"timestampNs\" : 94780895868083\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] ContextManager::stopAT - stopping AT contexts\",\n        \"sequence\" : 51,\n        \"timestampNs\" : 94780895871041\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] ContextManager::stopAT - SUCCESS\",\n        \"sequence\" : 52,\n        \"timestampNs\" : 94780895880916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Config ROM header restored in DMA buffer: 0x00000000 \u2192 0x0404a54b\",\n        \"sequence\" : 53,\n        \"timestampNs\" : 94780895892500\n      },\n      {\n        \"category\" : \"Topology\",\n        \"categoryId\" : 3,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Topology] === \ud83d\uddfa\ufe0f Topology Snapshot v2 ===\",\n        \"sequence\" : 54,\n        \"timestampNs\" : 94780897234458\n      },\n      {\n        \"category\" : \"Topology\",\n        \"categoryId\" : 3,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Topology] \ud83e\uddee gen=1 nodes=3 root=2 IRM=2 local=0 bus=1023 gap=63 hops=2 status=1 error=0\",\n        \"sequence\" : 55,\n        \"timestampNs\" : 94780897484250\n      },\n      {\n        \"category\" : \"BusReset\",\n        \"categoryId\" : 2,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[BusReset] Reset provenance: gen=1 origin=local initiator=node0 root=2 irm=2 local=0\",\n        \"sequence\" : 56,\n        \"timestampNs\" : 94780897500541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] IntMask updated: shadow=0x878783ff add=0x00020000 (masterEnable=1 busReset=1)\",\n        \"sequence\" : 57,\n        \"timestampNs\" : 94780897520791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] Re-arming AT contexts for new generation (OHCI \u00a77.2.3.2 step 7)\",\n        \"sequence\" : 58,\n        \"timestampNs\" : 94780897533000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] GenerationTracker: Self-ID complete. New NodeID: 0xffc0\",\n        \"sequence\" : 59,\n        \"timestampNs\" : 94780897539458\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] NodeID valid: using broadcast bus (0x3ff) for source field (raw=0x8800ffc0 node=0)\",\n        \"sequence\" : 60,\n        \"timestampNs\" : 94780897542375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] RearmATContexts: handled by ContextManager (AT contexts remain idle)\",\n        \"sequence\" : 61,\n        \"timestampNs\" : 94780897545125\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnBusResetComplete: gen=1\",\n        \"sequence\" : 62,\n        \"timestampNs\" : 94780897547291\n      },\n      {\n        \"category\" : \"BusReset\",\n        \"categoryId\" : 2,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[BusReset] Bus reset #1 complete in 3.60 ms (generation=1, aborts=0)\",\n        \"sequence\" : 63,\n        \"timestampNs\" : 94780897549416\n      },\n      {\n        \"category\" : \"BusReset\",\n        \"categoryId\" : 2,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[BusReset] Discovery delayed 100ms for generation 1\",\n        \"sequence\" : 64,\n        \"timestampNs\" : 94780898096458\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=0 action=none(0)\",\n        \"sequence\" : 65,\n        \"timestampNs\" : 94780999274583\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] TopologyMapService: Map rebuilt for generation 1: nodes=3, selfIds=3\",\n        \"sequence\" : 66,\n        \"timestampNs\" : 94780999634875\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=0 action=none(0)\",\n        \"sequence\" : 67,\n        \"timestampNs\" : 94780999844125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] IntMask updated: shadow=0x87c783ff add=0x00400000 (masterEnable=1 busReset=1)\",\n        \"sequence\" : 68,\n        \"timestampNs\" : 94780999890541\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\",\n        \"sequence\" : 69,\n        \"timestampNs\" : 94780999910000\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Topology ready gen=1: 3 total nodes, 1 scannable (local=0)\",\n        \"sequence\" : 70,\n        \"timestampNs\" : 94780999919250\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\",\n        \"sequence\" : 71,\n        \"timestampNs\" : 94780999928041\n      },\n      {\n        \"category\" : \"IRM\",\n        \"categoryId\" : 8,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[IRM] IRMClient: Set IRM node=2 generation=1 resetNs=94780895905541\",\n        \"sequence\" : 72,\n        \"timestampNs\" : 94781001229416\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] IRMClient updated: IRM node=2, generation=1\",\n        \"sequence\" : 73,\n        \"timestampNs\" : 94781001255625\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=1 action=none(0)\",\n        \"sequence\" : 74,\n        \"timestampNs\" : 94781003481708\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=1 action=none(0)\",\n        \"sequence\" : 75,\n        \"timestampNs\" : 94781003561041\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/1 speed=2 addrNode=0x0002 addr=0xffff_f0000400\",\n        \"sequence\" : 76,\n        \"timestampNs\" : 94781004216416\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] NewUserClient request received (type=0)\",\n        \"sequence\" : 77,\n        \"timestampNs\" : 94781004720666\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] Start() completed - runtime state initialized\",\n        \"sequence\" : 78,\n        \"timestampNs\" : 94781005331833\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] NewUserClient success (client=0x71a6004ff8)\",\n        \"sequence\" : 79,\n        \"timestampNs\" : 94781005345333\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] Start() completed - runtime state initialized\",\n        \"sequence\" : 80,\n        \"timestampNs\" : 94781005356583\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=0 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 81,\n        \"timestampNs\" : 94781005487125\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000400\",\n        \"sequence\" : 82,\n        \"timestampNs\" : 94781005502708\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/3 speed=2 addrNode=0x0002 addr=0xffff_f0000408\",\n        \"sequence\" : 83,\n        \"timestampNs\" : 94781005574625\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=1 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 84,\n        \"timestampNs\" : 94781005839250\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/3 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000408\",\n        \"sequence\" : 85,\n        \"timestampNs\" : 94781005860958\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1\\/3 speed=2 addrNode=0x0002 addr=0xffff_f000040c\",\n        \"sequence\" : 86,\n        \"timestampNs\" : 94781005967166\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=2 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 87,\n        \"timestampNs\" : 94781006257250\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1\\/3 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000040c\",\n        \"sequence\" : 88,\n        \"timestampNs\" : 94781006275375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2\\/3 speed=2 addrNode=0x0002 addr=0xffff_f0000410\",\n        \"sequence\" : 89,\n        \"timestampNs\" : 94781006345750\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=3 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 90,\n        \"timestampNs\" : 94781006647083\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2\\/3 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000410\",\n        \"sequence\" : 91,\n        \"timestampNs\" : 94781006669083\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery][speed_success] Node 2: Success at S400 (total=1)\",\n        \"sequence\" : 92,\n        \"timestampNs\" : 94781006838833\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [RoleEvidence] root-bib gen=1 node=2 bmc=0 irmc=0 cmc=0 isc=1\",\n        \"sequence\" : 93,\n        \"timestampNs\" : 94781006850041\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=1\\/0 cycleSeen=1 action=none(0)\",\n        \"sequence\" : 94,\n        \"timestampNs\" : 94781006893291\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/1 speed=2 addrNode=0x0002 addr=0xffff_f0000414\",\n        \"sequence\" : 95,\n        \"timestampNs\" : 94781006926083\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=4 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 96,\n        \"timestampNs\" : 94781007185458\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000414\",\n        \"sequence\" : 97,\n        \"timestampNs\" : 94781007210375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000418\",\n        \"sequence\" : 98,\n        \"timestampNs\" : 94781007284166\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=5 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 99,\n        \"timestampNs\" : 94781007540666\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/6 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000418\",\n        \"sequence\" : 100,\n        \"timestampNs\" : 94781007556958\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1\\/6 speed=2 addrNode=0x0002 addr=0xffff_f000041c\",\n        \"sequence\" : 101,\n        \"timestampNs\" : 94781007612875\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=6 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 102,\n        \"timestampNs\" : 94781007920583\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1\\/6 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000041c\",\n        \"sequence\" : 103,\n        \"timestampNs\" : 94781007951291\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000420\",\n        \"sequence\" : 104,\n        \"timestampNs\" : 94781008074750\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=7 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 105,\n        \"timestampNs\" : 94781008348833\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2\\/6 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000420\",\n        \"sequence\" : 106,\n        \"timestampNs\" : 94781008375625\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=3\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000424\",\n        \"sequence\" : 107,\n        \"timestampNs\" : 94781008445291\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=8 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 108,\n        \"timestampNs\" : 94781008695625\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=3\\/6 status=0 payloadBytes=4 successSoFar=3 addr=0xffff_f0000424\",\n        \"sequence\" : 109,\n        \"timestampNs\" : 94781008714000\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=4\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000428\",\n        \"sequence\" : 110,\n        \"timestampNs\" : 94781008786500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=9 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 111,\n        \"timestampNs\" : 94781009051500\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=4\\/6 status=0 payloadBytes=4 successSoFar=4 addr=0xffff_f0000428\",\n        \"sequence\" : 112,\n        \"timestampNs\" : 94781009077083\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=5\\/6 speed=2 addrNode=0x0002 addr=0xffff_f000042c\",\n        \"sequence\" : 113,\n        \"timestampNs\" : 94781009156916\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=10 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 114,\n        \"timestampNs\" : 94781009434708\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=5\\/6 status=0 payloadBytes=4 successSoFar=5 addr=0xffff_f000042c\",\n        \"sequence\" : 115,\n        \"timestampNs\" : 94781009453375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000430\",\n        \"sequence\" : 116,\n        \"timestampNs\" : 94781010891541\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=11 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 117,\n        \"timestampNs\" : 94781011208875\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/6 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000430\",\n        \"sequence\" : 118,\n        \"timestampNs\" : 94781011227083\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000434\",\n        \"sequence\" : 119,\n        \"timestampNs\" : 94781011309416\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=12 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 120,\n        \"timestampNs\" : 94781011558708\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1\\/6 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f0000434\",\n        \"sequence\" : 121,\n        \"timestampNs\" : 94781011574375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000438\",\n        \"sequence\" : 122,\n        \"timestampNs\" : 94781011632750\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=13 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 123,\n        \"timestampNs\" : 94781011897041\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2\\/6 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000438\",\n        \"sequence\" : 124,\n        \"timestampNs\" : 94781011917708\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=3\\/6 speed=2 addrNode=0x0002 addr=0xffff_f000043c\",\n        \"sequence\" : 125,\n        \"timestampNs\" : 94781012002000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=14 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 126,\n        \"timestampNs\" : 94781012296333\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=3\\/6 status=0 payloadBytes=4 successSoFar=3 addr=0xffff_f000043c\",\n        \"sequence\" : 127,\n        \"timestampNs\" : 94781012318875\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=4\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000440\",\n        \"sequence\" : 128,\n        \"timestampNs\" : 94781012409250\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=15 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 129,\n        \"timestampNs\" : 94781012659250\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=4\\/6 status=0 payloadBytes=4 successSoFar=4 addr=0xffff_f0000440\",\n        \"sequence\" : 130,\n        \"timestampNs\" : 94781012670666\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=5\\/6 speed=2 addrNode=0x0002 addr=0xffff_f0000444\",\n        \"sequence\" : 131,\n        \"timestampNs\" : 94781012718750\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=16 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 132,\n        \"timestampNs\" : 94781012953208\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=5\\/6 status=0 payloadBytes=4 successSoFar=5 addr=0xffff_f0000444\",\n        \"sequence\" : 133,\n        \"timestampNs\" : 94781012971458\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/7 speed=2 addrNode=0x0002 addr=0xffff_f0000448\",\n        \"sequence\" : 134,\n        \"timestampNs\" : 94781013084125\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=17 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 135,\n        \"timestampNs\" : 94781013324708\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/7 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000448\",\n        \"sequence\" : 136,\n        \"timestampNs\" : 94781013336375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1\\/7 speed=2 addrNode=0x0002 addr=0xffff_f000044c\",\n        \"sequence\" : 137,\n        \"timestampNs\" : 94781013410541\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=18 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 138,\n        \"timestampNs\" : 94781013659791\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1\\/7 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000044c\",\n        \"sequence\" : 139,\n        \"timestampNs\" : 94781013670583\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2\\/7 speed=2 addrNode=0x0002 addr=0xffff_f0000450\",\n        \"sequence\" : 140,\n        \"timestampNs\" : 94781013724791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=19 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 141,\n        \"timestampNs\" : 94781013994333\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2\\/7 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000450\",\n        \"sequence\" : 142,\n        \"timestampNs\" : 94781014006958\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=3\\/7 speed=2 addrNode=0x0002 addr=0xffff_f0000454\",\n        \"sequence\" : 143,\n        \"timestampNs\" : 94781014068291\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=20 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 144,\n        \"timestampNs\" : 94781014307750\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=3\\/7 status=0 payloadBytes=4 successSoFar=3 addr=0xffff_f0000454\",\n        \"sequence\" : 145,\n        \"timestampNs\" : 94781014318250\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=4\\/7 speed=2 addrNode=0x0002 addr=0xffff_f0000458\",\n        \"sequence\" : 146,\n        \"timestampNs\" : 94781014366833\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=21 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 147,\n        \"timestampNs\" : 94781014638625\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=4\\/7 status=0 payloadBytes=4 successSoFar=4 addr=0xffff_f0000458\",\n        \"sequence\" : 148,\n        \"timestampNs\" : 94781014649416\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=5\\/7 speed=2 addrNode=0x0002 addr=0xffff_f000045c\",\n        \"sequence\" : 149,\n        \"timestampNs\" : 94781014726291\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=22 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 150,\n        \"timestampNs\" : 94781014955208\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=5\\/7 status=0 payloadBytes=4 successSoFar=5 addr=0xffff_f000045c\",\n        \"sequence\" : 151,\n        \"timestampNs\" : 94781014965125\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=6\\/7 speed=2 addrNode=0x0002 addr=0xffff_f0000460\",\n        \"sequence\" : 152,\n        \"timestampNs\" : 94781015014708\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=23 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 153,\n        \"timestampNs\" : 94781015258291\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=6\\/7 status=0 payloadBytes=4 successSoFar=6 addr=0xffff_f0000460\",\n        \"sequence\" : 154,\n        \"timestampNs\" : 94781015269583\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/1 speed=2 addrNode=0x0002 addr=0xffff_f0000464\",\n        \"sequence\" : 155,\n        \"timestampNs\" : 94781015370375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=24 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 156,\n        \"timestampNs\" : 94781015634083\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000464\",\n        \"sequence\" : 157,\n        \"timestampNs\" : 94781015646375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/3 speed=2 addrNode=0x0002 addr=0xffff_f0000468\",\n        \"sequence\" : 158,\n        \"timestampNs\" : 94781015712458\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=25 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 159,\n        \"timestampNs\" : 94781015945166\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/3 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000468\",\n        \"sequence\" : 160,\n        \"timestampNs\" : 94781015955750\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1\\/3 speed=2 addrNode=0x0002 addr=0xffff_f000046c\",\n        \"sequence\" : 161,\n        \"timestampNs\" : 94781016003583\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=26 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 162,\n        \"timestampNs\" : 94781016253958\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1\\/3 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000046c\",\n        \"sequence\" : 163,\n        \"timestampNs\" : 94781016269041\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2\\/3 speed=2 addrNode=0x0002 addr=0xffff_f0000470\",\n        \"sequence\" : 164,\n        \"timestampNs\" : 94781016317208\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=27 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 165,\n        \"timestampNs\" : 94781016553541\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2\\/3 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000470\",\n        \"sequence\" : 166,\n        \"timestampNs\" : 94781016569458\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/1 speed=2 addrNode=0x0002 addr=0xffff_f0000474\",\n        \"sequence\" : 167,\n        \"timestampNs\" : 94781016655000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=28 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 168,\n        \"timestampNs\" : 94781016894791\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000474\",\n        \"sequence\" : 169,\n        \"timestampNs\" : 94781016911375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0\\/3 speed=2 addrNode=0x0002 addr=0xffff_f0000478\",\n        \"sequence\" : 170,\n        \"timestampNs\" : 94781016974500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=29 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 171,\n        \"timestampNs\" : 94781017204375\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0\\/3 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000478\",\n        \"sequence\" : 172,\n        \"timestampNs\" : 94781017214625\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1\\/3 speed=2 addrNode=0x0002 addr=0xffff_f000047c\",\n        \"sequence\" : 173,\n        \"timestampNs\" : 94781017267625\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=30 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 174,\n        \"timestampNs\" : 94781017518708\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1\\/3 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000047c\",\n        \"sequence\" : 175,\n        \"timestampNs\" : 94781017530625\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2\\/3 speed=2 addrNode=0x0002 addr=0xffff_f0000480\",\n        \"sequence\" : 176,\n        \"timestampNs\" : 94781017580375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] OnARResponse: completing tLabel=31 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4\",\n        \"sequence\" : 177,\n        \"timestampNs\" : 94781017809666\n      },\n      {\n        \"category\" : \"ConfigROM\",\n        \"categoryId\" : 10,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2\\/3 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000480\",\n        \"sequence\" : 178,\n        \"timestampNs\" : 94781017819625\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\",\n        \"sequence\" : 179,\n        \"timestampNs\" : 94781017894833\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] ROM scan complete for gen=1, processing results...\",\n        \"sequence\" : 180,\n        \"timestampNs\" : 94781017904125\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Discovered 1 ROMs (hadBusy=0)\",\n        \"sequence\" : 181,\n        \"timestampNs\" : 94781017909333\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] ROM scan succeeded with 1 ROMs \u2014 clearing discovery delay\",\n        \"sequence\" : 182,\n        \"timestampNs\" : 94781017915708\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Known device profile available for vendor=0x0003db model=0x01dddd integration=2\",\n        \"sequence\" : 183,\n        \"timestampNs\" : 94781018140458\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Device upsert: GUID=0x0003db0a0000d112 vendor=0x0003db(Apogee) model=0x01dddd(Duet) kind=TA_61883 audioCandidate=1 node=2 gen=1\",\n        \"sequence\" : 184,\n        \"timestampNs\" : 94781018159166\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] Creating ApogeeDuetProtocol for vendor=0x0003db model=0x01dddd node=0x0002\",\n        \"sequence\" : 185,\n        \"timestampNs\" : 94781018195208\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioRuntimeRegistry: \u2705 protocol created: Apogee Duet FireWire for GUID=0x0003db0a0000d112 node=2\",\n        \"sequence\" : 186,\n        \"timestampNs\" : 94781018204041\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u2705 AV\\/C DETECTED: GUID=3db0a0000d112, specID=0x00a02d - SCANNING...\",\n        \"sequence\" : 187,\n        \"timestampNs\" : 94781018255916\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Initialized for device nodeID=2, cmdAddr=0xfffff0000b00, rspAddr=0xfffff0000d00\",\n        \"sequence\" : 188,\n        \"timestampNs\" : 94781018271541\n      },\n      {\n        \"category\" : \"AVC\",\n        \"categoryId\" : 14,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[AVC] AVCUnit: Created for device GUID=3db0a0000d112, specID=0x00a02d\",\n        \"sequence\" : 189,\n        \"timestampNs\" : 94781018279750\n      },\n      {\n        \"category\" : \"AVC\",\n        \"categoryId\" : 14,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[AVC] AVCUnit: Initializing...\",\n        \"sequence\" : 190,\n        \"timestampNs\" : 94781018290750\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery]   Created FWDevice with 1 units\",\n        \"sequence\" : 191,\n        \"timestampNs\" : 94781019367333\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\",\n        \"sequence\" : 192,\n        \"timestampNs\" : 94781019374958\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Device Discovered:\",\n        \"sequence\" : 193,\n        \"timestampNs\" : 94781019380750\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery]   GUID: 0x0003db0a0000d112\",\n        \"sequence\" : 194,\n        \"timestampNs\" : 94781019384375\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery]   Vendor: 0x0003db\",\n        \"sequence\" : 195,\n        \"timestampNs\" : 94781019388583\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery]   Model: 0x01dddd\",\n        \"sequence\" : 196,\n        \"timestampNs\" : 94781019392333\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery]   Node: 2 (gen=1)\",\n        \"sequence\" : 197,\n        \"timestampNs\" : 94781019396000\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery]   Kind: TA 61883 (AMDTP)\",\n        \"sequence\" : 198,\n        \"timestampNs\" : 94781019400083\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery]   Audio Candidate: YES\",\n        \"sequence\" : 199,\n        \"timestampNs\" : 94781019404125\n      },\n      {\n        \"category\" : \"Discovery\",\n        \"categoryId\" : 7,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Discovery] Discovery complete: 1 devices processed in gen=1\",\n        \"sequence\" : 200,\n        \"timestampNs\" : 94781019416083\n      }\n    ],\n    \"scannedCount\" : 257\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 4356,
+      "nextSequence": 200,
+      "oldestSequence": 1,
+      "recordCount": 200,
+      "records": [
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWAsyncVerbosity' = 1 (from Info.plist)",
+          "sequence": 1,
+          "timestampNs": 94780892533791
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWControllerVerbosity' = 1 (from Info.plist)",
+          "sequence": 2,
+          "timestampNs": 94780892613916
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWHardwareVerbosity' = 1 (from Info.plist)",
+          "sequence": 3,
+          "timestampNs": 94780892653750
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWDiscoveryVerbosity' = 2 (default, not in Info.plist)",
+          "sequence": 4,
+          "timestampNs": 94780892682458
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWConfigROMVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 5,
+          "timestampNs": 94780892707666
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWUserClientVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 6,
+          "timestampNs": 94780892733666
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWMusicSubunitVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 7,
+          "timestampNs": 94780892758250
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWFCPVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 8,
+          "timestampNs": 94780892785333
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWCMPVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 9,
+          "timestampNs": 94780892812083
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWIRMVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 10,
+          "timestampNs": 94780892835375
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWAVCVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 11,
+          "timestampNs": 94780892858250
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWDICEVerbosity' = 1 (from Info.plist)",
+          "sequence": 12,
+          "timestampNs": 94780892880541
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWIsochVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 13,
+          "timestampNs": 94780892903333
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWDirectAudioVerbosity' = 1 (from Info.plist)",
+          "sequence": 14,
+          "timestampNs": 94780892925500
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWEnableHexDumps' = false (from Info.plist)",
+          "sequence": 15,
+          "timestampNs": 94780892949750
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWAutoStartAudioStreams' = true (from Info.plist)",
+          "sequence": 16,
+          "timestampNs": 94780892974833
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWLogStatistics' = true (from Info.plist)",
+          "sequence": 17,
+          "timestampNs": 94780893000458
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWMirrorToOsLog' = true (default, not in Info.plist)",
+          "sequence": 18,
+          "timestampNs": 94780893022458
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] LogConfig initialized: Async=1 Controller=1 Hardware=1 Discovery=2 ConfigROM=1 UserClient=1 Music=1 FCP=1 CMP=1 IRM=1 AVC=1 DICE=1 Isoch=1 DirectAudio=1 HexDumps=0 AutoStart=1 Stats=1",
+          "sequence": 19,
+          "timestampNs": 94780893027916
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] ASFWSBP2Nub::Start \u2014 registering (phase-0)",
+          "sequence": 20,
+          "timestampNs": 94780893148083
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] ASFWDriver::Start() complete",
+          "sequence": 21,
+          "timestampNs": 94780893185083
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Bus reset: invalidated 0 live GUID-to-node mappings pending ROM rescan",
+          "sequence": 22,
+          "timestampNs": 94780893722416
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Bus reset: suspended 0 published devices pending discovery",
+          "sequence": 23,
+          "timestampNs": 94780893727708
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd25 SYNTHETIC BUS-RESET PACKET via PacketRouter: gen=0 event=0x09 xferStatus=0x8409",
+          "sequence": 24,
+          "timestampNs": 94780893820041
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] RxPath: Synthetic bus reset packet: tCode=0x0 gen=0 (controller=0)",
+          "sequence": 25,
+          "timestampNs": 94780893887166
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] RxPath: Bus reset packet captured (total: 1), packet gen=0 (informational only)",
+          "sequence": 26,
+          "timestampNs": 94780893891625
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] Bus reset detected @ 94780744601875 ns",
+          "sequence": 27,
+          "timestampNs": 94780893898625
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID Complete (bit16)",
+          "sequence": 28,
+          "timestampNs": 94780893901375
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID Complete2 (bit15, sticky)",
+          "sequence": 29,
+          "timestampNs": 94780893903541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID buffer armed: paddr=0x80198000 size=2048 bytes",
+          "sequence": 30,
+          "timestampNs": 94780893958500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID Complete (bit16)",
+          "sequence": 31,
+          "timestampNs": 94780893989291
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] SetPowerState: powerFlags=0x00000002 (on)",
+          "sequence": 32,
+          "timestampNs": 94780894005208
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] SetPowerState: pin desire On -> 0x00000000, override -> 0x00000000",
+          "sequence": 33,
+          "timestampNs": 94780894020166
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID generation VALIDATED: 1",
+          "sequence": 34,
+          "timestampNs": 94780895180041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID decode complete: valid=1 quads=4 sequences=3 enumeratorError=0",
+          "sequence": 35,
+          "timestampNs": 94780895551541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] \ud83e\uddf5 Sequences: start=1 count=1, start=2 count=1, start=3 count=1",
+          "sequence": 36,
+          "timestampNs": 94780895794000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] \u2705 Self-ID decode valid",
+          "sequence": 37,
+          "timestampNs": 94780895798500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] === End Self-ID Debug ===",
+          "sequence": 38,
+          "timestampNs": 94780895800583
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] ConfirmBusGeneration: Confirmed generation 1 (from SelfIDCount register)",
+          "sequence": 39,
+          "timestampNs": 94780895810916
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] GenerationTracker: Synthetic bus reset detected. New generation: 1",
+          "sequence": 40,
+          "timestampNs": 94780895814791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] Bus generation update (synthetic-packet): prev8=0, new8=1 -> prev16=0x0000, new16=0x0001",
+          "sequence": 41,
+          "timestampNs": 94780895817500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] GenerationTracker updated: 0\u21921",
+          "sequence": 42,
+          "timestampNs": 94780895821583
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] Generation confirmed via Tracking actor (no redundant cancel)",
+          "sequence": 43,
+          "timestampNs": 94780895823625
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] PayloadRegistry: canceled epoch <= 0 and set epoch=1",
+          "sequence": 44,
+          "timestampNs": 94780895844375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] ConfirmBusGeneration complete - async subsystem coordinated for new generation",
+          "sequence": 45,
+          "timestampNs": 94780895847791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u2705 CancelAllAndFreeLabels: cancelled 0 transactions",
+          "sequence": 46,
+          "timestampNs": 94780895857458
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 CancelByGeneration: gen=1 (will extract and free labels)",
+          "sequence": 47,
+          "timestampNs": 94780895859833
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u2705 CancelByGeneration: Cancelled 0 transactions",
+          "sequence": 48,
+          "timestampNs": 94780895862291
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] LabelAllocator::ClearBitmap: bitmap=0x0000000000000000\u21920x0000000000000000",
+          "sequence": 49,
+          "timestampNs": 94780895865000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnBusResetBegin: cancelled oldGen=1 transactions, payload epoch\u21922 (hw will set gen)",
+          "sequence": 50,
+          "timestampNs": 94780895868083
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] ContextManager::stopAT - stopping AT contexts",
+          "sequence": 51,
+          "timestampNs": 94780895871041
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] ContextManager::stopAT - SUCCESS",
+          "sequence": 52,
+          "timestampNs": 94780895880916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Config ROM header restored in DMA buffer: 0x00000000 \u2192 0x0404a54b",
+          "sequence": 53,
+          "timestampNs": 94780895892500
+        },
+        {
+          "category": "Topology",
+          "categoryId": 3,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Topology] === \ud83d\uddfa\ufe0f Topology Snapshot v2 ===",
+          "sequence": 54,
+          "timestampNs": 94780897234458
+        },
+        {
+          "category": "Topology",
+          "categoryId": 3,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Topology] \ud83e\uddee gen=1 nodes=3 root=2 IRM=2 local=0 bus=1023 gap=63 hops=2 status=1 error=0",
+          "sequence": 55,
+          "timestampNs": 94780897484250
+        },
+        {
+          "category": "BusReset",
+          "categoryId": 2,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[BusReset] Reset provenance: gen=1 origin=local initiator=node0 root=2 irm=2 local=0",
+          "sequence": 56,
+          "timestampNs": 94780897500541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] IntMask updated: shadow=0x878783ff add=0x00020000 (masterEnable=1 busReset=1)",
+          "sequence": 57,
+          "timestampNs": 94780897520791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] Re-arming AT contexts for new generation (OHCI \u00a77.2.3.2 step 7)",
+          "sequence": 58,
+          "timestampNs": 94780897533000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] GenerationTracker: Self-ID complete. New NodeID: 0xffc0",
+          "sequence": 59,
+          "timestampNs": 94780897539458
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] NodeID valid: using broadcast bus (0x3ff) for source field (raw=0x8800ffc0 node=0)",
+          "sequence": 60,
+          "timestampNs": 94780897542375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] RearmATContexts: handled by ContextManager (AT contexts remain idle)",
+          "sequence": 61,
+          "timestampNs": 94780897545125
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnBusResetComplete: gen=1",
+          "sequence": 62,
+          "timestampNs": 94780897547291
+        },
+        {
+          "category": "BusReset",
+          "categoryId": 2,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[BusReset] Bus reset #1 complete in 3.60 ms (generation=1, aborts=0)",
+          "sequence": 63,
+          "timestampNs": 94780897549416
+        },
+        {
+          "category": "BusReset",
+          "categoryId": 2,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[BusReset] Discovery delayed 100ms for generation 1",
+          "sequence": 64,
+          "timestampNs": 94780898096458
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=0 action=none(0)",
+          "sequence": 65,
+          "timestampNs": 94780999274583
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] TopologyMapService: Map rebuilt for generation 1: nodes=3, selfIds=3",
+          "sequence": 66,
+          "timestampNs": 94780999634875
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=0 action=none(0)",
+          "sequence": 67,
+          "timestampNs": 94780999844125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] IntMask updated: shadow=0x87c783ff add=0x00400000 (masterEnable=1 busReset=1)",
+          "sequence": 68,
+          "timestampNs": 94780999890541
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+          "sequence": 69,
+          "timestampNs": 94780999910000
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Topology ready gen=1: 3 total nodes, 1 scannable (local=0)",
+          "sequence": 70,
+          "timestampNs": 94780999919250
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+          "sequence": 71,
+          "timestampNs": 94780999928041
+        },
+        {
+          "category": "IRM",
+          "categoryId": 8,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[IRM] IRMClient: Set IRM node=2 generation=1 resetNs=94780895905541",
+          "sequence": 72,
+          "timestampNs": 94781001229416
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] IRMClient updated: IRM node=2, generation=1",
+          "sequence": 73,
+          "timestampNs": 94781001255625
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=1 action=none(0)",
+          "sequence": 74,
+          "timestampNs": 94781003481708
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=1 action=none(0)",
+          "sequence": 75,
+          "timestampNs": 94781003561041
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/1 speed=2 addrNode=0x0002 addr=0xffff_f0000400",
+          "sequence": 76,
+          "timestampNs": 94781004216416
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] NewUserClient request received (type=0)",
+          "sequence": 77,
+          "timestampNs": 94781004720666
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] Start() completed - runtime state initialized",
+          "sequence": 78,
+          "timestampNs": 94781005331833
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] NewUserClient success (client=0x71a6004ff8)",
+          "sequence": 79,
+          "timestampNs": 94781005345333
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] Start() completed - runtime state initialized",
+          "sequence": 80,
+          "timestampNs": 94781005356583
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=0 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 81,
+          "timestampNs": 94781005487125
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000400",
+          "sequence": 82,
+          "timestampNs": 94781005502708
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/3 speed=2 addrNode=0x0002 addr=0xffff_f0000408",
+          "sequence": 83,
+          "timestampNs": 94781005574625
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=1 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 84,
+          "timestampNs": 94781005839250
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/3 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000408",
+          "sequence": 85,
+          "timestampNs": 94781005860958
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1/3 speed=2 addrNode=0x0002 addr=0xffff_f000040c",
+          "sequence": 86,
+          "timestampNs": 94781005967166
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=2 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 87,
+          "timestampNs": 94781006257250
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1/3 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000040c",
+          "sequence": 88,
+          "timestampNs": 94781006275375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2/3 speed=2 addrNode=0x0002 addr=0xffff_f0000410",
+          "sequence": 89,
+          "timestampNs": 94781006345750
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=3 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 90,
+          "timestampNs": 94781006647083
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2/3 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000410",
+          "sequence": 91,
+          "timestampNs": 94781006669083
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery][speed_success] Node 2: Success at S400 (total=1)",
+          "sequence": 92,
+          "timestampNs": 94781006838833
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [RoleEvidence] root-bib gen=1 node=2 bmc=0 irmc=0 cmc=0 isc=1",
+          "sequence": 93,
+          "timestampNs": 94781006850041
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=1 local=0 root=2 irm=2 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=1/0 cycleSeen=1 action=none(0)",
+          "sequence": 94,
+          "timestampNs": 94781006893291
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/1 speed=2 addrNode=0x0002 addr=0xffff_f0000414",
+          "sequence": 95,
+          "timestampNs": 94781006926083
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=4 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 96,
+          "timestampNs": 94781007185458
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000414",
+          "sequence": 97,
+          "timestampNs": 94781007210375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/6 speed=2 addrNode=0x0002 addr=0xffff_f0000418",
+          "sequence": 98,
+          "timestampNs": 94781007284166
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=5 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 99,
+          "timestampNs": 94781007540666
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/6 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000418",
+          "sequence": 100,
+          "timestampNs": 94781007556958
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1/6 speed=2 addrNode=0x0002 addr=0xffff_f000041c",
+          "sequence": 101,
+          "timestampNs": 94781007612875
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=6 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 102,
+          "timestampNs": 94781007920583
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1/6 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000041c",
+          "sequence": 103,
+          "timestampNs": 94781007951291
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2/6 speed=2 addrNode=0x0002 addr=0xffff_f0000420",
+          "sequence": 104,
+          "timestampNs": 94781008074750
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=7 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 105,
+          "timestampNs": 94781008348833
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2/6 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000420",
+          "sequence": 106,
+          "timestampNs": 94781008375625
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=3/6 speed=2 addrNode=0x0002 addr=0xffff_f0000424",
+          "sequence": 107,
+          "timestampNs": 94781008445291
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=8 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 108,
+          "timestampNs": 94781008695625
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=3/6 status=0 payloadBytes=4 successSoFar=3 addr=0xffff_f0000424",
+          "sequence": 109,
+          "timestampNs": 94781008714000
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=4/6 speed=2 addrNode=0x0002 addr=0xffff_f0000428",
+          "sequence": 110,
+          "timestampNs": 94781008786500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=9 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 111,
+          "timestampNs": 94781009051500
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=4/6 status=0 payloadBytes=4 successSoFar=4 addr=0xffff_f0000428",
+          "sequence": 112,
+          "timestampNs": 94781009077083
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=5/6 speed=2 addrNode=0x0002 addr=0xffff_f000042c",
+          "sequence": 113,
+          "timestampNs": 94781009156916
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=10 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 114,
+          "timestampNs": 94781009434708
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=5/6 status=0 payloadBytes=4 successSoFar=5 addr=0xffff_f000042c",
+          "sequence": 115,
+          "timestampNs": 94781009453375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/6 speed=2 addrNode=0x0002 addr=0xffff_f0000430",
+          "sequence": 116,
+          "timestampNs": 94781010891541
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=11 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 117,
+          "timestampNs": 94781011208875
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/6 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000430",
+          "sequence": 118,
+          "timestampNs": 94781011227083
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1/6 speed=2 addrNode=0x0002 addr=0xffff_f0000434",
+          "sequence": 119,
+          "timestampNs": 94781011309416
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=12 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 120,
+          "timestampNs": 94781011558708
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1/6 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f0000434",
+          "sequence": 121,
+          "timestampNs": 94781011574375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2/6 speed=2 addrNode=0x0002 addr=0xffff_f0000438",
+          "sequence": 122,
+          "timestampNs": 94781011632750
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=13 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 123,
+          "timestampNs": 94781011897041
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2/6 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000438",
+          "sequence": 124,
+          "timestampNs": 94781011917708
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=3/6 speed=2 addrNode=0x0002 addr=0xffff_f000043c",
+          "sequence": 125,
+          "timestampNs": 94781012002000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=14 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 126,
+          "timestampNs": 94781012296333
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=3/6 status=0 payloadBytes=4 successSoFar=3 addr=0xffff_f000043c",
+          "sequence": 127,
+          "timestampNs": 94781012318875
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=4/6 speed=2 addrNode=0x0002 addr=0xffff_f0000440",
+          "sequence": 128,
+          "timestampNs": 94781012409250
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=15 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 129,
+          "timestampNs": 94781012659250
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=4/6 status=0 payloadBytes=4 successSoFar=4 addr=0xffff_f0000440",
+          "sequence": 130,
+          "timestampNs": 94781012670666
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=5/6 speed=2 addrNode=0x0002 addr=0xffff_f0000444",
+          "sequence": 131,
+          "timestampNs": 94781012718750
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=16 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 132,
+          "timestampNs": 94781012953208
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=5/6 status=0 payloadBytes=4 successSoFar=5 addr=0xffff_f0000444",
+          "sequence": 133,
+          "timestampNs": 94781012971458
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/7 speed=2 addrNode=0x0002 addr=0xffff_f0000448",
+          "sequence": 134,
+          "timestampNs": 94781013084125
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=17 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 135,
+          "timestampNs": 94781013324708
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/7 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000448",
+          "sequence": 136,
+          "timestampNs": 94781013336375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1/7 speed=2 addrNode=0x0002 addr=0xffff_f000044c",
+          "sequence": 137,
+          "timestampNs": 94781013410541
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=18 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 138,
+          "timestampNs": 94781013659791
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1/7 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000044c",
+          "sequence": 139,
+          "timestampNs": 94781013670583
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2/7 speed=2 addrNode=0x0002 addr=0xffff_f0000450",
+          "sequence": 140,
+          "timestampNs": 94781013724791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=19 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 141,
+          "timestampNs": 94781013994333
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2/7 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000450",
+          "sequence": 142,
+          "timestampNs": 94781014006958
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=3/7 speed=2 addrNode=0x0002 addr=0xffff_f0000454",
+          "sequence": 143,
+          "timestampNs": 94781014068291
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=20 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 144,
+          "timestampNs": 94781014307750
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=3/7 status=0 payloadBytes=4 successSoFar=3 addr=0xffff_f0000454",
+          "sequence": 145,
+          "timestampNs": 94781014318250
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=4/7 speed=2 addrNode=0x0002 addr=0xffff_f0000458",
+          "sequence": 146,
+          "timestampNs": 94781014366833
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=21 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 147,
+          "timestampNs": 94781014638625
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=4/7 status=0 payloadBytes=4 successSoFar=4 addr=0xffff_f0000458",
+          "sequence": 148,
+          "timestampNs": 94781014649416
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=5/7 speed=2 addrNode=0x0002 addr=0xffff_f000045c",
+          "sequence": 149,
+          "timestampNs": 94781014726291
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=22 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 150,
+          "timestampNs": 94781014955208
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=5/7 status=0 payloadBytes=4 successSoFar=5 addr=0xffff_f000045c",
+          "sequence": 151,
+          "timestampNs": 94781014965125
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=6/7 speed=2 addrNode=0x0002 addr=0xffff_f0000460",
+          "sequence": 152,
+          "timestampNs": 94781015014708
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=23 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 153,
+          "timestampNs": 94781015258291
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=6/7 status=0 payloadBytes=4 successSoFar=6 addr=0xffff_f0000460",
+          "sequence": 154,
+          "timestampNs": 94781015269583
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/1 speed=2 addrNode=0x0002 addr=0xffff_f0000464",
+          "sequence": 155,
+          "timestampNs": 94781015370375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=24 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 156,
+          "timestampNs": 94781015634083
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000464",
+          "sequence": 157,
+          "timestampNs": 94781015646375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/3 speed=2 addrNode=0x0002 addr=0xffff_f0000468",
+          "sequence": 158,
+          "timestampNs": 94781015712458
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=25 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 159,
+          "timestampNs": 94781015945166
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/3 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000468",
+          "sequence": 160,
+          "timestampNs": 94781015955750
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1/3 speed=2 addrNode=0x0002 addr=0xffff_f000046c",
+          "sequence": 161,
+          "timestampNs": 94781016003583
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=26 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 162,
+          "timestampNs": 94781016253958
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1/3 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000046c",
+          "sequence": 163,
+          "timestampNs": 94781016269041
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2/3 speed=2 addrNode=0x0002 addr=0xffff_f0000470",
+          "sequence": 164,
+          "timestampNs": 94781016317208
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=27 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 165,
+          "timestampNs": 94781016553541
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2/3 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000470",
+          "sequence": 166,
+          "timestampNs": 94781016569458
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/1 speed=2 addrNode=0x0002 addr=0xffff_f0000474",
+          "sequence": 167,
+          "timestampNs": 94781016655000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=28 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 168,
+          "timestampNs": 94781016894791
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/1 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000474",
+          "sequence": 169,
+          "timestampNs": 94781016911375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=0/3 speed=2 addrNode=0x0002 addr=0xffff_f0000478",
+          "sequence": 170,
+          "timestampNs": 94781016974500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=29 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 171,
+          "timestampNs": 94781017204375
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=0/3 status=0 payloadBytes=4 successSoFar=0 addr=0xffff_f0000478",
+          "sequence": 172,
+          "timestampNs": 94781017214625
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=1/3 speed=2 addrNode=0x0002 addr=0xffff_f000047c",
+          "sequence": 173,
+          "timestampNs": 94781017267625
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=30 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 174,
+          "timestampNs": 94781017518708
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=1/3 status=0 payloadBytes=4 successSoFar=1 addr=0xffff_f000047c",
+          "sequence": 175,
+          "timestampNs": 94781017530625
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanTX] gen=1 node=2 quadIndex=2/3 speed=2 addrNode=0x0002 addr=0xffff_f0000480",
+          "sequence": 176,
+          "timestampNs": 94781017580375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] OnARResponse: completing tLabel=31 gen=1 node=0xFFC2 rcode=0x0 kr=0x00000000 len=4",
+          "sequence": 177,
+          "timestampNs": 94781017809666
+        },
+        {
+          "category": "ConfigROM",
+          "categoryId": 10,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[ConfigROM] [TempROMScanRX] gen=1 node=2 quadIndex=2/3 status=0 payloadBytes=4 successSoFar=2 addr=0xffff_f0000480",
+          "sequence": 178,
+          "timestampNs": 94781017819625
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+          "sequence": 179,
+          "timestampNs": 94781017894833
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] ROM scan complete for gen=1, processing results...",
+          "sequence": 180,
+          "timestampNs": 94781017904125
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Discovered 1 ROMs (hadBusy=0)",
+          "sequence": 181,
+          "timestampNs": 94781017909333
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] ROM scan succeeded with 1 ROMs \u2014 clearing discovery delay",
+          "sequence": 182,
+          "timestampNs": 94781017915708
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Known device profile available for vendor=0x0003db model=0x01dddd integration=2",
+          "sequence": 183,
+          "timestampNs": 94781018140458
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Device upsert: GUID=0x0003db0a0000d112 vendor=0x0003db(Apogee) model=0x01dddd(Duet) kind=TA_61883 audioCandidate=1 node=2 gen=1",
+          "sequence": 184,
+          "timestampNs": 94781018159166
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] Creating ApogeeDuetProtocol for vendor=0x0003db model=0x01dddd node=0x0002",
+          "sequence": 185,
+          "timestampNs": 94781018195208
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioRuntimeRegistry: \u2705 protocol created: Apogee Duet FireWire for GUID=0x0003db0a0000d112 node=2",
+          "sequence": 186,
+          "timestampNs": 94781018204041
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u2705 AV/C DETECTED: GUID=3db0a0000d112, specID=0x00a02d - SCANNING...",
+          "sequence": 187,
+          "timestampNs": 94781018255916
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Initialized for device nodeID=2, cmdAddr=0xfffff0000b00, rspAddr=0xfffff0000d00",
+          "sequence": 188,
+          "timestampNs": 94781018271541
+        },
+        {
+          "category": "AVC",
+          "categoryId": 14,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[AVC] AVCUnit: Created for device GUID=3db0a0000d112, specID=0x00a02d",
+          "sequence": 189,
+          "timestampNs": 94781018279750
+        },
+        {
+          "category": "AVC",
+          "categoryId": 14,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[AVC] AVCUnit: Initializing...",
+          "sequence": 190,
+          "timestampNs": 94781018290750
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery]   Created FWDevice with 1 units",
+          "sequence": 191,
+          "timestampNs": 94781019367333
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+          "sequence": 192,
+          "timestampNs": 94781019374958
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Device Discovered:",
+          "sequence": 193,
+          "timestampNs": 94781019380750
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery]   GUID: 0x0003db0a0000d112",
+          "sequence": 194,
+          "timestampNs": 94781019384375
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery]   Vendor: 0x0003db",
+          "sequence": 195,
+          "timestampNs": 94781019388583
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery]   Model: 0x01dddd",
+          "sequence": 196,
+          "timestampNs": 94781019392333
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery]   Node: 2 (gen=1)",
+          "sequence": 197,
+          "timestampNs": 94781019396000
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery]   Kind: TA 61883 (AMDTP)",
+          "sequence": 198,
+          "timestampNs": 94781019400083
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery]   Audio Candidate: YES",
+          "sequence": 199,
+          "timestampNs": 94781019404125
+        },
+        {
+          "category": "Discovery",
+          "categoryId": 7,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Discovery] Discovery complete: 1 devices processed in gen=1",
+          "sequence": 200,
+          "timestampNs": 94781019416083
+        }
+      ],
+      "scannedCount": 257
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}
