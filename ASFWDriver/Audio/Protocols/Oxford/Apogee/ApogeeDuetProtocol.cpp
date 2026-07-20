@@ -146,6 +146,12 @@ struct ApogeeDuetProtocol::ClockTransition {
         kRestoreOutput,
     };
 
+    uint64_t epoch{0};
+    FW::Generation generation{FW::Generation{0}};
+    Protocols::AVC::FCPTransport* transportAtStart{nullptr};
+    Scheduling::TimerToken settleTimer{Scheduling::kInvalidTimerToken};
+    std::atomic<bool> completed{false};
+
     AudioClockConfig desiredClock{};
     SignalSampleRate desiredRate{SignalSampleRate::kUnknown};
     SignalFormatCommand::SignalFormat inputBefore{};
@@ -407,7 +413,8 @@ ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        IRM::IRMClient* irmClient,
                                        CMP::CMPClient* cmpClient,
                                        uint64_t deviceGuid,
-                                       uint32_t formatSettleDelayMs)
+                                       uint32_t formatSettleDelayMs,
+                                       Scheduling::ITimerScheduler* timerScheduler)
     : busOps_(busOps)
     , busInfo_(busInfo)
     , nodeId_(nodeId)
@@ -415,7 +422,15 @@ ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
     , irmClient_(irmClient)
     , cmpClient_(cmpClient)
     , deviceGuid_(deviceGuid)
-    , formatSettleDelayMs_(formatSettleDelayMs) {
+    , formatSettleDelayMs_(formatSettleDelayMs)
+    , timerScheduler_(timerScheduler) {
+}
+
+bool ApogeeDuetProtocol::IsActive(const ClockTransition& transition) const noexcept {
+    return !transition.completed.load(std::memory_order_acquire) &&
+           activeClockTransition_ &&
+           activeClockTransition_.get() == &transition &&
+           transition.epoch == activeClockTransitionEpoch_;
 }
 
 CMP::CMPDevice ApogeeDuetProtocol::CurrentCMPDevice() const noexcept {
@@ -433,6 +448,7 @@ IOReturn ApogeeDuetProtocol::Initialize() {
 }
 
 IOReturn ApogeeDuetProtocol::Shutdown() {
+    CancelClockTransition(kIOReturnAborted);
     clockConfigApplied_ = false;
     outputConnected_ = false;
     inputConnected_ = false;
@@ -444,6 +460,7 @@ void ApogeeDuetProtocol::UpdateRuntimeContext(uint16_t nodeId,
     // A replacement transport or node identity denotes a newly discovered bus
     // epoch. Do not carry the AV/C configuration cache across that boundary.
     if (nodeId_ != nodeId || fcpTransport_ != transport) {
+        CancelClockTransition(kIOReturnAborted);
         clockConfigApplied_ = false;
         if (cmpClient_ && deviceGuid_ != 0) {
             cmpClient_->InvalidateDevice(deviceGuid_);
@@ -532,6 +549,11 @@ void ApogeeDuetProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
         return;
     }
 
+    if (activeClockTransition_) {
+        callback(kIOReturnBusy, {});
+        return;
+    }
+
     if (clockConfigApplied_ && appliedClock_.sampleRateHz == desiredClock.sampleRateHz) {
         AudioStreamRuntimeCaps caps{};
         (void)GetRuntimeAudioStreamCaps(caps);
@@ -569,17 +591,24 @@ void ApogeeDuetProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
     // device state; the generic duplex coordinator owns host/CMP/IRM rollback
     // because this method runs before those resources are committed.
     auto transition = std::make_shared<ClockTransition>();
+    transition->epoch = ++nextClockTransitionEpoch_;
+    transition->generation = busInfo_.GetGeneration();
+    transition->transportAtStart = fcpTransport_;
     transition->desiredClock = desiredClock;
     transition->desiredRate = sampleRate;
     transition->completion = std::move(callback);
+
+    activeClockTransition_ = transition;
+    activeClockTransitionEpoch_ = transition->epoch;
+
     AdvanceClockTransition(transition);
 }
 
 void ApogeeDuetProtocol::AdvanceClockTransition(
     const std::shared_ptr<ClockTransition>& transition) {
-    if (!transition || !fcpTransport_) {
-        if (transition) {
-            CompleteClockTransition(transition, kIOReturnNotReady);
+    if (!transition || !IsActive(*transition) || !fcpTransport_) {
+        if (transition && !transition->completed.load(std::memory_order_acquire)) {
+            FailClockTransition(transition, kIOReturnNotReady);
         }
         return;
     }
@@ -591,6 +620,9 @@ void ApogeeDuetProtocol::AdvanceClockTransition(
         command->Submit([this, transition, isInput, captureBefore, nextPhase, command](
                             Protocols::AVC::AVCResult result,
                             const SignalFormatCommand::SignalFormat& format) {
+            if (!IsActive(*transition)) {
+                return;
+            }
             const IOReturn status = MapAVCResultToIOReturn(result);
             if (status != kIOReturnSuccess) {
                 FailClockTransition(transition, status);
@@ -634,6 +666,9 @@ void ApogeeDuetProtocol::AdvanceClockTransition(
                 command->Submit([this, transition, command](
                                     Protocols::AVC::AVCResult result,
                                     const SignalFormatCommand::SignalFormat&) {
+                    if (!IsActive(*transition)) {
+                        return;
+                    }
                     const IOReturn status = MapAVCResultToIOReturn(result);
                     if (status != kIOReturnSuccess) {
                         FailClockTransition(transition, status);
@@ -657,6 +692,9 @@ void ApogeeDuetProtocol::AdvanceClockTransition(
                 command->Submit([this, transition, command](
                                     Protocols::AVC::AVCResult result,
                                     const SignalFormatCommand::SignalFormat&) {
+                    if (!IsActive(*transition)) {
+                        return;
+                    }
                     const IOReturn status = MapAVCResultToIOReturn(result);
                     if (status != kIOReturnSuccess) {
                         FailClockTransition(transition, status);
@@ -668,14 +706,34 @@ void ApogeeDuetProtocol::AdvanceClockTransition(
                 });
             }
             return;
-        case ClockTransition::Phase::kSettle:
-            if (transition->inputChanged || transition->outputChanged) {
-                // Control-plane only; never runs on the packet hot path.
-                IOSleep(formatSettleDelayMs_);
-            }
+        case ClockTransition::Phase::kSettle: {
             transition->phase = ClockTransition::Phase::kReadInputAfter;
-            AdvanceClockTransition(transition);
+            const bool needsSettle = transition->inputChanged || transition->outputChanged;
+            if (!needsSettle || formatSettleDelayMs_ == 0U) {
+                AdvanceClockTransition(transition);
+                return;
+            }
+            if (!timerScheduler_) {
+                FailClockTransition(transition, kIOReturnNotReady);
+                return;
+            }
+            const uint64_t currentEpoch = transition->epoch;
+            transition->settleTimer = timerScheduler_->ScheduleAfter(
+                static_cast<uint64_t>(formatSettleDelayMs_) * 1000000ULL,
+                [this, transition, currentEpoch]() {
+                    transition->settleTimer = Scheduling::kInvalidTimerToken;
+                    if (!IsActive(*transition) ||
+                        transition->transportAtStart != fcpTransport_ ||
+                        transition->generation != busInfo_.GetGeneration()) {
+                        return;
+                    }
+                    AdvanceClockTransition(transition);
+                });
+            if (transition->settleTimer == Scheduling::kInvalidTimerToken) {
+                FailClockTransition(transition, kIOReturnNoResources);
+            }
             return;
+        }
         case ClockTransition::Phase::kReadInputAfter:
             submitStatus(true, false, ClockTransition::Phase::kReadOutputAfter);
             return;
@@ -706,6 +764,16 @@ void ApogeeDuetProtocol::AdvanceClockTransition(
     }
 }
 
+void ApogeeDuetProtocol::CancelClockTransition(IOReturn status) {
+    if (!activeClockTransition_) {
+        return;
+    }
+    auto transition = activeClockTransition_;
+    activeClockTransition_.reset();
+    activeClockTransitionEpoch_ = 0;
+    FinishClockTransition(transition, status);
+}
+
 void ApogeeDuetProtocol::FailClockTransition(const std::shared_ptr<ClockTransition>& transition,
                                              IOReturn status) {
     if (!transition) {
@@ -729,6 +797,9 @@ void ApogeeDuetProtocol::FailClockTransition(const std::shared_ptr<ClockTransiti
             SignalFormatCommand::FrequencyToSampleRate(transition->inputBefore.frequency));
         command->Submit([this, transition, command](Protocols::AVC::AVCResult,
                                                       const SignalFormatCommand::SignalFormat&) {
+            if (!IsActive(*transition)) {
+                return;
+            }
             transition->phase = ClockTransition::Phase::kRestoreOutput;
             AdvanceClockTransition(transition);
         });
@@ -742,7 +813,28 @@ void ApogeeDuetProtocol::FailClockTransition(const std::shared_ptr<ClockTransiti
 void ApogeeDuetProtocol::CompleteClockTransition(
     const std::shared_ptr<ClockTransition>& transition,
     IOReturn status) {
-    if (!transition || !transition->completion) {
+    FinishClockTransition(transition, status);
+}
+
+void ApogeeDuetProtocol::FinishClockTransition(
+    const std::shared_ptr<ClockTransition>& transition,
+    IOReturn status) {
+    if (!transition || transition->completed.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    if (transition->settleTimer != Scheduling::kInvalidTimerToken && timerScheduler_) {
+        const auto timerToCancel = transition->settleTimer;
+        transition->settleTimer = Scheduling::kInvalidTimerToken;
+        timerScheduler_->Cancel(timerToCancel);
+    }
+
+    if (activeClockTransition_ && activeClockTransition_.get() == transition.get()) {
+        activeClockTransition_.reset();
+        activeClockTransitionEpoch_ = 0;
+    }
+
+    if (!transition->completion) {
         return;
     }
 
