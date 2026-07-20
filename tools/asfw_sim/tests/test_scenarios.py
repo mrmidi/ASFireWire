@@ -136,3 +136,19 @@ def test_invalid_geometry_is_only_a_warning_without_require_valid(tmp_path, head
     outcome = run_scenario(scenario, headers)[0]
     assert outcome.ok
     assert any("would not compile" in w for w in outcome.warnings)
+
+
+def test_rx_loss_does_not_skip_cycle_events(headers):
+    """[P1] RX-loss injection must only skip replay publishing, not whole cycle events.
+    Verify that an RX-loss run has the same final completion_cursor and write_frontier
+    as a same-duration baseline run.
+    """
+    from asfw_sim.sim import SimConfig, run
+    from asfw_sim.geometry import Geometry
+    g = Geometry.from_headers(48000, headers)
+    
+    baseline = run(SimConfig(geometry=g, duration_cycles=8000, rx_drop_every_cycles=0))
+    rx_loss = run(SimConfig(geometry=g, duration_cycles=8000, rx_drop_every_cycles=200))
+    
+    assert baseline.completion_cursor == rx_loss.completion_cursor
+    assert baseline.write_frontier == rx_loss.write_frontier

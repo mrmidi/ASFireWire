@@ -1,0 +1,16 @@
+name: f9-drift-reproduction
+description: >
+  F9 reproduction. At -4478 ppm (the observed cold-start capture rate mismatch),
+  correlated and perfect modes must stay bounded because the HAL tracks the
+  device rate via ZTS. If either collapses, the geometry cannot absorb even a
+  compensated clock mismatch.
+base: driver
+rate: 48000
+
+sweep:
+  zts_mode: [correlated, perfect]
+
+scenario:
+  duration_s: 60
+  bus_drift_ppm: -4478
+  self_heal: false

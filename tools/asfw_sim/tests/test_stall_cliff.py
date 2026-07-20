@@ -36,6 +36,7 @@ def _run(geometry, seconds=15, stall_cycles=0, stall_at_s=4):
             duration_cycles=CYCLES * seconds,
             stall_at_cycle=CYCLES * stall_at_s,
             stall_cycles=stall_cycles,
+            self_heal=False,
         )
     )
 
@@ -157,3 +158,19 @@ def test_head_dies_at_the_watchdog_cadence_plus_an_excursion(g48):
     assert not _run(g48, stall_cycles=int(0.068 * CYCLES)).collapsed
     assert _run(g48, stall_cycles=800).collapsed
     assert not _run(g48.evolve(replay_capacity=2048), stall_cycles=800).collapsed
+
+
+def test_self_heal_recovers_from_long_producer_stall(g48):
+    """With self_heal enabled, a long stall does NOT collapse permanently."""
+    result = run(
+        SimConfig(
+            geometry=g48,
+            duration_cycles=CYCLES * 20,
+            stall_at_cycle=CYCLES * 5,
+            stall_cycles=800,  # 100 ms stall (kills baseline)
+            self_heal=True,
+        )
+    )
+    assert not result.collapsed
+    assert result.align_count > 1, "must re-arm and align again"
+    assert result.written_fraction > 0.90, "must recover and write frames again"

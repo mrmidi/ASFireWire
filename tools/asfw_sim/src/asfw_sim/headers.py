@@ -217,6 +217,10 @@ class DriverHeaders:
         return self.timing["kSchedulingJitterFrames"]
 
     @property
+    def hal_zero_timestamp_period_frames(self) -> int:
+        return self.timing["kHalZeroTimestampPeriodFrames"]
+
+    @property
     def replay_capacity(self) -> int:
         return self.replay["kCapacity"]
 

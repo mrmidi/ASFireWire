@@ -138,16 +138,18 @@ def cmd_geometry(args) -> int:
     _row("kTimelineSlots", t["kTimelineSlots"], "packets", "timeline slot array")
 
     _rule("RX replay ring (RxSequenceReplay.hpp)")
-    _row("kCapacity", r["kCapacity"], "entries", f"{_ms(r['kCapacity'])} of RX history")
+    _row("kCapacity", r["kCapacity"], "entries", f"{_ms(r['kCapacity'])} of RX history -- PRODUCER-STALL RECOVERY BUDGET")
     _row("kReadDelay", r["kReadDelay"], "entries",
-         f"{_ms(r['kReadDelay'])} -- PRODUCER-STALL RECOVERY BUDGET")
+         f"{_ms(r['kReadDelay'])} -- reader history starting lag")
 
     _rule("Derived budgets (not written down in any header)")
     lead = t["kTxPreparationLeadPackets"]
     read_delay = r["kReadDelay"]
     horizon = t["kTxDataHorizonPackets"]
-    _row("stall tolerance (law)", f"{(read_delay + horizon) / 8:.1f}", "ms",
-         "(kReadDelay + horizon) / 8 -- see FINDINGS.md F3")
+    geometry_default = Geometry.from_headers(t["kSampleRateHz"], h)
+    cliff_cycles = _cliff(geometry_default, seconds=5, hi=8000)
+    _row("measured stall tolerance", f"{cliff_cycles / 8:.1f}", "ms",
+         "measured limit beyond which terminal collapse occurs")
     _row("replay headroom", read_delay - lead, "packets",
          "kReadDelay - lead; NOT the failure mechanism (F1)")
     _row("prefill before IT arm", t["kTxSharedSlotPackets"], "packets",
@@ -381,7 +383,18 @@ def cmd_capture(args) -> int:
 
 
 def cmd_run(args) -> int:
-    print(_run(_geometry(args), args.seconds, args.stall_ms).summary())
+    g = _geometry(args)
+    result = run(
+        SimConfig(
+            geometry=g,
+            duration_cycles=CYCLES * args.seconds,
+            stall_at_cycle=CYCLES * 4,
+            stall_cycles=int(args.stall_ms * 8),
+            bus_drift_ppm=args.drift_ppm,
+            zts_mode=args.zts_mode,
+        )
+    )
+    print(result.summary())
     return 0
 
 
@@ -429,6 +442,10 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--ring-multiple", type=int, default=4)
     run_p = sub.add_parser("run", help="run one scenario")
     run_p.add_argument("--stall-ms", type=float, default=0.0)
+    run_p.add_argument("--drift-ppm", type=float, default=0.0,
+                       help="device audio oscillator drift in ppm")
+    run_p.add_argument("--zts-mode", choices=["correlated", "uncorrelated", "perfect"],
+                       default="correlated", help="ZTS clock correlation mode")
     sub.add_parser("cliff", help="bisect the stall-tolerance cliff")
     sub.add_parser("sweep", help="compare readDelay/horizon variants")
     scen = sub.add_parser(

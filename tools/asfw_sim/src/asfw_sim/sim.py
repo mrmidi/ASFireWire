@@ -56,6 +56,18 @@ class SimConfig:
     #: zero-length IR descriptor: DirectAudioReceiveConsumer::ConsumePacket
     #: early-returns on packet.payload.empty() (:150) without publishing.
     rx_drop_every_cycles: int = 0
+    #: Enable the deficit-gated frame-cursor re-arming self-heal (Zts.cpp:260-275).
+    self_heal: bool = True
+    #: Device audio oscillator drift relative to the bus clock, in ppm.
+    #: Negative = device runs slow (fewer frames per bus cycle).
+    bus_drift_ppm: float = 0.0
+    #: How CoreAudio's IO callback timing relates to the bus clock:
+    #:   "correlated"   -- HAL tracks device rate via ZTS (SimpleIIR model)
+    #:   "uncorrelated" -- IO fires at nominal host rate (broken/absent ZTS)
+    #:   "perfect"      -- IO instantly tracks bus rate (zero IIR lag)
+    zts_mode: str = "correlated"
+    #: SimpleIIR smoothing coefficient per ZTS period (correlated mode only).
+    iir_alpha: float = 0.25
 
 
 @dataclass
@@ -90,6 +102,8 @@ class SimResult:
     #: (cycle, W, E, ahead, reclamped, align_count) samples.
     trace: list[tuple[int, int, int, int, int, int]] = field(default_factory=list)
     rx_dropped: int = 0
+    terminal_visited: int = 0
+    terminal_written: int = 0
 
     # scheduler
     wakes: int = 0
@@ -106,13 +120,17 @@ class SimResult:
         return self.frames_written / self.frames_visited if self.frames_visited else 0.0
 
     @property
+    def terminal_written_fraction(self) -> float:
+        return self.terminal_written / self.terminal_visited if self.terminal_visited else 0.0
+
+    @property
     def collapsed(self) -> bool:
         """Did the stream reach the observed zombie state?
 
         Signature from the 2026-07-19 Duet run: transport alive (packets still
         emitted every cycle) while essentially no host PCM reaches the wire.
         """
-        return self.written_fraction < 0.5
+        return self.terminal_written_fraction < 0.5
 
     def failure_count(self, failure: ReplayFailure) -> int:
         return self.replay_failures.get(failure, 0)
@@ -156,7 +174,9 @@ def run(config: SimConfig) -> SimResult:
     replay = RxSequenceReplayState(capacity=capacity, read_delay=g.replay_read_delay)
     reader = RxSequenceReplayReader()
 
-    rx_cadence = BlockingCadence(g.sample_rate, g.frames_per_data_packet)
+    rx_cadence = BlockingCadence(
+        g.sample_rate, g.frames_per_data_packet, drift_ppm=config.bus_drift_ppm
+    )
     rx_frame_cursor = 0
 
     # --- cold start: PrefillTxRingBeforeStart commits one full ring of NODATA.
@@ -170,8 +190,27 @@ def run(config: SimConfig) -> SimResult:
     completion_cursor = 0
     write_frontier = 0
     io_period = g.hal_io_period_frames
-    frames_per_cycle = g.sample_rate / CYCLES_PER_SECOND
-    next_io_cycle = io_period / frames_per_cycle
+    nominal_fps_per_cycle = g.sample_rate / CYCLES_PER_SECOND
+    actual_rate = g.sample_rate * (1.0 + config.bus_drift_ppm / 1e6)
+    actual_fps_per_cycle = actual_rate / CYCLES_PER_SECOND
+    nominal_io_interval = io_period / nominal_fps_per_cycle
+
+    if config.zts_mode == "uncorrelated":
+        io_interval = nominal_io_interval
+    elif config.zts_mode == "perfect":
+        io_interval = io_period / actual_fps_per_cycle
+    else:
+        io_interval = nominal_io_interval
+
+    next_io_cycle = io_interval
+
+    iir_fps_per_cycle = nominal_fps_per_cycle
+    zts_period_cycles = (
+        g.hal_zero_timestamp_period_frames / actual_fps_per_cycle
+        if actual_fps_per_cycle > 0
+        else 0
+    )
+    next_zts_update = zts_period_cycles
 
     pending_wake_at: int | None = None
     min_distance = 0
@@ -193,29 +232,30 @@ def run(config: SimConfig) -> SimResult:
 
         # 1. RX publishes one observation per cycle.
         data_blocks = rx_cadence.next_packet_frames()
-        if (
+        dropped = (
             config.rx_drop_every_cycles
             and cycle % config.rx_drop_every_cycles == 0
             and cycle > WARMUP_CYCLES
-        ):
+        )
+        if dropped:
             # The frame cursor still advances (the device sent those frames);
             # only our observation of them is lost.
             rx_frame_cursor += data_blocks
             result.rx_dropped += 1
-            continue
-        replay.publish(
-            ReplayEntry(
-                first_audio_frame=rx_frame_cursor,
-                source_cycle_timer=cycle,
-                syt_offset=0 if data_blocks else 0xFFFF_FFFF,
-                data_blocks=data_blocks,
-                valid_syt=bool(data_blocks),
+        else:
+            replay.publish(
+                ReplayEntry(
+                    first_audio_frame=rx_frame_cursor,
+                    source_cycle_timer=cycle,
+                    syt_offset=0 if data_blocks else 0xFFFF_FFFF,
+                    data_blocks=data_blocks,
+                    valid_syt=bool(data_blocks),
+                )
             )
-        )
-        rx_frame_cursor += data_blocks
-        result.replay_entries_published += 1
-        if not replay.established:
-            replay.mark_established()
+            rx_frame_cursor += data_blocks
+            result.replay_entries_published += 1
+            if not replay.established:
+                replay.mark_established()
 
         # 2. The IT context transmits one packet per cycle.
         completion_cursor = cycle
@@ -229,13 +269,31 @@ def run(config: SimConfig) -> SimResult:
         wake_due = cycle % g.tx_packets_per_group == 0
         io_due = cycle >= next_io_cycle
         if io_due:
-            next_io_cycle += io_period / frames_per_cycle
+            if config.zts_mode == "correlated" and cycle >= next_zts_update:
+                iir_fps_per_cycle = (
+                    config.iir_alpha * actual_fps_per_cycle
+                    + (1.0 - config.iir_alpha) * iir_fps_per_cycle
+                )
+                next_zts_update += zts_period_cycles
+            if config.zts_mode == "uncorrelated":
+                io_interval = nominal_io_interval
+            elif config.zts_mode == "perfect":
+                io_interval = io_period / actual_fps_per_cycle
+            else:
+                io_interval = io_period / iir_fps_per_cycle
+            next_io_cycle += io_interval
             write_frontier += io_period
             res = writer.write(write_frontier - io_period, io_period)
             result.frames_visited += res.visited
             result.frames_written += res.written
             result.frames_without_packet += res.without_packet
             result.frames_outside_packet += res.outside_packet
+
+            terminal_start = max(0, config.duration_cycles - CYCLES_PER_SECOND)
+            if cycle >= terminal_start:
+                result.terminal_visited += res.visited
+                result.terminal_written += res.written
+
             wake_due = True
 
         if wake_due and pending_wake_at is None:
@@ -258,6 +316,7 @@ def run(config: SimConfig) -> SimResult:
             max_to_prepare=g.tx_preparation_lead_packets,
             target_frame_end=target_frame_end,
             allow_recovered_clock=replay.established,
+            self_heal=config.self_heal,
         )
         committed_end += outcome.prepared
         result.wakes += 1

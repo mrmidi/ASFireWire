@@ -14,6 +14,7 @@ rate: 48000
 scenario:
   duration_s: 30
   rx_drop_every_cycles: 200
+  self_heal: false
 
 expect:
   collapsed: true

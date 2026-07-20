@@ -48,6 +48,9 @@ class Geometry:
     # Blocking AMDTP
     frames_per_data_packet: int
 
+    # ZTS period (AudioTimingGeometry.hpp)
+    hal_zero_timestamp_period_frames: int
+
     # RX replay ring (RxSequenceReplay.hpp)
     replay_capacity: int
     replay_read_delay: int
@@ -115,6 +118,7 @@ class Geometry:
             frames_per_data_packet=frames_per_data_packet_for(
                 sample_rate, h.frames_per_data_packet
             ),
+            hal_zero_timestamp_period_frames=h.hal_zero_timestamp_period_frames,
             replay_capacity=h.replay_capacity,
             replay_read_delay=h.replay_read_delay,
             profile_name=h.profile_name,

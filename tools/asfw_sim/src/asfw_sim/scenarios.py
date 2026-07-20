@@ -68,6 +68,10 @@ _SCENARIO_KEYS = {
     "unbounded_replay_history",
     "rx_drop_every_cycles",
     "trace_every_cycles",
+    "self_heal",
+    "bus_drift_ppm",
+    "zts_mode",
+    "iir_alpha",
 }
 _TOP_LEVEL_KEYS = {
     "name",
@@ -143,6 +147,10 @@ class Scenario:
             ),
             rx_drop_every_cycles=int(merged.get("rx_drop_every_cycles", 0)),
             trace_every_cycles=int(merged.get("trace_every_cycles", 0)),
+            self_heal=bool(merged.get("self_heal", True)),
+            bus_drift_ppm=float(merged.get("bus_drift_ppm", 0)),
+            zts_mode=str(merged.get("zts_mode", "correlated")),
+            iir_alpha=float(merged.get("iir_alpha", 0.25)),
         )
 
     @property

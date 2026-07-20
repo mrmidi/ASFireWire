@@ -31,13 +31,13 @@ class BlockingCadence:
 
     sample_rate: int
     frames_per_data_packet: int
+    drift_ppm: float = 0.0
 
-    _accumulator: int = 0
+    _accumulator: float = 0.0
 
     def __post_init__(self) -> None:
-        # Start half a step in so the first cycle is DATA, matching a device
-        # that begins streaming on a data block rather than an idle packet.
-        self._accumulator = self._threshold // 2
+        self._effective_rate = self.sample_rate * (1.0 + self.drift_ppm / 1e6)
+        self._accumulator = self._threshold / 2.0
 
     @property
     def _threshold(self) -> int:
@@ -45,14 +45,14 @@ class BlockingCadence:
 
     def next_packet_frames(self) -> int:
         """Frames carried by the next cycle: the SYT interval, or 0 for NODATA."""
-        self._accumulator += self.sample_rate
+        self._accumulator += self._effective_rate
         if self._accumulator >= self._threshold:
             self._accumulator -= self._threshold
             return self.frames_per_data_packet
         return 0
 
     def reset(self) -> None:
-        self._accumulator = self._threshold // 2
+        self._accumulator = self._threshold / 2.0
 
     # --- analysis helpers ---------------------------------------------------
     def expected_data_fraction(self) -> float:

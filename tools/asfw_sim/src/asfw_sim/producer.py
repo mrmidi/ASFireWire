@@ -106,6 +106,8 @@ class Packetizer:
         return True
 
     def rearm_frame_cursor_alignment(self) -> None:
+        if not self.frame_cursor_aligned:
+            return
         self.frame_cursor_aligned = False
         self.cursor_epoch += 1
 
@@ -152,6 +154,7 @@ def prepare_transmit_slots(
     max_to_prepare: int,
     target_frame_end: int,
     allow_recovered_clock: bool,
+    self_heal: bool = True,
 ) -> PrepareOutcome:
     """One ``TxPreparationReady`` pass (``ASFWAudioDriverZts.cpp:189-547``)."""
     outcome = PrepareOutcome(
@@ -177,10 +180,12 @@ def prepare_transmit_slots(
 
             entry, diag = reader.try_read(replay)
 
-            # `overwritten` is repositionable, not a fault: re-anchor and retry
-            # in place, without re-arming alignment (Zts.cpp:253-273).
+            # `overwritten` is repositionable: re-anchor and retry in place.
+            # Deficit self-heal: if W > E, re-arm alignment to close the gap.
             if entry is None and diag.failure is ReplayFailure.HISTORY_OVERWRITTEN:
                 outcome.reclamped += 1
+                if self_heal and packetizer.frame_cursor_aligned and (target_frame_end - geometry.data_horizon_frames > packetizer.timeline.exposed_frame_end):
+                    packetizer.rearm_frame_cursor_alignment()
                 if reader.begin(replay):
                     entry, diag = reader.try_read(replay)
 
