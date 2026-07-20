@@ -1049,8 +1049,37 @@ kern_return_t ASFWDriver::StartContinuousIsochTxSilence(uint64_t guid) {
     return protocol->StartContinuousPlaybackIntegration(
         route,
         [&ctx, route]() -> IOReturn {
-            IOReturn kr = ctx.isoch.PrepareTransmit(
-                route.channel, *ctx.deps.hardware, 0U);
+            // Unlike Stage 5H (triggered from inside a real Core Audio
+            // StartIO, which already allocated the shared TX slab before
+            // ever reaching the RME branch), this dev-only path is driven
+            // straight from UserClient with no CoreAudio session -- the
+            // shared payload/metadata/control memory PrepareTransmit expects
+            // was never allocated. Allocate it here with the same fixed
+            // no-CIP RME wire geometry validated since Stage 5A: 1536
+            // bytes/packet (32 frames x 12 dbs x 4 bytes, no CIP header).
+            IOMemoryDescriptor* rawPayload = nullptr;
+            IOMemoryDescriptor* rawMetadata = nullptr;
+            IOMemoryDescriptor* rawControl = nullptr;
+            const uint32_t numSlots =
+                ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
+            const uint32_t interruptInterval =
+                ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
+            IOReturn kr = ctx.isoch.AllocateTxIsochResources(
+                0U, numSlots, 1536U, interruptInterval,
+                &rawPayload, &rawMetadata, &rawControl);
+            if (rawPayload) {
+                rawPayload->release();
+            }
+            if (rawMetadata) {
+                rawMetadata->release();
+            }
+            if (rawControl) {
+                rawControl->release();
+            }
+            if (kr == kIOReturnSuccess) {
+                kr = ctx.isoch.PrepareTransmit(
+                    route.channel, *ctx.deps.hardware, 0U);
+            }
             if (kr == kIOReturnSuccess) {
                 kr = ctx.isoch.PrimePreparedTransmitForPreflight();
             }
@@ -1079,10 +1108,16 @@ kern_return_t ASFWDriver::StopContinuousIsochTxSilence(uint64_t guid) {
     }
 
     ASFW_LOG(Audio, "[RME] Continuous TX silence stop (dev) GUID=0x%016llx", guid);
-    return protocol->StopContinuousPlaybackIntegration(
+    const IOReturn kr = protocol->StopContinuousPlaybackIntegration(
         [&ctx]() -> IOReturn {
             return ctx.isoch.StopTransmitContinuousCircularSilenceCadence();
         });
+    // Symmetric with the dev-only allocation in StartContinuousIsochTxSilence
+    // (this path never had a real CoreAudio StartIO/StopIO to own the shared
+    // slab's lifetime). Safe to free unconditionally: FreeTxIsochResources()
+    // clears all stream slots and no other consumer holds this dev slab.
+    ctx.isoch.FreeTxIsochResources();
+    return kr;
 }
 
 kern_return_t ASFWDriver::GetContinuousIsochTxHealth(

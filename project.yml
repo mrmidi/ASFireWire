@@ -157,7 +157,15 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "0.2.0"
-        CURRENT_PROJECT_VERSION: 2
+        # Bumped from 2: every rebuild-during-iteration otherwise produces a
+        # dext with the same CFBundleVersion as whatever is already active,
+        # and OSSystemExtensionRequest won't replace an equal-or-lower
+        # version -- the only way forward was an explicit
+        # systemextensionsctl uninstall, which got stuck in "terminating for
+        # uninstall but still running" (fixed only by a full reboot)
+        # repeatedly during Stage 6 development. A comfortably high fixed
+        # value means every future install is a normal automatic upgrade.
+        CURRENT_PROJECT_VERSION: 100
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: -Onone
