@@ -1022,6 +1022,21 @@ kern_return_t ASFWDriver::StopAudioStreaming(uint64_t guid) {
     return ivars->context->audioCoordinator->StopStreaming(guid);
 }
 
+// PENDING HARDWARE VERIFICATION (as of this commit): the buffer-allocation
+// fix below is believed correct by inspection but has not been exercised on
+// real hardware end to end. Every live attempt so far failed earlier, at
+// GetPlaybackPreflightRoute() returning false ("no verified playback
+// route"), before ever reaching this function's body. Root cause: something
+// on the system (observed pattern is consistent with coreaudiod) calls the
+// real Core Audio StartIO -> Stage 5H path within about a second of every
+// bus reset, consuming the single-use route RMEFireface800Protocol arms
+// once per Stage 5F completion, before this dev-only MCP-triggered path
+// (three sequential HTTP round trips: initialize, notifications/initialized,
+// tools/call) can win the race. This is a pre-existing route-contention
+// characteristic (Stage 5H has the identical symptom when something beats
+// it to the route), not a Stage 6 regression. Next attempt should either
+// (a) find and quiesce whatever is auto-probing the device, or (b) give this
+// dev path its own independent IRM reservation instead of racing Stage 5H's.
 kern_return_t ASFWDriver::StartContinuousIsochTxSilence(uint64_t guid) {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
