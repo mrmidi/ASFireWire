@@ -45,7 +45,7 @@ private:
     void VerifyClockAfterStfWrite(uint32_t expectedRate) noexcept;
     void ProbeSyncStatus() noexcept;
     void ProbeTxIsochChannel() noexcept;
-    void ReservePlaybackResourcesPreflight(uint32_t rate) noexcept;
+    void ReservePlaybackResourcesPreflight(uint32_t rate, uint32_t attempt = 0U) noexcept;
     void ProgramRxPacketFormat(uint32_t rate, uint8_t channel, uint32_t bandwidthUnits) noexcept;
     void RequestDeviceTxAllocation(uint32_t rate) noexcept;
     void PollDeviceTxIsochChannel(uint32_t rate, uint32_t attempt) noexcept;

@@ -616,7 +616,8 @@ void RMEFireface800Protocol::ProbeTxIsochChannel() noexcept {
 }
 
 
-void RMEFireface800Protocol::ReservePlaybackResourcesPreflight(uint32_t rate) noexcept {
+void RMEFireface800Protocol::ReservePlaybackResourcesPreflight(uint32_t rate,
+                                                                uint32_t attempt) noexcept {
     if (!active_.load(std::memory_order_acquire)) {
         return;
     }
@@ -641,14 +642,33 @@ void RMEFireface800Protocol::ReservePlaybackResourcesPreflight(uint32_t rate) no
     }
 
     irmClient_->ReadResourcesSnapshot(
-        [this, rate, bandwidthUnits](IRM::AllocationStatus status, IRM::ResourceSnapshot snapshot) {
+        [this, rate, bandwidthUnits, attempt](IRM::AllocationStatus status,
+                                              IRM::ResourceSnapshot snapshot) {
             if (!active_.load(std::memory_order_acquire)) {
                 return;
             }
             if (status != IRM::AllocationStatus::Success) {
+                // Right after a bus reset the IRM node hasn't been re-resolved
+                // yet (IRMClient::ReadIRMWindow reports NotFound while
+                // irmNodeId_ == 0xFF) — this is a transient race against bus
+                // manager/Self-ID processing, not a permanent failure. Retry
+                // with the same bounded backoff PollDeviceTxIsochChannel uses
+                // below, instead of stranding playbackPreflightRoute_ at 0
+                // until the next full rediscovery.
+                if (status == IRM::AllocationStatus::NotFound && attempt < 10U) {
+                    ASFW_LOG_WARNING(
+                        Audio,
+                        "[RME] Stage 5F IRM snapshot not ready (IRM node not yet resolved) status=%{public}s attempt=%u; retrying",
+                        IRM::ToString(status),
+                        attempt);
+                    IOSleep(50);
+                    ReservePlaybackResourcesPreflight(rate, attempt + 1U);
+                    return;
+                }
                 ASFW_LOG_ERROR(Audio,
-                               "[RME] Stage 5F IRM snapshot failed status=%{public}s",
-                               IRM::ToString(status));
+                               "[RME] Stage 5F IRM snapshot failed status=%{public}s attempt=%u",
+                               IRM::ToString(status),
+                               attempt);
                 return;
             }
 
