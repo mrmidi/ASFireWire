@@ -146,6 +146,23 @@ class Capture:
                 counts[name] = counts.get(name, 0) + 1
         return counts
 
+    def ahead_count_in_window(self, t_start_s: float, t_end_s: float) -> int:
+        """Count [TxReplay] fail=ahead records between two time bounds.
+
+        Time is derived from the record's position in the capture (t_ns).
+        This is a LOWER BOUND: driver ring records are rate-limited, so the
+        actual number of ahead events may be higher.
+        """
+        t_start_ns = int(t_start_s * 1_000_000_000)
+        t_end_ns = int(t_end_s * 1_000_000_000)
+        count = 0
+        for r in self.by_tag("TxReplay"):
+            if r.get("fail") != "ahead":
+                continue
+            if t_start_ns <= r.t_ns <= t_end_ns:
+                count += 1
+        return count
+
     def silent(self) -> bool:
         """Did any `[PayloadWriter] delta` record show zero frames written?"""
         deltas = self.by_tag("PayloadWriter", "delta")

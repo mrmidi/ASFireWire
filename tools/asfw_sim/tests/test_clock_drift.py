@@ -148,3 +148,19 @@ class TestIIRTransient:
         assert max_w_minus_e < horizon, (
             f"IIR transient peak {max_w_minus_e} exceeded budget {horizon}"
         )
+
+
+class TestIIRSensitivity:
+    @pytest.mark.parametrize("alpha", [0.05, 0.10, 0.25, 0.50, 0.90])
+    def test_correlated_bounded_across_alphas(self, geometry: Geometry, alpha: float):
+        result = run(
+            SimConfig(
+                geometry=geometry,
+                duration_cycles=CYCLES_PER_SECOND * 60,
+                zts_mode="correlated",
+                bus_drift_ppm=-4478,
+                iir_alpha=alpha,
+                self_heal=False,
+            )
+        )
+        assert not result.collapsed, f"collapsed at alpha={alpha}"

@@ -151,13 +151,18 @@ def diagnose(
     deficit_end_frames: int,
     elapsed_s: float,
     geometry: Geometry | None = None,
-    ahead: int | None = None,
+    ahead_delta: int | None = None,
     align_count: int | None = None,
 ) -> Diagnosis:
     """Classify an observed run from two `[PayloadWriter]` deficit samples.
 
     `deficit_*` is `W - E` in frames (the driver reports it as the exposure
     deficit; a healthy stream reports a negative value, or none at all).
+
+    `ahead_delta` is the number of [TxReplay] fail=ahead events that occurred
+    **between** the two deficit samples (NOT a cumulative lifetime count).
+    If None, F9 cannot be distinguished from F6 and the classifier falls
+    through to the F6 branch.
     """
     g = geometry or Geometry.from_headers()
     if elapsed_s <= 0:
@@ -185,9 +190,9 @@ def diagnose(
         else:
             outlook = f"silence in ~{seconds_left:.0f} s at this rate"
 
-        if ahead is not None:
+        if ahead_delta is not None:
             deficit_delta = deficit_end_frames - deficit_start_frames
-            explainable = ahead * per_drop
+            explainable = ahead_delta * per_drop
             if deficit_delta > 0 and explainable < deficit_delta * 0.1:
                 estimated_ppm = (
                     slope / (g.sample_rate / CYCLES_PER_SECOND) * 1e6 / CYCLES_PER_SECOND
@@ -196,10 +201,10 @@ def diagnose(
                     cause="rate-mismatch (F9)",
                     confidence="medium",
                     reasoning=(
-                        f"deficit grows {slope:+.1f} frames/s but only {ahead} "
-                        f"`ahead` events cannot pay for it at {per_drop:.1f} "
-                        f"frames each ({explainable:.0f} explainable vs "
-                        f"{deficit_delta} observed). E advances slower than W "
+                        f"deficit grows {slope:+.1f} frames/s but only {ahead_delta} "
+                        f"`ahead` events in this window cannot pay for it at "
+                        f"{per_drop:.1f} frames each ({explainable:.0f} explainable "
+                        f"vs {deficit_delta} observed). E advances slower than W "
                         f"continuously — a rate mismatch, not an event ratchet. "
                         f"Equivalent to ~{estimated_ppm:.0f} ppm device drift. "
                         f"Check ZTS correlation and preparation-path cadence."
@@ -232,12 +237,12 @@ def diagnose(
             ),
         )
 
-    if ahead:
+    if ahead_delta:
         return Diagnosis(
             cause="benign replay churn",
             confidence="medium",
             reasoning=(
-                f"{ahead} `ahead` events but the deficit is still negative "
+                f"{ahead_delta} `ahead` events but the deficit is still negative "
                 f"({deficit_end_frames}) and flat. `ahead` alone is not a fault: "
                 "a small replay ring generates them while audio stays intact."
             ),

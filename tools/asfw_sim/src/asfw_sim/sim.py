@@ -104,6 +104,8 @@ class SimResult:
     rx_dropped: int = 0
     terminal_visited: int = 0
     terminal_written: int = 0
+    terminal_consecutive_silent: int = 0
+    terminal_total_callbacks: int = 0
 
     # scheduler
     wakes: int = 0
@@ -129,8 +131,11 @@ class SimResult:
 
         Signature from the 2026-07-19 Duet run: transport alive (packets still
         emitted every cycle) while essentially no host PCM reaches the wire.
+        Requires the final 5 consecutive IO callbacks to have written zero
+        frames, avoiding both false negatives (a stream that dies 200 ms before
+        end) and false positives (a stall that recovers before termination).
         """
-        return self.terminal_written_fraction < 0.5
+        return self.terminal_consecutive_silent >= 5
 
     def failure_count(self, failure: ReplayFailure) -> int:
         return self.replay_failures.get(failure, 0)
@@ -293,6 +298,11 @@ def run(config: SimConfig) -> SimResult:
             if cycle >= terminal_start:
                 result.terminal_visited += res.visited
                 result.terminal_written += res.written
+                result.terminal_total_callbacks += 1
+                if res.written == 0:
+                    result.terminal_consecutive_silent += 1
+                else:
+                    result.terminal_consecutive_silent = 0
 
             wake_due = True
 
