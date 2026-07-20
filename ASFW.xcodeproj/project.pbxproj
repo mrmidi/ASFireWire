@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A1B2C3D4E5F60718293A4B5C /* RMEFireface800Protocol.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6C /* RMEFireface800Protocol.cpp */; };
 		0267190E6597A8DA11482D7C /* DriverConnector+Status.swift in Sources */ = {isa = PBXBuildFile; fileRef = 264D4CD41FF948792F95E023 /* DriverConnector+Status.swift */; };
 		02D9A096E4DC8704CF3B4DE4 /* MetricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B20C10AC8C1594C410D4D6F /* MetricsView.swift */; };
 		04D9E2DA1F4128063BC1E28E /* FocusriteSaffireProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7B882FD0DA3D8C7A7845DA54 /* FocusriteSaffireProfile.cpp */; };
@@ -115,6 +114,7 @@
 		47C7D2797F3974490450A45A /* AVCNestedChannelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB92C50A509F45F51EFD3F03 /* AVCNestedChannelTests.swift */; };
 		47F41CED6EB2EE793A31B6E5 /* ASFWAudioDriverControls.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 018751CF8CA051FDDE9B2B06 /* ASFWAudioDriverControls.cpp */; };
 		48359CD69DF9A8F5868E12C0 /* ASFWMCPLiveDriverControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1391A71639068D8291B32AF /* ASFWMCPLiveDriverControl.swift */; };
+		49F6698714AAE6DA7A1CE7AE /* RMEFireface800Protocol.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B80BA7172EA0EC366CA7C8EC /* RMEFireface800Protocol.cpp */; };
 		4A7F808CC9DBBBED16B2F07A /* ConfigROMBuilder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 290CF8A5D9D6CABD1B3BF37A /* ConfigROMBuilder.cpp */; };
 		4B85BC02C027180D070F4DFF /* DICETcatProtocol.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3B6A6E8C021FEF7B9569D79A /* DICETcatProtocol.cpp */; };
 		4C587E86B66E99AA77CF17A1 /* ASFWDriverUserClient.iig in Sources */ = {isa = PBXBuildFile; fileRef = AF46E21DCF97D1A3F7DFDA09 /* ASFWDriverUserClient.iig */; };
@@ -382,9 +382,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		B1C2D3E4F5061728394A5B6C /* RMEFireface800Protocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RMEFireface800Protocol.cpp; sourceTree = "<group>"; };
-		C1D2E3F40516273849A5B6C7 /* RMEFireface800Protocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RMEFireface800Protocol.hpp; sourceTree = "<group>"; };
-		E1F2031425364758697A8B9C /* RMEAudioProfiles.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RMEAudioProfiles.hpp; sourceTree = "<group>"; };
 		00744EB824D48D9F716E153A /* PostResetTimingCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PostResetTimingCoordinator.hpp; sourceTree = "<group>"; };
 		00979778212761BF904386E6 /* AudioEndpointRuntime.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioEndpointRuntime.hpp; sourceTree = "<group>"; };
 		00D5EC5AEB7989BC5DBE3E15 /* BusResetHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetHandler.cpp; sourceTree = "<group>"; };
@@ -561,6 +558,7 @@
 		3B0597EE0A4E4C496E0C2EA6 /* ASFWAudioDriverZts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverZts.cpp; sourceTree = "<group>"; };
 		3B294E73813DAE348F5D045A /* IDeviceManager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IDeviceManager.hpp; sourceTree = "<group>"; };
 		3B6A6E8C021FEF7B9569D79A /* DICETcatProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DICETcatProtocol.cpp; sourceTree = "<group>"; };
+		3BA650C15D778F327D36918D /* RMEAudioProfiles.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RMEAudioProfiles.hpp; sourceTree = "<group>"; };
 		3BC1BCBC9E52B53B87DEEA69 /* CIPHeader.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CIPHeader.hpp; sourceTree = "<group>"; };
 		3CCCE7A077DAD59020AD49F2 /* BusResetCoordinatorActions.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetCoordinatorActions.cpp; sourceTree = "<group>"; };
 		3CF6AA538A8321AEB7DDB655 /* MCPHardwareSmokeRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPHardwareSmokeRunnerTests.swift; sourceTree = "<group>"; };
@@ -917,6 +915,7 @@
 		B7E03EB5573EA30EB8F2D42B /* PingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PingView.swift; sourceTree = "<group>"; };
 		B7E5492B36B350E48E9214A8 /* AudioNubPublisher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioNubPublisher.cpp; sourceTree = "<group>"; };
 		B808B46CF106706A04C126DB /* ASFWMCPAvcFcpTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPAvcFcpTools.swift; sourceTree = "<group>"; };
+		B80BA7172EA0EC366CA7C8EC /* RMEFireface800Protocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RMEFireface800Protocol.cpp; sourceTree = "<group>"; };
 		B8B02346383E39CA66366AAE /* AudioDriverConfig.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioDriverConfig.cpp; sourceTree = "<group>"; };
 		B9E220CDF43AD389BD345A8F /* DriverKitOwnership.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DriverKitOwnership.hpp; sourceTree = "<group>"; };
 		BA6781D8E0522CE83CECCD4F /* Error.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Error.hpp; sourceTree = "<group>"; };
@@ -930,6 +929,7 @@
 		BCD6B302DCC686B9FD46CE06 /* RolePolicy.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RolePolicy.cpp; sourceTree = "<group>"; };
 		BD88A8D5D9A4D4FDC7E5A71A /* ConfigROMParser.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMParser.hpp; sourceTree = "<group>"; };
 		BD92B955A8BFE30B33FB1F45 /* ATManagerImpl.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ATManagerImpl.hpp; sourceTree = "<group>"; };
+		BDCF2C69EC4FAB205B581D26 /* RMEFireface800Protocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RMEFireface800Protocol.hpp; sourceTree = "<group>"; };
 		BE308A43E548024E6623D4A8 /* bump.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = bump.sh; sourceTree = "<group>"; };
 		BF49A4417B0371208665ECA7 /* StreamFormatParser.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StreamFormatParser.hpp; sourceTree = "<group>"; };
 		BF9FE813F630AD0832D9E674 /* FWDevice.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FWDevice.hpp; sourceTree = "<group>"; };
@@ -1654,7 +1654,7 @@
 				4D2DB64009F93C974F2DF20F /* DICE */,
 				FD14F207887135CE102F8ACA /* Duplex */,
 				6DF35E1146D265DA8C2B7611 /* Oxford */,
-				D1E2F3041526374859A6B7C8 /* RME */,
+				83A156BB194E66B40C582BD8 /* RME */,
 			);
 			path = Protocols;
 			sourceTree = "<group>";
@@ -1996,6 +1996,15 @@
 				7D8FA4EACF4B6E55512C76DC /* SpeedPolicy.hpp */,
 			);
 			path = Discovery;
+			sourceTree = "<group>";
+		};
+		83A156BB194E66B40C582BD8 /* RME */ = {
+			isa = PBXGroup;
+			children = (
+				B80BA7172EA0EC366CA7C8EC /* RMEFireface800Protocol.cpp */,
+				BDCF2C69EC4FAB205B581D26 /* RMEFireface800Protocol.hpp */,
+			);
+			path = RME;
 			sourceTree = "<group>";
 		};
 		8416E8873F248937DC1F725E /* Config */ = {
@@ -2628,15 +2637,6 @@
 			path = Diagnostics;
 			sourceTree = "<group>";
 		};
-		D1E2F3041526374859A6B7C8 /* RME */ = {
-			isa = PBXGroup;
-			children = (
-				B1C2D3E4F5061728394A5B6C /* RMEFireface800Protocol.cpp */,
-				C1D2E3F40516273849A5B6C7 /* RMEFireface800Protocol.hpp */,
-			);
-			path = RME;
-			sourceTree = "<group>";
-		};
 		E08412C570C729DF6E083569 /* Vendors */ = {
 			isa = PBXGroup;
 			children = (
@@ -2645,7 +2645,7 @@
 				F1BF9794C22F3E1693A6CCF0 /* FocusriteAudioProfiles.hpp */,
 				ADA183665D23E96057546B82 /* MidasAudioProfiles.hpp */,
 				0C844DC3BD4E0AE7D1081F52 /* PreSonusAudioProfiles.hpp */,
-				E1F2031425364758697A8B9C /* RMEAudioProfiles.hpp */,
+				3BA650C15D778F327D36918D /* RMEAudioProfiles.hpp */,
 				C9474A3E174E5254247327C6 /* TerraTecAudioProfiles.hpp */,
 			);
 			path = Vendors;
@@ -2899,8 +2899,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				EE5A446B3669D0171F9606EE /* ASFW */,
 				0EB9A8DA75D08971084A440A /* ASFWDriver */,
+				EE5A446B3669D0171F9606EE /* ASFW */,
 				348672D607701677ABCB567C /* ASFWTests */,
 			);
 		};
@@ -3049,7 +3049,6 @@
 				DB27C439E148A97E29A0D466 /* DeviceDiscoveryHandler.cpp in Sources */,
 				971AC3A1D14A2A8C0F6E1939 /* DeviceManager.cpp in Sources */,
 				8482325128986FFEE1C854CF /* DeviceProtocolFactory.cpp in Sources */,
-				A1B2C3D4E5F60718293A4B5C /* RMEFireface800Protocol.cpp in Sources */,
 				713D5C0BC0201DFBDA15B69D /* DeviceRegistry.cpp in Sources */,
 				6DB7521C088B8C7AE091D4D3 /* DeviceStreamModeQuirks.cpp in Sources */,
 				D5D557B2656B33436FB6738E /* DiagnosticLogger.cpp in Sources */,
@@ -3115,6 +3114,7 @@
 				3ECDDF5924BE520E1750A8FF /* PostResetTimingCoordinator.cpp in Sources */,
 				270027C27155433C83E72998 /* PowerLinkPolicyCoordinator.cpp in Sources */,
 				AE6B45BB973CF543649B851E /* PreSonusStudioLiveProfile.cpp in Sources */,
+				49F6698714AAE6DA7A1CE7AE /* RMEFireface800Protocol.cpp in Sources */,
 				3455F76072D6ED0ED7E7B77E /* ROMReader.cpp in Sources */,
 				55D2ED0B592528E5950795D3 /* ROMScanSession.cpp in Sources */,
 				3125B234BDC6F30DF047EC94 /* ROMScanSessionDetails.cpp in Sources */,
@@ -3319,7 +3319,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -3340,7 +3340,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -3415,9 +3415,6 @@
 		5871D362E349A3418E269976 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CLANG_ENABLE_CODE_COVERAGE = NO;
-				GCC_GENERATE_TEST_COVERAGE_FILES = NO;
-				GCC_INSTRUMENT_PROGRAM_FLOW_ARCS = NO;
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_DEXT_ENTITLEMENTS_NO = ASFWDriver/ASFWDriver.entitlements;
 				ASFW_DEXT_ENTITLEMENTS_YES = "ASFWDriver/ASFWDriver+SCSI.entitlements";
@@ -3429,7 +3426,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI))";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -3467,7 +3464,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -3500,9 +3497,6 @@
 		8AE4F9EA5D2C9D98D94E9AD2 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CLANG_ENABLE_CODE_COVERAGE = NO;
-				GCC_GENERATE_TEST_COVERAGE_FILES = NO;
-				GCC_INSTRUMENT_PROGRAM_FLOW_ARCS = NO;
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_DEXT_ENTITLEMENTS_NO = ASFWDriver/ASFWDriver.entitlements;
 				ASFW_DEXT_ENTITLEMENTS_YES = "ASFWDriver/ASFWDriver+SCSI.entitlements";
@@ -3514,7 +3508,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI))";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -3617,7 +3611,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;

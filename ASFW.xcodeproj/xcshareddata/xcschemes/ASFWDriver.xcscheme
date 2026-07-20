@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "EE5A446B3669D0171F9606EE"
-               BuildableName = "ASFW.app"
-               BlueprintName = "ASFW"
+               BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
+               BuildableName = "ASFWDriver.dext"
+               BlueprintName = "ASFWDriver"
                ReferencedContainer = "container:ASFW.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -29,18 +29,12 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       onlyGenerateCoverageForSpecifiedTargets = "NO">
-      <TestPlans>
-         <TestPlanReference
-            default = "YES"
-            reference = "container:ASFW.xctestplan">
-         </TestPlanReference>
-      </TestPlans>
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "EE5A446B3669D0171F9606EE"
-            BuildableName = "ASFW.app"
-            BlueprintName = "ASFW"
+            BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
+            BuildableName = "ASFWDriver.dext"
+            BlueprintName = "ASFWDriver"
             ReferencedContainer = "container:ASFW.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -63,9 +57,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "EE5A446B3669D0171F9606EE"
-            BuildableName = "ASFW.app"
-            BlueprintName = "ASFW"
+            BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
+            BuildableName = "ASFWDriver.dext"
+            BlueprintName = "ASFWDriver"
             ReferencedContainer = "container:ASFW.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -82,9 +76,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "EE5A446B3669D0171F9606EE"
-            BuildableName = "ASFW.app"
-            BlueprintName = "ASFW"
+            BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
+            BuildableName = "ASFWDriver.dext"
+            BlueprintName = "ASFWDriver"
             ReferencedContainer = "container:ASFW.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
