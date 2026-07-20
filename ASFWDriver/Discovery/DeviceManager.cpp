@@ -553,6 +553,11 @@ std::shared_ptr<FWDevice> DeviceManager::ResumeExistingDevice(const std::shared_
         return nullptr;
     }
 
+    // A rediscovery may enrich identity after the initial minimal ROM pass (for
+    // example, model_id found in a Unit Directory). Refresh even when the device
+    // is already Ready so the UserClient and protocol selection see the new IDs.
+    device->RefreshIdentity(record);
+
     if (device->IsSuspended()) {
         device->Resume(record.gen, record.nodeId, record.link);
         UpdateOperationalIndex(record.guid, record.gen, record.nodeId, "update");

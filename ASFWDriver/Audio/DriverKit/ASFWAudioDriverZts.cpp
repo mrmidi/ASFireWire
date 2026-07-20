@@ -12,6 +12,7 @@
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 #include <DriverKit/DriverKit.h>
 
@@ -502,11 +503,20 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     // the producer gets its first turn. Steady state still targets completion
     // + kTxPreparationLeadPackets.
     ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-    timing.replayValid = true;
     timing.txClockValid = false;
-    timing.disposition =
-        ASFW::Protocols::Audio::AMDTP::
-            AmdtpPacketDisposition::NoData;
+    const bool isRmeFireface800 =
+        ivars.device.vendorId == ASFW::DeviceProfiles::Audio::kRMEVendorId &&
+        ivars.device.modelId == ASFW::DeviceProfiles::Audio::kFireface800ModelId;
+
+    // Normal devices intentionally prefill NO-DATA through the replay override.
+    // The FF800 is different: it needs its native 192 kHz blocking cadence
+    // (6 data packets / 2 true empty cycles per 8 bus cycles). Leaving
+    // replayValid=true with replayDataBlocks=0 forces every packet empty and
+    // bypasses the cadence engine entirely.
+    timing.replayValid = !isRmeFireface800;
+    timing.disposition = isRmeFireface800
+        ? ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data
+        : ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
 
     uint32_t prepared = 0;
     for (uint64_t packetIndex = 0;
@@ -527,9 +537,10 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     }
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG TX prefill seeded %u/%u committed NO-DATA packets before isoch start (steadyLead=%u)",
+             "ADK DBG TX prefill seeded %u/%u committed %{public}s packets before isoch start (steadyLead=%u)",
              prepared,
              numSlots,
+             isRmeFireface800 ? "FF800 blocking cadence" : "NO-DATA",
              ASFW::IsochTransport::AudioTimingGeometry::
                  kTxPreparationLeadPackets);
 }

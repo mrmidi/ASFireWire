@@ -53,6 +53,7 @@ add_device_test(AudioDuplexCoordinatorTests
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Parse/ConfigROMParser.cpp"
 )
 
 # FW-74: resolver-owned duplex stream geometry, wire-format quirks, and host recipe.

@@ -116,6 +116,11 @@ std::vector<RomEntry> FWDevice::ExtractUnitDirectory(
                     entries.push_back(RomEntry{CfgKey::Unit_Sw_Version, value, keyType, 0});
                 }
                 break;
+            case 0x17:  // Model_ID
+                if (keyType == 0) {  // Immediate
+                    entries.push_back(RomEntry{CfgKey::ModelId, value, keyType, 0});
+                }
+                break;
             case 0x14:  // Logical_Unit_Number
                 if (keyType == 0) {  // Immediate
                     entries.push_back(RomEntry{CfgKey::Logical_Unit_Number, value, keyType, 0});
@@ -219,6 +224,31 @@ void FWDevice::Resume(Generation newGen, uint16_t newNodeId, const LinkPolicy& n
         if (unit) {
             unit->Resume();
         }
+    }
+}
+
+void FWDevice::RefreshIdentity(const DeviceRecord& record)
+{
+    if (record.guid != guid_) {
+        return;
+    }
+
+    const uint32_t previousVendorId = vendorId_;
+    const uint32_t previousModelId = modelId_;
+
+    vendorId_ = record.vendorId;
+    modelId_ = record.modelId;
+    kind_ = record.kind;
+    vendorName_ = record.vendorName;
+    modelName_ = record.modelName;
+    isAudioCandidate_ = record.isAudioCandidate;
+    supportsAMDTP_ = record.supportsAMDTP;
+
+    if (previousVendorId != vendorId_ || previousModelId != modelId_) {
+        ASFW_LOG(Discovery,
+                 "FWDevice identity refreshed GUID=0x%016llx vendor=0x%06x->0x%06x "
+                 "model=0x%06x->0x%06x",
+                 guid_, previousVendorId, vendorId_, previousModelId, modelId_);
     }
 }
 

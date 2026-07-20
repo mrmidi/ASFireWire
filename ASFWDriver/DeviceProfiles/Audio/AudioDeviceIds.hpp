@@ -56,7 +56,13 @@ inline constexpr uint32_t kStudioLive1642ModelId = 0x000010;
 inline constexpr uint32_t kStudioLive2442ModelId = 0x000012;
 inline constexpr uint32_t kStudioLive3242ModelId = 0x000014;
 
+// ---- RME (vendor-specific Fireface family) ----
+inline constexpr uint32_t kRMEVendorId          = 0x000a35;
+inline constexpr uint32_t kFireface800ModelId   = 0x101800;
+
 // ---- Display names ----
+inline constexpr const char* kRMEVendorName            = "RME";
+inline constexpr const char* kFireface800ModelName      = "Fireface 800";
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
 inline constexpr const char* kSPro40ModelName         = "Saffire Pro 40";
 inline constexpr const char* kLiquidS56ModelName      = "Liquid Saffire 56";

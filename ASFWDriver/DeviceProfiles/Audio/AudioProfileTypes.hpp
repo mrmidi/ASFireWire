@@ -21,6 +21,7 @@ enum class AudioIntegrationMode : uint8_t {
     kNone = 0,      // Recognized but not driven (deferred multistream models).
     kHardcodedNub,  // Vendor-specific audio backend (DICE/TCAT), no AV/C.
     kAVCDriven,     // AV/C discovery drives topology; vendor protocol adds extra controls.
+    kReadOnlyNub,   // Publish a Core Audio endpoint, but deliberately block streaming.
 };
 
 /// Audio protocol family a device belongs to. Forward-looking: consumed today only for

@@ -56,6 +56,7 @@ public:
     void Publish();
     void Suspend();
     void Resume(Generation newGen, uint16_t newNodeId, const LinkPolicy& newLink);
+    void RefreshIdentity(const DeviceRecord& record);
     void Terminate();
 
 private:
@@ -69,9 +70,9 @@ private:
     ) const;
 
     const Guid64 guid_;
-    const uint32_t vendorId_;
-    const uint32_t modelId_;
-    const DeviceKind kind_;
+    uint32_t vendorId_;
+    uint32_t modelId_;
+    DeviceKind kind_;
 
     std::string vendorName_;
     std::string modelName_;

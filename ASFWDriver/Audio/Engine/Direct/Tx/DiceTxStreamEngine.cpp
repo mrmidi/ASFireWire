@@ -16,11 +16,13 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.fmt = streamConfig.fmt;
     config.fdf = streamConfig.fdf;
     config.framesPerDataPacket = streamConfig.framesPerDataPacket;
+    config.includeCipHeader = streamConfig.includeCipHeader;
     config.sourceChannelOffset = streamConfig.sourceChannelOffset;
-    // Compute the true max packet size: CIP headers (8 bytes) + frames × DBS × 4 bytes/slot.
-    // Do not use the AmdtpStreamConfig default (512) — it is too small for high-channel
-    // devices (e.g. a 24-channel device with DBS=24 needs 776 bytes at 8 fpd).
-    config.maxPacketBytes = 8u +
+    // Compute the true max packet size. Standard AMDTP uses an 8-byte CIP
+    // header; former-generation RME Fireface streams use raw no-CIP payloads.
+    // Do not use the AmdtpStreamConfig default (512) — it is too small for
+    // high-channel devices.
+    config.maxPacketBytes = (streamConfig.includeCipHeader ? 8u : 0u) +
         static_cast<uint32_t>(streamConfig.framesPerDataPacket) * streamConfig.dbs * 4u;
     return config;
 }

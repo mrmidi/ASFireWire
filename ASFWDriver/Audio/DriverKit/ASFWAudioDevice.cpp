@@ -13,6 +13,7 @@
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
@@ -64,6 +65,21 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
              static_cast<uint64_t>(in_flags));
 
     auto& ivars = *this->ivars->driverIvars;
+
+    // Stage 5C deliberately lets the FF800 enter the generic TX allocation,
+    // mapping, packetizer and prefill path. The Dext-side StartAudioStreaming
+    // branch then primes descriptors only and returns unsupported before any
+    // OHCI CommandPtr/RUN write or device communication start.
+    const bool isRmeStage5C =
+        ivars.device.vendorId == ASFW::DeviceProfiles::Audio::kRMEVendorId &&
+        ivars.device.modelId == ASFW::DeviceProfiles::Audio::kFireface800ModelId;
+    if (isRmeStage5C) {
+        ASFW_LOG_WARNING(
+            Audio,
+            "[RME] Stage 5C: Core Audio StartIO entering host TX DMA/descriptor preflight; live streaming remains blocked GUID=0x%016llx",
+            ivars.device.guid);
+    }
+
     __block kern_return_t kr = kIOReturnSuccess;
 
     ivars.workQueue->DispatchSync(^{
@@ -177,7 +193,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             const uint32_t numSlots =
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
             const uint32_t maxPacketBytes =
-                8u + static_cast<uint32_t>(txConfig.framesPerDataPacket) * txConfig.dbs * 4u;
+                (txConfig.includeCipHeader ? 8u : 0u) +
+                static_cast<uint32_t>(txConfig.framesPerDataPacket) * txConfig.dbs * 4u;
             const uint32_t interruptInterval =
                 ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
 
@@ -231,6 +248,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.controlBlock = controlBlock;
             ivars.runtime.txSlotProvider.numSlots = numSlots;
             ivars.runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
+            ivars.runtime.txSlotProvider.isochTag =
+                txConfig.includeCipHeader
+                    ? ASFW::IsochTransport::IsochPacketTag::kCip
+                    : ASFW::IsochTransport::IsochPacketTag::kNoCipHeader;
 
             ivars.runtime.txExecutionTimeline.controlBlock = controlBlock;
 
@@ -282,7 +303,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             const uint32_t numSlots2 =
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
             const uint32_t maxPacketBytes2 =
-                8u + static_cast<uint32_t>(txConfig2.framesPerDataPacket) * txConfig2.dbs * 4u;
+                (txConfig2.includeCipHeader ? 8u : 0u) +
+                static_cast<uint32_t>(txConfig2.framesPerDataPacket) * txConfig2.dbs * 4u;
             const uint32_t interruptInterval2 =
                 ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
 
@@ -318,6 +340,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProviderSecondary.controlBlock = controlBlock2;
             ivars.runtime.txSlotProviderSecondary.numSlots = numSlots2;
             ivars.runtime.txSlotProviderSecondary.slotStrideBytes = maxPacketBytes2;
+            ivars.runtime.txSlotProviderSecondary.isochTag =
+                txConfig2.includeCipHeader
+                    ? ASFW::IsochTransport::IsochPacketTag::kCip
+                    : ASFW::IsochTransport::IsochPacketTag::kNoCipHeader;
 
             if (!ivars.runtime.txStreamEngineSecondary.Configure(*profile, txConfig2)) {
                 kr = failStart(kIOReturnError, "ConfigureTxStreamEngine2");
@@ -545,6 +571,18 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
              static_cast<uint64_t>(in_flags));
 
     auto& ivars = *this->ivars->driverIvars;
+
+    // Matching Stage 4A no-op teardown for a StartIO request that was rejected
+    // before the generic transport or AudioDriverKit state was entered.
+    if (ivars.device.vendorId == ASFW::DeviceProfiles::Audio::kRMEVendorId &&
+        ivars.device.modelId == ASFW::DeviceProfiles::Audio::kFireface800ModelId) {
+        ASFW_LOG(
+            Audio,
+            "[RME] Stage 4A: StopIO acknowledged with no active stream GUID=0x%016llx",
+            ivars.device.guid);
+        return kIOReturnSuccess;
+    }
+
     __block kern_return_t kr = kIOReturnSuccess;
 
     ivars.workQueue->DispatchSync(^{

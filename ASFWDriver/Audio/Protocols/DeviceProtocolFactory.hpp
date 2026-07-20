@@ -46,6 +46,8 @@ public:
     // Identity constants are defined in DeviceProfiles/Audio/AudioDeviceIds.hpp (single
     // source of truth) and re-exported here so existing DeviceProtocolFactory::kX call
     // sites keep resolving.
+    static constexpr uint32_t kRMEVendorId = DeviceProfiles::Audio::kRMEVendorId;
+    static constexpr uint32_t kFireface800ModelId = DeviceProfiles::Audio::kFireface800ModelId;
     static constexpr uint32_t kFocusriteVendorId = DeviceProfiles::Audio::kFocusriteVendorId;
     static constexpr uint32_t kSPro40ModelId = DeviceProfiles::Audio::kSPro40ModelId;
     static constexpr uint32_t kLiquidS56ModelId = DeviceProfiles::Audio::kLiquidS56ModelId;
@@ -68,6 +70,8 @@ public:
         DeviceProfiles::Audio::kStudioLive1602ModelId;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 =
         DeviceProfiles::Audio::kFocusriteGuidModelSPro40Tcd3070;
+    static constexpr const char* kRMEVendorName = DeviceProfiles::Audio::kRMEVendorName;
+    static constexpr const char* kFireface800ModelName = DeviceProfiles::Audio::kFireface800ModelName;
     static constexpr const char* kFocusriteVendorName = DeviceProfiles::Audio::kFocusriteVendorName;
     static constexpr const char* kSPro40ModelName = DeviceProfiles::Audio::kSPro40ModelName;
     static constexpr const char* kLiquidS56ModelName = DeviceProfiles::Audio::kLiquidS56ModelName;

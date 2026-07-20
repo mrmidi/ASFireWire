@@ -8,6 +8,7 @@
 #include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "BeBoB/Phase88Protocol.hpp"
+#include "RME/RMEFireface800Protocol.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Audio {
@@ -77,6 +78,15 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         // AVCDiscovery wires transport for live command execution.
         return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
             busOps, busInfo, nodeId, nullptr, irmClient, cmpClient, deviceGuid);
+    }
+
+    if (vendorId == DeviceProfiles::Audio::kRMEVendorId &&
+        modelId == DeviceProfiles::Audio::kFireface800ModelId) {
+        ASFW_LOG(Audio,
+                 "Creating Stage 5C RME Fireface 800 no-CIP wire-format preflight vendor=0x%06x model=0x%06x node=0x%04x",
+                 vendorId, modelId, nodeId);
+        return std::make_unique<RME::RMEFireface800Protocol>(
+            busOps, busInfo, nodeId, deviceGuid, irmClient);
     }
 
     if (vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId) {

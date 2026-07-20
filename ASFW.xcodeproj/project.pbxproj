@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1B2C3D4E5F60718293A4B5C /* RMEFireface800Protocol.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6C /* RMEFireface800Protocol.cpp */; };
 		0267190E6597A8DA11482D7C /* DriverConnector+Status.swift in Sources */ = {isa = PBXBuildFile; fileRef = 264D4CD41FF948792F95E023 /* DriverConnector+Status.swift */; };
 		02D9A096E4DC8704CF3B4DE4 /* MetricsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B20C10AC8C1594C410D4D6F /* MetricsView.swift */; };
 		04D9E2DA1F4128063BC1E28E /* FocusriteSaffireProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7B882FD0DA3D8C7A7845DA54 /* FocusriteSaffireProfile.cpp */; };
@@ -381,6 +382,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B1C2D3E4F5061728394A5B6C /* RMEFireface800Protocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RMEFireface800Protocol.cpp; sourceTree = "<group>"; };
+		C1D2E3F40516273849A5B6C7 /* RMEFireface800Protocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RMEFireface800Protocol.hpp; sourceTree = "<group>"; };
+		E1F2031425364758697A8B9C /* RMEAudioProfiles.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RMEAudioProfiles.hpp; sourceTree = "<group>"; };
 		00744EB824D48D9F716E153A /* PostResetTimingCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PostResetTimingCoordinator.hpp; sourceTree = "<group>"; };
 		00979778212761BF904386E6 /* AudioEndpointRuntime.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioEndpointRuntime.hpp; sourceTree = "<group>"; };
 		00D5EC5AEB7989BC5DBE3E15 /* BusResetHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetHandler.cpp; sourceTree = "<group>"; };
@@ -1650,6 +1654,7 @@
 				4D2DB64009F93C974F2DF20F /* DICE */,
 				FD14F207887135CE102F8ACA /* Duplex */,
 				6DF35E1146D265DA8C2B7611 /* Oxford */,
+				D1E2F3041526374859A6B7C8 /* RME */,
 			);
 			path = Protocols;
 			sourceTree = "<group>";
@@ -2623,6 +2628,15 @@
 			path = Diagnostics;
 			sourceTree = "<group>";
 		};
+		D1E2F3041526374859A6B7C8 /* RME */ = {
+			isa = PBXGroup;
+			children = (
+				B1C2D3E4F5061728394A5B6C /* RMEFireface800Protocol.cpp */,
+				C1D2E3F40516273849A5B6C7 /* RMEFireface800Protocol.hpp */,
+			);
+			path = RME;
+			sourceTree = "<group>";
+		};
 		E08412C570C729DF6E083569 /* Vendors */ = {
 			isa = PBXGroup;
 			children = (
@@ -2631,6 +2645,7 @@
 				F1BF9794C22F3E1693A6CCF0 /* FocusriteAudioProfiles.hpp */,
 				ADA183665D23E96057546B82 /* MidasAudioProfiles.hpp */,
 				0C844DC3BD4E0AE7D1081F52 /* PreSonusAudioProfiles.hpp */,
+				E1F2031425364758697A8B9C /* RMEAudioProfiles.hpp */,
 				C9474A3E174E5254247327C6 /* TerraTecAudioProfiles.hpp */,
 			);
 			path = Vendors;
@@ -3034,6 +3049,7 @@
 				DB27C439E148A97E29A0D466 /* DeviceDiscoveryHandler.cpp in Sources */,
 				971AC3A1D14A2A8C0F6E1939 /* DeviceManager.cpp in Sources */,
 				8482325128986FFEE1C854CF /* DeviceProtocolFactory.cpp in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* RMEFireface800Protocol.cpp in Sources */,
 				713D5C0BC0201DFBDA15B69D /* DeviceRegistry.cpp in Sources */,
 				6DB7521C088B8C7AE091D4D3 /* DeviceStreamModeQuirks.cpp in Sources */,
 				D5D557B2656B33436FB6738E /* DiagnosticLogger.cpp in Sources */,
@@ -3303,7 +3319,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -3324,7 +3340,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -3399,6 +3415,9 @@
 		5871D362E349A3418E269976 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_CODE_COVERAGE = NO;
+				GCC_GENERATE_TEST_COVERAGE_FILES = NO;
+				GCC_INSTRUMENT_PROGRAM_FLOW_ARCS = NO;
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_DEXT_ENTITLEMENTS_NO = ASFWDriver/ASFWDriver.entitlements;
 				ASFW_DEXT_ENTITLEMENTS_YES = "ASFWDriver/ASFWDriver+SCSI.entitlements";
@@ -3410,7 +3429,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI))";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -3448,7 +3467,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -3481,6 +3500,9 @@
 		8AE4F9EA5D2C9D98D94E9AD2 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_CODE_COVERAGE = NO;
+				GCC_GENERATE_TEST_COVERAGE_FILES = NO;
+				GCC_INSTRUMENT_PROGRAM_FLOW_ARCS = NO;
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_DEXT_ENTITLEMENTS_NO = ASFWDriver/ASFWDriver.entitlements;
 				ASFW_DEXT_ENTITLEMENTS_YES = "ASFWDriver/ASFWDriver+SCSI.entitlements";
@@ -3492,7 +3514,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI))";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -3595,7 +3617,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;

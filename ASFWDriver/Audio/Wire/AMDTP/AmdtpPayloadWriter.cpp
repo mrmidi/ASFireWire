@@ -123,7 +123,8 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         // field set, so this cannot underflow.
         const uint32_t frameInPacket =
             static_cast<uint32_t>(absoluteFrame - snap.firstAudioFrame);
-        uint8_t* dest = snap.packetBytes + kCipHeaderBytes +
+        const uint32_t headerBytes = streamConfig_.includeCipHeader ? kCipHeaderBytes : 0U;
+        uint8_t* dest = snap.packetBytes + headerBytes +
                         frameInPacket * snap.dbs * kBytesPerSlot;
 
         const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)

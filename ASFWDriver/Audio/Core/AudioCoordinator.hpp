@@ -69,6 +69,7 @@ public:
 
 private:
     [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
+    void EnsureRMEReadOnlyNub(uint64_t guid) noexcept;
 
     AudioNubPublisher publisher_;
     DiceAudioBackend dice_;

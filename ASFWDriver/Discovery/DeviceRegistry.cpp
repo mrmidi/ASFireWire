@@ -3,6 +3,9 @@
 #include <limits>
 #include "../Logging/Logging.hpp"
 #include "../DeviceProfiles/Audio/AudioProfileRegistry.hpp"
+#include "../ConfigROM/Parse/ConfigROMParser.hpp"
+
+#include <span>
 
 namespace ASFW::Discovery {
 
@@ -16,6 +19,39 @@ constexpr uint32_t kUnitSwVersion_SBP2 = 0x010483; // SBP-2 Unit_Sw_Version
 }
 
 namespace {
+
+[[nodiscard]] std::optional<uint32_t> FindUnitModelIdInRawROM(const ConfigROM& rom) {
+    if (rom.rawQuadlets.empty()) {
+        return std::nullopt;
+    }
+
+    const uint32_t rootDirStart = 1U + static_cast<uint32_t>(rom.bib.busInfoLength);
+    for (const auto& rootEntry : rom.rootDirMinimal) {
+        if (rootEntry.key != CfgKey::Unit_Directory || rootEntry.leafOffsetQuadlets == 0) {
+            continue;
+        }
+
+        const uint32_t absoluteOffset = rootDirStart + rootEntry.leafOffsetQuadlets;
+        if (absoluteOffset >= rom.rawQuadlets.size()) {
+            continue;
+        }
+
+        const auto raw = std::span<const uint32_t>(rom.rawQuadlets.data(), rom.rawQuadlets.size());
+        const auto parsed = ConfigROMParser::ParseDirectory(raw.subspan(absoluteOffset), 32);
+        if (!parsed) {
+            continue;
+        }
+
+        for (const auto& entry : *parsed) {
+            if (entry.keyType == ASFW::FW::EntryType::kImmediate &&
+                entry.keyId == ASFW::FW::ConfigKey::kModelId) {
+                return entry.value;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
 
 void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
     for (const auto& entry : rom.rootDirMinimal) {
@@ -35,13 +71,37 @@ void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
         if (unit.unitSwVersion != 0) {
             device.unitSwVersion = unit.unitSwVersion;
         }
-        if (device.unitSpecId.has_value() && device.unitSwVersion.has_value()) {
-            break;
+
+        // Some devices, including the RME Fireface 800, publish model_id in the
+        // Unit Directory instead of the Root Directory. Preserve a root-level
+        // model_id when present, otherwise use the first usable unit model_id.
+        if (device.modelId == 0 && unit.modelId.has_value()) {
+            device.modelId = *unit.modelId;
+        }
+    }
+
+    // Details discovery can complete with the raw Unit Directory present while the
+    // higher-level UnitDirectory metadata is still incomplete. Parse the raw unit
+    // directory as a final, generic fallback so immediate model_id entries are not lost.
+    if (device.modelId == 0) {
+        if (const auto rawModelId = FindUnitModelIdInRawROM(rom); rawModelId.has_value()) {
+            device.modelId = *rawModelId;
+            ASFW_LOG(Discovery,
+                     "Recovered unit-directory model_id from raw Config ROM: 0x%06x",
+                     device.modelId);
         }
     }
 
     device.vendorName = rom.vendorName;
     device.modelName = rom.modelName;
+    if (device.modelName.empty()) {
+        for (const auto& unit : rom.unitDirectories) {
+            if (unit.modelName.has_value() && !unit.modelName->empty()) {
+                device.modelName = *unit.modelName;
+                break;
+            }
+        }
+    }
 }
 
 void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
@@ -137,7 +197,8 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
                  device.vendorId,
                  device.modelId,
                  static_cast<unsigned>(integrationMode));
-        if (integrationMode == DeviceProfiles::Audio::AudioIntegrationMode::kHardcodedNub) {
+        if (integrationMode == DeviceProfiles::Audio::AudioIntegrationMode::kHardcodedNub ||
+            integrationMode == DeviceProfiles::Audio::AudioIntegrationMode::kReadOnlyNub) {
             device.kind = DeviceKind::VendorSpecificAudio;
             device.isAudioCandidate = true;
         } else {

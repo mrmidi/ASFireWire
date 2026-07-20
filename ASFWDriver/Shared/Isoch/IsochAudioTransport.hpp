@@ -29,6 +29,66 @@ namespace ASFW::IsochTransport {
 
 inline constexpr uint32_t kTransportAbiVersion = 4;
 
+
+// =============================================================================
+// OHCI isochronous transmit packet-header contract.
+// =============================================================================
+// IEEE-1394 isoch tag 0 carries a stream with no CIP header; tag 1 carries a
+// standard CIP packet. The Fireface 800 former-generation protocol uses tag 0
+// because its payload is raw PCM24-in-32 (Linux AMDTP CIP_NO_HEADER).
+enum class IsochPacketTag : uint8_t {
+    kNoCipHeader = 0,
+    kCip = 1,
+};
+
+inline constexpr uint8_t kIsochSpeedS400 = 2;
+inline constexpr uint8_t kIsochDataBlockTCode = 0xA;
+
+[[nodiscard]] constexpr uint32_t BuildIsochTxHeaderQ0(
+    IsochPacketTag tag,
+    uint8_t speedCode = kIsochSpeedS400,
+    uint8_t sy = 0) noexcept {
+    return (static_cast<uint32_t>(speedCode & 0x7U) << 16U) |
+           (static_cast<uint32_t>(tag) << 14U) |
+           (static_cast<uint32_t>(kIsochDataBlockTCode) << 4U) |
+           static_cast<uint32_t>(sy & 0xFU);
+}
+
+[[nodiscard]] constexpr uint32_t BuildIsochTxHeaderQ1(
+    uint32_t payloadLength) noexcept {
+    return (payloadLength & 0xFFFFU) << 16U;
+}
+
+[[nodiscard]] constexpr uint8_t DecodeIsochTxHeaderSpeed(
+    uint32_t headerQ0) noexcept {
+    return static_cast<uint8_t>((headerQ0 >> 16U) & 0x7U);
+}
+
+[[nodiscard]] constexpr IsochPacketTag DecodeIsochTxHeaderTag(
+    uint32_t headerQ0) noexcept {
+    return static_cast<IsochPacketTag>((headerQ0 >> 14U) & 0x3U);
+}
+
+[[nodiscard]] constexpr uint8_t DecodeIsochTxHeaderTCode(
+    uint32_t headerQ0) noexcept {
+    return static_cast<uint8_t>((headerQ0 >> 4U) & 0xFU);
+}
+
+[[nodiscard]] constexpr uint32_t DecodeIsochTxHeaderDataLength(
+    uint32_t headerQ1) noexcept {
+    return (headerQ1 >> 16U) & 0xFFFFU;
+}
+
+/// A no-CIP idle cycle is represented by no isochronous packet at all. The
+/// OHCI core must program a zero-length standard OUTPUT_LAST skip descriptor,
+/// not an immediate isoch header with data_length=0. CIP streams retain their
+/// normal header-only packet semantics.
+[[nodiscard]] constexpr bool ShouldSkipIsochTxPacket(
+    IsochPacketTag tag,
+    uint32_t payloadLength) noexcept {
+    return tag == IsochPacketTag::kNoCipHeader && payloadLength == 0U;
+}
+
 // =============================================================================
 // Shared queue / buffer sizing (ADK §3.3 / §6.4).
 // These constants are the "Iron Rule" ground truth for both sides.
@@ -57,7 +117,7 @@ struct alignas(64) TxPacketMeta final {
     uint32_t immediateHeader[2];      ///< Ready-to-blit OHCI IT header quadlets
                                       ///< (OUTPUT_MORE_IMMEDIATE immediate data).
                                       ///< The core never interprets these.
-    uint32_t payloadLength;           ///< Bytes: 8 (NO-DATA) or 8 + frames·dbs·4.
+    uint32_t payloadLength;           ///< Bytes: 0 for a true empty no-CIP cycle, raw payload for tag 0, or CIP header + payload for tag 1.
     uint32_t reserved0;
     uint64_t packetIndex;             ///< Absolute index this entry describes.
     std::atomic<uint64_t> commitGen;  ///< Lap-numbered commit marker; 0 = never

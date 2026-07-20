@@ -27,6 +27,13 @@ class IDuplexDeviceControl;
 
 namespace ASFW::Audio {
 
+struct PlaybackPreflightRoute final {
+    uint8_t channel{0xFFU};
+    uint32_t bandwidthUnits{0U};
+    uint32_t sampleRateHz{0U};
+    bool deviceCommunicationStopped{false};
+};
+
 /// Interface for device-specific protocol handlers
 ///
 /// Device protocols are instantiated by DeviceProtocolFactory when a
@@ -74,6 +81,7 @@ public:
     }
 
     using VoidCallback = std::function<void(IOReturn)>;
+    using BoundedPlaybackStep = std::function<IOReturn()>;
 
     /// Optional bring-up hook to prepare device-side duplex state at 48kHz.
     /// Drivers can call this before any IRM reservation or host IR/IT startup.
@@ -107,6 +115,30 @@ public:
     /// Optional internal hook for backends that need the protocol's IRM client.
     virtual ::ASFW::IRM::IRMClient* GetIRMClient() const {
         return nullptr;
+    }
+
+    /// Optional bounded bring-up route held by a device protocol. This is only
+    /// for staged transport validation; it is not a general streaming API.
+    virtual bool GetPlaybackPreflightRoute(PlaybackPreflightRoute& outRoute) const {
+        (void)outRoute;
+        return false;
+    }
+
+    /// Optional staged integration hook. The protocol starts its already-
+    /// verified device communication engine, invokes one bounded host transmit
+    /// validation window, then stops the device and releases the held playback
+    /// IRM route.
+    /// This is not a live streaming API and must never make StartIO succeed.
+    virtual IOReturn RunBoundedPlaybackIntegrationPreflight(
+        const PlaybackPreflightRoute& route,
+        BoundedPlaybackStep prepareHost,
+        BoundedPlaybackStep runHostBurst,
+        BoundedPlaybackStep cleanupHost) {
+        (void)route;
+        (void)prepareHost;
+        (void)runHostBurst;
+        (void)cleanupHost;
+        return kIOReturnUnsupported;
     }
 
     /// Optional protocol-neutral duplex control interface used by the audio lifecycle.

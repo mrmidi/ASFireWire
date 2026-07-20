@@ -5,7 +5,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>42</string>
+	<string>17</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>ASFWAudioDriverService</key>
@@ -51,7 +51,7 @@
 				<string>ASFWAudioNub</string>
 			</dict>
 			<key>ASFWAutoStartAudioStreams</key>
-			<true/>
+			<false/>
 			<key>ASFWControllerVerbosity</key>
 			<integer>1</integer>
 			<key>ASFWDICEVerbosity</key>
@@ -87,7 +87,7 @@
 			<key>IOClass</key>
 			<string>IOUserService</string>
 			<key>IOPCIMatch</key>
-			<string>0x590111c1</string>
+			<string>0x823f104c</string>
 			<key>IOPCITunnelCompatible</key>
 			<true/>
 			<key>IOProbeScore</key>
@@ -113,7 +113,7 @@
 			<key>IOMatchCategory</key>
 			<string>ASFWSCSIController</string>
 			<key>IOPCIMatch</key>
-			<string>0x590111c1</string>
+			<string>0x823f104c</string>
 			<key>IOPCITunnelCompatible</key>
 			<true/>
 			<key>IOProviderClass</key>

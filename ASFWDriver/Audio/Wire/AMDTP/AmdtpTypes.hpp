@@ -35,6 +35,12 @@ struct AmdtpStreamConfig final {
     uint8_t framesPerDataPacket{8};
     uint32_t maxPacketBytes{512};
 
+    // Most IEC 61883-6/AMDTP streams carry the standard 8-byte CIP header.
+    // RME Fireface former-generation streams use CIP_NO_HEADER: the isoch
+    // payload is raw PCM data blocks and no-data cycles are genuine empty
+    // packets. Keep the default true so every existing device is unchanged.
+    bool includeCipHeader{true};
+
     // First host buffer channel this stream encodes. For a multi-stream device
     // (Venice F32 = 2×16) the 32-ch host output buffer is split across streams:
     // stream 0 reads channels [0, pcmChannels), stream 1 reads [16, 16+pcmChannels),

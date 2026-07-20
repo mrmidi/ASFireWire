@@ -496,7 +496,106 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         return kIOReturnNotReady;
     }
 
+    // Resolve the runtime binding before the global auto-start gate. Stage 5H
+    // is a bounded integration test: prepare one immutable circular 48-cycle
+    // D-D-D-S silence ring with RUN clear, start the already-verified FF800
+    // communication engine, sustain the ring for exactly 100 ms, stop OHCI
+    // first, then stop the device and release the held IRM route. Core Audio
+    // streaming remains rejected after the bounded cleanup completes.
+    ProtocolRuntimeBinding binding{};
+    const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
+    if (bindingStatus == kIOReturnSuccess && binding.device != nullptr) {
+        const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
+            binding.device->vendorId, binding.device->modelId);
+        if (integration == ASFW::Audio::DeviceIntegrationMode::kReadOnlyNub &&
+            binding.device->vendorId == ASFW::DeviceProfiles::Audio::kRMEVendorId &&
+            binding.device->modelId == ASFW::DeviceProfiles::Audio::kFireface800ModelId) {
+            ASFWDriver* parent = GetParentASFWDriver(ivars);
+            auto* ctx = parent
+                ? static_cast<ServiceContext*>(parent->GetServiceContext())
+                : nullptr;
+            ASFW::Audio::PlaybackPreflightRoute route{};
+            if (!ctx || !ctx->deps.hardware || !binding.protocol ||
+                !binding.protocol->GetPlaybackPreflightRoute(route)) {
+                ASFW_LOG_WARNING(
+                    Audio,
+                    "[RME] Stage 5H bounded circular silent cadence run deferred: verified IRM route is not ready GUID=0x%016llx",
+                    ivars->guid);
+                return kIOReturnUnsupported;
+            }
+            if (route.channel > 63U || route.bandwidthUnits != 1286U ||
+                route.sampleRateHz != 192000U ||
+                !route.deviceCommunicationStopped) {
+                ASFW_LOG_ERROR(
+                    Audio,
+                    "[RME] Stage 5H bounded circular silent cadence run rejected invalid route channel=%u bandwidth=%u/1286 rate=%u deviceStopped=%u",
+                    route.channel,
+                    route.bandwidthUnits,
+                    route.sampleRateHz,
+                    route.deviceCommunicationStopped ? 1U : 0U);
+                return kIOReturnUnsupported;
+            }
+
+            ASFW_LOG_WARNING(
+                Audio,
+                "[RME] Stage 5H bounded circular silent cadence run starting GUID=0x%016llx channel=%u bandwidth=%u rate=%u descriptors=48 dataPacketsPerSweep=36 skipPerSweep=12 durationMs=100 deviceEngineStarting=1",
+                ivars->guid,
+                route.channel,
+                route.bandwidthUnits,
+                route.sampleRateHz);
+
+            const IOReturn integrationKr =
+                binding.protocol->RunBoundedPlaybackIntegrationPreflight(
+                    route,
+                    [ctx, route]() -> IOReturn {
+                        IOReturn kr = ctx->isoch.PrepareTransmit(
+                            route.channel, *ctx->deps.hardware, 0U);
+                        if (kr == kIOReturnSuccess) {
+                            kr = ctx->isoch.PrimePreparedTransmitForPreflight();
+                        }
+                        if (kr == kIOReturnSuccess) {
+                            kr = ctx->isoch
+                                .PrepareTransmitBoundedCircularSilenceCadenceForPreflight();
+                        }
+                        return kr;
+                    },
+                    [ctx]() -> IOReturn {
+                        // Stage 5H keeps the immutable 6 ms ring active for exactly
+                        // 100 ms, proving repeated wraps without refill.
+                        return ctx->isoch
+                            .RunPreparedTransmitBoundedCircularSilenceCadenceForPreflight(100U);
+                    },
+                    [ctx]() -> IOReturn {
+                        // Idempotent final host cleanup. The RUN callback already
+                        // clears RUN and waits for ACTIVE; this also handles every
+                        // preparation/start failure path before device stop.
+                        return ctx->isoch
+                            .CleanupPreparedTransmitBoundedCircularSilenceCadenceForPreflight();
+                    });
+
+            // The protocol call above is synchronous: OHCI, FF800 and IRM
+            // cleanup all finish before StartAudioStreaming returns and before
+            // AudioDriverKit unwinds/frees the shared TX slabs.
+            if (integrationKr == kIOReturnSuccess) {
+                ASFW_LOG(
+                    Audio,
+                    "[RME] ✅ Stage 5H bounded circular silent playback integration completed GUID=0x%016llx channel=%u durationMs=100; Core Audio StartIO remains rejected",
+                    ivars->guid,
+                    route.channel);
+            } else {
+                ASFW_LOG_ERROR(
+                    Audio,
+                    "[RME] Stage 5H bounded circular silent playback integration failed GUID=0x%016llx channel=%u kr=0x%x; Core Audio StartIO remains rejected",
+                    ivars->guid,
+                    route.channel,
+                    integrationKr);
+            }
+            return kIOReturnUnsupported;
+        }
+    }
+
     // Auto-start gating (Info.plist + runtime), useful for debugging discovery without streams.
+    // Stage 5H has already been handled above; it executes one bounded 100 ms circular silence run and never enables live Core Audio streaming.
     if (!ASFW::LogConfig::Shared().IsAudioAutoStartEnabled()) {
         ASFW_LOG(Audio,
                  "ASFWAudioNub: StartAudioStreaming skipped (auto-start disabled) GUID=0x%016llx",
@@ -509,11 +608,15 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     // Linux resets FCP before its OXFW stream restart (oxfw.c:279-287), and
     // Apple likewise waits for its resumed state before reconnecting. DICE's
     // hardcoded-nub path does not use FCP and remains independent.
-    ProtocolRuntimeBinding binding{};
-    const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
     if (bindingStatus == kIOReturnSuccess && binding.device != nullptr) {
         const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
             binding.device->vendorId, binding.device->modelId);
+        if (integration == ASFW::Audio::DeviceIntegrationMode::kReadOnlyNub) {
+            ASFW_LOG_WARNING(Audio,
+                             "ASFWAudioNub: read-only audio endpoint transport remains disabled GUID=0x%016llx",
+                             ivars->guid);
+            return kIOReturnUnsupported;
+        }
         if (integration != ASFW::Audio::DeviceIntegrationMode::kHardcodedNub) {
             auto* transport = binding.avcDiscovery
                 ? binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId)
@@ -552,6 +655,27 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
 {
     if (!ivars || ivars->guid == 0) {
         return kIOReturnNotReady;
+    }
+
+    ProtocolRuntimeBinding binding{};
+    if (ResolveProtocolRuntimeBinding(ivars, binding) == kIOReturnSuccess &&
+        binding.device != nullptr &&
+        binding.device->vendorId == ASFW::DeviceProfiles::Audio::kRMEVendorId &&
+        binding.device->modelId == ASFW::DeviceProfiles::Audio::kFireface800ModelId) {
+        ASFWDriver* parent = GetParentASFWDriver(ivars);
+        auto* ctx = parent
+            ? static_cast<ServiceContext*>(parent->GetServiceContext())
+            : nullptr;
+        if (ctx) {
+            (void)ctx->isoch.StopTransmit();
+        }
+        if (auto endpoint = FindEndpointRuntime(ivars)) {
+            endpoint->MarkStreaming(false);
+        }
+        ASFW_LOG(Audio,
+                 "[RME] Stage 5H stop cleanup complete; bounded circular transmit context is stopped and no live audio stream exists GUID=0x%016llx",
+                 ivars->guid);
+        return kIOReturnSuccess;
     }
 
     auto* coordinator = GetAudioCoordinator(ivars);

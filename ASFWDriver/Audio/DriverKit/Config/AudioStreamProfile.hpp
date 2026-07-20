@@ -27,6 +27,12 @@ struct AudioStreamConfig final {
     uint8_t framesPerDataPacket{8};
     uint8_t fdf{0x02};
     uint8_t fmt{0x10};
+
+    // Most AMDTP streams carry the standard 8-byte CIP header.
+    // Former-generation RME Fireface streams use raw no-CIP payloads.
+    // Default true preserves every existing profile.
+    bool includeCipHeader{true};
+
     uint8_t sourceChannelOffset{0};
 };
 

@@ -303,11 +303,23 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
             return kIOReturnBadArgument;
         }
 
-        auto status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
+        auto status = pci->ConfigureInterrupts(
+            kIOInterruptTypePCIMessagedX, 1, 1, 0);
+        ASFW_LOG(Controller,
+            "PrepareInterrupts: MSI-X ConfigureInterrupts -> 0x%08x",
+            status);
+
         if (status != kIOReturnSuccess) {
-            status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessaged, 1, 1, 0);
+            status = pci->ConfigureInterrupts(
+                kIOInterruptTypePCIMessaged, 1, 1, 0);
+            ASFW_LOG(Controller,
+                "PrepareInterrupts: MSI ConfigureInterrupts -> 0x%08x",
+                status);
+
             if (status != kIOReturnSuccess) {
-                return status;
+                ASFW_LOG(Controller,
+                    "PrepareInterrupts: MSI-X/MSI unavailable; "
+                    "trying existing interrupt index 0");
             }
         }
     }
@@ -320,7 +332,12 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
         ctx.interruptAction = OSSharedPtr(action, OSNoRetain);
     }
 
-    auto kr = intrMgr->Initialise(provider, ctx.workQueue, ctx.interruptAction);
+    auto kr = intrMgr->Initialise(
+        provider, ctx.workQueue, ctx.interruptAction);
+    ASFW_LOG(Controller,
+        "PrepareInterrupts: InterruptManager::Initialise(index=0) "
+        "-> 0x%08x",
+        kr);
     if (kr != kIOReturnSuccess) {
         ctx.interruptAction.reset();
         return kr;

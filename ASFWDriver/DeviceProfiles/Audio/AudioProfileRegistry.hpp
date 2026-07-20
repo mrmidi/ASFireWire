@@ -19,6 +19,7 @@
 #include "Vendors/FocusriteAudioProfiles.hpp"
 #include "Vendors/MidasAudioProfiles.hpp"
 #include "Vendors/PreSonusAudioProfiles.hpp"
+#include "Vendors/RMEAudioProfiles.hpp"
 #include "Vendors/TerraTecAudioProfiles.hpp"
 
 #include <optional>
@@ -36,6 +37,7 @@ public:
         if (auto hint = Alesis::LookupIdentity(query)) { return hint; }
         if (auto hint = Midas::LookupIdentity(query)) { return hint; }
         if (auto hint = PreSonus::LookupIdentity(query)) { return hint; }
+        if (auto hint = RME::LookupIdentity(query)) { return hint; }
         if (auto hint = TerraTec::LookupIdentity(query)) { return hint; }
         if (auto hint = Focusrite::LookupIdentityByGuid(query)) { return hint; }
         return std::nullopt;
@@ -51,6 +53,7 @@ public:
         if (auto hint = Alesis::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Midas::LookupAudioProfile(query)) { return hint; }
         if (auto hint = PreSonus::LookupAudioProfile(query)) { return hint; }
+        if (auto hint = RME::LookupAudioProfile(query)) { return hint; }
         if (auto hint = TerraTec::LookupAudioProfile(query)) { return hint; }
         return std::nullopt;
     }

@@ -67,8 +67,9 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     }
 
     const uint32_t dataPacketBytes =
-        kCipHeaderBytes + static_cast<uint32_t>(config.framesPerDataPacket) *
-                              config.dbs * kBytesPerSlot;
+        (config.includeCipHeader ? kCipHeaderBytes : 0U) +
+        static_cast<uint32_t>(config.framesPerDataPacket) *
+            config.dbs * kBytesPerSlot;
     if (dataPacketBytes > config.maxPacketBytes) {
         return false;
     }
@@ -156,10 +157,13 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     const uint32_t payloadBytes =
         static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
 
-    const bool isEmptyPacket = !isData && txPolicy_.emptyPacketsDuringIdle;
+    // CIP_NO_HEADER streams have no representation for a header-only no-data
+    // packet; their idle cycles are genuine zero-length packets.
+    const bool isEmptyPacket =
+        !isData && (txPolicy_.emptyPacketsDuringIdle || !streamConfig_.includeCipHeader);
 
     const uint32_t byteCount =
-        isEmptyPacket ? 0 : (isData ? (kCipHeaderBytes + payloadBytes) : kCipHeaderBytes);
+        isEmptyPacket ? 0 : (isData ? (HeaderBytes() + payloadBytes) : HeaderBytes());
 
     if (slot.capacityBytes < byteCount) {
         return false; // no state advanced; caller may retry
@@ -181,7 +185,9 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
                             ? timing.nextDataSyt
                             : IEC61883::SytFormatter::kNoInfo;
 
-        WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
+        if (streamConfig_.includeCipHeader) {
+            WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
+        }
         WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
 
         if (!timeline_->ExposeDataPacket(outPacket, slot.bytes,
@@ -199,6 +205,8 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
             timeline_->MarkNoDataPacket(slot.packetIndex);
         } else {
             // CIP-header-only: no payload, even as padding (DICE-II rejects it).
+            // This branch is unreachable for CIP_NO_HEADER streams because
+            // those force isEmptyPacket above.
             WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
             timeline_->MarkNoDataPacket(slot.packetIndex);
             // DBC deliberately not advanced.
@@ -226,7 +234,7 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
                                                 uint32_t payloadBytes) noexcept {
     (void)packetCapacityBytes; // capacity validated by the caller
 
-    uint8_t* payload = packetBytes + kCipHeaderBytes;
+    uint8_t* payload = packetBytes + HeaderBytes();
 
     if (txPolicy_.clearPayloadBeforeExposure) {
         for (uint32_t i = 0; i < payloadBytes; ++i) {
@@ -253,8 +261,12 @@ void AmdtpTxPacketizer::WriteCipHeader(
     WriteBE32(packetBytes + 4, header.q1);
 }
 
+uint32_t AmdtpTxPacketizer::HeaderBytes() const noexcept {
+    return streamConfig_.includeCipHeader ? kCipHeaderBytes : 0U;
+}
+
 uint32_t AmdtpTxPacketizer::DataPacketBytes() const noexcept {
-    return kCipHeaderBytes + PayloadBytes();
+    return HeaderBytes() + PayloadBytes();
 }
 
 uint32_t AmdtpTxPacketizer::PayloadBytes() const noexcept {

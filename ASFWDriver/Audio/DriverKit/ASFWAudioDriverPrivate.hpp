@@ -105,6 +105,8 @@ public:
     ASFW::IsochTransport::TxStreamControl* controlBlock{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
+    ASFW::IsochTransport::IsochPacketTag isochTag{
+        ASFW::IsochTransport::IsochPacketTag::kCip};
 
     bool AcquireWritableSlot(
         uint32_t packetIndex,
@@ -132,27 +134,19 @@ public:
         meta.packetIndex = packet.packetIndex;
         meta.payloadLength = packet.byteCount;
 
-        // immediateData[0] = isoch packet header: spd=2 (S400) at [18:16],
-        // tag=1 (standard CIP) at [15:14], tcode=0xA (isoch data block
-        // transmit) at [7:4], sy=0. The channel at [13:8] is deliberately
-        // left as a placeholder: the owning transport ring always stamps its
-        // configured channel immediately before publishing the descriptor.
-        // The speed field is mandatory — omitting it transmits at S100 and
-        // produces a header the device/analyzer treats as malformed.
-        // Cross-validated with Linux: firewire/ohci.h:277-286 and
-        // firewire/ohci.c:3377-3381.
-        const uint32_t isochHeaderQ0 = (static_cast<uint32_t>(2 & 0x7) << 16) |
-                                       (static_cast<uint32_t>(1 & 0x3) << 14) |
-                                       (static_cast<uint32_t>(0xA & 0xF) << 4);
+        // immediateData[0] = OHCI isoch packet header. Tag 1 identifies a
+        // standard CIP packet; tag 0 identifies raw payload with no CIP header
+        // (the Fireface 800 former-generation wire format). The owning ring
+        // stamps the configured channel immediately before DMA publication.
+        const uint32_t isochHeaderQ0 =
+            ASFW::IsochTransport::BuildIsochTxHeaderQ0(isochTag);
         meta.immediateHeader[0] = OSSwapHostToLittleInt32(isochHeaderQ0);
 
-        // immediateData[1] = data_length (payload bytes) in bits [31:16]. The
-        // CIP header is the first 8 bytes of the payload buffer and is shipped
-        // by the OUTPUT_LAST descriptor — it does NOT belong in the packet
-        // header immediate. Cross-validated with Linux:
-        // firewire/ohci.h:287-288 and firewire/ohci.c:3383.
+        // immediateData[1] = data_length (all bytes transmitted after the OHCI
+        // immediate packet header) in bits [31:16]. This is 0 for a true empty
+        // no-CIP idle cycle, raw PCM bytes for tag 0, or CIP+payload for tag 1.
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
-            static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
+            ASFW::IsochTransport::BuildIsochTxHeaderQ1(packet.byteCount));
 
         // Compute expectedGen and release-store commitGen
         const uint64_t gen = ASFW::IsochTransport::ExpectedCommitGen(packet.packetIndex, numSlots);

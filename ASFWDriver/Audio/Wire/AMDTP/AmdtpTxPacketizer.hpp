@@ -55,6 +55,7 @@ private:
     void WriteCipHeader(uint8_t* packetBytes,
                         const IEC61883::CipHeaderWords& header) noexcept;
 
+    [[nodiscard]] uint32_t HeaderBytes() const noexcept;
     [[nodiscard]] uint32_t DataPacketBytes() const noexcept;
     [[nodiscard]] uint32_t PayloadBytes() const noexcept;
 

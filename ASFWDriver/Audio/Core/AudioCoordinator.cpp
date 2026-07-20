@@ -46,6 +46,15 @@ void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
     const uint64_t guid = device->GetGUID();
+
+    const auto* record = registry_.FindByGuid(guid);
+    if (record &&
+        DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId) ==
+            DeviceIntegrationMode::kReadOnlyNub) {
+        EnsureRMEReadOnlyNub(guid);
+        return;
+    }
+
     if (BackendForGuid(guid) == &dice_) {
         dice_.OnDeviceRecordUpdated(guid);
     }
@@ -55,7 +64,12 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
     if (!device) return;
     const uint64_t guid = device->GetGUID();
     auto* backend = BackendForGuid(guid);
-    if (backend == &dice_) {
+    const auto* record = registry_.FindByGuid(guid);
+    if (record &&
+        DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId) ==
+            DeviceIntegrationMode::kReadOnlyNub) {
+        EnsureRMEReadOnlyNub(guid);
+    } else if (backend == &dice_) {
         dice_.OnDeviceRecordUpdated(guid);
     }
 
@@ -105,8 +119,15 @@ void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> de
 void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     if (guid == 0) return;
 
+    const auto* record = registry_.FindByGuid(guid);
+    const auto integration = record
+        ? DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId)
+        : DeviceIntegrationMode::kNone;
+
     auto* backend = BackendForGuid(guid);
-    if (backend == &dice_) {
+    if (integration == DeviceIntegrationMode::kReadOnlyNub) {
+        publisher_.TerminateNub(guid, "RME-Stage3-Removed");
+    } else if (backend == &dice_) {
         dice_.OnDeviceRemoved(guid);
     } else if (backend == &avc_) {
         avc_.OnDeviceRemoved(guid);
@@ -168,6 +189,44 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
     dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterCycleInconsistent);
 }
 
+
+void AudioCoordinator::EnsureRMEReadOnlyNub(uint64_t guid) noexcept {
+    const auto* record = registry_.FindByGuid(guid);
+    if (!record ||
+        record->vendorId != DeviceProfiles::Audio::kRMEVendorId ||
+        record->modelId != DeviceProfiles::Audio::kFireface800ModelId) {
+        return;
+    }
+
+    Model::ASFWAudioDevice dev{};
+    dev.guid = record->guid;
+    dev.vendorId = record->vendorId;
+    dev.modelId = record->modelId;
+    dev.deviceName = "RME Fireface 800 (Stage 5C)";
+    dev.inputChannelCount = 12;
+    dev.outputChannelCount = 12;
+    dev.channelCount = 12;
+    dev.inputPlugName = "Fireface 800 Inputs";
+    dev.outputPlugName = "Fireface 800 Outputs";
+    dev.sampleRates = {192000u};
+    dev.currentSampleRate = 192000u;
+    dev.streamMode = Model::StreamMode::kBlocking;
+
+    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+        endpoint->UpdateConfig(dev);
+    }
+
+    if (publisher_.EnsureNub(guid, dev, "RME-Stage5C")) {
+        ASFW_LOG(Audio,
+                 "[RME] ✅ Stage 5C Core Audio endpoint published: 192000 Hz, 12 inputs, 12 outputs; streaming disabled GUID=0x%016llx",
+                 guid);
+    } else {
+        ASFW_LOG_ERROR(Audio,
+                       "[RME] Stage 5C failed to publish Core Audio endpoint GUID=0x%016llx",
+                       guid);
+    }
+}
+
 IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     if (guid == 0) return nullptr;
 
@@ -180,12 +239,25 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     if (integration == DeviceIntegrationMode::kHardcodedNub) {
         return &dice_;
     }
+    if (integration == DeviceIntegrationMode::kReadOnlyNub) {
+        return nullptr;
+    }
 
     return &avc_;
 }
 
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
+
+    const auto* record = registry_.FindByGuid(guid);
+    if (record &&
+        DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId) ==
+            DeviceIntegrationMode::kReadOnlyNub) {
+        ASFW_LOG_WARNING(Audio,
+                         "[RME] Stage 5C endpoint is preflight-only; no-CIP wire format is verified but OHCI streaming remains blocked GUID=0x%016llx",
+                         guid);
+        return kIOReturnUnsupported;
+    }
 
     bool setActive = false;
     if (lock_) {
