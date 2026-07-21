@@ -8,12 +8,27 @@
 // SessionRegistry/CommandExecutor command plane — ORB per command, real SCSI
 // status + autosense back in the response.
 //
-// The framework auto-creates target 0 and probes it (~3 s) BEFORE the SBP-2
-// login completes. Rather than spoof a hardcoded identity, the pre-login probe
-// INQUIRY is DEFERRED: its completion is held and replayed with the device's
-// real INQUIRY once login is up (generic, no per-device identity). TUR/REQUEST
-// SENSE complete GOOD meanwhile; everything else returns BUSY so the initiator
-// retries. A held INQUIRY is flushed BUSY on teardown/abort if login never comes.
+// Target lifecycle follows the SBP-2 session (pure framework hotplug model):
+// UserTargetPresentForID answers false UNCONDITIONALLY, so the kernel shim's
+// bring-up presence scan never creates a target — a machine booting with no
+// SBP-2 device has no target whose probe could strand the registry (the
+// pre-fix unconditional true held the boot probe INQUIRY forever: 60 s
+// registry busy-timeout panic, IOService.cpp:5986, issue #54). Constant false
+// also makes the scan's timing irrelevant: a login-driven create can never
+// race the scan into a duplicate target 0 (the HW-observed v49 wedge). All
+// creation is explicit: UserCreateTargetForID(0) on the SBP-2 login-up edge,
+// UserDestroyTargetForID(0) on the terminal logout/login-failure edge, both on
+// a dedicated lifecycle queue. Transient bus-reset suspension emits no edge
+// (reconnect re-asserts login), so the target survives a bus reset mid-scan.
+//
+// The SAM probes the target right after creation, while the session is logged
+// in — the probe INQUIRY is forwarded to the device and returns its real
+// identity. In the suspended window (bus reset dropped the login; reconnect
+// pending) INQUIRY answers BUSY like everything else, so the initiator's
+// bounded retries either land after reconnect or fail cleanly — nothing is
+// ever held without a deadline. (The previous design deferred pre-login
+// INQUIRYs indefinitely; that was the #54 strand and is gone. TUR/REQUEST
+// SENSE still answer GOOD to keep probes moving.)
 //
 
 // libc++ <new> must precede DriverKit headers: DriverKit.h forward-declares
@@ -26,11 +41,9 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOKitKeys.h>
-#include <DriverKit/IOTimerDispatchSource.h>
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSNumber.h>
 
-#include "../Common/TimingUtils.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/SBP2/SCSICommandSet.hpp"
 #include "SBP2BridgeHub.hpp"
@@ -45,41 +58,61 @@ namespace SBP2 = ASFW::Protocols::SBP2;
 namespace {
 constexpr uint8_t kOpTestUnitReady = 0x00;
 constexpr uint8_t kOpRequestSense  = 0x03;
-constexpr uint8_t kOpInquiry       = 0x12;
 constexpr uint8_t kOpReserve6      = 0x16;
 constexpr uint8_t kOpRelease6      = 0x17;
 constexpr uint8_t kOpReserve10     = 0x56;
 constexpr uint8_t kOpRelease10     = 0x57;
 
-// One deferred pre-login probe INQUIRY. The framework auto-creates target 0 and
-// probes it (~3 s) BEFORE the SBP-2 login completes; INQUIRY must return data
-// even when the unit is not ready (SCSI), so instead of a spoof we HOLD the
-// probe's completion and replay it against the real device once login is up.
-// A single slot suffices — the SAM keeps one probe INQUIRY outstanding; a second
-// concurrent one falls back to BUSY.
-struct HeldInquiry {
-    OSAction* completion;   // owns one retain (taken at hold) until consumed
-    uint64_t targetID;
-    uint64_t taskID;
-    uint64_t dataAddress;   // framework data buffer, valid until the task completes
-    uint64_t dataLength;
-    uint32_t requestedLength;
-    uint32_t timeoutMs;
-    uint8_t cdb[16];
-    uint8_t cdbLen;
-    bool inUse;
-};
-
 struct PendingState {
     IOLock* lock;
-    HeldInquiry inquiry;
-    // Set when a held INQUIRY expired without login. Later pre-login INQUIRYs
-    // then answer BUSY immediately instead of re-holding: the SAM retries the
-    // probe a few times, and each re-hold would stack another full hold window
-    // onto a nub that has been busy since boot — back into the 60 s panic.
-    // Cleared on the next login-up notification.
-    bool loginWindowExpired;
+    // Target 0 exists kernel-side (created at SBP-2 login, destroyed at logout).
+    // Create/destroy idempotence guard; written on lifecycleQueue only.
+    bool targetAttached;
+    // Set (and never cleared) at the top of Stop: lifecycle blocks still queued
+    // skip create/destroy so they cannot race the framework's own child-target
+    // termination. Stop deliberately does NOT wait for in-flight blocks — a
+    // synchronous wait from the Default queue can deadlock against an in-flight
+    // UserCreateTargetForID (its target-init upcall is serviced on Default).
+    bool stopping;
 };
+
+bool IsTargetAttached(PendingState* ps) {
+    if (ps == nullptr || ps->lock == nullptr) {
+        return false;
+    }
+    IOLockLock(ps->lock);
+    const bool attached = ps->targetAttached;
+    IOLockUnlock(ps->lock);
+    return attached;
+}
+
+void SetTargetAttached(PendingState* ps, bool attached) {
+    if (ps == nullptr || ps->lock == nullptr) {
+        return;
+    }
+    IOLockLock(ps->lock);
+    ps->targetAttached = attached;
+    IOLockUnlock(ps->lock);
+}
+
+bool IsStopping(PendingState* ps) {
+    if (ps == nullptr || ps->lock == nullptr) {
+        return true; // no state → treat as tearing down, do nothing
+    }
+    IOLockLock(ps->lock);
+    const bool stopping = ps->stopping;
+    IOLockUnlock(ps->lock);
+    return stopping;
+}
+
+void SetStopping(PendingState* ps) {
+    if (ps == nullptr || ps->lock == nullptr) {
+        return;
+    }
+    IOLockLock(ps->lock);
+    ps->stopping = true;
+    IOLockUnlock(ps->lock);
+}
 
 // Must match UserGetDMASpecification's maxTransferSize. Sized as a permissive
 // ceiling for any single-LUN SBP-2 scanner, not a per-model value: the LS-9000's
@@ -90,13 +123,6 @@ constexpr uint64_t kMaxTransferPerTask = 1u * 1024u * 1024u;
 // scanner mechanics in general (SCAN, autofocus run tens of seconds) — not tuned
 // to a specific model.
 constexpr uint32_t kDefaultTaskTimeoutMs = 60'000;
-
-// Upper bound on how long a pre-login probe INQUIRY may be held. The kernel
-// probe path has no timeout of its own and blocks the nub's IOConfigThread;
-// the registry busy-timeout panics at 60 s of sustained busy (IOService.cpp:
-// 5986). 20 s spans a normal login (~2-5 s) plus bus-reset retries while
-// leaving ample headroom before the panic.
-constexpr uint64_t kHeldInquiryMaxHoldNs = 20'000'000'000ull;
 
 // Map an SBP-2 command result onto the SAM response. Synthetic
 // kIOReturnNotReady (bridge accepted the task but the session dropped out
@@ -141,114 +167,77 @@ void FillResponseFromResult(SCSIUserParallelResponse& resp,
     }
 }
 
-// Store a held INQUIRY into the single slot. Caller has already taken the
-// completion + controller retains. Returns false if the slot is occupied (the
-// caller then drops the retains and answers BUSY).
-bool TryHoldInquiry(PendingState* ps, const HeldInquiry& held) {
-    if (ps == nullptr || ps->lock == nullptr) {
-        return false;
-    }
-    IOLockLock(ps->lock);
-    const bool slotFree = !ps->inquiry.inUse && !ps->loginWindowExpired;
-    if (slotFree) {
-        ps->inquiry = held;
-    }
-    IOLockUnlock(ps->lock);
-    return slotFree;
-}
-
-void MarkLoginWindowExpired(PendingState* ps) {
-    if (ps == nullptr || ps->lock == nullptr) {
-        return;
-    }
-    IOLockLock(ps->lock);
-    ps->loginWindowExpired = true;
-    IOLockUnlock(ps->lock);
-}
-
-void ClearLoginWindowExpired(PendingState* ps) {
-    if (ps == nullptr || ps->lock == nullptr) {
-        return;
-    }
-    IOLockLock(ps->lock);
-    ps->loginWindowExpired = false;
-    IOLockUnlock(ps->lock);
-}
-
-// Take ownership of the held INQUIRY (if any). Exactly one caller wins; the
-// retains transfer to it.
-bool ExtractHeldInquiry(PendingState* ps, HeldInquiry* out) {
-    if (ps == nullptr || ps->lock == nullptr) {
-        return false;
-    }
-    IOLockLock(ps->lock);
-    const bool had = ps->inquiry.inUse;
-    if (had) {
-        *out = ps->inquiry;
-        ps->inquiry = HeldInquiry{};
-    }
-    IOLockUnlock(ps->lock);
-    return had;
-}
-
-// Complete a held INQUIRY with BUSY (login never arrived / teardown / abort) and
-// consume the held completion retain. `self` is always live at every call site
-// (drain block retain, Stop frame, or abort frame), so it is NOT released here.
-void CompleteHeldInquiryBusy(ASFWSCSIController* self, const HeldInquiry& held) {
-    SCSIUserParallelResponse resp{};
-    resp.version = kScsiUserParallelTaskResponseCurrentVersion1;
-    resp.fTargetID = held.targetID;
-    resp.fControllerTaskIdentifier = held.taskID;
-    resp.fServiceResponse = kSCSIServiceResponse_TASK_COMPLETE;
-    resp.fCompletionStatus = kSCSITaskStatus_BUSY;
-    self->ParallelTaskCompletion(held.completion, resp);
-    held.completion->release();
-}
-
-// Replay a held INQUIRY against the real device now that login is up. Consumes
-// the held retains via the submit completion (or inline on the not-ready guard).
-void SubmitHeldInquiry(ASFWSCSIController* self, const HeldInquiry& held) {
-    auto bridge = SBP2::SBP2BridgeHub::Get();
-    if (!bridge || !bridge->IsReady()) {
-        CompleteHeldInquiryBusy(self, held);
+// Runs on lifecycleQueue (never auxQueue: UserCreateTargetForID is routed
+// through AuxiliaryQueue by the framework, and never the Default queue: it
+// services the framework's target-init upcalls). Handles one SBP-2 login edge:
+// create target 0 on login-up, destroy it on terminal logout. Caller holds a
+// self retain across the call.
+//
+// Known race, accepted: a block that passed the stopping check can still be
+// inside a create/destroy kernel call when the framework begins terminating
+// the controller (Stop cannot wait for it — a synchronous wait from the
+// Default queue deadlocks against the create's target-init upcall). The
+// framework must tolerate hotplug create/destroy racing termination; the call
+// then fails and is logged. HW validation covers the unplug paths.
+void HandleLoginEdge(ASFWSCSIController* self, PendingState* ps,
+                     uint64_t guid, bool loggedIn)
+{
+    if (IsStopping(ps)) {
         return;
     }
 
-    SBP2::SCSI::CommandRequest request{};
-    request.cdb.assign(held.cdb, held.cdb + held.cdbLen);
-    request.direction = SBP2::SCSI::DataDirection::FromTarget;
-    request.transferLength = held.requestedLength;
-    request.timeoutMs = held.timeoutMs;
+    if (loggedIn) {
+        if (IsTargetAttached(ps)) {
+            return; // reconnect re-assert or duplicate catch-up — already attached
+        }
+        // Re-check the session NOW (this block may run long after the edge was
+        // queued — a stale Start catch-up must not create a target for a
+        // session that has since logged out; the later down-edge found nothing
+        // to destroy).
+        auto bridge = SBP2::SBP2BridgeHub::Get();
+        if (!bridge || !bridge->IsReady()) {
+            ASFW_LOG(Controller, "[SCSIHBA] login edge stale (session not ready) — create skipped");
+            return;
+        }
+        OSDictionary* dict = OSDictionary::withCapacity(1);
+        if (dict == nullptr) {
+            // No create attempt without a properties dict; the next login edge
+            // (reconnect re-fires the observer) retries.
+            ASFW_LOG(Controller, "[SCSIHBA] target dict alloc failed — create skipped");
+            return;
+        }
+        const kern_return_t kr = self->UserCreateTargetForID(0, dict);
+        OSSafeReleaseNULL(dict);
+        if (kr == kIOReturnSuccess) {
+            SetTargetAttached(ps, true);
+            ASFW_LOG(Controller,
+                     "[SCSIHBA] target 0 created (SBP-2 login, guid=0x%016llx)", guid);
+        } else {
+            // Not retried here: a reconnect or replug re-fires the up edge.
+            ASFW_LOG(Controller, "[SCSIHBA] UserCreateTargetForID(0) failed: 0x%x", kr);
+        }
+        return;
+    }
 
-    OSAction* completion = held.completion;   // held completion retain, released in the lambda
-    const uint64_t targetID = held.targetID;
-    const uint64_t taskID = held.taskID;
-    const uint64_t dataAddress = held.dataAddress;
-    const uint64_t dataLength = held.dataLength;
-    const uint32_t requestedLength = held.requestedLength;
-
-    // Keep the controller alive across the async submit gap (local retain paired
-    // with the lambda's release).
-    self->retain();
-    bridge->SubmitTask(std::move(request),
-        [self, completion, targetID, taskID, dataAddress, dataLength, requestedLength](
-            const SBP2::SCSI::CommandResult& result) {
-            SCSIUserParallelResponse resp{};
-            resp.version = kScsiUserParallelTaskResponseCurrentVersion1;
-            resp.fTargetID = targetID;
-            resp.fControllerTaskIdentifier = taskID;
-            FillResponseFromResult(resp, result);
-            if (resp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE &&
-                !result.payload.empty() && dataAddress != 0) {
-                uint64_t n = std::min<uint64_t>(result.payload.size(), requestedLength);
-                n = std::min<uint64_t>(n, dataLength);
-                memcpy(reinterpret_cast<void*>(dataAddress), result.payload.data(), n);
-                resp.fBytesTransferred = n;
-            }
-            self->ParallelTaskCompletion(completion, resp);
-            completion->release();
-            self->release();
-        });
+    // Terminal logout or login failure (a transient bus-reset suspension emits
+    // no event — reconnect re-asserts login instead). Outstanding bridged tasks
+    // complete through the registry's abort path with synthetic failures; the
+    // framework handles completions racing a destroyed target (standard
+    // hotplug).
+    if (IsTargetAttached(ps)) {
+        const kern_return_t kr = self->UserDestroyTargetForID(0);
+        // Clear the flag even on failure: the kernel target is terminating (or
+        // already gone) either way, and the next login edge recreates it.
+        SetTargetAttached(ps, false);
+        if (kr == kIOReturnSuccess) {
+            ASFW_LOG(Controller,
+                     "[SCSIHBA] target 0 destroyed (SBP-2 logout, guid=0x%016llx)", guid);
+        } else {
+            ASFW_LOG(Controller,
+                     "[SCSIHBA] UserDestroyTargetForID(0) failed: 0x%x (guid=0x%016llx)",
+                     kr, guid);
+        }
+    }
 }
 } // namespace
 
@@ -265,9 +254,8 @@ bool ASFWSCSIController::init()
     if (ivars == nullptr) {
         return false;
     }
-    ivars->targetCreated = false;
-    ivars->targetID = 0;
 
+    // IONewZero → targetAttached=false, stopping=false.
     PendingState* ps = IONewZero(PendingState, 1);
     if (ps == nullptr) {
         return false;
@@ -283,21 +271,22 @@ bool ASFWSCSIController::init()
 
 void ASFWSCSIController::free()
 {
-    if (ivars != nullptr && ivars->pendingState != nullptr) {
-        // Stop flushes any held INQUIRY before free; if one somehow survived, a
-        // live controller retain would have kept us out of free — so only the
-        // lock + struct need releasing here.
-        auto* ps = static_cast<PendingState*>(ivars->pendingState);
-        if (ps->lock != nullptr) {
-            IOLockFree(ps->lock);
-        }
-        IOSafeDeleteNULL(ps, PendingState, 1);
-        ivars->pendingState = nullptr;
-    }
     if (ivars != nullptr) {
-        // Backstop for a Start that failed before Stop could run.
-        OSSafeReleaseNULL(ivars->holdTimerAction);
-        OSSafeReleaseNULL(ivars->holdTimer);
+        // Queues are released here, not in Stop: lifecycle blocks retain the
+        // controller, so free() only runs once every queued block has finished
+        // — the queues are idle by now. Releasing in Stop instead would race
+        // in-flight blocks, and a failed Start (which never gets a Stop) would
+        // leak them.
+        OSSafeReleaseNULL(ivars->lifecycleQueue);
+        OSSafeReleaseNULL(ivars->auxQueue);
+        if (ivars->pendingState != nullptr) {
+            auto* ps = static_cast<PendingState*>(ivars->pendingState);
+            if (ps->lock != nullptr) {
+                IOLockFree(ps->lock);
+            }
+            IOSafeDeleteNULL(ps, PendingState, 1);
+            ivars->pendingState = nullptr;
+        }
     }
     IOSafeDeleteNULL(ivars, ASFWSCSIController_IVars, 1);
     super::free();
@@ -305,7 +294,7 @@ void ASFWSCSIController::free()
 
 kern_return_t IMPL(ASFWSCSIController, Start)
 {
-    ASFW_LOG(Controller, "[SCSIHBA] Start (SBP-2 bridge + deferred-INQUIRY probe)");
+    ASFW_LOG(Controller, "[SCSIHBA] Start (SBP-2 bridge, login-driven target)");
     // UserCreateTargetForID is declared QUEUENAME(AuxiliaryQueue) in the SDK .iig
     // ("this call to the framework runs on the Auxiliary queue"), but the framework
     // does not create that queue — the dext must. Without it the call never
@@ -321,27 +310,16 @@ kern_return_t IMPL(ASFWSCSIController, Start)
         ASFW_LOG(Controller, "[SCSIHBA] SetDispatchQueue(AuxiliaryQueue) failed: 0x%x", ret);
         return ret;
     }
-    // The hold-bound timer must exist before the framework can probe target 0
-    // (a held INQUIRY without it can wedge the nub's IOConfigThread past the
-    // 60 s registry busy timeout). Created on the aux queue so the expiry
-    // handler serializes with the login drain and the Stop flush barrier.
-    ret = IOTimerDispatchSource::Create(ivars->auxQueue, &ivars->holdTimer);
-    if (ret != kIOReturnSuccess || ivars->holdTimer == nullptr) {
-        ASFW_LOG(Controller, "[SCSIHBA] hold timer create failed: 0x%x", ret);
-        return ret != kIOReturnSuccess ? ret : kIOReturnError;
-    }
-    ret = CreateActionHeldInquiryTimerFired(0, &ivars->holdTimerAction);
-    if (ret != kIOReturnSuccess || ivars->holdTimerAction == nullptr) {
-        ASFW_LOG(Controller, "[SCSIHBA] hold timer action create failed: 0x%x", ret);
-        return ret != kIOReturnSuccess ? ret : kIOReturnError;
-    }
-    ret = ivars->holdTimer->SetHandler(ivars->holdTimerAction);
-    if (ret != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "[SCSIHBA] hold timer SetHandler failed: 0x%x", ret);
+    // Login-edge work (UserCreateTargetForID/UserDestroyTargetForID) runs on its
+    // own serial queue: not auxQueue (the create call is routed through it — a
+    // call FROM it never dispatches, same wedge as above) and not the Default
+    // queue (it services the framework's target-init upcalls during the create).
+    ret = IODispatchQueue::Create("ASFWSCSIController-TargetLifecycle", 0, 0,
+                                  &ivars->lifecycleQueue);
+    if (ret != kIOReturnSuccess || ivars->lifecycleQueue == nullptr) {
+        ASFW_LOG(Controller, "[SCSIHBA] lifecycle queue create failed: 0x%x", ret);
         return ret;
     }
-    (void)ivars->holdTimer->SetEnableWithCompletion(true, nullptr);
-
     ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[SCSIHBA] super::Start failed: 0x%x", ret);
@@ -349,105 +327,68 @@ kern_return_t IMPL(ASFWSCSIController, Start)
     }
 
     // Reverse channel from the FireWire side (a separate IOService, unreachable
-    // via the provider chain): fires on SBP-2 login up/down. On login up, replay
-    // any probe INQUIRY held during the pre-login window with the device's real
-    // INQUIRY (see the deferred-INQUIRY handling in UserProcessParallelTask).
+    // via the provider chain): fires on SBP-2 login up/down and drives the
+    // target lifecycle (create on login, destroy on terminal logout) — see
+    // HandleLoginEdge.
     //
     // Runs UNDER the hub lock (see SBP2BridgeHub::NotifyTargetState), so it only
-    // schedules work: retain self, hop onto auxQueue, drain there, release.
-    SBP2::SBP2BridgeHub::SetTargetObserver([this](uint64_t guid, bool loggedIn) {
-        (void)guid;
-        if (!loggedIn || ivars == nullptr || ivars->auxQueue == nullptr) {
+    // schedules work: retain self, hop onto lifecycleQueue, handle there, release.
+    PendingState* ps = static_cast<PendingState*>(ivars->pendingState);
+    SBP2::SBP2BridgeHub::SetTargetObserver([this, ps](uint64_t guid, bool loggedIn) {
+        if (ivars == nullptr || ivars->lifecycleQueue == nullptr) {
             return;
         }
         this->retain();
-        ivars->auxQueue->DispatchAsync(^{
-            auto* ps = static_cast<PendingState*>(ivars->pendingState);
-            ClearLoginWindowExpired(ps);
-            HeldInquiry held{};
-            if (ExtractHeldInquiry(ps, &held)) {
-                ASFW_LOG(Controller, "[SCSIHBA] replaying held INQUIRY after login");
-                SubmitHeldInquiry(this, held);
-            }
+        ivars->lifecycleQueue->DispatchAsync(^{
+            HandleLoginEdge(this, ps, guid, loggedIn);
             this->release();
         });
     });
-    return kIOReturnSuccess;
-}
 
-void ASFWSCSIController::HeldInquiryTimerFired_Impl(
-    ASFWSCSIController_HeldInquiryTimerFired_Args)
-{
-    (void)action;
-    (void)time;
-    if (ivars == nullptr) {
-        return;
+    // Catch-up: the FireWire side may already be logged in when the HBA starts
+    // (HBA service restart while the driver is running) — no further login
+    // event will fire, so synthesize the up-edge. Safe against a racing real
+    // edge: the lifecycle queue serializes, targetAttached dedupes a double
+    // create, and HandleLoginEdge re-checks IsReady() at execution time so a
+    // catch-up that lands after a terminal logout creates nothing.
+    auto bridge = SBP2::SBP2BridgeHub::Get();
+    if (bridge && bridge->IsReady()) {
+        this->retain();
+        ivars->lifecycleQueue->DispatchAsync(^{
+            HandleLoginEdge(this, ps, /*guid*/ 0, /*loggedIn*/ true);
+            this->release();
+        });
     }
-    auto* ps = static_cast<PendingState*>(ivars->pendingState);
-    HeldInquiry held{};
-    if (ExtractHeldInquiry(ps, &held)) {
-        // Login never arrived. Refuse further holds until it does (the SAM's
-        // probe retries would otherwise stack fresh hold windows onto a nub
-        // that has been busy since boot) and fail the probe with BUSY.
-        MarkLoginWindowExpired(ps);
-        ASFW_LOG(Controller,
-                 "[SCSIHBA] held INQUIRY expired without SBP-2 login → BUSY "
-                 "(further pre-login INQUIRYs answer BUSY until login)");
-        CompleteHeldInquiryBusy(this, held);
-    }
+    return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(ASFWSCSIController, Stop)
 {
     ASFW_LOG(Controller, "[SCSIHBA] Stop");
-    // Drop the observer first. ClearTargetObserver is synchronous with respect to
-    // an in-flight login notification (runs under the hub lock), so no new drain
-    // blocks are scheduled after it returns.
+    // Gate lifecycle blocks first: anything still queued sees stopping and
+    // skips create/destroy, so it cannot race the framework's own child-target
+    // termination (see the no-destroy comment below).
+    SetStopping(static_cast<PendingState*>(ivars != nullptr ? ivars->pendingState : nullptr));
+    // Drop the observer. ClearTargetObserver is synchronous with respect to
+    // an in-flight login notification (runs under the hub lock), so no new
+    // lifecycle blocks are scheduled after it returns.
+    //
+    // Deliberately NO synchronous wait on lifecycleQueue here: Stop runs on the
+    // Default queue, and an in-flight UserCreateTargetForID cannot return until
+    // its target-init upcall is serviced on that same Default queue — a sync
+    // wait closes a three-way deadlock (Stop → lifecycleQueue → kernel create →
+    // Default) that wedges termination into the 60 s registry busy-timeout
+    // panic. Queued blocks are gated by the stopping flag instead; queue
+    // objects are released in free(), which cannot run until every block (each
+    // holds a controller retain) has finished.
     SBP2::SBP2BridgeHub::ClearTargetObserver();
-    if (ivars != nullptr && ivars->auxQueue != nullptr) {
-        // Barrier on auxQueue: runs after any queued drain block, so a held
-        // INQUIRY is either already replayed or still ours to flush here (backstop
-        // against a leaked OSAction if the SAM tears down without aborting it).
-        IODispatchQueue* aux = ivars->auxQueue;
-        aux->DispatchSync(^{
-            HeldInquiry held{};
-            if (ExtractHeldInquiry(static_cast<PendingState*>(ivars->pendingState), &held)) {
-                CompleteHeldInquiryBusy(this, held);
-            }
-        });
-        if (ivars->holdTimer != nullptr) {
-            // Same ordering rule as InterruptManager::Teardown: the final
-            // releases ride in the cancel completion, so the kernel-side free
-            // cannot land while a fire is still in flight.
-            IOTimerDispatchSource* timer = ivars->holdTimer;
-            OSAction* timerAction = ivars->holdTimerAction;
-            ivars->holdTimer = nullptr;
-            ivars->holdTimerAction = nullptr;
-            timer->SetEnableWithCompletion(false, nullptr);
-            const kern_return_t ckr = timer->Cancel(^{
-                if (timerAction != nullptr) {
-                    timerAction->release();
-                }
-                timer->release();
-            });
-            if (ckr != kIOReturnSuccess) {
-                if (timerAction != nullptr) {
-                    timerAction->release();
-                }
-                timer->release();
-            }
-        }
-        OSSafeReleaseNULL(ivars->auxQueue);
-    }
-    // No UserDestroyTargetForID: target 0 is framework-auto-created (presence
-    // scan, see UserStartController). On HBA teardown the framework terminates it
-    // as a child of the stopping controller. An explicit destroy here re-enters
-    // that in-flight termination on the aux queue, target 0 never quiesces, and
-    // the registry busy-times out at 60s → panic (IOSCSITargetDevice (1,1) +
-    // IOThunderboltPort, IOService.cpp:5986). Same auto-target-0 rule as create.
-    if (ivars != nullptr) {
-        ivars->targetCreated = false;
-    }
+    // No UserDestroyTargetForID here — not even for a target this HBA created
+    // at login: on HBA teardown the framework terminates the target as a child
+    // of the stopping controller, and an explicit destroy re-enters that
+    // in-flight termination on the aux queue, target 0 never quiesces, and the
+    // registry busy-times out at 60s → panic (IOSCSITargetDevice (1,1) +
+    // IOThunderboltPort, IOService.cpp:5986). Logout-driven destroys run on the
+    // lifecycle queue BEFORE Stop and are gated off by the stopping flag above.
     return Stop(provider, SUPERDISPATCH);
 }
 
@@ -514,17 +455,16 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
 
 kern_return_t IMPL(ASFWSCSIController, UserStartController)
 {
-    // No explicit UserCreateTargetForID: the kernel shim scans target IDs
+    // No target yet: the kernel shim scans target IDs
     // 0..UserReportHighestSupportedDeviceID at bring-up and creates a device for
-    // every ID where UserTargetPresentForID returns true, so target 0 is auto-
-    // created here (HW-confirmed: an explicit create for target 0 fails
-    // kIOReturnError because it already exists, and pairing it with a true
-    // presence answer spawned a DUPLICATE device that wedged teardown). The
-    // pre-login probe of this auto-created target is handled by deferring INQUIRY
-    // (see UserProcessParallelTask), not by creating the target on login.
-    ASFW_LOG(Controller, "[SCSIHBA] UserStartController — target 0 published via presence scan");
-    ivars->targetCreated = true;
-    ivars->targetID = 0;
+    // every ID where UserTargetPresentForID returns true — which is now false
+    // until an SBP-2 login is up, so the scan creates nothing and controller
+    // registration completes immediately. A machine booting with no SBP-2
+    // device on the bus therefore has no target whose probe could strand the
+    // registry (issue #54). Target 0 is created from the login observer
+    // (HandleLoginEdge); creating it here with a true presence answer spawned a
+    // DUPLICATE device that wedged teardown (HW-observed, v49).
+    ASFW_LOG(Controller, "[SCSIHBA] UserStartController — no target until SBP-2 login");
     return kIOReturnSuccess;
 }
 
@@ -574,7 +514,16 @@ kern_return_t IMPL(ASFWSCSIController, UserDoesHBASupportMultiPathing)
 
 kern_return_t IMPL(ASFWSCSIController, UserDoesHBAPerformDeviceManagement)
 {
-    *result = false; // let the SAM manage device objects
+    // False despite the driver managing targets itself (login-driven
+    // create/destroy). The value only gates family-initiated scanning, never
+    // the driver's own UserCreateTargetForID/UserDestroyTargetForID — the
+    // whole HW-validated lifecycle ran with false. In the legacy kernel
+    // family, false is what triggers the auto-create scan; the DriverKit
+    // shim's presence scan (neutralized by UserTargetPresentForID == false
+    // below) appears to be its analog, but the shim source is not published,
+    // so true's exact effect is unverified. Flipping to true might suppress
+    // that scan at the root — untested on HW; see the validation plan.
+    *result = false;
     return kIOReturnSuccess;
 }
 
@@ -588,7 +537,16 @@ kern_return_t IMPL(ASFWSCSIController, UserDoesHBASupportSCSIParallelFeature)
 
 kern_return_t IMPL(ASFWSCSIController, UserTargetPresentForID)
 {
-    *result = (targetID == 0);
+    // Constant false — the presence scan must NEVER create a target. Answering
+    // true unconditionally made the bring-up scan auto-create target 0 on a
+    // device-less boot and strand its probe INQUIRY forever (the 60 s registry
+    // busy-timeout boot panic of issue #54); answering true while attached
+    // would let a login-driven create that lands BEFORE the scan runs be
+    // duplicated BY the scan (the HW-observed v49 duplicate-target wedge — the
+    // scan's timing relative to login edges is not ordered). All target
+    // creation goes through UserCreateTargetForID on the login edge instead.
+    (void)targetID;
+    *result = false;
     return kIOReturnSuccess;
 }
 
@@ -681,65 +639,16 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     const bool ready = bridge && bridge->IsReady();
 
     if (!ready) {
-        // Pre-login window (or Suspend after a bus reset). INQUIRY must return
-        // data even when the unit is not ready, so DEFER it: hold the completion
-        // and replay it with the device's real INQUIRY once login is up — no
-        // spoof. TUR/REQUEST SENSE complete GOOD to keep the probe moving;
-        // everything else returns BUSY so the initiator retries.
-        if (opcode == kOpInquiry) {
-            IOBufferMemoryDescriptor* buffer = nullptr;
-            IOAddressSegment seg{};
-            const uint8_t cdbLen = parallelRequest.fCommandSize;
-            kern_return_t kr = UserGetDataBuffer(parallelRequest.fTargetID,
-                                                 parallelRequest.fControllerTaskIdentifier,
-                                                 &buffer);
-            if (kr == kIOReturnSuccess && buffer != nullptr &&
-                buffer->GetAddressRange(&seg) == kIOReturnSuccess && seg.address != 0 &&
-                cdbLen > 0 && cdbLen <= sizeof(HeldInquiry{}.cdb)) {
-                HeldInquiry held{};
-                held.completion = completion;
-                held.targetID = parallelRequest.fTargetID;
-                held.taskID = parallelRequest.fControllerTaskIdentifier;
-                held.dataAddress = seg.address;
-                held.dataLength = seg.length;
-                held.requestedLength = static_cast<uint32_t>(std::min<uint64_t>(
-                    parallelRequest.fRequestedTransferCount, kMaxTransferPerTask));
-                held.timeoutMs = parallelRequest.fTimeoutInMilliSec != 0
-                                     ? parallelRequest.fTimeoutInMilliSec
-                                     : kDefaultTaskTimeoutMs;
-                memcpy(held.cdb, parallelRequest.fCommandDescriptorBlock, cdbLen);
-                held.cdbLen = cdbLen;
-                held.inUse = true;
-                // Hold a completion retain for the async gap; consumed on drain
-                // (SubmitHeldInquiry) or flush (CompleteHeldInquiryBusy). The
-                // borrowed buffer ref stays valid until the task completes — do
-                // NOT release it.
-                completion->retain();
-                if (TryHoldInquiry(static_cast<PendingState*>(ivars->pendingState), held)) {
-                    ASFW_LOG(Controller, "[SCSIHBA] INQUIRY deferred until SBP-2 login");
-                    // Bound the hold: the kernel probe blocks the nub's
-                    // IOConfigThread with no timeout of its own, and the
-                    // registry panics at 60 s of sustained busy.
-                    if (ivars->holdTimer != nullptr) {
-                        (void)ASFW::Timing::initializeHostTimebase();
-                        const uint64_t deadline =
-                            mach_absolute_time() +
-                            ASFW::Timing::nanosToHostTicks(kHeldInquiryMaxHoldNs);
-                        (void)ivars->holdTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
-                                                           deadline, 0);
-                    }
-                    if (response != nullptr) {
-                        *response = kIOReturnSuccess;
-                    }
-                    return kIOReturnSuccess;  // completion fires on drain/flush/expiry
-                }
-                // Slot already occupied — undo the retain, fall through to BUSY.
-                completion->release();
-            } else {
-                ASFW_LOG(Controller, "[SCSIHBA] INQUIRY: UserGetDataBuffer failed 0x%x", kr);
-            }
-            resp.fCompletionStatus = kSCSITaskStatus_BUSY;
-        } else if (opcode == kOpTestUnitReady || opcode == kOpRequestSense) {
+        // Suspended window: the target exists (it was created at login) but the
+        // session dropped after a bus reset and reconnect is pending. Every
+        // data-carrying command — INQUIRY included — answers BUSY so the
+        // initiator's bounded retries either land after the reconnect or fail
+        // cleanly; nothing is held without a deadline (an indefinitely held
+        // INQUIRY was the issue-#54 strand: a device that vanishes while
+        // suspended emits no terminal edge, so a held completion would never
+        // fire and the task would pin the registry). TUR/REQUEST SENSE complete
+        // GOOD to keep probes moving.
+        if (opcode == kOpTestUnitReady || opcode == kOpRequestSense) {
             // GOOD, no data.
         } else {
             ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x → BUSY (SBP-2 session not ready)",
@@ -886,13 +795,9 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
 kern_return_t IMPL(ASFWSCSIController, UserAbortTaskRequest)
 {
     (void)theT; (void)theL; (void)theQ;
-    // If the framework times out / aborts the deferred probe INQUIRY, complete it
-    // so the OSAction is not leaked (single target, so match coarsely).
-    HeldInquiry held{};
-    if (ivars != nullptr &&
-        ExtractHeldInquiry(static_cast<PendingState*>(ivars->pendingState), &held)) {
-        CompleteHeldInquiryBusy(this, held);
-    }
+    // Nothing to abort HBA-side: no task is ever held (not-ready answers BUSY
+    // synchronously), and bridged tasks complete through the registry's own
+    // abort path on teardown.
     if (response != nullptr) { *response = 0; }
     return kIOReturnSuccess;
 }

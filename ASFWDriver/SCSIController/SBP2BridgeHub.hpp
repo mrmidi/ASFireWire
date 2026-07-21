@@ -4,7 +4,7 @@
 // service (ASFWDriver, which owns the SBP-2 stack) and the HBA service
 // (ASFWSCSIController). Both run in the same dext process (same
 // IOUserServerName), but the HBA's provider chain goes through the SCSI
-// kernel companion, so it cannot reach the ASFWSBP2Nub object the way
+// kernel companion, so it cannot reach ASFWDriver-owned objects the way
 // ASFWAudioDriver casts its provider. This hub is the in-process rendezvous:
 // DriverContext publishes the bridge after the SBP-2 stack is wired, and the
 // HBA fetches a shared_ptr per task (so a concurrent teardown cannot free the
@@ -28,7 +28,10 @@ public:
     // provider chain) registers a target-state observer so the FireWire side can
     // drive SCSI target create/destroy on SBP-2 login/logout. loggedIn=true on
     // login up, false on logout/failure. The HBA registers on Start and clears
-    // on Stop; NotifyTargetState fires the observer outside the hub lock.
+    // on Stop. NotifyTargetState fires the observer UNDER the hub lock — the
+    // HBA's Stop is load-bearing on that synchrony (once ClearTargetObserver
+    // returns, no observer call is running or can start), so the observer must
+    // only schedule non-blocking work; see NotifyTargetState.
     using TargetStateCallback = std::function<void(uint64_t guid, bool loggedIn)>;
     static void SetTargetObserver(TargetStateCallback observer);
     static void ClearTargetObserver();

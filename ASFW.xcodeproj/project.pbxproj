@@ -166,7 +166,6 @@
 		6E8C6EB15D6AF7434C3151B9 /* AudioDriverConfigPolicy.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 77718C25B7597AEFA561E918 /* AudioDriverConfigPolicy.cpp */; };
 		6EA4F8D1E4044AFA2A5414F8 /* ASFWMCPModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71D5D0D779E109C9C34E2411 /* ASFWMCPModels.swift */; };
 		6F0DE7F5B30952FCDA0FF317 /* AudioWrappers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63680CA8E6E72550C6E4E80A /* AudioWrappers.swift */; };
-		6F924DBE04EF48BA21DDAB47 /* ASFWSBP2Nub.iig in Sources */ = {isa = PBXBuildFile; fileRef = 0D6D570BBB3D40A554D48A8A /* ASFWSBP2Nub.iig */; };
 		6FA099D57133604A5FBE5006 /* MCPSDKBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85B459C6BE789ECDDE3EE684 /* MCPSDKBridgeTests.swift */; };
 		6FA31DB6C2C615B5E0AFBB7C /* ASFWMCPBusResetTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D6A93FFD51132B2A4F8B00E /* ASFWMCPBusResetTools.swift */; };
 		70BB1420AC1F4305497316D1 /* PCRSpace.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D13BBB8A1268401CF4FD514C /* PCRSpace.cpp */; };
@@ -272,7 +271,6 @@
 		BCDFB0EB885A4BCBA8D72666 /* ASFWMCPSDKBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D710940703C1A030B7B978DB /* ASFWMCPSDKBridge.swift */; };
 		BD6E4BFC81EB785F9B19BBE5 /* DescriptorRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A04788B23B3E43F7A1311A33 /* DescriptorRing.cpp */; };
 		BE0B40BCFCBB4416AF264948 /* SessionRegistry.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 36A97E74ED2EB18E06BCF26F /* SessionRegistry.cpp */; };
-		BECBE8153753536EE865771D /* ASFWSBP2Nub.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 664BCCE4CA38E930A13BFB54 /* ASFWSBP2Nub.cpp */; };
 		BFA67B801CE2FD081CFA4BF5 /* AVCSampleRateMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AC380D7BBAE68986EC3385C /* AVCSampleRateMappingTests.swift */; };
 		C21E6722E21042051434C9C5 /* LocalRequestWiring.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E046501FE168EA65F0AB0E3B /* LocalRequestWiring.cpp */; };
 		C37065634821FE7EEB593CCB /* ASFWDriver.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BC54AD9BD749D537A0D2BF05 /* ASFWDriver.cpp */; };
@@ -440,7 +438,6 @@
 		0D0166324F7667585F28B95B /* ROMScanner.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ROMScanner.hpp; sourceTree = "<group>"; };
 		0D264DCA6E0A2799CC954891 /* ConfigROMHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMHandler.hpp; sourceTree = "<group>"; };
 		0D64275890CE0E64593121E3 /* BusManagerPolicyCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusManagerPolicyCoordinator.hpp; sourceTree = "<group>"; };
-		0D6D570BBB3D40A554D48A8A /* ASFWSBP2Nub.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; path = ASFWSBP2Nub.iig; sourceTree = "<group>"; };
 		0D7C4001D3AB4A10778631C4 /* MCPBeBoBToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPBeBoBToolsTests.swift; sourceTree = "<group>"; };
 		0D97F81936B9E88427C69E25 /* AmdtpPayloadWriter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AmdtpPayloadWriter.cpp; sourceTree = "<group>"; };
 		0E15E59914A4531C4DF4BA41 /* RingHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RingHelpers.hpp; sourceTree = "<group>"; };
@@ -715,7 +712,6 @@
 		655FB09EB76F6D8D6126D358 /* IsochRxTiming.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochRxTiming.hpp; sourceTree = "<group>"; };
 		6584F43E69795954390E2608 /* AVCCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCCommand.hpp; sourceTree = "<group>"; };
 		65B3BA7B9A5F9DC8E1BEC3EA /* IsochDMAMemoryManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IsochDMAMemoryManager.cpp; sourceTree = "<group>"; };
-		664BCCE4CA38E930A13BFB54 /* ASFWSBP2Nub.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWSBP2Nub.cpp; sourceTree = "<group>"; };
 		66752E26A9486DAA98D1BBD9 /* AudioFunctionBlockCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioFunctionBlockCommand.cpp; sourceTree = "<group>"; };
 		6680B2421DD01722EDC795B5 /* ApogeeDuetProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeDuetProfile.hpp; sourceTree = "<group>"; };
 		67AA940379DFC95D081CDAD1 /* RolePolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RolePolicy.hpp; sourceTree = "<group>"; };
@@ -1650,8 +1646,6 @@
 		55605526849D62DA8E95B843 /* SCSIController */ = {
 			isa = PBXGroup;
 			children = (
-				664BCCE4CA38E930A13BFB54 /* ASFWSBP2Nub.cpp */,
-				0D6D570BBB3D40A554D48A8A /* ASFWSBP2Nub.iig */,
 				3558EAA4E19D859BC8594170 /* ASFWSCSIController.cpp */,
 				8A3249A94E8CDB78EB9ACBBC /* ASFWSCSIController.iig */,
 				CA65E64C4DAEC918DD1EE8D6 /* SBP2BridgeHub.cpp */,
@@ -2992,8 +2986,6 @@
 				4C587E86B66E99AA77CF17A1 /* ASFWDriverUserClient.iig in Sources */,
 				EF599DEE5F7463FD92D044D6 /* ASFWProtocolBooleanControl.cpp in Sources */,
 				38233AF639905DE47D6C282C /* ASFWProtocolBooleanControl.iig in Sources */,
-				BECBE8153753536EE865771D /* ASFWSBP2Nub.cpp in Sources */,
-				6F924DBE04EF48BA21DDAB47 /* ASFWSBP2Nub.iig in Sources */,
 				F3EC20E3CDECF9FD90E56995 /* ASFWSCSIController.cpp in Sources */,
 				53771C712318BB0A08B8724D /* ASFWSCSIController.iig in Sources */,
 				17C45BD159D713EF7947B119 /* ATContextBase.cpp in Sources */,

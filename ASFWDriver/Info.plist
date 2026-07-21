@@ -71,15 +71,6 @@
 			<integer>1</integer>
 			<key>ASFWLogStatistics</key>
 			<true/>
-			<key>ASFWSBP2NubProperties</key>
-			<dict>
-				<key>ASFWNubType</key>
-				<string>SBP2</string>
-				<key>IOClass</key>
-				<string>IOUserService</string>
-				<key>IOUserClass</key>
-				<string>ASFWSBP2Nub</string>
-			</dict>
 			<key>ASFWTraceDMACoherency</key>
 			<false/>
 			<key>CFBundleIdentifier</key>
