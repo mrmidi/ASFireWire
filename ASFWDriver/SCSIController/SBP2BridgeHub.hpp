@@ -4,7 +4,7 @@
 // service (ASFWDriver, which owns the SBP-2 stack) and the HBA service
 // (ASFWSCSIController). Both run in the same dext process (same
 // IOUserServerName), but the HBA's provider chain goes through the SCSI
-// kernel companion, so it cannot reach the ASFWSBP2Nub object the way
+// kernel companion, so it cannot reach ASFWDriver-owned objects the way
 // ASFWAudioDriver casts its provider. This hub is the in-process rendezvous:
 // DriverContext publishes the bridge after the SBP-2 stack is wired, and the
 // HBA fetches a shared_ptr per task (so a concurrent teardown cannot free the

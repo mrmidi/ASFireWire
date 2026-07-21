@@ -29,9 +29,7 @@
 //
 // Matching: this HBA co-matches the OHCI PCI device directly (IOProviderClass
 // IOPCIDevice + IOPCIMatch, distinct IOMatchCategory), alongside the main
-// ASFWDriver. ASFWDriver also publishes an ASFWSBP2Nub, but nothing matches on
-// it yet — it is staged for a future per-unit personality, not the current
-// match path.
+// ASFWDriver.
 //
 
 #ifndef ASFWSCSIController_h
