@@ -1,0 +1,21 @@
+name: f4-dominated-proposal
+description: >
+  F4, kept as a regression guard against re-adopting the superseded fix.
+  Raising kReadDelay to 1024 DOES survive the 100 ms stall, so it looks fine in
+  isolation -- that is exactly why it was proposed. Its cost is invisible here:
+  bring-up to `established` goes 32 -> 128 ms. Prefer f3-capacity-2048-fix.
+base: driver
+rate: 48000
+
+geometry:
+  replay_read_delay: 1024
+  replay_capacity: 2048
+
+scenario:
+  duration_s: 20
+  stall_ms: 100
+  stall_at_s: 5
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.95

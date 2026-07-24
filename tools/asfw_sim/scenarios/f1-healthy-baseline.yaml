@@ -1,0 +1,18 @@
+name: f1-healthy-baseline
+description: >
+  F1. The triage reports claim the 678-packet preparation lead is
+  "structurally unfillable" from a 512-entry/256-delay replay ring. If that were
+  true, a healthy duplex stream would starve the reader immediately. It does not:
+  the reader advances once per PREPARED PACKET, not per packet index, so
+  reader - producer stays pinned at -kReadDelay regardless of the lead.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 20
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.99
+  max_replay_failures: 0
+  max_align_count: 1

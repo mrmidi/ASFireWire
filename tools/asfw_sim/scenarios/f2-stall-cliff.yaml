@@ -1,0 +1,21 @@
+name: f2-stall-cliff
+description: >
+  F2. A producer stall longer than the exposure budget kills audio content
+  PERMANENTLY while transport stays perfect. 100 ms is past HEAD's 78 ms cliff:
+  the stream must collapse, keep emitting DATA packets at the normal cadence,
+  and never re-arm the frame cursor. written_fraction ~= stall_at_s/duration_s
+  because not one frame is written afterwards.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 20
+  stall_ms: 100
+  stall_at_s: 5
+  self_heal: false
+
+expect:
+  collapsed: true
+  written_fraction_max: 0.30
+  min_data_packet_fraction: 0.70
+  max_align_count: 1

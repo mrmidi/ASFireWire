@@ -80,7 +80,7 @@ kern_return_t CollectAndPack(Diagnostics::DiagnosticsService* service, IOUserCli
 
     StructType val{};
     ASFWDiagStatus status = (service->*collectFn)(&val);
-    (void)status; // Handled via header status field
+    val.header.status = static_cast<uint32_t>(status);
 
     size_t sizeToCopy = PrepareForWire(val);
 

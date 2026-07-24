@@ -116,6 +116,15 @@ add_device_test(ApogeeDuetVendorCmdTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
 )
 
+# Apogee Duet clock transition tests
+add_device_test(ApogeeDuetClockTransitionTests
+    ApogeeDuetClockTransitionTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+)
+
 add_device_test(AVCStartReadinessTests
     AVCStartReadinessTests.cpp
 )

@@ -51,6 +51,8 @@ public:
     // AmdtpTxPacketizer::ReArmFrameCursorAlignment).
     void ReArmFrameCursorAlignment() noexcept;
 
+    [[nodiscard]] bool IsFrameCursorAligned() const noexcept;
+
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
         uint32_t packetIndex,
         const AMDTP::AmdtpTimingState& timing) noexcept;

@@ -1,0 +1,22 @@
+name: f6-rx-loss-ratchet
+description: >
+  F6. The direct answer to "why W > E". No stall, no bus reset, no epoch change.
+  ConsumePacket early-returns on an empty payload without publishing a replay
+  entry, TX consumes one entry per packet, a missing entry ships NODATA, and
+  NODATA never advances E while W keeps tracking the device clock. Each lost
+  observation costs E ~6.8 frames permanently, because AlignFrameCursorOnce is
+  one-shot. At 0.5% RX loss the 2400-frame horizon is spent in ~16 s and the
+  stream goes silent for good. kTxExposureLeadFrames is a one-time budget of
+  ~320 lost observations, not a steady-state cushion.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 30
+  rx_drop_every_cycles: 200
+  self_heal: false
+
+expect:
+  collapsed: true
+  max_align_count: 1
+  min_data_packet_fraction: 0.70

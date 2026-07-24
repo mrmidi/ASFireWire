@@ -1,0 +1,393 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 104585,\n    \"nextSequence\" : 104585,\n    \"oldestSequence\" : 64868,\n    \"recordCount\" : 41,\n    \"records\" : [\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=451442 cur=450792 prod=450792 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 99944,\n        \"timestampNs\" : 87843419715416\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=471876 cur=471488 prod=471744 ok=1\",\n        \"sequence\" : 99977,\n        \"timestampNs\" : 87846035813333\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=531516 cur=531389 prod=531645 ok=1\",\n        \"sequence\" : 100213,\n        \"timestampNs\" : 87853522815208\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1577167 cur=1577714 prod=1577970 ok=1\",\n        \"sequence\" : 104220,\n        \"timestampNs\" : 87984302949125\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1585698 cur=1586618 prod=1586874 ok=1\",\n        \"sequence\" : 104230,\n        \"timestampNs\" : 87985415145166\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1597567 cur=1598487 prod=1598487 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104236,\n        \"timestampNs\" : 87986866813375\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1599356 cur=1600335 prod=1600591 ok=1\",\n        \"sequence\" : 104244,\n        \"timestampNs\" : 87987130180416\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1608745 cur=1609724 prod=1609724 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104250,\n        \"timestampNs\" : 87988271179083\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1610885 cur=1611912 prod=1612168 ok=1\",\n        \"sequence\" : 104260,\n        \"timestampNs\" : 87988576810791\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1642694 cur=1643721 prod=1643721 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104271,\n        \"timestampNs\" : 87992520667291\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1645127 cur=1646155 prod=1646411 ok=1\",\n        \"sequence\" : 104279,\n        \"timestampNs\" : 87992856662166\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1684777 cur=1685803 prod=1685803 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104303,\n        \"timestampNs\" : 87997780133708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1688175 cur=1689201 prod=1689457 ok=1\",\n        \"sequence\" : 104312,\n        \"timestampNs\" : 87998237402875\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1699441 cur=1700467 prod=1700467 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104319,\n        \"timestampNs\" : 87999613498750\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1703124 cur=1704153 prod=1704409 ok=1\",\n        \"sequence\" : 104328,\n        \"timestampNs\" : 88000106239041\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1722364 cur=1723393 prod=1723393 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104335,\n        \"timestampNs\" : 88002478698083\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1726189 cur=1727217 prod=1727473 ok=1\",\n        \"sequence\" : 104344,\n        \"timestampNs\" : 88002988965041\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1747181 cur=1748209 prod=1748209 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104352,\n        \"timestampNs\" : 88005580143333\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1751328 cur=1752357 prod=1752613 ok=1\",\n        \"sequence\" : 104362,\n        \"timestampNs\" : 88006131237750\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1759625 cur=1760654 prod=1760654 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104366,\n        \"timestampNs\" : 88007136000625\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1764169 cur=1765196 prod=1765452 ok=1\",\n        \"sequence\" : 104376,\n        \"timestampNs\" : 88007736040666\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1776545 cur=1777572 prod=1777572 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104381,\n        \"timestampNs\" : 88009250226666\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1781225 cur=1782252 prod=1782508 ok=1\",\n        \"sequence\" : 104390,\n        \"timestampNs\" : 88009867359166\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1793780 cur=1794807 prod=1794807 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104396,\n        \"timestampNs\" : 88011404661000\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1803221 cur=1804246 prod=1804502 ok=1\",\n        \"sequence\" : 104414,\n        \"timestampNs\" : 88012616670458\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1824350 cur=1825375 prod=1825375 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104421,\n        \"timestampNs\" : 88015225283958\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1834573 cur=1835603 prod=1835859 ok=1\",\n        \"sequence\" : 104440,\n        \"timestampNs\" : 88016535772291\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1837730 cur=1838760 prod=1838760 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104443,\n        \"timestampNs\" : 88016898682041\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1843245 cur=1844275 prod=1844531 ok=1\",\n        \"sequence\" : 104452,\n        \"timestampNs\" : 88017619439458\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1859031 cur=1860061 prod=1860061 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104463,\n        \"timestampNs\" : 88019560765541\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1865017 cur=1866045 prod=1866301 ok=1\",\n        \"sequence\" : 104469,\n        \"timestampNs\" : 88020340962083\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1869511 cur=1870539 prod=1870539 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104473,\n        \"timestampNs\" : 88020870110333\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1875777 cur=1876803 prod=1877059 ok=1\",\n        \"sequence\" : 104483,\n        \"timestampNs\" : 88021685596250\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1886179 cur=1887205 prod=1887205 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104487,\n        \"timestampNs\" : 88022953244708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1892540 cur=1893569 prod=1893825 ok=1\",\n        \"sequence\" : 104497,\n        \"timestampNs\" : 88023780915666\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1906980 cur=1908008 prod=1908264 ok=1\",\n        \"sequence\" : 104517,\n        \"timestampNs\" : 88025586013375\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1909277 cur=1910305 prod=1910305 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104519,\n        \"timestampNs\" : 88025840482916\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1930038 cur=1930782 prod=1930782 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104551,\n        \"timestampNs\" : 88028400711958\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1933398 cur=1934426 prod=1934682 ok=1\",\n        \"sequence\" : 104553,\n        \"timestampNs\" : 88028887984000\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1946777 cur=1947801 prod=1948057 ok=1\",\n        \"sequence\" : 104572,\n        \"timestampNs\" : 88030559613833\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1951358 cur=1952382 prod=1952382 d=0 ep=4\\/4 slot=0\\/0 est=1\",\n        \"sequence\" : 104575,\n        \"timestampNs\" : 88031100242916\n      }\n    ],\n    \"scannedCount\" : 4797\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 104585,
+      "nextSequence": 104585,
+      "oldestSequence": 64868,
+      "recordCount": 41,
+      "records": [
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=451442 cur=450792 prod=450792 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 99944,
+          "timestampNs": 87843419715416
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=471876 cur=471488 prod=471744 ok=1",
+          "sequence": 99977,
+          "timestampNs": 87846035813333
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=531516 cur=531389 prod=531645 ok=1",
+          "sequence": 100213,
+          "timestampNs": 87853522815208
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1577167 cur=1577714 prod=1577970 ok=1",
+          "sequence": 104220,
+          "timestampNs": 87984302949125
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1585698 cur=1586618 prod=1586874 ok=1",
+          "sequence": 104230,
+          "timestampNs": 87985415145166
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1597567 cur=1598487 prod=1598487 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104236,
+          "timestampNs": 87986866813375
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1599356 cur=1600335 prod=1600591 ok=1",
+          "sequence": 104244,
+          "timestampNs": 87987130180416
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1608745 cur=1609724 prod=1609724 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104250,
+          "timestampNs": 87988271179083
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1610885 cur=1611912 prod=1612168 ok=1",
+          "sequence": 104260,
+          "timestampNs": 87988576810791
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1642694 cur=1643721 prod=1643721 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104271,
+          "timestampNs": 87992520667291
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1645127 cur=1646155 prod=1646411 ok=1",
+          "sequence": 104279,
+          "timestampNs": 87992856662166
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1684777 cur=1685803 prod=1685803 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104303,
+          "timestampNs": 87997780133708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1688175 cur=1689201 prod=1689457 ok=1",
+          "sequence": 104312,
+          "timestampNs": 87998237402875
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1699441 cur=1700467 prod=1700467 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104319,
+          "timestampNs": 87999613498750
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1703124 cur=1704153 prod=1704409 ok=1",
+          "sequence": 104328,
+          "timestampNs": 88000106239041
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1722364 cur=1723393 prod=1723393 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104335,
+          "timestampNs": 88002478698083
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1726189 cur=1727217 prod=1727473 ok=1",
+          "sequence": 104344,
+          "timestampNs": 88002988965041
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1747181 cur=1748209 prod=1748209 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104352,
+          "timestampNs": 88005580143333
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1751328 cur=1752357 prod=1752613 ok=1",
+          "sequence": 104362,
+          "timestampNs": 88006131237750
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1759625 cur=1760654 prod=1760654 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104366,
+          "timestampNs": 88007136000625
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1764169 cur=1765196 prod=1765452 ok=1",
+          "sequence": 104376,
+          "timestampNs": 88007736040666
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1776545 cur=1777572 prod=1777572 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104381,
+          "timestampNs": 88009250226666
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1781225 cur=1782252 prod=1782508 ok=1",
+          "sequence": 104390,
+          "timestampNs": 88009867359166
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1793780 cur=1794807 prod=1794807 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104396,
+          "timestampNs": 88011404661000
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1803221 cur=1804246 prod=1804502 ok=1",
+          "sequence": 104414,
+          "timestampNs": 88012616670458
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1824350 cur=1825375 prod=1825375 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104421,
+          "timestampNs": 88015225283958
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1834573 cur=1835603 prod=1835859 ok=1",
+          "sequence": 104440,
+          "timestampNs": 88016535772291
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1837730 cur=1838760 prod=1838760 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104443,
+          "timestampNs": 88016898682041
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1843245 cur=1844275 prod=1844531 ok=1",
+          "sequence": 104452,
+          "timestampNs": 88017619439458
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1859031 cur=1860061 prod=1860061 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104463,
+          "timestampNs": 88019560765541
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1865017 cur=1866045 prod=1866301 ok=1",
+          "sequence": 104469,
+          "timestampNs": 88020340962083
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1869511 cur=1870539 prod=1870539 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104473,
+          "timestampNs": 88020870110333
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1875777 cur=1876803 prod=1877059 ok=1",
+          "sequence": 104483,
+          "timestampNs": 88021685596250
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1886179 cur=1887205 prod=1887205 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104487,
+          "timestampNs": 88022953244708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1892540 cur=1893569 prod=1893825 ok=1",
+          "sequence": 104497,
+          "timestampNs": 88023780915666
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1906980 cur=1908008 prod=1908264 ok=1",
+          "sequence": 104517,
+          "timestampNs": 88025586013375
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1909277 cur=1910305 prod=1910305 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104519,
+          "timestampNs": 88025840482916
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1930038 cur=1930782 prod=1930782 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104551,
+          "timestampNs": 88028400711958
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1933398 cur=1934426 prod=1934682 ok=1",
+          "sequence": 104553,
+          "timestampNs": 88028887984000
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-reclamp] [TxReplay] reclamped pkt=1946777 cur=1947801 prod=1948057 ok=1",
+          "sequence": 104572,
+          "timestampNs": 88030559613833
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-replay-read] [TxReplay] fail=ahead pkt=1951358 cur=1952382 prod=1952382 d=0 ep=4/4 slot=0/0 est=1",
+          "sequence": 104575,
+          "timestampNs": 88031100242916
+        }
+      ],
+      "scannedCount": 4797
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}
