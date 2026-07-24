@@ -94,17 +94,20 @@ bool ControllerStateMachine::IsLegalTransition(ControllerState from,
     case ControllerState::kStopped:
         return to == ControllerState::kStarting;
     case ControllerState::kStarting:
-        return to == ControllerState::kRunning || to == ControllerState::kFailed;
+        return to == ControllerState::kRunning || to == ControllerState::kFailed ||
+               to == ControllerState::kRevoked;
     case ControllerState::kRunning:
         return to == ControllerState::kQuiescing || to == ControllerState::kRevoked;
     case ControllerState::kQuiescing:
-        return to == ControllerState::kStopped || to == ControllerState::kSuspended;
+        return to == ControllerState::kStopped || to == ControllerState::kSuspended ||
+               to == ControllerState::kRevoked;
     case ControllerState::kSuspended:
-        return to == ControllerState::kStarting;
+        return to == ControllerState::kStarting || to == ControllerState::kQuiescing ||
+               to == ControllerState::kRevoked;
     case ControllerState::kRevoked:
         return to == ControllerState::kStopped;
     case ControllerState::kFailed:
-        return to == ControllerState::kQuiescing;
+        return to == ControllerState::kQuiescing || to == ControllerState::kRevoked;
     }
     return false;
 }

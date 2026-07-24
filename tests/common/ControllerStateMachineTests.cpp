@@ -2,6 +2,7 @@
 
 #include "Controller/ControllerStateMachine.hpp"
 
+#include <array>
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -60,6 +61,52 @@ TEST(ControllerStateMachineTests, AcceptsProviderRevocationPath) {
     ASSERT_EQ(state.TransitionTo(ControllerState::kRevoked, "provider revoked", 3),
               TransitionDisposition::kApplied);
     EXPECT_EQ(state.TransitionTo(ControllerState::kStopped, "released", 4),
+              TransitionDisposition::kApplied);
+}
+
+TEST(ControllerStateMachineTests, ProviderRevocationDominatesEveryLiveState) {
+    const std::array<ControllerState, 4> states{
+        ControllerState::kStarting,
+        ControllerState::kRunning,
+        ControllerState::kQuiescing,
+        ControllerState::kSuspended,
+    };
+
+    for (const auto stateBeforeRevocation : states) {
+        ControllerStateMachine state;
+        ASSERT_EQ(state.TransitionTo(ControllerState::kStarting, "start", 1),
+                  TransitionDisposition::kApplied);
+        if (stateBeforeRevocation == ControllerState::kRunning ||
+            stateBeforeRevocation == ControllerState::kQuiescing ||
+            stateBeforeRevocation == ControllerState::kSuspended) {
+            ASSERT_EQ(state.TransitionTo(ControllerState::kRunning, "ready", 2),
+                      TransitionDisposition::kApplied);
+        }
+        if (stateBeforeRevocation == ControllerState::kQuiescing ||
+            stateBeforeRevocation == ControllerState::kSuspended) {
+            ASSERT_EQ(state.TransitionTo(ControllerState::kQuiescing, "quiesce", 3),
+                      TransitionDisposition::kApplied);
+        }
+        if (stateBeforeRevocation == ControllerState::kSuspended) {
+            ASSERT_EQ(state.TransitionTo(ControllerState::kSuspended, "suspend", 4),
+                      TransitionDisposition::kApplied);
+        }
+
+        EXPECT_EQ(state.TransitionTo(ControllerState::kRevoked, "provider revoked", 5),
+                  TransitionDisposition::kApplied)
+            << "from " << ASFW::Driver::ToString(stateBeforeRevocation);
+        EXPECT_EQ(state.CurrentState(), ControllerState::kRevoked);
+    }
+}
+
+TEST(ControllerStateMachineTests, ProviderRevocationDominatesFailedStart) {
+    ControllerStateMachine state;
+
+    ASSERT_EQ(state.TransitionTo(ControllerState::kStarting, "start", 1),
+              TransitionDisposition::kApplied);
+    ASSERT_EQ(state.TransitionTo(ControllerState::kFailed, "failure", 2),
+              TransitionDisposition::kApplied);
+    EXPECT_EQ(state.TransitionTo(ControllerState::kRevoked, "provider revoked", 3),
               TransitionDisposition::kApplied);
 }
 
