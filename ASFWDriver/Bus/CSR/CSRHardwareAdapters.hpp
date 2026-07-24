@@ -23,7 +23,9 @@ public:
         if (hw_ == nullptr) {
             return false;
         }
-        return (hw_->Read(ASFW::Driver::Register32::kNodeID) & ASFW::Driver::NodeIDBits::kRoot) != 0U;
+        auto access = hw_->TryBeginAccess();
+        return access &&
+               (access.Read(ASFW::Driver::Register32::kNodeID) & ASFW::Driver::NodeIDBits::kRoot) != 0U;
     }
 
 private:

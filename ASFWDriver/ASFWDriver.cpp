@@ -184,7 +184,7 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
     // until the batch-scoped HardwareAccessGate cutover, so later cleanup MMIO
     // becomes a no-op instead of touching a withdrawn BAR.
     if (providerRevoked && ctx.deps.hardware) {
-        ctx.deps.hardware->Revoke();
+        ctx.deps.hardware->RevokeAndDrain();
     }
 
 #ifndef ASFW_HOST_TEST
@@ -546,7 +546,7 @@ void ASFWDriver::RequestRuntimeQuiesce(uint32_t rawReason) {
     // still fence OHCI immediately. The active executor will observe its
     // state as Revoked before publishing its final transition.
     if (plan->revokeImmediately && !plan->runTeardown && ctx.deps.hardware) {
-        ctx.deps.hardware->Revoke();
+        ctx.deps.hardware->RevokeAndDrain();
     }
     if (plan->runTeardown) {
         ExecuteRuntimeTeardown(ctx, *plan);
@@ -634,7 +634,11 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
     // advances via the full interrupt path (IRQ → Self-ID → coordinator). A
     // completed reset therefore proves interrupt delivery end to end.
     const uint32_t resets = ctx.deps.busReset->Metrics().resetCount;
-    const uint32_t hcControl = ctx.deps.hardware->Read(Register32::kHCControl);
+    auto access = ctx.deps.hardware->TryBeginAccess();
+    if (!access) {
+        return;
+    }
+    const uint32_t hcControl = access.Read(Register32::kHCControl);
     const bool mmioAlive = (hcControl != 0xFFFFFFFFu);
     const bool linkEnabled = mmioAlive && (hcControl & HCControlBits::kLinkEnable);
 
@@ -648,7 +652,7 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
     // with resetCount==0 means the reset happened but the IRQ never arrived
     // (interrupt path dead); linkEnable clear means the controller was reset
     // under us after the rebuild; 0xFFFFFFFF means MMIO itself is gone.
-    const uint32_t intEvent = mmioAlive ? ctx.deps.hardware->Read(Register32::kIntEvent) : 0;
+    const uint32_t intEvent = mmioAlive ? access.Read(Register32::kIntEvent) : 0;
     ASFW_LOG(Controller,
              "Wake verify: ❌ dead controller (resets=%u HCControl=0x%08x IntEvent=0x%08x "
              "attempt=%llu/%llu) - rebuilding",

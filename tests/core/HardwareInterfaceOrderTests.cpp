@@ -155,13 +155,13 @@ TEST_F(HardwareInterfaceOrderTests, SetLocalCycleMasterEnabled_InOrder) {
 }
 
 TEST_F(HardwareInterfaceOrderTests, RevokeBlocksAllFurtherBarAccess) {
-    hardware_.Revoke();
+    hardware_.RevokeAndDrain();
 
     EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
     EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
     EXPECT_FALSE(hardware_.IsAvailable());
-    EXPECT_EQ(hardware_.Read(Register32::kNodeID), 0U);
-    hardware_.Write(Register32::kNodeID, 0xDEADBEEFu);
+    auto access = hardware_.TryBeginAccess();
+    EXPECT_FALSE(access);
     hardware_.SetInterruptMask(0xFFFFFFFFu, false);
 }
 

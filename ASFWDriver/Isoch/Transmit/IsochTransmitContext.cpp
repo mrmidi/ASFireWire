@@ -314,19 +314,21 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     const uint32_t cmdPtr = static_cast<uint32_t>(descIOVA) | Tx::Layout::kBlocksPerPacket;
 
     ASFW_LOG(Isoch, "IT: Writing CommandPtr=0x%08x (Z=%u)", cmdPtr, Tx::Layout::kBlocksPerPacket);
-    hardware_->Write(cmdPtrReg, cmdPtr);
+    auto access = hardware_->TryBeginAccess();
+    if (!access) return kIOReturnNotReady;
+    access.Write(cmdPtrReg, cmdPtr);
 
-    hardware_->Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
+    access.Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
 
-    hardware_->Write(Register32::kIsoXmitIntEventClear, 0xFFFFFFFF);
-    hardware_->Write(Register32::kIsoXmitIntMaskSet, (1u << contextIndex_));
-    hardware_->Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
+    access.Write(Register32::kIsoXmitIntEventClear, 0xFFFFFFFF);
+    access.Write(Register32::kIsoXmitIntMaskSet, (1u << contextIndex_));
+    access.Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
     ASFW_LOG(Isoch, "IT: Enabled IT interrupt for context %u", contextIndex_);
 
-    hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
+    access.Write(ctrlSetReg, Driver::ContextControl::kRun);
 
-    const uint32_t readCmd = hardware_->Read(cmdPtrReg);
-    const uint32_t readCtl = hardware_->Read(ctrlReg);
+    const uint32_t readCmd = access.Read(cmdPtrReg);
+    const uint32_t readCtl = access.Read(ctrlReg);
 
     const bool runSet = (readCtl & Driver::ContextControl::kRun) != 0;
     const bool activeSet = (readCtl & Driver::ContextControl::kActive) != 0;
@@ -359,25 +361,36 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         const Register32 ctrlSetReg =
             static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
 
-        hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+        auto access = hardware_->TryBeginAccess();
+        if (!access) {
+            refillInProgress_.clear(std::memory_order_release);
+            return kIOReturnNotReady;
+        }
+        access.Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
         // A posted CLEAR must reach OHCI before ACTIVE is meaningful.  Linux
         // firewire/ohci.c:1361-1378 follows this same RUN-clear/ACTIVE-clear
         // barrier before it lets DMA resources go away.
-        hardware_->WriteAndFlush(ctrlClrReg, Driver::ContextControl::kRun);
+        access.WriteAndFlush(ctrlClrReg, Driver::ContextControl::kRun);
+        access = {};
 
-        if ((hardware_->Read(ctrlSetReg) & Driver::ContextControl::kActive) != 0) {
+        const auto readControl = [this, ctrlSetReg] {
+            auto readAccess = hardware_->TryBeginAccess();
+            return readAccess ? readAccess.Read(ctrlSetReg) : 0U;
+        };
+
+        if ((readControl() & Driver::ContextControl::kActive) != 0) {
             IODelay(5);
             constexpr uint32_t kMaxIterations = 250;
             constexpr uint32_t kBaseDelayMicros = 6;
             for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
-                if ((hardware_->Read(ctrlSetReg) & Driver::ContextControl::kActive) == 0) {
+                if ((readControl() & Driver::ContextControl::kActive) == 0) {
                     break;
                 }
                 IODelay(kBaseDelayMicros + iteration);
             }
         }
 
-        const uint32_t control = hardware_->Read(ctrlSetReg);
+        const uint32_t control = readControl();
         if ((control & Driver::ContextControl::kActive) != 0) {
             const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
                 ? kIOReturnDMAError
@@ -478,8 +491,10 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
         const Register32 ctrlClrReg =
             static_cast<Register32>(
                 DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
-        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
-        hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+        if (auto access = hardware_->TryBeginAccess()) {
+            access.Write(ctrlClrReg, Driver::ContextControl::kRun);
+            access.Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+        }
     }
     if (controlBlock_) {
         const auto currentStatus = controlBlock_->statusWord.load(std::memory_order_acquire);
@@ -509,10 +524,10 @@ void IsochTransmitContext::Poll() noexcept {
             // Saffire dual-context freeze, whose trigger left no interrupt
             // record).
             if (irqSilentKickStreak_ == 1 && hardware_) {
-                const uint32_t ctrl = hardware_->Read(static_cast<Register32>(
-                    DMAContextHelpers::IsoXmitContextControl(contextIndex_)));
-                const uint32_t latchedIntEvents =
-                    hardware_->Read(Register32::kIntEvent);
+                auto access = hardware_->TryBeginAccess();
+                const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
+                    DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
+                const uint32_t latchedIntEvents = access ? access.Read(Register32::kIntEvent) : 0;
                 ASFW_LOG(Isoch,
                          "IT: refill watchdog engaged (no IT interrupts "
                          "observed; kicks=%llu ctrl=0x%08x intEvent=0x%08x)",
@@ -526,13 +541,10 @@ void IsochTransmitContext::Poll() noexcept {
                 // interrupt path died mid-session and the watchdog fed the
                 // wire for 35 minutes of corrupt audio). Sustained interrupt
                 // silence is a transport fault, not jitter.
-                const uint32_t ctrl = hardware_
-                    ? hardware_->Read(static_cast<Register32>(
-                          DMAContextHelpers::IsoXmitContextControl(
-                              contextIndex_)))
-                    : 0;
-                const uint32_t latchedIntEvents =
-                    hardware_ ? hardware_->Read(Register32::kIntEvent) : 0;
+                auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
+                const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
+                    DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
+                const uint32_t latchedIntEvents = access ? access.Read(Register32::kIntEvent) : 0;
                 ASFW_LOG(Isoch,
                          "IT FATAL: interrupt path silent across %u "
                          "consecutive watchdog kicks; stopping context "

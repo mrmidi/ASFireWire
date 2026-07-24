@@ -153,18 +153,20 @@ kern_return_t ConfigROMStager::StageImage(const ConfigROMBuilder& image, Hardwar
         return kIOReturnUnsupported;
     }
 
+    auto access = hw.TryBeginAccess();
+    if (!access) return kIOReturnNotReady;
     if (!guidWritten_) {
-        hw.WriteAndFlush(Register32::kGUIDHi, image.GuidHiQuad());
-        hw.WriteAndFlush(Register32::kGUIDLo, image.GuidLoQuad());
+        access.WriteAndFlush(Register32::kGUIDHi, image.GuidHiQuad());
+        access.WriteAndFlush(Register32::kGUIDLo, image.GuidLoQuad());
         guidWritten_ = true;
     }
 
-    hw.WriteAndFlush(Register32::kBusOptions, image.BusInfoQuad());
+    access.WriteAndFlush(Register32::kBusOptions, image.BusInfoQuad());
 
-    hw.WriteAndFlush(Register32::kConfigROMHeader, image.HeaderQuad());
+    access.WriteAndFlush(Register32::kConfigROMHeader, image.HeaderQuad());
 
     const auto mapAddr = static_cast<uint32_t>(segment_.address);
-    hw.WriteAndFlush(Register32::kConfigROMMap, mapAddr);
+    access.WriteAndFlush(Register32::kConfigROMMap, mapAddr);
 
     return kIOReturnSuccess;
 }
@@ -174,7 +176,9 @@ void ConfigROMStager::Teardown(HardwareInterface& hw) {
         ASFW_LOG(Hardware,
                  "ConfigROMStager: Tearing down - clearing ConfigROMMap and BIBimageValid");
         hw.ClearHCControlBits(HCControlBits::kBibImageValid);
-        hw.WriteAndFlush(Register32::kConfigROMMap, 0);
+        if (auto access = hw.TryBeginAccess()) {
+            access.WriteAndFlush(Register32::kConfigROMMap, 0);
+        }
     }
 
     if (dma_) {

@@ -58,14 +58,16 @@ HardwareInterface::~HardwareInterface() {
 
 kern_return_t HardwareInterface::Attach(IOService*, IOService*) {
     WithState(this, [](HardwareTestState& state) { state.available = true; });
+    accessGate_.Open();
     return kIOReturnSuccess;
 }
 
-void HardwareInterface::Revoke() noexcept {
+void HardwareInterface::RevokeAndDrain() noexcept {
     WithState(this, [](HardwareTestState& state) { state.available = false; });
+    accessGate_.RevokeAndDrain();
 }
 
-void HardwareInterface::Detach() { Revoke(); }
+void HardwareInterface::Detach() { RevokeAndDrain(); }
 
 bool HardwareInterface::Attached() const noexcept { return IsAvailable(); }
 
@@ -77,7 +79,59 @@ void HardwareInterface::BindAsyncControllerPort(ASFW::Async::IAsyncControllerPor
     asyncControllerPort_ = controllerPort;
 }
 
+HardwareAccessScope HardwareInterface::TryBeginAccess() noexcept {
+    return accessGate_.TryBeginAccess(*this);
+}
+
 uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
+    return ReadScoped(reg);
+}
+
+void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
+    WriteScoped(reg, value);
+}
+
+void HardwareInterface::WriteAndFlush(Register32 reg, uint32_t value) {
+    WriteScoped(reg, value);
+}
+
+HardwareAccessScope::~HardwareAccessScope() { Release(); }
+
+HardwareAccessScope::HardwareAccessScope(HardwareAccessScope&& other) noexcept
+    : hardware_(std::exchange(other.hardware_, nullptr)), lock_(std::exchange(other.lock_, nullptr)) {}
+
+HardwareAccessScope& HardwareAccessScope::operator=(HardwareAccessScope&& other) noexcept {
+    if (this != &other) {
+        Release();
+        hardware_ = std::exchange(other.hardware_, nullptr);
+        lock_ = std::exchange(other.lock_, nullptr);
+    }
+    return *this;
+}
+
+void HardwareAccessScope::Release() noexcept {
+    if (lock_) {
+        IOLockUnlock(lock_);
+        lock_ = nullptr;
+        hardware_ = nullptr;
+    }
+}
+
+uint32_t HardwareAccessScope::Read(Register32 reg) const noexcept {
+    return hardware_ ? hardware_->ReadScoped(reg) : 0;
+}
+
+void HardwareAccessScope::Write(Register32 reg, uint32_t value) const noexcept {
+    if (hardware_) hardware_->WriteScoped(reg, value);
+}
+
+void HardwareAccessScope::FlushPostedWrites() const noexcept {}
+
+void HardwareAccessScope::WriteAndFlush(Register32 reg, uint32_t value) const noexcept {
+    Write(reg, value);
+}
+
+uint32_t HardwareInterface::ReadScoped(Register32 reg) const noexcept {
     return WithState(this, [reg](HardwareTestState& state) -> uint32_t {
         if (!state.available) {
             return 0;
@@ -87,7 +141,7 @@ uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
     });
 }
 
-void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
+void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexcept {
     WithState(this, [reg, value](HardwareTestState& state) {
         if (!state.available) {
             return;
@@ -109,30 +163,7 @@ void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
     });
 }
 
-void HardwareInterface::WriteAndFlush(Register32 reg, uint32_t value) {
-    WithState(this, [reg, value](HardwareTestState& state) {
-        if (!state.available) {
-            return;
-        }
-        state.registers[KeyFor(reg)] = value;
-        state.operations.push_back(TestOperation::WriteAndFlush);
-
-        if (reg == Register32::kIntEventClear) {
-            state.registers[KeyFor(Register32::kIntEvent)] &=
-                ~value;
-        } else if (reg == Register32::kIntMaskSet) {
-            state.registers[KeyFor(Register32::kIntMaskSet)] |= value;
-        } else if (reg == Register32::kIntMaskClear) {
-            state.registers[KeyFor(Register32::kIntMaskSet)] &=
-                ~value;
-        } else if (reg == Register32::kLinkControlSet) {
-            state.registers[KeyFor(Register32::kLinkControl)] |= value;
-        } else if (reg == Register32::kLinkControlClear) {
-            state.registers[KeyFor(Register32::kLinkControl)] &=
-                ~value;
-        }
-    });
-}
+void HardwareInterface::FlushPostedWritesScoped() const noexcept {}
 
 void HardwareInterface::SetInterruptMask(uint32_t mask, bool enable) {
     if (enable) {
@@ -143,15 +174,15 @@ void HardwareInterface::SetInterruptMask(uint32_t mask, bool enable) {
 }
 
 InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp) const noexcept {
-    return InterruptSnapshot{Read(Register32::kIntEvent), Read(Register32::kIntMaskSet),
-                             Read(Register32::kIsoXmitEvent), Read(Register32::kIsoRecvEvent),
+    return InterruptSnapshot{ReadScoped(Register32::kIntEvent), ReadScoped(Register32::kIntMaskSet),
+                             ReadScoped(Register32::kIsoXmitEvent), ReadScoped(Register32::kIsoRecvEvent),
                              timestamp};
 }
 
-void HardwareInterface::SetLinkControlBits(uint32_t bits) { WriteAndFlush(Register32::kLinkControlSet, bits); }
+void HardwareInterface::SetLinkControlBits(uint32_t bits) { WriteScoped(Register32::kLinkControlSet, bits); }
 
 void HardwareInterface::ClearLinkControlBits(uint32_t bits) {
-    WriteAndFlush(Register32::kLinkControlClear, bits);
+    WriteScoped(Register32::kLinkControlClear, bits);
 }
 
 void HardwareInterface::ClearIntEvents(uint32_t mask) {
@@ -217,7 +248,7 @@ bool HardwareInterface::InitiateBusReset(bool shortReset) {
 }
 
 bool HardwareInterface::ReadIntEvent(uint32_t& value) {
-    value = Read(Register32::kIntEvent);
+    value = ReadScoped(Register32::kIntEvent);
     return true;
 }
 
@@ -321,36 +352,42 @@ OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
     return OSSharedPtr<IODMACommand>(new IODMACommand(), OSNoRetain);
 }
 
-uint32_t HardwareInterface::ReadHCControl() const noexcept { return Read(Register32::kHCControl); }
+uint32_t HardwareInterface::ReadHCControl() const noexcept { return ReadScoped(Register32::kHCControl); }
 
 void HardwareInterface::SetHCControlBits(uint32_t bits) noexcept {
-    Write(Register32::kHCControlSet, Read(Register32::kHCControl) | bits);
+    WriteScoped(Register32::kHCControlSet, ReadScoped(Register32::kHCControl) | bits);
 }
 
 void HardwareInterface::ClearHCControlBits(uint32_t bits) noexcept {
-    Write(Register32::kHCControlClear, Read(Register32::kHCControl) & ~bits);
+    WriteScoped(Register32::kHCControlClear, ReadScoped(Register32::kHCControl) & ~bits);
 }
 
-uint32_t HardwareInterface::ReadNodeID() const noexcept { return Read(Register32::kNodeID); }
+uint32_t HardwareInterface::ReadNodeID() const noexcept { return ReadScoped(Register32::kNodeID); }
+
+uint32_t HardwareInterface::ReadIntEvent() const noexcept { return ReadScoped(Register32::kIntEvent); }
+
+uint32_t HardwareInterface::ReadLinkControl() const noexcept {
+    return ReadScoped(Register32::kLinkControl);
+}
+
+uint32_t HardwareInterface::ReadCycleTime() const noexcept { return ReadScoped(Register32::kCycleTimer); }
 
 bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t, uint32_t) const {
-    const bool isSet = (Read(Register32::kHCControl) & mask) != 0U;
+    const bool isSet = (ReadScoped(Register32::kHCControl) & mask) != 0U;
     return expectSet ? isSet : !isSet;
 }
 
 bool HardwareInterface::WaitLink(uint32_t mask, bool expectSet, uint32_t, uint32_t) const {
-    const bool isSet = (Read(Register32::kLinkControl) & mask) != 0U;
+    const bool isSet = (ReadScoped(Register32::kLinkControl) & mask) != 0U;
     return expectSet ? isSet : !isSet;
 }
 
 bool HardwareInterface::WaitNodeIdValid(uint32_t) const {
-    return (Read(Register32::kNodeID) & 0x80000000U) != 0U;
+    return (ReadScoped(Register32::kNodeID) & 0x80000000U) != 0U;
 }
 
-void HardwareInterface::FlushPostedWrites() const {}
-
 std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const noexcept {
-    return {Read(Register32::kCycleTimer), mach_absolute_time()};
+    return {ReadScoped(Register32::kCycleTimer), mach_absolute_time()};
 }
 
 void HardwareInterface::SetTestRegister(Register32 reg, uint32_t value) noexcept {
@@ -358,7 +395,7 @@ void HardwareInterface::SetTestRegister(Register32 reg, uint32_t value) noexcept
 }
 
 uint32_t HardwareInterface::GetTestRegister(Register32 reg) const noexcept {
-    return Read(reg);
+    return ReadScoped(reg);
 }
 
 std::vector<HardwareInterface::TestOperation> HardwareInterface::CopyTestOperations() const {
@@ -451,14 +488,14 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
 
 kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     using namespace ASFW::Driver::IRMCSR;
-    WriteAndFlush(Register32::kInitialBandwidthAvailable, kInitialBandwidthAvailable);
-    WriteAndFlush(Register32::kInitialChannelsAvailableHi, kInitialChannelsAvailableHi);
-    WriteAndFlush(Register32::kInitialChannelsAvailableLo, kInitialChannelsAvailableLo);
+    WriteScoped(Register32::kInitialBandwidthAvailable, kInitialBandwidthAvailable);
+    WriteScoped(Register32::kInitialChannelsAvailableHi, kInitialChannelsAvailableHi);
+    WriteScoped(Register32::kInitialChannelsAvailableLo, kInitialChannelsAvailableLo);
     return kIOReturnSuccess;
 }
 
 bool HardwareInterface::IsLocalCycleMasterEnabled() const noexcept {
-    return (Read(Register32::kLinkControl) & LinkControlBits::kCycleMaster) != 0;
+    return (ReadScoped(Register32::kLinkControl) & LinkControlBits::kCycleMaster) != 0;
 }
 
 bool HardwareInterface::SetLocalCycleMasterEnabled(bool enable) noexcept {

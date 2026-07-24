@@ -75,21 +75,23 @@ kern_return_t IsochReceiveContext::Start() {
     }
 
     const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
-    hardware_->Write(registers_.ContextMatch, contextMatch);
+    auto access = hardware_->TryBeginAccess();
+    if (!access) return kIOReturnNotReady;
+    access.Write(registers_.ContextMatch, contextMatch);
 
     const uint32_t cmdPtr = rxRing_.InitialCommandPtrWord();
     if (cmdPtr == 0) {
         ASFW_LOG(Isoch, "❌ Start: Invalid descriptor cmdPtr");
         return kIOReturnInternalError;
     }
-    hardware_->Write(registers_.CommandPtr, cmdPtr);
+    access.Write(registers_.CommandPtr, cmdPtr);
 
-    hardware_->Write(registers_.ContextControlClear, 0xFFFFFFFFu);
+    access.Write(registers_.ContextControlClear, 0xFFFFFFFFu);
     const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
-    hardware_->Write(registers_.ContextControlSet, ctlValue);
+    access.Write(registers_.ContextControlSet, ctlValue);
 
     const uint32_t contextMask = 1u << contextIndex_;
-    hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
+    access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
     ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
 
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
@@ -115,27 +117,36 @@ kern_return_t IsochReceiveContext::Stop() {
     }
 
     const uint32_t contextMask = 1u << contextIndex_;
-    hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskClear, contextMask);
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskClear, contextMask);
+        access.WriteAndFlush(registers_.ContextControlClear, Driver::ContextControl::kRun);
+    } else {
+        rxLock_.clear(std::memory_order_release);
+        return kIOReturnNotReady;
+    }
     // Flush RUN-clear and wait for ACTIVE to fall before dropping the direct
     // audio binding.  See Linux firewire/ohci.c:1361-1378 for the same
     // teardown ordering; freeing this mapping while ACTIVE is set can fault
     // the host when OHCI completes a late DMA write.
-    hardware_->WriteAndFlush(registers_.ContextControlClear, Driver::ContextControl::kRun);
     ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
 
-    if ((hardware_->Read(registers_.ContextControlSet) & Driver::ContextControl::kActive) != 0) {
+    const auto readControl = [this] {
+        auto access = hardware_->TryBeginAccess();
+        return access ? access.Read(registers_.ContextControlSet) : 0U;
+    };
+    if ((readControl() & Driver::ContextControl::kActive) != 0) {
         IODelay(5);
         constexpr uint32_t kMaxIterations = 250;
         constexpr uint32_t kBaseDelayMicros = 6;
         for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
-            if ((hardware_->Read(registers_.ContextControlSet) & Driver::ContextControl::kActive) == 0) {
+            if ((readControl() & Driver::ContextControl::kActive) == 0) {
                 break;
             }
             IODelay(kBaseDelayMicros + iteration);
         }
     }
 
-    const uint32_t control = hardware_->Read(registers_.ContextControlSet);
+    const uint32_t control = readControl();
     if ((control & Driver::ContextControl::kActive) != 0) {
         const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
             ? kIOReturnDMAError

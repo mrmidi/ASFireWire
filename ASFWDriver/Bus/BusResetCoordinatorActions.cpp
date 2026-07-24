@@ -84,7 +84,9 @@ void BusResetCoordinator::ClearStaleSelfIDComplete2() {
 
     // OHCI 1.1 §6.1 / Table 6-1 and §11.5: `selfIDComplete2` retains state
     // across bus resets and is cleared only through `IntEventClear`.
-    hardware_->WriteAndFlush(Register32::kIntEventClear, IntEventBits::kSelfIDComplete2);
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kIntEventClear, IntEventBits::kSelfIDComplete2);
+    }
     selfIdLatch_.stickyComplete = false;
     selfIdLatch_.stickyCompleteTimeNs = 0;
 }
@@ -104,7 +106,9 @@ void BusResetCoordinator::ClearConsumedSelfIDInterrupts() {
     }
 
     if (clearMask != 0U) {
-        hardware_->WriteAndFlush(Register32::kIntEventClear, clearMask);
+        if (auto access = hardware_->TryBeginAccess()) {
+            access.WriteAndFlush(Register32::kIntEventClear, clearMask);
+        }
     }
 
     selfIdLatch_.Reset();
@@ -141,7 +145,9 @@ bool BusResetCoordinator::DecodeSelfID() {
         return false;
     }
 
-    const uint32_t countRegister = hardware_->Read(Register32::kSelfIDCount);
+    auto access = hardware_->TryBeginAccess();
+    if (!access) return false;
+    const uint32_t countRegister = access.Read(Register32::kSelfIDCount);
     auto decoded = selfIdCapture_->Decode(countRegister, *hardware_);
     if (!decoded) {
         RecordRecoveryReason(std::string{"Self-ID decode failed: "} +
@@ -166,7 +172,9 @@ bool BusResetCoordinator::BuildTopology() {
         return false;
     }
 
-    const uint32_t nodeIDRegister = hardware_->Read(Register32::kNodeID);
+    auto access = hardware_->TryBeginAccess();
+    if (!access) return false;
+    const uint32_t nodeIDRegister = access.Read(Register32::kNodeID);
     const uint64_t timestamp = MonotonicNow();
 
     auto snapshot =
@@ -234,8 +242,10 @@ void BusResetCoordinator::RestoreConfigROM() {
     }
 
     configRomStager_->RestoreHeaderAfterBusReset();
-    hardware_->WriteAndFlush(Register32::kBusOptions, configRomStager_->ExpectedBusOptions());
-    hardware_->WriteAndFlush(Register32::kConfigROMHeader, configRomStager_->ExpectedHeader());
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kBusOptions, configRomStager_->ExpectedBusOptions());
+        access.WriteAndFlush(Register32::kConfigROMHeader, configRomStager_->ExpectedHeader());
+    }
 }
 
 void BusResetCoordinator::ClearBusReset() {
@@ -243,7 +253,9 @@ void BusResetCoordinator::ClearBusReset() {
         return;
     }
 
-    hardware_->WriteAndFlush(Register32::kIntEventClear, IntEventBits::kBusReset);
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kIntEventClear, IntEventBits::kBusReset);
+    }
     busResetClearTime_ = MonotonicNow();
 }
 
@@ -252,7 +264,9 @@ void BusResetCoordinator::EnableFilters() {
         return;
     }
 
-    hardware_->Write(Register32::kAsReqFilterHiSet, kAsReqAcceptAllMask);
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.Write(Register32::kAsReqFilterHiSet, kAsReqAcceptAllMask);
+    }
     filtersEnabled_ = true;
 }
 

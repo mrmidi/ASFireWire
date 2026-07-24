@@ -267,10 +267,12 @@ bool BusResetCoordinator::G_ATInactive() {
 
     // OHCI 1.1 §7.2.3.2 requires software to wait until the AT contexts are no
     // longer active before clearing `IntEvent.busReset`.
+    auto access = hardware_->TryBeginAccess();
+    if (!access) return false;
     const uint32_t atReqControl =
-        hardware_->Read(Register32FromOffsetUnchecked(DMAContextHelpers::AsReqTrContextControlSet));
+        access.Read(Register32FromOffsetUnchecked(DMAContextHelpers::AsReqTrContextControlSet));
     const uint32_t atRspControl =
-        hardware_->Read(Register32FromOffsetUnchecked(DMAContextHelpers::AsRspTrContextControlSet));
+        access.Read(Register32FromOffsetUnchecked(DMAContextHelpers::AsRspTrContextControlSet));
 
     const bool atReqActive = (atReqControl & kContextControlActiveBit) != 0U;
     const bool atRspActive = (atRspControl & kContextControlActiveBit) != 0U;
@@ -290,7 +292,9 @@ bool BusResetCoordinator::G_NodeIDValid() const {
         return false;
     }
 
-    const uint32_t nodeId = hardware_->Read(Register32::kNodeID);
+    auto access = hardware_->TryBeginAccess();
+    if (!access) return false;
+    const uint32_t nodeId = access.Read(Register32::kNodeID);
     return ((nodeId & 0x80000000U) != 0U) && ((nodeId & 0x3FU) != 63U);
 }
 
@@ -299,7 +303,8 @@ bool BusResetCoordinator::G_IsRoot() const {
         return false;
     }
     // OHCI NodeID.root (bit 30) — set when the PHY reports this controller is root.
-    return (hardware_->Read(Register32::kNodeID) & NodeIDBits::kRoot) != 0U;
+    auto access = hardware_->TryBeginAccess();
+    return access && (access.Read(Register32::kNodeID) & NodeIDBits::kRoot) != 0U;
 }
 
 } // namespace ASFW::Driver
