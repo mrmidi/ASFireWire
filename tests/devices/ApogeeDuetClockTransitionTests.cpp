@@ -19,6 +19,7 @@ using ASFW::Async::AsyncHandle;
 using ASFW::Async::AsyncStatus;
 using ASFW::Async::FWAddress;
 using ASFW::Async::InterfaceCompletionCallback;
+using ASFW::Discovery::DeviceRouteToken;
 using ASFW::FW::FwSpeed;
 using ASFW::FW::Generation;
 using ASFW::FW::NodeId;
@@ -63,12 +64,23 @@ public:
     }
 };
 
+[[nodiscard]] DeviceRouteToken MakeRoute() {
+    return DeviceRouteToken{
+        .guid = 0x3DB0A0000D112ULL,
+        .deviceIncarnation = 1,
+        .routeEpoch = 1,
+        .generation = Generation{1},
+        .nodeId = 0xFFC2,
+    };
+}
+
 TEST(ApogeeDuetClockTransitionTests, ConcurrentApplyClockConfigReturnsBusy) {
     TestBusOps busOps;
     TestBusInfo busInfo;
     ASFW::Testing::FakeTimerScheduler timerScheduler;
 
-    ApogeeDuetProtocol protocol(busOps, busInfo, 0xFFC2, nullptr, nullptr, nullptr, 0x3DB0A0000D112ULL, 100U, &timerScheduler);
+    ApogeeDuetProtocol protocol(busOps, busInfo, MakeRoute(), nullptr, nullptr, nullptr, 100U,
+                                &timerScheduler);
 
     // Initial ApplyClockConfig without transport returns kIOReturnNotReady
     bool callbackFired = false;
@@ -85,7 +97,8 @@ TEST(ApogeeDuetClockTransitionTests, ShutdownCancelsClockTransition) {
     TestBusInfo busInfo;
     ASFW::Testing::FakeTimerScheduler timerScheduler;
 
-    ApogeeDuetProtocol protocol(busOps, busInfo, 0xFFC2, nullptr, nullptr, nullptr, 0x3DB0A0000D112ULL, 100U, &timerScheduler);
+    ApogeeDuetProtocol protocol(busOps, busInfo, MakeRoute(), nullptr, nullptr, nullptr, 100U,
+                                &timerScheduler);
 
     EXPECT_EQ(protocol.Shutdown(), kIOReturnSuccess);
 }

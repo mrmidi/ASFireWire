@@ -149,10 +149,8 @@ private:
                              uint32_t deltaConsumed,
                              RefillOutcome& out) noexcept;
     void CommitRefill(uint32_t toFill) noexcept;
-    [[nodiscard]] bool DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
-                                                 uint8_t contextIndex,
-                                                 uint32_t& outPacketIndex,
-                                                 uint32_t& outCmdPtr) noexcept;
+    [[nodiscard]] bool DecodeHardwarePacketIndex(uint32_t cmdPtr,
+                                                 uint32_t& outPacketIndex) noexcept;
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};

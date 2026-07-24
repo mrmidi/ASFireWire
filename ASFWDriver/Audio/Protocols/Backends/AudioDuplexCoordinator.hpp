@@ -104,7 +104,7 @@ private:
     [[nodiscard]] uint64_t AllocateRestartId() noexcept;
     [[nodiscard]] bool IsRestartEpochCurrent(uint64_t guid,
                                              uint64_t restartId,
-                                             FW::Generation topologyGeneration) const noexcept;
+                                             const Discovery::DeviceRouteToken& route) const noexcept;
     [[nodiscard]] bool TryConsumePendingClockRequest(uint64_t guid, PendingClockRequest& outRequest) noexcept;
     [[nodiscard]] bool TryTakeCompletedClockRequest(
         uint64_t guid,

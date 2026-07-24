@@ -458,6 +458,10 @@ kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
 }
 
 kern_return_t ControllerCore::Start(IOService* provider) {
+    if (!deps_.stateMachine) {
+        ASFW_LOG(Controller, "ControllerCore::Start requires the shared runtime state machine");
+        return kIOReturnNotReady;
+    }
     if (running_) {
         return kIOReturnSuccess;
     }
@@ -816,8 +820,7 @@ kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
     // Before the link is up there is nothing to re-advertise — Start() stages the
     // Config ROM from rolePolicy_ during bring-up. Once running, re-stage the BIB
     // capabilities and force a long bus reset so peers re-read the local ROM.
-    if (!deps_.stateMachine || deps_.stateMachine->CurrentState() != ControllerState::kRunning ||
-        !deps_.hardware) {
+    if (StateMachine().CurrentState() != ControllerState::kRunning || !deps_.hardware) {
         return kIOReturnSuccess;
     }
 

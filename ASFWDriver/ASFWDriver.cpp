@@ -73,6 +73,7 @@
 #include "Service/DriverContext.hpp"
 #include "Service/LocalRequestWiring.hpp"
 #include "SCSIController/SBP2BridgeHub.hpp"
+#include "SCSIController/SBP2NubPublisher.hpp"
 #include "SCSIController/SBP2TargetBridge.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
@@ -202,6 +203,11 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
     if (ctx.sbp2Bridge) {
         ctx.sbp2Bridge->Shutdown();
         ctx.sbp2Bridge.reset();
+    }
+    if (ctx.sbp2NubPublisher && plan.reason != QuiesceReason::kSystemSuspend &&
+        plan.reason != QuiesceReason::kWakeRebuild) {
+        ctx.sbp2NubPublisher->Shutdown();
+        ctx.sbp2NubPublisher.reset();
     }
 
     ctx.watchdog.Stop();
@@ -471,22 +477,9 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
 
-    // Publish once per instance: StartRuntime() is re-entered on wake, and the
-    // SBP-2 nub and RegisterService() must not repeat across sleep/wake cycles.
+    // Register once per service instance: StartRuntime() is re-entered on wake.
+    // SBP-2 nubs are published separately and only for discovered SBP-2 units.
     if (!ivars->serviceRegistered) {
-        // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
-        // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
-        // this nub yet — it is staged for a future per-unit personality carrying
-        // login/unit identity, and kept published now to reserve the discovery seam.
-        IOService* sbp2NubService = nullptr;
-        kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
-        if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
-            ASFW_LOG(Controller, "[SCSIHBA] Failed to create ASFWSBP2Nub: 0x%08x", nubKr);
-        } else {
-            // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
-            sbp2NubService->release();
-        }
-
         RegisterService();
         ivars->serviceRegistered = true;
     }

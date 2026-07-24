@@ -35,6 +35,7 @@
 #include "../Protocols/SBP2/Session/DriverKitSessionScheduler.hpp"
 #include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../SCSIController/SBP2BridgeHub.hpp"
+#include "../SCSIController/SBP2NubPublisher.hpp"
 #include "../SCSIController/SBP2TargetBridge.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
@@ -66,6 +67,10 @@ void ServiceContext::DisarmProviderNotifications() {
 void ServiceContext::Reset(ResetMode mode) {
     // Runtime stopping is owned by RuntimeLifecycleCoordinator. Reset only
     // releases resources after its quiesce executor has stopped them.
+    if (mode == ResetMode::Full && sbp2NubPublisher) {
+        sbp2NubPublisher->Shutdown();
+        sbp2NubPublisher.reset();
+    }
     controller.reset();
     audioCoordinator.reset();
     // Tear down the runtime audio protocols while the services they were built from
@@ -95,6 +100,13 @@ void ServiceContext::Reset(ResetMode mode) {
     deps.irmClient.reset();         // Clean up IRM client
     deps.asyncController.reset();
     deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    if (mode == ResetMode::Full) {
+        // A new provider incarnation must rediscover remote hardware. Retaining
+        // old FWDevice/FWUnit objects here would let a new SBP-2 nub publisher
+        // adopt a stale unit before a fresh ROM scan establishes its route.
+        deps.deviceManager.reset();
+        deps.deviceRegistry.reset();
+    }
     deps.cycleInconsistentCallback = {};
     statusPublisher.Reset();
     watchdog.Reset();
@@ -269,6 +281,13 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
         ctx.sbp2Bridge->Start();
         ASFW::Protocols::SBP2::SBP2BridgeHub::Set(ctx.sbp2Bridge);
         ASFW_LOG(Controller, "[Controller] SBP2 target bridge initialized");
+    }
+
+    if (!ctx.sbp2NubPublisher && d.deviceManager && ctx.workQueue) {
+        ctx.sbp2NubPublisher = std::make_shared<ASFW::Protocols::SBP2::SBP2NubPublisher>(
+            &service, *d.deviceManager, ctx.workQueue.get());
+        ctx.sbp2NubPublisher->Start();
+        ASFW_LOG(Controller, "[Controller] SBP-2 real-unit nub publisher initialized");
     }
 
     // Inbound local-request routing remains owned centrally by LocalRequestDispatch

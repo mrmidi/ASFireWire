@@ -34,6 +34,7 @@ class CMPClient;
 
 namespace ASFW::Discovery {
 struct DeviceRecord;
+class DeviceRegistry;
 }
 
 namespace ASFW::Scheduling {
@@ -78,9 +79,10 @@ public:
     // nullptr for unknown devices (Create returns nullptr) or when bus ports / a
     // valid operational node id are unavailable.
     std::shared_ptr<IDeviceProtocol> EnsureForDevice(const Discovery::DeviceRecord& record,
-                                                     Async::IFireWireBusOps* busOps,
-                                                     Async::IFireWireBusInfo* busInfo,
-                                                     IRM::IRMClient* irmClient) noexcept;
+                                                      Async::IFireWireBusOps* busOps,
+                                                      Async::IFireWireBusInfo* busInfo,
+                                                      Discovery::DeviceRegistry& routeRegistry,
+                                                      IRM::IRMClient* irmClient) noexcept;
 
     // Registers an already-constructed protocol for `guid`, replacing any existing entry.
     // For external creators/tests that build the protocol themselves rather than going

@@ -580,6 +580,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                 deviceRecord,
                 static_cast<Async::IFireWireBusOps*>(&bus),
                 static_cast<Async::IFireWireBusInfo*>(&bus),
+                *deps_.deviceRegistry,
                 deps_.irmClient.get());
         }
 

@@ -238,11 +238,11 @@ void DICEDuplexBringupController::ScheduleRetry(uint64_t delayMs, std::function<
 #endif
 }
 
-bool DICEDuplexBringupController::EnsureGenerationCurrent() const noexcept {
+bool DICEDuplexBringupController::EnsureRouteCurrent() const noexcept {
     if (restartSession_.phase == DiceRestartPhase::kIdle) {
         return true;
     }
-    return busInfo_.GetGeneration() == restartSession_.generation;
+    return io_.IsRouteCurrent();
 }
 
 bool DICEDuplexBringupController::TeardownRequested() const noexcept {
@@ -390,7 +390,7 @@ void DICEDuplexBringupController::PrepareDuplex(
 void DICEDuplexBringupController::DoReadGlobalStatus(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -409,7 +409,7 @@ void DICEDuplexBringupController::DoReadGlobalStatus(
 void DICEDuplexBringupController::DoRefreshSectionLayout(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -428,7 +428,7 @@ void DICEDuplexBringupController::DoRefreshSectionLayout(
 void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -454,7 +454,7 @@ void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
 void DICEDuplexBringupController::DoReadOwnerBeforeClaim(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -478,7 +478,7 @@ void DICEDuplexBringupController::DoReadOwnerBeforeClaim(
 void DICEDuplexBringupController::DoClaimOwner(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -506,7 +506,7 @@ void DICEDuplexBringupController::DoClaimOwner(
 void DICEDuplexBringupController::DoReadOwnerAfterClaim(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -533,7 +533,7 @@ void DICEDuplexBringupController::DoReadOwnerAfterClaim(
 void DICEDuplexBringupController::DoWriteClockSelect(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -579,7 +579,7 @@ void DICEDuplexBringupController::DoActiveClockCheck(
     AudioDuplexChannels channels,
     uint32_t accumulatedNotify,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -633,7 +633,7 @@ void DICEDuplexBringupController::DoWaitClockAccepted(
     AudioDuplexChannels channels,
     uint32_t attempt,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -675,7 +675,7 @@ void DICEDuplexBringupController::DoConfirmClockAccepted(
     AudioDuplexChannels channels,
     uint32_t observedNotify,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -696,7 +696,7 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
     uint32_t observedNotify,
     IOReturn failureStatus,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -762,7 +762,7 @@ void DICEDuplexBringupController::DoAwaitStreamingClockLock(
     AudioDuplexChannels channels,
     uint32_t attempt,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -817,7 +817,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
     AudioDuplexChannels channels,
     uint32_t step,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -993,7 +993,7 @@ void DICEDuplexBringupController::DoProgramRx(
     uint32_t streamIndex,
     uint32_t entrySizeBytes,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -1064,7 +1064,7 @@ void DICEDuplexBringupController::DoProgramTx(
     uint32_t streamIndex,
     uint32_t entrySizeBytes,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -1126,7 +1126,7 @@ void DICEDuplexBringupController::DoEnableGlobal(
     AudioDuplexChannels channels,
     VoidCallback cb) {
     (void)channels;
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -1254,7 +1254,7 @@ void DICEDuplexBringupController::DoRollback(IOReturn error, VoidCallback cb) {
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         ResetRestartSession(restartSession_);
         flowMode_ = FlowMode::kNone;
         cb(error);
@@ -1274,7 +1274,7 @@ void DICEDuplexBringupController::DoPollSourceLock(
     uint32_t attempt,
     uint32_t accumulatedNotify,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         (void)StopDuplex();
         cb(kIOReturnOffline);
         return;
@@ -1370,7 +1370,7 @@ void DICEDuplexBringupController::ProgramRxForDuplex48k(VoidCallback callback) {
         callback(kIOReturnNotReady);
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         callback(kIOReturnOffline);
         return;
     }
@@ -1391,7 +1391,7 @@ void DICEDuplexBringupController::ProgramTxAndEnableDuplex48k(VoidCallback callb
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         callback(kIOReturnOffline);
         return;
     }
@@ -1463,7 +1463,7 @@ void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         restartSession_.ownerClaimed = false;
         callback(kIOReturnSuccess);
         return;
@@ -1505,7 +1505,7 @@ void DICEDuplexBringupController::DoStopDisableGlobal(
     if (AbortStopIfTeardown("DisableGlobal", cb)) {
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         ResetRestartSession(restartSession_);
         cb(stopSequenceError_);
@@ -1530,7 +1530,7 @@ void DICEDuplexBringupController::DoStopDisableTx(
     if (AbortStopIfTeardown("DisableTx", cb)) {
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         cb(stopSequenceError_);
         return;
@@ -1612,7 +1612,7 @@ void DICEDuplexBringupController::DoStopDisableRx(
     if (AbortStopIfTeardown("DisableRx", cb)) {
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         cb(stopSequenceError_);
         return;
@@ -1708,7 +1708,7 @@ void DICEDuplexBringupController::DoStopReleaseOwner(VoidCallback cb) {
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         ResetRestartSession(restartSession_);
         flowMode_ = FlowMode::kNone;

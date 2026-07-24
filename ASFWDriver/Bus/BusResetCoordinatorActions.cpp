@@ -145,9 +145,15 @@ bool BusResetCoordinator::DecodeSelfID() {
         return false;
     }
 
-    auto access = hardware_->TryBeginAccess();
-    if (!access) return false;
-    const uint32_t countRegister = access.Read(Register32::kSelfIDCount);
+    uint32_t countRegister = 0;
+    {
+        auto access = hardware_->TryBeginAccess();
+        if (!access) return false;
+        countRegister = access.Read(Register32::kSelfIDCount);
+    }
+    // Decode performs the mandated second SelfIDCount read to reject a capture
+    // that changed under us. That read needs its own short scope; never hold a
+    // HardwareAccessScope across a call which can acquire another one.
     auto decoded = selfIdCapture_->Decode(countRegister, *hardware_);
     if (!decoded) {
         RecordRecoveryReason(std::string{"Self-ID decode failed: "} +

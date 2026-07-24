@@ -27,11 +27,13 @@ namespace {
 
 SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      Protocols::Ports::FireWireBusInfo& busInfo,
-                                     uint16_t nodeId,
+                                     Discovery::DeviceRegistry& routeRegistry,
+                                     const Discovery::DeviceRouteToken& route,
                                      IRM::IRMClient* irmClient)
-    : tcat_(busOps, busInfo, nodeId, irmClient)
+    : tcat_(busOps, busInfo, routeRegistry, route, irmClient)
 {
-    ASFW_LOG(DICE, "SPro24DspProtocol created for node 0x%04x", nodeId);
+    ASFW_LOG(DICE, "SPro24DspProtocol created for GUID=0x%016llx node=0x%04x", route.guid,
+             route.nodeId);
 }
 
 bool SPro24DspProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {

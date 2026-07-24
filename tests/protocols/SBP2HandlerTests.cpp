@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Discovery/DeviceManager.hpp"
+#include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "ASFWDriver/Protocols/SBP2/SBP2WireFormats.hpp"
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
@@ -35,6 +36,7 @@ using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceKind;
 using ASFW::Discovery::DeviceManager;
 using ASFW::Discovery::DeviceRecord;
+using ASFW::Discovery::DeviceRegistry;
 using ASFW::Discovery::Generation;
 using ASFW::Discovery::LifeState;
 using ASFW::Discovery::LinkPolicy;
@@ -116,7 +118,8 @@ std::vector<uint8_t> BuildCommandRequestWire(std::vector<uint8_t> cdb,
 
 class HandlerRig {
 public:
-    HandlerRig() : registry(bus, bus, addressManager, deviceManager, scheduler, &queue) {
+    HandlerRig()
+        : registry(bus, bus, addressManager, deviceRegistry, deviceManager, scheduler, &queue) {
         queue.SetManualDispatchForTesting(true);
         bus.SetGeneration(ASFW::FW::Generation{1});
         bus.SetLocalNodeID(ASFW::FW::NodeId{0x2A});
@@ -138,6 +141,7 @@ public:
         record.state = LifeState::Ready;
 
         ConfigROM rom{};
+        rom.bib.guid = record.guid;
         rom.gen = Generation{1};
         rom.nodeId = record.nodeId;
         rom.vendorName = record.vendorName;
@@ -149,6 +153,7 @@ public:
             RomEntry{CfgKey::Management_Agent_Offset, 0x000080, 1, 0},
             RomEntry{CfgKey::Unit_Characteristics, 0x080400, 0, 0},
         };
+        (void)deviceRegistry.UpsertFromROM(rom, record.link);
         ASSERT_NE(nullptr, deviceManager.UpsertDevice(record, rom));
     }
 
@@ -199,6 +204,7 @@ public:
     ASFW::Async::Testing::DeferredFireWireBus bus;
     FakeSessionScheduler scheduler;
     AddressSpaceManager addressManager{nullptr};
+    DeviceRegistry deviceRegistry;
     DeviceManager deviceManager;
     IODispatchQueue queue;
     SessionRegistry registry;

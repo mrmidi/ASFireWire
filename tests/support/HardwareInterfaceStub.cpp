@@ -49,6 +49,11 @@ constexpr RegisterKey KeyFor(Register32 reg) noexcept {
 HardwareInterface::HardwareInterface() {
     std::scoped_lock lock(gHardwareStateLock);
     gHardwareStates.try_emplace(this);
+    // Host fixtures construct this fake directly; there is no PCI provider
+    // attach phase. Model a fully initialized provider so scoped MMIO is
+    // available until an explicit RevokeAndDrain()/Detach(). Production keeps
+    // the gate closed until HardwareInterface::Attach() completes.
+    accessGate_.Open();
 }
 
 HardwareInterface::~HardwareInterface() {
@@ -113,10 +118,16 @@ void HardwareAccessScope::Write(Register32 reg, uint32_t value) const noexcept {
     if (hardware_) hardware_->WriteScoped(reg, value);
 }
 
-void HardwareAccessScope::FlushPostedWrites() const noexcept {}
+void HardwareAccessScope::FlushPostedWrites() const noexcept {
+    if (!hardware_) {
+        return;
+    }
+    hardware_->FlushPostedWritesScoped();
+}
 
 void HardwareAccessScope::WriteAndFlush(Register32 reg, uint32_t value) const noexcept {
     Write(reg, value);
+    FlushPostedWrites();
 }
 
 uint32_t HardwareInterface::ReadScoped(Register32 reg) const noexcept {
@@ -151,7 +162,11 @@ void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexce
     });
 }
 
-void HardwareInterface::FlushPostedWritesScoped() const noexcept {}
+void HardwareInterface::FlushPostedWritesScoped() const noexcept {
+    WithState(this, [](HardwareTestState& state) {
+        state.operations.push_back(TestOperation::WriteAndFlush);
+    });
+}
 
 void HardwareInterface::SetInterruptMask(uint32_t mask, bool enable) {
     if (enable) {

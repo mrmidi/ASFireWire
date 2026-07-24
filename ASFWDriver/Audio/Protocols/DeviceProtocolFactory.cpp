@@ -19,6 +19,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     uint32_t modelId,
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,
+    Discovery::DeviceRegistry& routeRegistry,
     const Discovery::DeviceRouteToken& route,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
@@ -32,7 +33,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         if (modelId == kSPro24DspModelId) {
             ASFW_LOG(DICE, "Creating SPro24DspProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
                      vendorId, modelId, nodeId);
-            return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(busOps, busInfo, nodeId, irmClient);
+            return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(busOps, busInfo, routeRegistry,
+                                                                         route, irmClient);
         }
 
         if (modelId == kSPro14ModelId || modelId == kSPro24ModelId) {
@@ -43,7 +45,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                      vendorId,
                      modelId,
                      nodeId);
-            return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+            return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                    route, irmClient);
         }
     }
 
@@ -53,7 +56,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId,
                  modelId,
                  nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                route, irmClient);
     }
 
     if (vendorId == kMidasVendorId && modelId == kMidasVeniceModelId) {
@@ -62,7 +66,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId,
                  modelId,
                  nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                route, irmClient);
     }
 
     if (vendorId == kPreSonusVendorId && modelId == kStudioLive1602ModelId) {
@@ -71,7 +76,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId,
                  modelId,
                  nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                route, irmClient);
     }
 
     // Check for Apogee Duet FireWire (AV/C + vendor-dependent commands).

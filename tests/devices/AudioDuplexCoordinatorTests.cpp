@@ -1182,7 +1182,7 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingAbortsClockRequestsDuringRestar
     EXPECT_EQ(protocol_->stopCalls, 3);
 }
 
-TEST_F(AudioDuplexCoordinatorTests, GenerationChangeDuringPrepareInvalidatesRestartEpoch) {
+TEST_F(AudioDuplexCoordinatorTests, RouteRebindDuringPrepareInvalidatesRestartEpoch) {
     protocol_->SetHoldPrepare(true);
 
     std::promise<IOReturn> startPromise;
@@ -1191,7 +1191,8 @@ TEST_F(AudioDuplexCoordinatorTests, GenerationChangeDuringPrepareInvalidatesRest
         [&] { startPromise.set_value(coordinator_.StartStreaming(kTestGuid)); });
 
     ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(1));
-    InstallDeviceAtGeneration(Generation{2}, protocol_);
+    registry_.InvalidateLiveMappingsForBusReset();
+    InstallDeviceAtGeneration(Generation{1}, protocol_);
     protocol_->SetHoldPrepare(false);
 
     EXPECT_EQ(startFuture.get(), kIOReturnAborted);

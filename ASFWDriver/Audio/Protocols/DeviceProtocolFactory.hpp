@@ -19,6 +19,10 @@ namespace ASFW::CMP {
 class CMPClient;
 }
 
+namespace ASFW::Discovery {
+class DeviceRegistry;
+}
+
 namespace ASFW::IRM {
 class IRMClient;
 }
@@ -158,6 +162,7 @@ public:
         uint32_t modelId,
         Protocols::Ports::FireWireBusOps& busOps,
         Protocols::Ports::FireWireBusInfo& busInfo,
+        Discovery::DeviceRegistry& routeRegistry,
         const Discovery::DeviceRouteToken& route,
         ::ASFW::IRM::IRMClient* irmClient = nullptr,
         ::ASFW::CMP::CMPClient* cmpClient = nullptr,

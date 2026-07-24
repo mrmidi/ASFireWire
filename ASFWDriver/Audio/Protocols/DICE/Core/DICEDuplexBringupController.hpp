@@ -128,7 +128,7 @@ private:
     void DoStopReleaseRx(bool releaseOwner, VoidCallback cb);
     void DoStopReleaseOwner(VoidCallback cb);
 
-    [[nodiscard]] bool EnsureGenerationCurrent() const noexcept;
+    [[nodiscard]] bool EnsureRouteCurrent() const noexcept;
     [[nodiscard]] bool TeardownRequested() const noexcept;
     [[nodiscard]] uint64_t OwnerValue() const noexcept;
     void RecordStopTeardownAbort(const char* stage) const noexcept;

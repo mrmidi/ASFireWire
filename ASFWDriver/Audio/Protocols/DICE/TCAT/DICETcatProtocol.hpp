@@ -34,7 +34,8 @@ public:
 
     DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                      Protocols::Ports::FireWireBusInfo& busInfo,
-                     uint16_t nodeId,
+                     Discovery::DeviceRegistry& routeRegistry,
+                     const Discovery::DeviceRouteToken& route,
                      ::ASFW::IRM::IRMClient* irmClient = nullptr);
 
     IOReturn Initialize() override;

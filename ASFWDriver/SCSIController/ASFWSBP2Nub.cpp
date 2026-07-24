@@ -2,7 +2,7 @@
 // ASFWSBP2Nub.cpp
 // ASFWDriver
 //
-// Minimal provider nub for ASFWSCSIController. See ASFWSBP2Nub.iig.
+// Per-discovered-unit provider nub. See ASFWSBP2Nub.iig.
 //
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWSBP2Nub.h>
@@ -18,7 +18,7 @@ kern_return_t IMPL(ASFWSBP2Nub, Start)
     if (ret != kIOReturnSuccess) {
         return ret;
     }
-    ASFW_LOG(Controller, "[SCSIHBA] ASFWSBP2Nub::Start — registering (phase-0)");
+    ASFW_LOG(Controller, "[SCSIHBA] ASFWSBP2Nub::Start — registering discovered unit");
     ret = RegisterService();
     if (ret != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[SCSIHBA] ASFWSBP2Nub RegisterService failed: 0x%x", ret);
