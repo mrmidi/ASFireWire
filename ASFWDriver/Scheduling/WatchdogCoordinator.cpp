@@ -91,9 +91,27 @@ void WatchdogCoordinator::Stop() {
 }
 
 void WatchdogCoordinator::Reset() {
-    Stop();
-    action_.reset();
-    timer_.reset();
+    // Cancel is terminal. Keep both the source and its OSAction alive until
+    // DriverKit confirms that every queued timer callback has returned; the
+    // timer retains its handler until cancellation (IOTimerDispatchSource.h).
+    if (timer_) {
+        IOTimerDispatchSource* timer = timer_.detach();
+        OSAction* action = action_.detach();
+        const kern_return_t kr = timer->Cancel(^{
+            if (action) {
+                action->release();
+            }
+            timer->release();
+        });
+        if (kr != kIOReturnSuccess) {
+            if (action) {
+                action->release();
+            }
+            timer->release();
+        }
+    } else {
+        action_.reset();
+    }
     isochLogDivider_ = 0;
     itLogDivider_ = 0;
     ztsLogDivider_ = 0;

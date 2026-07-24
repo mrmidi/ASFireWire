@@ -41,11 +41,24 @@
 void ServiceContext::DisarmProviderNotifications() {
 #ifndef ASFW_HOST_TEST
     if (providerNotifications) {
-        (void)providerNotifications->SetEnableWithCompletion(false, nullptr);
-        // Do not call Cancel(nullptr) here. DriverKit dispatches cancel asynchronously,
-        // and releasing the source before that block runs can crash in Cancel_Impl.
+        // Cancellation is terminal, so retain the source and its OSAction until
+        // DriverKit reports that all queued notification handlers completed.
+        auto* source = providerNotifications.detach();
+        auto* action = providerNotificationAction.detach();
+        const kern_return_t kr = source->Cancel(^{
+            if (action) {
+                action->release();
+            }
+            source->release();
+        });
+        if (kr != kIOReturnSuccess) {
+            if (action) {
+                action->release();
+            }
+            source->release();
+        }
+        return;
     }
-    providerNotifications.reset();
     providerNotificationAction.reset();
 #endif
 }

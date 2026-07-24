@@ -153,16 +153,18 @@ state machine and cannot admit work.
 
 ## DriverKit completion barriers
 
-Cancellation is not complete merely because cancellation was requested. The
-coordinator composes completion-bearing teardown operations for interrupt,
-timer, notification, and action sources.
+Cancellation is not complete merely because cancellation was requested. Final
+teardown uses the terminal `Cancel` completion of interrupt, timer, and
+notification sources. The source and its OSAction retain their final references
+until that completion executes, after all pending handlers return; only then are
+they released.
 
-`super::Stop()` may run only after the final barrier proves that no callback can
-still target or retain the service.
+Suspend is different: it uses `SetEnableWithCompletion(false, ...)` and keeps
+the source and action alive for wake. The lifecycle state closes work admission
+before disable, so a queued callback cannot enter torn-down runtime state.
 
-The coordinator must never block a dispatch queue while waiting for completion
-work scheduled to that same queue. Barrier composition must be asynchronous or
-executed from a context that can safely wait.
+The coordinator never blocks a dispatch queue waiting for its own completion
+work. Completion handlers provide the lifetime barrier asynchronously.
 
 ## MMIO rule
 

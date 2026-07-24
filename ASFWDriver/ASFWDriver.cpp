@@ -180,9 +180,7 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
     const bool providerRevoked = plan.reason == QuiesceReason::kProviderRevoked;
 
     // A provider notification can arrive while another quiesce is in progress.
-    // Revoke first: every legacy register helper is still individually gated
-    // until the batch-scoped HardwareAccessGate cutover, so later cleanup MMIO
-    // becomes a no-op instead of touching a withdrawn BAR.
+    // Revoke first so no later software teardown can enter an OHCI MMIO scope.
     if (providerRevoked && ctx.deps.hardware) {
         ctx.deps.hardware->RevokeAndDrain();
     }
@@ -511,16 +509,25 @@ kern_return_t IMPL(ASFWDriver, Stop) {
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kPlannedStop));
     if (ivars) {
         if (ivars->wakeVerifyTimer) {
-            // Disable only, then release — Cancel() dispatches async and can
-            // run after the source is freed (see WatchdogCoordinator::Stop).
-            // Releasing the action breaks the OSAction→service retain cycle.
-            ivars->wakeVerifyTimer->SetEnableWithCompletion(false, nullptr);
-            ivars->wakeVerifyTimer->release();
+            // Final stop is terminal.  DriverKit retains the timer's action
+            // until cancellation, and invokes this completion only after any
+            // queued timer callback returns.
+            auto* timer = ivars->wakeVerifyTimer;
+            auto* action = ivars->wakeVerifyAction;
             ivars->wakeVerifyTimer = nullptr;
-        }
-        if (ivars->wakeVerifyAction) {
-            ivars->wakeVerifyAction->release();
             ivars->wakeVerifyAction = nullptr;
+            const kern_return_t kr = timer->Cancel(^{
+                if (action) {
+                    action->release();
+                }
+                timer->release();
+            });
+            if (kr != kIOReturnSuccess) {
+                if (action) {
+                    action->release();
+                }
+                timer->release();
+            }
         }
         ivars->powerProvider = nullptr;
     }
