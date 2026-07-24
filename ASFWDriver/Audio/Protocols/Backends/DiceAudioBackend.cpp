@@ -546,8 +546,8 @@ void DiceAudioBackend::NotificationObserverThunk(void* context, uint32_t bits) n
 void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     if (guid == 0) return;
 
-    const auto* record = registry_.FindByGuid(guid);
-    if (!record) {
+    const auto record = registry_.SnapshotByGuid(guid);
+    if (!record.has_value()) {
         ASFW_LOG(Audio, "DiceAudioBackend::EnsureNubForGuid: no registry record for GUID=0x%016llx", guid);
         return;
     }

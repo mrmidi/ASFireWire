@@ -23,6 +23,7 @@
 #include <span>
 #include "AVCDefs.hpp"
 #include "../Ports/FireWireBusPort.hpp"
+#include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
 
@@ -155,6 +156,7 @@ public:
     bool init(Protocols::Ports::FireWireBusOps* busOps,
               Protocols::Ports::FireWireBusInfo* busInfo,
               Discovery::FWDevice* device,
+              Discovery::DeviceRegistry& routeRegistry,
               Scheduling::ITimerScheduler& timerScheduler,
               const FCPTransportConfig& config = {});
 
@@ -181,20 +183,13 @@ public:
     /// Resume an explicitly idempotent command only after discovery has
     /// rebound this transport's device to the reset generation. Calling this
     /// before the device is ready is deliberately a no-op.
-    void OnRouteRevalidated(uint32_t generation);
+    void OnRouteRevalidated(const Discovery::DeviceRouteToken& route);
 
     const FCPTransportConfig& GetConfig() const { return config_; }
 
-    // The FWDevice object survives a bus reset and is updated with its new
-    // node ID before observers are resumed. CMP must use this live identity,
-    // never a node ID cached by a protocol adapter before the reset.
-    [[nodiscard]] uint16_t GetTargetNodeID() const noexcept {
-        return device_ ? device_->GetNodeID() : 0xFFFFU;
-    }
-
 private:
-    /// Immutable routing epoch for one FCP block-write attempt.  A response
-    /// may match only after this exact attempt has completed successfully.
+    /// Immutable route token for one FCP block-write attempt. A response may
+    /// match only after this exact attempt has completed successfully.
     /// Linux pairs destination identity with generation at request issue
     /// (core-transaction.c:285-303, 363-372); Apple's AVC stack retains the
     /// equivalent fWriteNodeID/fWriteGen on its write command
@@ -202,8 +197,7 @@ private:
     /// their implementation.
     struct FCPWriteAttempt {
         uint64_t id{0};
-        uint16_t targetNodeID{0xFFFFU};
-        uint32_t generation{0};
+        Discovery::DeviceRouteToken route{};
     };
 
     struct OutstandingCommand {
@@ -221,10 +215,10 @@ private:
         std::optional<FCPWriteAttempt> successfulWriteAttempt;
         /// A reset may invalidate the route between write and response. An
         /// explicitly idempotent request waits here until discovery confirms a
-        /// fresh `(node, generation)` route; it must never replay immediately
+        /// fresh route token; it must never replay immediately
         /// on the reset interrupt path.
         bool awaitingRouteRevalidation{false};
-        uint32_t resetGeneration{0};
+        std::optional<Discovery::DeviceRouteToken> resetRoute;
         bool gotInterim{false};
 
         Async::AsyncHandle asyncHandle;
@@ -257,6 +251,7 @@ private:
     Protocols::Ports::FireWireBusOps* busOps_{nullptr};
     Protocols::Ports::FireWireBusInfo* busInfo_{nullptr};
     Discovery::FWDevice* device_{nullptr};
+    Discovery::DeviceRegistry* routeRegistry_{nullptr};
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};
     FCPTransportConfig config_;
 

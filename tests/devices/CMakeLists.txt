@@ -65,6 +65,7 @@ add_device_test(BeBoBProtocolTests
     BeBoBProtocolTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
 )
@@ -114,6 +115,7 @@ add_device_test(ApogeeDuetVendorCmdTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
 # Apogee Duet clock transition tests

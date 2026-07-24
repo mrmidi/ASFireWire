@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AudioTypes.hpp"
+#include "../../Discovery/DeviceRouteToken.hpp"
 
 #include <DriverKit/IOReturn.h>
 #include <cstdint>
@@ -119,9 +120,9 @@ public:
     }
 
     /// Update volatile runtime context that can change across bus resets.
-    virtual void UpdateRuntimeContext(uint16_t nodeId,
+    virtual void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                       Protocols::AVC::FCPTransport* transport) {
-        (void)nodeId;
+        (void)route;
         (void)transport;
     }
 

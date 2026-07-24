@@ -107,11 +107,10 @@ public:
 
     ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                        Protocols::Ports::FireWireBusInfo& busInfo,
-                       uint16_t nodeId,
+                       Discovery::DeviceRouteToken route,
                        Protocols::AVC::FCPTransport* fcpTransport = nullptr,
                        IRM::IRMClient* irmClient = nullptr,
                        CMP::CMPClient* cmpClient = nullptr,
-                       uint64_t deviceGuid = 0,
                        uint32_t formatSettleDelayMs = 100U,
                        Scheduling::ITimerScheduler* timerScheduler = nullptr);
     virtual ~ApogeeDuetProtocol() = default;
@@ -197,7 +196,7 @@ public:
     }
 
     // IDeviceProtocol boolean control overrides
-    void UpdateRuntimeContext(uint16_t nodeId,
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
     bool SupportsBooleanControl(uint32_t classIdFourCC,
                                 uint32_t element) const override;
@@ -235,14 +234,13 @@ private:
 
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
-    uint16_t nodeId_;
+    Discovery::DeviceRouteToken route_{};
     Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
     IRM::IRMClient* irmClient_{nullptr};
     CMP::CMPClient* cmpClient_{nullptr};
-    uint64_t deviceGuid_{0};
     AudioDuplexChannels duplexChannels_{};
     AudioClockConfig appliedClock_{};
-    FW::Generation preparedGeneration_{0};
+    uint64_t preparedRouteEpoch_{0};
     bool clockConfigApplied_{false};
     bool outputConnected_{false};
     bool inputConnected_{false};
@@ -294,4 +292,3 @@ private:
 };
 
 } // namespace ASFW::Audio::Oxford::Apogee
-

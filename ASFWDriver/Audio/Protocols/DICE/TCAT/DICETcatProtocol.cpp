@@ -333,10 +333,10 @@ IOReturn DICETcatProtocol::StopDuplex() {
     return duplexCtrl_->StopDuplex();
 }
 
-void DICETcatProtocol::UpdateRuntimeContext(uint16_t nodeId,
+void DICETcatProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                             Protocols::AVC::FCPTransport* transport) {
     (void)transport;
-    io_.SetNodeId(nodeId);
+    io_.SetNodeId(route.nodeId);
 }
 
 void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {

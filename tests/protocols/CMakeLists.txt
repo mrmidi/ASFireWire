@@ -56,6 +56,7 @@ add_protocols_test(FCPResponseRouterTests
 add_protocols_test(CMPConnectionTests
     CMPConnectionTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
 # Music Subunit Identifier Parser Tests

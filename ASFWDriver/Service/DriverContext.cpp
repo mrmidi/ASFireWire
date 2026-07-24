@@ -235,10 +235,11 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
     }
 
     if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
-        d.deviceManager && d.sbp2SessionScheduler) {
+        d.deviceRegistry && d.deviceManager && d.sbp2SessionScheduler) {
         auto& bus = ctx.controller->Bus();
         d.sbp2SessionRegistry = std::make_shared<ASFW::Protocols::SBP2::SessionRegistry>(
-            bus, bus, *d.sbp2AddressSpaceManager, *d.deviceManager, *d.sbp2SessionScheduler,
+            bus, bus, *d.sbp2AddressSpaceManager, *d.deviceRegistry, *d.deviceManager,
+            *d.sbp2SessionScheduler,
             ctx.workQueue.get());
         if (d.busReset) {
             // Last-resort recovery for targets whose fetch engine wedges so hard

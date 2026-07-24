@@ -409,10 +409,10 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         return failStart(kr, "SBP-2 dependency preparation failed");
     }
 
-    if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager) {
+    if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager && ctx.deps.deviceRegistry) {
         auto& bus = ctx.controller->Bus();
         ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
-            this, *ctx.deps.deviceManager, bus, bus, *ctx.deps.sbp2SessionScheduler,
+            this, *ctx.deps.deviceRegistry, *ctx.deps.deviceManager, bus, bus, *ctx.deps.sbp2SessionScheduler,
             ctx.audioCoordinator.get());
         ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
         ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
@@ -445,8 +445,12 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
 
     if (!ctx.deps.cmpClient) {
+        if (!ctx.deps.deviceRegistry) {
+            return failStart(kIOReturnNotReady, "device registry unavailable for CMP");
+        }
         ctx.deps.cmpClient = std::make_shared<ASFW::CMP::CMPClient>(ctx.controller->Bus(),
-                                                                      ctx.controller->Bus());
+                                                                      ctx.controller->Bus(),
+                                                                      *ctx.deps.deviceRegistry);
         ctx.controller->SetCMPClient(ctx.deps.cmpClient);
         ASFW_LOG(Controller, "✅ CMPClient initialized");
     }
@@ -1084,12 +1088,12 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
                        "runtime-dependencies", guid);
         return kIOReturnNotReady;
     }
-    auto* record = ctx.deps.deviceRegistry->FindByGuid(guid);
+    const auto record = ctx.deps.deviceRegistry->SnapshotByGuid(guid);
     auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
-    if (!record || !protocol) {
+    if (!record.has_value() || !protocol) {
         ASFW_LOG_ERROR(Audio,
                        "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx record=%u protocol=%u",
-                       "device-config", guid, record != nullptr, protocol != nullptr);
+                       "device-config", guid, record.has_value(), protocol != nullptr);
         return kIOReturnNotReady;
     }
     auto* transport = ctx.deps.avcDiscovery->GetFCPTransportForNodeID(record->nodeId);
@@ -1099,7 +1103,11 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
                  guid, record->nodeId);
         return kIOReturnNotReady;
     }
-    protocol->UpdateRuntimeContext(record->nodeId, transport);
+    const auto route = ctx.deps.deviceRegistry->CurrentRoute(guid);
+    if (!route) {
+        return kIOReturnNotReady;
+    }
+    protocol->UpdateRuntimeContext(*route, transport);
     ASFW_LOG(Audio, "[BeBoB] developer stream start GUID=0x%016llx", guid);
     return ctx.audioCoordinator->StartStreaming(guid);
 }

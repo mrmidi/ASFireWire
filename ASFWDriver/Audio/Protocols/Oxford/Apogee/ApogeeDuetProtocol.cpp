@@ -408,20 +408,18 @@ bool ApogeeDuetProtocol::VendorCommand::ParseStatusPayload(std::span<const uint8
 
 ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        Protocols::Ports::FireWireBusInfo& busInfo,
-                                       uint16_t nodeId,
+                                       Discovery::DeviceRouteToken route,
                                        Protocols::AVC::FCPTransport* fcpTransport,
                                        IRM::IRMClient* irmClient,
                                        CMP::CMPClient* cmpClient,
-                                       uint64_t deviceGuid,
                                        uint32_t formatSettleDelayMs,
                                        Scheduling::ITimerScheduler* timerScheduler)
     : busOps_(busOps)
     , busInfo_(busInfo)
-    , nodeId_(nodeId)
+    , route_(route)
     , fcpTransport_(fcpTransport)
     , irmClient_(irmClient)
     , cmpClient_(cmpClient)
-    , deviceGuid_(deviceGuid)
     , formatSettleDelayMs_(formatSettleDelayMs)
     , timerScheduler_(timerScheduler) {
 }
@@ -433,15 +431,7 @@ bool ApogeeDuetProtocol::IsActive(const ClockTransition& transition) const noexc
            transition.epoch == activeClockTransitionEpoch_;
 }
 
-CMP::CMPDevice ApogeeDuetProtocol::CurrentCMPDevice() const noexcept {
-    const uint16_t liveNodeId = fcpTransport_ ? fcpTransport_->GetTargetNodeID() : nodeId_;
-    return CMP::CMPDevice{
-        .guid = deviceGuid_,
-        .nodeId = FW::NodeId{liveNodeId <= 0x3FU ? static_cast<uint8_t>(liveNodeId)
-                                                  : static_cast<uint8_t>(0xFFU)},
-        .generation = busInfo_.GetGeneration(),
-    };
-}
+CMP::CMPDevice ApogeeDuetProtocol::CurrentCMPDevice() const noexcept { return CMP::CMPDevice{.route = route_}; }
 
 IOReturn ApogeeDuetProtocol::Initialize() {
     return kIOReturnSuccess;
@@ -455,19 +445,19 @@ IOReturn ApogeeDuetProtocol::Shutdown() {
     return kIOReturnSuccess;
 }
 
-void ApogeeDuetProtocol::UpdateRuntimeContext(uint16_t nodeId,
+void ApogeeDuetProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                               Protocols::AVC::FCPTransport* transport) {
     // A replacement transport or node identity denotes a newly discovered bus
     // epoch. Do not carry the AV/C configuration cache across that boundary.
-    if (nodeId_ != nodeId || fcpTransport_ != transport) {
+    if (route_ != route || fcpTransport_ != transport) {
         CancelClockTransition(kIOReturnAborted);
         clockConfigApplied_ = false;
-        if (cmpClient_ && deviceGuid_ != 0) {
-            cmpClient_->InvalidateDevice(deviceGuid_);
+        if (cmpClient_ && route_) {
+            cmpClient_->InvalidateRoute(route_);
         }
-        preparedGeneration_ = FW::Generation{0};
+        preparedRouteEpoch_ = 0;
     }
-    nodeId_ = nodeId;
+    route_ = route;
     fcpTransport_ = transport;
 }
 
@@ -498,18 +488,17 @@ void ApogeeDuetProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
         return;
     }
 
-    const FW::Generation currentGeneration = busInfo_.GetGeneration();
-    if (preparedGeneration_ != currentGeneration) {
+    if (preparedRouteEpoch_ != route_.routeEpoch) {
         // PCR state and device stream formation are reset-scoped. Preserve no
         // old connection as a candidate for BREAK/reuse; recovery must reserve
         // fresh resources and establish fresh PCRs in the new generation.
-        if (cmpClient_ && deviceGuid_ != 0) {
-            cmpClient_->InvalidateDevice(deviceGuid_);
+        if (cmpClient_ && route_) {
+            cmpClient_->InvalidateRoute(route_);
         }
         clockConfigApplied_ = false;
         outputConnected_ = false;
         inputConnected_ = false;
-        preparedGeneration_ = currentGeneration;
+        preparedRouteEpoch_ = route_.routeEpoch;
     }
 
     // A normal start is a control-plane boundary, not a packet hot path.  Do
@@ -1712,8 +1701,13 @@ void ApogeeDuetProtocol::ClearDisplay(VoidCallback callback) {
 
 void ApogeeDuetProtocol::GetInputMeter(ResultCallback<InputMeterState> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const auto gen = busInfo_.GetGeneration();
-    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    if (!cmpClient_ || !cmpClient_->IsRouteCurrent(route_)) {
+        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, InputMeterState{});
+        return;
+    }
+    const auto route = route_;
+    const auto gen = route.generation;
+    const auto node = FW::NodeId{static_cast<uint8_t>(route.nodeId)};
     const uint64_t addr64 = kMeterBaseAddress + kMeterInputOffset;
     const Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
@@ -1725,9 +1719,10 @@ void ApogeeDuetProtocol::GetInputMeter(ResultCallback<InputMeterState> callback)
                       addr,
                       8,
                       FW::FwSpeed::S100,
-                      [callbackState](Async::AsyncStatus status,
+                      [this, route, callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
-                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 8U) {
+                          if (!cmpClient_->IsRouteCurrent(route) ||
+                              status != Async::AsyncStatus::kSuccess || payload.size() < 8U) {
                               Common::InvokeSharedCallback(callbackState, kIOReturnError, InputMeterState{});
                               return;
                           }
@@ -1741,8 +1736,13 @@ void ApogeeDuetProtocol::GetInputMeter(ResultCallback<InputMeterState> callback)
 
 void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const auto gen = busInfo_.GetGeneration();
-    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    if (!cmpClient_ || !cmpClient_->IsRouteCurrent(route_)) {
+        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, MixerMeterState{});
+        return;
+    }
+    const auto route = route_;
+    const auto gen = route.generation;
+    const auto node = FW::NodeId{static_cast<uint8_t>(route.nodeId)};
     const uint64_t addr64 = kMeterBaseAddress + kMeterMixerOffset;
     const Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
@@ -1754,9 +1754,10 @@ void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback)
                       addr,
                       16,
                       FW::FwSpeed::S100,
-                      [callbackState](Async::AsyncStatus status,
+                      [this, route, callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
-                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 16U) {
+                          if (!cmpClient_->IsRouteCurrent(route) ||
+                              status != Async::AsyncStatus::kSuccess || payload.size() < 16U) {
                               Common::InvokeSharedCallback(callbackState, kIOReturnError, MixerMeterState{});
                               return;
                           }
@@ -1772,8 +1773,13 @@ void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback)
 
 void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const auto gen = busInfo_.GetGeneration();
-    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    if (!cmpClient_ || !cmpClient_->IsRouteCurrent(route_)) {
+        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, 0u);
+        return;
+    }
+    const auto route = route_;
+    const auto gen = route.generation;
+    const auto node = FW::NodeId{static_cast<uint8_t>(route.nodeId)};
     const uint64_t addr64 = kOxfordCsrBase + kOxfordFirmwareIdOffset;
     const Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
@@ -1785,9 +1791,10 @@ void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
                       addr,
                       4,
                       FW::FwSpeed::S100,
-                      [callbackState](Async::AsyncStatus status,
+                      [this, route, callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
-                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
+                          if (!cmpClient_->IsRouteCurrent(route) ||
+                              status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
                               Common::InvokeSharedCallback(callbackState, kIOReturnError, 0u);
                               return;
                           }
@@ -1798,8 +1805,13 @@ void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
 
 void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    const auto gen = busInfo_.GetGeneration();
-    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    if (!cmpClient_ || !cmpClient_->IsRouteCurrent(route_)) {
+        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, 0u);
+        return;
+    }
+    const auto route = route_;
+    const auto gen = route.generation;
+    const auto node = FW::NodeId{static_cast<uint8_t>(route.nodeId)};
     const uint64_t addr64 = kOxfordCsrBase + kOxfordHardwareIdOffset;
     const Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
@@ -1811,9 +1823,10 @@ void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
                       addr,
                       4,
                       FW::FwSpeed::S100,
-                      [callbackState](Async::AsyncStatus status,
+                      [this, route, callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
-                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
+                          if (!cmpClient_->IsRouteCurrent(route) ||
+                              status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
                               Common::InvokeSharedCallback(callbackState, kIOReturnError, 0u);
                               return;
                           }

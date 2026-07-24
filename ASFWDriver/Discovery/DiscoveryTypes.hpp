@@ -188,6 +188,10 @@ enum class LifeState : uint8_t {
 struct DeviceRecord {
     // ---- Stable identity (persistent across resets) ----
     Guid64 guid{0};
+    // Device incarnation changes only when this GUID is removed and later
+    // discovered again. Route epoch changes on reset/rebind independently.
+    uint64_t deviceIncarnation{0};
+    uint64_t routeEpoch{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     DeviceKind kind{DeviceKind::Unknown};

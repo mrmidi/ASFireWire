@@ -631,13 +631,13 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
     }
 
     void InstallDevice(const std::shared_ptr<IDeviceProtocol>& protocol) {
-        registry_.UpsertFromROM(MakeConfigRom(kTestGuid), LinkPolicy{});
+        (void)registry_.UpsertFromROM(MakeConfigRom(kTestGuid), LinkPolicy{});
         runtime_.Insert(kTestGuid, protocol);
     }
 
     void InstallDeviceAtGeneration(Generation gen,
                                    const std::shared_ptr<IDeviceProtocol>& protocol) {
-        registry_.UpsertFromROM(
+        (void)registry_.UpsertFromROM(
             MakeConfigRom(kTestGuid, kFocusriteVendorId, kSPro24DspModelId, gen), LinkPolicy{});
         runtime_.Insert(kTestGuid, protocol);
         protocol_->healthGeneration = gen;
@@ -727,7 +727,7 @@ TEST_F(AudioDuplexCoordinatorTests, ColdStartTransitionsIdleToRunning) {
 
 TEST_F(AudioDuplexCoordinatorTests,
        AvcProfileReservesBothDirectionsAndInterleavesHostStartsWithDeviceStages) {
-    registry_.UpsertFromROM(
+    (void)registry_.UpsertFromROM(
         MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
     ClearLog();
 
@@ -783,7 +783,7 @@ TEST_F(AudioDuplexCoordinatorTests,
 
 TEST_F(AudioDuplexCoordinatorTests,
        ApogeeDuetStartForces48kBeforeDevicePreparationEvenAfterPersistedRate) {
-    registry_.UpsertFromROM(
+    (void)registry_.UpsertFromROM(
         MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
 
     // A developer-only/manual rate request can leave an old value in the

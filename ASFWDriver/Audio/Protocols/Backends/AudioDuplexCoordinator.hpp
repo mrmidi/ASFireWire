@@ -91,7 +91,7 @@ private:
     // Resolves the record + its protocol-neutral duplex surface for `guid`. `outHold` receives a
     // shared_ptr to the owning IDeviceProtocol; callers must keep it alive for as long as
     // they use `outDeviceControl` (it is a view into the held protocol).
-    [[nodiscard]] Discovery::DeviceRecord* RequireDuplexRecord(
+    [[nodiscard]] std::optional<Discovery::DeviceRecord> RequireDuplexRecord(
         uint64_t guid,
         IDuplexDeviceControl*& outDeviceControl,
         std::shared_ptr<IDeviceProtocol>& outHold) noexcept;

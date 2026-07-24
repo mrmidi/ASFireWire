@@ -111,13 +111,30 @@ void LogDeviceUpsert(Guid64 guid, const DeviceRecord& device, const ConfigROM& r
 
 } // namespace
 
-DeviceRegistry::DeviceRegistry() = default;
+DeviceRegistry::DeviceRegistry()
+    : lock_(IOLockAlloc()) {}
 
-DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link) {
+DeviceRegistry::~DeviceRegistry() {
+    if (lock_) {
+        IOLockFree(lock_);
+        lock_ = nullptr;
+    }
+}
+
+DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link) {
+    IOLockLock(lock_);
     const Guid64 guid = rom.bib.guid;
     const auto operationalNodeId = TryOperationalNodeId(rom.nodeId);
-    
-    auto& device = devicesByGuid_[guid];
+
+    auto [it, inserted] = devicesByGuid_.try_emplace(guid);
+    auto& device = it->second;
+    if (inserted) {
+        device.deviceIncarnation = ++lastDeviceIncarnationByGuid_[guid];
+        device.routeEpoch = AllocateRouteEpochLocked();
+    } else if (device.gen != rom.gen || device.nodeId != rom.nodeId ||
+               !HasLiveRoute(device)) {
+        device.routeEpoch = AllocateRouteEpochLocked();
+    }
     device.guid = guid;
     PopulateDeviceIdentity(device, rom);
     MaybeInferKnownIdentityFromGuid(device, guid);
@@ -175,10 +192,13 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
     }
 
     LogDeviceUpsert(guid, device, rom);
-    return device;
+    DeviceRecord snapshot = device;
+    IOLockUnlock(lock_);
+    return snapshot;
 }
 
 void DeviceRegistry::MarkDiscovered(Generation gen, uint8_t nodeId) {
+    IOLockLock(lock_);
     // Check if we already know this (gen, nodeId)
     GenNodeKey key = MakeKey(gen, nodeId);
     auto it = genNodeToGuid_.find(key);
@@ -194,18 +214,22 @@ void DeviceRegistry::MarkDiscovered(Generation gen, uint8_t nodeId) {
         }
     }
     // If not found, we'll create it later when ROM arrives
+    IOLockUnlock(lock_);
 }
 
 void DeviceRegistry::MarkDuplicateGuid(Generation gen, Guid64 guid, uint8_t nodeId) {
+    IOLockLock(lock_);
     auto it = devicesByGuid_.find(guid);
     if (it != devicesByGuid_.end()) {
         it->second.state = LifeState::Quarantined;
         ASFW_LOG(Discovery, "⚠️  Duplicate GUID detected: 0x%016llx node=%u gen=%u (quarantined)",
                  guid, nodeId, gen.value);
     }
+    IOLockUnlock(lock_);
 }
 
 void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
+    IOLockLock(lock_);
     GenNodeKey key = MakeKey(gen, nodeId);
     auto it = genNodeToGuid_.find(key);
     
@@ -215,15 +239,31 @@ void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
         if (devIt != devicesByGuid_.end()) {
             devIt->second.state = LifeState::Lost;
             devIt->second.nodeId = kInvalidNodeId;
+            devIt->second.routeEpoch = AllocateRouteEpochLocked();
             ASFW_LOG(Discovery, "Device lost: GUID=0x%016llx node=%u gen=%u",
                      guid, nodeId, gen.value);
         }
         // Remove from secondary index
         genNodeToGuid_.erase(it);
     }
+    IOLockUnlock(lock_);
+}
+
+void DeviceRegistry::RetireDevice(Guid64 guid) {
+    IOLockLock(lock_);
+    auto it = devicesByGuid_.find(guid);
+    if (it != devicesByGuid_.end()) {
+        lastDeviceIncarnationByGuid_[guid] = it->second.deviceIncarnation;
+        devicesByGuid_.erase(it);
+    }
+    for (auto mapping = genNodeToGuid_.begin(); mapping != genNodeToGuid_.end();) {
+        mapping = (mapping->second == guid) ? genNodeToGuid_.erase(mapping) : std::next(mapping);
+    }
+    IOLockUnlock(lock_);
 }
 
 void DeviceRegistry::InvalidateLiveMappingsForBusReset() {
+    IOLockLock(lock_);
     size_t invalidatedCount = 0;
     for (auto& entry : devicesByGuid_) {
         auto& device = entry.second;
@@ -232,6 +272,7 @@ void DeviceRegistry::InvalidateLiveMappingsForBusReset() {
         }
 
         device.nodeId = kInvalidNodeId;
+        device.routeEpoch = AllocateRouteEpochLocked();
         ++invalidatedCount;
     }
 
@@ -239,39 +280,56 @@ void DeviceRegistry::InvalidateLiveMappingsForBusReset() {
     ASFW_LOG(Discovery,
              "Bus reset: invalidated %zu live GUID-to-node mappings pending ROM rescan",
              invalidatedCount);
+    IOLockUnlock(lock_);
 }
 
-DeviceRecord* DeviceRegistry::FindByGuid(Guid64 guid) {
+std::optional<DeviceRecord> DeviceRegistry::SnapshotByGuid(Guid64 guid) const {
+    IOLockLock(lock_);
     auto it = devicesByGuid_.find(guid);
-    return (it != devicesByGuid_.end()) ? &it->second : nullptr;
+    const auto snapshot = (it != devicesByGuid_.end()) ? std::optional<DeviceRecord>{it->second}
+                                                        : std::nullopt;
+    IOLockUnlock(lock_);
+    return snapshot;
 }
 
-const DeviceRecord* DeviceRegistry::FindByGuid(Guid64 guid) const {
-    auto it = devicesByGuid_.find(guid);
-    return (it != devicesByGuid_.end()) ? &it->second : nullptr;
-}
-
-DeviceRecord* DeviceRegistry::FindByNode(Generation gen, uint8_t nodeId) {
+std::optional<DeviceRecord> DeviceRegistry::SnapshotByNode(Generation gen, uint8_t nodeId) const {
+    IOLockLock(lock_);
     GenNodeKey key = MakeKey(gen, nodeId);
     auto it = genNodeToGuid_.find(key);
-    
-    if (it != genNodeToGuid_.end()) {
-        return FindByGuid(it->second);
-    }
-    return nullptr;
+    const auto record = (it != genNodeToGuid_.end()) ? devicesByGuid_.find(it->second)
+                                                      : devicesByGuid_.end();
+    const auto snapshot = (record != devicesByGuid_.end()) ? std::optional<DeviceRecord>{record->second}
+                                                            : std::nullopt;
+    IOLockUnlock(lock_);
+    return snapshot;
 }
 
-const DeviceRecord* DeviceRegistry::FindByNode(Generation gen, uint8_t nodeId) const {
-    GenNodeKey key = MakeKey(gen, nodeId);
-    auto it = genNodeToGuid_.find(key);
-    
-    if (it != genNodeToGuid_.end()) {
-        return FindByGuid(it->second);
+std::optional<DeviceRouteToken> DeviceRegistry::CurrentRoute(Guid64 guid) const {
+    IOLockLock(lock_);
+    const auto it = devicesByGuid_.find(guid);
+    const auto token = (it != devicesByGuid_.end() && HasLiveRoute(it->second))
+                           ? std::optional<DeviceRouteToken>{MakeRouteToken(it->second)}
+                           : std::nullopt;
+    IOLockUnlock(lock_);
+    return token;
+}
+
+bool DeviceRegistry::IsCurrent(const DeviceRouteToken& token) const noexcept {
+    if (!token) {
+        return false;
     }
-    return nullptr;
+    IOLockLock(lock_);
+    const auto it = devicesByGuid_.find(token.guid);
+    const bool current = it != devicesByGuid_.end() && HasLiveRoute(it->second) &&
+                         it->second.deviceIncarnation == token.deviceIncarnation &&
+                         it->second.routeEpoch == token.routeEpoch &&
+                         it->second.gen == token.generation && it->second.nodeId == token.nodeId;
+    IOLockUnlock(lock_);
+    return current;
 }
 
 std::vector<DeviceRecord> DeviceRegistry::LiveDevices(Generation gen) const {
+    IOLockLock(lock_);
     std::vector<DeviceRecord> result;
     
     for (const auto& entry : devicesByGuid_) {
@@ -281,12 +339,17 @@ std::vector<DeviceRecord> DeviceRegistry::LiveDevices(Generation gen) const {
         }
     }
     
+    IOLockUnlock(lock_);
     return result;
 }
 
 void DeviceRegistry::Clear() {
+    IOLockLock(lock_);
     devicesByGuid_.clear();
     genNodeToGuid_.clear();
+    lastDeviceIncarnationByGuid_.clear();
+    nextRouteEpoch_ = 0;
+    IOLockUnlock(lock_);
 }
 
 DeviceKind DeviceRegistry::ClassifyDevice(const ConfigROM& rom) const {
@@ -320,6 +383,29 @@ bool DeviceRegistry::IsAudioCandidate(const ConfigROM& rom) const {
 
 DeviceRegistry::GenNodeKey DeviceRegistry::MakeKey(Generation gen, uint8_t nodeId) {
     return (gen.value << 8) | static_cast<uint32_t>(nodeId);
+}
+
+uint64_t DeviceRegistry::AllocateRouteEpochLocked() noexcept {
+    // Zero is reserved for an invalid token. Wrap is theoretically possible but
+    // requires 2^64 route changes during one driver incarnation.
+    ++nextRouteEpoch_;
+    if (nextRouteEpoch_ == 0) {
+        ++nextRouteEpoch_;
+    }
+    return nextRouteEpoch_;
+}
+
+bool DeviceRegistry::HasLiveRoute(const DeviceRecord& device) noexcept {
+    return device.state != LifeState::Lost && device.state != LifeState::Quarantined &&
+           TryOperationalNodeId(device.nodeId).has_value();
+}
+
+DeviceRouteToken DeviceRegistry::MakeRouteToken(const DeviceRecord& device) noexcept {
+    return DeviceRouteToken{.guid = device.guid,
+                            .deviceIncarnation = device.deviceIncarnation,
+                            .routeEpoch = device.routeEpoch,
+                            .generation = device.gen,
+                            .nodeId = device.nodeId};
 }
 
 } // namespace ASFW::Discovery

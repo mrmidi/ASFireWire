@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
+#include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
 
 #include <array>
@@ -25,6 +26,7 @@ namespace PCRRegisters = ASFW::CMP::PCRRegisters;
 
 class CMPBus final : public IFireWireBus {
 public:
+    ASFW::Discovery::DeviceRegistry routes;
     AsyncHandle ReadBlock(Generation, NodeId node, FWAddress address, uint32_t,
                           FwSpeed, InterfaceCompletionCallback callback) override {
         const bool isMpr = address.addressLo == PCRRegisters::kOMPR ||
@@ -86,18 +88,24 @@ private:
     uint32_t nextHandle_{0};
 };
 
-CMPDevice Device(uint64_t guid, uint8_t node, uint32_t generation = 1) {
-    return CMPDevice{.guid = guid, .nodeId = NodeId{node}, .generation = Generation{generation}};
+CMPDevice Device(ASFW::Discovery::DeviceRegistry& routes, uint64_t guid, uint8_t node,
+                 uint32_t generation = 1) {
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = guid;
+    rom.gen = Generation{generation};
+    rom.nodeId = node;
+    (void)routes.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+    return CMPDevice{.route = *routes.CurrentRoute(guid)};
 }
 
 TEST(CMPConnectionTests, LeasesAreIndependentForDifferentDeviceGuids) {
     CMPBus bus;
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus first = CMPStatus::Failed;
     CMPStatus second = CMPStatus::Failed;
 
-    cmp.ConnectOPCR(Device(0xA, 2), 0, 5, [&first](CMPStatus status) { first = status; });
-    cmp.ConnectOPCR(Device(0xB, 3), 0, 7, [&second](CMPStatus status) { second = status; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xA, 2), 0, 5, [&first](CMPStatus status) { first = status; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xB, 3), 0, 7, [&second](CMPStatus status) { second = status; });
 
     EXPECT_EQ(first, CMPStatus::Success);
     EXPECT_EQ(second, CMPStatus::Success);
@@ -109,10 +117,10 @@ TEST(CMPConnectionTests, LeasesAreIndependentForDifferentDeviceGuids) {
 TEST(CMPConnectionTests, DisconnectWithoutLocalLeaseDoesNotDecrementRemoteP2P) {
     CMPBus bus;
     bus.pcrByNode_[2] = 0x81058000U;
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus status = CMPStatus::Failed;
 
-    cmp.DisconnectOPCR(Device(0xA, 2), 0, [&status](CMPStatus result) { status = result; });
+    cmp.DisconnectOPCR(Device(bus.routes, 0xA, 2), 0, [&status](CMPStatus result) { status = result; });
 
     EXPECT_EQ(status, CMPStatus::Success);
     EXPECT_EQ(bus.lockCount, 0U);
@@ -122,10 +130,10 @@ TEST(CMPConnectionTests, DisconnectWithoutLocalLeaseDoesNotDecrementRemoteP2P) {
 TEST(CMPConnectionTests, RetriesCompareSwapContentionWithFreshPCRRead) {
     CMPBus bus;
     bus.conflictOnce = true;
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus status = CMPStatus::Failed;
 
-    cmp.ConnectOPCR(Device(0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
 
     EXPECT_EQ(status, CMPStatus::Success);
     EXPECT_EQ(bus.lockCount, 2U);
@@ -136,10 +144,10 @@ TEST(CMPConnectionTests, ProgramsOutputPCRSpeedAndOverheadFromLiveGapCount) {
     CMPBus bus;
     bus.routeSpeed = FwSpeed::S200;
     bus.gapCount = 8;
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus status = CMPStatus::Failed;
 
-    cmp.ConnectOPCR(Device(0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
 
     // gap 8 derives 166 bandwidth units; oPCR overhead encoding selects ID 6.
     EXPECT_EQ(status, CMPStatus::Success);
@@ -150,10 +158,10 @@ TEST(CMPConnectionTests, ProgramsInputPCROnlyWithConnectionAndChannelFields) {
     CMPBus bus;
     bus.routeSpeed = FwSpeed::S200;
     bus.gapCount = 8;
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus status = CMPStatus::Failed;
 
-    cmp.ConnectIPCR(Device(0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
+    cmp.ConnectIPCR(Device(bus.routes, 0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
 
     // iPCR has no data-rate or overhead-ID fields; those bits must remain zero.
     EXPECT_EQ(status, CMPStatus::Success);
@@ -163,10 +171,10 @@ TEST(CMPConnectionTests, ProgramsInputPCROnlyWithConnectionAndChannelFields) {
 TEST(CMPConnectionTests, RejectsBroadcastPCRWithoutCompareSwap) {
     CMPBus bus;
     bus.pcrByNode_[2] = 0xC0000000U; // online + foreign broadcast connection
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus status = CMPStatus::Success;
 
-    cmp.ConnectOPCR(Device(0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
 
     EXPECT_EQ(status, CMPStatus::NoResources);
     EXPECT_EQ(bus.lockCount, 0U);
@@ -176,10 +184,10 @@ TEST(CMPConnectionTests, RejectsBroadcastPCRWithoutCompareSwap) {
 TEST(CMPConnectionTests, RejectsPlugOutsideMasterPlugRegisterCount) {
     CMPBus bus;
     bus.mprValue = 0x80000000U; // S400, no plugs
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus status = CMPStatus::Success;
 
-    cmp.ConnectOPCR(Device(0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xA, 2), 0, 5, [&status](CMPStatus result) { status = result; });
 
     EXPECT_EQ(status, CMPStatus::NotFound);
     EXPECT_EQ(bus.lockCount, 0U);
@@ -187,20 +195,33 @@ TEST(CMPConnectionTests, RejectsPlugOutsideMasterPlugRegisterCount) {
 
 TEST(CMPConnectionTests, NewGenerationDropsOldLeaseBeforeReconnect) {
     CMPBus bus;
-    CMPClient cmp(bus, bus);
+    CMPClient cmp(bus, bus, bus.routes);
     CMPStatus first = CMPStatus::Failed;
-    cmp.ConnectOPCR(Device(0xA, 2, 1), 0, 5, [&first](CMPStatus status) { first = status; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xA, 2, 1), 0, 5, [&first](CMPStatus status) { first = status; });
     ASSERT_EQ(first, CMPStatus::Success);
 
     // A reset restores remote PCR state. The new routing epoch must not be
     // blocked by the lease that represented the previous generation.
     bus.pcrByNode_[3] = 0x80000000U;
     CMPStatus second = CMPStatus::Failed;
-    cmp.ConnectOPCR(Device(0xA, 3, 2), 0, 7, [&second](CMPStatus status) { second = status; });
+    cmp.ConnectOPCR(Device(bus.routes, 0xA, 3, 2), 0, 7, [&second](CMPStatus status) { second = status; });
 
     EXPECT_EQ(second, CMPStatus::Success);
     EXPECT_EQ(bus.lockCount, 2U);
     EXPECT_EQ(bus.pcrByNode_[3], 0x81078000U);
+}
+
+TEST(CMPConnectionTests, RejectsRouteInvalidatedBeforeCMPAdmission) {
+    CMPBus bus;
+    CMPClient cmp(bus, bus, bus.routes);
+    const CMPDevice stale = Device(bus.routes, 0xA, 2);
+    bus.routes.InvalidateLiveMappingsForBusReset();
+
+    CMPStatus status = CMPStatus::Success;
+    cmp.ConnectOPCR(stale, 0, 5, [&status](CMPStatus result) { status = result; });
+
+    EXPECT_EQ(status, CMPStatus::Failed);
+    EXPECT_EQ(bus.lockCount, 0U);
 }
 
 } // namespace

@@ -2,8 +2,12 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <vector>
 
+#include <DriverKit/IOLib.h>
+
+#include "DeviceRouteToken.hpp"
 #include "DiscoveryTypes.hpp"
 
 namespace ASFW::Discovery {
@@ -13,12 +17,13 @@ namespace ASFW::Discovery {
 class DeviceRegistry {
 public:
     DeviceRegistry();
-    ~DeviceRegistry() = default;
+    ~DeviceRegistry();
 
-    // Create or update device record from parsed ROM. Returns reference to live record.
+    // Create or update device record from parsed ROM. Returns a stable snapshot;
+    // no registry-owned mutable record escapes its lock.
     // Pure metadata: device-specific runtime protocol creation is owned by the Audio layer
     // (Audio::AudioRuntimeRegistry), triggered from the controller discovery path.
-    DeviceRecord& UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link);
+    [[nodiscard]] DeviceRecord UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link);
 
     // Mark device as discovered (seen in Self-ID, before ROM fetch)
     void MarkDiscovered(Generation gen, uint8_t nodeId);
@@ -29,17 +34,21 @@ public:
     // Mark device as lost (not present in current generation)
     void MarkLost(Generation gen, uint8_t nodeId);
 
+    // Retire an actually removed device. A later replug of the same GUID gets a
+    // new device incarnation and cannot validate old asynchronous callbacks.
+    void RetireDevice(Guid64 guid);
+
     // A bus reset invalidates every generation/node mapping immediately. Device
     // identity remains cached by GUID and is rebound only after a new ROM scan.
     void InvalidateLiveMappingsForBusReset();
 
-    // Lookup by GUID (stable across resets)
-    DeviceRecord* FindByGuid(Guid64 guid);
-    const DeviceRecord* FindByGuid(Guid64 guid) const;
+    // Locked value snapshots. Callers must act after the lock is released; no
+    // registry lock is ever held while invoking backend or DriverKit code.
+    [[nodiscard]] std::optional<DeviceRecord> SnapshotByGuid(Guid64 guid) const;
+    [[nodiscard]] std::optional<DeviceRecord> SnapshotByNode(Generation gen, uint8_t nodeId) const;
 
-    // Lookup by (generation, nodeId)
-    DeviceRecord* FindByNode(Generation gen, uint8_t nodeId);
-    const DeviceRecord* FindByNode(Generation gen, uint8_t nodeId) const;
+    [[nodiscard]] std::optional<DeviceRouteToken> CurrentRoute(Guid64 guid) const;
+    [[nodiscard]] bool IsCurrent(const DeviceRouteToken& token) const noexcept;
 
     // Export snapshot of all devices present in given generation
     std::vector<DeviceRecord> LiveDevices(Generation gen) const;
@@ -55,12 +64,22 @@ private:
     bool IsAudioCandidate(const ConfigROM& rom) const;
 
     // Primary storage: GUID-keyed device records
+    mutable IOLock* lock_{nullptr};
     std::map<Guid64, DeviceRecord> devicesByGuid_;
+
+    // Preserve the last incarnation after a record is retired so replugging the
+    // same GUID cannot accidentally validate callbacks from its old service.
+    std::map<Guid64, uint64_t> lastDeviceIncarnationByGuid_;
+    uint64_t nextRouteEpoch_{0};
 
     // Secondary index: (generation, nodeId) → GUID for fast per-generation lookup
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
     std::map<GenNodeKey, Guid64> genNodeToGuid_;
+
+    [[nodiscard]] uint64_t AllocateRouteEpochLocked() noexcept;
+    [[nodiscard]] static bool HasLiveRoute(const DeviceRecord& device) noexcept;
+    [[nodiscard]] static DeviceRouteToken MakeRouteToken(const DeviceRecord& device) noexcept;
 };
 
 } // namespace ASFW::Discovery

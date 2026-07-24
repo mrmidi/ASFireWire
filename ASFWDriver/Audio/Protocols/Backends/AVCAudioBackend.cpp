@@ -373,7 +373,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return failStart(kIOReturnNotReady, "config");
     }
 
-    if (!registry_.FindByGuid(guid)) {
+    if (!registry_.SnapshotByGuid(guid).has_value()) {
         ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (no device record) GUID=0x%016llx", guid);
         return failStart(kIOReturnNotReady, "device record");
     }

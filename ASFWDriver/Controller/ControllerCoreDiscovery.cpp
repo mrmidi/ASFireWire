@@ -568,7 +568,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         auto policy = deps_.speedPolicy->ForNode(*nodeId);
 
         auto& bus = this->Bus();
-        auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
+        const auto deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
         discoveredGuids.insert(deviceRecord.guid);
 
         // Create the device-specific runtime protocol here, at the orchestrator layer,
@@ -619,6 +619,12 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                      "Device missing from generation %u scan - marking lost (GUID=0x%016llx)",
                      gen.value, guid);
             deps_.deviceManager->MarkDeviceLost(guid);
+            if (!deps_.deviceManager->GetDeviceByGUID(guid)) {
+                // DeviceManager has confirmed termination rather than temporary
+                // reset suspension. Retiring here advances the next incarnation
+                // when this GUID is later rediscovered.
+                deps_.deviceRegistry->RetireDevice(guid);
+            }
         }
     } else if (deps_.deviceManager && zeroRomScanInconclusive) {
         ASFW_LOG(Discovery,

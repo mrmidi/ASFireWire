@@ -82,7 +82,7 @@ public:
     void ConfirmDuplex48kStart(VoidCallback callback) override;
     IOReturn StopDuplex() override;
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return tcat_.GetIRMClient(); }
-    void UpdateRuntimeContext(uint16_t nodeId,
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
     
     // ========================================================================
