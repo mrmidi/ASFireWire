@@ -74,24 +74,23 @@ kern_return_t IsochReceiveContext::Start() {
         return kIOReturnNotReady;
     }
 
-    const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
-    auto access = hardware_->TryBeginAccess();
-    if (!access) return kIOReturnNotReady;
-    access.Write(registers_.ContextMatch, contextMatch);
-
     const uint32_t cmdPtr = rxRing_.InitialCommandPtrWord();
     if (cmdPtr == 0) {
         ASFW_LOG(Isoch, "❌ Start: Invalid descriptor cmdPtr");
         return kIOReturnInternalError;
     }
-    access.Write(registers_.CommandPtr, cmdPtr);
-
-    access.Write(registers_.ContextControlClear, 0xFFFFFFFFu);
+    const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
     const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
-    access.Write(registers_.ContextControlSet, ctlValue);
-
     const uint32_t contextMask = 1u << contextIndex_;
-    access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
+    {
+        auto access = hardware_->TryBeginAccess();
+        if (!access) return kIOReturnNotReady;
+        access.Write(registers_.ContextMatch, contextMatch);
+        access.Write(registers_.CommandPtr, cmdPtr);
+        access.Write(registers_.ContextControlClear, 0xFFFFFFFFu);
+        access.Write(registers_.ContextControlSet, ctlValue);
+        access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
+    }
     ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
 
     while (rxLock_.test_and_set(std::memory_order_acquire)) {

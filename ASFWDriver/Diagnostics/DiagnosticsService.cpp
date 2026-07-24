@@ -631,7 +631,9 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
 
     auto* hw = controller_->GetHardware();
     if (hw) {
-        const uint32_t busOptions = hw->Read(Driver::Register32::kBusOptions);
+        auto access = hw->TryBeginAccess();
+        if (!access) return ASFWDiagStatusUnavailable;
+        const uint32_t busOptions = access.Read(Driver::Register32::kBusOptions);
         auto caps = ASFW::FW::DecodeBusOptions(ASFW::FW::NormalizeLocalBusOptions(
             busOptions, rolePolicy.roleMode, rolePolicy.fullBMActivityLevel));
         out->advertisedBmc = caps.bmc ? 1 : 0;
@@ -673,9 +675,11 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         auto* const hw = controller_->GetHardware();
         if (hw) {
             using namespace ASFW::Driver;
-            out->initialBandwidthAvailable = hw->Read(Register32::kInitialBandwidthAvailable);
-            out->initialChannelsAvailableHi = hw->Read(Register32::kInitialChannelsAvailableHi);
-            out->initialChannelsAvailableLo = hw->Read(Register32::kInitialChannelsAvailableLo);
+            if (auto access = hw->TryBeginAccess()) {
+                out->initialBandwidthAvailable = access.Read(Register32::kInitialBandwidthAvailable);
+                out->initialChannelsAvailableHi = access.Read(Register32::kInitialChannelsAvailableHi);
+                out->initialChannelsAvailableLo = access.Read(Register32::kInitialChannelsAvailableLo);
+            }
         }
     }
 

@@ -83,18 +83,6 @@ HardwareAccessScope HardwareInterface::TryBeginAccess() noexcept {
     return accessGate_.TryBeginAccess(*this);
 }
 
-uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
-    return ReadScoped(reg);
-}
-
-void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
-    WriteScoped(reg, value);
-}
-
-void HardwareInterface::WriteAndFlush(Register32 reg, uint32_t value) {
-    WriteScoped(reg, value);
-}
-
 HardwareAccessScope::~HardwareAccessScope() { Release(); }
 
 HardwareAccessScope::HardwareAccessScope(HardwareAccessScope&& other) noexcept

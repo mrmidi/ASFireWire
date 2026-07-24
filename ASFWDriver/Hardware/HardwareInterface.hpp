@@ -79,12 +79,6 @@ class HardwareInterface {
     /// cross an asynchronous boundary or be held while waiting.
     [[nodiscard]] HardwareAccessScope TryBeginAccess() noexcept;
 
-    // Compatibility surface during the call-site migration. Each operation
-    // opens a short scope; new code must use TryBeginAccess() to batch MMIO.
-    [[nodiscard]] uint32_t Read(Register32 reg) const noexcept;
-    void Write(Register32 reg, uint32_t value) noexcept;
-    void WriteAndFlush(Register32 reg, uint32_t value);
-
     void SetInterruptMask(uint32_t mask, bool enable);
     [[nodiscard]] InterruptSnapshot CaptureInterruptSnapshot(uint64_t timestamp) const noexcept;
     void SetLinkControlBits(uint32_t bits);

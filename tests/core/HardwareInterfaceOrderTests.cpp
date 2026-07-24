@@ -9,6 +9,10 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <atomic>
+#include <chrono>
+#include <future>
+#include <thread>
 #include <vector>
 
 using namespace ASFW::Driver;
@@ -163,6 +167,46 @@ TEST_F(HardwareInterfaceOrderTests, RevokeBlocksAllFurtherBarAccess) {
     auto access = hardware_.TryBeginAccess();
     EXPECT_FALSE(access);
     hardware_.SetInterruptMask(0xFFFFFFFFu, false);
+}
+
+TEST_F(HardwareInterfaceOrderTests, RevokeWaitsForActiveAccessScope) {
+    std::atomic<bool> scopeEntered{false};
+    std::atomic<bool> releaseScope{false};
+
+    std::thread worker([&] {
+        auto access = hardware_.TryBeginAccess();
+        ASSERT_TRUE(access);
+        scopeEntered.store(true, std::memory_order_release);
+        while (!releaseScope.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    });
+
+    while (!scopeEntered.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    auto revoke = std::async(std::launch::async, [&] { hardware_.RevokeAndDrain(); });
+    EXPECT_EQ(revoke.wait_for(std::chrono::milliseconds(10)), std::future_status::timeout);
+
+    releaseScope.store(true, std::memory_order_release);
+    EXPECT_EQ(revoke.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    worker.join();
+    EXPECT_FALSE(hardware_.TryBeginAccess());
+}
+
+TEST_F(HardwareInterfaceOrderTests, ScopeBatchesMultipleRegisterOperations) {
+    InSequence seq;
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), 0x1U));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIntEvent), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0x2U; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntMaskSet), 0x4U));
+
+    auto access = hardware_.TryBeginAccess();
+    ASSERT_TRUE(access);
+    access.Write(Register32::kIntEventClear, 0x1U);
+    EXPECT_EQ(access.Read(Register32::kIntEvent), 0x2U);
+    access.Write(Register32::kIntMaskSet, 0x4U);
 }
 
 TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffFalseClearsRhbWithoutIssuingBusReset) {

@@ -666,7 +666,9 @@ kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t*
         return kIOReturnBadArgument;
     }
 
-    const uint32_t cycleTimer = hardware.Read(static_cast<Register32>(Register32::kCycleTimer));
+    auto access = hardware.TryBeginAccess();
+    if (!access) return kIOReturnNotReady;
+    const uint32_t cycleTimer = access.Read(static_cast<Register32>(Register32::kCycleTimer));
     const uint64_t hostTime = mach_absolute_time();
 
     *outHostTimeMid = hostTime;
