@@ -51,25 +51,8 @@ void ServiceContext::DisarmProviderNotifications() {
 }
 
 void ServiceContext::Reset(ResetMode mode) {
-    stopping.store(true, std::memory_order_release);
-    if (deps.asyncSubsystem) {
-        deps.asyncSubsystem->BeginQuiesce();
-    }
-    if (audioCoordinator) {
-        audioCoordinator->BeginTeardown();
-    }
-    if (deps.avcDiscovery) {
-        deps.avcDiscovery->Shutdown();
-    }
-    // Unpublish + shut down the HBA bridge while the session registry and bus
-    // are still alive: Shutdown() releases the SBP-2 session (logout on the
-    // wire) and aborts in-flight/queued HBA tasks back to the SCSI layer.
-    ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
-    if (sbp2Bridge) {
-        sbp2Bridge->Shutdown();
-        sbp2Bridge.reset();
-    }
-    (void)isoch.StopAll();
+    // Runtime stopping is owned by RuntimeLifecycleCoordinator. Reset only
+    // releases resources after its quiesce executor has stopped them.
     controller.reset();
     audioCoordinator.reset();
     // Tear down the runtime audio protocols while the services they were built from
@@ -83,7 +66,6 @@ void ServiceContext::Reset(ResetMode mode) {
     deps.selfId.reset();
     deps.scheduler.reset();
     deps.metrics.reset();
-    deps.stateMachine.reset();
     deps.configRom.reset();
     deps.configRomStager.reset();
     if (mode == ResetMode::Full) {
@@ -107,6 +89,7 @@ void ServiceContext::Reset(ResetMode mode) {
     if (mode == ResetMode::Full) {
         workQueue.reset();
         interruptAction.reset();
+        lifecycle.reset();
     }
 }
 
@@ -131,6 +114,9 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     }
     if (!d.stateMachine) {
         d.stateMachine = std::make_shared<ControllerStateMachine>();
+    }
+    if (!ctx.lifecycle) {
+        ctx.lifecycle = std::make_unique<RuntimeLifecycleCoordinator>(d.stateMachine);
     }
     if (!d.configRom) {
         d.configRom = std::make_shared<ConfigROMBuilder>();
@@ -340,49 +326,6 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
 
 kern_return_t DriverWiring::PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx) {
     return ctx.watchdog.Prepare(service, ctx.workQueue);
-}
-
-void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
-    ctx.stopping.store(true, std::memory_order_release);
-    if (ctx.deps.asyncSubsystem) {
-        ctx.deps.asyncSubsystem->BeginQuiesce();
-    }
-    if (ctx.audioCoordinator) {
-        ctx.audioCoordinator->BeginTeardown();
-    }
-    if (ctx.deps.avcDiscovery) {
-        ctx.deps.avcDiscovery->Shutdown();
-    }
-    ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
-    if (ctx.sbp2Bridge) {
-        ctx.sbp2Bridge->Shutdown();
-        ctx.sbp2Bridge.reset();
-    }
-    (void)ctx.isoch.StopAll();
-    if (ctx.deps.interrupts)
-        ctx.deps.interrupts->Teardown();
-    if (ctx.deps.selfId && ctx.deps.hardware)
-        ctx.deps.selfId->Disarm(*ctx.deps.hardware);
-    if (ctx.deps.selfId)
-        ctx.deps.selfId->ReleaseBuffers();
-    if (ctx.deps.configRomStager && ctx.deps.hardware)
-        ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
-
-    // Stop the async engine before ControllerCore::Stop closes the PCI BAR.
-    if (ctx.deps.asyncSubsystem) {
-        ctx.deps.asyncSubsystem->Stop();
-    }
-    if (ctx.controller) {
-        ctx.controller->Stop();
-        ctx.controller.reset();
-    }
-    if (ctx.deps.hardware)
-        ctx.deps.hardware->Detach();
-    ctx.interruptAction.reset();
-    ctx.watchdog.Reset();
-    ctx.DisarmProviderNotifications();
-    ctx.workQueue.reset();
-    ctx.statusPublisher.Reset();
 }
 
 } // namespace ASFW::Driver

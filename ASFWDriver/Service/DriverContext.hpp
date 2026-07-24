@@ -1,6 +1,6 @@
 #pragma once
 
-#include <atomic>
+#include <memory>
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -17,6 +17,7 @@
 #include "../Hardware/InterruptDispatcher.hpp"
 #include "../Isoch/IsochService.hpp"
 #include "../Scheduling/WatchdogCoordinator.hpp"
+#include "Lifecycle/RuntimeLifecycleCoordinator.hpp"
 
 class ASFWDriver;
 
@@ -45,7 +46,7 @@ struct ServiceContext {
     OSSharedPtr<IOServiceNotificationDispatchSource> providerNotifications;
     OSSharedPtr<OSAction> providerNotificationAction;
 #endif
-    std::atomic<bool> stopping{false};
+    std::unique_ptr<ASFW::Driver::RuntimeLifecycleCoordinator> lifecycle;
     ASFW::Driver::StatusPublisher statusPublisher;
     ASFW::Driver::WatchdogCoordinator watchdog;
     ASFW::Driver::IsochService isoch;
@@ -75,7 +76,6 @@ public:
     static kern_return_t PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx);
     static kern_return_t PrepareInterrupts(ASFWDriver& service, IOService* provider, ::ServiceContext& ctx);
     static kern_return_t PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx);
-    static void CleanupStartFailure(::ServiceContext& ctx);
 };
 
 } // namespace ASFW::Driver

@@ -42,8 +42,12 @@
 namespace ASFW::Driver {
 
 void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
-    if (!running_ || !deps_.hardware) {
-        ASFW_LOG(Controller, "HandleInterrupt early return (running=%d hw=%p)", running_,
+    const bool admitted = deps_.stateMachine &&
+                         (deps_.stateMachine->CurrentState() == ControllerState::kStarting ||
+                          deps_.stateMachine->CurrentState() == ControllerState::kRunning);
+    if (!admitted || !deps_.hardware) {
+        ASFW_LOG(Controller, "HandleInterrupt early return (state=%{public}s hw=%p)",
+                 deps_.stateMachine ? ToString(deps_.stateMachine->CurrentState()).data() : "none",
                  deps_.hardware.get());
         return;
     }

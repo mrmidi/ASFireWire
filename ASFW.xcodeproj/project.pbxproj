@@ -347,6 +347,7 @@
 		F4A99690858D37ACCC9CECB6 /* SystemLogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB2E35051CCCFD3E4CD6E2F /* SystemLogsView.swift */; };
 		F576426B7995BB3474228911 /* ASFWDriverUserClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5364BA023A0C10D7791261A1 /* ASFWDriverUserClient.cpp */; };
 		F62328EAD744B4AA552D6E91 /* ASFWAudioDriver.iig in Sources */ = {isa = PBXBuildFile; fileRef = 2A74ECB6BAB486C9BA62AFC2 /* ASFWAudioDriver.iig */; };
+		F8FEBF54A8FC8898B66F6835 /* RuntimeLifecycleCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C4428DAA8DA9967C8DC18F26 /* RuntimeLifecycleCoordinator.cpp */; };
 		F9079357980132495EE8D5C0 /* LoggingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0ACF327198028F1B5462DA0 /* LoggingSettingsView.swift */; };
 		F9082ECD47629C0EABD9CC93 /* DiagnosticsTextFormatter+Bus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 934A97DC159F9DBB258CEAA8 /* DiagnosticsTextFormatter+Bus.swift */; };
 		F9444E5ADB5352F9529044B1 /* LocalIRMResourceController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5F05380C584322E86EBF681B /* LocalIRMResourceController.cpp */; };
@@ -750,6 +751,7 @@
 		7244ECF34A6763BB88ACA847 /* AM824Decoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AM824Decoder.hpp; sourceTree = "<group>"; };
 		72BE64F16BB205405D7F37A1 /* IsochTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochTypes.hpp; sourceTree = "<group>"; };
 		736A4C5A335E4750AF418976 /* ModernContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModernContentView.swift; sourceTree = "<group>"; };
+		73ACFCE68103EFB2B2048C78 /* RuntimeLifecycleCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RuntimeLifecycleCoordinator.hpp; sourceTree = "<group>"; };
 		74260321CFC16C9580F80885 /* IsochReceiveContext.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochReceiveContext.hpp; sourceTree = "<group>"; };
 		746DA77C4A934EC1BB0D2BD9 /* ASFWMCPIrmCasTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPIrmCasTools.swift; sourceTree = "<group>"; };
 		747E8B61F56CFA97DD0187AA /* MetricCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricCard.swift; sourceTree = "<group>"; };
@@ -973,6 +975,7 @@
 		C3CE3114E5A44F1CB692B127 /* DirectAudioReceiveConsumer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DirectAudioReceiveConsumer.hpp; sourceTree = "<group>"; };
 		C3D2851A216473089C454E06 /* ControllerCoreFacades.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCoreFacades.cpp; sourceTree = "<group>"; };
 		C401273251275E280E712124 /* AudioClientCursor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioClientCursor.hpp; sourceTree = "<group>"; };
+		C4428DAA8DA9967C8DC18F26 /* RuntimeLifecycleCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RuntimeLifecycleCoordinator.cpp; sourceTree = "<group>"; };
 		C516291F7D576A9672B1D447 /* RootSelectionCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RootSelectionCoordinator.cpp; sourceTree = "<group>"; };
 		C5390203CDB35CB79E64B942 /* BusManagerElection.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusManagerElection.cpp; sourceTree = "<group>"; };
 		C5776F6B807031795F90788F /* ASFWMCPToolCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPToolCatalog.swift; sourceTree = "<group>"; };
@@ -2723,6 +2726,15 @@
 			path = Local;
 			sourceTree = "<group>";
 		};
+		E79F434414C35770A2A5D1E2 /* Lifecycle */ = {
+			isa = PBXGroup;
+			children = (
+				C4428DAA8DA9967C8DC18F26 /* RuntimeLifecycleCoordinator.cpp */,
+				73ACFCE68103EFB2B2048C78 /* RuntimeLifecycleCoordinator.hpp */,
+			);
+			path = Lifecycle;
+			sourceTree = "<group>";
+		};
 		EFF220506953EAF2FCEEB3DA /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -2763,6 +2775,7 @@
 				72430D632F4DD63789EC2EA5 /* DriverContext.hpp */,
 				E046501FE168EA65F0AB0E3B /* LocalRequestWiring.cpp */,
 				9226D5E4A667DC6666A68775 /* LocalRequestWiring.hpp */,
+				E79F434414C35770A2A5D1E2 /* Lifecycle */,
 			);
 			path = Service;
 			sourceTree = "<group>";
@@ -3156,6 +3169,7 @@
 				589E39588CAE2656BD536E6A /* RoleCoordinator.cpp in Sources */,
 				7EC90B35354E754E20425C17 /* RolePolicy.cpp in Sources */,
 				29B0D6CD095CB3373C656373 /* RootSelectionCoordinator.cpp in Sources */,
+				F8FEBF54A8FC8898B66F6835 /* RuntimeLifecycleCoordinator.cpp in Sources */,
 				5480F75B2BE232AE464EA258 /* RxAudioPacketProcessor.cpp in Sources */,
 				A3CBF895FFB7285CA4D01CD1 /* RxPath.cpp in Sources */,
 				3D13B6691F2A30C4FCC49C94 /* SBP2BridgeHub.cpp in Sources */,
