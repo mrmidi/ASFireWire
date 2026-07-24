@@ -96,3 +96,9 @@ add_common_test(SpeedMapServiceTests
     SpeedMapServiceTests.cpp
     "${ASFW_DRIVER_DIR}/Bus/CSR/SpeedMapService.cpp"
 )
+
+# Root runtime lifecycle state-machine tests
+add_common_test(ControllerStateMachineTests
+    ControllerStateMachineTests.cpp
+    "${ASFW_DRIVER_DIR}/Controller/ControllerStateMachine.cpp"
+)
