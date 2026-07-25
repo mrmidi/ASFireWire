@@ -53,9 +53,23 @@ final class ASFWDriverConnector: ObservableObject {
         case setIsochVerbosity = 40
         case asyncBlockRead = 44
         case asyncBlockWrite = 45
+        // SBP-2 address-space and session management
+        case allocateAddressRange = 46
+        case deallocateAddressRange = 47
+        case readIncomingData = 48
+        case writeLocalData = 49
         // DV capture (raw DIF stream via shared ring, memory type 1)
         case startDVCapture = 50
         case stopDVCapture = 51
+        case createSBP2Session = 52
+        case startSBP2Login = 53
+        case getSBP2SessionState = 54
+        case submitSBP2Inquiry = 55
+        case getSBP2InquiryResult = 56
+        case submitSBP2Command = 57
+        case getSBP2CommandResult = 58
+        case submitSBP2TaskManagement = 59
+        case releaseSBP2Session = 60
         // Developer-only local software bus reset, generation-pinned.
         case requestUserBusReset = 61
         case startAudioStreaming = 62
