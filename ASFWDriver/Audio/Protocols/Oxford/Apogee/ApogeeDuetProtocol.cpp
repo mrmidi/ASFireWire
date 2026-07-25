@@ -31,10 +31,6 @@ using Protocols::AVC::FCPStatus;
 
 namespace {
 
-constexpr uint8_t kArgDefault = 0xFF;
-constexpr uint8_t kArgIndexed = 0x80;
-constexpr uint8_t kBoolOn = 0x70;
-constexpr uint8_t kBoolOff = 0x60;
 
 constexpr uint8_t kCTypeControl = 0x00;
 constexpr uint8_t kCTypeStatus = 0x01;
@@ -45,15 +41,6 @@ constexpr uint32_t kCMPTimeoutMs = 250;
 constexpr uint32_t kCMPPollMs = 5;
 constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
 
-constexpr size_t kVendorHeaderSize = 9; // OUI(3) + Prefix(3) + Code + Arg1 + Arg2.
-
-[[nodiscard]] uint8_t ToWireBool(bool value) noexcept {
-    return value ? kBoolOn : kBoolOff;
-}
-
-[[nodiscard]] bool FromWireBool(uint8_t value) noexcept {
-    return value == kBoolOn;
-}
 
 [[nodiscard]] IOReturn MapFCPStatusToIOReturn(FCPStatus status) noexcept {
     switch (status) {
@@ -91,10 +78,6 @@ constexpr size_t kVendorHeaderSize = 9; // OUI(3) + Prefix(3) + Code + Arg1 + Ar
         default:
             return kIOReturnError;
     }
-}
-
-[[nodiscard]] uint8_t EncodeMixerSource(uint8_t source) noexcept {
-    return static_cast<uint8_t>(((source / 2U) << 4U) | (source % 2U));
 }
 
 [[nodiscard]] OutputMuteMode ParseMuteMode(bool mute, bool unmute) noexcept {
@@ -179,232 +162,6 @@ namespace {
 }
 
 } // namespace
-
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::Bool(Code code, bool value) {
-    VendorCommand command{};
-    command.code = code;
-    command.boolValue = value;
-    return command;
-}
-
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::IndexedBool(Code code, uint8_t index, bool value) {
-    VendorCommand command{};
-    command.code = code;
-    command.index = index;
-    command.boolValue = value;
-    return command;
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::InGain(uint8_t index, uint8_t value) {
-    VendorCommand command{};
-    command.code = Code::InGain;
-    command.index = index;
-    command.u8Value = value;
-    return command;
-}
-
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::OutVolume(uint8_t value) {
-    VendorCommand command{};
-    command.code = Code::OutVolume;
-    command.u8Value = value;
-    return command;
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::MixerSrc(uint8_t source, uint8_t destination, uint16_t gain) {
-    VendorCommand command{};
-    command.code = Code::MixerSrc;
-    command.index = source;
-    command.index2 = destination;
-    command.u16Value = gain;
-    return command;
-}
-
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::HwState(const std::array<uint8_t, 11>& raw) {
-    VendorCommand command{};
-    command.code = Code::HwState;
-    command.hwState = raw;
-    return command;
-}
-
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::VendorCommand::Make(Code code) {
-    VendorCommand command{};
-    command.code = code;
-    return command;
-}
-
-std::vector<uint8_t> ApogeeDuetProtocol::VendorCommand::BuildOperandBase() const {
-    std::vector<uint8_t> operands;
-    operands.reserve(kVendorHeaderSize);
-
-    operands.push_back(ApogeeDuetProtocol::kOUI[0]);
-    operands.push_back(ApogeeDuetProtocol::kOUI[1]);
-    operands.push_back(ApogeeDuetProtocol::kOUI[2]);
-
-    operands.push_back(ApogeeDuetProtocol::kPrefix[0]);
-    operands.push_back(ApogeeDuetProtocol::kPrefix[1]);
-    operands.push_back(ApogeeDuetProtocol::kPrefix[2]);
-
-    operands.push_back(static_cast<uint8_t>(code));
-    operands.push_back(kArgDefault);
-    operands.push_back(kArgDefault);
-
-    switch (code) {
-        case Code::MicPolarity:
-        case Code::XlrIsMicLevel:
-        case Code::XlrIsConsumerLevel:
-        case Code::MicPhantom:
-        case Code::InGain:
-        case Code::InputSourceIsPhone:
-            operands[7] = kArgIndexed;
-            operands[8] = index;
-            break;
-        case Code::OutIsConsumerLevel:
-        case Code::OutMute:
-        case Code::OutVolume:
-        case Code::MuteForLineOut:
-        case Code::MuteForHpOut:
-        case Code::UnmuteForLineOut:
-        case Code::UnmuteForHpOut:
-            operands[7] = kArgIndexed;
-            break;
-        case Code::MixerSrc:
-            operands[7] = EncodeMixerSource(index);
-            operands[8] = index2;
-            break;
-        case Code::HwState:
-        case Code::OutSourceIsMixer:
-        case Code::DisplayOverholdTwoSec:
-        case Code::DisplayClear:
-        case Code::DisplayIsInput:
-        case Code::InClickless:
-        case Code::DisplayFollowToKnob:
-            break;
-    }
-
-    return operands;
-}
-
-void ApogeeDuetProtocol::VendorCommand::AppendControlValue(std::vector<uint8_t>& operands) const {
-    switch (code) {
-        case Code::MicPolarity:
-        case Code::XlrIsMicLevel:
-        case Code::XlrIsConsumerLevel:
-        case Code::MicPhantom:
-        case Code::OutIsConsumerLevel:
-        case Code::OutMute:
-        case Code::InputSourceIsPhone:
-        case Code::OutSourceIsMixer:
-        case Code::DisplayOverholdTwoSec:
-        case Code::MuteForLineOut:
-        case Code::MuteForHpOut:
-        case Code::UnmuteForLineOut:
-        case Code::UnmuteForHpOut:
-        case Code::DisplayIsInput:
-        case Code::InClickless:
-        case Code::DisplayFollowToKnob:
-            operands.push_back(ToWireBool(boolValue));
-            break;
-        case Code::InGain:
-        case Code::OutVolume:
-            operands.push_back(u8Value);
-            break;
-        case Code::MixerSrc:
-            operands.push_back(static_cast<uint8_t>((u16Value >> 8U) & 0xFFU));
-            operands.push_back(static_cast<uint8_t>(u16Value & 0xFFU));
-            break;
-        case Code::HwState:
-            operands.insert(operands.end(), hwState.begin(), hwState.end());
-            break;
-        case Code::DisplayClear:
-            break;
-    }
-}
-
-bool ApogeeDuetProtocol::VendorCommand::ParseStatusPayload(std::span<const uint8_t> payload) {
-    if (payload.size() < kVendorHeaderSize) {
-        return false;
-    }
-
-    if (payload[0] != ApogeeDuetProtocol::kOUI[0] ||
-        payload[1] != ApogeeDuetProtocol::kOUI[1] ||
-        payload[2] != ApogeeDuetProtocol::kOUI[2]) {
-        return false;
-    }
-
-    if (payload[3] != ApogeeDuetProtocol::kPrefix[0] ||
-        payload[4] != ApogeeDuetProtocol::kPrefix[1] ||
-        payload[5] != ApogeeDuetProtocol::kPrefix[2]) {
-        return false;
-    }
-
-    if (payload[6] != static_cast<uint8_t>(code)) {
-        return false;
-    }
-
-    switch (code) {
-        case Code::MicPolarity:
-        case Code::XlrIsMicLevel:
-        case Code::XlrIsConsumerLevel:
-        case Code::MicPhantom:
-        case Code::InputSourceIsPhone:
-            if (payload[8] != index || payload.size() < (kVendorHeaderSize + 1U)) {
-                return false;
-            }
-            boolValue = FromWireBool(payload[9]);
-            return true;
-        case Code::OutIsConsumerLevel:
-        case Code::OutMute:
-        case Code::OutSourceIsMixer:
-        case Code::DisplayOverholdTwoSec:
-        case Code::MuteForLineOut:
-        case Code::MuteForHpOut:
-        case Code::UnmuteForLineOut:
-        case Code::UnmuteForHpOut:
-        case Code::DisplayIsInput:
-        case Code::InClickless:
-        case Code::DisplayFollowToKnob:
-            if (payload.size() < (kVendorHeaderSize + 1U)) {
-                return false;
-            }
-            boolValue = FromWireBool(payload[9]);
-            return true;
-        case Code::InGain:
-            if (payload[8] != index || payload.size() < (kVendorHeaderSize + 1U)) {
-                return false;
-            }
-            u8Value = payload[9];
-            return true;
-        case Code::MixerSrc:
-            if (payload[7] != EncodeMixerSource(index) ||
-                payload[8] != index2 ||
-                payload.size() < (kVendorHeaderSize + 2U)) {
-                return false;
-            }
-            u16Value = static_cast<uint16_t>((static_cast<uint16_t>(payload[9]) << 8U) |
-                                             static_cast<uint16_t>(payload[10]));
-            return true;
-        case Code::HwState:
-            if (payload.size() < (kVendorHeaderSize + hwState.size())) {
-                return false;
-            }
-            for (size_t i = 0; i < hwState.size(); ++i) {
-                hwState[i] = payload[kVendorHeaderSize + i];
-            }
-            return true;
-        case Code::OutVolume:
-            if (payload.size() < (kVendorHeaderSize + 1U)) {
-                return false;
-            }
-            u8Value = payload[9];
-            return true;
-        case Code::DisplayClear:
-            return true;
-    }
-
-    return false;
-}
 
 ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        Protocols::Ports::FireWireBusInfo& busInfo,

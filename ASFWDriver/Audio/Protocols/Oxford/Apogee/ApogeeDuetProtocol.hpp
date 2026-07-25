@@ -7,6 +7,7 @@
 #pragma once
 
 #include "ApogeeTypes.hpp"
+#include "ApogeeVendorCodec.hpp"
 #include "../OxfordCsr.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include "../../Duplex/IDuplexDeviceControl.hpp"
@@ -37,51 +38,9 @@ namespace ASFW::Audio::Oxford::Apogee {
 class ApogeeDuetProtocol final : public IDeviceProtocol,
                                  public IDuplexDeviceControl {
 public:
-    struct VendorCommand {
-        enum class Code : uint8_t {
-            MicPolarity = 0x00,
-            XlrIsMicLevel = 0x01,
-            XlrIsConsumerLevel = 0x02,
-            MicPhantom = 0x03,
-            OutIsConsumerLevel = 0x04,
-            InGain = 0x05,
-            HwState = 0x07,
-            OutMute = 0x09,
-            InputSourceIsPhone = 0x0C,
-            MixerSrc = 0x10,
-            OutSourceIsMixer = 0x11,
-            DisplayOverholdTwoSec = 0x13,
-            DisplayClear = 0x14,
-            OutVolume = 0x15,
-            MuteForLineOut = 0x16,
-            MuteForHpOut = 0x17,
-            UnmuteForLineOut = 0x18,
-            UnmuteForHpOut = 0x19,
-            DisplayIsInput = 0x1B,
-            InClickless = 0x1E,
-            DisplayFollowToKnob = 0x22,
-        };
-
-        Code code{};
-        uint8_t index{0};
-        uint8_t index2{0};
-        bool boolValue{false};
-        uint8_t u8Value{0};
-        uint16_t u16Value{0};
-        std::array<uint8_t, 11> hwState{};
-
-        static VendorCommand Bool(Code code, bool value);
-        static VendorCommand IndexedBool(Code code, uint8_t index, bool value);
-        static VendorCommand InGain(uint8_t index, uint8_t value);
-        static VendorCommand OutVolume(uint8_t value);
-        static VendorCommand MixerSrc(uint8_t source, uint8_t destination, uint16_t gain);
-        static VendorCommand HwState(const std::array<uint8_t, 11>& raw);
-        static VendorCommand Make(Code code);
-
-        [[nodiscard]] std::vector<uint8_t> BuildOperandBase() const;
-        void AppendControlValue(std::vector<uint8_t>& operands) const;
-        [[nodiscard]] bool ParseStatusPayload(std::span<const uint8_t> payload);
-    };
+    // The command table and operand encoding moved to ApogeeVendorCodec (FW-126);
+    // this alias keeps every existing ApogeeDuetProtocol::VendorCommand use valid.
+    using VendorCommand = ApogeeVendorCommand;
 
     static std::vector<VendorCommand> BuildKnobStateQuery();
     static VendorCommand BuildKnobStateControl(const KnobState& state);
@@ -286,9 +245,6 @@ private:
     /// Route-liveness policy handed to the chip-common CSR reads.
     [[nodiscard]] Oxford::RouteValidator MakeRouteValidator() const;
 
-    // Apogee Constants
-    static constexpr uint8_t kOUI[3] = {0x00, 0x03, 0xDB};
-    static constexpr uint8_t kPrefix[3] = {0x50, 0x43, 0x4D}; // PCM
 };
 
 } // namespace ASFW::Audio::Oxford::Apogee

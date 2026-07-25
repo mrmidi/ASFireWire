@@ -70,6 +70,7 @@
 		2E53CC413479AB11FAB75769 /* AudioRuntimeRegistry.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DB44B94B07D6C330C0EA2537 /* AudioRuntimeRegistry.cpp */; };
 		2E55B6BFEE36CC8CAB7B7B47 /* ReadCommand.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B2B12F1219B1AE79B6B8AF8E /* ReadCommand.cpp */; };
 		2F0B42D371D4B4DA2C961A0E /* BeBoBPlug0StreamDiscovery.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 323649CE26A7765896E013D5 /* BeBoBPlug0StreamDiscovery.cpp */; };
+		310409E6EFA558BCA557F77A /* ApogeeVendorCodec.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0E9BE99CAFCBEDAD1B11BEB /* ApogeeVendorCodec.cpp */; };
 		3125B234BDC6F30DF047EC94 /* ROMScanSessionDetails.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2091230AA237991CD12A881E /* ROMScanSessionDetails.cpp */; };
 		319CC4C54BFDF715B4F35C7C /* ASFWDriver.iig in Sources */ = {isa = PBXBuildFile; fileRef = 49272738AA5479B3357D6624 /* ASFWDriver.iig */; };
 		31A5F98B3E7B01E9B348D2DF /* DiagnosticsTextFormatter+Hardware.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30AEC085823D6C50F1463AB4 /* DiagnosticsTextFormatter+Hardware.swift */; };
@@ -451,6 +452,7 @@
 		0D7C4001D3AB4A10778631C4 /* MCPBeBoBToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPBeBoBToolsTests.swift; sourceTree = "<group>"; };
 		0D97F81936B9E88427C69E25 /* AmdtpPayloadWriter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AmdtpPayloadWriter.cpp; sourceTree = "<group>"; };
 		0E15E59914A4531C4DF4BA41 /* RingHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RingHelpers.hpp; sourceTree = "<group>"; };
+		0E29971B91B76C420357B5F3 /* ApogeeVendorCodec.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeVendorCodec.hpp; sourceTree = "<group>"; };
 		0E63C96EE7B8535670E083C6 /* PhyCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhyCommand.cpp; sourceTree = "<group>"; };
 		0E9534FDE6EA1C49B6D44A4B /* ASFWAudioDriverLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverLifecycle.cpp; sourceTree = "<group>"; };
 		0EFBB31EBA1674516A0A39D7 /* SBP2CommandWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2CommandWireFormats.hpp; sourceTree = "<group>"; };
@@ -807,6 +809,7 @@
 		8485E39E1457C2EA049F4DA7 /* ARContextBase.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARContextBase.hpp; sourceTree = "<group>"; };
 		84EE5D95253736515AA645E1 /* ASFWDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = ASFWDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		84FDA897B3726BA5E3BEF4FE /* IDiagSink.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IDiagSink.hpp; sourceTree = "<group>"; };
+		8544FF023E801CA773F297ED /* OxfwVendorDependent.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OxfwVendorDependent.hpp; sourceTree = "<group>"; };
 		8548E1DA1006A1671CC85CF1 /* IsochDmaGeometry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochDmaGeometry.hpp; sourceTree = "<group>"; };
 		85B459C6BE789ECDDE3EE684 /* MCPSDKBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPSDKBridgeTests.swift; sourceTree = "<group>"; };
 		85B4DE4392632E634DFD1C4A /* StreamFormatTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StreamFormatTypes.hpp; sourceTree = "<group>"; };
@@ -1021,6 +1024,7 @@
 		CFBE8CA65AB808A853E1392B /* AudioTelemetryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTelemetryView.swift; sourceTree = "<group>"; };
 		D052AC7D4757845AB77B75B1 /* MCPSbp2ToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPSbp2ToolsTests.swift; sourceTree = "<group>"; };
 		D0941CE629D5F2534ADE5436 /* IFireWireBusInfo.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IFireWireBusInfo.hpp; sourceTree = "<group>"; };
+		D0E9BE99CAFCBEDAD1B11BEB /* ApogeeVendorCodec.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeVendorCodec.cpp; sourceTree = "<group>"; };
 		D1391A71639068D8291B32AF /* ASFWMCPLiveDriverControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPLiveDriverControl.swift; sourceTree = "<group>"; };
 		D13BBB8A1268401CF4FD514C /* PCRSpace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PCRSpace.cpp; sourceTree = "<group>"; };
 		D14370CF27984ADE19CE1FD8 /* DebugViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewModel.swift; sourceTree = "<group>"; };
@@ -1603,6 +1607,8 @@
 				862D65458BD2D45123D9C6E4 /* ApogeeDuetProtocol.cpp */,
 				0FCC9AE9BE1B3929CC94BE88 /* ApogeeDuetProtocol.hpp */,
 				422A112B4666B20A04B000CD /* ApogeeTypes.hpp */,
+				D0E9BE99CAFCBEDAD1B11BEB /* ApogeeVendorCodec.cpp */,
+				0E29971B91B76C420357B5F3 /* ApogeeVendorCodec.hpp */,
 			);
 			path = Apogee;
 			sourceTree = "<group>";
@@ -1894,6 +1900,7 @@
 			children = (
 				E23557505A30ACA0C184956D /* OxfordCsr.cpp */,
 				FCED93498449F4A70563C14F /* OxfordCsr.hpp */,
+				8544FF023E801CA773F297ED /* OxfwVendorDependent.hpp */,
 				47E4C5B6855DA512A76E1439 /* Apogee */,
 			);
 			path = Oxford;
@@ -3055,6 +3062,7 @@
 				3D9D02951035C22384C1CBF0 /* AmdtpTxPacketizer.cpp in Sources */,
 				3D97308CA3A11622955D8461 /* ApogeeDuetProfile.cpp in Sources */,
 				397A66B5278D4CEA50CEFE3E /* ApogeeDuetProtocol.cpp in Sources */,
+				310409E6EFA558BCA557F77A /* ApogeeVendorCodec.cpp in Sources */,
 				B88224662B577BC1F022CE84 /* AsyncSubsystem.cpp in Sources */,
 				7C6A17973382F6042B6956AB /* AsyncSubsystemBusReset.cpp in Sources */,
 				A9D340317F946538F1D8F065 /* AsyncSubsystemCommandQueue.cpp in Sources */,
