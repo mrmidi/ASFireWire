@@ -515,10 +515,11 @@ TEST(ApogeeDuetDuplexAdapter, PrepareDuplexRevalidates48kBeforeResourceAllocatio
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), rig.Transport(), &irm, &cmp, 0);
+    auto& duplex = *protocol.AsDuplexDeviceControl();
     ASFW::Audio::AudioDuplexChannels channels{};
     IOReturn completionStatus = kIOReturnNotReady;
 
-    protocol.PrepareDuplex(
+    duplex.PrepareDuplex(
         channels, ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
         [&completionStatus](IOReturn status, ASFW::Audio::DuplexPrepareResult) {
             completionStatus = status;
@@ -532,7 +533,7 @@ TEST(ApogeeDuetDuplexAdapter, PrepareDuplexRevalidates48kBeforeResourceAllocatio
     rig.Target().ClearCommands();
     device.Reset(0x01U, 0x01U);
     completionStatus = kIOReturnNotReady;
-    protocol.PrepareDuplex(
+    duplex.PrepareDuplex(
         channels, ASFW::Audio::AudioClockConfig{.sampleRateHz = 48000U},
         [&completionStatus](IOReturn status, ASFW::Audio::DuplexPrepareResult) {
             completionStatus = status;
@@ -600,12 +601,13 @@ TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), nullptr, &irm, &cmp);
+    auto& duplex = *protocol.AsDuplexDeviceControl();
     ASFW::Audio::AudioDuplexChannels channels{};
     channels.deviceToHostIsoChannel = 5;
-    protocol.SetAssignedChannels(channels);
+    duplex.SetAssignedChannels(channels);
 
     IOReturn status = kIOReturnNotReady;
-    protocol.ProgramRx([&status](IOReturn result, ASFW::Audio::DuplexStageResult) {
+    duplex.ProgramRx([&status](IOReturn result, ASFW::Audio::DuplexStageResult) {
         status = result;
     });
 
@@ -644,16 +646,17 @@ TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
     ASFW::IRM::IRMClient irm(rig.Bus());
     ASFW::CMP::CMPClient cmp(rig.Bus(), rig.Bus(), rig.Routes());
     ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), nullptr, &irm, &cmp);
+    auto& duplex = *protocol.AsDuplexDeviceControl();
 
     IOReturn rxStatus = kIOReturnNotReady;
-    protocol.ProgramRx([&rxStatus](IOReturn status, ASFW::Audio::DuplexStageResult) {
+    duplex.ProgramRx([&rxStatus](IOReturn status, ASFW::Audio::DuplexStageResult) {
         rxStatus = status;
     });
     EXPECT_EQ(rxStatus, kIOReturnSuccess);
 
     rig.Bus().SetFailCompareSwap(true);
     IOReturn txStatus = kIOReturnNotReady;
-    protocol.ProgramTxAndEnableDuplex(
+    duplex.ProgramTxAndEnableDuplex(
         [&txStatus](IOReturn status, ASFW::Audio::DuplexStageResult) { txStatus = status; });
     EXPECT_EQ(txStatus, kIOReturnError);
 }

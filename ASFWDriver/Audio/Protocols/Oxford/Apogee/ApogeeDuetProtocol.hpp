@@ -3,9 +3,24 @@
 //
 // ApogeeDuetProtocol.hpp - Protocol implementation for Apogee Duet FireWire
 // Reference: snd-firewire-ctl-services/protocols/oxfw/src/apogee.rs
+//
+// What is left here after the FW-124 decomposition is composition plus the
+// device's own control surface:
+//
+//   ApogeeVendorCodec     command table and operand encoding   (FW-126)
+//   ApogeeTransport       FCP dispatch and meter register IO   (FW-129)
+//   ApogeeParamsSerdes    parameter serialization              (FW-128)
+//   OxfordCsr             chip-common FW970/971 ID registers   (FW-137)
+//   ApogeeDuetDuplex      duplex lifecycle and clock FSM       (FW-127)
+//
+// The duplex controller is a member rather than a base class, so this type no
+// longer carries the IDuplexDeviceControl vtable; AsDuplexDeviceControl hands
+// out the member. The IDeviceProtocol methods that overlap the duplex surface
+// stay here as forwarders, because callers reach them through IDeviceProtocol.
 
 #pragma once
 
+#include "ApogeeDuetDuplex.hpp"
 #include "ApogeeTypes.hpp"
 #include "ApogeeVendorCodec.hpp"
 #include "../OxfordCsr.hpp"
@@ -17,7 +32,6 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
-#include <memory>
 #include <span>
 
 namespace ASFW::Protocols::AVC {
@@ -35,8 +49,7 @@ struct CMPDevice;
 
 namespace ASFW::Audio::Oxford::Apogee {
 
-class ApogeeDuetProtocol final : public IDeviceProtocol,
-                                 public IDuplexDeviceControl {
+class ApogeeDuetProtocol final : public IDeviceProtocol {
 public:
     // The command table and operand encoding moved to ApogeeVendorCodec (FW-126);
     // this alias keeps every existing ApogeeDuetProtocol::VendorCommand use valid.
@@ -56,34 +69,37 @@ public:
                        CMP::CMPClient* cmpClient = nullptr,
                        uint32_t formatSettleDelayMs = 100U,
                        Scheduling::ITimerScheduler* timerScheduler = nullptr);
-    virtual ~ApogeeDuetProtocol() = default;
+    ~ApogeeDuetProtocol() override = default;
 
     // IDeviceProtocol implementation
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
-    const char* GetName() const override { return "Apogee Duet FireWire"; }
-    bool HasDsp() const override { return true; } // Has mixer/DSP features
-    bool HasMixer() const override { return true; }
-    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
-    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
-    const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
+    [[nodiscard]] const char* GetName() const override { return "Apogee Duet FireWire"; }
+    [[nodiscard]] bool HasDsp() const override { return true; } // Has mixer/DSP features
+    [[nodiscard]] bool HasMixer() const override { return true; }
+    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return &duplex_; }
+    [[nodiscard]] const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
+        return &duplex_;
+    }
 
-    // IDuplexDeviceControl: the generic lifecycle owns IRM + host isoch;
-    // this adapter owns only AV/C signal-format and CMP/PCR operations.
-    void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const AudioClockConfig& desiredClock,
-                       PrepareCallback callback) override;
-    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
-    void ProgramRx(StageCallback callback) override;
-    void ProgramTxAndEnableDuplex(StageCallback callback) override;
-    void ConfirmDuplexStart(ConfirmCallback callback) override;
+    // IDeviceProtocol members the duplex controller answers. Kept here because
+    // callers hold an IDeviceProtocol, not an IDuplexDeviceControl.
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override {
+        return duplex_.GetRuntimeAudioStreamCaps(outCaps);
+    }
+    [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }
+    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
+                              Protocols::AVC::FCPTransport* transport) override {
+        duplex_.UpdateRuntimeContext(route, transport);
+    }
+
+    /// Discovery applies the 48 kHz formation before publishing, holding the
+    /// concrete type rather than the duplex seam.
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          ClockApplyCallback callback) override;
-    void ReadDuplexHealth(HealthCallback callback) override;
-    void DisconnectPlayback(VoidCallback callback) override;
-    void DisconnectCapture(VoidCallback callback) override;
-    [[nodiscard]] IOReturn StopDuplex() override;
-    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
+                          IDuplexDeviceControl::ClockApplyCallback callback) {
+        duplex_.ApplyClockConfig(desiredClock, std::move(callback));
+    }
 
     // ========================================================================
     // Parameter Access (Async)
@@ -126,43 +142,7 @@ public:
     void GetFirmwareId(ResultCallback<uint32_t> callback);
     void GetHardwareId(ResultCallback<uint32_t> callback);
 
-    // Runtime integration hook. Not wired by factory yet.
-    void SetFCPTransport(Protocols::AVC::FCPTransport* fcpTransport) noexcept {
-        // The cache describes commands accepted through one transport epoch;
-        // a replacement transport must re-establish the device formation.
-        if (fcpTransport_ != fcpTransport) {
-            clockConfigApplied_ = false;
-        }
-        fcpTransport_ = fcpTransport;
-    }
-
-    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
-                              Protocols::AVC::FCPTransport* transport) override;
-
 private:
-    struct ClockTransition;
-
-    Protocols::Ports::FireWireBusOps& busOps_;
-    Protocols::Ports::FireWireBusInfo& busInfo_;
-    Discovery::DeviceRouteToken route_{};
-    Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
-    IRM::IRMClient* irmClient_{nullptr};
-    CMP::CMPClient* cmpClient_{nullptr};
-    AudioDuplexChannels duplexChannels_{};
-    AudioClockConfig appliedClock_{};
-    uint64_t preparedRouteEpoch_{0};
-    bool clockConfigApplied_{false};
-    bool outputConnected_{false};
-    bool inputConnected_{false};
-    uint32_t formatSettleDelayMs_{100U};
-    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
-
-    std::shared_ptr<ClockTransition> activeClockTransition_{nullptr};
-    uint64_t activeClockTransitionEpoch_{0};
-    uint64_t nextClockTransitionEpoch_{0};
-
-    [[nodiscard]] bool IsActive(const ClockTransition& transition) const noexcept;
-
     // Helpers
     using VendorResultCallback = std::function<void(IOReturn, const VendorCommand&)>;
     using VendorSequenceCallback =
@@ -175,20 +155,12 @@ private:
                                bool isStatus,
                                VendorSequenceCallback callback);
 
-    [[nodiscard]] CMP::CMPDevice CurrentCMPDevice() const noexcept;
-
-    void AdvanceClockTransition(const std::shared_ptr<ClockTransition>& transition);
-    void FailClockTransition(const std::shared_ptr<ClockTransition>& transition,
-                             IOReturn status);
-    void CancelClockTransition(IOReturn status);
-    void CompleteClockTransition(const std::shared_ptr<ClockTransition>& transition,
-                                 IOReturn status);
-    void FinishClockTransition(const std::shared_ptr<ClockTransition>& transition,
-                                IOReturn status);
-
     /// Route-liveness policy handed to the chip-common CSR reads.
     [[nodiscard]] Oxford::RouteValidator MakeRouteValidator() const;
 
+    // Declaration order matters: duplex_ binds a reference to runtime_.
+    DuetRuntime runtime_;
+    ApogeeDuetDuplex duplex_;
 };
 
 } // namespace ASFW::Audio::Oxford::Apogee

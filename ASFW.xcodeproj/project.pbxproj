@@ -64,6 +64,7 @@
 		28D79A1641FA4B845BEE0F1D /* MusicSubunit.cpp in Sources */ = {isa = PBXBuildFile; fileRef = ED07965E5C76A435ED80F085 /* MusicSubunit.cpp */; };
 		296B6C27335C80B79E9CDCBA /* GenericDiceProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A638E889D072CE33AEFCBDEA /* GenericDiceProfile.cpp */; };
 		29B0D6CD095CB3373C656373 /* RootSelectionCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C516291F7D576A9672B1D447 /* RootSelectionCoordinator.cpp */; };
+		2A1AA2854FA6831041FCF99F /* ApogeeDuetDuplex.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 521341B63E7AC9981BE350D1 /* ApogeeDuetDuplex.cpp */; };
 		2B3406B0907FC37FBA107BD2 /* PayloadHandle.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2C818DB628E918248C3E1A5D /* PayloadHandle.cpp */; };
 		2B63AD73E9E124C02A392F9C /* DriverConnector+LoggingConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FA63624C10EEF4E28C60EB7 /* DriverConnector+LoggingConfig.swift */; };
 		2E0AE0970C1F1DBC2D67F55E /* ASFWMCPRegisterTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47E488D2351E4FD559B0CDF0 /* ASFWMCPRegisterTools.swift */; };
@@ -666,6 +667,7 @@
 		51751F4E2707BF3956287D1F /* DuetViewModelLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuetViewModelLogicTests.swift; sourceTree = "<group>"; };
 		51F633B0544F08756AAAA430 /* ROMScanSession.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ROMScanSession.hpp; sourceTree = "<group>"; };
 		51FA6BF0E32CC73655F97151 /* SPro24DspTypes.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SPro24DspTypes.cpp; sourceTree = "<group>"; };
+		521341B63E7AC9981BE350D1 /* ApogeeDuetDuplex.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeDuetDuplex.cpp; sourceTree = "<group>"; };
 		5314E082B4BAF30CE27495A4 /* CameraSubunit.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CameraSubunit.hpp; sourceTree = "<group>"; };
 		5364BA023A0C10D7791261A1 /* ASFWDriverUserClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWDriverUserClient.cpp; sourceTree = "<group>"; };
 		53DEDB80CA15AB259093212A /* TxCompletion.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxCompletion.hpp; sourceTree = "<group>"; };
@@ -1073,6 +1075,7 @@
 		DF378D7A8CBF72942CB67F13 /* AVCUnitWireParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVCUnitWireParsingTests.swift; sourceTree = "<group>"; };
 		DF440CE02C9739DD19E27EAB /* TransactionStorage.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TransactionStorage.hpp; sourceTree = "<group>"; };
 		DF7847CA58AF943FE7E5B5C1 /* BusResetCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusResetCoordinator.hpp; sourceTree = "<group>"; };
+		DF8BD4A8C4C1E8235295F5AC /* ApogeeDuetDuplex.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeDuetDuplex.hpp; sourceTree = "<group>"; };
 		DFDD693FD1CC62C11029FEE4 /* DeviceRouteToken.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceRouteToken.hpp; sourceTree = "<group>"; };
 		DFF64153AF55C8E3D3A56754 /* DVCaptureSink.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DVCaptureSink.hpp; sourceTree = "<group>"; };
 		E01908F08E66CD99EB44C3AE /* IAVCDiscovery.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAVCDiscovery.hpp; sourceTree = "<group>"; };
@@ -1611,6 +1614,8 @@
 			isa = PBXGroup;
 			children = (
 				26B0033F8CE6CF9AA238F8AF /* ApogeeCaps.hpp */,
+				521341B63E7AC9981BE350D1 /* ApogeeDuetDuplex.cpp */,
+				DF8BD4A8C4C1E8235295F5AC /* ApogeeDuetDuplex.hpp */,
 				862D65458BD2D45123D9C6E4 /* ApogeeDuetProtocol.cpp */,
 				0FCC9AE9BE1B3929CC94BE88 /* ApogeeDuetProtocol.hpp */,
 				3D6F81F4D6F67BA694F51F03 /* ApogeeParamsSerdes.cpp */,
@@ -3072,6 +3077,7 @@
 				1AA921B5214974B982C6AF6D /* AmdtpPacketTimeline.cpp in Sources */,
 				0D45E9D5217493F2CA468B66 /* AmdtpPayloadWriter.cpp in Sources */,
 				3D9D02951035C22384C1CBF0 /* AmdtpTxPacketizer.cpp in Sources */,
+				2A1AA2854FA6831041FCF99F /* ApogeeDuetDuplex.cpp in Sources */,
 				3D97308CA3A11622955D8461 /* ApogeeDuetProfile.cpp in Sources */,
 				397A66B5278D4CEA50CEFE3E /* ApogeeDuetProtocol.cpp in Sources */,
 				C1C14D86D56F95DB279F339F /* ApogeeParamsSerdes.cpp in Sources */,
