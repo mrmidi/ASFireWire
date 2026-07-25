@@ -124,52 +124,6 @@ struct PlugChannelSummary {
 constexpr uint32_t kAVCSpecID = 0x00A02D;
 constexpr uint32_t kDuetPrefetchTimeoutMs = 5000;
 constexpr uint32_t kDuetFixedSampleRateHz = 48000;
-constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
-constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
-constexpr uint32_t kScopeInput = static_cast<uint32_t>('inpt');
-constexpr uint32_t kDuetPhantomMask = 0x3u;
-
-void ConfigureDuetPhantomOverrides(
-    ASFW::Audio::Model::ASFWAudioDevice& config,
-    const std::optional<ASFW::Audio::Oxford::Apogee::InputParams>& inputParams) {
-    config.hasPhantomOverride = true;
-    config.phantomSupportedMask = kDuetPhantomMask;
-
-    uint32_t initialMask = 0;
-    if (inputParams.has_value()) {
-        const auto& params = *inputParams;
-        for (uint32_t index = 0; index < 2; ++index) {
-            if (params.phantomPowerings[index]) {
-                initialMask |= (1u << index);
-            }
-        }
-    }
-    config.phantomInitialMask = initialMask;
-
-    config.boolControlOverrides.clear();
-    config.boolControlOverrides.reserve(4);
-    for (uint32_t element = 1; element <= 2; ++element) {
-        const uint32_t bit = 1u << (element - 1u);
-        bool polarityInitial = false;
-        if (inputParams.has_value()) {
-            polarityInitial = inputParams->polarities[element - 1u];
-        }
-        config.boolControlOverrides.push_back({
-            .classIdFourCC = kClassIdPhantomPower,
-            .scopeFourCC = kScopeInput,
-            .element = element,
-            .isSettable = true,
-            .initialValue = (initialMask & bit) != 0u,
-        });
-        config.boolControlOverrides.push_back({
-            .classIdFourCC = kClassIdPhaseInvert,
-            .scopeFourCC = kScopeInput,
-            .element = element,
-            .isSettable = true,
-            .initialValue = polarityInitial,
-        });
-    }
-}
 
 //==============================================================================
 // Constructor / Destructor
@@ -431,7 +385,6 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
         return;
     }
     if (IsApogeeDuet(*device)) {
-        ConfigureDuetPhantomOverrides(audioDeviceConfig, std::nullopt);
         ASFW_LOG(Audio,
                  "AVCDiscovery: Apogee Duet detected (GUID=%llx) - prefetching vendor config before publishing config",
                  guid);
@@ -719,7 +672,6 @@ void AVCDiscovery::FinishDuetPrefetch(
         return;
     }
 
-    ConfigureDuetPhantomOverrides(finalConfig, operation->state.inputParams);
     finalConfig.sampleRates = {kDuetFixedSampleRateHz};
     finalConfig.currentSampleRate = kDuetFixedSampleRateHz;
 

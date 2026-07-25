@@ -136,13 +136,21 @@ public:
     uint64_t GetGuid() const LOCALONLY;
 
     // Request a device sample-rate change (CoreAudio HandleChangeSampleRate ->
-    // DICE CLOCK_SELECT + duplex reconfigure). Cross-process RPC bridge
-    // (AudioDriver -> ASFWDriver process): it runs in the nub's own process so
-    // the parent -> ServiceContext -> AudioCoordinator chain is valid. Returns
-    // kIOReturnUnsupported for a rate the device does not advertise.
+    // DICE CLOCK_SELECT + duplex reconfigure). This is IIG dispatch between two
+    // IOService objects on different dispatch queues, NOT a process boundary:
+    // both personalities share one IOUserServerName with IOUserServerOneProcess
+    // (Info.plist:35-38, :99-102), as line 111 above already states. The
+    // dispatch is what makes the parent -> ServiceContext -> AudioCoordinator
+    // chain valid. Returns kIOReturnUnsupported for a rate the device does not
+    // advertise.
     virtual kern_return_t RequestSampleRateChange(uint32_t sampleRateHz);
 
-    // RPC protocol-backed boolean control bridge (AudioDriver -> ASFWDriver process)
+    // Protocol-backed boolean control bridge. Same process as above - this
+    // crosses dispatch queues, not processes. No device currently answers these:
+    // the phantom/polarity path they served was removed with the CoreAudio
+    // control policy decision (FW-132), so IDeviceProtocol's defaults report
+    // kIOReturnUnsupported. Phantom and polarity move to the ASFW app over the
+    // user client instead.
     virtual kern_return_t GetProtocolBooleanControl(
         uint32_t classIdFourCC,
         uint32_t element,

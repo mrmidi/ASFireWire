@@ -39,29 +39,6 @@ void InitializeAudioDriverConfigDefaults(ParsedAudioDriverConfig& outConfig) {
     }
 }
 
-void BuildFallbackBoolControls(ParsedAudioDriverConfig& inOutConfig) {
-    if (inOutConfig.boolControlCount != 0 || !inOutConfig.hasPhantomOverride) {
-        return;
-    }
-
-    const uint32_t mask = inOutConfig.phantomSupportedMask;
-    for (uint32_t bit = 0; bit < 32; ++bit) {
-        const uint32_t flag = 1u << bit;
-        if ((mask & flag) == 0u) {
-            continue;
-        }
-
-        const BoolControlDescriptor descriptor{
-            .classIdFourCC = kClassIdPhantomPower,
-            .scopeFourCC = kScopeInput,
-            .element = bit + 1u,
-            .isSettable = true,
-            .initialValue = (inOutConfig.phantomInitialMask & flag) != 0u,
-        };
-        AppendBoolControl(inOutConfig, descriptor);
-    }
-}
-
 void ApplyBringupSingleFormatPolicy(ParsedAudioDriverConfig& inOutConfig) {
     // Bring-up note: dynamic sample-rate advertisement is intentionally deferred.
     inOutConfig.sampleRates[0] = kDefaultSampleRate;

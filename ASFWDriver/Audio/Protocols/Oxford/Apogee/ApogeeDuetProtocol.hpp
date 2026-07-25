@@ -153,39 +153,8 @@ public:
         fcpTransport_ = fcpTransport;
     }
 
-    // IDeviceProtocol boolean control overrides
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
-    bool SupportsBooleanControl(uint32_t classIdFourCC,
-                                uint32_t element) const override;
-    IOReturn GetBooleanControlValue(uint32_t classIdFourCC,
-                                    uint32_t element,
-                                    bool& outValue) override;
-    IOReturn SetBooleanControlValue(uint32_t classIdFourCC,
-                                    uint32_t element,
-                                    bool value) override;
-
-    // Mapping helper for tests and call sites.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    static bool TryMapBooleanControl(uint32_t classIdFourCC,
-                                     uint32_t element,
-                                     uint8_t& outChannelIndex) noexcept {
-        const bool supportedClass =
-            (classIdFourCC == static_cast<uint32_t>('phan')) ||
-            (classIdFourCC == static_cast<uint32_t>('phsi'));
-        if (!supportedClass) {
-            return false;
-        }
-        if (element == 1u) {
-            outChannelIndex = 0u;
-            return true;
-        }
-        if (element == 2u) {
-            outChannelIndex = 1u;
-            return true;
-        }
-        return false;
-    }
 
 private:
     struct ClockTransition;

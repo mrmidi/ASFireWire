@@ -44,9 +44,6 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.sampleRateCount = parsedConfig.sampleRateCount;
     device.currentSampleRate = parsedConfig.currentSampleRate;
     device.streamModeRaw = std::to_underlying(parsedConfig.streamMode);
-    device.hasPhantomOverride = parsedConfig.hasPhantomOverride;
-    device.phantomSupportedMask = parsedConfig.phantomSupportedMask;
-    device.phantomInitialMask = parsedConfig.phantomInitialMask;
     device.boolControlCount = parsedConfig.boolControlCount;
 
     for (uint32_t index = 0; index < ASFW::Isoch::Audio::kMaxSampleRates; ++index) {
@@ -189,7 +186,6 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ASFW::Isoch::Audio::BuildChannelNamesFromPlugs(parsedConfig);
     }
 
-    ASFW::Isoch::Audio::BuildFallbackBoolControls(parsedConfig);
     // Profiled devices advertise their own validated rate set (DICE: 44.1/48 kHz);
     // only fall back to the single-format bring-up policy for unprofiled devices
     // whose multi-rate path is not yet validated end-to-end.
@@ -629,7 +625,11 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return error;
     }
 
-    ivars.audioDevice->SetWantsControlsRestored(true);
+    // The device is the source of truth for its own control state - we poll
+    // HwState to track the physical knob - so a host plist restore at publish
+    // time would fight the hardware (IOUserAudioClockDevice.iig:878-891).
+    // Device-wide with no per-control opt-out, hence a single decision here.
+    ivars.audioDevice->SetWantsControlsRestored(false);
     if (!requireAdkSuccess(
             "driver.SetTransportType",
             driver.SetTransportType(

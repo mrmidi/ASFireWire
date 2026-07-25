@@ -106,11 +106,6 @@ add_device_test(ClockRequestBrokerTests
     ClockRequestBrokerTests.cpp
 )
 
-# Apogee protocol boolean control mapping tests
-add_device_test(ApogeeBooleanControlMappingTests
-    ApogeeBooleanControlMappingTests.cpp
-)
-
 # FW-130: Apogee Duet device spec (control caps + CIP quirks), header-only
 add_device_test(ApogeeCapsTests
     ApogeeCapsTests.cpp

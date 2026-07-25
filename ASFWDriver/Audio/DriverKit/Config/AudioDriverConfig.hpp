@@ -55,10 +55,6 @@ struct ParsedAudioDriverConfig {
 
     StreamMode streamMode{StreamMode::kNonBlocking};
 
-    bool hasPhantomOverride{false};
-    uint32_t phantomSupportedMask{0};
-    uint32_t phantomInitialMask{0};
-
     uint32_t boolControlCount{0};
     BoolControlDescriptor boolControls[kMaxBoolControls]{};
 
@@ -84,8 +80,6 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
 // falling back to synthesized "<plug> N". Idempotent; safe to re-run after the
 // channel counts change.
 void BuildChannelNamesFromPlugs(ParsedAudioDriverConfig& inOutConfig);
-
-void BuildFallbackBoolControls(ParsedAudioDriverConfig& inOutConfig);
 
 void ApplyBringupSingleFormatPolicy(ParsedAudioDriverConfig& inOutConfig);
 

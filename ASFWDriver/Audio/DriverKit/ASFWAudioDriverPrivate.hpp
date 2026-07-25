@@ -45,9 +45,6 @@ struct AudioDriverDeviceState {
     // sync), pending until PerformDeviceConfigurationChange commits it.
     std::atomic<uint32_t> pendingExternalRateHz{0};
     uint32_t streamModeRaw{0};
-    bool hasPhantomOverride{false};
-    uint32_t phantomSupportedMask{0};
-    uint32_t phantomInitialMask{0};
     uint32_t boolControlCount{0};
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
 
