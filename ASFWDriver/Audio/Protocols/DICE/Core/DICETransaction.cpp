@@ -99,9 +99,9 @@ void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
                     return;
                 }
                 ASFW_LOG(DICE,
-                         "ReadSectionChunked: chunk at +%zu failed (status=%u); using %zu/%zu bytes",
+                         "ReadSectionChunked: chunk at +%zu failed (status=%{public}s); using %zu/%zu bytes",
                          accumulated->size(),
-                         static_cast<unsigned>(status),
+                         ASFW::Async::ToString(status),
                          accumulated->size(),
                          totalBytes);
                 done(kIOReturnSuccess);

@@ -175,8 +175,8 @@ public:
                 }
                 // Phase 2.3: CompletionCallback now takes (handle, status, span)
                 // Encode handle as (label + 1) to ensure handle is never 0
-                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u rCode=0x%02X",
-                            static_cast<uint32_t>(label) + 1, static_cast<uint32_t>(status), responseCode);
+                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%{public}s rCode=0x%02X",
+                            static_cast<uint32_t>(label) + 1, ASFW::Async::ToString(status), responseCode);
                 callback(AsyncHandle{static_cast<uint32_t>(label) + 1}, status, responseCode, data);
                 ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] Callback returned");
             } else {

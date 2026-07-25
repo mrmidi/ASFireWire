@@ -170,8 +170,8 @@ void CMPClient::ReadQuadlet(const CMPDevice& device, uint32_t address, FW::FwSpe
             return;
         }
         if (status != Async::AsyncStatus::kSuccess || payload.size() != sizeof(uint32_t)) {
-            CMPTRACE("ReadQuadlet DONE: addr=0x%08x status=%u (FAIL, payload=%zu)",
-                     address, status, payload.size());
+            CMPTRACE("ReadQuadlet DONE: addr=0x%08x status=%{public}s (FAIL, payload=%zu)",
+                     address, ASFW::Async::ToString(status), payload.size());
             callback(false, 0);
             return;
         }
@@ -210,7 +210,8 @@ void CMPClient::CompareSwap(const CMPDevice& device, uint32_t address, uint32_t 
             return;
         }
         if (status != Async::AsyncStatus::kSuccess) {
-            CMPTRACE("CompareSwap DONE: addr=0x%08x status=%u (async FAIL)", address, status);
+            CMPTRACE("CompareSwap DONE: addr=0x%08x status=%{public}s (async FAIL)", address,
+                     ASFW::Async::ToString(status));
             callback(MapAsyncStatus(status), 0);
             return;
         }

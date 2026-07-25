@@ -165,8 +165,8 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
     fetchAgentWriteHandle_ = {};
 
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG(Async, "FetchAgent: ORB_POINTER write failed status=%d",
-                 static_cast<int>(status));
+        ASFW_LOG(Async, "FetchAgent: ORB_POINTER write failed status=%{public}s",
+                 ASFW::Async::ToString(status));
         if (activeFetchAgentORB_ != nullptr) {
             uint32_t retries = activeFetchAgentORB_->GetFetchAgentWriteRetries();
             if (retries > 0) {
@@ -335,8 +335,8 @@ void FetchAgent::ResetNoWait(std::function<void()> onComplete) noexcept {
         0,
         TargetSpeed(),
         [onComplete](Async::AsyncStatus status, std::span<const uint8_t>) {
-            ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) complete status=%d",
-                     static_cast<int>(status));
+            ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) complete status=%{public}s",
+                     ASFW::Async::ToString(status));
             if (onComplete) {
                 onComplete();
             }
