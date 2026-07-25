@@ -59,6 +59,9 @@ public:
     // Selector 1012: LogRing occupancy + per-category counters
     kern_return_t GetLogStats(IOUserClientMethodArguments* args);
 
+    // Selector 1013: audio endpoint telemetry, copied from audio-owned state.
+    kern_return_t GetAudioTelemetry(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};

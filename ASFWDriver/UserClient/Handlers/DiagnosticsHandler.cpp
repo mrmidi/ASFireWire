@@ -1,5 +1,7 @@
 #include "DiagnosticsHandler.hpp"
 #include "../../Controller/ControllerCore.hpp"
+#include "../../Audio/Core/AudioRuntimeRegistry.hpp"
+#include "../../Audio/Runtime/AudioTelemetrySnapshot.hpp"
 #include "../../Diagnostics/DiagnosticsService.hpp"
 #include "../../Async/AsyncSubsystem.hpp"
 #include "../../Async/Interfaces/IAsyncSubsystemPort.hpp"
@@ -194,6 +196,28 @@ kern_return_t DiagnosticsHandler::GetLogStats(IOUserClientMethodArguments* args)
     ASFW::Logging::PackLogStats(ASFW::Logging::LogRing::Shared(), stats);
 
     OSData* data = OSData::withBytes(&stats, sizeof(stats));
+    if (!data) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+kern_return_t DiagnosticsHandler::GetAudioTelemetry(
+    IOUserClientMethodArguments* args) {
+    if (!args || !driver_) {
+        return kIOReturnBadArgument;
+    }
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* runtime = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    if (!runtime) {
+        return kIOReturnNotReady;
+    }
+
+    ASFW::Audio::Runtime::AudioTelemetrySnapshot snapshot{};
+    (void)runtime->CopyAudioTelemetrySnapshots(snapshot);
+    OSData* data = OSData::withBytes(&snapshot, sizeof(snapshot));
     if (!data) {
         return kIOReturnNoMemory;
     }

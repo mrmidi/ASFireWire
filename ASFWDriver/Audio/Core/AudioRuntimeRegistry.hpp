@@ -15,6 +15,8 @@
 
 #include <DriverKit/IOLib.h>
 
+#include "../Runtime/AudioTelemetrySnapshot.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -60,6 +62,8 @@ public:
     [[nodiscard]] std::shared_ptr<IDeviceProtocol> FindShared(uint64_t guid) noexcept;
     [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> FindEndpointRuntime(uint64_t guid) noexcept;
     [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> EnsureEndpointRuntime(uint64_t guid) noexcept;
+    [[nodiscard]] uint32_t CopyAudioTelemetrySnapshots(
+        Runtime::AudioTelemetrySnapshot& out) noexcept;
 
     // Set before discovery creates AV/C protocol instances. The registry does not
     // own the client; DriverContext owns it for the service lifetime.

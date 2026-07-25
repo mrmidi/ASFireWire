@@ -60,6 +60,8 @@ final class ASFWDriverConnector: ObservableObject {
         case requestUserBusReset = 61
         case startAudioStreaming = 62
         case stopAudioStreaming = 63
+        // Read-only audio telemetry diagnostics.
+        case getAudioTelemetry = 1013
     }
 
     // MARK: - Re-exported Models
