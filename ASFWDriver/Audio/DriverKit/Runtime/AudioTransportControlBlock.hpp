@@ -12,6 +12,7 @@
 #include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 
 namespace ASFW::Audio::Runtime {
@@ -337,6 +338,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingOverruns{0};
     std::atomic<uint64_t> txScheduledSampleFrame{0};
     std::atomic<uint64_t> txCompletedSampleFrame{0};
+    std::atomic<uint32_t> txCurrentCommittedMarginPackets{0};
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
     std::atomic<uint32_t> txMinimumCommittedMarginPackets{UINT32_MAX};
     std::atomic<uint64_t> txLastPreparationLatencyTicks{0};
@@ -344,6 +346,40 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> txPreparationLatencySamples{0};
     std::atomic<uint64_t> txPreparationAtMost750Us{0};
     std::atomic<uint64_t> txPreparationAtLeast1500Us{0};
+    // Snapshot-and-reset [TxPrep] telemetry.  These characterize the interval
+    // since the previous emitted line; the adjacent fields remain since-start
+    // watermarks/counters for long-run fault evidence.
+    std::atomic<uint32_t> txIntervalCommittedMarginMinPackets{UINT32_MAX};
+    std::atomic<uint32_t> txIntervalCommittedMarginMaxPackets{0};
+    std::atomic<uint64_t> txIntervalPreparationLatencyMaxTicks{0};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxPreparationLatencyHistogramBuckets>
+        txIntervalPreparationLatencyHistogram{};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxCommittedMarginHistogramBuckets>
+        txIntervalCommittedMarginHistogram{};
+    // Last complete interval, copied by the control plane.  The audio thread
+    // writes it under txCompletedIntervalSequence (odd while mutating, even
+    // when stable); readers only ever receive a value-owned snapshot.
+    std::atomic<uint64_t> txCompletedIntervalSequence{0};
+    std::atomic<uint32_t> txCompletedIntervalMarginMinPackets{UINT32_MAX};
+    std::atomic<uint32_t> txCompletedIntervalMarginMaxPackets{0};
+    std::atomic<uint64_t> txCompletedIntervalPreparationLatencyMaxTicks{0};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxPreparationLatencyHistogramBuckets>
+        txCompletedIntervalPreparationLatencyHistogram{};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxCommittedMarginHistogramBuckets>
+        txCompletedIntervalCommittedMarginHistogram{};
+    /// Host-tick stamp of the last emitted [TxPrep] line. The heartbeat is
+    /// wall-clock paced rather than wake-count paced so its rate does not scale
+    /// with sample rate (a %N-of-wakes trigger fires 2-4x faster at 96/192 kHz,
+    /// flooding the log ring exactly when retention matters most).
+    std::atomic<uint64_t> txHeartbeatLastHostTicks{0};
     std::atomic<int64_t> txLastLeadTicks{0};
     std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
     std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
@@ -451,6 +487,7 @@ struct AudioTransportControlBlock final {
         playbackRingOverruns.store(0, std::memory_order_relaxed);
         txScheduledSampleFrame.store(0, std::memory_order_relaxed);
         txCompletedSampleFrame.store(0, std::memory_order_relaxed);
+        txCurrentCommittedMarginPackets.store(0, std::memory_order_relaxed);
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_relaxed);
         txMinimumCommittedMarginPackets.store(
             UINT32_MAX, std::memory_order_relaxed);
@@ -459,6 +496,30 @@ struct AudioTransportControlBlock final {
         txPreparationLatencySamples.store(0, std::memory_order_relaxed);
         txPreparationAtMost750Us.store(0, std::memory_order_relaxed);
         txPreparationAtLeast1500Us.store(0, std::memory_order_relaxed);
+        txIntervalCommittedMarginMinPackets.store(
+            UINT32_MAX, std::memory_order_relaxed);
+        txIntervalCommittedMarginMaxPackets.store(0, std::memory_order_relaxed);
+        txIntervalPreparationLatencyMaxTicks.store(
+            0, std::memory_order_relaxed);
+        for (auto& bucket : txIntervalPreparationLatencyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        for (auto& bucket : txIntervalCommittedMarginHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        txCompletedIntervalSequence.store(0, std::memory_order_relaxed);
+        txCompletedIntervalMarginMinPackets.store(
+            UINT32_MAX, std::memory_order_relaxed);
+        txCompletedIntervalMarginMaxPackets.store(0, std::memory_order_relaxed);
+        txCompletedIntervalPreparationLatencyMaxTicks.store(
+            0, std::memory_order_relaxed);
+        for (auto& bucket : txCompletedIntervalPreparationLatencyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        for (auto& bucket : txCompletedIntervalCommittedMarginHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        txHeartbeatLastHostTicks.store(0, std::memory_order_relaxed);
         txLastLeadTicks.store(0, std::memory_order_relaxed);
         txMinimumLeadTicks.store(INT64_MAX, std::memory_order_relaxed);
         txMaximumLeadTicks.store(INT64_MIN, std::memory_order_relaxed);

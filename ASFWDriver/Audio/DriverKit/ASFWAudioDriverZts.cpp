@@ -5,7 +5,9 @@
 // Latest observed zero-timestamp publication for ASFWAudioDriver.
 //
 
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <new>
 
 #include "ASFWAudioDevice.h"
@@ -932,11 +934,14 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 latency, std::memory_order_relaxed);
             directControl->txPreparationLatencySamples.fetch_add(
                 1, std::memory_order_relaxed);
-            if (latencyNanos <= 750000) {
+            using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+            if (latencyNanos <= Geometry::kTxPreparationLatency750Us *
+                                    Geometry::kNanosecondsPerMicrosecond) {
                 directControl->txPreparationAtMost750Us.fetch_add(
                     1, std::memory_order_relaxed);
             }
-            if (latencyNanos >= 1500000) {
+            if (latencyNanos >= Geometry::kTxPreparationLatency1500Us *
+                                    Geometry::kNanosecondsPerMicrosecond) {
                 directControl->txPreparationAtLeast1500Us.fetch_add(
                     1, std::memory_order_relaxed);
             }
@@ -951,6 +956,37 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                             std::memory_order_relaxed,
                             std::memory_order_relaxed)) {
             }
+            uint64_t previousIntervalMax =
+                directControl->txIntervalPreparationLatencyMaxTicks.load(
+                    std::memory_order_relaxed);
+            while (latency > previousIntervalMax &&
+                   !directControl->txIntervalPreparationLatencyMaxTicks
+                        .compare_exchange_weak(
+                            previousIntervalMax,
+                            latency,
+                            std::memory_order_relaxed,
+                            std::memory_order_relaxed)) {
+            }
+
+            const size_t latencyBucket =
+                latencyNanos < Geometry::kTxPreparationLatency250Us *
+                                   Geometry::kNanosecondsPerMicrosecond
+                    ? 0
+                    : latencyNanos < Geometry::kTxPreparationLatency500Us *
+                                         Geometry::kNanosecondsPerMicrosecond
+                          ? 1
+                          : latencyNanos < Geometry::kTxPreparationLatency750Us *
+                                                Geometry::kNanosecondsPerMicrosecond
+                                ? 2
+                                : latencyNanos < Geometry::kTxPreparationLatency1000Us *
+                                                       Geometry::kNanosecondsPerMicrosecond
+                                      ? 3
+                                      : latencyNanos < Geometry::kTxPreparationLatency1500Us *
+                                                             Geometry::kNanosecondsPerMicrosecond
+                                            ? 4
+                                            : 5;
+            directControl->txIntervalPreparationLatencyHistogram[latencyBucket]
+                .fetch_add(1, std::memory_order_relaxed);
         }
         const uint64_t distance =
             packetLimitTarget > exposeCursor
@@ -979,6 +1015,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             committedMargin > UINT32_MAX
                 ? UINT32_MAX
                 : static_cast<uint32_t>(committedMargin);
+        directControl->txCurrentCommittedMarginPackets.store(
+            boundedMargin, std::memory_order_relaxed);
         const uint32_t committedMarginFloorBefore =
             directControl->txMinimumCommittedMarginPackets.load(
                 std::memory_order_relaxed);
@@ -991,6 +1029,41 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                         std::memory_order_relaxed,
                         std::memory_order_relaxed)) {
         }
+        uint32_t previousIntervalMarginMin =
+            directControl->txIntervalCommittedMarginMinPackets.load(
+                std::memory_order_relaxed);
+        while (boundedMargin < previousIntervalMarginMin &&
+               !directControl->txIntervalCommittedMarginMinPackets
+                    .compare_exchange_weak(
+                        previousIntervalMarginMin,
+                        boundedMargin,
+                        std::memory_order_relaxed,
+                        std::memory_order_relaxed)) {
+        }
+        uint32_t previousIntervalMarginMax =
+            directControl->txIntervalCommittedMarginMaxPackets.load(
+                std::memory_order_relaxed);
+        while (boundedMargin > previousIntervalMarginMax &&
+               !directControl->txIntervalCommittedMarginMaxPackets
+                    .compare_exchange_weak(
+                        previousIntervalMarginMax,
+                        boundedMargin,
+                        std::memory_order_relaxed,
+                        std::memory_order_relaxed)) {
+        }
+        using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+        const size_t marginBucket =
+            boundedMargin < Geometry::kTxCommittedMargin2xFloorPackets
+                ? 0
+                : boundedMargin < Geometry::kTxCommittedMargin4xFloorPackets
+                      ? 1
+                      : boundedMargin < Geometry::kTxCommittedMargin8xFloorPackets
+                            ? 2
+                            : boundedMargin < Geometry::kTxCommittedMargin16xFloorPackets
+                                  ? 3
+                                  : 4;
+        directControl->txIntervalCommittedMarginHistogram[marginBucket]
+            .fetch_add(1, std::memory_order_relaxed);
 
         // [TxPrep] Surface the cross-queue preparation health to the log. The
         // refill ISR trips kUnderrunFatal once committedMargin falls to the
@@ -1011,22 +1084,134 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             ASFW::IsochTransport::AudioTimingGeometry::kTxHardwareRingPackets;
         const bool newCommittedMarginLow =
             boundedMargin < committedMarginFloorBefore;
-        const bool slackBudgetExceeded = latencyNanos >= 1500000;
-        if (newCommittedMarginLow || slackBudgetExceeded ||
-            (wakeSamples != 0 && (wakeSamples % 1024) == 0)) {
+        const bool slackBudgetExceeded =
+            latencyNanos >= Geometry::kTxPreparationLatency1500Us *
+                                Geometry::kNanosecondsPerMicrosecond;
+
+        // Wall-clock heartbeat. A wake-count trigger is rate-dependent: the
+        // same divisor emits ~1.3 lines/s at 48 kHz and 2-4x that at 96/192 kHz,
+        // where ring retention matters most. Both anomaly triggers below are
+        // independent of this, so pacing costs no fault coverage.
+        constexpr uint64_t kHeartbeatIntervalNanos = 5'000'000'000ULL;
+        const uint64_t lastHeartbeatTicks =
+            directControl->txHeartbeatLastHostTicks.load(
+                std::memory_order_relaxed);
+        const bool heartbeatDue =
+            lastHeartbeatTicks == 0 || now <= lastHeartbeatTicks ||
+            ASFW::Timing::hostTicksToNanos(now - lastHeartbeatTicks) >=
+                kHeartbeatIntervalNanos;
+
+        if (newCommittedMarginLow || slackBudgetExceeded || heartbeatDue) {
+            // Anomaly emissions intentionally close an interval early. This
+            // keeps every retained [TxPrep] line self-contained and leaves the
+            // normal healthy interval wall-clock paced at five seconds.
+            const uint32_t intervalMarginMin =
+                directControl->txIntervalCommittedMarginMinPackets.exchange(
+                    UINT32_MAX, std::memory_order_relaxed);
+            const uint32_t intervalMarginMax =
+                directControl->txIntervalCommittedMarginMaxPackets.exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t intervalLatencyMaxNanos =
+                ASFW::Timing::hostTicksToNanos(
+                    directControl->txIntervalPreparationLatencyMaxTicks.exchange(
+                        0, std::memory_order_relaxed));
+            const uint64_t latencyBucket0 =
+                directControl->txIntervalPreparationLatencyHistogram[0].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t latencyBucket1 =
+                directControl->txIntervalPreparationLatencyHistogram[1].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t latencyBucket2 =
+                directControl->txIntervalPreparationLatencyHistogram[2].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t latencyBucket3 =
+                directControl->txIntervalPreparationLatencyHistogram[3].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t latencyBucket4 =
+                directControl->txIntervalPreparationLatencyHistogram[4].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t latencyBucket5 =
+                directControl->txIntervalPreparationLatencyHistogram[5].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t marginBucket0 =
+                directControl->txIntervalCommittedMarginHistogram[0].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t marginBucket1 =
+                directControl->txIntervalCommittedMarginHistogram[1].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t marginBucket2 =
+                directControl->txIntervalCommittedMarginHistogram[2].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t marginBucket3 =
+                directControl->txIntervalCommittedMarginHistogram[3].exchange(
+                    0, std::memory_order_relaxed);
+            const uint64_t marginBucket4 =
+                directControl->txIntervalCommittedMarginHistogram[4].exchange(
+                    0, std::memory_order_relaxed);
+            // Publish a stable copy for the read-only user-client snapshot.
+            // No control-plane caller receives directControl itself.
+            directControl->txCompletedIntervalSequence.fetch_add(
+                1, std::memory_order_relaxed);
+            directControl->txCompletedIntervalMarginMinPackets.store(
+                intervalMarginMin, std::memory_order_relaxed);
+            directControl->txCompletedIntervalMarginMaxPackets.store(
+                intervalMarginMax, std::memory_order_relaxed);
+            directControl->txCompletedIntervalPreparationLatencyMaxTicks.store(
+                ASFW::Timing::nanosToHostTicks(intervalLatencyMaxNanos),
+                std::memory_order_relaxed);
+            const uint64_t latencyBuckets[] = {
+                latencyBucket0, latencyBucket1, latencyBucket2,
+                latencyBucket3, latencyBucket4, latencyBucket5,
+            };
+            for (size_t index = 0; index < std::size(latencyBuckets); ++index) {
+                directControl->txCompletedIntervalPreparationLatencyHistogram[index].store(
+                    latencyBuckets[index], std::memory_order_relaxed);
+            }
+            const uint64_t marginBuckets[] = {
+                marginBucket0, marginBucket1, marginBucket2,
+                marginBucket3, marginBucket4,
+            };
+            for (size_t index = 0; index < std::size(marginBuckets); ++index) {
+                directControl->txCompletedIntervalCommittedMarginHistogram[index].store(
+                    marginBuckets[index], std::memory_order_relaxed);
+            }
+            directControl->txCompletedIntervalSequence.fetch_add(
+                1, std::memory_order_release);
+            // Stamped on every emission, so an anomaly burst defers the next
+            // heartbeat instead of interleaving with it. Anomalies are never
+            // themselves suppressed.
+            directControl->txHeartbeatLastHostTicks.store(
+                now, std::memory_order_relaxed);
             ASFW_LOG(
                 DirectAudio,
-                "[TxPrep] margin=%u min=%u lead=%u distMin=%u lastLatUs=%llu "
-                "maxLatUs=%llu late1500=%llu wakes=%llu exposureLead=%u "
-                "coverageLead=%u%{public}s",
+                "[TxPrep] margin=%u iMin=%u iMax=%u min=%u lead=%u "
+                "lastLatUs=%llu iMaxLatUs=%llu maxLatUs=%llu "
+                "latHist=%llu/%llu/%llu/%llu/%llu/%llu "
+                "marginHist=%llu/%llu/%llu/%llu/%llu fast750=%llu "
+                "late1500=%llu wakes=%llu "
+                "exposureLead=%u coverageLead=%u%{public}s",
                 boundedMargin,
+                intervalMarginMin,
+                intervalMarginMax,
                 minCommittedMargin,
                 ASFW::IsochTransport::AudioTimingGeometry::
                     kTxPreparationLeadPackets,
-                directControl->txMinimumPreparationDistance.load(
-                    std::memory_order_relaxed),
                 latencyNanos / 1000,
+                intervalLatencyMaxNanos / 1000,
                 maxLatencyNanos / 1000,
+                latencyBucket0,
+                latencyBucket1,
+                latencyBucket2,
+                latencyBucket3,
+                latencyBucket4,
+                latencyBucket5,
+                marginBucket0,
+                marginBucket1,
+                marginBucket2,
+                marginBucket3,
+                marginBucket4,
+                directControl->txPreparationAtMost750Us.load(
+                    std::memory_order_relaxed),
                 directControl->txPreparationAtLeast1500Us.load(
                     std::memory_order_relaxed),
                 wakeSamples,

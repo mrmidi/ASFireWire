@@ -1,4 +1,5 @@
 #include "Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
+#include "Audio/Runtime/AudioTelemetrySnapshot.hpp"
 
 #include <gtest/gtest.h>
 
@@ -13,6 +14,7 @@ using ASFW::Audio::Runtime::TxPreparationRequestState;
 using ASFW::Audio::Runtime::TxProducerFaultReason;
 using ASFW::Audio::Runtime::TxProducerFaultRecord;
 using ASFW::Audio::Runtime::TxProducerFaultStage;
+using ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot;
 
 TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalescible) {
     TxPreparationRequestState requests{};
@@ -66,6 +68,35 @@ TEST(AudioTransportControlBlockTests, ProducerFaultDetailIsAudioOwnedAndResettab
 
     control.ResetForStart();
     EXPECT_FALSE(control.txProducerFault.TryRead(observed));
+}
+
+TEST(AudioTransportControlBlockTests, TelemetrySnapshotCopiesOnlyCompletedInterval) {
+    AudioTransportControlBlock control{};
+    control.generation.store(7, std::memory_order_relaxed);
+    control.txCurrentCommittedMarginPackets.store(672, std::memory_order_relaxed);
+    control.txMinimumCommittedMarginPackets.store(665, std::memory_order_relaxed);
+    control.txLastPreparationLatencyTicks.store(32, std::memory_order_relaxed);
+    control.txMaxPreparationLatencyTicks.store(2468, std::memory_order_relaxed);
+    control.txPreparationLatencySamples.store(144550, std::memory_order_relaxed);
+    control.txPreparationAtMost750Us.store(144549, std::memory_order_relaxed);
+    control.txPreparationAtLeast1500Us.store(1, std::memory_order_relaxed);
+    control.txCompletedIntervalSequence.store(2, std::memory_order_relaxed);
+    control.txCompletedIntervalMarginMinPackets.store(665, std::memory_order_relaxed);
+    control.txCompletedIntervalMarginMaxPackets.store(678, std::memory_order_relaxed);
+    control.txCompletedIntervalPreparationLatencyMaxTicks.store(158, std::memory_order_relaxed);
+    control.txCompletedIntervalPreparationLatencyHistogram[0].store(6650, std::memory_order_relaxed);
+    control.txCompletedIntervalCommittedMarginHistogram[3].store(7119, std::memory_order_relaxed);
+
+    AudioTelemetryEndpointSnapshot snapshot{};
+    ASFW::Audio::Runtime::CopyAudioTelemetrySnapshot(control, snapshot);
+
+    EXPECT_EQ(snapshot.controlGeneration, 7U);
+    EXPECT_EQ(snapshot.currentCommittedMarginPackets, 672U);
+    EXPECT_EQ(snapshot.completedIntervalMarginMinPackets, 665U);
+    EXPECT_EQ(snapshot.completedIntervalMarginMaxPackets, 678U);
+    EXPECT_EQ(snapshot.completedLatencyHistogram[0], 6650U);
+    EXPECT_EQ(snapshot.completedMarginHistogram[3], 7119U);
+    EXPECT_NE(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryHasCompletedInterval, 0U);
 }
 
 TEST(AudioTransportControlBlockTests, WirePayloadTelemetryStaysInAudioAndFlagsDropout) {
@@ -124,6 +155,18 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.txPreparationLatencySamples.store(10, std::memory_order_relaxed);
     control.txPreparationAtMost750Us.store(9, std::memory_order_relaxed);
     control.txPreparationAtLeast1500Us.store(1, std::memory_order_relaxed);
+    control.txIntervalCommittedMarginMinPackets.store(
+        64, std::memory_order_relaxed);
+    control.txIntervalCommittedMarginMaxPackets.store(
+        512, std::memory_order_relaxed);
+    control.txIntervalPreparationLatencyMaxTicks.store(
+        31, std::memory_order_relaxed);
+    for (auto& bucket : control.txIntervalPreparationLatencyHistogram) {
+        bucket.store(7, std::memory_order_relaxed);
+    }
+    for (auto& bucket : control.txIntervalCommittedMarginHistogram) {
+        bucket.store(11, std::memory_order_relaxed);
+    }
     control.txLastLeadTicks.store(40, std::memory_order_relaxed);
     control.txMinimumLeadTicks.store(10, std::memory_order_relaxed);
     control.txMaximumLeadTicks.store(70, std::memory_order_relaxed);
@@ -192,6 +235,21 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.txPreparationLatencySamples.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txPreparationAtMost750Us.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txPreparationAtLeast1500Us.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txIntervalCommittedMarginMinPackets.load(
+                  std::memory_order_acquire),
+              UINT32_MAX);
+    EXPECT_EQ(control.txIntervalCommittedMarginMaxPackets.load(
+                  std::memory_order_acquire),
+              0U);
+    EXPECT_EQ(control.txIntervalPreparationLatencyMaxTicks.load(
+                  std::memory_order_acquire),
+              0U);
+    for (const auto& bucket : control.txIntervalPreparationLatencyHistogram) {
+        EXPECT_EQ(bucket.load(std::memory_order_acquire), 0U);
+    }
+    for (const auto& bucket : control.txIntervalCommittedMarginHistogram) {
+        EXPECT_EQ(bucket.load(std::memory_order_acquire), 0U);
+    }
     EXPECT_EQ(control.txLastLeadTicks.load(std::memory_order_acquire), 0);
     EXPECT_EQ(control.txMinimumLeadTicks.load(std::memory_order_acquire),
               INT64_MAX);
