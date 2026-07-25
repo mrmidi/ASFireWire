@@ -68,6 +68,14 @@ add_async_test(ATDescriptorTests
     ATDescriptorTests.cpp
 )
 
+# AT Context Completion Tests
+add_async_test(ATContextCompletionTests
+    ATContextCompletionTests.cpp
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
 # Buffer Ring DMA Tests
 add_async_test(BufferRingDMATests
     BufferRingDMATests.cpp
