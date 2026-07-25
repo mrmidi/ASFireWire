@@ -93,6 +93,13 @@ struct ApogeeVendorCommand {
     /// Validate and decode a status response into this command's value fields.
     /// Returns false - never a partially-filled command - on any mismatch.
     [[nodiscard]] bool ParseStatusPayload(std::span<const uint8_t> payload);
+
+    /// The params diff engine (FW-128) compares whole commands, so equality must
+    /// cover every value field rather than just the code. Every factory above
+    /// value-initialises first, so the fields a given code does not use are
+    /// deterministically zero in both operands and never make two otherwise
+    /// identical commands compare unequal.
+    [[nodiscard]] bool operator==(const ApogeeVendorCommand&) const = default;
 };
 
 /// The Duet's framing, bound to its spec.

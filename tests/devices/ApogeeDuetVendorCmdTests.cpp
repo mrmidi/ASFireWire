@@ -9,6 +9,7 @@
 #include <span>
 #include <type_traits>
 #include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.hpp"
 #include "Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"
@@ -139,27 +140,30 @@ inline void BuildMuteMode(OutputMuteMode mode, bool& mute, bool& unmute) noexcep
     }
 }
 
-// Static member function aliases
+// The serdes moved out of ApogeeDuetProtocol into a free, transport-free
+// namespace (FW-128); these keep the existing test bodies reading the same.
+namespace Serdes = ASFW::Audio::Oxford::Apogee::ParamsSerdes;
+
 inline VendorCmd BuildKnobStateControl(const KnobState& state) {
-    return ApogeeDuetProtocol::BuildKnobStateControl(state);
+    return Serdes::BuildKnobStateControl(state);
 }
 inline KnobState ParseKnobState(const VendorCmd& cmd) {
-    return ApogeeDuetProtocol::ParseKnobState(cmd);
+    return Serdes::ParseKnobState(cmd);
 }
 inline std::vector<VendorCmd> BuildKnobStateQuery() {
-    return ApogeeDuetProtocol::BuildKnobStateQuery();
+    return Serdes::BuildKnobStateQuery();
 }
 inline std::vector<VendorCmd> BuildOutputParamsQuery() {
-    return ApogeeDuetProtocol::BuildOutputParamsQuery();
+    return Serdes::BuildOutputParamsQuery();
 }
 inline std::vector<VendorCmd> BuildInputParamsQuery() {
-    return ApogeeDuetProtocol::BuildInputParamsQuery();
+    return Serdes::BuildInputParamsQuery();
 }
 inline std::vector<VendorCmd> BuildMixerParamsQuery() {
-    return ApogeeDuetProtocol::BuildMixerParamsQuery();
+    return Serdes::BuildMixerParamsQuery();
 }
 inline std::vector<VendorCmd> BuildDisplayParamsQuery() {
-    return ApogeeDuetProtocol::BuildDisplayParamsQuery();
+    return Serdes::BuildDisplayParamsQuery();
 }
 
 // ============================================================================

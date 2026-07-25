@@ -42,25 +42,8 @@ public:
     // this alias keeps every existing ApogeeDuetProtocol::VendorCommand use valid.
     using VendorCommand = ApogeeVendorCommand;
 
-    static std::vector<VendorCommand> BuildKnobStateQuery();
-    static VendorCommand BuildKnobStateControl(const KnobState& state);
-    static KnobState ParseKnobState(const VendorCommand& command);
-
-    static std::vector<VendorCommand> BuildOutputParamsQuery();
-    static std::vector<VendorCommand> BuildOutputParamsControl(const OutputParams& params);
-    static OutputParams ParseOutputParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildInputParamsQuery();
-    static std::vector<VendorCommand> BuildInputParamsControl(const InputParams& params);
-    static InputParams ParseInputParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildMixerParamsQuery();
-    static std::vector<VendorCommand> BuildMixerParamsControl(const MixerParams& params);
-    static MixerParams ParseMixerParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildDisplayParamsQuery();
-    static std::vector<VendorCommand> BuildDisplayParamsControl(const DisplayParams& params);
-    static DisplayParams ParseDisplayParams(const std::vector<VendorCommand>& commands);
+    // Params serialization moved to ApogeeParamsSerdes (FW-128). It is pure and
+    // static, so it is tested directly rather than through this class.
 
     using VoidCallback = std::function<void(IOReturn)>;
     template<typename T> using ResultCallback = std::function<void(IOReturn, T)>;

@@ -128,6 +128,25 @@ add_device_test(ApogeeTransportTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
+# FW-128: Duet params serialization (pure, no transport)
+add_device_test(ApogeeParamsSerdesTests
+    ApogeeParamsSerdesTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+)
+
+# FW-128: OXFW-common params cache/diff engine (header-only template)
+add_device_test(OxfwParamsEngineTests
+    OxfwParamsEngineTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 # FW-137: Oxford FW970/971 chip-common CSR reads
 add_device_test(OxfordCsrTests
     OxfordCsrTests.cpp
@@ -151,6 +170,7 @@ add_device_test(AvcTestRigTests
 add_device_test(ApogeeDuetVendorCmdTests
     ApogeeDuetVendorCmdTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
@@ -166,6 +186,7 @@ add_device_test(ApogeeDuetVendorCmdTests
 add_device_test(ApogeeDuetClockTransitionTests
     ApogeeDuetClockTransitionTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"

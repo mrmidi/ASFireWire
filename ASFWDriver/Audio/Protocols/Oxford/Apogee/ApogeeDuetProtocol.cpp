@@ -6,6 +6,7 @@
 
 #include "ApogeeDuetProtocol.hpp"
 
+#include "ApogeeParamsSerdes.hpp"
 #include "ApogeeTransport.hpp"
 
 #include "../../../../Common/CallbackUtils.hpp"
@@ -33,15 +34,11 @@ using Protocols::AVC::FCPStatus;
 
 namespace {
 
-
-constexpr uint8_t kCTypeControl = 0x00;
-constexpr uint8_t kCTypeStatus = 0x01;
-constexpr uint8_t kSubunitUnit = 0xFF;
-constexpr uint8_t kOpcodeVendorDependent = 0x00;
-constexpr uint32_t kControlSyncTimeoutMs = 1500;
+// The AV/C framing constants that used to sit here left with the vendor codec
+// (FW-126) and dispatch (FW-129); only the CMP poll geometry is still read from
+// this file.
 constexpr uint32_t kCMPTimeoutMs = 250;
 constexpr uint32_t kCMPPollMs = 5;
-constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
 
 // Still needed here by the clock-transition path, which maps AV/C signal-format
 // results. The FCP-status mapping moved out with dispatch (FW-129).
@@ -66,39 +63,7 @@ constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
     }
 }
 
-
-
-
-[[nodiscard]] OutputMuteMode ParseMuteMode(bool mute, bool unmute) noexcept {
-    if (mute && unmute) {
-        return OutputMuteMode::Never;
-    }
-    if (mute && !unmute) {
-        return OutputMuteMode::Swapped;
-    }
-    if (!mute && unmute) {
-        return OutputMuteMode::Normal;
-    }
-    return OutputMuteMode::Never;
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void BuildMuteMode(OutputMuteMode mode, bool& mute, bool& unmute) noexcept {
-    switch (mode) {
-        case OutputMuteMode::Never:
-            mute = true;
-            unmute = true;
-            break;
-        case OutputMuteMode::Normal:
-            mute = false;
-            unmute = true;
-            break;
-        case OutputMuteMode::Swapped:
-            mute = true;
-            unmute = false;
-            break;
-    }
-}
+// The mute-mode tri-state helpers moved with the serdes (FW-128).
 
 } // namespace
 
@@ -820,350 +785,10 @@ void ApogeeDuetProtocol::ExecuteVendorSequence(const std::vector<VendorCommand>&
     VendorFcp::ExecuteSequence(fcpTransport_, commands, isStatus, std::move(callback));
 }
 
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildKnobStateQuery() {
-    return {VendorCommand::Make(VendorCommand::Code::HwState)};
-}
-
-ApogeeDuetProtocol::VendorCommand ApogeeDuetProtocol::BuildKnobStateControl(
-    const KnobState& state) {
-    std::array<uint8_t, 11> raw{};
-    raw[0] = state.outputMute ? 1U : 0U;
-    raw[1] = static_cast<uint8_t>(state.target);
-    raw[3] = static_cast<uint8_t>(KnobState::kOutputVolMax - state.outputVolume);
-    raw[4] = state.inputGains[0];
-    raw[5] = state.inputGains[1];
-    return VendorCommand::HwState(raw);
-}
-
-KnobState ApogeeDuetProtocol::ParseKnobState(const VendorCommand& command) {
-    KnobState state{};
-    if (command.code != VendorCommand::Code::HwState) {
-        return state;
-    }
-
-    state.outputMute = command.hwState[0] > 0;
-    switch (command.hwState[1]) {
-        case 1:
-            state.target = KnobTarget::InputPair0;
-            break;
-        case 2:
-            state.target = KnobTarget::InputPair1;
-            break;
-        default:
-            state.target = KnobTarget::OutputPair0;
-            break;
-    }
-
-    state.outputVolume = static_cast<uint8_t>(KnobState::kOutputVolMax - command.hwState[3]);
-    state.inputGains[0] = command.hwState[4];
-    state.inputGains[1] = command.hwState[5];
-    return state;
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildOutputParamsQuery() {
-    return {
-        VendorCommand::Bool(VendorCommand::Code::OutMute, false),
-        VendorCommand::OutVolume(0),
-        VendorCommand::Bool(VendorCommand::Code::OutSourceIsMixer, false),
-        VendorCommand::Bool(VendorCommand::Code::OutIsConsumerLevel, false),
-        VendorCommand::Bool(VendorCommand::Code::MuteForLineOut, false),
-        VendorCommand::Bool(VendorCommand::Code::UnmuteForLineOut, false),
-        VendorCommand::Bool(VendorCommand::Code::MuteForHpOut, false),
-        VendorCommand::Bool(VendorCommand::Code::UnmuteForHpOut, false),
-    };
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildOutputParamsControl(
-    const OutputParams& params) {
-    bool lineMute = false;
-    bool lineUnmute = false;
-    bool hpMute = false;
-    bool hpUnmute = false;
-
-    BuildMuteMode(params.lineMuteMode, lineMute, lineUnmute);
-    BuildMuteMode(params.hpMuteMode, hpMute, hpUnmute);
-
-    return {
-        VendorCommand::Bool(VendorCommand::Code::OutMute, params.mute),
-        VendorCommand::OutVolume(params.volume),
-        VendorCommand::Bool(VendorCommand::Code::OutSourceIsMixer,
-                            params.source == OutputSource::MixerOutputPair0),
-        VendorCommand::Bool(VendorCommand::Code::OutIsConsumerLevel,
-                            params.nominalLevel == OutputNominalLevel::Consumer),
-        VendorCommand::Bool(VendorCommand::Code::MuteForLineOut, lineMute),
-        VendorCommand::Bool(VendorCommand::Code::UnmuteForLineOut, lineUnmute),
-        VendorCommand::Bool(VendorCommand::Code::MuteForHpOut, hpMute),
-        VendorCommand::Bool(VendorCommand::Code::UnmuteForHpOut, hpUnmute),
-    };
-}
-
-OutputParams ApogeeDuetProtocol::ParseOutputParams(const std::vector<VendorCommand>& commands) {
-    OutputParams params{};
-
-    bool lineMute = false;
-    bool lineUnmute = false;
-    bool hpMute = false;
-    bool hpUnmute = false;
-
-    for (const auto& command : commands) {
-        switch (command.code) {
-            case VendorCommand::Code::OutMute:
-                params.mute = command.boolValue;
-                break;
-            case VendorCommand::Code::OutVolume:
-                params.volume = command.u8Value;
-                break;
-            case VendorCommand::Code::OutSourceIsMixer:
-                params.source = command.boolValue ? OutputSource::MixerOutputPair0
-                                                  : OutputSource::StreamInputPair0;
-                break;
-            case VendorCommand::Code::OutIsConsumerLevel:
-                params.nominalLevel = command.boolValue ? OutputNominalLevel::Consumer
-                                                        : OutputNominalLevel::Instrument;
-                break;
-            case VendorCommand::Code::MuteForLineOut:
-                lineMute = command.boolValue;
-                break;
-            case VendorCommand::Code::UnmuteForLineOut:
-                lineUnmute = command.boolValue;
-                break;
-            case VendorCommand::Code::MuteForHpOut:
-                hpMute = command.boolValue;
-                break;
-            case VendorCommand::Code::UnmuteForHpOut:
-                hpUnmute = command.boolValue;
-                break;
-            default:
-                break;
-        }
-    }
-
-    params.lineMuteMode = ParseMuteMode(lineMute, lineUnmute);
-    params.hpMuteMode = ParseMuteMode(hpMute, hpUnmute);
-    return params;
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildInputParamsQuery() {
-    return {
-        VendorCommand::InGain(0, 0),
-        VendorCommand::InGain(1, 0),
-        VendorCommand::IndexedBool(VendorCommand::Code::MicPolarity, 0, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::MicPolarity, 1, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::XlrIsMicLevel, 0, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::XlrIsMicLevel, 1, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::XlrIsConsumerLevel, 0, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::XlrIsConsumerLevel, 1, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::MicPhantom, 0, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::MicPhantom, 1, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::InputSourceIsPhone, 0, false),
-        VendorCommand::IndexedBool(VendorCommand::Code::InputSourceIsPhone, 1, false),
-        VendorCommand::Bool(VendorCommand::Code::InClickless, false),
-    };
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildInputParamsControl(
-    const InputParams& params) {
-    std::vector<VendorCommand> commands;
-    commands.reserve(13);
-
-    for (size_t i = 0; i < params.gains.size(); ++i) {
-        commands.push_back(VendorCommand::InGain(static_cast<uint8_t>(i), params.gains[i]));
-    }
-    for (size_t i = 0; i < params.polarities.size(); ++i) {
-        commands.push_back(VendorCommand::IndexedBool(VendorCommand::Code::MicPolarity,
-                                                      static_cast<uint8_t>(i),
-                                                      params.polarities[i]));
-    }
-    for (size_t i = 0; i < params.phantomPowerings.size(); ++i) {
-        commands.push_back(VendorCommand::IndexedBool(VendorCommand::Code::MicPhantom,
-                                                      static_cast<uint8_t>(i),
-                                                      params.phantomPowerings[i]));
-    }
-    for (size_t i = 0; i < params.sources.size(); ++i) {
-        commands.push_back(VendorCommand::IndexedBool(VendorCommand::Code::InputSourceIsPhone,
-                                                      static_cast<uint8_t>(i),
-                                                      params.sources[i] == InputSource::Phone));
-    }
-
-    commands.push_back(VendorCommand::Bool(VendorCommand::Code::InClickless, params.clickless));
-
-    for (size_t i = 0; i < params.xlrNominalLevels.size(); ++i) {
-        commands.push_back(VendorCommand::IndexedBool(
-            VendorCommand::Code::XlrIsMicLevel,
-            static_cast<uint8_t>(i),
-            params.xlrNominalLevels[i] == InputXlrNominalLevel::Microphone));
-    }
-    for (size_t i = 0; i < params.xlrNominalLevels.size(); ++i) {
-        commands.push_back(VendorCommand::IndexedBool(
-            VendorCommand::Code::XlrIsConsumerLevel,
-            static_cast<uint8_t>(i),
-            params.xlrNominalLevels[i] == InputXlrNominalLevel::Consumer));
-    }
-
-    return commands;
-}
-
-InputParams ApogeeDuetProtocol::ParseInputParams(const std::vector<VendorCommand>& commands) {
-    InputParams params{};
-    std::array<bool, 2> isMicLevels{};
-    std::array<bool, 2> isConsumerLevels{};
-
-    for (const auto& command : commands) {
-        switch (command.code) {
-            case VendorCommand::Code::InGain:
-                if (command.index < params.gains.size()) {
-                    params.gains[command.index] = command.u8Value;
-                }
-                break;
-            case VendorCommand::Code::MicPolarity:
-                if (command.index < params.polarities.size()) {
-                    params.polarities[command.index] = command.boolValue;
-                }
-                break;
-            case VendorCommand::Code::XlrIsMicLevel:
-                if (command.index < isMicLevels.size()) {
-                    isMicLevels[command.index] = command.boolValue;
-                }
-                break;
-            case VendorCommand::Code::XlrIsConsumerLevel:
-                if (command.index < isConsumerLevels.size()) {
-                    isConsumerLevels[command.index] = command.boolValue;
-                }
-                break;
-            case VendorCommand::Code::MicPhantom:
-                if (command.index < params.phantomPowerings.size()) {
-                    params.phantomPowerings[command.index] = command.boolValue;
-                }
-                break;
-            case VendorCommand::Code::InputSourceIsPhone:
-                if (command.index < params.sources.size()) {
-                    params.sources[command.index] = command.boolValue ? InputSource::Phone
-                                                                       : InputSource::Xlr;
-                }
-                break;
-            case VendorCommand::Code::InClickless:
-                params.clickless = command.boolValue;
-                break;
-            default:
-                break;
-        }
-    }
-
-    for (size_t i = 0; i < params.xlrNominalLevels.size(); ++i) {
-        if (isMicLevels[i]) {
-            params.xlrNominalLevels[i] = InputXlrNominalLevel::Microphone;
-        } else if (isConsumerLevels[i]) {
-            params.xlrNominalLevels[i] = InputXlrNominalLevel::Consumer;
-        } else {
-            params.xlrNominalLevels[i] = InputXlrNominalLevel::Professional;
-        }
-    }
-
-    return params;
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildMixerParamsQuery() {
-    return {
-        VendorCommand::MixerSrc(0, 0, 0),
-        VendorCommand::MixerSrc(1, 0, 0),
-        VendorCommand::MixerSrc(2, 0, 0),
-        VendorCommand::MixerSrc(3, 0, 0),
-        VendorCommand::MixerSrc(0, 1, 0),
-        VendorCommand::MixerSrc(1, 1, 0),
-        VendorCommand::MixerSrc(2, 1, 0),
-        VendorCommand::MixerSrc(3, 1, 0),
-    };
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildMixerParamsControl(
-    const MixerParams& params) {
-    std::vector<VendorCommand> commands;
-    commands.reserve(8);
-
-    for (size_t dst = 0; dst < params.outputs.size(); ++dst) {
-        const auto& coefs = params.outputs[dst];
-        commands.push_back(VendorCommand::MixerSrc(0, static_cast<uint8_t>(dst),
-                                                   coefs.analogInputs[0]));
-        commands.push_back(VendorCommand::MixerSrc(1, static_cast<uint8_t>(dst),
-                                                   coefs.analogInputs[1]));
-        commands.push_back(VendorCommand::MixerSrc(2, static_cast<uint8_t>(dst),
-                                                   coefs.streamInputs[0]));
-        commands.push_back(VendorCommand::MixerSrc(3, static_cast<uint8_t>(dst),
-                                                   coefs.streamInputs[1]));
-    }
-
-    return commands;
-}
-
-MixerParams ApogeeDuetProtocol::ParseMixerParams(const std::vector<VendorCommand>& commands) {
-    MixerParams params{};
-
-    for (const auto& command : commands) {
-        if (command.code != VendorCommand::Code::MixerSrc ||
-            command.index2 >= params.outputs.size()) {
-            continue;
-        }
-
-        if (command.index < 2) {
-            params.outputs[command.index2].analogInputs[command.index] = command.u16Value;
-        } else if (command.index < 4) {
-            params.outputs[command.index2].streamInputs[command.index - 2] = command.u16Value;
-        }
-    }
-
-    return params;
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildDisplayParamsQuery() {
-    return {
-        VendorCommand::Bool(VendorCommand::Code::DisplayIsInput, false),
-        VendorCommand::Bool(VendorCommand::Code::DisplayFollowToKnob, false),
-        VendorCommand::Bool(VendorCommand::Code::DisplayOverholdTwoSec, false),
-    };
-}
-
-std::vector<ApogeeDuetProtocol::VendorCommand> ApogeeDuetProtocol::BuildDisplayParamsControl(
-    const DisplayParams& params) {
-    return {
-        VendorCommand::Bool(VendorCommand::Code::DisplayIsInput,
-                            params.target == DisplayTarget::Input),
-        VendorCommand::Bool(VendorCommand::Code::DisplayFollowToKnob,
-                            params.mode == DisplayMode::FollowingToKnobTarget),
-        VendorCommand::Bool(VendorCommand::Code::DisplayOverholdTwoSec,
-                            params.overhold == DisplayOverhold::TwoSeconds),
-    };
-}
-
-DisplayParams ApogeeDuetProtocol::ParseDisplayParams(const std::vector<VendorCommand>& commands) {
-    DisplayParams params{};
-
-    for (const auto& command : commands) {
-        switch (command.code) {
-            case VendorCommand::Code::DisplayIsInput:
-                params.target = command.boolValue ? DisplayTarget::Input : DisplayTarget::Output;
-                break;
-            case VendorCommand::Code::DisplayFollowToKnob:
-                params.mode = command.boolValue
-                                  ? DisplayMode::FollowingToKnobTarget
-                                  : DisplayMode::Independent;
-                break;
-            case VendorCommand::Code::DisplayOverholdTwoSec:
-                params.overhold = command.boolValue ? DisplayOverhold::TwoSeconds
-                                                    : DisplayOverhold::Infinite;
-                break;
-            default:
-                break;
-        }
-    }
-
-    return params;
-}
-
-
 void ApogeeDuetProtocol::GetKnobState(ResultCallback<KnobState> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildKnobStateQuery(),
+        ParamsSerdes::BuildKnobStateQuery(),
         true,
         [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess || responses.empty()) {
@@ -1172,14 +797,14 @@ void ApogeeDuetProtocol::GetKnobState(ResultCallback<KnobState> callback) {
                                              KnobState{});
                 return;
             }
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseKnobState(responses[0]));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParamsSerdes::ParseKnobState(responses[0]));
         });
 }
 
 void ApogeeDuetProtocol::SetKnobState(const KnobState& state, VoidCallback callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        {BuildKnobStateControl(state)},
+        {ParamsSerdes::BuildKnobStateControl(state)},
         false,
         [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
             Common::InvokeSharedCallback(callbackState, status);
@@ -1189,21 +814,21 @@ void ApogeeDuetProtocol::SetKnobState(const KnobState& state, VoidCallback callb
 void ApogeeDuetProtocol::GetOutputParams(ResultCallback<OutputParams> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildOutputParamsQuery(),
+        ParamsSerdes::BuildOutputParamsQuery(),
         true,
         [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
                 Common::InvokeSharedCallback(callbackState, status, OutputParams{});
                 return;
             }
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseOutputParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParamsSerdes::ParseOutputParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetOutputParams(const OutputParams& params, VoidCallback callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildOutputParamsControl(params),
+        ParamsSerdes::BuildOutputParamsControl(params),
         false,
         [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
             Common::InvokeSharedCallback(callbackState, status);
@@ -1213,21 +838,21 @@ void ApogeeDuetProtocol::SetOutputParams(const OutputParams& params, VoidCallbac
 void ApogeeDuetProtocol::GetInputParams(ResultCallback<InputParams> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildInputParamsQuery(),
+        ParamsSerdes::BuildInputParamsQuery(),
         true,
         [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
                 Common::InvokeSharedCallback(callbackState, status, InputParams{});
                 return;
             }
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseInputParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParamsSerdes::ParseInputParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetInputParams(const InputParams& params, VoidCallback callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildInputParamsControl(params),
+        ParamsSerdes::BuildInputParamsControl(params),
         false,
         [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
             Common::InvokeSharedCallback(callbackState, status);
@@ -1237,21 +862,21 @@ void ApogeeDuetProtocol::SetInputParams(const InputParams& params, VoidCallback 
 void ApogeeDuetProtocol::GetMixerParams(ResultCallback<MixerParams> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildMixerParamsQuery(),
+        ParamsSerdes::BuildMixerParamsQuery(),
         true,
         [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
                 Common::InvokeSharedCallback(callbackState, status, MixerParams{});
                 return;
             }
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseMixerParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParamsSerdes::ParseMixerParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetMixerParams(const MixerParams& params, VoidCallback callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildMixerParamsControl(params),
+        ParamsSerdes::BuildMixerParamsControl(params),
         false,
         [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
             Common::InvokeSharedCallback(callbackState, status);
@@ -1261,21 +886,21 @@ void ApogeeDuetProtocol::SetMixerParams(const MixerParams& params, VoidCallback 
 void ApogeeDuetProtocol::GetDisplayParams(ResultCallback<DisplayParams> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildDisplayParamsQuery(),
+        ParamsSerdes::BuildDisplayParamsQuery(),
         true,
         [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
                 Common::InvokeSharedCallback(callbackState, status, DisplayParams{});
                 return;
             }
-            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseDisplayParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParamsSerdes::ParseDisplayParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetDisplayParams(const DisplayParams& params, VoidCallback callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
-        BuildDisplayParamsControl(params),
+        ParamsSerdes::BuildDisplayParamsControl(params),
         false,
         [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
             Common::InvokeSharedCallback(callbackState, status);
