@@ -168,6 +168,21 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         }
     }
 
+    // The isoch context is restarted at frame zero, while CoreAudio retains a
+    // monotonically increasing client timeline across StartIO. Rebase the
+    // master producer once StartIO publishes that client origin; otherwise
+    // BeginRead sees every RX frame as stale and zero-fills the capture ring.
+    if (!configuration_.isSecondary && inputView_.control && !cursorInitialized_) {
+        auto* const control = inputView_.control;
+        const uint64_t generation = control->captureFrameOriginGeneration.load(
+            std::memory_order_acquire);
+        if (generation != 0) {
+            absoluteFrameCursor_ = control->captureFrameOrigin.load(
+                std::memory_order_relaxed);
+            cursorInitialized_ = true;
+        }
+    }
+
     const uint32_t channels = configuration_.streamChannels > 0
         ? configuration_.streamChannels
         : inputView_.memory.inputChannels;

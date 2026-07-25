@@ -462,6 +462,27 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
             ivars.runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed));
 
+        // The framework keeps a monotonic client timeline across stream
+        // restarts. The RX isoch context starts at zero, so publish the
+        // current input origin before it writes the next capture packet.
+        // The Saffire profile's documented 16-packet receive offset gives the
+        // first BeginRead a real received window rather than a zero-filled
+        // startup edge.
+        uint64_t inputSampleFrame = 0;
+        uint64_t inputHostTicks = 0;
+        GetCurrentClientIOTime(true, &inputSampleFrame, &inputHostTicks);
+        const auto inputPolicy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
+            static_cast<uint32_t>(ivars.device.currentSampleRate));
+        const uint64_t captureOrigin = inputSampleFrame +
+            inputPolicy.CursorOffsetFrames(ASFW::Audio::AudioDirection::Input);
+        control->PublishCaptureFrameOrigin(captureOrigin);
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG RX capture origin=%llu clientInput=%llu host=%llu offset=%u",
+                 captureOrigin,
+                 inputSampleFrame,
+                 inputHostTicks,
+                 inputPolicy.CursorOffsetFrames(ASFW::Audio::AudioDirection::Input));
+
         ASFW_LOG(DirectAudio,
                  "ADK DBG StartIO transport and hardware clock ready");
         ASFW_LOG(DirectAudio,
