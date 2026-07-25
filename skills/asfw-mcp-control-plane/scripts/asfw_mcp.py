@@ -257,6 +257,66 @@ def command_health(client: MCPClient) -> Any:
     return compact_health(read_resource(client, health_uri))
 
 
+def compact_call(result: Any) -> Any:
+    """Strip the duplicated tool-result envelope.
+
+    The server returns the same JSON twice: once stringified in `content[].text`
+    and once as `structuredContent`. On success only the payload is interesting;
+    on failure the whole structured envelope is preserved so `errors` and
+    refusal codes stay visible.
+    """
+    if not isinstance(result, dict):
+        return result
+    structured = result.get("structuredContent")
+    if not isinstance(structured, dict):
+        return result
+    healthy = structured.get("ok") is True and not structured.get("errors")
+    if result.get("isError") or not healthy:
+        envelope = dict(structured)
+        if result.get("isError"):
+            envelope["isError"] = True
+        return envelope
+    data = structured.get("data")
+    return structured if data is None else data
+
+
+def compact_tools(listing: Any) -> Any:
+    """Reduce tools/list to name, mutating flag, parameter names, and summary."""
+    tools = listing.get("tools") if isinstance(listing, dict) else None
+    if not isinstance(tools, list):
+        return listing
+    output = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        entry: dict[str, Any] = {"name": tool.get("name")}
+        annotations = tool.get("annotations")
+        if isinstance(annotations, dict) and not annotations.get("readOnlyHint", False):
+            entry["mutating"] = True
+        schema = tool.get("inputSchema")
+        if isinstance(schema, dict) and isinstance(schema.get("properties"), dict):
+            entry["params"] = sorted(schema["properties"])
+        else:
+            # No declared schema: the caller must consult SKILL.md for arguments.
+            entry["params"] = None
+        entry["summary"] = tool.get("description")
+        output.append(entry)
+    return {"tools": output}
+
+
+def compact_resources(listing: Any) -> Any:
+    resources = listing.get("resources") if isinstance(listing, dict) else None
+    if not isinstance(resources, list):
+        return listing
+    return {
+        "resources": [
+            {"uri": item.get("uri"), "summary": item.get("description")}
+            for item in resources
+            if isinstance(item, dict)
+        ]
+    }
+
+
 def is_safe_tool(name: str) -> bool:
     return name.startswith(SAFE_TOOL_PREFIXES) or name in SAFE_TOOL_NAMES
 
@@ -276,6 +336,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--endpoint", default=os.environ.get("ASFW_MCP_ENDPOINT", DEFAULT_ENDPOINT))
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--allow-mutation", action="store_true")
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Drop the duplicated result envelope and schema noise. Errors are always preserved.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("health")
     subparsers.add_parser("summary")
@@ -300,10 +365,16 @@ def main() -> int:
             output = command_summary(client)
         elif args.command == "tools":
             output = client.request("tools/list")
+            if args.compact:
+                output = compact_tools(output)
         elif args.command == "resources":
             output = client.request("resources/list")
+            if args.compact:
+                output = compact_resources(output)
         elif args.command == "read":
             output = read_resource(client, args.uri)
+            if args.compact:
+                output = unwrap(output)
         else:
             if not args.allow_mutation and not is_safe_tool(args.tool):
                 raise MCPError(
@@ -311,6 +382,8 @@ def main() -> int:
                     "Use --allow-mutation only with explicit user authorization."
                 )
             output = client.request("tools/call", {"name": args.tool, "arguments": parse_arguments(args.arguments)})
+            if args.compact:
+                output = compact_call(output)
         print(json.dumps(output, indent=2, sort_keys=True))
         return 0
     except MCPError as error:

@@ -95,6 +95,14 @@ final class ASFWDriverConnector: ObservableObject {
 
     var connection: io_connect_t = 0
     let connectionQueue = DispatchQueue(label: "net.mrmidi.ASFWDriverConnector.connection")
+
+    /// Marks `connectionQueue` so `deinit` can tell whether it is already running on
+    /// it. The async-notification event handler takes a temporary strong `self` for the
+    /// duration of the callback (`[weak self]` cannot prevent that), so when the last
+    /// other reference is dropped while a notification is in flight, `deinit` runs on
+    /// `connectionQueue` itself. A `sync` there is a self-deadlock and traps with
+    /// "dispatch_sync called on queue already owned by current thread".
+    private static let connectionQueueKey = DispatchSpecificKey<UInt8>()
     let serviceName = "ASFWDriver"
 
     var notificationPort: IONotificationPortRef?
@@ -123,13 +131,22 @@ final class ASFWDriverConnector: ObservableObject {
     // MARK: - Initialisation
 
     init() {
+        connectionQueue.setSpecific(key: Self.connectionQueueKey, value: 1)
         startMonitoring()
     }
 
     deinit {
-        connectionQueue.sync {
-            self.closeConnectionLocked(reason: "Connector deinit")
-            self.stopMonitoringLocked()
+        // By deinit no other reference exists, so running the teardown inline when we
+        // are already on `connectionQueue` cannot race with anything — and it is the
+        // only safe option, since `sync` onto the current queue traps.
+        if DispatchQueue.getSpecific(key: Self.connectionQueueKey) != nil {
+            closeConnectionLocked(reason: "Connector deinit (on connection queue)")
+            stopMonitoringLocked()
+        } else {
+            connectionQueue.sync {
+                self.closeConnectionLocked(reason: "Connector deinit")
+                self.stopMonitoringLocked()
+            }
         }
     }
 

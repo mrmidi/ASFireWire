@@ -11,12 +11,16 @@ Use the bundled client instead of reconstructing MCP HTTP/SSE sessions or pastin
 
 Run these commands from the ASFireWire repository root.
 
-1. Confirm the app-hosted MCP server is enabled. The current local endpoint is
-   `http://127.0.0.1:8765/mcp` (do not rely on the stale `8766` default in old
-   examples). Set it explicitly for every investigation:
+1. Confirm the app-hosted MCP server is enabled. The default local endpoint is
+   `http://127.0.0.1:8766/mcp`, which is also the client's built-in
+   `DEFAULT_ENDPOINT`, so no export is needed in the normal case.
+
+   The port is user-configurable in the app's **MCP Control Plane** settings.
+   On `Connection refused`, read the port shown in that panel and set the
+   endpoint explicitly rather than assuming the server is down:
 
    ```bash
-   export ASFW_MCP_ENDPOINT=http://127.0.0.1:8765/mcp
+   export ASFW_MCP_ENDPOINT=http://127.0.0.1:<port>/mcp
    ```
 
 2. Ask the versioned health resource whether deeper reads are trustworthy:
@@ -45,6 +49,36 @@ Run these commands from the ASFireWire repository root.
    ```
 
 Pass `--endpoint` or set `ASFW_MCP_ENDPOINT` when the server uses a non-default loopback port.
+
+## Tool visibility is not device capability
+
+`tools` lists a filtered view, never the full catalog. Two independent filters
+apply (`ASFW/MCP/ASFWMCPCore.swift`, `listTools`):
+
+1. **Visibility tier vs runtime mode** — `always`, `readOnly`, `developerWrite`,
+   and `rawDeveloper` are admitted according to the server's current mode.
+2. **Protocol-hint prefilter** — evaluated *before* the tier check, against the
+   union of `protocolHints` across all currently discovered nodes.
+
+The hint prefilter is **any-of, not all-of**: a tool is listed when it declares
+no hints, or when *at least one* of its declared hints is present. A tool
+declaring `["bebob", "cmp"]` is therefore listed on a `cmp`-only bus.
+
+Two consequences:
+
+- An absent tool means "not listed for this generation's hints and mode". It is
+  **not** evidence that the driver lacks the capability or that the device lacks
+  the protocol. Check `ASFWMCPToolCatalog` for the defined set and ask
+  `asfw_explain_capability` for the specific reason.
+- Visibility does not follow the read-only/destructive gradient. Observed with
+  only an Apogee Duet attached (`avc`, `cmp`): `asfw_phase88_start_48k` and
+  `asfw_phase88_stop` are listed because they declare `cmp`, while every
+  read-only BeBoB diagnostic (`asfw_bebob_get_unit_plug_info`,
+  `asfw_bebob_get_clock_topology`, `asfw_phase88_get_clock`, …) is hidden
+  because it declares `bebob` alone. The destructive lifecycle tools are
+  reachable while the state queries that would justify using them are not.
+  Never infer device state from which tools appear; re-list after any
+  generation change.
 
 ## Ring-first diagnostic workflow
 

@@ -46,8 +46,12 @@ extension ASFWMCPCore {
             return await nodeSummaryResult(toolName: name, decoder: decoder)
         case "asfw_explain_capability":
             return await explainCapabilityResult(toolName: name, decoder: decoder)
-        case "asfw_get_controller_state", "asfw_get_topology", "asfw_get_config_rom":
-            return notImplementedToolResult(name, reason: "Read-only \(name) dispatch is reserved for the live telemetry adapter.")
+        case "asfw_get_controller_state":
+            return await controllerStateResult(toolName: name)
+        case "asfw_get_topology":
+            return await topologyResult(toolName: name)
+        case "asfw_get_config_rom":
+            return await configRomResult(toolName: name, decoder: decoder)
         case "asfw_log_query":
             return await dispatchLogQuery(name, decoder: decoder)
         case "asfw_log_stats":
@@ -74,12 +78,14 @@ extension ASFWMCPCore {
             return await dispatchWriteBlock(name, decoder: decoder)
         case "asfw_write_ohci_register_dev":
             return await dispatchOhciWrite(name, decoder: decoder)
-        case "asfw_read_ohci_register", "asfw_snapshot_ohci_registers":
-            return notImplementedToolResult(name, reason: "OHCI read dispatch needs the live driver adapter from FW-94.")
+        case "asfw_read_ohci_register":
+            return await ohciRegisterReadResult(toolName: name, decoder: decoder)
+        case "asfw_snapshot_ohci_registers":
+            return await ohciSnapshotResult(toolName: name)
         case "asfw_irm_get_state", "asfw_irm_get_bandwidth", "asfw_irm_get_channels":
             return await dispatchIrmSnapshot(name, decoder: decoder)
         case "asfw_irm_list_allocations":
-            return notImplementedToolResult(name, reason: "IRM allocation ownership is not exposed by the live driver adapter yet.")
+            return await irmAllocationsResult(toolName: name)
         case "asfw_irm_allocate_channel", "asfw_irm_free_channel":
             return await dispatchIrmChannel(name, decoder: decoder, allocate: name == "asfw_irm_allocate_channel")
         case "asfw_irm_allocate_bandwidth", "asfw_irm_free_bandwidth":
@@ -88,8 +94,19 @@ extension ASFWMCPCore {
             return await avcUnitInventoryResult(toolName: name)
         case "asfw_avc_get_subunit_capabilities":
             return await avcSubunitCapabilitiesResult(toolName: name, decoder: decoder)
-        case "asfw_avc_get_subunit_descriptor", "asfw_fcp_get_recent_responses":
-            return notImplementedToolResult(name, reason: "Recent FCP command/response records are not exposed by the live adapter yet.")
+        case "asfw_fcp_get_recent_responses":
+            return await recentFcpResponsesResult(toolName: name, decoder: decoder)
+        case "asfw_avc_get_subunit_descriptor":
+            // Unlike the other read-only tools, this one is not a routing gap: AV/C
+            // descriptor access is a wire-observable OPEN/READ/CLOSE DESCRIPTOR
+            // sequence that has to be written against the AV/C descriptor mechanism
+            // and cross-checked with references/IOFireWireAVC before it may issue FCP
+            // to a real device. Left explicitly unimplemented rather than synthesized.
+            return notImplementedToolResult(
+                name,
+                reason: "AV/C READ DESCRIPTOR is not implemented. It requires the OPEN/READ/CLOSE "
+                    + "descriptor sequence validated against a reference stack, not a routing change."
+            )
         case "asfw_fcp_send_command":
             return await dispatchFcpReadCommand(name, decoder: decoder)
         case "asfw_apogee_duet_apply_format_dev":
@@ -1401,6 +1418,141 @@ private extension ASFWMCPCore {
         } catch {
             return malformedToolResult(toolName, reason: error.localizedDescription)
         }
+    }
+
+    /// Mirrors the field set of the `asfw://telemetry/snapshot` controller section
+    /// so the tool and the resource cannot drift into disagreeing about state.
+    func controllerStateResult(toolName: String) async -> ASFWMCPToolCallResult {
+        let snapshot = await driver.fetchTelemetrySnapshot(configuration: configuration)
+        guard snapshot.driverConnected else {
+            return .failure(
+                toolName: toolName,
+                code: .driverNotConnected,
+                reason: "The driver is not connected; controller state cannot be read."
+            )
+        }
+        let controller = snapshot.controller
+        var fields: [String: ASFWMCPValue] = [
+            "driverConnected": .bool(snapshot.driverConnected),
+            "generation": .int(Int(snapshot.generation)),
+            "state": .string(controller.state),
+            "linkActive": .bool(controller.linkActive),
+            "isIRM": .bool(controller.isIRM),
+            "isCycleMaster": .bool(controller.isCycleMaster)
+        ]
+        fields["localNodeId"] = controller.localNodeId.map { .int(Int($0)) } ?? .null
+        fields["rootNodeId"] = controller.rootNodeId.map { .int(Int($0)) } ?? .null
+        fields["irmNodeId"] = controller.irmNodeId.map { .int(Int($0)) } ?? .null
+        fields["nodeCount"] = .int(Int(snapshot.bus.nodeCount))
+        fields["gapCount"] = .int(Int(snapshot.bus.gapCount))
+        fields["topologyValid"] = .bool(snapshot.bus.topologyValid)
+        return .success(toolName: toolName, data: .object(fields))
+    }
+
+    func topologyResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let topology = await driver.fetchTopology() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "No valid topology snapshot is available; the driver reports the topology invalid or is not connected."
+            )
+        }
+        return .success(toolName: toolName, data: topology.mcpValue)
+    }
+
+    func configRomResult(toolName: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            guard let summary = await driver.fetchConfigROM(nodeId: nodeId, generation: generation) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "No Config ROM is cached for node \(nodeId) in generation \(generation)."
+                )
+            }
+            return .success(toolName: toolName, data: summary.mcpValue)
+        } catch {
+            return .failure(toolName: toolName, code: .malformedRequest, reason: error.localizedDescription)
+        }
+    }
+
+    func recentFcpResponsesResult(toolName: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        let limit = (try? decoder.int("limit", default: 20, range: 1...64)) ?? 20
+        let records = await driver.recentFcpRecords(limit: limit)
+        return .success(
+            toolName: toolName,
+            data: .object([
+                // Absence here does not mean no FCP occurred: driver-originated FCP is
+                // not captured. The driver log ring's FCP category has that chronology.
+                "scope": .string("mcpIssued"),
+                "limit": .int(limit),
+                "recordCount": .int(records.count),
+                "records": .array(records.map(\.mcpValue))
+            ])
+        )
+    }
+
+    func irmAllocationsResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let report = await driver.fetchIrmAllocations() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "IRM resource state is unavailable; the driver is not connected or no local IRM snapshot exists."
+            )
+        }
+        return .success(toolName: toolName, data: report.mcpValue)
+    }
+
+    func ohciSnapshotResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let snapshot = await driver.fetchOhciSnapshot() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "The OHCI diagnostics snapshot is unavailable; the driver is not connected or returned no diagnostics."
+            )
+        }
+        return .success(toolName: toolName, data: snapshot.mcpValue)
+    }
+
+    /// Snapshot-backed single-register read. Accepts either a canonical `name` or an
+    /// `offset`, and refuses offsets outside the covered set rather than implying a
+    /// read that did not happen.
+    func ohciRegisterReadResult(toolName: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        let requestedName = try? decoder.string("name")
+        let requestedOffset = try? decoder.uint32("offset")
+        guard requestedName != nil || requestedOffset != nil else {
+            return malformedToolResult(toolName, reason: "Provide either 'name' or 'offset'.")
+        }
+        guard let snapshot = await driver.fetchOhciSnapshot() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "The OHCI diagnostics snapshot is unavailable; the driver is not connected or returned no diagnostics."
+            )
+        }
+        let match = snapshot.registers.first {
+            if let requestedName { return $0.name.caseInsensitiveCompare(requestedName) == .orderedSame }
+            return $0.offset == requestedOffset
+        }
+        guard let register = match else {
+            let requested = requestedName ?? String(format: "0x%03X", requestedOffset ?? 0)
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "Register \(requested) is not in the diagnostics snapshot. "
+                    + "This tool reads only the snapshot-covered registers (\(ASFWMCPOhciRegisterMap.coveredOffsetList)); "
+                    + "arbitrary MMIO offset reads are not exposed."
+            )
+        }
+        return .success(
+            toolName: toolName,
+            data: .object([
+                "generation": .int(Int(snapshot.generation)),
+                "source": .string("diagnosticsSnapshot"),
+                "register": register.mcpValue
+            ])
+        )
     }
 
     func avcUnitInventoryResult(toolName: String) async -> ASFWMCPToolCallResult {
