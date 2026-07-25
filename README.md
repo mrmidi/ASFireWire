@@ -488,6 +488,33 @@ If a machine ever ends up in a panic loop: boot into Recovery, `csrutil disable`
 boot normally, uninstall the extension
 (`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver`), then re-enable SIP.
 
+### Reinstalling a local development build
+
+Use `install-asfw.sh` to follow the development build, ad-hoc signing, artifact
+verification, and `/Applications` staging flow in one command. The script does
+not submit the system-extension activation request itself. It opens the installed
+app so you can review the visible state and use the **Install** button.
+
+The script never opens a password prompt. If `/Applications` or the uninstall
+operation needs administrator access, prime a short-lived credential first:
+
+```bash
+sudo -v
+./install-asfw.sh --config Debug
+```
+
+Pass `--fresh` when replacing an active dext, or `--no-build` to reuse the
+current build product. The experimental SCSI HBA and bundled Codex MCP skill
+remain explicit:
+
+```bash
+sudo -v
+./install-asfw.sh --config Debug --scsi --fresh --install-mcp-skill
+```
+
+Keep an SBP-2 device powered on before installing or testing a `--scsi` build.
+The cold-boot and teardown warning in the preceding section still applies.
+
 ## Installing a prebuilt build (testers)
 
 If you want to test ASFireWire without building it yourself, tagged releases attach a
