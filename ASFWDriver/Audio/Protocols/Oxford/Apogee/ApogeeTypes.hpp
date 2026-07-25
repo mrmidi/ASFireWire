@@ -10,6 +10,8 @@
 #include <array>
 #include <cstddef>
 
+#include "ApogeeCaps.hpp"
+
 namespace ASFW::Audio::Oxford::Apogee {
 
 // ============================================================================
@@ -28,10 +30,11 @@ struct KnobState {
     uint8_t outputVolume{0};      // 0-64
     std::array<uint8_t, 2> inputGains{}; // 10-75
 
-    static constexpr uint8_t kOutputVolMin = 0;
-    static constexpr uint8_t kOutputVolMax = 64;
-    static constexpr uint8_t kInputGainMin = 10;
-    static constexpr uint8_t kInputGainMax = 75;
+    // Every range resolves to the device spec (FW-130); these are views on it.
+    static constexpr uint8_t kOutputVolMin = ApogeeDuetSpec::kOutputVolume.min;
+    static constexpr uint8_t kOutputVolMax = ApogeeDuetSpec::kOutputVolume.max;
+    static constexpr uint8_t kInputGainMin = ApogeeDuetSpec::kInputGain.min;
+    static constexpr uint8_t kInputGainMax = ApogeeDuetSpec::kInputGain.max;
 };
 
 // ============================================================================
@@ -44,8 +47,11 @@ enum class OutputSource : uint8_t {
 };
 
 enum class OutputNominalLevel : uint8_t {
-    Instrument = 0, // +4 dBu (Fixed)
-    Consumer   = 1, // -10 dBV (Variable)
+    // Fixed level for an external amplifier (apogee.rs:297-299). Not +4 dBu:
+    // that is the *input* Professional level, on a different control.
+    Instrument = 0,
+    // -10 dBV, adjustable across the output volume range (apogee.rs:300-301).
+    Consumer   = 1,
 };
 
 enum class OutputMuteMode : uint8_t {
@@ -62,8 +68,8 @@ struct OutputParams {
     OutputMuteMode lineMuteMode{OutputMuteMode::Never};
     OutputMuteMode hpMuteMode{OutputMuteMode::Never};
 
-    static constexpr uint8_t kVolumeMin = 0;
-    static constexpr uint8_t kVolumeMax = 64;
+    static constexpr uint8_t kVolumeMin = ApogeeDuetSpec::kOutputVolume.min;
+    static constexpr uint8_t kVolumeMax = ApogeeDuetSpec::kOutputVolume.max;
 };
 
 // ============================================================================
@@ -89,8 +95,8 @@ struct InputParams {
     std::array<InputSource, 2> sources{};
     bool clickless{false};
 
-    static constexpr uint8_t kGainMin = 10;
-    static constexpr uint8_t kGainMax = 75;
+    static constexpr uint8_t kGainMin = ApogeeDuetSpec::kInputGain.min;
+    static constexpr uint8_t kGainMax = ApogeeDuetSpec::kInputGain.max;
 };
 
 // ============================================================================
@@ -105,8 +111,8 @@ struct MixerCoefficients {
 struct MixerParams {
     std::array<MixerCoefficients, 2> outputs{}; // Dst 0, 1
 
-    static constexpr uint16_t kGainMin = 0;
-    static constexpr uint16_t kGainMax = 0x3fff;
+    static constexpr uint16_t kGainMin = ApogeeDuetSpec::kMixerSourceGain.min;
+    static constexpr uint16_t kGainMax = ApogeeDuetSpec::kMixerSourceGain.max;
 };
 
 // ============================================================================
@@ -141,9 +147,9 @@ struct DisplayParams {
 struct InputMeterState {
     std::array<int32_t, 2> levels{};
 
-    static constexpr int32_t kMin = 0;
-    static constexpr int32_t kMax = 0x7FFFFFFF; // i32::MAX
-    static constexpr int32_t kStep = 0x100;
+    static constexpr int32_t kMin = ApogeeDuetSpec::kMeterLevel.min;
+    static constexpr int32_t kMax = ApogeeDuetSpec::kMeterLevel.max; // i32::MAX
+    static constexpr int32_t kStep = ApogeeDuetSpec::kMeterLevelStep;
 };
 
 struct MixerMeterState {

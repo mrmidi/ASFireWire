@@ -111,6 +111,11 @@ add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp
 )
 
+# FW-130: Apogee Duet device spec (control caps + CIP quirks), header-only
+add_device_test(ApogeeCapsTests
+    ApogeeCapsTests.cpp
+)
+
 # FW-137: Oxford FW970/971 chip-common CSR reads
 add_device_test(OxfordCsrTests
     OxfordCsrTests.cpp

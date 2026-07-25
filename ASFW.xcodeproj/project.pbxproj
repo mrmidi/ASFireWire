@@ -515,6 +515,7 @@
 		264D4CD41FF948792F95E023 /* DriverConnector+Status.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+Status.swift"; sourceTree = "<group>"; };
 		266834E2C8A6B4A27DD031D3 /* AVCUnitPlugSignalFormatCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCUnitPlugSignalFormatCommand.hpp; sourceTree = "<group>"; };
 		268D5F73922355973E130B0C /* DriverConnector+AudioTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+AudioTelemetry.swift"; sourceTree = "<group>"; };
+		26B0033F8CE6CF9AA238F8AF /* ApogeeCaps.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeCaps.hpp; sourceTree = "<group>"; };
 		26B7F3D2FEC0DA11D8D9F0AC /* MCPDiceTcatToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPDiceTcatToolsTests.swift; sourceTree = "<group>"; };
 		26D9B4B7CCF56DED31429264 /* AudioDriverConfig.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioDriverConfig.hpp; sourceTree = "<group>"; };
 		26FFF0C54FD8AB9ACB7B2E06 /* ARResponseContext.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARResponseContext.hpp; sourceTree = "<group>"; };
@@ -1598,6 +1599,7 @@
 		47E4C5B6855DA512A76E1439 /* Apogee */ = {
 			isa = PBXGroup;
 			children = (
+				26B0033F8CE6CF9AA238F8AF /* ApogeeCaps.hpp */,
 				862D65458BD2D45123D9C6E4 /* ApogeeDuetProtocol.cpp */,
 				0FCC9AE9BE1B3929CC94BE88 /* ApogeeDuetProtocol.hpp */,
 				422A112B4666B20A04B000CD /* ApogeeTypes.hpp */,
