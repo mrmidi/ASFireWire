@@ -210,6 +210,14 @@ class ControllerCore final : private Role::IPhyConfigReset,
     Discovery::DeviceRegistry* GetDeviceRegistry() const;
     Audio::AudioRuntimeRegistry* GetAudioRuntimeRegistry() const;
 
+    /// Drops the controller's shared_ptr copy of the audio runtime registry without
+    /// destroying the controller. Teardown must run the audio protocol destructors
+    /// while `busImpl_` is still alive: those destructors release IRM reservations
+    /// through `IRMClient`, which holds a non-owning `IFireWireBus&` borrowed from
+    /// this controller. `~ControllerCore` destroys `busImpl_` before `deps_`, so a
+    /// registry destroyed as part of `deps_` would call through a dangling bus.
+    void ReleaseAudioRuntimeRegistry() noexcept;
+
     Protocols::AVC::IAVCDiscovery* GetAVCDiscovery() const;
     void SetAVCDiscovery(std::shared_ptr<Protocols::AVC::AVCDiscovery> avcDiscovery);
     void SetFCPResponseRouter(std::shared_ptr<Protocols::AVC::FCPResponseRouter> fcpResponseRouter);

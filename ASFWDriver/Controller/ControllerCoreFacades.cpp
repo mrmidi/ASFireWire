@@ -85,6 +85,10 @@ Audio::AudioRuntimeRegistry* ControllerCore::GetAudioRuntimeRegistry() const {
     return deps_.audioRuntimeRegistry.get();
 }
 
+void ControllerCore::ReleaseAudioRuntimeRegistry() noexcept {
+    deps_.audioRuntimeRegistry.reset();
+}
+
 Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
     return deps_.avcDiscovery.get();
 }
