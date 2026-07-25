@@ -2,85 +2,28 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // ApogeeDuetClockTransitionTests.cpp - Unit tests for ApogeeDuetProtocol non-blocking clock transitions.
+//
+// FW-138: the bespoke TestBusOps/TestBusInfo pair was replaced by the shared
+// AvcTestRig, which supplies the same bus surface plus a real FCPTransport.
 
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
-#include "ASFWDriver/Protocols/Ports/FireWireBusPort.hpp"
 
-#include "FakeTimerScheduler.hpp"
+#include "AvcTestRig.hpp"
 
 namespace {
 
 using ASFW::Audio::AudioClockConfig;
 using ASFW::Audio::ClockApplyResult;
 using ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol;
-using ASFW::Async::AsyncHandle;
-using ASFW::Async::AsyncStatus;
-using ASFW::Async::FWAddress;
-using ASFW::Async::InterfaceCompletionCallback;
-using ASFW::Discovery::DeviceRouteToken;
-using ASFW::FW::FwSpeed;
-using ASFW::FW::Generation;
-using ASFW::FW::NodeId;
-using ASFW::Protocols::Ports::FireWireBusInfo;
-using ASFW::Protocols::Ports::FireWireBusOps;
-
-class TestBusOps final : public FireWireBusOps {
-public:
-    AsyncHandle ReadBlock(Generation, NodeId, FWAddress, uint32_t, FwSpeed,
-                          InterfaceCompletionCallback cb) override {
-        cb(AsyncStatus::kSuccess, {});
-        return AsyncHandle{++next_};
-    }
-    AsyncHandle WriteBlock(Generation, NodeId, FWAddress, std::span<const uint8_t>, FwSpeed,
-                           InterfaceCompletionCallback cb) override {
-        cb(AsyncStatus::kSuccess, {});
-        return AsyncHandle{++next_};
-    }
-    AsyncHandle Lock(Generation, NodeId, FWAddress, ASFW::FW::LockOp, std::span<const uint8_t>,
-                     uint32_t, FwSpeed, InterfaceCompletionCallback cb) override {
-        cb(AsyncStatus::kSuccess, {});
-        return AsyncHandle{++next_};
-    }
-    bool Cancel(AsyncHandle) override { return false; }
-private:
-    uint32_t next_{0};
-};
-
-class TestBusInfo final : public FireWireBusInfo {
-public:
-    Generation GetGeneration() const noexcept override {
-        return Generation{1};
-    }
-    NodeId GetLocalNodeID() const noexcept override {
-        return NodeId{0};
-    }
-    FwSpeed GetSpeed(NodeId) const noexcept override {
-        return FwSpeed::S400;
-    }
-    uint32_t HopCount(NodeId, NodeId) const noexcept override {
-        return 0;
-    }
-};
-
-[[nodiscard]] DeviceRouteToken MakeRoute() {
-    return DeviceRouteToken{
-        .guid = 0x3DB0A0000D112ULL,
-        .deviceIncarnation = 1,
-        .routeEpoch = 1,
-        .generation = Generation{1},
-        .nodeId = 0xFFC2,
-    };
-}
+using ASFW::Testing::AvcTestRig;
 
 TEST(ApogeeDuetClockTransitionTests, ConcurrentApplyClockConfigReturnsBusy) {
-    TestBusOps busOps;
-    TestBusInfo busInfo;
-    ASFW::Testing::FakeTimerScheduler timerScheduler;
+    AvcTestRig rig;
 
-    ApogeeDuetProtocol protocol(busOps, busInfo, MakeRoute(), nullptr, nullptr, nullptr, 100U,
-                                &timerScheduler);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), nullptr, nullptr, nullptr, 100U,
+                                &rig.Timers());
 
     // Initial ApplyClockConfig without transport returns kIOReturnNotReady
     bool callbackFired = false;
@@ -93,12 +36,10 @@ TEST(ApogeeDuetClockTransitionTests, ConcurrentApplyClockConfigReturnsBusy) {
 }
 
 TEST(ApogeeDuetClockTransitionTests, ShutdownCancelsClockTransition) {
-    TestBusOps busOps;
-    TestBusInfo busInfo;
-    ASFW::Testing::FakeTimerScheduler timerScheduler;
+    AvcTestRig rig;
 
-    ApogeeDuetProtocol protocol(busOps, busInfo, MakeRoute(), nullptr, nullptr, nullptr, 100U,
-                                &timerScheduler);
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), nullptr, nullptr, nullptr, 100U,
+                                &rig.Timers());
 
     EXPECT_EQ(protocol.Shutdown(), kIOReturnSuccess);
 }
