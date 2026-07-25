@@ -43,6 +43,11 @@ struct QuiescePlan {
 // Sole authority for root runtime transitions and work admission. Resource
 // teardown remains in the service-specific executor, but it runs only after a
 // plan issued here and reports completion back here.
+//
+// See documentation:
+//   - ASFWDriver/Service/Lifecycle/RUNTIME_LIFECYCLE_CONTRACT.md
+//   - documentation/TOKEN_BASED_LIFECYCLE.md
+//
 class RuntimeLifecycleCoordinator final {
 public:
     explicit RuntimeLifecycleCoordinator(std::shared_ptr<ControllerStateMachine> stateMachine);

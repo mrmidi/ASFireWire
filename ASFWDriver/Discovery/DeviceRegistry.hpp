@@ -14,6 +14,10 @@ namespace ASFW::Discovery {
 
 // Stable GUID-keyed device registry with per-generation live mapping.
 // Maintains device identity across bus resets and performs audio classification.
+// See documentation:
+//   - documentation/TOKEN_BASED_LIFECYCLE.md
+//   - ASFWDriver/Service/Lifecycle/RUNTIME_LIFECYCLE_CONTRACT.md
+//
 class DeviceRegistry {
 public:
     DeviceRegistry();

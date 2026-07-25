@@ -6,6 +6,8 @@ This document is the authority for the ASFWDriver root runtime lifecycle.
 Implementation code may refine resource details, but it must not introduce a
 second state machine, teardown path, or hardware-legality authority.
 
+See also [TOKEN_BASED_LIFECYCLE.md](../../../documentation/TOKEN_BASED_LIFECYCLE.md) for the token-based routing architecture and device route validity contract.
+
 ## Ownership
 
 | Concern | Sole authority | Notes |

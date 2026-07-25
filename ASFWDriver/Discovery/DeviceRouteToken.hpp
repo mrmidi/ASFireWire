@@ -1,3 +1,14 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// DeviceRouteToken.hpp
+// ASFWDriver - Discovery Layer
+//
+// Immutable value-type token encapsulating device identity, route epoch, and node ID.
+// See documentation:
+//   - documentation/TOKEN_BASED_LIFECYCLE.md
+//   - ASFWDriver/Service/Lifecycle/RUNTIME_LIFECYCLE_CONTRACT.md
+//
+
 #pragma once
 
 #include <cstdint>

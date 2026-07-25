@@ -13,6 +13,9 @@ namespace ASFW::Driver {
 class HardwareInterface;
 
 /// Serializes local OHCI access with provider revocation.
+/// See documentation:
+///   - ASFWDriver/Service/Lifecycle/RUNTIME_LIFECYCLE_CONTRACT.md
+///   - documentation/TOKEN_BASED_LIFECYCLE.md
 class HardwareAccessGate {
   public:
     HardwareAccessGate() : lock_(IOLockAlloc()) {}
