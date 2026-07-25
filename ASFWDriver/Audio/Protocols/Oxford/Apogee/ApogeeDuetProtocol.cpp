@@ -226,13 +226,21 @@ void ApogeeDuetProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
                                        const AudioClockConfig& desiredClock,
                                        PrepareCallback callback) {
     if (!cmpClient_ || !irmClient_ || !fcpTransport_) {
+        ASFW_LOG_ERROR(Oxfw, "PrepareDuplex: not ready (cmp=%d irm=%d fcp=%d)",
+                       cmpClient_ != nullptr, irmClient_ != nullptr, fcpTransport_ != nullptr);
         callback(kIOReturnNotReady, {});
         return;
     }
     if (!IsSupportedAudioClockConfig(desiredClock)) {
+        ASFW_LOG_ERROR(Oxfw, "PrepareDuplex: unsupported clock %u Hz", desiredClock.sampleRateHz);
         callback(kIOReturnUnsupported, {});
         return;
     }
+
+    ASFW_LOG(Oxfw, "PrepareDuplex: rate=%u node=%u gen=%u epoch=%llu",
+             desiredClock.sampleRateHz, static_cast<unsigned>(route_.nodeId),
+             static_cast<unsigned>(route_.generation.value),
+             static_cast<unsigned long long>(route_.routeEpoch));
 
     if (preparedRouteEpoch_ != route_.routeEpoch) {
         // PCR state and device stream formation are reset-scoped. Preserve no
@@ -517,6 +525,11 @@ void ApogeeDuetProtocol::FailClockTransition(const std::shared_ptr<ClockTransiti
     clockConfigApplied_ = false;
     if (transition->failureStatus == kIOReturnSuccess) {
         transition->failureStatus = status;
+        // Only the first failure names the real cause; the restore phases that
+        // follow re-enter here and would otherwise overwrite it in the log too.
+        ASFW_LOG_ERROR(Oxfw, "clock transition epoch=%llu failed in phase=%d status=0x%08x",
+                       static_cast<unsigned long long>(transition->epoch),
+                       static_cast<int>(transition->phase), static_cast<unsigned>(status));
     }
 
     if (transition->phase == ClockTransition::Phase::kRestoreInput ||
@@ -582,6 +595,9 @@ void ApogeeDuetProtocol::FinishClockTransition(
 
     appliedClock_ = transition->desiredClock;
     clockConfigApplied_ = true;
+    ASFW_LOG(Oxfw, "clock transition epoch=%llu applied rate=%u",
+             static_cast<unsigned long long>(transition->epoch),
+             appliedClock_.sampleRateHz);
     AudioStreamRuntimeCaps caps{};
     (void)GetRuntimeAudioStreamCaps(caps);
     completion(kIOReturnSuccess,
@@ -636,6 +652,14 @@ void ApogeeDuetProtocol::ProgramRx(StageCallback callback) {
     const bool connected = wait.completed && wait.status == CMP::CMPStatus::Success;
     outputConnected_ = connected;
 
+    if (connected) {
+        ASFW_LOG(Oxfw, "ProgramRx: oPCR0 connected ch=%u", duplexChannels_.deviceToHostIsoChannel);
+    } else {
+        ASFW_LOG_ERROR(Oxfw, "ProgramRx: oPCR0 ch=%u failed (%{public}s)",
+                       duplexChannels_.deviceToHostIsoChannel,
+                       wait.completed ? IRM::ToString(wait.status) : "wait timeout");
+    }
+
     AudioStreamRuntimeCaps caps{};
     (void)GetRuntimeAudioStreamCaps(caps);
     callback(connected ? kIOReturnSuccess
@@ -665,6 +689,14 @@ void ApogeeDuetProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
     const bool connected = wait.completed && wait.status == CMP::CMPStatus::Success;
     inputConnected_ = connected;
 
+    if (connected) {
+        ASFW_LOG(Oxfw, "ProgramTx: iPCR0 connected ch=%u", duplexChannels_.hostToDeviceIsoChannel);
+    } else {
+        ASFW_LOG_ERROR(Oxfw, "ProgramTx: iPCR0 ch=%u failed (%{public}s)",
+                       duplexChannels_.hostToDeviceIsoChannel,
+                       wait.completed ? IRM::ToString(wait.status) : "wait timeout");
+    }
+
     AudioStreamRuntimeCaps caps{};
     (void)GetRuntimeAudioStreamCaps(caps);
     callback(connected ? kIOReturnSuccess
@@ -678,6 +710,15 @@ void ApogeeDuetProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
 }
 
 void ApogeeDuetProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
+    if (outputConnected_ && inputConnected_) {
+        ASFW_LOG(Oxfw, "ConfirmDuplexStart: duplex up rate=%u rx=%u tx=%u",
+                 appliedClock_.sampleRateHz, duplexChannels_.deviceToHostIsoChannel,
+                 duplexChannels_.hostToDeviceIsoChannel);
+    } else {
+        ASFW_LOG_ERROR(Oxfw, "ConfirmDuplexStart: incomplete (out=%d in=%d)",
+                       outputConnected_, inputConnected_);
+    }
+
     AudioStreamRuntimeCaps caps{};
     (void)GetRuntimeAudioStreamCaps(caps);
     callback((outputConnected_ && inputConnected_) ? kIOReturnSuccess : kIOReturnNotReady,
@@ -742,11 +783,22 @@ void ApogeeDuetProtocol::DisconnectCapture(VoidCallback callback) {
 }
 
 IOReturn ApogeeDuetProtocol::StopDuplex() {
+    // The one record that says the stream went away deliberately. Without it a
+    // teardown and a silent stall look identical in the ring.
+    ASFW_LOG(Oxfw, "StopDuplex: breaking both plugs (out=%d in=%d)", outputConnected_,
+             inputConnected_);
+
     IOReturn playbackStatus = kIOReturnSuccess;
     DisconnectPlayback([&playbackStatus](IOReturn status) { playbackStatus = status; });
 
     IOReturn captureStatus = kIOReturnSuccess;
     DisconnectCapture([&captureStatus](IOReturn status) { captureStatus = status; });
+
+    if (playbackStatus != kIOReturnSuccess || captureStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Oxfw, "StopDuplex: playback=0x%08x capture=0x%08x",
+                       static_cast<unsigned>(playbackStatus),
+                       static_cast<unsigned>(captureStatus));
+    }
 
     if (playbackStatus != kIOReturnSuccess) {
         return playbackStatus;

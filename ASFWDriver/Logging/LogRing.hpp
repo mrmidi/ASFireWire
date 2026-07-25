@@ -58,7 +58,11 @@ enum class LogCategory : uint8_t {
     Zts = 19,
     TxSyt = 20,
     PayloadWriter = 21,
-    Count = 22,
+    // Device backends get one category each, so a single filter isolates a
+    // backend end to end. DICE (18) is the precedent; Oxfw covers the
+    // OXFW-common layer and its device overlays (Apogee Duet).
+    Oxfw = 22,
+    Count = 23,
 };
 
 /// Severity scale (smaller = more severe), used for filtering.

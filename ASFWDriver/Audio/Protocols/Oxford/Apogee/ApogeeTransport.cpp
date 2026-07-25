@@ -6,6 +6,7 @@
 #include "ApogeeTransport.hpp"
 
 #include "../../../../Common/CallbackUtils.hpp"
+#include "../../../../Logging/Logging.hpp"
 #include "../../../../Protocols/AVC/AVCDefs.hpp"
 #include "../../../../Protocols/AVC/FCPTransport.hpp"
 
@@ -20,6 +21,21 @@ using Protocols::AVC::AVCResult;
 using Protocols::AVC::CTypeToResult;
 using Protocols::AVC::FCPFrame;
 using Protocols::AVC::FCPStatus;
+
+/// Renders the framed operand bytes for a log line. The framing is the whole
+/// point of the OXFW-common template (FW-126), and a one-byte error in the OUI
+/// or magic prefix is invisible to host tests - they check our framing against
+/// our own expectations, not against the device. This is what makes it visible.
+void FormatFrameBytes(const FCPFrame& frame, char* out, size_t outSize) noexcept {
+    size_t written = 0;
+    for (size_t index = 0; index < frame.length && written + 3 < outSize; ++index) {
+        static constexpr char kHex[] = "0123456789abcdef";
+        out[written++] = kHex[(frame.data[index] >> 4U) & 0x0FU];
+        out[written++] = kHex[frame.data[index] & 0x0FU];
+        out[written++] = ' ';
+    }
+    out[written > 0 ? written - 1 : 0] = '\0';
+}
 
 constexpr uint8_t kCTypeControl = 0x00;
 constexpr uint8_t kCTypeStatus = 0x01;
@@ -96,6 +112,8 @@ void Send(Protocols::AVC::FCPTransport* transport,
 
     if (paddedLength < Protocols::AVC::kAVCFrameMinSize ||
         paddedLength > Protocols::AVC::kAVCFrameMaxSize) {
+        ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: framed length %zu out of AV/C bounds",
+                       static_cast<unsigned>(command.code), paddedLength);
         Common::InvokeSharedCallback(callbackState, kIOReturnBadArgument, command);
         return;
     }
@@ -115,16 +133,29 @@ void Send(Protocols::AVC::FCPTransport* transport,
 
     frame.length = paddedLength;
 
+    {
+        char bytes[(3 * 24) + 1];
+        FormatFrameBytes(frame, bytes, sizeof(bytes));
+        ASFW_LOG_INFO(Oxfw, "vendor %{public}s code=0x%02x tx=[%{public}s]",
+                      isStatus ? "STATUS" : "CONTROL",
+                      static_cast<unsigned>(command.code), bytes);
+    }
+
     const auto handle = transport->SubmitCommand(
         frame,
         [callbackState, command, isStatus](FCPStatus status, const FCPFrame& response) {
             const IOReturn transportStatus = MapFCPStatusToIOReturn(status);
             if (transportStatus != kIOReturnSuccess) {
+                ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: FCP transport failed status=%d",
+                               static_cast<unsigned>(command.code), static_cast<int>(status));
                 Common::InvokeSharedCallback(callbackState, transportStatus, command);
                 return;
             }
 
             if (response.length < Protocols::AVC::kAVCFrameMinSize) {
+                ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: runt response (%zu bytes)",
+                               static_cast<unsigned>(command.code),
+                               static_cast<size_t>(response.length));
                 Common::InvokeSharedCallback(callbackState, kIOReturnBadMessageID, command);
                 return;
             }
@@ -132,6 +163,12 @@ void Send(Protocols::AVC::FCPTransport* transport,
             const AVCResult avcResult = CTypeToResult(response.data[0]);
             const IOReturn avcStatus = MapAVCResultToIOReturn(avcResult);
             if (avcStatus != kIOReturnSuccess) {
+                // REJECTED vs NOT IMPLEMENTED is the difference between a wrong
+                // operand and an unsupported code - do not collapse them.
+                ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: AV/C refused ctype=0x%02x result=%d",
+                               static_cast<unsigned>(command.code),
+                               static_cast<unsigned>(response.data[0]),
+                               static_cast<int>(avcResult));
                 Common::InvokeSharedCallback(callbackState, avcStatus, command);
                 return;
             }
@@ -142,6 +179,10 @@ void Send(Protocols::AVC::FCPTransport* transport,
                 std::span<const uint8_t> payload{response.data.data() + kAvcHeaderBytes,
                                                  operandLength};
                 if (!parsed.ParseStatusPayload(payload)) {
+                    char bytes[(3 * 24) + 1];
+                    FormatFrameBytes(response, bytes, sizeof(bytes));
+                    ASFW_LOG_ERROR(Oxfw, "vendor code=0x%02x: status parse failed rx=[%{public}s]",
+                                   static_cast<unsigned>(command.code), bytes);
                     Common::InvokeSharedCallback(callbackState, kIOReturnBadMessageID, command);
                     return;
                 }
@@ -193,6 +234,13 @@ void ExecuteSequence(Protocols::AVC::FCPTransport* transport,
                  if (status != kIOReturnSuccess) {
                      // Abort the rest: a half-applied params group is worse
                      // than a failed one, and the caller retries the whole set.
+                     // Send hands the originating command back on every failure
+                     // path, so `response` names the step that aborted.
+                     ASFW_LOG_ERROR(Oxfw,
+                                    "vendor sequence aborted at %zu/%zu code=0x%02x status=0x%08x",
+                                    state->index, state->commands.size(),
+                                    static_cast<unsigned>(response.code),
+                                    static_cast<unsigned>(status));
                      state->completion(status, {});
                      return;
                  }
@@ -223,12 +271,14 @@ void ReadMeterBlock(Async::IFireWireBusOps& busOps,
                     const Discovery::DeviceRouteToken& route,
                     Async::FWAddress address,
                     uint32_t blockBytes,
+                    const char* meterName,
                     RouteValidator isRouteCurrent,
                     Decoder decode,
                     std::function<void(IOReturn, State)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
 
     if (!isRouteCurrent || !isRouteCurrent()) {
+        ASFW_LOG_ERROR(Oxfw, "meter %{public}s: route not current at issue", meterName);
         Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, State{});
         return;
     }
@@ -239,11 +289,26 @@ void ReadMeterBlock(Async::IFireWireBusOps& busOps,
         address,
         blockBytes,
         FW::FwSpeed::S100,
-        [callbackState, isRouteCurrent, decode](Async::AsyncStatus status,
-                                                std::span<const uint8_t> payload) {
+        [callbackState, isRouteCurrent, decode, meterName](Async::AsyncStatus status,
+                                                           std::span<const uint8_t> payload) {
+            // One kIOReturnError covers a retired route, a bus error, and a
+            // malformed payload. Name which, or a meter that stops updating is
+            // indistinguishable from a device that never answered.
             State state{};
-            if (!isRouteCurrent() || status != Async::AsyncStatus::kSuccess ||
-                !decode(payload, state)) {
+            if (!isRouteCurrent()) {
+                ASFW_LOG_ERROR(Oxfw, "meter %{public}s: route retired during read", meterName);
+                Common::InvokeSharedCallback(callbackState, kIOReturnError, State{});
+                return;
+            }
+            if (status != Async::AsyncStatus::kSuccess) {
+                ASFW_LOG_ERROR(Oxfw, "meter %{public}s: read failed status=%d", meterName,
+                               static_cast<int>(status));
+                Common::InvokeSharedCallback(callbackState, kIOReturnError, State{});
+                return;
+            }
+            if (!decode(payload, state)) {
+                ASFW_LOG_ERROR(Oxfw, "meter %{public}s: decode rejected %zu bytes", meterName,
+                               payload.size());
                 Common::InvokeSharedCallback(callbackState, kIOReturnError, State{});
                 return;
             }
@@ -277,7 +342,7 @@ void ReadInput(Async::IFireWireBusOps& busOps,
                const Discovery::DeviceRouteToken& route,
                RouteValidator isRouteCurrent,
                std::function<void(IOReturn, InputMeterState)> callback) {
-    ReadMeterBlock<InputMeterState>(busOps, route, InputAddress(), kInputBlockBytes,
+    ReadMeterBlock<InputMeterState>(busOps, route, InputAddress(), kInputBlockBytes, "input",
                                     std::move(isRouteCurrent), &DecodeInput, std::move(callback));
 }
 
@@ -285,7 +350,7 @@ void ReadMixer(Async::IFireWireBusOps& busOps,
                const Discovery::DeviceRouteToken& route,
                RouteValidator isRouteCurrent,
                std::function<void(IOReturn, MixerMeterState)> callback) {
-    ReadMeterBlock<MixerMeterState>(busOps, route, MixerAddress(), kMixerBlockBytes,
+    ReadMeterBlock<MixerMeterState>(busOps, route, MixerAddress(), kMixerBlockBytes, "mixer",
                                     std::move(isRouteCurrent), &DecodeMixer, std::move(callback));
 }
 
