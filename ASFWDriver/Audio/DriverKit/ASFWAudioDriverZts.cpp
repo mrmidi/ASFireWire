@@ -1177,6 +1177,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             }
             directControl->txCompletedIntervalSequence.fetch_add(
                 1, std::memory_order_release);
+            directControl->rxCaptureBufferTelemetry.CompleteInterval();
             // Stamped on every emission, so an anomaly burst defers the next
             // heartbeat instead of interleaving with it. Anomalies are never
             // themselves suppressed.

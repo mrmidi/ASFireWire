@@ -309,6 +309,7 @@ public:
         out.sampleRateHz = directSampleRateHz_;
         out.outputChannels = directOutputChannels_;
         out.inputChannels = directInputChannels_;
+        out.inputFrameCapacityFrames = directInputCapacityFrames_;
         out.preparationLeadPackets =
             IsochTransport::AudioTimingGeometry::kTxPreparationLeadPackets;
         out.hardwareFloorPackets =

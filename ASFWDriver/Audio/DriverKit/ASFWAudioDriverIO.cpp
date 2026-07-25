@@ -74,11 +74,13 @@ bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& gra
     const uint32_t capacity = graph.memory.inputFrameCapacity;
     const uint64_t oldest = (capacity != 0 && write > capacity) ? (write - capacity) : 0;
     bool starved = false;
+    uint32_t starvedFrames = 0;
     for (uint32_t i = 0; i < frameCount; ++i) {
         const uint64_t frame = sampleTime + i;
         if (frame < oldest || frame >= write) {
             ZeroInputFrameIfMissing(graph, frame);
             starved = true;
+            ++starvedFrames;
         }
     }
 
@@ -90,7 +92,10 @@ bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& gra
     }
     if (starved) {
         control.captureRingStarvations.fetch_add(1, std::memory_order_relaxed);
+        control.rxCaptureBufferTelemetry.RecordStarvation(starvedFrames);
     }
+    control.rxCaptureBufferTelemetry.Observe(
+        write, readEnd, capacity);
     return true;
 }
 

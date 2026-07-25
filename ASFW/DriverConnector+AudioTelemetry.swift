@@ -10,7 +10,9 @@ import Foundation
 struct AudioTelemetryEndpoint: Identifiable, Equatable {
     static let latencyBucketLabels = ["<250 µs", "250–500 µs", "500–750 µs", "750–1000 µs", "1–1.5 ms", "≥1.5 ms"]
     static let marginBucketLabels = ["<2× floor", "2–4×", "4–8×", "8–16×", "≥16×"]
+    static let rxOccupancyBucketLabels = ["0–20%", "20–40%", "40–60%", "60–80%", "80–100%"]
     static let notMeasured = UInt32.max
+    static let notMeasuredFrames = UInt64.max
 
     let guid: UInt64
     let endpointGeneration: UInt64
@@ -36,15 +38,37 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let minimumCommittedMarginPackets: UInt32
     let preparationLeadPackets: UInt32
     let hardwareFloorPackets: UInt32
+    let rxCurrentAvailableFrames: UInt64
+    let rxCompletedIntervalSequence: UInt64
+    let rxCompletedIntervalMinimumAvailableFrames: UInt64
+    let rxCompletedIntervalMaximumAvailableFrames: UInt64
+    let rxCompletedIntervalMinimumFreeHeadroomFrames: UInt64
+    let rxCompletedIntervalOverrunEvents: UInt64
+    let rxCompletedIntervalOverwrittenFrames: UInt64
+    let rxCompletedIntervalStarvationEvents: UInt64
+    let rxCompletedIntervalStarvedFrames: UInt64
+    let rxCaptureOverrunEvents: UInt64
+    let rxCaptureStarvationEvents: UInt64
+    let rxTotalOverwrittenFrames: UInt64
+    let rxTotalStarvedFrames: UInt64
+    let rxCompletedOccupancyHistogram: [UInt64]
+    let inputFrameCapacityFrames: UInt32
 
     var id: UInt64 { guid }
     var isStreaming: Bool { (flags & (1 << 1)) != 0 }
     var hasCompletedInterval: Bool { (flags & (1 << 2)) != 0 }
+    var hasCompletedRxInterval: Bool { (flags & (1 << 3)) != 0 }
     var intervalMinimum: UInt32? {
         completedIntervalMarginMinPackets == Self.notMeasured ? nil : completedIntervalMarginMinPackets
     }
     var lifetimeMinimum: UInt32? {
         minimumCommittedMarginPackets == Self.notMeasured ? nil : minimumCommittedMarginPackets
+    }
+    var rxIntervalMinimumAvailable: UInt64? {
+        rxCompletedIntervalMinimumAvailableFrames == Self.notMeasuredFrames ? nil : rxCompletedIntervalMinimumAvailableFrames
+    }
+    var rxIntervalMinimumFreeHeadroom: UInt64? {
+        rxCompletedIntervalMinimumFreeHeadroomFrames == Self.notMeasuredFrames ? nil : rxCompletedIntervalMinimumFreeHeadroomFrames
     }
 }
 
@@ -55,7 +79,7 @@ struct AudioTelemetrySnapshot {
 extension ASFWDriverConnector {
     func getAudioTelemetry() -> AudioTelemetrySnapshot? {
         guard isConnected, connection != 0,
-              let data = callStruct(.getAudioTelemetry, initialCap: 2048) else {
+              let data = callStruct(.getAudioTelemetry, initialCap: 4096) else {
             return nil
         }
         return AudioTelemetryWireDecoder.decode(data)
@@ -63,9 +87,9 @@ extension ASFWDriverConnector {
 }
 
 private enum AudioTelemetryWireDecoder {
-    private static let version = 1
+    private static let version = 2
     private static let headerBytes = 8
-    private static let endpointBytes = 224
+    private static let endpointBytes = 376
     private static let maximumEndpoints = 8
 
     static func decode(_ data: Data) -> AudioTelemetrySnapshot? {
@@ -109,12 +133,29 @@ private enum AudioTelemetryWireDecoder {
               let intervalMarginMax = u32(208),
               let minimumMargin = u32(212),
               let preparationLead = u32(216),
-              let hardwareFloor = u32(220) else {
+              let hardwareFloor = u32(220),
+              let rxCurrentAvailable = u64(224),
+              let rxCompletedIntervalSequence = u64(232),
+              let rxIntervalMinimumAvailable = u64(240),
+              let rxIntervalMaximumAvailable = u64(248),
+              let rxIntervalMinimumFreeHeadroom = u64(256),
+              let rxIntervalOverrunEvents = u64(264),
+              let rxIntervalOverwrittenFrames = u64(272),
+              let rxIntervalStarvationEvents = u64(280),
+              let rxIntervalStarvedFrames = u64(288),
+              let rxOverrunEvents = u64(296),
+              let rxStarvationEvents = u64(304),
+              let rxTotalOverwrittenFrames = u64(312),
+              let rxTotalStarvedFrames = u64(320),
+              let inputFrameCapacityFrames = u32(368) else {
             return nil
         }
         let latencyHistogram = (0..<6).compactMap { u64(96 + $0 * 8) }
         let marginHistogram = (0..<5).compactMap { u64(144 + $0 * 8) }
-        guard latencyHistogram.count == 6, marginHistogram.count == 5 else { return nil }
+        let rxOccupancyHistogram = (0..<5).compactMap { u64(328 + $0 * 8) }
+        guard latencyHistogram.count == 6,
+              marginHistogram.count == 5,
+              rxOccupancyHistogram.count == 5 else { return nil }
         return AudioTelemetryEndpoint(
             guid: guid,
             endpointGeneration: endpointGeneration,
@@ -139,7 +180,22 @@ private enum AudioTelemetryWireDecoder {
             completedIntervalMarginMaxPackets: intervalMarginMax,
             minimumCommittedMarginPackets: minimumMargin,
             preparationLeadPackets: preparationLead,
-            hardwareFloorPackets: hardwareFloor
+            hardwareFloorPackets: hardwareFloor,
+            rxCurrentAvailableFrames: rxCurrentAvailable,
+            rxCompletedIntervalSequence: rxCompletedIntervalSequence,
+            rxCompletedIntervalMinimumAvailableFrames: rxIntervalMinimumAvailable,
+            rxCompletedIntervalMaximumAvailableFrames: rxIntervalMaximumAvailable,
+            rxCompletedIntervalMinimumFreeHeadroomFrames: rxIntervalMinimumFreeHeadroom,
+            rxCompletedIntervalOverrunEvents: rxIntervalOverrunEvents,
+            rxCompletedIntervalOverwrittenFrames: rxIntervalOverwrittenFrames,
+            rxCompletedIntervalStarvationEvents: rxIntervalStarvationEvents,
+            rxCompletedIntervalStarvedFrames: rxIntervalStarvedFrames,
+            rxCaptureOverrunEvents: rxOverrunEvents,
+            rxCaptureStarvationEvents: rxStarvationEvents,
+            rxTotalOverwrittenFrames: rxTotalOverwrittenFrames,
+            rxTotalStarvedFrames: rxTotalStarvedFrames,
+            rxCompletedOccupancyHistogram: rxOccupancyHistogram,
+            inputFrameCapacityFrames: inputFrameCapacityFrames
         )
     }
 }

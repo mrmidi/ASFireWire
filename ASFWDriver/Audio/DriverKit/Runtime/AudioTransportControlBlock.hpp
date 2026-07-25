@@ -12,7 +12,9 @@
 #include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace ASFW::Audio::Runtime {
@@ -196,6 +198,159 @@ struct TxProducerFaultSnapshot final {
             }
         }
         return false;
+    }
+};
+
+// RX capture-ring telemetry is intentionally about frame ownership, not
+// payload amplitude. Both the direct RX writer and the CoreAudio reader sample
+// the same absolute frame frontiers, so the watermarks identify the buffer
+// slack that can be reduced when tuning round-trip latency.
+struct RxCaptureBufferTelemetry final {
+    using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+
+    std::atomic<uint64_t> currentAvailableFrames{0};
+    std::atomic<uint64_t> intervalMinimumAvailableFrames{UINT64_MAX};
+    std::atomic<uint64_t> intervalMaximumAvailableFrames{0};
+    std::atomic<uint64_t> intervalMinimumFreeHeadroomFrames{UINT64_MAX};
+    std::array<std::atomic<uint64_t>,
+               Geometry::kRxCaptureOccupancyHistogramBuckets>
+        intervalOccupancyHistogram{};
+    std::atomic<uint64_t> intervalOverrunEvents{0};
+    std::atomic<uint64_t> intervalOverwrittenFrames{0};
+    std::atomic<uint64_t> intervalStarvationEvents{0};
+    std::atomic<uint64_t> intervalStarvedFrames{0};
+
+    // Written by the heartbeat owner. Odd while copying, even when readers
+    // may snapshot the completed interval without locking the audio path.
+    std::atomic<uint64_t> completedIntervalSequence{0};
+    std::atomic<uint64_t> completedMinimumAvailableFrames{UINT64_MAX};
+    std::atomic<uint64_t> completedMaximumAvailableFrames{0};
+    std::atomic<uint64_t> completedMinimumFreeHeadroomFrames{UINT64_MAX};
+    std::array<std::atomic<uint64_t>,
+               Geometry::kRxCaptureOccupancyHistogramBuckets>
+        completedOccupancyHistogram{};
+    std::atomic<uint64_t> completedOverrunEvents{0};
+    std::atomic<uint64_t> completedOverwrittenFrames{0};
+    std::atomic<uint64_t> completedStarvationEvents{0};
+    std::atomic<uint64_t> completedStarvedFrames{0};
+    std::atomic<uint64_t> totalOverwrittenFrames{0};
+    std::atomic<uint64_t> totalStarvedFrames{0};
+
+    static void UpdateMinimum(std::atomic<uint64_t>& target,
+                              uint64_t candidate) noexcept {
+        uint64_t previous = target.load(std::memory_order_relaxed);
+        while (candidate < previous &&
+               !target.compare_exchange_weak(
+                   previous, candidate, std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+    }
+
+    static void UpdateMaximum(std::atomic<uint64_t>& target,
+                              uint64_t candidate) noexcept {
+        uint64_t previous = target.load(std::memory_order_relaxed);
+        while (candidate > previous &&
+               !target.compare_exchange_weak(
+                   previous, candidate, std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+    }
+
+    void Observe(uint64_t writeFrame, uint64_t readFrame,
+                 uint32_t capacityFrames) noexcept {
+        if (capacityFrames == 0) {
+            return;
+        }
+        const uint64_t available = writeFrame >= readFrame
+            ? std::min(writeFrame - readFrame,
+                       static_cast<uint64_t>(capacityFrames))
+            : 0;
+        const uint64_t freeHeadroom = capacityFrames - available;
+        currentAvailableFrames.store(available, std::memory_order_relaxed);
+        UpdateMinimum(intervalMinimumAvailableFrames, available);
+        UpdateMaximum(intervalMaximumAvailableFrames, available);
+        UpdateMinimum(intervalMinimumFreeHeadroomFrames, freeHeadroom);
+        const uint32_t bucket = static_cast<uint32_t>(
+            std::min<uint64_t>(
+                (available * Geometry::kRxCaptureOccupancyHistogramBuckets) /
+                    capacityFrames,
+                Geometry::kRxCaptureOccupancyHistogramBuckets - 1));
+        intervalOccupancyHistogram[bucket].fetch_add(
+            1, std::memory_order_relaxed);
+    }
+
+    void RecordOverrun(uint64_t overwrittenFrames) noexcept {
+        intervalOverrunEvents.fetch_add(1, std::memory_order_relaxed);
+        intervalOverwrittenFrames.fetch_add(
+            overwrittenFrames, std::memory_order_relaxed);
+        totalOverwrittenFrames.fetch_add(
+            overwrittenFrames, std::memory_order_relaxed);
+    }
+
+    void RecordStarvation(uint64_t starvedFrames) noexcept {
+        intervalStarvationEvents.fetch_add(1, std::memory_order_relaxed);
+        intervalStarvedFrames.fetch_add(
+            starvedFrames, std::memory_order_relaxed);
+        totalStarvedFrames.fetch_add(
+            starvedFrames, std::memory_order_relaxed);
+    }
+
+    void CompleteInterval() noexcept {
+        completedIntervalSequence.fetch_add(1, std::memory_order_relaxed);
+        completedMinimumAvailableFrames.store(
+            intervalMinimumAvailableFrames.exchange(
+                UINT64_MAX, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        completedMaximumAvailableFrames.store(
+            intervalMaximumAvailableFrames.exchange(
+                0, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        completedMinimumFreeHeadroomFrames.store(
+            intervalMinimumFreeHeadroomFrames.exchange(
+                UINT64_MAX, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        for (size_t index = 0; index < intervalOccupancyHistogram.size(); ++index) {
+            completedOccupancyHistogram[index].store(
+                intervalOccupancyHistogram[index].exchange(
+                    0, std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+        completedOverrunEvents.store(intervalOverrunEvents.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedOverwrittenFrames.store(intervalOverwrittenFrames.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedStarvationEvents.store(intervalStarvationEvents.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedStarvedFrames.store(intervalStarvedFrames.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedIntervalSequence.fetch_add(1, std::memory_order_release);
+    }
+
+    void Reset() noexcept {
+        currentAvailableFrames.store(0, std::memory_order_relaxed);
+        intervalMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        intervalMaximumAvailableFrames.store(0, std::memory_order_relaxed);
+        intervalMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        for (auto& bucket : intervalOccupancyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        intervalOverrunEvents.store(0, std::memory_order_relaxed);
+        intervalOverwrittenFrames.store(0, std::memory_order_relaxed);
+        intervalStarvationEvents.store(0, std::memory_order_relaxed);
+        intervalStarvedFrames.store(0, std::memory_order_relaxed);
+        completedIntervalSequence.store(0, std::memory_order_relaxed);
+        completedMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        completedMaximumAvailableFrames.store(0, std::memory_order_relaxed);
+        completedMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        for (auto& bucket : completedOccupancyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        completedOverrunEvents.store(0, std::memory_order_relaxed);
+        completedOverwrittenFrames.store(0, std::memory_order_relaxed);
+        completedStarvationEvents.store(0, std::memory_order_relaxed);
+        completedStarvedFrames.store(0, std::memory_order_relaxed);
+        totalOverwrittenFrames.store(0, std::memory_order_relaxed);
+        totalStarvedFrames.store(0, std::memory_order_relaxed);
     }
 };
 
@@ -432,6 +587,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> captureRingReadFrame{0};
     std::atomic<uint64_t> captureRingOverruns{0};
     std::atomic<uint64_t> captureRingStarvations{0};
+    RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
 
     [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
         uint64_t sampleFrame,
@@ -541,6 +697,7 @@ struct AudioTransportControlBlock final {
         captureRingReadFrame.store(0, std::memory_order_relaxed);
         captureRingOverruns.store(0, std::memory_order_relaxed);
         captureRingStarvations.store(0, std::memory_order_relaxed);
+        rxCaptureBufferTelemetry.Reset();
 
         generation.fetch_add(1, std::memory_order_acq_rel);
     }

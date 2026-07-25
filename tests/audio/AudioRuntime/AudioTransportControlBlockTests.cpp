@@ -99,6 +99,31 @@ TEST(AudioTransportControlBlockTests, TelemetrySnapshotCopiesOnlyCompletedInterv
     EXPECT_NE(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryHasCompletedInterval, 0U);
 }
 
+TEST(AudioTransportControlBlockTests, RxCaptureTelemetryCapturesIntervalWatermarks) {
+    AudioTransportControlBlock control{};
+    auto& telemetry = control.rxCaptureBufferTelemetry;
+    telemetry.Observe(800, 600, 1024);
+    telemetry.Observe(1600, 800, 1024);
+    telemetry.RecordOverrun(32);
+    telemetry.RecordStarvation(16);
+    telemetry.CompleteInterval();
+
+    AudioTelemetryEndpointSnapshot snapshot{};
+    ASFW::Audio::Runtime::CopyAudioTelemetrySnapshot(control, snapshot);
+
+    EXPECT_EQ(snapshot.rxCurrentAvailableFrames, 800U);
+    EXPECT_EQ(snapshot.rxCompletedIntervalMinimumAvailableFrames, 200U);
+    EXPECT_EQ(snapshot.rxCompletedIntervalMaximumAvailableFrames, 800U);
+    EXPECT_EQ(snapshot.rxCompletedIntervalMinimumFreeHeadroomFrames, 224U);
+    EXPECT_EQ(snapshot.rxCompletedIntervalOverrunEvents, 1U);
+    EXPECT_EQ(snapshot.rxCompletedIntervalOverwrittenFrames, 32U);
+    EXPECT_EQ(snapshot.rxCompletedIntervalStarvationEvents, 1U);
+    EXPECT_EQ(snapshot.rxCompletedIntervalStarvedFrames, 16U);
+    EXPECT_EQ(snapshot.rxTotalOverwrittenFrames, 32U);
+    EXPECT_EQ(snapshot.rxTotalStarvedFrames, 16U);
+    EXPECT_NE(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryHasCompletedRxInterval, 0U);
+}
+
 TEST(AudioTransportControlBlockTests, WirePayloadTelemetryStaysInAudioAndFlagsDropout) {
     AudioTransportControlBlock control{};
     const uint8_t dataPacket[] = {

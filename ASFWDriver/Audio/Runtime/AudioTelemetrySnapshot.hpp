@@ -17,13 +17,14 @@
 
 namespace ASFW::Audio::Runtime {
 
-constexpr uint32_t kAudioTelemetryWireVersion = 1;
+constexpr uint32_t kAudioTelemetryWireVersion = 2;
 constexpr uint32_t kAudioTelemetryMaxEndpoints = 8;
 
 enum AudioTelemetryFlags : uint32_t {
     kAudioTelemetryBindingReady = 1U << 0,
     kAudioTelemetryStreaming = 1U << 1,
     kAudioTelemetryHasCompletedInterval = 1U << 2,
+    kAudioTelemetryHasCompletedRxInterval = 1U << 3,
 };
 
 struct AudioTelemetryEndpointSnapshot final {
@@ -57,9 +58,27 @@ struct AudioTelemetryEndpointSnapshot final {
     uint32_t minimumCommittedMarginPackets{std::numeric_limits<uint32_t>::max()};
     uint32_t preparationLeadPackets{0};
     uint32_t hardwareFloorPackets{0};
+    uint64_t rxCurrentAvailableFrames{0};
+    uint64_t rxCompletedIntervalSequence{0};
+    uint64_t rxCompletedIntervalMinimumAvailableFrames{std::numeric_limits<uint64_t>::max()};
+    uint64_t rxCompletedIntervalMaximumAvailableFrames{0};
+    uint64_t rxCompletedIntervalMinimumFreeHeadroomFrames{std::numeric_limits<uint64_t>::max()};
+    uint64_t rxCompletedIntervalOverrunEvents{0};
+    uint64_t rxCompletedIntervalOverwrittenFrames{0};
+    uint64_t rxCompletedIntervalStarvationEvents{0};
+    uint64_t rxCompletedIntervalStarvedFrames{0};
+    uint64_t rxCaptureOverrunEvents{0};
+    uint64_t rxCaptureStarvationEvents{0};
+    uint64_t rxTotalOverwrittenFrames{0};
+    uint64_t rxTotalStarvedFrames{0};
+    std::array<uint64_t,
+               IsochTransport::AudioTimingGeometry::
+                   kRxCaptureOccupancyHistogramBuckets>
+        rxCompletedOccupancyHistogram{};
+    uint32_t inputFrameCapacityFrames{0};
 };
 
-static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 224);
+static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 376);
 
 struct AudioTelemetrySnapshot final {
     uint32_t version{kAudioTelemetryWireVersion};
@@ -67,7 +86,7 @@ struct AudioTelemetrySnapshot final {
     std::array<AudioTelemetryEndpointSnapshot, kAudioTelemetryMaxEndpoints> endpoints{};
 };
 
-static_assert(sizeof(AudioTelemetrySnapshot) == 1800);
+static_assert(sizeof(AudioTelemetrySnapshot) == 3016);
 
 inline void CopyAudioTelemetrySnapshot(
     const AudioTransportControlBlock& control,
@@ -87,6 +106,16 @@ inline void CopyAudioTelemetrySnapshot(
         control.txCurrentCommittedMarginPackets.load(memoryOrder);
     out.minimumCommittedMarginPackets =
         control.txMinimumCommittedMarginPackets.load(memoryOrder);
+    out.rxCurrentAvailableFrames =
+        control.rxCaptureBufferTelemetry.currentAvailableFrames.load(memoryOrder);
+    out.rxCaptureOverrunEvents =
+        control.captureRingOverruns.load(memoryOrder);
+    out.rxCaptureStarvationEvents =
+        control.captureRingStarvations.load(memoryOrder);
+    out.rxTotalOverwrittenFrames =
+        control.rxCaptureBufferTelemetry.totalOverwrittenFrames.load(memoryOrder);
+    out.rxTotalStarvedFrames =
+        control.rxCaptureBufferTelemetry.totalStarvedFrames.load(memoryOrder);
 
     // The heartbeat writer brackets this completed interval with an even
     // sequence. Retry a few times rather than blocking a real-time producer.
@@ -114,6 +143,41 @@ inline void CopyAudioTelemetrySnapshot(
             out.completedIntervalSequence = after;
             if (after != 0) {
                 out.flags |= kAudioTelemetryHasCompletedInterval;
+            }
+            break;
+        }
+    }
+
+    for (uint32_t attempt = 0; attempt < 3; ++attempt) {
+        const uint64_t before =
+            control.rxCaptureBufferTelemetry.completedIntervalSequence.load(memoryOrder);
+        if ((before & 1U) != 0U) {
+            continue;
+        }
+        out.rxCompletedIntervalMinimumAvailableFrames =
+            control.rxCaptureBufferTelemetry.completedMinimumAvailableFrames.load(memoryOrder);
+        out.rxCompletedIntervalMaximumAvailableFrames =
+            control.rxCaptureBufferTelemetry.completedMaximumAvailableFrames.load(memoryOrder);
+        out.rxCompletedIntervalMinimumFreeHeadroomFrames =
+            control.rxCaptureBufferTelemetry.completedMinimumFreeHeadroomFrames.load(memoryOrder);
+        out.rxCompletedIntervalOverrunEvents =
+            control.rxCaptureBufferTelemetry.completedOverrunEvents.load(memoryOrder);
+        out.rxCompletedIntervalOverwrittenFrames =
+            control.rxCaptureBufferTelemetry.completedOverwrittenFrames.load(memoryOrder);
+        out.rxCompletedIntervalStarvationEvents =
+            control.rxCaptureBufferTelemetry.completedStarvationEvents.load(memoryOrder);
+        out.rxCompletedIntervalStarvedFrames =
+            control.rxCaptureBufferTelemetry.completedStarvedFrames.load(memoryOrder);
+        for (size_t index = 0; index < out.rxCompletedOccupancyHistogram.size(); ++index) {
+            out.rxCompletedOccupancyHistogram[index] =
+                control.rxCaptureBufferTelemetry.completedOccupancyHistogram[index].load(memoryOrder);
+        }
+        const uint64_t after =
+            control.rxCaptureBufferTelemetry.completedIntervalSequence.load(memoryOrder);
+        if (before == after && (after & 1U) == 0U) {
+            out.rxCompletedIntervalSequence = after;
+            if (after != 0) {
+                out.flags |= kAudioTelemetryHasCompletedRxInterval;
             }
             return;
         }

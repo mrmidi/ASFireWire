@@ -46,15 +46,20 @@ public:
                                                         std::memory_order_relaxed);
         }
 
-        const uint64_t read =
+        uint64_t read =
             control->captureRingReadFrame.load(std::memory_order_acquire);
         const uint32_t capacity = binding_->memory.inputFrameCapacity;
         if (capacity != 0 && producedEndFrame > read &&
             (producedEndFrame - read) > capacity) {
+            const uint64_t overwrittenFrames = producedEndFrame - read - capacity;
             control->captureRingReadFrame.store(producedEndFrame - capacity,
                                                  std::memory_order_release);
             control->captureRingOverruns.fetch_add(1, std::memory_order_relaxed);
+            control->rxCaptureBufferTelemetry.RecordOverrun(overwrittenFrames);
+            read = producedEndFrame - capacity;
         }
+        control->rxCaptureBufferTelemetry.Observe(
+            producedEndFrame, read, capacity);
     }
 
 private:

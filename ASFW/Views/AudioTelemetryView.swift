@@ -2,8 +2,7 @@
 //  AudioTelemetryView.swift
 //  ASFW
 //
-//  TX-first telemetry dashboard. RX is deliberately limited to recovery
-//  counters until FW-123 defines a meaningful receive safety contract.
+//  TX-first telemetry dashboard with RX capture-ring safety telemetry.
 //
 
 import Charts
@@ -89,7 +88,7 @@ struct AudioTelemetryView: View {
                         marginCards(endpoint)
                         charts(endpoint)
                         latencySummary(endpoint)
-                        rxRecovery(endpoint)
+                        RxTelemetrySection(endpoint: endpoint)
                     }
                     .padding(20)
                 }
@@ -194,20 +193,6 @@ struct AudioTelemetryView: View {
         }
     }
 
-    private func rxRecovery(_ endpoint: AudioTelemetryEndpoint) -> some View {
-        TelemetryPanel(title: "RX recovery (limited)") {
-            HStack(spacing: 24) {
-                Label("\(endpoint.rxReplayEntries.formatted()) replay entries", systemImage: "arrow.triangle.2.circlepath")
-                Label("\(endpoint.rxReplayEpochResets.formatted()) epoch resets", systemImage: "arrow.counterclockwise")
-            }
-            .foregroundStyle(.secondary)
-            Text("These are recovery counters, not receive latency or safety telemetry. FW-123 defines the dedicated RX contract and UI wire.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
-        }
-    }
-
     private func marginTint(_ value: UInt32?, floor: UInt32) -> Color {
         guard let value else { return .secondary }
         return value <= floor * 2 ? .red : value <= floor * 4 ? .orange : .green
@@ -221,7 +206,7 @@ struct MarginHistoryPoint: Identifiable {
     var id: String { "\(endpointGUID)-\(timestamp.timeIntervalSinceReferenceDate)" }
 }
 
-private struct TelemetryMetricCard: View {
+struct TelemetryMetricCard: View {
     let title: String
     let value: String
     let detail: String
@@ -240,7 +225,7 @@ private struct TelemetryMetricCard: View {
     }
 }
 
-private struct TelemetryPanel<Content: View>: View {
+struct TelemetryPanel<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
@@ -255,7 +240,7 @@ private struct TelemetryPanel<Content: View>: View {
     }
 }
 
-private struct HistogramChart: View {
+struct HistogramChart: View {
     let labels: [String]
     let counts: [UInt64]
     let tint: Color

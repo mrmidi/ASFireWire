@@ -139,6 +139,7 @@ struct AudioTimingGeometry final {
     // captured distribution meaningful if the lead changes during tuning.
     static constexpr uint32_t kTxPreparationLatencyHistogramBuckets = 6;
     static constexpr uint32_t kTxCommittedMarginHistogramBuckets = 5;
+    static constexpr uint32_t kRxCaptureOccupancyHistogramBuckets = 5;
     static constexpr uint64_t kNanosecondsPerMicrosecond = 1'000;
     static constexpr uint64_t kTxPreparationLatency250Us = 250;
     static constexpr uint64_t kTxPreparationLatency500Us = 500;

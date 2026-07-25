@@ -226,6 +226,7 @@
 		963574C5C0B791D8C9BC3322 /* ASFWMCPCmpTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 969C58B339AB3E30DB3B3E45 /* ASFWMCPCmpTools.swift */; };
 		96BB0B87EC5E19FC54BF6338 /* MCPBusResetToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F50437CCB59475ED6F54FC52 /* MCPBusResetToolsTests.swift */; };
 		971AC3A1D14A2A8C0F6E1939 /* DeviceManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7193EECF6193A154761C3877 /* DeviceManager.cpp */; };
+		9936F20F2E83B8048D94BA14 /* RxTelemetrySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75BF1539474CBA7AFB67A769 /* RxTelemetrySection.swift */; };
 		9939EA3C38D005D2B1706109 /* LockCommand.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 647BC02DDA3AE383EBFED56E /* LockCommand.cpp */; };
 		9B8E94EA1F0A961CD016D197 /* DriverViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7892E16293D409FFB4F00710 /* DriverViewModel.swift */; };
 		9BFABEBFD4EE64F02ADFBBF1 /* AsyncSubsystemInterrupts.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B3F76378A96EF757865E11C4 /* AsyncSubsystemInterrupts.cpp */; };
@@ -761,6 +762,7 @@
 		746DA77C4A934EC1BB0D2BD9 /* ASFWMCPIrmCasTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPIrmCasTools.swift; sourceTree = "<group>"; };
 		747E8B61F56CFA97DD0187AA /* MetricCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricCard.swift; sourceTree = "<group>"; };
 		753A90E159A919F0CF3D606B /* AmdtpTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AmdtpTypes.hpp; sourceTree = "<group>"; };
+		75BF1539474CBA7AFB67A769 /* RxTelemetrySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RxTelemetrySection.swift; sourceTree = "<group>"; };
 		75FA4BD49A436757DB447E83 /* RawPcm24In32Decoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RawPcm24In32Decoder.hpp; sourceTree = "<group>"; };
 		76574F961A8705D1667DDBD3 /* DICETcatProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DICETcatProtocol.hpp; sourceTree = "<group>"; };
 		76B0E21D7030C5536C28D271 /* IAsyncControllerPort.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAsyncControllerPort.hpp; sourceTree = "<group>"; };
@@ -1566,6 +1568,7 @@
 				B7E03EB5573EA30EB8F2D42B /* PingView.swift */,
 				6C6B4EEB948F7332CD86745F /* ReadWriteView.swift */,
 				EFA374405CB437F912867561 /* RomExplorerView.swift */,
+				75BF1539474CBA7AFB67A769 /* RxTelemetrySection.swift */,
 				FF26B9D9B6DD1E2CD447CB18 /* SaffireMixerView.swift */,
 				40B5596E889581A72B7E3E95 /* SelfIDDetailView.swift */,
 				8FB2E35051CCCFD3E4CD6E2F /* SystemLogsView.swift */,
@@ -3364,6 +3367,7 @@
 				79975EDD451331BDAABF472D /* RomModels.swift in Sources */,
 				A3FA3AB19550E36A7A30BB2F /* RomParser.swift in Sources */,
 				08694BE1C51DD14DB11CAB80 /* RomSummarizer.swift in Sources */,
+				9936F20F2E83B8048D94BA14 /* RxTelemetrySection.swift in Sources */,
 				E4F5CF4EC419B3428F076E1F /* SaffireMixerModels.swift in Sources */,
 				FA8EB77AE75DA096CD8B147C /* SaffireMixerView.swift in Sources */,
 				059F77DD809EC6C80A619901 /* SaffireMixerViewModel.swift in Sources */,
