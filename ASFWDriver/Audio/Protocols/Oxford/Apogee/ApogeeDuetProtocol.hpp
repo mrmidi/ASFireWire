@@ -234,14 +234,6 @@ private:
     void FinishClockTransition(const std::shared_ptr<ClockTransition>& transition,
                                 IOReturn status);
 
-    static uint32_t ReadQuadletBE(const uint8_t* data) noexcept;
-
-    // Duet-specific meter block offsets (apogee.rs:128-130). The Oxford CSR
-    // offsets that used to sit here moved to Oxford/OxfordCsr.hpp.
-    static constexpr uint64_t kMeterBaseAddress = 0xFFFFF0080000ULL;
-    static constexpr uint32_t kMeterInputOffset = 0x0004;
-    static constexpr uint32_t kMeterMixerOffset = 0x0404;
-
     /// Route-liveness policy handed to the chip-common CSR reads.
     [[nodiscard]] Oxford::RouteValidator MakeRouteValidator() const;
 

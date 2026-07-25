@@ -122,11 +122,21 @@ add_device_test(OxfwVendorFramingTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
 )
 
+# FW-129: Duet FCP dispatch and meter register reads
+add_device_test(ApogeeTransportTests
+    ApogeeTransportTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 # FW-137: Oxford FW970/971 chip-common CSR reads
 add_device_test(OxfordCsrTests
     OxfordCsrTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
@@ -148,6 +158,7 @@ add_device_test(ApogeeDuetVendorCmdTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
@@ -162,6 +173,7 @@ add_device_test(ApogeeDuetClockTransitionTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"

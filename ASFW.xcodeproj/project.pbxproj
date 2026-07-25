@@ -270,6 +270,7 @@
 		B6E2C5C7E735F9E2CFC4D82A /* ASFWMCPHardwareSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F29A145F23C0F76691EC4F /* ASFWMCPHardwareSmokeRunner.swift */; };
 		B88224662B577BC1F022CE84 /* AsyncSubsystem.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3FD92A76AA32886FBDD522A0 /* AsyncSubsystem.cpp */; };
 		B918D8919D1BAC0AE4587DF2 /* AudioDriverConfig.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B8B02346383E39CA66366AAE /* AudioDriverConfig.cpp */; };
+		BAD107F1CA938EF185F39510 /* ApogeeTransport.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1906A50A66DCEC2817FD97C /* ApogeeTransport.cpp */; };
 		BAD829E2B652999948C41244 /* CMPClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B5F0202EE7FC8FB720EC735D /* CMPClient.cpp */; };
 		BBC4374CAF02DA7A26022E78 /* DuetViewModelLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51751F4E2707BF3956287D1F /* DuetViewModelLogicTests.swift */; };
 		BCC377A8BC71F82C85384962 /* ASFWMCPTransactionSchemas.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEA485C0412D0BA1D14FE998 /* ASFWMCPTransactionSchemas.swift */; };
@@ -917,6 +918,7 @@
 		AA6E283C66645521931AA351 /* StatusPublisher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StatusPublisher.hpp; sourceTree = "<group>"; };
 		AA81C887B5139B7E8F8DD466 /* RootSelectionCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RootSelectionCoordinator.hpp; sourceTree = "<group>"; };
 		AA98640AA86E9C3825DB9154 /* BusResetHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusResetHandler.hpp; sourceTree = "<group>"; };
+		AB15BC9398871C7CCCE657D8 /* ApogeeTransport.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeTransport.hpp; sourceTree = "<group>"; };
 		AB1BE8DD77E29FF5F092DEE9 /* Phase88MixerData.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Phase88MixerData.hpp; sourceTree = "<group>"; };
 		AB20705B5E5C72D4746FCF35 /* PayloadContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PayloadContext.cpp; sourceTree = "<group>"; };
 		AB453939124D6E9B3A7A8BFC /* ASFWMCPIrmAllocationTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPIrmAllocationTools.swift; sourceTree = "<group>"; };
@@ -1073,6 +1075,7 @@
 		E046501FE168EA65F0AB0E3B /* LocalRequestWiring.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LocalRequestWiring.cpp; sourceTree = "<group>"; };
 		E0ACF327198028F1B5462DA0 /* LoggingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoggingSettingsView.swift; sourceTree = "<group>"; };
 		E16CD7D8847B269F7291724B /* DiagnosticsService.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiagnosticsService.cpp; sourceTree = "<group>"; };
+		E1906A50A66DCEC2817FD97C /* ApogeeTransport.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeTransport.cpp; sourceTree = "<group>"; };
 		E23557505A30ACA0C184956D /* OxfordCsr.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OxfordCsr.cpp; sourceTree = "<group>"; };
 		E27ACAC62D6F66AAB6061C27 /* DescriptorAccessor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DescriptorAccessor.hpp; sourceTree = "<group>"; };
 		E2C4D17A33EDCA3ABE6B5D82 /* DiceQuirks.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceQuirks.hpp; sourceTree = "<group>"; };
@@ -1606,6 +1609,8 @@
 				26B0033F8CE6CF9AA238F8AF /* ApogeeCaps.hpp */,
 				862D65458BD2D45123D9C6E4 /* ApogeeDuetProtocol.cpp */,
 				0FCC9AE9BE1B3929CC94BE88 /* ApogeeDuetProtocol.hpp */,
+				E1906A50A66DCEC2817FD97C /* ApogeeTransport.cpp */,
+				AB15BC9398871C7CCCE657D8 /* ApogeeTransport.hpp */,
 				422A112B4666B20A04B000CD /* ApogeeTypes.hpp */,
 				D0E9BE99CAFCBEDAD1B11BEB /* ApogeeVendorCodec.cpp */,
 				0E29971B91B76C420357B5F3 /* ApogeeVendorCodec.hpp */,
@@ -3062,6 +3067,7 @@
 				3D9D02951035C22384C1CBF0 /* AmdtpTxPacketizer.cpp in Sources */,
 				3D97308CA3A11622955D8461 /* ApogeeDuetProfile.cpp in Sources */,
 				397A66B5278D4CEA50CEFE3E /* ApogeeDuetProtocol.cpp in Sources */,
+				BAD107F1CA938EF185F39510 /* ApogeeTransport.cpp in Sources */,
 				310409E6EFA558BCA557F77A /* ApogeeVendorCodec.cpp in Sources */,
 				B88224662B577BC1F022CE84 /* AsyncSubsystem.cpp in Sources */,
 				7C6A17973382F6042B6956AB /* AsyncSubsystemBusReset.cpp in Sources */,
