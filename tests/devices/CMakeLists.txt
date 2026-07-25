@@ -111,6 +111,16 @@ add_device_test(ApogeeBooleanControlMappingTests
     ApogeeBooleanControlMappingTests.cpp
 )
 
+# FW-137: Oxford FW970/971 chip-common CSR reads
+add_device_test(OxfordCsrTests
+    OxfordCsrTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 # FW-138: shared AV/C test rig (deferred bus + real FCPTransport + target responder)
 add_device_test(AvcTestRigTests
     AvcTestRigTests.cpp
@@ -124,6 +134,7 @@ add_device_test(AvcTestRigTests
 add_device_test(ApogeeDuetVendorCmdTests
     ApogeeDuetVendorCmdTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
@@ -136,6 +147,7 @@ add_device_test(ApogeeDuetVendorCmdTests
 add_device_test(ApogeeDuetClockTransitionTests
     ApogeeDuetClockTransitionTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"

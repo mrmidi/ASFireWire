@@ -1771,68 +1771,21 @@ void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback)
                       });
 }
 
-void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    if (!cmpClient_ || !cmpClient_->IsRouteCurrent(route_)) {
-        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, 0u);
-        return;
-    }
-    const auto route = route_;
-    const auto gen = route.generation;
-    const auto node = FW::NodeId{static_cast<uint8_t>(route.nodeId)};
-    const uint64_t addr64 = kOxfordCsrBase + kOxfordFirmwareIdOffset;
-    const Async::FWAddress addr{Async::FWAddress::AddressParts{
-        .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
-        .addressLo = static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
-    }};
+// The Oxford ASIC registers are chip-common, not Duet-specific (FW-137), so
+// the register map and decode live in Oxford/OxfordCsr. What stays here is the
+// Duet's own route-liveness policy, expressed as the validator that layer takes.
+Oxford::RouteValidator ApogeeDuetProtocol::MakeRouteValidator() const {
+    return [this, route = route_] {
+        return cmpClient_ != nullptr && cmpClient_->IsRouteCurrent(route);
+    };
+}
 
-    busOps_.ReadBlock(gen,
-                      node,
-                      addr,
-                      4,
-                      FW::FwSpeed::S100,
-                      [this, route, callbackState](Async::AsyncStatus status,
-                                                       std::span<const uint8_t> payload) {
-                          if (!cmpClient_->IsRouteCurrent(route) ||
-                              status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
-                              Common::InvokeSharedCallback(callbackState, kIOReturnError, 0u);
-                              return;
-                          }
-                          Common::InvokeSharedCallback(callbackState, kIOReturnSuccess,
-                                                       ReadQuadletBE(payload.data()));
-                      });
+void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
+    Oxford::ReadFirmwareId(busOps_, route_, MakeRouteValidator(), std::move(callback));
 }
 
 void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    if (!cmpClient_ || !cmpClient_->IsRouteCurrent(route_)) {
-        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, 0u);
-        return;
-    }
-    const auto route = route_;
-    const auto gen = route.generation;
-    const auto node = FW::NodeId{static_cast<uint8_t>(route.nodeId)};
-    const uint64_t addr64 = kOxfordCsrBase + kOxfordHardwareIdOffset;
-    const Async::FWAddress addr{Async::FWAddress::AddressParts{
-        .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
-        .addressLo = static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
-    }};
-
-    busOps_.ReadBlock(gen,
-                      node,
-                      addr,
-                      4,
-                      FW::FwSpeed::S100,
-                      [this, route, callbackState](Async::AsyncStatus status,
-                                                       std::span<const uint8_t> payload) {
-                          if (!cmpClient_->IsRouteCurrent(route) ||
-                              status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
-                              Common::InvokeSharedCallback(callbackState, kIOReturnError, 0u);
-                              return;
-                          }
-                          Common::InvokeSharedCallback(callbackState, kIOReturnSuccess,
-                                                       ReadQuadletBE(payload.data()));
-                      });
+    Oxford::ReadHardwareId(busOps_, route_, MakeRouteValidator(), std::move(callback));
 }
 
 } // namespace ASFW::Audio::Oxford::Apogee

@@ -309,6 +309,7 @@
 		D74F6BD06A3382F1C0BB22D4 /* SaffireproCommon.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 58270AA2B471122F849C5F2E /* SaffireproCommon.cpp */; };
 		DA37C664D350AD585F6D5EA4 /* SPro24DspTypes.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 51FA6BF0E32CC73655F97151 /* SPro24DspTypes.cpp */; };
 		DB27C439E148A97E29A0D466 /* DeviceDiscoveryHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2E4B81BA5CC13B1A56B9CBD4 /* DeviceDiscoveryHandler.cpp */; };
+		DC89FE9F882D19BE1FDB16E4 /* OxfordCsr.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E23557505A30ACA0C184956D /* OxfordCsr.cpp */; };
 		DCC7DB19E290D1B5A1B0291B /* TopologyMapBuilder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2EED729D62CF1EBCCBEC147C /* TopologyMapBuilder.cpp */; };
 		DD2D5573DA6BE5997B87E23B /* AudioSubunit.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 24B390EF283273CB0AF276B9 /* AudioSubunit.cpp */; };
 		DDA1C4112C4713F14C2EB2D2 /* AudioDuplexCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4869BB87D8A8B57A73DF3A1C /* AudioDuplexCoordinator.cpp */; };
@@ -1067,6 +1068,7 @@
 		E046501FE168EA65F0AB0E3B /* LocalRequestWiring.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LocalRequestWiring.cpp; sourceTree = "<group>"; };
 		E0ACF327198028F1B5462DA0 /* LoggingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoggingSettingsView.swift; sourceTree = "<group>"; };
 		E16CD7D8847B269F7291724B /* DiagnosticsService.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiagnosticsService.cpp; sourceTree = "<group>"; };
+		E23557505A30ACA0C184956D /* OxfordCsr.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OxfordCsr.cpp; sourceTree = "<group>"; };
 		E27ACAC62D6F66AAB6061C27 /* DescriptorAccessor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DescriptorAccessor.hpp; sourceTree = "<group>"; };
 		E2C4D17A33EDCA3ABE6B5D82 /* DiceQuirks.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceQuirks.hpp; sourceTree = "<group>"; };
 		E2C7021E0B5A7CF87A2D74C2 /* Phase88Profile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Phase88Profile.hpp; sourceTree = "<group>"; };
@@ -1149,6 +1151,7 @@
 		FB4F38B538B6F7A28F16625C /* SBP2ManagementORB.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SBP2ManagementORB.cpp; sourceTree = "<group>"; };
 		FC76D117C15153F78867F3A4 /* ASFWMCPSbp2Tools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPSbp2Tools.swift; sourceTree = "<group>"; };
 		FCD731960BD463377A35C2E5 /* ControllerDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControllerDetailView.swift; sourceTree = "<group>"; };
+		FCED93498449F4A70563C14F /* OxfordCsr.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OxfordCsr.hpp; sourceTree = "<group>"; };
 		FD117766281DF405E522EFAB /* MCPControlViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPControlViewModelTests.swift; sourceTree = "<group>"; };
 		FDB5F702B5BEE95708CFC5AF /* RomCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomCache.swift; sourceTree = "<group>"; };
 		FE0057D2389E9882DD0915E6 /* LockCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LockCommand.hpp; sourceTree = "<group>"; };
@@ -1887,6 +1890,8 @@
 		6DF35E1146D265DA8C2B7611 /* Oxford */ = {
 			isa = PBXGroup;
 			children = (
+				E23557505A30ACA0C184956D /* OxfordCsr.cpp */,
+				FCED93498449F4A70563C14F /* OxfordCsr.hpp */,
 				47E4C5B6855DA512A76E1439 /* Apogee */,
 			);
 			path = Oxford;
@@ -3171,6 +3176,7 @@
 				E2DE70670F9BE323DAEA7D93 /* MidasVeniceProfile.cpp in Sources */,
 				28D79A1641FA4B845BEE0F1D /* MusicSubunit.cpp in Sources */,
 				05A3A3259B305E9E922B7399 /* MusicSubunitCapabilities.cpp in Sources */,
+				DC89FE9F882D19BE1FDB16E4 /* OxfordCsr.cpp in Sources */,
 				70BB1420AC1F4305497316D1 /* PCRSpace.cpp in Sources */,
 				4562BAF2CE0D64CA7FD58A77 /* PacketBuilder.cpp in Sources */,
 				C9DEE8C6C159F576AEA8338E /* PacketRouter.cpp in Sources */,

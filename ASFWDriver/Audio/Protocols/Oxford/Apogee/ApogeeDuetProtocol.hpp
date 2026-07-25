@@ -7,6 +7,7 @@
 #pragma once
 
 #include "ApogeeTypes.hpp"
+#include "../OxfordCsr.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
@@ -178,12 +179,10 @@ public:
     // Oxford ID Registers (Async)
     // ========================================================================
 
+    // Register map, decode and ASIC classification are chip-common and live in
+    // Oxford/OxfordCsr.hpp (FW-137). These remain as the Duet's entry points.
     void GetFirmwareId(ResultCallback<uint32_t> callback);
     void GetHardwareId(ResultCallback<uint32_t> callback);
-
-    // Oxford hardware identifiers (from snd-firewire-ctl-services/oxford.rs).
-    static constexpr uint32_t kHardwareIdFw970 = 0x39443841; // '9''D''8''A'
-    static constexpr uint32_t kHardwareIdFw971 = 0x39373100; // '9''7''1''\0'
 
     // Runtime integration hook. Not wired by factory yet.
     void SetFCPTransport(Protocols::AVC::FCPTransport* fcpTransport) noexcept {
@@ -278,13 +277,14 @@ private:
 
     static uint32_t ReadQuadletBE(const uint8_t* data) noexcept;
 
-    // Meter and Oxford CSR constants.
+    // Duet-specific meter block offsets (apogee.rs:128-130). The Oxford CSR
+    // offsets that used to sit here moved to Oxford/OxfordCsr.hpp.
     static constexpr uint64_t kMeterBaseAddress = 0xFFFFF0080000ULL;
     static constexpr uint32_t kMeterInputOffset = 0x0004;
     static constexpr uint32_t kMeterMixerOffset = 0x0404;
-    static constexpr uint64_t kOxfordCsrBase = 0xFFFFF0000000ULL;
-    static constexpr uint64_t kOxfordFirmwareIdOffset = 0x50000ULL;
-    static constexpr uint64_t kOxfordHardwareIdOffset = 0x90020ULL;
+
+    /// Route-liveness policy handed to the chip-common CSR reads.
+    [[nodiscard]] Oxford::RouteValidator MakeRouteValidator() const;
 
     // Apogee Constants
     static constexpr uint8_t kOUI[3] = {0x00, 0x03, 0xDB};
