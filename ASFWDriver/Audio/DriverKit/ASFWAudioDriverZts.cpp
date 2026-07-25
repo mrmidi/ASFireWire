@@ -348,6 +348,26 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     // keeps writing. Re-arming makes the first DATA packet
                     // after replay recovers re-project the cursor to the live
                     // frame, closing the gap.
+                    // This branch is what arms the [TxAlign] self-heal, and it
+                    // was silent: a recurring re-anchor showed up as a ~112 ms
+                    // frame-cursor jump with nothing naming the cause. The
+                    // reasons are not equivalent - kHistoryOverwritten means the
+                    // reader fell behind, which is NOT the timing-domain move
+                    // this branch assumes, and re-anchoring would hide it. Name
+                    // the reason so the two cases can be told apart.
+                    ASFW_LOG_ERROR(
+                        DirectAudio,
+                        "[TxReplayRearm] reason=%{public}s cur=%llu prod=%llu ep=%u/%u "
+                        "slot=%llu/%u est=%u",
+                        ASFW::Audio::Runtime::RxSequenceReplayReadFailureName(
+                            replayDiagnostic.failure),
+                        replayDiagnostic.readerCursor,
+                        replayDiagnostic.producerCursor,
+                        replayDiagnostic.readerEpoch,
+                        replayDiagnostic.replayEpoch,
+                        replayDiagnostic.slotSequence,
+                        replayDiagnostic.slotEpoch,
+                        replayDiagnostic.replayEstablished ? 1u : 0u);
                     ivars.runtime.txReplayReader.Reset();
                     ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
                     if (ivars.runtime.txSecondaryActive) {
