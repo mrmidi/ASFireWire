@@ -25,6 +25,9 @@ enum AudioTelemetryFlags : uint32_t {
     kAudioTelemetryStreaming = 1U << 1,
     kAudioTelemetryHasCompletedInterval = 1U << 2,
     kAudioTelemetryHasCompletedRxInterval = 1U << 3,
+    // CoreAudio issued BeginRead during the completed RX interval. Without a
+    // reader, a full capture ring is intentionally only a retained window.
+    kAudioTelemetryRxCaptureReaderActive = 1U << 4,
 };
 
 struct AudioTelemetryEndpointSnapshot final {
@@ -178,6 +181,10 @@ inline void CopyAudioTelemetrySnapshot(
             out.rxCompletedIntervalSequence = after;
             if (after != 0) {
                 out.flags |= kAudioTelemetryHasCompletedRxInterval;
+                if (control.rxCaptureBufferTelemetry.completedReaderBeginReadCalls.load(
+                        memoryOrder) != 0) {
+                    out.flags |= kAudioTelemetryRxCaptureReaderActive;
+                }
             }
             return;
         }

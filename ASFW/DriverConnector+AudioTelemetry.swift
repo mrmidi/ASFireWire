@@ -58,6 +58,7 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     var isStreaming: Bool { (flags & (1 << 1)) != 0 }
     var hasCompletedInterval: Bool { (flags & (1 << 2)) != 0 }
     var hasCompletedRxInterval: Bool { (flags & (1 << 3)) != 0 }
+    var isRxCaptureReaderActive: Bool { (flags & (1 << 4)) != 0 }
     var intervalMinimum: UInt32? {
         completedIntervalMarginMinPackets == Self.notMeasured ? nil : completedIntervalMarginMinPackets
     }

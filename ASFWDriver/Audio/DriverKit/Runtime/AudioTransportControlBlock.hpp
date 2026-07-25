@@ -219,6 +219,10 @@ struct RxCaptureBufferTelemetry final {
     std::atomic<uint64_t> intervalOverwrittenFrames{0};
     std::atomic<uint64_t> intervalStarvationEvents{0};
     std::atomic<uint64_t> intervalStarvedFrames{0};
+    // A BeginRead is the only authoritative indication that CoreAudio is
+    // consuming capture frames. A full ring without one is the normal
+    // latest-window mailbox state, not an input overrun.
+    std::atomic<uint64_t> intervalReaderBeginReadCalls{0};
 
     // Written by the heartbeat owner. Odd while copying, even when readers
     // may snapshot the completed interval without locking the audio path.
@@ -233,6 +237,7 @@ struct RxCaptureBufferTelemetry final {
     std::atomic<uint64_t> completedOverwrittenFrames{0};
     std::atomic<uint64_t> completedStarvationEvents{0};
     std::atomic<uint64_t> completedStarvedFrames{0};
+    std::atomic<uint64_t> completedReaderBeginReadCalls{0};
     std::atomic<uint64_t> totalOverwrittenFrames{0};
     std::atomic<uint64_t> totalStarvedFrames{0};
 
@@ -295,6 +300,10 @@ struct RxCaptureBufferTelemetry final {
             starvedFrames, std::memory_order_relaxed);
     }
 
+    void RecordReaderBeginRead() noexcept {
+        intervalReaderBeginReadCalls.fetch_add(1, std::memory_order_relaxed);
+    }
+
     void CompleteInterval() noexcept {
         completedIntervalSequence.fetch_add(1, std::memory_order_relaxed);
         completedMinimumAvailableFrames.store(
@@ -323,6 +332,8 @@ struct RxCaptureBufferTelemetry final {
             0, std::memory_order_relaxed), std::memory_order_relaxed);
         completedStarvedFrames.store(intervalStarvedFrames.exchange(
             0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedReaderBeginReadCalls.store(intervalReaderBeginReadCalls.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
         completedIntervalSequence.fetch_add(1, std::memory_order_release);
     }
 
@@ -338,6 +349,7 @@ struct RxCaptureBufferTelemetry final {
         intervalOverwrittenFrames.store(0, std::memory_order_relaxed);
         intervalStarvationEvents.store(0, std::memory_order_relaxed);
         intervalStarvedFrames.store(0, std::memory_order_relaxed);
+        intervalReaderBeginReadCalls.store(0, std::memory_order_relaxed);
         completedIntervalSequence.store(0, std::memory_order_relaxed);
         completedMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
         completedMaximumAvailableFrames.store(0, std::memory_order_relaxed);
@@ -349,6 +361,7 @@ struct RxCaptureBufferTelemetry final {
         completedOverwrittenFrames.store(0, std::memory_order_relaxed);
         completedStarvationEvents.store(0, std::memory_order_relaxed);
         completedStarvedFrames.store(0, std::memory_order_relaxed);
+        completedReaderBeginReadCalls.store(0, std::memory_order_relaxed);
         totalOverwrittenFrames.store(0, std::memory_order_relaxed);
         totalStarvedFrames.store(0, std::memory_order_relaxed);
     }

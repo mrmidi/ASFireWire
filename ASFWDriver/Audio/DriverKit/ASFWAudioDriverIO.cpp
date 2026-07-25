@@ -176,6 +176,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     return returnError(kIOReturnBadArgument);
                 }
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
+                control->rxCaptureBufferTelemetry.RecordReaderBeginRead();
                 (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
                                                      *control,
                                                      sampleTime,

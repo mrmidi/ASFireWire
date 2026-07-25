@@ -106,6 +106,7 @@ TEST(AudioTransportControlBlockTests, RxCaptureTelemetryCapturesIntervalWatermar
     telemetry.Observe(1600, 800, 1024);
     telemetry.RecordOverrun(32);
     telemetry.RecordStarvation(16);
+    telemetry.RecordReaderBeginRead();
     telemetry.CompleteInterval();
 
     AudioTelemetryEndpointSnapshot snapshot{};
@@ -122,6 +123,18 @@ TEST(AudioTransportControlBlockTests, RxCaptureTelemetryCapturesIntervalWatermar
     EXPECT_EQ(snapshot.rxTotalOverwrittenFrames, 32U);
     EXPECT_EQ(snapshot.rxTotalStarvedFrames, 16U);
     EXPECT_NE(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryHasCompletedRxInterval, 0U);
+    EXPECT_NE(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryRxCaptureReaderActive, 0U);
+}
+
+TEST(AudioTransportControlBlockTests, RxCaptureReaderActivityIsScopedToTheCompletedInterval) {
+    AudioTransportControlBlock control{};
+    control.rxCaptureBufferTelemetry.CompleteInterval();
+
+    AudioTelemetryEndpointSnapshot snapshot{};
+    ASFW::Audio::Runtime::CopyAudioTelemetrySnapshot(control, snapshot);
+
+    EXPECT_NE(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryHasCompletedRxInterval, 0U);
+    EXPECT_EQ(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryRxCaptureReaderActive, 0U);
 }
 
 TEST(AudioTransportControlBlockTests, WirePayloadTelemetryStaysInAudioAndFlagsDropout) {

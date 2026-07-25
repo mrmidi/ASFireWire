@@ -54,8 +54,15 @@ public:
             const uint64_t overwrittenFrames = producedEndFrame - read - capacity;
             control->captureRingReadFrame.store(producedEndFrame - capacity,
                                                  std::memory_order_release);
-            control->captureRingOverruns.fetch_add(1, std::memory_order_relaxed);
-            control->rxCaptureBufferTelemetry.RecordOverrun(overwrittenFrames);
+            // RX continuously retains the newest capture window even when no
+            // client has opened the input side. Do not report those routine
+            // mailbox wraps as data loss; a BeginRead establishes the reader
+            // frontier whose loss this metric is meant to diagnose.
+            if (control->counters.ioBeginReadCount.load(
+                    std::memory_order_acquire) != 0) {
+                control->captureRingOverruns.fetch_add(1, std::memory_order_relaxed);
+                control->rxCaptureBufferTelemetry.RecordOverrun(overwrittenFrames);
+            }
             read = producedEndFrame - capacity;
         }
         control->rxCaptureBufferTelemetry.Observe(

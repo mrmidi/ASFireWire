@@ -12,61 +12,16 @@ struct RxTelemetrySection: View {
 
     var body: some View {
         TelemetryPanel(title: "RX buffer safety") {
-            HStack(spacing: 12) {
-                TelemetryMetricCard(
-                    title: "Available now",
-                    value: "\(endpoint.rxCurrentAvailableFrames.formatted()) / \(endpoint.inputFrameCapacityFrames.formatted())",
-                    detail: "frames available / capacity",
-                    tint: endpoint.rxCurrentAvailableFrames == 0 ? .red : .blue
-                )
-                TelemetryMetricCard(
-                    title: "Interval low",
-                    value: endpoint.rxIntervalMinimumAvailable?.formatted() ?? "—",
-                    detail: "minimum available frames",
-                    tint: intervalTint(endpoint.rxIntervalMinimumAvailable)
-                )
-                TelemetryMetricCard(
-                    title: "Interval high",
-                    value: endpoint.hasCompletedRxInterval
-                        ? endpoint.rxCompletedIntervalMaximumAvailableFrames.formatted()
-                        : "—",
-                    detail: "maximum occupancy frames",
-                    tint: .teal
-                )
-                TelemetryMetricCard(
-                    title: "Minimum headroom",
-                    value: endpoint.rxIntervalMinimumFreeHeadroom?.formatted() ?? "—",
-                    detail: "writer-free frames",
-                    tint: intervalTint(endpoint.rxIntervalMinimumFreeHeadroom)
-                )
-                TelemetryMetricCard(
-                    title: "Interval faults",
-                    value: "\(endpoint.rxCompletedIntervalOverrunEvents + endpoint.rxCompletedIntervalStarvationEvents)",
-                    detail: "overruns + starvations",
-                    tint: intervalFaultTint
-                )
+            if endpoint.isRxCaptureReaderActive {
+                safetyDashboard
+            } else {
+                Label("Capture reader idle", systemImage: "pause.circle")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Text("CoreAudio did not request input frames in the last interval. RX keeps the newest \(endpoint.inputFrameCapacityFrames.formatted()) frames as a mailbox; a full ring and its routine wraps are not overruns. Start an input capture to measure buffer headroom and loss.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-
-            HistogramChart(
-                labels: AudioTelemetryEndpoint.rxOccupancyBucketLabels,
-                counts: endpoint.rxCompletedOccupancyHistogram,
-                tint: .mint
-            )
-            .frame(height: 150)
-            .accessibilityLabel("Capture-ring occupancy distribution for the last completed interval")
-
-            HStack(spacing: 24) {
-                Label(
-                    "\(endpoint.rxCaptureOverrunEvents.formatted()) overruns · \(endpoint.rxTotalOverwrittenFrames.formatted()) overwritten frames",
-                    systemImage: "exclamationmark.triangle"
-                )
-                Label(
-                    "\(endpoint.rxCaptureStarvationEvents.formatted()) starvations · \(endpoint.rxTotalStarvedFrames.formatted()) zero-filled frames",
-                    systemImage: "waveform.badge.exclamationmark"
-                )
-            }
-            .font(.caption)
-            .foregroundStyle(lifetimeFaultTint)
 
             HStack(spacing: 24) {
                 Label("\(endpoint.rxReplayEntries.formatted()) replay entries", systemImage: "arrow.triangle.2.circlepath")
@@ -79,6 +34,65 @@ struct RxTelemetrySection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    @ViewBuilder
+    private var safetyDashboard: some View {
+        HStack(spacing: 12) {
+            TelemetryMetricCard(
+                title: "Available now",
+                value: "\(endpoint.rxCurrentAvailableFrames.formatted()) / \(endpoint.inputFrameCapacityFrames.formatted())",
+                detail: "frames available / capacity",
+                tint: endpoint.rxCurrentAvailableFrames == 0 ? .red : .blue
+            )
+            TelemetryMetricCard(
+                title: "Interval low",
+                value: endpoint.rxIntervalMinimumAvailable?.formatted() ?? "—",
+                detail: "minimum available frames",
+                tint: intervalTint(endpoint.rxIntervalMinimumAvailable)
+            )
+            TelemetryMetricCard(
+                title: "Interval high",
+                value: endpoint.hasCompletedRxInterval
+                    ? endpoint.rxCompletedIntervalMaximumAvailableFrames.formatted()
+                    : "—",
+                detail: "maximum occupancy frames",
+                tint: .teal
+            )
+            TelemetryMetricCard(
+                title: "Minimum headroom",
+                value: endpoint.rxIntervalMinimumFreeHeadroom?.formatted() ?? "—",
+                detail: "writer-free frames",
+                tint: intervalTint(endpoint.rxIntervalMinimumFreeHeadroom)
+            )
+            TelemetryMetricCard(
+                title: "Interval faults",
+                value: "\(endpoint.rxCompletedIntervalOverrunEvents + endpoint.rxCompletedIntervalStarvationEvents)",
+                detail: "overruns + starvations",
+                tint: intervalFaultTint
+            )
+        }
+
+        HistogramChart(
+            labels: AudioTelemetryEndpoint.rxOccupancyBucketLabels,
+            counts: endpoint.rxCompletedOccupancyHistogram,
+            tint: .mint
+        )
+        .frame(height: 150)
+        .accessibilityLabel("Capture-ring occupancy distribution for the last completed interval")
+
+        HStack(spacing: 24) {
+            Label(
+                "\(endpoint.rxCaptureOverrunEvents.formatted()) overruns · \(endpoint.rxTotalOverwrittenFrames.formatted()) overwritten frames",
+                systemImage: "exclamationmark.triangle"
+            )
+            Label(
+                "\(endpoint.rxCaptureStarvationEvents.formatted()) starvations · \(endpoint.rxTotalStarvedFrames.formatted()) zero-filled frames",
+                systemImage: "waveform.badge.exclamationmark"
+            )
+        }
+        .font(.caption)
+        .foregroundStyle(lifetimeFaultTint)
     }
 
     private var intervalFaultTint: Color {
