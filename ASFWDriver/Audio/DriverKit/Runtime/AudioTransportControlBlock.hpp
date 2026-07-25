@@ -592,11 +592,6 @@ struct AudioTransportControlBlock final {
 
     std::atomic<uint64_t> inputProducedEndFrame{0};
     std::atomic<uint64_t> inputOverruns{0};
-    // CoreAudio's client sample clock is not restarted with an isoch context.
-    // RX receives this value after StartIO so its producer cursor shares the
-    // exact absolute frame domain used by BeginRead.
-    std::atomic<uint64_t> captureFrameOrigin{0};
-    std::atomic<uint64_t> captureFrameOriginGeneration{0};
     // Device-domain frame count from CIP DBC (Data Block Counter).
     // Updated by RX interrupt path, read by TX preparation path.
     std::atomic<uint64_t> rxDbcFrameCount{0};
@@ -613,11 +608,6 @@ struct AudioTransportControlBlock final {
         uint32_t hostNanosPerSampleQ8) noexcept {
         return hostClockAnchor.Publish(
             sampleFrame, hostTicks, hostNanosPerSampleQ8);
-    }
-
-    void PublishCaptureFrameOrigin(uint64_t sampleFrame) noexcept {
-        captureFrameOrigin.store(sampleFrame, std::memory_order_relaxed);
-        captureFrameOriginGeneration.fetch_add(1, std::memory_order_release);
     }
 
     void ResetForStart() noexcept {
@@ -714,8 +704,6 @@ struct AudioTransportControlBlock final {
 
         inputProducedEndFrame.store(0, std::memory_order_relaxed);
         inputOverruns.store(0, std::memory_order_relaxed);
-        captureFrameOrigin.store(0, std::memory_order_relaxed);
-        captureFrameOriginGeneration.store(0, std::memory_order_relaxed);
         rxDbcFrameCount.store(0, std::memory_order_relaxed);
 
         captureRingWriteFrame.store(0, std::memory_order_relaxed);

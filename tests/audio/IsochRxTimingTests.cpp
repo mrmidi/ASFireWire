@@ -282,46 +282,6 @@ TEST(IsochRxTimingTests, DirectReceiveConsumerOwnsDecodeAcrossOpaqueIsochSeam) {
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
 }
 
-TEST(IsochRxTimingTests, DirectReceiveConsumerRebasesCaptureToCoreAudioTimeline) {
-    constexpr size_t kFrames = 1;
-    constexpr size_t kDbs = 2;
-    alignas(4) std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
-    packet[0] = 0x23;
-    packet[1] = 0xA1;
-    FillTwoChannelAmdtpPacket(packet, 0x407FFFFFu, 0x40000000u);
-
-    std::array<float, 8> input{};
-    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
-    control.PublishCaptureFrameOrigin(1'000);
-    FixedDirectAudioBindingSource source({
-        .generation = 1,
-        .inputBase = input.data(),
-        .inputBytes = sizeof(input),
-        .inputFrames = 4,
-        .inputChannels = 2,
-        .control = &control,
-        .sampleRateHz = 48000,
-        .valid = true,
-    });
-    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
-        &source, {.am824Slots = kDbs, .streamChannels = kDbs});
-    const ASFW::Isoch::IsochReceiveBatch batch{
-        .drainCycleTimer = EncodeCycleTimer(13, 300, 0),
-        .drainHostTicks = 1'000'000,
-    };
-    const ASFW::Isoch::IsochReceivePacket isochPacket{
-        .descriptorIndex = 7,
-        .payload = packet,
-    };
-
-    consumer.OnReceiveActivated();
-    consumer.BeginReceiveBatch(batch);
-    consumer.ConsumePacket(batch, isochPacket);
-
-    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1'001u);
-    EXPECT_FLOAT_EQ(input[0], 1.0f);
-}
-
 TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;
