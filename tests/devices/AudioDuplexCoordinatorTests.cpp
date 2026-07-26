@@ -1262,8 +1262,15 @@ TEST_F(AudioDuplexCoordinatorTests, UnsupportedClockConfigFailsBeforeHostAllocat
 
 TEST_F(AudioDuplexCoordinatorTests,
        RecoveryTriggerIsIgnoredWhenSessionIsIdleWithoutFootprint) {
+    // kIOReturnUnsupported, not kIOReturnSuccess (FW-146). An ignored recovery
+    // ran nothing, and callers act on the difference: AVCAudioBackend used to
+    // read this as "recovery succeeded" and reset the timing-loss escalation
+    // budget, so a device that always declined could never exhaust its
+    // attempts. The rest of this test already asserts that nothing ran —
+    // beginCalls == 0 and the session stays Idle — which is precisely why
+    // reporting success here was wrong.
     ASSERT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
-              kIOReturnSuccess);
+              kIOReturnUnsupported);
 
     const auto session = GetSession();
     ASSERT_TRUE(session.has_value());

@@ -66,6 +66,10 @@ private:
     // nub: the CoreAudio device then outlives the hardware it represents until
     // the whole driver tears down. Record the removal as owed, re-attempt it,
     // and only tear the nub down once the stop actually succeeds.
+    /// Whether `guid` is still the backend's active device. Debounced work must
+    /// re-check this: the device can be removed during a settle window, and
+    /// FinishDeviceRemoval clearing activeGuid_ is how that becomes observable.
+    [[nodiscard]] bool IsActiveDevice(uint64_t guid) noexcept;
     /// True when the removal may proceed: either the stop succeeded, or the
     /// device record is already gone, in which case the device-side stages are
     /// moot and only the host-side cleanup (run here) still matters.

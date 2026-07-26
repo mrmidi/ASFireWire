@@ -107,6 +107,16 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
     FinishDeviceRemoval(guid);
 }
 
+bool AVCAudioBackend::IsActiveDevice(uint64_t guid) noexcept {
+    if (!lock_) {
+        return true;
+    }
+    IOLockLock(lock_);
+    const bool active = (activeGuid_ == guid);
+    IOLockUnlock(lock_);
+    return active;
+}
+
 bool AVCAudioBackend::IsRemovalStopSettled(uint64_t guid, IOReturn stopStatus) noexcept {
     if (stopStatus == kIOReturnSuccess) {
         return true;
@@ -233,7 +243,10 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
         if (!stopping_.load(std::memory_order_acquire)) {
             const IOReturn status = duplexCoordinator_.RecoverStreaming(
                 guid, DuplexRestartReason::kBusResetRebind);
-            if (status != kIOReturnSuccess) {
+            // Unsupported means the policy declined to act — a decision, not a
+            // fault. Reporting it as a failure would put an error line on a
+            // benign path (FW-146).
+            if (status != kIOReturnSuccess && status != kIOReturnUnsupported) {
                 ASFW_LOG_ERROR(Audio,
                                "AVCAudioBackend: post-reset recovery failed GUID=0x%016llx kr=0x%x",
                                guid,
@@ -308,15 +321,29 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
         // before any PCR/MMIO work, so it cannot run after hardware detaches.
         // Debounce off the RX queue: give the [TxAlign] self-heal its transient
         // window. Poll stopping_ so teardown aborts within one tick.
+        // stopping_ only covers driver teardown. The device itself can be
+        // unplugged during the settle window — that is the ordinary case, not
+        // an edge one — and nothing else cancels this block, so without the
+        // liveness check the escalation runs against a device whose record,
+        // nub and CoreAudio presence are already gone (FW-146). FinishDeviceRemoval
+        // clears activeGuid_, which is what makes the device observable as gone.
         for (uint32_t waited = 0; waited < kTimingLossSettleMs;
              waited += kTimingLossPollMs) {
             if (stopping_.load(std::memory_order_acquire)) {
                 FinishRecovery(guid);
                 return;
             }
+            if (!IsActiveDevice(guid)) {
+                ASFW_LOG(Audio,
+                         "AVCAudioBackend: timing-loss abandoned; device left during settle "
+                         "GUID=0x%016llx",
+                         guid);
+                FinishRecovery(guid);
+                return;
+            }
             IOSleep(kTimingLossPollMs);
         }
-        if (stopping_.load(std::memory_order_acquire)) {
+        if (stopping_.load(std::memory_order_acquire) || !IsActiveDevice(guid)) {
             FinishRecovery(guid);
             return;
         }
@@ -373,6 +400,14 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
             ASFW_LOG(Audio,
                      "AVCAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
                      guid);
+        } else if (status == kIOReturnUnsupported) {
+            // The policy declined to recover. Nothing was restarted, so the
+            // budget must keep accumulating — resetting it here would mean a
+            // device that always declines can never exhaust its escalations.
+            ASFW_LOG(Audio,
+                     "AVCAudioBackend: timing-loss recovery not applicable "
+                     "(attempt=%u retained) GUID=0x%016llx",
+                     attempt, guid);
         } else {
             ASFW_LOG_ERROR(Audio,
                            "AVCAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",

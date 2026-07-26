@@ -598,10 +598,17 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
     LogRecoveryPolicy(session, reason, decision);
 
     if (decision.disposition == DiceRecoveryDisposition::kIgnore) {
+        // kIOReturnUnsupported, not kIOReturnSuccess: the policy declined to
+        // run a recovery, which is not the same as running one that worked.
+        // Callers act on the difference — AVCAudioBackend used to log
+        // "recovery succeeded" here and reset its escalation budget, which is
+        // what kTimingLossMaxAttempts exists to accumulate (FW-146). The
+        // codebase already treats Unsupported as a benign no-op rather than a
+        // failure (see the device-stop status check below).
         return (decision.reason == DiceRecoveryPolicyReason::kSuppressedByStop ||
                 decision.reason == DiceRecoveryPolicyReason::kIdleApplyInvalidated)
                    ? kIOReturnAborted
-                   : kIOReturnSuccess;
+                   : kIOReturnUnsupported;
     }
 
     if (decision.disposition == DiceRecoveryDisposition::kFailSession) {
