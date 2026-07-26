@@ -29,10 +29,10 @@ jobs:
       # after the pinned xcodegen version changes, regenerate locally with the
       # same version and commit.
       - name: Verify ASFW.xcodeproj matches project.yml (XcodeGen)
-        env:
-          XCODEGEN_VERSION: 2.45.4
-          XCODEGEN_SHA256: 090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef
         run: |
+          # Single source of truth, shared with build.sh, so a contributor's
+          # locally installed xcodegen can never disagree with this check.
+          . ./.xcodegen-version
           XCODEGEN_ARCHIVE="$RUNNER_TEMP/xcodegen.zip"
           XCODEGEN_ROOT="$RUNNER_TEMP/xcodegen-release"
           curl --fail --location --retry 3 \

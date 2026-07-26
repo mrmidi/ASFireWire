@@ -1,0 +1,18 @@
+# XcodeGen release pinned for generating ASFW.xcodeproj from project.yml.
+#
+# Both CI (.github/workflows/build-and-test.yml) and build.sh read this file, so
+# the version that regenerates the committed project is the same everywhere.
+# Homebrew's xcodegen floats and its output is NOT byte-identical across
+# releases (2.45.4 -> 2.46.0 reorders the pbxproj `targets` list), which is why
+# the pin exists and why build.sh refuses to regenerate with a different one.
+#
+# Upgrading — do all three steps together, or CI's drift check will fail:
+#   1. bump XCODEGEN_VERSION below
+#   2. curl the release zip, put its `shasum -a 256` in XCODEGEN_SHA256
+#        curl -fL -o /tmp/xcodegen.zip \
+#          https://github.com/yonaskolb/XcodeGen/releases/download/<ver>/xcodegen.zip
+#        shasum -a 256 /tmp/xcodegen.zip
+#   3. regenerate ASFW.xcodeproj with that exact version and commit it alongside
+#
+XCODEGEN_VERSION=2.46.0
+XCODEGEN_SHA256=4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806

@@ -60,6 +60,10 @@ SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
 # See README "SCSI HBA — opt-in".
 ENABLE_SCSI=false
 
+# Skip the XcodeGen regeneration in preflight() and build the committed project
+# as-is. Escape hatch for a machine whose xcodegen differs from the pin.
+NO_XCODEGEN=false
+
 usage() {
   cat <<EOF
 Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
@@ -74,6 +78,11 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --scsi             Include the SCSI HBA (personality + restricted entitlement);
                      requires SIP disabled, and is NOT cold-boot-safe without a
                      powered-on SBP-2 device attached — see README
+  --no-xcodegen      Build against the committed ASFW.xcodeproj without
+                     regenerating it (escape hatch when the locally installed
+                     xcodegen differs from the version pinned in
+                     .xcodegen-version; added/removed sources will NOT be
+                     picked up)
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})
@@ -93,6 +102,7 @@ while [[ $# -gt 0 ]]; do
     --commands) GENERATE_COMMANDS=true; shift;;
     --analyze) RUN_ANALYZER=true; shift;;
     --scsi) ENABLE_SCSI=true; shift;;
+    --no-xcodegen) NO_XCODEGEN=true; shift;;
     --scheme) SCHEME_NAME="$2"; shift 2;;
     --config) CONFIGURATION="$2"; shift 2;;
     --arch) ARCH_NAME="$2"; shift 2;;
@@ -116,10 +126,30 @@ preflight() {
   if ! $TEST_ONLY; then
     require_cmd xcodebuild
     # The Xcode project is generated from project.yml (XcodeGen). Regenerate so
-    # source globs pick up added/removed files; output is deterministic, so this
-    # is a no-op when nothing changed. Falls through to the committed project
-    # when xcodegen isn't installed (e.g. CI runners).
-    if [[ -f "project.yml" ]] && command -v xcodegen >/dev/null 2>&1; then
+    # source globs pick up added/removed files; output is deterministic *for a
+    # given xcodegen version*, so this is a no-op when nothing changed. Falls
+    # through to the committed project when xcodegen isn't installed (e.g. CI
+    # runners, which use the pinned release directly).
+    if [[ -f "project.yml" ]] && ! $NO_XCODEGEN && command -v xcodegen >/dev/null 2>&1; then
+      # XcodeGen output is not byte-identical across releases, and CI diffs the
+      # regenerated pbxproj against the committed one. Regenerating with an
+      # unpinned version silently produces a project that CI will reject, so
+      # stop here instead — a build missing a newly added source file is much
+      # harder to diagnose than this message.
+      if [[ -f ".xcodegen-version" ]]; then
+        . ./.xcodegen-version
+        xcodegen_actual="$(xcodegen --version 2>/dev/null | awk '{print $NF}')"
+        if [[ -n "${XCODEGEN_VERSION:-}" && "$xcodegen_actual" != "$XCODEGEN_VERSION" ]]; then
+          err "xcodegen ${xcodegen_actual:-<unknown>} is installed, but this repo pins ${XCODEGEN_VERSION}."
+          err "Regenerating would produce a pbxproj that CI's drift check rejects."
+          err "Either:"
+          err "  - install the pinned release (copy-paste block in README -> Building ->"
+          err "    'Xcode project is generated (XcodeGen)'), or"
+          err "  - re-run with --no-xcodegen to build the committed project as-is"
+          err "    (added/removed source files will NOT be picked up)."
+          exit 1
+        fi
+      fi
       log "Regenerating ${PROJECT_NAME}.xcodeproj from project.yml..."
       xcodegen generate --quiet || { err "xcodegen generate failed"; exit 1; }
     fi

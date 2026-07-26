@@ -3000,8 +3000,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				EE5A446B3669D0171F9606EE /* ASFW */,
 				0EB9A8DA75D08971084A440A /* ASFWDriver */,
+				EE5A446B3669D0171F9606EE /* ASFW */,
 				348672D607701677ABCB567C /* ASFWTests */,
 			);
 		};
