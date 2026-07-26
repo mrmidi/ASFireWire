@@ -26,19 +26,29 @@ jobs:
       # ASFW.xcodeproj is generated from project.yml (XcodeGen) and committed.
       # Fail if they drifted apart — someone edited project.yml or added source
       # files without regenerating, or hand-edited the pbxproj. If this fails
-      # after an xcodegen version bump changed the output format, regenerate
-      # locally with the new version and commit.
+      # after the pinned xcodegen version changes, regenerate locally with the
+      # same version and commit.
       - name: Verify ASFW.xcodeproj matches project.yml (XcodeGen)
+        env:
+          XCODEGEN_VERSION: 2.45.4
+          XCODEGEN_SHA256: 090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef
         run: |
-          brew install xcodegen
-          xcodegen --version
-          xcodegen generate --quiet
+          XCODEGEN_ARCHIVE="$RUNNER_TEMP/xcodegen.zip"
+          XCODEGEN_ROOT="$RUNNER_TEMP/xcodegen-release"
+          curl --fail --location --retry 3 \
+            --output "$XCODEGEN_ARCHIVE" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          echo "${XCODEGEN_SHA256}  ${XCODEGEN_ARCHIVE}" | shasum -a 256 -c -
+          ditto -x -k "$XCODEGEN_ARCHIVE" "$XCODEGEN_ROOT"
+          XCODEGEN_BIN="$XCODEGEN_ROOT/xcodegen/bin/xcodegen"
+          "$XCODEGEN_BIN" --version
+          "$XCODEGEN_BIN" generate --quiet
           # Diff only the pbxproj: scheme files are cosmetically rewritten by
           # any open Xcode (version attr, BuildableName flavor, empty blocks),
           # so they flip-flop between xcodegen and Xcode styles; their semantic
           # content comes from project.yml either way.
           if ! git diff --exit-code --stat -- ASFW.xcodeproj/project.pbxproj project.yml; then
-            echo "::error::ASFW.xcodeproj is out of sync with project.yml. Run 'xcodegen generate' locally and commit the regenerated project (see README → Building)."
+            echo "::error::ASFW.xcodeproj is out of sync with project.yml. Regenerate it with XcodeGen ${XCODEGEN_VERSION} and commit the result (see README → Building)."
             exit 1
           fi
 
