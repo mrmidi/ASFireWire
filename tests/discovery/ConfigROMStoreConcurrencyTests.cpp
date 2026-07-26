@@ -145,6 +145,25 @@ TEST(ConfigROMStoreConcurrencyTests, InvalidateRemovesGenerationNodeReachability
     EXPECT_EQ(store.FindByGuid(kGuid)->state, ASFW::Discovery::ROMState::Invalid);
 }
 
+TEST(ConfigROMStoreConcurrencyTests, FilteredExactGenerationLookupRejectsSuspendedROM) {
+    ASFW::Discovery::ConfigROMStore store;
+
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
+    const ASFW::Discovery::Generation kCachedGeneration{2};
+    constexpr uint8_t kNodeId = 2;
+
+    store.Insert(MakeROM(kCachedGeneration, kNodeId, kGuid));
+    store.SuspendAll(ASFW::Discovery::Generation{3});
+
+    // Lifecycle code can still inspect the suspended cache entry explicitly.
+    ASSERT_NE(store.FindByNode(kCachedGeneration, kNodeId), nullptr);
+    ASSERT_NE(store.FindByNode(kCachedGeneration, kNodeId, true), nullptr);
+
+    // Selector 14 uses the filtered exact-generation lookup so its existing
+    // not-cached path exports empty data instead of stale ROM bytes.
+    EXPECT_EQ(store.FindByNode(kCachedGeneration, kNodeId, false), nullptr);
+}
+
 TEST(ConfigROMStoreConcurrencyTests, LatestLookupDoesNotReuseProfileAcrossDifferentGuid) {
     ASFW::Discovery::ConfigROMStore store;
     constexpr ASFW::Discovery::Guid64 kOldGuid = 0x0090b54001ffffffULL;
