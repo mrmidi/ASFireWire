@@ -87,7 +87,7 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
 
     if (shouldStop) {
         const IOReturn stopStatus = StopStreaming(guid);
-        if (stopStatus != kIOReturnSuccess) {
+        if (!IsRemovalStopSettled(guid, stopStatus)) {
             // StopStreaming only succeeds after every OHCI context reports
             // ACTIVE clear.  Removing the nub sooner can revoke the backing
             // mapping while DMA still owns it, which is fatal on Apple silicon.
@@ -105,6 +105,37 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
                  guid);
     }
     FinishDeviceRemoval(guid);
+}
+
+bool AVCAudioBackend::IsRemovalStopSettled(uint64_t guid, IOReturn stopStatus) noexcept {
+    if (stopStatus == kIOReturnSuccess) {
+        return true;
+    }
+    if (stopStatus != kIOReturnNoDevice) {
+        return false;
+    }
+
+    // The device record is already gone, so every device-side stop stage is
+    // moot — there is no plug to break and no node to address, and no amount of
+    // waiting brings the record back. Deferring on this status is what kept the
+    // CoreAudio device alive after an unplug (FW-144): the retry asked again,
+    // got the same permanent answer, and never terminated the nub.
+    //
+    // What still has to happen is the host-side cleanup, which needs no device:
+    // release the reserved profile and clear the active GUID. Then the removal
+    // is safe to complete.
+    const kern_return_t hostStatus = hostTransport_.StopAll();
+    if (hostStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "AVCAudioBackend: host cleanup incomplete for removed device "
+                       "GUID=0x%016llx kr=0x%08x; completing removal anyway",
+                       guid, hostStatus);
+    } else {
+        ASFW_LOG(Audio,
+                 "AVCAudioBackend: device record already gone; host cleanup done GUID=0x%016llx",
+                 guid);
+    }
+    return true;
 }
 
 void AVCAudioBackend::DeferNubRemoval(uint64_t guid, IOReturn stopStatus) noexcept {
@@ -146,7 +177,7 @@ void AVCAudioBackend::RetryPendingNubRemovals() noexcept {
 
     for (const uint64_t guid : pending) {
         const IOReturn stopStatus = StopStreaming(guid);
-        if (stopStatus != kIOReturnSuccess) {
+        if (!IsRemovalStopSettled(guid, stopStatus)) {
             // Still not safe. Stay pending rather than forcing it — the whole
             // point of the guard is that revoking a live DMA mapping is fatal.
             ASFW_LOG_ERROR(Audio,

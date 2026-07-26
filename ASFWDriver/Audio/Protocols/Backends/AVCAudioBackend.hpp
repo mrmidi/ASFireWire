@@ -66,6 +66,10 @@ private:
     // nub: the CoreAudio device then outlives the hardware it represents until
     // the whole driver tears down. Record the removal as owed, re-attempt it,
     // and only tear the nub down once the stop actually succeeds.
+    /// True when the removal may proceed: either the stop succeeded, or the
+    /// device record is already gone, in which case the device-side stages are
+    /// moot and only the host-side cleanup (run here) still matters.
+    [[nodiscard]] bool IsRemovalStopSettled(uint64_t guid, IOReturn stopStatus) noexcept;
     void DeferNubRemoval(uint64_t guid, IOReturn stopStatus) noexcept;
     void RetryPendingNubRemovals() noexcept;
     /// Nub teardown plus per-GUID state cleanup. Shared by the immediate and

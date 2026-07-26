@@ -548,7 +548,15 @@ IOReturn AudioDuplexCoordinator::RunStopStreaming(uint64_t guid) noexcept {
         ClearRestartProgress(session);
         StoreSession(session);
         LogTerminal(session);
-        return kIOReturnNotReady;
+        // kIOReturnNoDevice, not kIOReturnNotReady: these are opposite
+        // situations and callers act on the difference. "Not ready" invites a
+        // retry, but a stop with no device record has nothing left to stop and
+        // will never succeed — the record does not come back. Reporting it as
+        // NotReady is what left the CoreAudio device stranded in FW-144, since
+        // the caller kept deferring teardown waiting for a success that could
+        // not arrive. Device-side stages need a device; host-side cleanup does
+        // not, and is the caller's to run.
+        return kIOReturnNoDevice;
     }
 
     DuplexRestartSession session = LoadSession(guid);
