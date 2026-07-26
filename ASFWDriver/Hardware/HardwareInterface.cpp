@@ -36,6 +36,17 @@ struct IOLockGuard {
 namespace ASFW::Driver {
 
 namespace {
+
+[[nodiscard]] constexpr bool IsProviderPresenceProbe(Register32 reg) noexcept {
+    // Linux firewire/ohci.c:2321-2323 treats an all-ones HCControl read as an
+    // ejected card. Do not generalize this to arbitrary OHCI registers: for
+    // example, InitialChannelsAvailableLo is validly all ones at startup.
+    return reg == Register32::kHCControl;
+}
+
+} // namespace
+
+namespace {
 constexpr uint8_t kDefaultBAR = 0;
 constexpr uint64_t kDefaultDMAMaxAddressBits = 32;
 #ifndef ASFW_HOST_TEST
@@ -247,8 +258,8 @@ uint32_t HardwareInterface::ReadScoped(Register32 reg) const noexcept {
     }
     uint32_t value = 0;
     device_->MemoryRead32(barIndex_, static_cast<uint64_t>(reg), &value);
-    if (value == 0xFFFFFFFFu) {
-        LatchHardwareGoneFromAdmittedScope(reg);
+    if (value == 0xFFFFFFFFu && IsProviderPresenceProbe(reg)) {
+        LatchHardwareGoneFromPresenceProbe(reg);
     }
     return value;
 }
@@ -267,17 +278,17 @@ void HardwareInterface::FlushPostedWritesScoped() const noexcept {
     FullBarrier();
 }
 
-void HardwareInterface::LatchHardwareGoneFromAdmittedScope(Register32 reg) const noexcept {
+void HardwareInterface::LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept {
     uint8_t expected = static_cast<uint8_t>(HardwareGoneReason::kNone);
     if (hardwareGoneReason_.compare_exchange_strong(
-            expected, static_cast<uint8_t>(HardwareGoneReason::kMmioAllOnes),
+            expected, static_cast<uint8_t>(HardwareGoneReason::kMmioPresenceProbeAllOnes),
             std::memory_order_acq_rel, std::memory_order_acquire)) {
         // The caller holds the gate's lock through HardwareAccessScope. Close
         // it in place so the current scope can finish without self-deadlocking;
         // its destructor provides the drain barrier for subsequent callers.
         accessGate_.RevokeFromAdmittedScope();
         ASFW_LOG(Hardware,
-                 "[Lifecycle] hardware-gone latched source=mmio-all-ones register=0x%03x",
+                 "[Lifecycle] hardware-gone latched source=mmio-presence-probe-all-ones register=0x%03x",
                  static_cast<uint32_t>(reg));
     }
 }

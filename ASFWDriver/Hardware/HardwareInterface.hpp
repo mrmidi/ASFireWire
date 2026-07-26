@@ -56,7 +56,7 @@ struct LocalCSRWriteResult {
 enum class HardwareGoneReason : uint8_t {
     kNone,
     kProviderRevoked,
-    kMmioAllOnes,
+    kMmioPresenceProbeAllOnes,
 };
 
 class HardwareInterface {
@@ -249,7 +249,7 @@ class HardwareInterface {
     [[nodiscard]] uint32_t ReadScoped(Register32 reg) const noexcept;
     void WriteScoped(Register32 reg, uint32_t value) const noexcept;
     void FlushPostedWritesScoped() const noexcept;
-    void LatchHardwareGoneFromAdmittedScope(Register32 reg) const noexcept;
+    void LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept;
 
     mutable HardwareAccessGate accessGate_;
     OSSharedPtr<IOPCIDevice> device_;

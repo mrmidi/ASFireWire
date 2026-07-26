@@ -192,10 +192,10 @@ void HardwareInterface::FlushPostedWritesScoped() const noexcept {
     });
 }
 
-void HardwareInterface::LatchHardwareGoneFromAdmittedScope(Register32 reg) const noexcept {
+void HardwareInterface::LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept {
     (void)reg;
-    hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kMmioAllOnes),
-                              std::memory_order_release);
+    hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kMmioPresenceProbeAllOnes),
+                               std::memory_order_release);
     accessGate_.RevokeFromAdmittedScope();
 }
 
