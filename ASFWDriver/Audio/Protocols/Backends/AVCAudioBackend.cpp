@@ -3,6 +3,8 @@
 
 #include "AVCAudioBackend.hpp"
 
+#include <vector>
+
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
@@ -89,9 +91,12 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
             // StopStreaming only succeeds after every OHCI context reports
             // ACTIVE clear.  Removing the nub sooner can revoke the backing
             // mapping while DMA still owns it, which is fatal on Apple silicon.
-            ASFW_LOG_ERROR(Audio,
-                           "AVCAudioBackend: retaining nub after unsafe device-removal stop GUID=0x%016llx kr=0x%08x",
-                           guid, stopStatus);
+            //
+            // FW-144: deferring here used to mean abandoning. The nub — and so
+            // the CoreAudio device — survived the device it represents, until a
+            // full driver teardown happened to free it. Record the removal as
+            // owed and re-attempt it instead.
+            DeferNubRemoval(guid, stopStatus);
             return;
         }
     } else {
@@ -99,6 +104,62 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
                  "AVCAudioBackend: OnDeviceRemoved skipping stop for inactive GUID=0x%016llx",
                  guid);
     }
+    FinishDeviceRemoval(guid);
+}
+
+void AVCAudioBackend::DeferNubRemoval(uint64_t guid, IOReturn stopStatus) noexcept {
+    bool alreadyPending = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        alreadyPending = !pendingNubRemoval_.insert(guid).second;
+        IOLockUnlock(lock_);
+    }
+
+    ASFW_LOG_ERROR(Audio,
+                   "AVCAudioBackend: deferring nub removal after unsafe device-removal stop "
+                   "GUID=0x%016llx kr=0x%08x alreadyPending=%u",
+                   guid, stopStatus, alreadyPending ? 1U : 0U);
+
+    // The blocking condition is local isoch quiescence, and on the observed
+    // trace it cleared a few microseconds later — the ADK side frees the TX
+    // isoch resources from its own stop path, after this one has already given
+    // up. Re-attempting once the current teardown chain unwinds is therefore
+    // the cheapest trigger that actually catches it. Anything still blocked
+    // after that is retried from the next backend event.
+    if (workQueue_) {
+        workQueue_->DispatchAsync(^{
+            RetryPendingNubRemovals();
+        });
+    }
+}
+
+void AVCAudioBackend::RetryPendingNubRemovals() noexcept {
+    std::vector<uint64_t> pending;
+    if (lock_) {
+        IOLockLock(lock_);
+        pending.assign(pendingNubRemoval_.begin(), pendingNubRemoval_.end());
+        IOLockUnlock(lock_);
+    }
+    if (pending.empty()) {
+        return;
+    }
+
+    for (const uint64_t guid : pending) {
+        const IOReturn stopStatus = StopStreaming(guid);
+        if (stopStatus != kIOReturnSuccess) {
+            // Still not safe. Stay pending rather than forcing it — the whole
+            // point of the guard is that revoking a live DMA mapping is fatal.
+            ASFW_LOG_ERROR(Audio,
+                           "AVCAudioBackend: nub removal still blocked GUID=0x%016llx kr=0x%08x",
+                           guid, stopStatus);
+            continue;
+        }
+        ASFW_LOG(Audio, "AVCAudioBackend: completing deferred nub removal GUID=0x%016llx", guid);
+        FinishDeviceRemoval(guid);
+    }
+}
+
+void AVCAudioBackend::FinishDeviceRemoval(uint64_t guid) noexcept {
     publisher_.TerminateNub(guid, "AVC-Removed");
     duplexCoordinator_.ClearSession(guid);
 
@@ -107,6 +168,7 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
         configByGuid_.erase(guid);
         recoveringGuids_.erase(guid);
         timingLossAttempts_.erase(guid);
+        pendingNubRemoval_.erase(guid);
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }

@@ -1502,6 +1502,17 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
         } else if (cleanupStatus != kIOReturnSuccess) {
             result = cleanupStatus;
         }
+        // Three independent statuses collapse into one `result`, and callers act
+        // on it — AVCAudioBackend::OnDeviceRemoved abandons the nub when this is
+        // non-success (FW-144). Without naming the stage, the caller's log says
+        // only that "the stop failed", which is not enough to tell a transient
+        // from a permanent one. Anomaly-only: a clean stop prints nothing.
+        if (result != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Audio,
+                           "RunDuplexStop: failed guid=0x%016llx tx=0x%08x rx=0x%08x "
+                           "cleanup=0x%08x -> 0x%08x",
+                           guid, transmitStopStatus, receiveStopStatus, cleanupStatus, result);
+        }
     } else {
         // DICE retains its original teardown contract unchanged.
         const kern_return_t hostStatus = hostTransport_.StopAll();
