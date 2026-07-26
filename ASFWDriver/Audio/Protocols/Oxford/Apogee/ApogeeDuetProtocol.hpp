@@ -156,7 +156,7 @@ private:
                                VendorSequenceCallback callback);
 
     /// Route-liveness policy handed to the chip-common CSR reads.
-    [[nodiscard]] Oxford::RouteValidator MakeRouteValidator() const;
+    [[nodiscard]] Oxford::RouteProvider MakeRouteProvider() const;
 
     // Declaration order matters: duplex_ binds a reference to runtime_.
     DuetRuntime runtime_;

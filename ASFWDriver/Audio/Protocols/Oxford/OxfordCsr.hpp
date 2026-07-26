@@ -19,11 +19,12 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 
 #include "../../../Async/Interfaces/IFireWireBusOps.hpp"
 #include "../../../Common/FWCommon.hpp"
-#include "../../../Discovery/DeviceRegistry.hpp"
+#include "../../../Discovery/DeviceRouteToken.hpp"
 
 namespace ASFW::Audio::Oxford {
 
@@ -99,18 +100,25 @@ enum class Asic : uint8_t {
 /// indistinguishable from a successful odd read classified as unknown.
 using IdCallback = std::function<void(IOReturn, uint32_t)>;
 
-/// Answers whether the route this read was issued against is still live. The
-/// caller owns route-liveness policy; this layer only honours it.
-using RouteValidator = std::function<bool()>;
+/// Resolves the device's route at the moment of use, or nullopt when it has no
+/// live route. The caller owns route-liveness policy; this layer only asks.
+///
+/// Deliberately a *provider*, not a validator over a caller-held token (FW-142).
+/// Taking `(route, isRouteCurrent)` invited the caller to capture a route once
+/// and validate that same value forever: `ApogeeDuetProtocol` snapshotted it at
+/// construction, the registry rebound the device before the read was issued, and
+/// every CSR read failed "route not current" against a device that was present
+/// and answering vendor commands on the same node and generation. Resolving on
+/// each use is what `FCPTransport::SubmitCommand` already does
+/// (FCPTransport.cpp:206), which is precisely why FCP never went stale.
+using RouteProvider = std::function<std::optional<Discovery::DeviceRouteToken>()>;
 
 void ReadFirmwareId(Async::IFireWireBusOps& busOps,
-                    const Discovery::DeviceRouteToken& route,
-                    RouteValidator isRouteCurrent,
+                    RouteProvider currentRoute,
                     IdCallback callback);
 
 void ReadHardwareId(Async::IFireWireBusOps& busOps,
-                    const Discovery::DeviceRouteToken& route,
-                    RouteValidator isRouteCurrent,
+                    RouteProvider currentRoute,
                     IdCallback callback);
 
 } // namespace ASFW::Audio::Oxford

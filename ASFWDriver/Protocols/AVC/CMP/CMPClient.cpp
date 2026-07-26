@@ -521,4 +521,8 @@ bool CMPClient::IsRouteCurrent(const Discovery::DeviceRouteToken& route) const n
     return static_cast<bool>(route) && routeRegistry_.IsCurrent(route);
 }
 
+std::optional<Discovery::DeviceRouteToken> CMPClient::CurrentRoute(Discovery::Guid64 guid) const {
+    return routeRegistry_.CurrentRoute(guid);
+}
+
 } // namespace ASFW::CMP

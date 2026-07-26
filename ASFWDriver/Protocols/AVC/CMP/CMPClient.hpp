@@ -99,6 +99,15 @@ public:
 
     [[nodiscard]] bool IsRouteCurrent(const Discovery::DeviceRouteToken& route) const noexcept;
 
+    /// Resolves the device's live route, or nullopt when it has none.
+    ///
+    /// Prefer this over holding a token and asking `IsRouteCurrent`: a token
+    /// captured once goes stale when the registry rebinds the device, and the
+    /// validator then reports "not current" for a device that is present and
+    /// answering. See FW-142.
+    [[nodiscard]] std::optional<Discovery::DeviceRouteToken> CurrentRoute(
+        Discovery::Guid64 guid) const;
+
     // Bus reset destroys remote PCR state. Drop only local bookkeeping; never
     // issue a BREAK in a new generation for an old connection.
     void InvalidateRoute(const Discovery::DeviceRouteToken& route);

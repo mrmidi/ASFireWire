@@ -268,35 +268,50 @@ namespace {
 /// payload may have come from whatever now occupies that node.
 template <typename State, typename Decoder>
 void ReadMeterBlock(Async::IFireWireBusOps& busOps,
-                    const Discovery::DeviceRouteToken& route,
                     Async::FWAddress address,
                     uint32_t blockBytes,
                     const char* meterName,
-                    RouteValidator isRouteCurrent,
+                    RouteProvider currentRoute,
                     Decoder decode,
                     std::function<void(IOReturn, State)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
 
-    if (!isRouteCurrent || !isRouteCurrent()) {
-        ASFW_LOG_ERROR(Oxfw, "meter %{public}s: route not current at issue", meterName);
+    // A provider the caller never wired is a programming error; a device with
+    // no live route is ordinary bus state. Separate branches, separate messages.
+    if (!currentRoute) {
+        ASFW_LOG_ERROR(Oxfw, "meter %{public}s: no route provider wired", meterName);
+        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, State{});
+        return;
+    }
+
+    const auto issued = currentRoute();
+    if (!issued.has_value()) {
+        ASFW_LOG_ERROR(Oxfw, "meter %{public}s: device has no live route", meterName);
         Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, State{});
         return;
     }
 
     busOps.ReadBlock(
-        route.generation,
-        FW::NodeId{static_cast<uint8_t>(route.nodeId)},
+        issued->generation,
+        FW::NodeId{static_cast<uint8_t>(issued->nodeId)},
         address,
         blockBytes,
         FW::FwSpeed::S100,
-        [callbackState, isRouteCurrent, decode, meterName](Async::AsyncStatus status,
-                                                           std::span<const uint8_t> payload) {
+        [callbackState, currentRoute = std::move(currentRoute), decode, meterName,
+         issued = *issued](Async::AsyncStatus status, std::span<const uint8_t> payload) {
             // One kIOReturnError covers a retired route, a bus error, and a
             // malformed payload. Name which, or a meter that stops updating is
             // indistinguishable from a device that never answered.
             State state{};
-            if (!isRouteCurrent()) {
-                ASFW_LOG_ERROR(Oxfw, "meter %{public}s: route retired during read", meterName);
+            const auto now = currentRoute();
+            if (!now.has_value() || *now != issued) {
+                ASFW_LOG_ERROR(Oxfw,
+                               "meter %{public}s: route retired during read "
+                               "(issued epoch=%llu, now epoch=%llu)",
+                               meterName,
+                               static_cast<unsigned long long>(issued.routeEpoch),
+                               static_cast<unsigned long long>(
+                                   now.has_value() ? now->routeEpoch : 0ULL));
                 Common::InvokeSharedCallback(callbackState, kIOReturnError, State{});
                 return;
             }
@@ -339,19 +354,17 @@ bool DecodeMixer(std::span<const uint8_t> payload, MixerMeterState& out) noexcep
 }
 
 void ReadInput(Async::IFireWireBusOps& busOps,
-               const Discovery::DeviceRouteToken& route,
-               RouteValidator isRouteCurrent,
+               RouteProvider currentRoute,
                std::function<void(IOReturn, InputMeterState)> callback) {
-    ReadMeterBlock<InputMeterState>(busOps, route, InputAddress(), kInputBlockBytes, "input",
-                                    std::move(isRouteCurrent), &DecodeInput, std::move(callback));
+    ReadMeterBlock<InputMeterState>(busOps, InputAddress(), kInputBlockBytes, "input",
+                                    std::move(currentRoute), &DecodeInput, std::move(callback));
 }
 
 void ReadMixer(Async::IFireWireBusOps& busOps,
-               const Discovery::DeviceRouteToken& route,
-               RouteValidator isRouteCurrent,
+               RouteProvider currentRoute,
                std::function<void(IOReturn, MixerMeterState)> callback) {
-    ReadMeterBlock<MixerMeterState>(busOps, route, MixerAddress(), kMixerBlockBytes, "mixer",
-                                    std::move(isRouteCurrent), &DecodeMixer, std::move(callback));
+    ReadMeterBlock<MixerMeterState>(busOps, MixerAddress(), kMixerBlockBytes, "mixer",
+                                    std::move(currentRoute), &DecodeMixer, std::move(callback));
 }
 
 } // namespace MeterRegisters

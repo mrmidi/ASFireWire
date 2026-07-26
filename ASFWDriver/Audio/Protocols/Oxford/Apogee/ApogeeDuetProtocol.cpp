@@ -200,28 +200,43 @@ void ApogeeDuetProtocol::ClearDisplay(VoidCallback callback) {
 }
 
 void ApogeeDuetProtocol::GetInputMeter(ResultCallback<InputMeterState> callback) {
-    MeterRegisters::ReadInput(runtime_.busOps, runtime_.route, MakeRouteValidator(), std::move(callback));
+    MeterRegisters::ReadInput(runtime_.busOps, MakeRouteProvider(), std::move(callback));
 }
 
 void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback) {
-    MeterRegisters::ReadMixer(runtime_.busOps, runtime_.route, MakeRouteValidator(), std::move(callback));
+    MeterRegisters::ReadMixer(runtime_.busOps, MakeRouteProvider(), std::move(callback));
 }
 
 // The Oxford ASIC registers are chip-common, not Duet-specific (FW-137), so
 // the register map and decode live in Oxford/OxfordCsr. What stays here is the
-// Duet's own route-liveness policy, expressed as the validator that layer takes.
-Oxford::RouteValidator ApogeeDuetProtocol::MakeRouteValidator() const {
-    return [this, route = runtime_.route] {
-        return runtime_.cmpClient != nullptr && runtime_.cmpClient->IsRouteCurrent(route);
+// Duet's own route policy, expressed as the provider that layer resolves through.
+//
+// FW-142: this used to hand down `runtime_.route` — a token snapshotted when the
+// protocol was constructed, back in the discovery prefetch chain — together with
+// a validator that checked that same stale value. The registry rebinds the
+// device between construction and the read, bumping routeEpoch, so every CSR and
+// meter read failed "route not current" while vendor commands on the identical
+// node and generation succeeded: FCPTransport re-resolves per submission
+// (FCPTransport.cpp:206) and so was never exposed. Resolve per use instead.
+//
+// The lambda captures the client pointer and GUID by value rather than `this`,
+// so an in-flight read cannot outlive the protocol and dereference it.
+Oxford::RouteProvider ApogeeDuetProtocol::MakeRouteProvider() const {
+    return [cmpClient = runtime_.cmpClient,
+            guid = runtime_.route.guid]() -> std::optional<Discovery::DeviceRouteToken> {
+        if (cmpClient == nullptr) {
+            return std::nullopt;
+        }
+        return cmpClient->CurrentRoute(guid);
     };
 }
 
 void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
-    Oxford::ReadFirmwareId(runtime_.busOps, runtime_.route, MakeRouteValidator(), std::move(callback));
+    Oxford::ReadFirmwareId(runtime_.busOps, MakeRouteProvider(), std::move(callback));
 }
 
 void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
-    Oxford::ReadHardwareId(runtime_.busOps, runtime_.route, MakeRouteValidator(), std::move(callback));
+    Oxford::ReadHardwareId(runtime_.busOps, MakeRouteProvider(), std::move(callback));
 }
 
 } // namespace ASFW::Audio::Oxford::Apogee

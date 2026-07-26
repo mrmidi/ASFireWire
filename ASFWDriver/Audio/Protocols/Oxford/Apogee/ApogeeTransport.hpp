@@ -27,7 +27,7 @@
 #include "ApogeeVendorCodec.hpp"
 #include "../OxfordCsr.hpp"
 #include "../../../../Async/Interfaces/IFireWireBusOps.hpp"
-#include "../../../../Discovery/DeviceRegistry.hpp"
+#include "../../../../Discovery/DeviceRouteToken.hpp"
 
 namespace ASFW::Protocols::AVC {
 class FCPTransport;
@@ -35,9 +35,10 @@ class FCPTransport;
 
 namespace ASFW::Audio::Oxford::Apogee {
 
-/// Reuses the FW-137 validator so both register transports express route
-/// liveness the same way.
-using RouteValidator = Oxford::RouteValidator;
+/// Reuses the FW-137 provider so both register transports resolve the route the
+/// same way. Meters had the identical stale-snapshot defect as the CSR reads
+/// (FW-142) because they shared the validator.
+using RouteProvider = Oxford::RouteProvider;
 
 //==============================================================================
 // Transport A - AV/C vendor commands over FCP
@@ -114,13 +115,11 @@ inline constexpr uint32_t kMixerBlockBytes = 16;
 [[nodiscard]] bool DecodeMixer(std::span<const uint8_t> payload, MixerMeterState& out) noexcept;
 
 void ReadInput(Async::IFireWireBusOps& busOps,
-               const Discovery::DeviceRouteToken& route,
-               RouteValidator isRouteCurrent,
+               RouteProvider currentRoute,
                std::function<void(IOReturn, InputMeterState)> callback);
 
 void ReadMixer(Async::IFireWireBusOps& busOps,
-               const Discovery::DeviceRouteToken& route,
-               RouteValidator isRouteCurrent,
+               RouteProvider currentRoute,
                std::function<void(IOReturn, MixerMeterState)> callback);
 
 } // namespace MeterRegisters
