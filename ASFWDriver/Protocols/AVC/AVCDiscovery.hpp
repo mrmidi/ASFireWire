@@ -153,6 +153,14 @@ private:
                                       const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
                                       const std::shared_ptr<DuetPrefetchOperation>& operation,
                                       const ::ASFW::Audio::Model::ASFWAudioDevice& config);
+    void ContinueDuetPrefetchStreamFormats(uint64_t guid,
+                                           const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                           const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                           const ::ASFW::Audio::Model::ASFWAudioDevice& config);
+    void ContinueDuetPrefetchClock(uint64_t guid,
+                                   const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                   const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                   const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ContinueDuetPrefetchHardware(uint64_t guid,
                                       const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
                                       const std::shared_ptr<DuetPrefetchOperation>& operation,

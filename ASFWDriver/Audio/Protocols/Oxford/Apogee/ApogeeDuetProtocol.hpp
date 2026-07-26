@@ -89,6 +89,11 @@ public:
     }
     [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }
     [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
+
+    /// May be null before the runtime context is bound; callers must check.
+    [[nodiscard]] Protocols::AVC::FCPTransport* GetFCPTransport() const noexcept {
+        return runtime_.fcpTransport;
+    }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override {
         duplex_.UpdateRuntimeContext(route, transport);

@@ -111,6 +111,7 @@
 		417D66A9EBE23DBB15A978FC /* FCPTransport.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 632D4C8307E08820BF267291 /* FCPTransport.cpp */; };
 		41F0AA350C27888799B44641 /* DriverConnector+LegacyIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F55AC7D4EE9130D6F349A2 /* DriverConnector+LegacyIO.swift */; };
 		422796F0E8E594CF7694A396 /* FWDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2A9C5EE2EDC1D5888C6FE092 /* FWDevice.cpp */; };
+		4276592E0D5A949F3A9CA5D3 /* OxfwStreamFormats.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B40E9ACE9D95CBEBF879D45C /* OxfwStreamFormats.cpp */; };
 		4290AEB2CC8EF9FA755D9615 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FBCE23C33F1D62789320910 /* OverviewView.swift */; };
 		42ED41C966FB1C93702515DA /* DriverContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C69AC3B622A686464AF6F6B9 /* DriverContext.cpp */; };
 		43E9F7DBC8C68F163661ABE3 /* DriverConnector+Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29383D19EAC4373F75CBF552 /* DriverConnector+Lifecycle.swift */; };
@@ -674,6 +675,7 @@
 		53E253C7B89EA397C9DA78FE /* MusicSubunitCapabilities.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MusicSubunitCapabilities.hpp; sourceTree = "<group>"; };
 		5411A165B2096EC85E8F22D0 /* DriverConnector+AudioStreaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+AudioStreaming.swift"; sourceTree = "<group>"; };
 		542EC6084F613E11B6899ACE /* PayloadHandle.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PayloadHandle.hpp; sourceTree = "<group>"; };
+		546894CC4D7A37F4BFE24617 /* OxfwStreamFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OxfwStreamFormats.hpp; sourceTree = "<group>"; };
 		5470A979030FEE276E814B89 /* RomModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomModels.swift; sourceTree = "<group>"; };
 		54B1D96FDA9ADC8812BE93C2 /* AsyncTraceCapture.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncTraceCapture.cpp; sourceTree = "<group>"; };
 		54B6542DE708A2C200353C5C /* MCPToolDispatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPToolDispatchTests.swift; sourceTree = "<group>"; };
@@ -951,6 +953,7 @@
 		B2B12F1219B1AE79B6B8AF8E /* ReadCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ReadCommand.cpp; sourceTree = "<group>"; };
 		B31D2FEE1FD985CD7AE779D2 /* fwicons.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = fwicons.icon; sourceTree = "<group>"; };
 		B3F76378A96EF757865E11C4 /* AsyncSubsystemInterrupts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemInterrupts.cpp; sourceTree = "<group>"; };
+		B40E9ACE9D95CBEBF879D45C /* OxfwStreamFormats.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OxfwStreamFormats.cpp; sourceTree = "<group>"; };
 		B4C0FA13AF98CB5D82ABE191 /* AVCWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCWireFormats.hpp; sourceTree = "<group>"; };
 		B5F0202EE7FC8FB720EC735D /* CMPClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CMPClient.cpp; sourceTree = "<group>"; };
 		B5F55AC7D4EE9130D6F349A2 /* DriverConnector+LegacyIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+LegacyIO.swift"; sourceTree = "<group>"; };
@@ -1917,6 +1920,8 @@
 				E23557505A30ACA0C184956D /* OxfordCsr.cpp */,
 				FCED93498449F4A70563C14F /* OxfordCsr.hpp */,
 				22C91AEBCAF58C33C448CCCD /* OxfwParamsEngine.hpp */,
+				B40E9ACE9D95CBEBF879D45C /* OxfwStreamFormats.cpp */,
+				546894CC4D7A37F4BFE24617 /* OxfwStreamFormats.hpp */,
 				8544FF023E801CA773F297ED /* OxfwVendorDependent.hpp */,
 				47E4C5B6855DA512A76E1439 /* Apogee */,
 			);
@@ -3207,6 +3212,7 @@
 				28D79A1641FA4B845BEE0F1D /* MusicSubunit.cpp in Sources */,
 				05A3A3259B305E9E922B7399 /* MusicSubunitCapabilities.cpp in Sources */,
 				DC89FE9F882D19BE1FDB16E4 /* OxfordCsr.cpp in Sources */,
+				4276592E0D5A949F3A9CA5D3 /* OxfwStreamFormats.cpp in Sources */,
 				70BB1420AC1F4305497316D1 /* PCRSpace.cpp in Sources */,
 				4562BAF2CE0D64CA7FD58A77 /* PacketBuilder.cpp in Sources */,
 				C9DEE8C6C159F576AEA8338E /* PacketRouter.cpp in Sources */,

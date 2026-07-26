@@ -157,6 +157,16 @@ add_device_test(OxfordCsrTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
+# FW-139: OXFW two-tier stream-format discovery (reported list vs probed rates)
+add_device_test(OxfwStreamFormatsTests
+    OxfwStreamFormatsTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfwStreamFormats.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 # FW-138: shared AV/C test rig (deferred bus + real FCPTransport + target responder)
 add_device_test(AvcTestRigTests
     AvcTestRigTests.cpp
