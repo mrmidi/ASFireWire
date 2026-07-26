@@ -503,18 +503,22 @@ sudo -v
 ./install-asfw.sh --config Debug
 ```
 
-Pass `--fresh` when replacing an active dext, or `--no-build` to reuse the
-current build product. The experimental SCSI HBA and bundled Codex MCP skill
-remain explicit:
+Pass `--fresh` when replacing an active dext or clearing a pending ASFW
+upgrade or uninstall. The script closes the installed app, asks
+`systemextensionsctl` to remove the existing ASFW state, and waits for all old
+dext entries to disappear before it replaces the app. Pass `--no-build` to reuse
+the current build product. The experimental SCSI HBA and bundled Codex MCP
+skill remain explicit:
 
 ```bash
 sudo -v
 ./install-asfw.sh --config Debug --scsi --fresh --install-mcp-skill
 ```
 
-If macOS reports that an ASFW upgrade or uninstall is waiting for a reboot, the
-script stops before building or replacing the app. Restart macOS to complete the
-pending system-extension change, then run the command again.
+Without `--fresh`, the script stops when it finds an ASFW upgrade or uninstall
+in progress and tells you to rerun with `--fresh`. A restart is only required
+if `systemextensionsctl uninstall` succeeds but macOS still retains the old
+dext state after the unload timeout.
 
 Keep an SBP-2 device powered on before installing or testing a `--scsi` build.
 The cold-boot and teardown warning in the preceding section still applies.

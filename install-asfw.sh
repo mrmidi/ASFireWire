@@ -31,7 +31,7 @@ Options:
   --scsi                  Include the experimental SCSI HBA
   --no-build              Reuse an existing build product
   --install-mcp-skill     Install or refresh the bundled Codex MCP skill
-  --fresh, --replace      Uninstall the active dext before staging the new app
+  --fresh, --replace      Uninstall existing dext state before staging the app
   --no-launch             Do not open ASFW.app after installation
   -h, --help              Show this help
 
@@ -104,19 +104,13 @@ close_existing_app() {
   die "ASFW.app is still running; close it manually and rerun the installer"
 }
 
-has_active_system_extension() {
-  local extension_lines
-  extension_lines="$(system_extension_lines)" || return $?
-  grep -qF '[activated enabled]' <<<"${extension_lines}"
-}
-
 system_extension_lines() {
   local extension_list
   extension_list="$(systemextensionsctl list 2>/dev/null)" || return 2
   grep -F "${SYSTEM_EXTENSION_ID}" <<<"${extension_list}" || true
 }
 
-ensure_no_pending_system_extension_transition() {
+ensure_replace_mode_for_pending_transition() {
   local extension_lines
   extension_lines="$(system_extension_lines)" \
     || die "Unable to query the current system-extension state"
@@ -125,42 +119,40 @@ ensure_no_pending_system_extension_transition() {
       <<<"${extension_lines}"; then
     log "ASFW has a pending system-extension transition:"
     printf '%s\n' "${extension_lines}"
-    die "Restart macOS to finish the pending change before reinstalling ASFW"
+    ${FRESH_REPLACE} && return 0
+    die "Rerun with --fresh to uninstall the pending dext state before replacement"
   fi
 }
 
-uninstall_active_system_extension() {
-  local query_status
-  if has_active_system_extension; then
-    :
-  else
-    query_status=$?
-    [[ ${query_status} -eq 1 ]] \
-      || die "Unable to query the current system-extension state"
-    log "No active ASFW system extension needs to be uninstalled."
+uninstall_existing_system_extension() {
+  local extension_lines
+  extension_lines="$(system_extension_lines)" \
+    || die "Unable to query the current system-extension state"
+  if [[ -z "${extension_lines}" ]]; then
+    log "No existing ASFW system extension needs to be uninstalled."
     return 0
   fi
 
   close_existing_app
-  log "Uninstalling the active ASFW dext before replacement..."
+  log "Uninstalling existing ASFW dext state before replacement..."
   run_maybe_sudo systemextensionsctl uninstall - "${SYSTEM_EXTENSION_ID}" \
     || die "Failed to uninstall ${SYSTEM_EXTENSION_ID}"
 
   local attempts=30
   while (( attempts > 0 )); do
-    if has_active_system_extension; then
-      :
-    else
-      query_status=$?
-      [[ ${query_status} -eq 1 ]] \
-        || die "Unable to verify the system-extension uninstall"
-      log "The previous ASFW dext is no longer active."
+    extension_lines="$(system_extension_lines)" \
+      || die "Unable to verify the system-extension uninstall"
+    if [[ -z "${extension_lines}" ]]; then
+      log "The previous ASFW dext state has been removed."
       return 0
     fi
     sleep 1
     ((attempts--))
   done
-  die "The previous ASFW dext is still active; close its clients and retry"
+
+  log "ASFW system-extension state still present after uninstall:"
+  printf '%s\n' "${extension_lines}"
+  die "macOS could not unload the previous dext; restart macOS before retrying"
 }
 
 verify_artifact() {
@@ -282,7 +274,7 @@ csrutil status | grep -qi 'disabled' \
   || die "SIP must be disabled for the README ad-hoc install workflow"
 systemextensionsctl developer 2>&1 | grep -qi 'developer mode is on' \
   || die "Enable system-extension developer mode before installing"
-ensure_no_pending_system_extension_transition
+ensure_replace_mode_for_pending_transition
 
 if ${DO_BUILD}; then
   build_args=(--no-bump --config "${CONFIGURATION}")
@@ -299,7 +291,7 @@ CONFIGURATION="${CONFIGURATION}" ./sign.sh "${APP_SOURCE}"
 verify_artifact "${APP_SOURCE}"
 
 ${INSTALL_MCP_SKILL} && install_mcp_skill
-${FRESH_REPLACE} && uninstall_active_system_extension
+${FRESH_REPLACE} && uninstall_existing_system_extension
 install_app_atomically "${APP_SOURCE}"
 
 if ${LAUNCH_APP}; then
