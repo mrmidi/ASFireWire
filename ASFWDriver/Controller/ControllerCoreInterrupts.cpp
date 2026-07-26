@@ -92,6 +92,9 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
         if (deps_.cmpClient) {
             deps_.cmpClient->InvalidateAllLeasesForBusReset();
         }
+        if (deps_.romStore) {
+            deps_.romStore->SuspendAll(Discovery::Generation{generation});
+        }
         if (deps_.avcDiscovery) {
             deps_.avcDiscovery->OnBusReset(generation);
         }

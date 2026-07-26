@@ -145,7 +145,7 @@ TEST(ConfigROMStoreConcurrencyTests, InvalidateRemovesGenerationNodeReachability
     EXPECT_EQ(store.FindByGuid(kGuid)->state, ASFW::Discovery::ROMState::Invalid);
 }
 
-TEST(ConfigROMStoreConcurrencyTests, FilteredExactGenerationLookupRejectsSuspendedROM) {
+TEST(ConfigROMStoreConcurrencyTests, BusResetSuspensionRejectsExactGenerationExport) {
     ASFW::Discovery::ConfigROMStore store;
 
     constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
@@ -159,8 +159,9 @@ TEST(ConfigROMStoreConcurrencyTests, FilteredExactGenerationLookupRejectsSuspend
     ASSERT_NE(store.FindByNode(kCachedGeneration, kNodeId), nullptr);
     ASSERT_NE(store.FindByNode(kCachedGeneration, kNodeId, true), nullptr);
 
-    // Selector 14 uses the filtered exact-generation lookup so its existing
-    // not-cached path exports empty data instead of stale ROM bytes.
+    // The live reset edge suspends this store before selector 14 can perform
+    // its filtered exact-generation lookup. The existing not-cached path must
+    // then export empty data instead of stale ROM bytes.
     EXPECT_EQ(store.FindByNode(kCachedGeneration, kNodeId, false), nullptr);
 }
 
