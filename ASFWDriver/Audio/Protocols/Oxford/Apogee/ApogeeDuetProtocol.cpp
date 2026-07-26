@@ -25,6 +25,7 @@ namespace ASFW::Audio::Oxford::Apogee {
 ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                        Protocols::Ports::FireWireBusInfo& busInfo,
                                        Discovery::DeviceRouteToken route,
+                                       Discovery::DeviceRegistry* routeRegistry,
                                        Protocols::AVC::FCPTransport* fcpTransport,
                                        IRM::IRMClient* irmClient,
                                        CMP::CMPClient* cmpClient,
@@ -34,6 +35,7 @@ ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
           .busOps = busOps,
           .busInfo = busInfo,
           .route = route,
+          .routeRegistry = routeRegistry,
           .fcpTransport = fcpTransport,
           .irmClient = irmClient,
           .cmpClient = cmpClient,
@@ -211,23 +213,33 @@ void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback)
 // the register map and decode live in Oxford/OxfordCsr. What stays here is the
 // Duet's own route policy, expressed as the provider that layer resolves through.
 //
-// FW-142: this used to hand down `runtime_.route` — a token snapshotted when the
-// protocol was constructed, back in the discovery prefetch chain — together with
-// a validator that checked that same stale value. The registry rebinds the
-// device between construction and the read, bumping routeEpoch, so every CSR and
-// meter read failed "route not current" while vendor commands on the identical
-// node and generation succeeded: FCPTransport re-resolves per submission
-// (FCPTransport.cpp:206) and so was never exposed. Resolve per use instead.
+// FW-142: resolve the route per use, straight from the registry.
 //
-// The lambda captures the client pointer and GUID by value rather than `this`,
+// This originally validated `runtime_.route` — a token snapshotted at
+// construction — through `runtime_.cmpClient`. That failed for a blunter reason
+// than a stale epoch: the two construction sites bind *different* optional
+// clients. The discovery prefetch path, which is where the CSR and meter reads
+// run, passes a real FCP transport and **null** IRM/CMP clients
+// (AVCDiscovery.cpp), so the validator short-circuited on the null check and
+// reported "route not current" without ever comparing a route. Node and
+// generation matched in the log because nothing examined them.
+//
+// The registry is the only route authority both sites can supply, which is why
+// it is now its own constructor parameter rather than something borrowed from a
+// client that may not exist. FCPTransport re-resolves the same way per
+// submission (FCPTransport.cpp:206), which is why vendor commands never failed.
+//
+// The lambda captures the registry pointer and GUID by value rather than `this`,
 // so an in-flight read cannot outlive the protocol and dereference it.
 Oxford::RouteProvider ApogeeDuetProtocol::MakeRouteProvider() const {
-    return [cmpClient = runtime_.cmpClient,
+    if (runtime_.routeRegistry == nullptr) {
+        // Distinct from "the device has no live route": this is a wiring bug,
+        // and returning an empty provider is what makes the reads say so.
+        return {};
+    }
+    return [registry = runtime_.routeRegistry,
             guid = runtime_.route.guid]() -> std::optional<Discovery::DeviceRouteToken> {
-        if (cmpClient == nullptr) {
-            return std::nullopt;
-        }
-        return cmpClient->CurrentRoute(guid);
+        return registry->CurrentRoute(guid);
     };
 }
 

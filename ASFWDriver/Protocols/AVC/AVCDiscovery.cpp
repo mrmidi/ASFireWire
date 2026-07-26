@@ -735,6 +735,9 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
         busOps_,
         busInfo_,
         *route,
+        // Register reads resolve through the registry, not through the CMP
+        // client — this path deliberately has no CMP/IRM client (FW-142).
+        &deviceRegistry_,
         &avcUnit->GetFCPTransport(),
         nullptr,
         nullptr,

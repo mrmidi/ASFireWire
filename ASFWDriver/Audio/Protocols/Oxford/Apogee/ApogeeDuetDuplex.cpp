@@ -678,6 +678,14 @@ void ApogeeDuetDuplex::DisconnectPlayback(VoidCallback callback) {
     runtime_.cmpClient->DisconnectIPCR(
         CurrentCMPDevice(), 0,
         [callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            // Anomaly-only: a break that fails leaves the plug's
+            // point-to-point count set, and the next start then fails to
+            // connect for a reason that looks unrelated. StopDuplex discards
+            // this status, so without a line here the cause is unrecoverable.
+            if (status != CMP::CMPStatus::Success) {
+                ASFW_LOG_ERROR(Oxfw, "DisconnectPlayback: iPCR0 break failed (%{public}s)",
+                               IRM::ToString(status));
+            }
             callback(MapCMPStatus(status));
         });
 }
@@ -693,6 +701,10 @@ void ApogeeDuetDuplex::DisconnectCapture(VoidCallback callback) {
     runtime_.cmpClient->DisconnectOPCR(
         CurrentCMPDevice(), 0,
         [callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            if (status != CMP::CMPStatus::Success) {
+                ASFW_LOG_ERROR(Oxfw, "DisconnectCapture: oPCR0 break failed (%{public}s)",
+                               IRM::ToString(status));
+            }
             callback(MapCMPStatus(status));
         });
 }

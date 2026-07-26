@@ -24,6 +24,10 @@
 
 #include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Discovery/DeviceRouteToken.hpp"
+
+namespace ASFW::Discovery {
+class DeviceRegistry;
+}
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
 #include "../../../../Scheduling/ITimerScheduler.hpp"
 
@@ -49,6 +53,10 @@ struct DuetRuntime {
     Protocols::Ports::FireWireBusOps& busOps;
     Protocols::Ports::FireWireBusInfo& busInfo;
     Discovery::DeviceRouteToken route{};
+    /// Source of truth for the *current* route. Register reads resolve through
+    /// this per use rather than trusting `route`, which is a construction-time
+    /// snapshot (FW-142).
+    Discovery::DeviceRegistry* routeRegistry{nullptr};
     Protocols::AVC::FCPTransport* fcpTransport{nullptr};
     IRM::IRMClient* irmClient{nullptr};
     CMP::CMPClient* cmpClient{nullptr};

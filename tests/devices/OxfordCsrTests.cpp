@@ -6,6 +6,8 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Audio/Protocols/Oxford/OxfordCsr.hpp"
+#include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "ASFWDriver/Bus/IRM/IRMClient.hpp"
 
 #include "AvcTestRig.hpp"
 
@@ -125,6 +127,48 @@ TEST_F(OxfordCsrReadTests, DeviceWithNoLiveRouteIsRefusedBeforeAnyBusTraffic) {
 
     EXPECT_EQ(status, kIOReturnNotReady);
     EXPECT_EQ(rig.Bus().ReadCount(), 0U) << "a dead route must not reach the bus";
+}
+
+TEST_F(OxfordCsrReadTests, ProtocolBuiltWithoutACmpClientStillReadsCsrs) {
+    // FW-142's real defect, at the level that had it. The discovery prefetch
+    // path constructs ApogeeDuetProtocol with a live FCP transport and *null*
+    // IRM/CMP clients, and route liveness used to be asked of the CMP client —
+    // so it short-circuited on the null check and every CSR read failed
+    // "route not current" without ever comparing a route. Node and generation
+    // matched in the log because nothing looked at them.
+    //
+    // Route resolution goes through the registry now, which is the only
+    // authority both construction sites can supply.
+    ASFW::IRM::IRMClient irm(rig.Bus());
+    ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol protocol(
+        rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), rig.Transport(),
+        /*irmClient=*/nullptr, /*cmpClient=*/nullptr);
+
+    MapId(Oxford::HardwareIdAddress(), Oxford::kHardwareIdFw971);
+
+    IOReturn status = kIOReturnNotReady;
+    uint32_t id = 0;
+    protocol.GetHardwareId([&status, &id](IOReturn s, uint32_t value) {
+        status = s;
+        id = value;
+    });
+
+    EXPECT_EQ(status, kIOReturnSuccess) << "a null CMP client must not block a register read";
+    EXPECT_EQ(Oxford::ClassifyHardwareId(id), Asic::kFw971);
+    EXPECT_GT(rig.Bus().ReadCount(), 0U) << "the read must actually reach the bus";
+}
+
+TEST_F(OxfordCsrReadTests, ProtocolBuiltWithoutARegistryReportsTheWiringFault) {
+    // The other half: with no route authority at all, the read must name that
+    // as its own fault rather than reporting it as "device has no live route".
+    ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol protocol(
+        rig.Bus(), rig.Bus(), rig.Route(), /*routeRegistry=*/nullptr, rig.Transport());
+
+    IOReturn status = kIOReturnSuccess;
+    protocol.GetFirmwareId([&status](IOReturn s, uint32_t) { status = s; });
+
+    EXPECT_EQ(status, kIOReturnNotReady);
+    EXPECT_EQ(rig.Bus().ReadCount(), 0U);
 }
 
 TEST_F(OxfordCsrReadTests, UnwiredProviderIsRefusedBeforeAnyBusTraffic) {
