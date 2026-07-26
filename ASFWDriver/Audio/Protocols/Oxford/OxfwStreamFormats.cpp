@@ -115,6 +115,17 @@ void Finish(const StatePtr& state, IOReturn status) {
         ASFW_LOG(Oxfw, "stream formats: %{public}s plug 0 -> %zu entries (%{public}s)",
                  state->isOutput ? "output" : "input", state->set.entries.size(),
                  state->set.assumed ? "assumed" : "reported");
+        // One line per entry. A count plus the first rate is enough to see
+        // which tier answered but not enough to act on: deciding what to
+        // advertise to CoreAudio, and whether a compound-AM824 write is even
+        // representable, needs the rate *and* the channel layout of each entry.
+        // Discovery-time only, so the line count is bounded and cold.
+        for (size_t i = 0; i < state->set.entries.size(); ++i) {
+            const auto& entry = state->set.entries[i];
+            ASFW_LOG(Oxfw, "stream formats: [%zu] %u Hz pcm=%u midi=%u", i, entry.sampleRateHz,
+                     static_cast<unsigned>(entry.pcmChannels),
+                     static_cast<unsigned>(entry.midiSlots));
+        }
     }
     auto callback = std::move(state->callback);
     if (callback) {

@@ -948,11 +948,14 @@ void AVCDiscovery::ContinueDuetPrefetchStreamFormats(
                 return;
             }
             if (status == kIOReturnSuccess) {
+                // The per-entry detail is logged by the Oxford layer; this line
+                // exists to tie the result to a GUID and to record whether the
+                // pinned 48 kHz is even in the device's own set.
                 const auto rates = formats.Rates();
                 ASFW_LOG(Oxfw,
-                         "Duet stream formats: %zu rate(s), %{public}s, first=%u GUID=%llx",
+                         "Duet stream formats: %zu rate(s), %{public}s, has48k=%d GUID=%llx",
                          rates.size(), formats.assumed ? "assumed" : "reported",
-                         rates.empty() ? 0U : rates.front(), guid);
+                         formats.SupportsRate(kDuetFixedSampleRateHz) ? 1 : 0, guid);
             } else {
                 ASFW_LOG_WARNING(Oxfw, "Duet stream-format discovery failed status=0x%x GUID=%llx",
                                  status, guid);
