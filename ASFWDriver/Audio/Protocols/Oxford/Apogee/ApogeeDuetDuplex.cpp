@@ -9,11 +9,17 @@
 // transition, and the settle timer additionally re-checks that neither the
 // transport nor the bus generation moved underneath it.
 //
-// Known deviation, deliberately preserved: the four CMP stages below still block
-// on WaitForCMP/IOSleep rather than running as continuations. That is a real
-// defect (it is the CMP stage work-loop self-deadlock class), but converting it
-// is a behaviour change to a path that is working on hardware, so it stays a
-// verbatim move here and is tracked separately.
+// Every CMP stage is continuation-passing (FW-141). This is a hard constraint,
+// not a style: CMP completions are delivered on the core queue, so a stage that
+// blocks waiting for its own completion prevents that completion from ever being
+// dispatched. Phase88 carried the identical WaitForCMP/IOSleep poll and
+// self-deadlocked on exactly that. Do not reintroduce a wait here — if a stage
+// needs a result, it belongs in the completion.
+//
+// Teardown continuations (Disconnect*, StopDuplex) additionally capture no
+// `this`: StopDuplex is fire-and-forget, so a completion that outlived the
+// object would dereference freed memory (the FW-60 use-after-free class). The
+// connected-flag writes happen before the request is issued for that reason.
 
 #include "ApogeeDuetDuplex.hpp"
 
@@ -37,9 +43,6 @@ using SignalFormatCommand = Protocols::AVC::StreamFormats::AVCUnitPlugSignalForm
 using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
 
 namespace {
-
-constexpr uint32_t kCMPTimeoutMs = 250;
-constexpr uint32_t kCMPPollMs = 5;
 
 // Still needed here by the clock-transition path, which maps AV/C signal-format
 // results. The FCP-status mapping moved out with dispatch (FW-129).
@@ -548,27 +551,18 @@ void ApogeeDuetDuplex::FinishClockTransition(
 
 namespace {
 
-struct CMPWaitState {
-    std::atomic<bool> done{false};
-    std::atomic<CMP::CMPStatus> status{CMP::CMPStatus::Failed};
-};
-
-struct CMPWaitResult {
-    bool completed{false};
-    CMP::CMPStatus status{CMP::CMPStatus::Failed};
-};
-
-[[nodiscard]] CMPWaitResult WaitForCMP(const std::shared_ptr<CMPWaitState>& state) noexcept {
-    for (uint32_t waited = 0; waited < kCMPTimeoutMs; waited += kCMPPollMs) {
-        if (state->done.load(std::memory_order_acquire)) {
-            return CMPWaitResult{
-                .completed = true,
-                .status = state->status.load(std::memory_order_acquire),
-            };
-        }
-        IOSleep(kCMPPollMs);
+/// A CMP completion always carries a status, so the caller no longer has to
+/// distinguish "the operation reported failure" from "our own poll loop gave
+/// up". Timeout here means the device or IRM genuinely did not answer.
+[[nodiscard]] IOReturn MapCMPStatus(CMP::CMPStatus status) noexcept {
+    switch (status) {
+        case CMP::CMPStatus::Success:
+            return kIOReturnSuccess;
+        case CMP::CMPStatus::Timeout:
+            return kIOReturnTimeout;
+        default:
+            return kIOReturnError;
     }
-    return {};
 }
 
 } // namespace
@@ -579,35 +573,29 @@ void ApogeeDuetDuplex::ProgramRx(StageCallback callback) {
         return;
     }
 
-    auto state = std::make_shared<CMPWaitState>();
-    const CMP::CMPDevice device = CurrentCMPDevice();
-    runtime_.cmpClient->ConnectOPCR(device, 0, duplexChannels_.deviceToHostIsoChannel,
-                            [state](CMP::CMPStatus status) {
-        state->status.store(status, std::memory_order_release);
-        state->done.store(true, std::memory_order_release);
-    });
-    const CMPWaitResult wait = WaitForCMP(state);
-    const bool connected = wait.completed && wait.status == CMP::CMPStatus::Success;
-    outputConnected_ = connected;
+    const auto channel = duplexChannels_.deviceToHostIsoChannel;
+    runtime_.cmpClient->ConnectOPCR(
+        CurrentCMPDevice(), 0, channel,
+        [this, channel, callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            const IOReturn kr = MapCMPStatus(status);
+            outputConnected_ = kr == kIOReturnSuccess;
 
-    if (connected) {
-        ASFW_LOG(Oxfw, "ProgramRx: oPCR0 connected ch=%u", duplexChannels_.deviceToHostIsoChannel);
-    } else {
-        ASFW_LOG_ERROR(Oxfw, "ProgramRx: oPCR0 ch=%u failed (%{public}s)",
-                       duplexChannels_.deviceToHostIsoChannel,
-                       wait.completed ? IRM::ToString(wait.status) : "wait timeout");
-    }
+            if (outputConnected_) {
+                ASFW_LOG(Oxfw, "ProgramRx: oPCR0 connected ch=%u", channel);
+            } else {
+                ASFW_LOG_ERROR(Oxfw, "ProgramRx: oPCR0 ch=%u failed (%{public}s)", channel,
+                               IRM::ToString(status));
+            }
 
-    AudioStreamRuntimeCaps caps{};
-    (void)GetRuntimeAudioStreamCaps(caps);
-    callback(connected ? kIOReturnSuccess
-                       : (wait.completed ? kIOReturnError : kIOReturnTimeout),
-             DuplexStageResult{
-                 .generation = runtime_.busInfo.GetGeneration(),
-                 .channels = duplexChannels_,
-                 .phase = DuplexRestartPhase::kDeviceRxProgrammed,
-                 .runtimeCaps = caps,
-             });
+            AudioStreamRuntimeCaps caps{};
+            (void)GetRuntimeAudioStreamCaps(caps);
+            callback(kr, DuplexStageResult{
+                             .generation = runtime_.busInfo.GetGeneration(),
+                             .channels = duplexChannels_,
+                             .phase = DuplexRestartPhase::kDeviceRxProgrammed,
+                             .runtimeCaps = caps,
+                         });
+        });
 }
 
 void ApogeeDuetDuplex::ProgramTxAndEnableDuplex(StageCallback callback) {
@@ -616,35 +604,29 @@ void ApogeeDuetDuplex::ProgramTxAndEnableDuplex(StageCallback callback) {
         return;
     }
 
-    auto state = std::make_shared<CMPWaitState>();
-    const CMP::CMPDevice device = CurrentCMPDevice();
-    runtime_.cmpClient->ConnectIPCR(device, 0, duplexChannels_.hostToDeviceIsoChannel,
-                            [state](CMP::CMPStatus status) {
-                                state->status.store(status, std::memory_order_release);
-                                state->done.store(true, std::memory_order_release);
-                            });
-    const CMPWaitResult wait = WaitForCMP(state);
-    const bool connected = wait.completed && wait.status == CMP::CMPStatus::Success;
-    inputConnected_ = connected;
+    const auto channel = duplexChannels_.hostToDeviceIsoChannel;
+    runtime_.cmpClient->ConnectIPCR(
+        CurrentCMPDevice(), 0, channel,
+        [this, channel, callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            const IOReturn kr = MapCMPStatus(status);
+            inputConnected_ = kr == kIOReturnSuccess;
 
-    if (connected) {
-        ASFW_LOG(Oxfw, "ProgramTx: iPCR0 connected ch=%u", duplexChannels_.hostToDeviceIsoChannel);
-    } else {
-        ASFW_LOG_ERROR(Oxfw, "ProgramTx: iPCR0 ch=%u failed (%{public}s)",
-                       duplexChannels_.hostToDeviceIsoChannel,
-                       wait.completed ? IRM::ToString(wait.status) : "wait timeout");
-    }
+            if (inputConnected_) {
+                ASFW_LOG(Oxfw, "ProgramTx: iPCR0 connected ch=%u", channel);
+            } else {
+                ASFW_LOG_ERROR(Oxfw, "ProgramTx: iPCR0 ch=%u failed (%{public}s)", channel,
+                               IRM::ToString(status));
+            }
 
-    AudioStreamRuntimeCaps caps{};
-    (void)GetRuntimeAudioStreamCaps(caps);
-    callback(connected ? kIOReturnSuccess
-                       : (wait.completed ? kIOReturnError : kIOReturnTimeout),
-             DuplexStageResult{
-                 .generation = runtime_.busInfo.GetGeneration(),
-                 .channels = duplexChannels_,
-                 .phase = DuplexRestartPhase::kDeviceTxArmed,
-                 .runtimeCaps = caps,
-             });
+            AudioStreamRuntimeCaps caps{};
+            (void)GetRuntimeAudioStreamCaps(caps);
+            callback(kr, DuplexStageResult{
+                             .generation = runtime_.busInfo.GetGeneration(),
+                             .channels = duplexChannels_,
+                             .phase = DuplexRestartPhase::kDeviceTxArmed,
+                             .runtimeCaps = caps,
+                         });
+        });
 }
 
 void ApogeeDuetDuplex::ConfirmDuplexStart(ConfirmCallback callback) {
@@ -689,16 +671,15 @@ void ApogeeDuetDuplex::DisconnectPlayback(VoidCallback callback) {
         return;
     }
 
-    auto state = std::make_shared<CMPWaitState>();
-    const CMP::CMPDevice device = CurrentCMPDevice();
-    runtime_.cmpClient->DisconnectIPCR(device, 0, [state](CMP::CMPStatus status) {
-        state->status.store(status, std::memory_order_release);
-        state->done.store(true, std::memory_order_release);
-    });
-    const CMPWaitResult wait = WaitForCMP(state);
-    const bool disconnected = wait.completed && wait.status == CMP::CMPStatus::Success;
+    // Cleared and the device resolved *before* the request goes out, so the
+    // completion captures no `this`: StopDuplex issues this fire-and-forget, and
+    // a continuation that outlived the object would dereference freed memory.
     inputConnected_ = false;
-    callback(disconnected ? kIOReturnSuccess : kIOReturnTimeout);
+    runtime_.cmpClient->DisconnectIPCR(
+        CurrentCMPDevice(), 0,
+        [callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            callback(MapCMPStatus(status));
+        });
 }
 
 void ApogeeDuetDuplex::DisconnectCapture(VoidCallback callback) {
@@ -708,16 +689,12 @@ void ApogeeDuetDuplex::DisconnectCapture(VoidCallback callback) {
         return;
     }
 
-    auto state = std::make_shared<CMPWaitState>();
-    const CMP::CMPDevice device = CurrentCMPDevice();
-    runtime_.cmpClient->DisconnectOPCR(device, 0, [state](CMP::CMPStatus status) {
-        state->status.store(status, std::memory_order_release);
-        state->done.store(true, std::memory_order_release);
-    });
-    const CMPWaitResult wait = WaitForCMP(state);
-    const bool disconnected = wait.completed && wait.status == CMP::CMPStatus::Success;
     outputConnected_ = false;
-    callback(disconnected ? kIOReturnSuccess : kIOReturnTimeout);
+    runtime_.cmpClient->DisconnectOPCR(
+        CurrentCMPDevice(), 0,
+        [callback = std::move(callback)](CMP::CMPStatus status) mutable {
+            callback(MapCMPStatus(status));
+        });
 }
 
 IOReturn ApogeeDuetDuplex::StopDuplex() {
@@ -726,22 +703,14 @@ IOReturn ApogeeDuetDuplex::StopDuplex() {
     ASFW_LOG(Oxfw, "StopDuplex: breaking both plugs (out=%d in=%d)", outputConnected_,
              inputConnected_);
 
-    IOReturn playbackStatus = kIOReturnSuccess;
-    DisconnectPlayback([&playbackStatus](IOReturn status) { playbackStatus = status; });
-
-    IOReturn captureStatus = kIOReturnSuccess;
-    DisconnectCapture([&captureStatus](IOReturn status) { captureStatus = status; });
-
-    if (playbackStatus != kIOReturnSuccess || captureStatus != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Oxfw, "StopDuplex: playback=0x%08x capture=0x%08x",
-                       static_cast<unsigned>(playbackStatus),
-                       static_cast<unsigned>(captureStatus));
-    }
-
-    if (playbackStatus != kIOReturnSuccess) {
-        return playbackStatus;
-    }
-    return captureStatus;
+    // Best-effort and fire-and-forget. Waiting for the breaks would occupy the
+    // very queue that delivers their completions, and teardown is the context
+    // least able to afford that. Linux does the same (bebob_stream.c:602-606):
+    // the next start re-verifies the plugs and clears any residual
+    // point-to-point count, so an unacknowledged break is recoverable.
+    DisconnectPlayback([](IOReturn) {});
+    DisconnectCapture([](IOReturn) {});
+    return kIOReturnSuccess;
 }
 
 } // namespace ASFW::Audio::Oxford::Apogee
