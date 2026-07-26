@@ -539,6 +539,16 @@ IOReturn AudioDuplexCoordinator::RunStopStreaming(uint64_t guid) noexcept {
         return kIOReturnAborted;
     }
 
+    // A cleanly stopped session has no host or device footprint. Treat a
+    // duplicate stop as an acknowledgement rather than asking the one global
+    // host transport to tear down the same session again.
+    const std::optional<DuplexRestartSession> existingSession = GetSession(guid);
+    if (existingSession && !HasAnyRestartState(*existingSession) &&
+        existingSession->phase == DuplexRestartPhase::kIdle &&
+        existingSession->state == DuplexRestartState::kIdle) {
+        return kIOReturnSuccess;
+    }
+
     IDuplexDeviceControl* deviceControl = nullptr;
     std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
     auto record = RequireDuplexRecord(guid, deviceControl, protoHold);
@@ -559,7 +569,7 @@ IOReturn AudioDuplexCoordinator::RunStopStreaming(uint64_t guid) noexcept {
         return kIOReturnNoDevice;
     }
 
-    DuplexRestartSession session = LoadSession(guid);
+    DuplexRestartSession session = existingSession.value_or(LoadSession(guid));
     return RunDuplexStop(guid, *record, *deviceControl, session);
 }
 

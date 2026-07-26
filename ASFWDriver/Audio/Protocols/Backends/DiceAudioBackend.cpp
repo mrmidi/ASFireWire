@@ -43,22 +43,13 @@ namespace {
 DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                   Driver::IsochService& isoch,
+                                   AudioDuplexCoordinator& duplexCoordinator,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , hostTransport_(isoch)
-    , restartCoordinator_(registry,
-                          runtime,
-                          hostTransport_,
-                          hardware,
-                          &stopping_,
-                          [this](uint64_t guid) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
-                              auto endpoint = runtime_.FindEndpointRuntime(guid);
-                              return endpoint ? endpoint.get() : nullptr;
-                          }) {
+    , restartCoordinator_(duplexCoordinator) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to allocate lock");
@@ -73,14 +64,10 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
     }
 
     DICE::NotificationMailbox::SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
-    hostTransport_.SetTimingLossCallback([this](uint64_t guid) {
-        HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
-    });
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
     DICE::NotificationMailbox::ClearObserver(this);
-    hostTransport_.SetTimingLossCallback({});
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -90,7 +77,6 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
 void DiceAudioBackend::BeginTeardown() noexcept {
     const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
     DICE::NotificationMailbox::ClearObserver(this);
-    hostTransport_.SetTimingLossCallback({});
 
     const uint64_t recoveryRejectBefore =
         recoveryRejectCount_.load(std::memory_order_acquire);
@@ -113,11 +99,6 @@ void DiceAudioBackend::BeginTeardown() noexcept {
         workQueue_->DispatchSync(^{});
 #endif
     }
-
-    // Releases every generic-runner IRM reservation while the IRM client is
-    // still alive. IsochService::StopAll remains idempotent when the outer
-    // service teardown invokes it again.
-    (void)hostTransport_.StopAll();
 
     const uint64_t endMs = UptimeMilliseconds();
     const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;

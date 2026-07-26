@@ -222,7 +222,11 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
             ctx.deps.interrupts->Teardown();
         }
     }
-    (void)ctx.isoch.StopAll();
+    // AudioCoordinator owns the neutral isoch session when it exists. Startup
+    // failures before audio composition still need this direct fallback.
+    if (!ctx.audioCoordinator) {
+        (void)ctx.isoch.StopAll();
+    }
 
     ctx.statusPublisher.BindListener(nullptr);
     ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),

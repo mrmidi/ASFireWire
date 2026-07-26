@@ -13,25 +13,35 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                                    Discovery::IDeviceManager& deviceManager,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                   Driver::IsochService& isoch,
-                                   Driver::HardwareInterface& hardware) noexcept
+                                    Driver::IsochService& isoch,
+                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(driver)
-    , dice_(publisher_, registry, runtime, isoch, hardware)
-    , avc_(publisher_, registry, runtime, isoch, hardware)
     , deviceManager_(deviceManager)
     , registry_(registry)
-    , runtime_(runtime) {
+    , runtime_(runtime)
+    , hostTransport_(isoch)
+    , duplexCoordinator_(registry_, runtime_, hostTransport_, hardware, &teardownRequested_,
+                         [this](uint64_t guid) -> Runtime::IDirectAudioBindingSource* {
+                             auto endpoint = runtime_.FindEndpointRuntime(guid);
+                             return endpoint ? endpoint.get() : nullptr;
+                         })
+    , dice_(publisher_, registry_, runtime_, duplexCoordinator_, hardware)
+    , avc_(publisher_, registry_, runtime_, hostTransport_, duplexCoordinator_, hardware) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
     }
 
     deviceManager_.RegisterDeviceObserver(this);
+    avc_.SetHostTeardownRequest(
+        [this] { return StopHostTransport("remote-device-removed"); });
+    hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
     ASFW_LOG(Audio, "AudioCoordinator: Registered device observer");
 }
 
 AudioCoordinator::~AudioCoordinator() noexcept {
     deviceManager_.UnregisterDeviceObserver(this);
+    hostTransport_.SetTimingLossCallback({});
 
     if (lock_) {
         IOLockFree(lock_);
@@ -352,13 +362,39 @@ IOReturn AudioCoordinator::RequestClockConfig(
 
 void AudioCoordinator::BeginTeardown() noexcept {
     ASFW_LOG(Audio, "AudioCoordinator: BeginTeardown");
+    teardownRequested_.store(true, std::memory_order_release);
+    // Block new backend recovery callbacks before draining either backend
+    // queue. The coordinator owns this one subscription for every family.
+    hostTransport_.SetTimingLossCallback({});
     dice_.BeginTeardown();
     avc_.BeginTeardown();
+    const kern_return_t hostStatus = StopHostTransport("service-teardown");
+    if (hostStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioCoordinator: host isoch teardown incomplete kr=0x%08x",
+                       hostStatus);
+    }
 
     if (lock_) {
         IOLockLock(lock_);
         activeGuid_ = 0;
         IOLockUnlock(lock_);
+    }
+}
+
+kern_return_t AudioCoordinator::StopHostTransport(const char* reason) noexcept {
+    const kern_return_t status = hostTransport_.StopAll();
+    ASFW_LOG(Audio,
+             "[Lifecycle] AudioCoordinator host-isoch teardown owner reason=%{public}s kr=0x%08x",
+             reason, status);
+    return status;
+}
+
+void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {
+    if (auto* backend = BackendForGuid(guid); backend == &dice_) {
+        dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
+    } else if (backend == &avc_) {
+        avc_.HandleTimingLoss(guid);
     }
 }
 

@@ -17,23 +17,15 @@ namespace ASFW::Audio {
 AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                                  Discovery::DeviceRegistry& registry,
                                  AudioRuntimeRegistry& runtime,
-                                 Driver::IsochService& isoch,
+                                 IIsochDuplexHostTransport& hostTransport,
+                                 AudioDuplexCoordinator& duplexCoordinator,
                                  Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , hostTransport_(isoch)
-    , duplexCoordinator_(
-          registry,
-          runtime,
-          hostTransport_,
-          hardware,
-          &stopping_,
-          [this](uint64_t guid) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
-              auto endpoint = runtime_.FindEndpointRuntime(guid);
-              return endpoint ? endpoint.get() : nullptr;
-          }) {
+    , hostTransport_(hostTransport)
+    , duplexCoordinator_(duplexCoordinator) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AVCAudioBackend: Failed to allocate lock");
@@ -49,14 +41,9 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                        queueStatus);
     }
 
-    // Subscribe to RX timing loss. Unlike DICE (which health-gates on a register
-    // probe), AV/C has no health register — HandleTimingLoss reads the RX replay
-    // cadence itself after a debounce. See AVC_STREAM_HEALTH_AND_RECOVERY.md §6.
-    hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleTimingLoss(guid); });
 }
 
 AVCAudioBackend::~AVCAudioBackend() noexcept {
-    hostTransport_.SetTimingLossCallback({});
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -134,7 +121,8 @@ bool AVCAudioBackend::IsRemovalStopSettled(uint64_t guid, IOReturn stopStatus) n
     // What still has to happen is the host-side cleanup, which needs no device:
     // release the reserved profile and clear the active GUID. Then the removal
     // is safe to complete.
-    const kern_return_t hostStatus = hostTransport_.StopAll();
+    const kern_return_t hostStatus = hostTeardownRequest_ ? hostTeardownRequest_()
+                                                          : kIOReturnNotReady;
     if (hostStatus != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AVCAudioBackend: host cleanup incomplete for removed device "
@@ -429,9 +417,6 @@ void AVCAudioBackend::BeginTeardown() noexcept {
     }
 
     const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
-    // Stop new timing-loss escalations from being queued during teardown; any
-    // block already queued bails on the stopping_ latch below.
-    hostTransport_.SetTimingLossCallback({});
     // Drain queued recovery before hardware detaches. Each queued block checks
     // stopping_ before it can re-establish PCRs in the teardown window.
     if (workQueue_) {
@@ -441,7 +426,6 @@ void AVCAudioBackend::BeginTeardown() noexcept {
         workQueue_->DispatchSync(^{ });
 #endif
     }
-    (void)hostTransport_.StopAll();
     ASFW_LOG(Audio,
              "AVCAudioBackend: BeginTeardown stopping=true already=%u",
              wasStopping ? 1U : 0U);
