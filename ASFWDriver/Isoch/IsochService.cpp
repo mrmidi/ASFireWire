@@ -520,6 +520,10 @@ kern_return_t IsochService::StopAll() {
     return kIOReturnSuccess;
 }
 
+bool IsochService::HardwareGone() const noexcept {
+    return hardware_ && hardware_->HardwareGone();
+}
+
 void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
 }

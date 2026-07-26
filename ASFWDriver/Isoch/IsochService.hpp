@@ -87,6 +87,7 @@ class IsochService {
     // Do not tear down a DirectAudio binding after a failed stop: an ACTIVE
     // OHCI context may still DMA into that mapping.
     [[nodiscard]] kern_return_t StopAll();
+    [[nodiscard]] bool HardwareGone() const noexcept;
     // The caller owns the consumer and must detach it only after StopReceive()
     // has succeeded (ACTIVE clear). Stream 0 is the master; streams 1+ are
     // secondary hardware contexts.

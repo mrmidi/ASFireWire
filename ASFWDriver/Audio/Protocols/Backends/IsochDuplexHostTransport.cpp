@@ -4,6 +4,7 @@
 #include "IsochDuplexHostTransport.hpp"
 
 #include "../../../Common/DriverKitOwnership.hpp"
+#include "../../../Logging/Logging.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include <new>
 #include <utility>
@@ -174,7 +175,16 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
         return status;
     }
     DetachReceiveConsumers();
-    reservations_.ReleaseAll();
+    if (isoch_.HardwareGone()) {
+        // Provider removal invalidates the old bus generation. Do not queue
+        // IRM release transactions after the async subsystem has quiesced.
+        reservations_.InvalidateAfterGenerationChange();
+        ASFW_LOG(Isoch,
+                 "[Lifecycle] IsochDuplexHostTransport StopAll hardware-gone "
+                 "action=invalidate-irm-reservations");
+    } else {
+        reservations_.ReleaseAll();
+    }
     return kIOReturnSuccess;
 }
 

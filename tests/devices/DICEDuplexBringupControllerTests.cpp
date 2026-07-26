@@ -1597,6 +1597,31 @@ TEST(DICEDuplexBringupControllerTests,
 }
 
 TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsInvalidatesAfterGenerationChangeWithoutWireRelease) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    ASSERT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnSuccess);
+    ASSERT_EQ(reservations.Reserve(irm, 1, 576U), kIOReturnSuccess);
+    bus.ClearOperations();
+
+    // A bus reset returns the IRM resource state to its initial values. The
+    // old generation cannot accept a release transaction, so only local
+    // bookkeeping may change here.
+    bus.SetGeneration(Generation{2});
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    reservations.InvalidateAfterGenerationChange();
+
+    EXPECT_EQ(reservations.Count(), 0U);
+    EXPECT_TRUE(bus.Operations().empty());
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
      DuplexIRMReservationsSelectsFirstAllowedChannelThatIRMReportsFree) {
     RecordingFireWireBus bus;
     // IRM channel bits are big-endian within each CSR quadlet: bit 31 is
