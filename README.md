@@ -441,14 +441,23 @@ and checksum CI uses:
 
 ```bash
 . ./.xcodegen-version
-curl --fail --location --retry 3 --output /tmp/xcodegen.zip \
+XCODEGEN_TMP="$(mktemp -d)"
+XCODEGEN_PREFIX="$HOME/.local"
+curl --fail --location --retry 3 \
+  --output "$XCODEGEN_TMP/xcodegen.zip" \
   "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
-echo "${XCODEGEN_SHA256}  /tmp/xcodegen.zip" | shasum -a 256 -c -
-ditto -x -k /tmp/xcodegen.zip /tmp/xcodegen-release
-sudo /tmp/xcodegen-release/xcodegen/install.sh          # -> /usr/local/bin/xcodegen
-# no-sudo variant: install.sh takes a prefix, e.g.
-#   /tmp/xcodegen-release/xcodegen/install.sh "$HOME/.local"
+echo "${XCODEGEN_SHA256}  ${XCODEGEN_TMP}/xcodegen.zip" | shasum -a 256 -c -
+ditto -x -k "$XCODEGEN_TMP/xcodegen.zip" "$XCODEGEN_TMP/release"
+mkdir -p "$XCODEGEN_PREFIX"
+"$XCODEGEN_TMP/release/xcodegen/install.sh" "$XCODEGEN_PREFIX"
+export PATH="$XCODEGEN_PREFIX/bin:$PATH"
+hash -r
+xcodegen --version
 ```
+
+The `PATH` update deliberately places the pinned binary before a Homebrew
+installation. Add the same `export` command to your shell startup file if you
+want future terminal sessions to use the pinned version.
 
 If `xcodegen` isn't on your `PATH` at all, nothing above applies — `build.sh`
 skips regeneration entirely and builds the committed project. The pin only

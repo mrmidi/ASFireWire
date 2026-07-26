@@ -136,19 +136,28 @@ preflight() {
       # unpinned version silently produces a project that CI will reject, so
       # stop here instead — a build missing a newly added source file is much
       # harder to diagnose than this message.
-      if [[ -f ".xcodegen-version" ]]; then
-        . ./.xcodegen-version
-        xcodegen_actual="$(xcodegen --version 2>/dev/null | awk '{print $NF}')"
-        if [[ -n "${XCODEGEN_VERSION:-}" && "$xcodegen_actual" != "$XCODEGEN_VERSION" ]]; then
-          err "xcodegen ${xcodegen_actual:-<unknown>} is installed, but this repo pins ${XCODEGEN_VERSION}."
-          err "Regenerating would produce a pbxproj that CI's drift check rejects."
-          err "Either:"
-          err "  - install the pinned release (copy-paste block in README -> Building ->"
-          err "    'Xcode project is generated (XcodeGen)'), or"
-          err "  - re-run with --no-xcodegen to build the committed project as-is"
-          err "    (added/removed source files will NOT be picked up)."
-          exit 1
-        fi
+      if [[ ! -r ".xcodegen-version" ]]; then
+        err "xcodegen is installed, but the required .xcodegen-version pin is missing or unreadable."
+        err "Refusing to regenerate ${PROJECT_NAME}.xcodeproj with an unpinned version."
+        exit 1
+      fi
+      unset XCODEGEN_VERSION
+      . ./.xcodegen-version
+      if [[ -z "${XCODEGEN_VERSION:-}" ]]; then
+        err ".xcodegen-version does not define XCODEGEN_VERSION."
+        err "Refusing to regenerate ${PROJECT_NAME}.xcodeproj with an unpinned version."
+        exit 1
+      fi
+      xcodegen_actual="$(xcodegen --version 2>/dev/null | awk '{print $NF}')"
+      if [[ "$xcodegen_actual" != "$XCODEGEN_VERSION" ]]; then
+        err "xcodegen ${xcodegen_actual:-<unknown>} is installed, but this repo pins ${XCODEGEN_VERSION}."
+        err "Regenerating would produce a pbxproj that CI's drift check rejects."
+        err "Either:"
+        err "  - install the pinned release (copy-paste block in README -> Building ->"
+        err "    'Xcode project is generated (XcodeGen)'), or"
+        err "  - re-run with --no-xcodegen to build the committed project as-is"
+        err "    (added/removed source files will NOT be picked up)."
+        exit 1
       fi
       log "Regenerating ${PROJECT_NAME}.xcodeproj from project.yml..."
       xcodegen generate --quiet || { err "xcodegen generate failed"; exit 1; }
