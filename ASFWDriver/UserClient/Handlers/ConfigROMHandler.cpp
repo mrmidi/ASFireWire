@@ -62,7 +62,7 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
         return kIOReturnNotReady;
     }
 
-    const auto* rom = romStore->FindByNode(requestedGen, nodeId);
+    const auto* rom = romStore->FindByNode(requestedGen, nodeId, false);
 
     if (rom == nullptr) {
         ASFW_LOG(UserClient,
