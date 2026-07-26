@@ -231,7 +231,7 @@ run_swift_tests() {
   if $VERBOSE; then
     xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1
   else
-    xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | grep -E '(Test Case|passed|failed|error:)' || true
+    xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | grep -E '(Test Case|passed|failed|error:)'
   fi
   local test_status=${PIPESTATUS[0]}
   set -e
