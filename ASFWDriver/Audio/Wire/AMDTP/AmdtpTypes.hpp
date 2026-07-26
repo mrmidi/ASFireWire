@@ -4,6 +4,17 @@
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
+/// WARNING: this enum's numeric values are INVERTED relative to every other
+/// StreamMode in the tree — ASFW::Encoding::StreamMode (below, same file),
+/// Audio::Model::StreamMode, and Isoch::Audio::StreamMode all use
+/// kNonBlocking = 0 / kBlocking = 1, and the nub wire field documents
+/// 0 = non-blocking, 1 = blocking.
+///
+/// Never convert to or from those by cast or std::to_underlying: a numeric
+/// conversion silently turns blocking into non-blocking. The one crossing point
+/// maps by name (DiceTxStreamEngine.cpp ToAmdtpConfig) and must stay that way.
+/// This matters for devices whose profile demands blocking transmission — see
+/// the Apogee Duet quirk in ApogeeCaps.hpp (FW-140).
 enum class StreamMode : uint8_t {
     Blocking = 0,
     NonBlocking = 1,
