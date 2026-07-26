@@ -31,3 +31,24 @@ struct DriverInstallErrorFormatterTests {
         #expect(described.localizedDescription == "Missing bundle")
     }
 }
+
+struct DriverInstallResultFormatterTests {
+    @Test func describesCompletedActivation() {
+        let description = DriverInstallResultFormatter.describe(
+            operation: "Activation",
+            result: .completed
+        )
+
+        #expect(description == "Activation completed")
+    }
+
+    @Test func tellsTheUserToRestartForDeferredActivation() {
+        let description = DriverInstallResultFormatter.describe(
+            operation: "Activation",
+            result: .willCompleteAfterReboot
+        )
+
+        #expect(description.contains("Activation accepted"))
+        #expect(description.contains("Restart macOS"))
+    }
+}

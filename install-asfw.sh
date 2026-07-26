@@ -105,10 +105,28 @@ close_existing_app() {
 }
 
 has_active_system_extension() {
+  local extension_lines
+  extension_lines="$(system_extension_lines)" || return $?
+  grep -qF '[activated enabled]' <<<"${extension_lines}"
+}
+
+system_extension_lines() {
   local extension_list
   extension_list="$(systemextensionsctl list 2>/dev/null)" || return 2
-  grep -F "${SYSTEM_EXTENSION_ID}" <<<"${extension_list}" \
-    | grep -qF '[activated enabled]'
+  grep -F "${SYSTEM_EXTENSION_ID}" <<<"${extension_list}" || true
+}
+
+ensure_no_pending_system_extension_transition() {
+  local extension_lines
+  extension_lines="$(system_extension_lines)" \
+    || die "Unable to query the current system-extension state"
+
+  if grep -Eq '\[(activated waiting .*reboot|terminating )' \
+      <<<"${extension_lines}"; then
+    log "ASFW has a pending system-extension transition:"
+    printf '%s\n' "${extension_lines}"
+    die "Restart macOS to finish the pending change before reinstalling ASFW"
+  fi
 }
 
 uninstall_active_system_extension() {
@@ -264,6 +282,7 @@ csrutil status | grep -qi 'disabled' \
   || die "SIP must be disabled for the README ad-hoc install workflow"
 systemextensionsctl developer 2>&1 | grep -qi 'developer mode is on' \
   || die "Enable system-extension developer mode before installing"
+ensure_no_pending_system_extension_transition
 
 if ${DO_BUILD}; then
   build_args=(--no-bump --config "${CONFIGURATION}")

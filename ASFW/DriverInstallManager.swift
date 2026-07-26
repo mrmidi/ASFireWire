@@ -48,6 +48,22 @@ enum DriverInstallErrorFormatter {
     }
 }
 
+enum DriverInstallResultFormatter {
+    static func describe(
+        operation: String,
+        result: OSSystemExtensionRequest.Result
+    ) -> String {
+        switch result {
+        case .completed:
+            return "\(operation) completed"
+        case .willCompleteAfterReboot:
+            return "\(operation) accepted. Restart macOS to complete the system extension change."
+        @unknown default:
+            return "\(operation) finished with unknown result \(result.rawValue)"
+        }
+    }
+}
+
 final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     static let shared = DriverInstallManager()
     private override init() {}
@@ -78,7 +94,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     // MARK: OSSystemExtensionRequestDelegate
     func request(_ request: OSSystemExtensionRequest, didFinishWithResult result: OSSystemExtensionRequest.Result) {
         let op = (currentOp == .activation ? "Activation" : "Deactivation")
-        completion?(.success("\(op) finished with result: \(result.rawValue)"))
+        completion?(.success(DriverInstallResultFormatter.describe(operation: op, result: result)))
         completion = nil
     }
 

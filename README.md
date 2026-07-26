@@ -512,6 +512,10 @@ sudo -v
 ./install-asfw.sh --config Debug --scsi --fresh --install-mcp-skill
 ```
 
+If macOS reports that an ASFW upgrade or uninstall is waiting for a reboot, the
+script stops before building or replacing the app. Restart macOS to complete the
+pending system-extension change, then run the command again.
+
 Keep an SBP-2 device powered on before installing or testing a `--scsi` build.
 The cold-boot and teardown warning in the preceding section still applies.
 
