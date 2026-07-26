@@ -50,6 +50,14 @@ class HardwareAccessGate {
         IOLockUnlock(lock_);
     }
 
+    /// Closes the gate while an already-admitted HardwareAccessScope holds
+    /// `lock_`. This must not acquire the lock again: a 0xffffffff read is
+    /// detected from inside that scope, and recursive locking would deadlock
+    /// the only thread that can drain it.
+    void RevokeFromAdmittedScope() noexcept {
+        open_ = false;
+    }
+
     /// Opens access only after the new provider is fully initialized.
     void Open() noexcept {
         if (!lock_) {

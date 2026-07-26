@@ -550,7 +550,7 @@ void ASFWDriver::RequestRuntimeQuiesce(uint32_t rawReason) {
     // still fence OHCI immediately. The active executor will observe its
     // state as Revoked before publishing its final transition.
     if (plan->revokeImmediately && !plan->runTeardown && ctx.deps.hardware) {
-        ctx.deps.hardware->RevokeAndDrain();
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
     }
     if (plan->runTeardown) {
         ExecuteRuntimeTeardown(ctx, *plan);
@@ -978,6 +978,9 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
         return;
     }
 
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
+    }
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kProviderRevoked));
 #endif
 }

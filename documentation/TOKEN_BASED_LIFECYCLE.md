@@ -4,6 +4,22 @@
 
 This document provides the authoritative architectural specification for the **Token-Based Device Route and Runtime Lifecycle** in the ASFW macOS DriverKit FireWire (IEEE 1394) driver (`ASFWDriver`).
 
+## Removal Terminology and Scope
+
+ASFW must distinguish these independent removal events; **“hot-unplug” alone is
+ambiguous and must not be used in lifecycle decisions**:
+
+| Event | What disappeared | Authority and required path |
+|---|---|---|
+| **Adapter/provider removal** | The Thunderbolt-to-FireWire adapter, and therefore the local PCI/OHCI provider. | Root lifecycle event: enter `Revoked`, immediately revoke and drain MMIO, skip all register cleanup and hardware quiesce, then tear down all software resources. |
+| **Remote FireWire-device loss** | One device on the IEEE 1394 bus, while the local OHCI controller remains attached. | Bus event: invalidate remote routes on the reset, rescan topology, retire only the absent remote device, and leave the root controller running. |
+
+`DeviceRouteToken` identifies a **remote FireWire device route**. It is not a
+token for the local OHCI controller or its PCI provider. Consequently,
+`deviceIncarnation` refers to a remote device being removed and later
+rediscovered, whereas provider removal is governed exclusively by
+`RuntimeLifecycleCoordinator` and `HardwareAccessGate`.
+
 Historically, FireWire control and transport pipelines relied on loose pairs of `(uint16_t nodeId, Generation generation)` passed across dispatch queues, async transaction callbacks, protocol engines (FCP, CMP, SBP-2), and CoreAudio audio nubs. Because FireWire bus resets dynamically reassign node IDs and increment bus generation numbers, asynchronously queued callbacks and multi-step transactions frequently suffered from race conditions:
 - Late-arriving callbacks executing against a reassigned node ID (potentially targeting the wrong physical device).
 - Stale asynchronous block-writes issued across a bus reset.
@@ -11,7 +27,7 @@ Historically, FireWire control and transport pipelines relied on loose pairs of 
 
 To eliminate these vulnerabilities, ASFW underwent a complete architectural cutover across commits `72777bc0` through `3746169f`:
 1. **Replacement of raw `(nodeId, gen)` pairs with `DeviceRouteToken`**: Immutable value-type tokens issued and validated exclusively by [`DeviceRegistry`](../ASFWDriver/Discovery/DeviceRegistry.hpp).
-2. **Device Incarnation & Route Epoch tracking**: Differentiating between physical device re-plugs (`deviceIncarnation`) and bus resets/rebinds (`routeEpoch`).
+2. **Device Incarnation & Route Epoch tracking**: Differentiating between remote FireWire-device re-plugs (`deviceIncarnation`) and bus resets/rebinds (`routeEpoch`).
 3. **Centralized Root Lifecycle Coordination ([`RuntimeLifecycleCoordinator`](../ASFWDriver/Service/Lifecycle/RuntimeLifecycleCoordinator.hpp))**: Standardizing the driver state graph ([`ControllerStateMachine`](../ASFWDriver/Controller/ControllerStateMachine.hpp)) and ensuring provider revocation dominance (`Revoked`) as specified in [`RUNTIME_LIFECYCLE_CONTRACT.md`](../ASFWDriver/Service/Lifecycle/RUNTIME_LIFECYCLE_CONTRACT.md).
 4. **Revocable MMIO Access Scopes ([`HardwareAccessGate`](../ASFWDriver/Hardware/HardwareAccessGate.hpp) & [`HardwareAccessScope`](../ASFWDriver/Hardware/HardwareAccessScope.hpp))**: Protecting PCI register accesses against post-detach MMIO panics.
 
@@ -28,7 +44,7 @@ namespace ASFW::Discovery {
 
 struct DeviceRouteToken {
     Guid64 guid{0};                // 64-bit IEEE 1212 EUI-64 global hardware identity
-    uint64_t deviceIncarnation{0}; // Monotonic count; advances only on physical unplug & re-plug
+    uint64_t deviceIncarnation{0}; // Monotonic count; advances only on remote-device unplug & re-plug
     uint64_t routeEpoch{0};        // Monotonic count; advances on every bus reset, invalidation, & rebind
     Generation generation{0};      // IEEE 1394 bus generation number at route creation
     uint16_t nodeId{kInvalidNodeId};// Operational physical node ID (0..62)
@@ -48,8 +64,8 @@ struct DeviceRouteToken {
 
 | Field | Type | Scope / Lifetime | Trigger for Value Change |
 |---|---|---|---|
-| `guid` | `Guid64` | Physical Hardware | Fixed for the life of the physical device. |
-| `deviceIncarnation` | `uint64_t` | Device Service Instance | Incremented by `DeviceRegistry` when a device is retired and re-added (physical disconnect & reconnect). Prevents late callbacks from a previous device session from validating against a new session. |
+| `guid` | `Guid64` | Remote FireWire Hardware | Fixed for the life of the remote physical device. |
+| `deviceIncarnation` | `uint64_t` | Remote Device Service Instance | Incremented by `DeviceRegistry` when a remote device is retired and re-added (remote-device disconnect & reconnect). Prevents late callbacks from a previous device session from validating against a new session. |
 | `routeEpoch` | `uint64_t` | Bus Reset & Route Rebind | Incremented by `DeviceRegistry` on every bus reset (`InvalidateLiveMappingsForBusReset`), device loss (`MarkLost`), or topology rebind (`UpsertFromROM`). |
 | `generation` | `Generation` | IEEE 1394 Bus Topology | Incremented by controller Self-ID count after a bus reset. |
 | `nodeId` | `uint16_t` | Self-ID Allocation | Physical 0..62 node ID assigned during Self-ID phase; set to `kInvalidNodeId` (0xFFFF) when unmapped. |
@@ -96,8 +112,8 @@ classDiagram
    - Sets every live device's `nodeId` to `kInvalidNodeId`.
    - Allocates a new `routeEpoch` for every record.
    - Immediately invalidates all outstanding `DeviceRouteToken` instances across the driver!
-3. **Device Retirement (`RetireDevice`)**:
-   - Called when a device is physically disconnected or lost.
+3. **Remote Device Retirement (`RetireDevice`)**:
+   - Called only when a remote FireWire device is conclusively disconnected or lost after discovery; it is not an adapter/provider-removal mechanism.
    - Retains `lastDeviceIncarnationByGuid_[guid]` so that a subsequent re-plug of the same physical unit allocates `deviceIncarnation + 1`. Old tokens from the previous session will fail `IsCurrent()` even if node IDs happen to match.
 4. **Validation Contract (`IsCurrent`)**:
    ```cpp
@@ -215,7 +231,7 @@ The driver enforcing a single legal state graph:
 
 ### 5.2 Provider Revocation Dominance
 
-If the PCI provider (`PCIDevice`) is hot-unplugged or terminated by macOS:
+If the PCI provider (`PCIDevice`) is removed with the local FireWire adapter or terminated by macOS (**adapter/provider removal**, not remote-device loss):
 1. `RuntimeLifecycleCoordinator` transitions state immediately to `Revoked`.
 2. `HardwareAccessGate::RevokeAndDrain()` is invoked:
    - Sets `open_ = false` under lock.

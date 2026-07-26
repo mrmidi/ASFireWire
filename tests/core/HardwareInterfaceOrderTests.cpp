@@ -169,6 +169,16 @@ TEST_F(HardwareInterfaceOrderTests, RevokeBlocksAllFurtherBarAccess) {
     hardware_.SetInterruptMask(0xFFFFFFFFu, false);
 }
 
+TEST_F(HardwareInterfaceOrderTests, ProviderRevocationLatchesHardwareGoneAndBlocksAllBarAccess) {
+    hardware_.LatchProviderRevokedAndDrain();
+
+    EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+    EXPECT_TRUE(hardware_.HardwareGone());
+    EXPECT_EQ(hardware_.GoneReason(), HardwareGoneReason::kProviderRevoked);
+    EXPECT_FALSE(hardware_.TryBeginAccess());
+}
+
 TEST_F(HardwareInterfaceOrderTests, RevokeWaitsForActiveAccessScope) {
     std::atomic<bool> scopeEntered{false};
     std::atomic<bool> releaseScope{false};
@@ -192,6 +202,24 @@ TEST_F(HardwareInterfaceOrderTests, RevokeWaitsForActiveAccessScope) {
     releaseScope.store(true, std::memory_order_release);
     EXPECT_EQ(revoke.wait_for(std::chrono::seconds(1)), std::future_status::ready);
     worker.join();
+    EXPECT_FALSE(hardware_.TryBeginAccess());
+}
+
+TEST_F(HardwareInterfaceOrderTests, AllOnesReadLatchesHardwareGoneAndFencesLaterMmio) {
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0xFFFFFFFFu; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+
+    auto access = hardware_.TryBeginAccess();
+    ASSERT_TRUE(access);
+    EXPECT_EQ(access.Read(Register32::kHCControl), 0xFFFFFFFFu);
+    EXPECT_TRUE(hardware_.HardwareGone());
+    EXPECT_EQ(hardware_.GoneReason(), HardwareGoneReason::kMmioAllOnes);
+
+    // The current scope is still responsible for releasing the gate lock, but
+    // it cannot submit another BAR operation after the faulting read.
+    access.Write(Register32::kIntMaskClear, 0xFFFFFFFFu);
+    access = {};
     EXPECT_FALSE(hardware_.TryBeginAccess());
 }
 
