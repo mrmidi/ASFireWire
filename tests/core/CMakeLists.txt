@@ -140,6 +140,13 @@ add_core_test(InterruptMaskShadowTests
 )
 target_link_libraries(InterruptMaskShadowTests PRIVATE GTest::gmock)
 
+# ControllerCore bus-reset liveness boundary tests
+add_core_test(ControllerCoreBusResetTests
+    ControllerCoreBusResetTests.cpp
+    "${ASFW_DRIVER_DIR}/Controller/ControllerCoreInterrupts.cpp"
+)
+target_link_libraries(ControllerCoreBusResetTests PRIVATE asfw_configrom_host)
+
 # Topology Map Builder Tests
 add_core_test(TopologyMapBuilderTests
     TopologyMapBuilderTests.cpp
