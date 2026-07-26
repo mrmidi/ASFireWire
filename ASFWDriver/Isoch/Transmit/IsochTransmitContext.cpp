@@ -363,6 +363,18 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
 
         auto access = hardware_->TryBeginAccess();
         if (!access) {
+            if (hardware_->HardwareGone()) {
+                if (controlBlock_) {
+                    controlBlock_->statusWord.store(IsochTxQueueStatus::kStopped,
+                                                    std::memory_order_release);
+                }
+                state_ = State::Stopped;
+                ASFW_LOG(Isoch,
+                         "[Lifecycle] IT stop context=%u hardware-gone action=release-dma-bindings",
+                         contextIndex_);
+                refillInProgress_.clear(std::memory_order_release);
+                return kIOReturnSuccess;
+            }
             refillInProgress_.clear(std::memory_order_release);
             return kIOReturnNotReady;
         }
