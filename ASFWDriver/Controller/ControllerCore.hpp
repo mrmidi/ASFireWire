@@ -40,7 +40,6 @@ class MetricsSink;
 namespace ASFW::Bus {
 class IRootStatus;
 class ICycleMasterControl;
-class IBusResetTrigger;
 class CSRResponder;
 class TopologyMapService;
 class SpeedMapService;
@@ -152,7 +151,6 @@ class ControllerCore final : private Role::IPhyConfigReset,
         // TOPOLOGY_MAP) plus its hardware adapters for root status / cycle master.
         std::shared_ptr<ASFW::Bus::IRootStatus> csrRootStatus;
         std::shared_ptr<ASFW::Bus::ICycleMasterControl> csrCycleMasterControl;
-        std::shared_ptr<ASFW::Bus::IBusResetTrigger> csrResetTrigger;
         std::shared_ptr<ASFW::Bus::BroadcastChannelCSR> broadcastChannel;
         std::shared_ptr<ASFW::Bus::CSRResponder> csrResponder;
         std::shared_ptr<ASFW::Bus::TopologyMapService> topologyMapService;

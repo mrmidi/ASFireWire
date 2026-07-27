@@ -60,10 +60,17 @@ CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t v
     case FW::kCSR_StateClear:
         return HandleStateWrite(/*isSet=*/false, value);
     case FW::kCSR_ResetStart:
-        if (deps_.resetTrigger != nullptr) {
-            deps_.resetTrigger->TriggerBusReset(/*shortReset=*/false);
-        }
-        return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = 0};
+        // IEEE 1212 RESET_START is a *command reset* of this node's own CSR state —
+        // it is NOT a serial bus reset. Treat it as STATE_CLEAR.abdicate.
+        //
+        // Cross-validated with Linux drivers/firewire/core-transaction.c:1191, which
+        // handles the write as write_csr(CSR_STATE_CLEAR, CSR_STATE_BIT_ABDICATE) and
+        // nothing else; Apple defines kCSRResetStartAddress
+        // (IOFireWireFamilyCommon.h:547) but never implements the address at all.
+        //
+        // Previously this issued a long bus reset, which let any remote node disrupt
+        // every device on the bus with a single quadlet write.
+        return HandleStateWrite(/*isSet=*/false, FW::kCSRStateBitABDICATE);
     case FW::kCSR_BroadcastChannel:
         if (deps_.broadcastChannel != nullptr) {
             deps_.broadcastChannel->Write(value);

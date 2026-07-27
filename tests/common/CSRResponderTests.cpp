@@ -134,6 +134,73 @@ TEST(CSRResponder, ResetStartWrite_ReadIsTypeError) {
     EXPECT_EQ(rd.rcode, ResponseCode::TypeError);
 }
 
+// ---- RESET_START is a command reset, NOT a bus reset ---------------------------
+//
+// IEEE 1212 RESET_START resets this node's own CSR state. Cross-validated with
+// Linux core-transaction.c:1191 (write_csr(CSR_STATE_CLEAR, CSR_STATE_BIT_ABDICATE),
+// nothing else) and Apple, which defines kCSRResetStartAddress but never implements
+// it. A prior version issued a long bus reset here, letting any remote node disrupt
+// every device on the bus with one quadlet write.
+
+TEST(CSRResponder, ResetStartWrite_ClearsAbdicate) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    auto rsp = Make(r, cm);
+
+    rsp.WriteQuadlet(FW::kCSR_StateSet, FW::kCSRStateBitABDICATE);
+    ASSERT_TRUE(rsp.Abdicate());
+
+    const auto res = rsp.WriteQuadlet(FW::kCSR_ResetStart, 0);
+    EXPECT_TRUE(res.mine);
+    EXPECT_EQ(res.rcode, ResponseCode::Complete);
+    EXPECT_FALSE(rsp.Abdicate()) << "RESET_START must clear ABDICATE (Linux core-transaction.c:1191)";
+}
+
+TEST(CSRResponder, ResetStartWrite_WithAbdicateAlreadyClear_IsIdempotent) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    auto rsp = Make(r, cm);
+
+    ASSERT_FALSE(rsp.Abdicate());
+
+    const auto res = rsp.WriteQuadlet(FW::kCSR_ResetStart, 0);
+    EXPECT_TRUE(res.mine);
+    EXPECT_EQ(res.rcode, ResponseCode::Complete);
+    EXPECT_FALSE(rsp.Abdicate());
+}
+
+TEST(CSRResponder, ResetStartWrite_DoesNotDisturbCycleMaster) {
+    FakeRoot r;
+    r.root = true;
+    FakeCycleMaster cm;
+    auto rsp = Make(r, cm);
+
+    rsp.WriteQuadlet(FW::kCSR_StateSet, FW::kCSRStateBitCMSTR);
+    ASSERT_TRUE(cm.enabled);
+    const int setCallsBefore = cm.setCalls;
+
+    rsp.WriteQuadlet(FW::kCSR_ResetStart, 0);
+
+    // The value written to RESET_START is ignored; only ABDICATE is touched, so the
+    // cycle-master bit must be left exactly as it was.
+    EXPECT_TRUE(cm.enabled);
+    EXPECT_EQ(cm.setCalls, setCallsBefore);
+}
+
+TEST(CSRResponder, ResetStartWrite_IgnoresWrittenValue) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    auto rsp = Make(r, cm);
+
+    rsp.WriteQuadlet(FW::kCSR_StateSet, FW::kCSRStateBitABDICATE);
+    ASSERT_TRUE(rsp.Abdicate());
+
+    // Any payload clears abdicate — RESET_START is write-triggered, not value-driven.
+    const auto res = rsp.WriteQuadlet(FW::kCSR_ResetStart, 0xFFFFFFFFU);
+    EXPECT_EQ(res.rcode, ResponseCode::Complete);
+    EXPECT_FALSE(rsp.Abdicate());
+}
+
 // ---- STATE read ---------------------------------------------------------------
 
 TEST(CSRResponder, StateRead_ReflectsCycleMasterAndAbdicate) {
