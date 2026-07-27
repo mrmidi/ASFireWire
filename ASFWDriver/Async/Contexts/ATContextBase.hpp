@@ -254,11 +254,10 @@ public:
      * 11. Unlock context, return TxCompletion
      *
      * **Apple Pattern**
-     * ChannelBundle::ScanNextATReqCompletion():
-     * - Checks xferStatus != 0 for completion
-     * - Extracts ack code and event code from status word
-     * - Extracts tLabel from packet header for response matching
-     * - Advances completion cursor
+     * AppleFWOHCI_AsyncTransmit::checkForCompletedElements():
+     * - Checks the terminal descriptor status of each pending ATxElement
+     * - Leaves the element queued while the terminal status is zero
+     * - Dispatches completion only after the terminal status becomes non-zero
      *
      * **Thread Safety**
      * Serialized via IOLock. Safe to call concurrently with SubmitChain().
@@ -315,6 +314,12 @@ private:
         uint16_t timeStamp{0};
     };
 
+    enum class ChainTailScanResult : uint8_t {
+        NotRecognized,
+        Pending,
+        Advanced,
+    };
+
     /// Descriptor ring for tracking in-flight chains
     DescriptorRing* ring_{nullptr};
 
@@ -342,7 +347,8 @@ private:
                                               size_t capacity) noexcept;
     [[nodiscard]] bool LoadScanState(ScanState& state) noexcept;
     void FetchScanDescriptor(const ScanState& state) noexcept;
-    [[nodiscard]] bool AdvanceToCompletedChainTail(const ScanState& state) noexcept;
+    [[nodiscard]] ChainTailScanResult InspectChainTail(
+        const ScanState& state) noexcept;
     void HandlePendingDescriptor(const ScanState& state) noexcept;
     [[nodiscard]] bool IsOrphanedDescriptor(const ScanState& state,
                                             uint32_t& commandPtrAddr,
@@ -607,11 +613,17 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
             return std::nullopt;
         }
 
-        if (state.xferStatus == 0 && AdvanceToCompletedChainTail(state)) {
-            continue;
-        }
-
         if (state.xferStatus == 0) {
+            switch (InspectChainTail(state)) {
+                case ChainTailScanResult::Advanced:
+                    continue;
+                case ChainTailScanResult::Pending:
+                    unlock();
+                    return std::nullopt;
+                case ChainTailScanResult::NotRecognized:
+                    break;
+            }
+
             HandlePendingDescriptor(state);
             unlock();
             return std::nullopt;
@@ -833,14 +845,14 @@ void ATContextBase<Derived, Tag>::FetchScanDescriptor(const ScanState& state) no
 }
 
 template<typename Derived, ContextRole Tag>
-bool ATContextBase<Derived, Tag>::AdvanceToCompletedChainTail(
-    const ScanState& state) noexcept {
+typename ATContextBase<Derived, Tag>::ChainTailScanResult
+ATContextBase<Derived, Tag>::InspectChainTail(const ScanState& state) noexcept {
     const uint16_t controlHi = static_cast<uint16_t>(
         state.desc->control >> HW::OHCIDescriptor::kControlHighShift);
     const uint8_t command = static_cast<uint8_t>(
         (controlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
     if (command != HW::OHCIDescriptor::kCmdOutputMore) {
-        return false;
+        return ChainTailScanResult::NotRecognized;
     }
 
     const uint8_t key = static_cast<uint8_t>(
@@ -850,7 +862,7 @@ bool ATContextBase<Derived, Tag>::AdvanceToCompletedChainTail(
     const size_t tailIndex =
         (state.headIndex + precursorBlocks) % state.capacity;
     if (tailIndex == state.tailIndex) {
-        return false;
+        return ChainTailScanResult::NotRecognized;
     }
 
     ScanState tailState;
@@ -858,7 +870,7 @@ bool ATContextBase<Derived, Tag>::AdvanceToCompletedChainTail(
     tailState.headIndex = tailIndex;
     tailState.desc = ring_->At(tailIndex);
     if (!tailState.desc) {
-        return false;
+        return ChainTailScanResult::NotRecognized;
     }
     tailState.isImmediate = HW::IsImmediate(*tailState.desc);
     FetchScanDescriptor(tailState);
@@ -866,9 +878,19 @@ bool ATContextBase<Derived, Tag>::AdvanceToCompletedChainTail(
         tailState.desc->control >> HW::OHCIDescriptor::kControlHighShift);
     const uint8_t tailCommand = static_cast<uint8_t>(
         (tailControlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
-    if (tailCommand != HW::OHCIDescriptor::kCmdOutputLast ||
-        HW::AT_xferStatus(*tailState.desc) == 0) {
-        return false;
+    if (tailCommand != HW::OHCIDescriptor::kCmdOutputLast) {
+        return ChainTailScanResult::NotRecognized;
+    }
+
+    if (HW::AT_xferStatus(*tailState.desc) == 0) {
+        // AppleFWOHCI 5.5.9 checkForCompletedElements() reads each pending
+        // ATxElement's terminal descriptor status and leaves the element queued
+        // while that status is zero (symbol offsets 0xf0e8-0xf10a).
+        // Linux leaves the packet queued until its OUTPUT_LAST transfer status becomes
+        // non-zero: references/linux-ohci-firewire-low-level-stack/drivers/firewire/ohci.c:1354-1366.
+        // The command pointer may already reference this pending tail, so the
+        // OUTPUT_MORE precursor is not orphaned.
+        return ChainTailScanResult::Pending;
     }
 
     // Linux records completion on the packet's OUTPUT_LAST descriptor:
@@ -878,7 +900,7 @@ bool ATContextBase<Derived, Tag>::AdvanceToCompletedChainTail(
     ASFW_LOG_V2(Async,
                 "ScanCompletion: head %zu→%zu (completed OUTPUT_LAST after OUTPUT_MORE)",
                 state.headIndex, tailIndex);
-    return true;
+    return ChainTailScanResult::Advanced;
 }
 
 template<typename Derived, ContextRole Tag>

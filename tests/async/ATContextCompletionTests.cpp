@@ -102,5 +102,58 @@ TEST_F(ATContextCompletionTest,
     EXPECT_FALSE(ring_.IsEmpty());
 }
 
+TEST_F(ATContextCompletionTest,
+       PreservesRecognizedChainWhenCommandPtrAdvancesToPendingOutputLast) {
+    PrepareBlockWriteChain(0);
+    hardware_.SetTestRegister(
+        Async::ATRequestTag::kCommandPtrReg,
+        ring_.CommandPtrWordTo(ring_.At(2), 1));
+
+    const auto pendingCompletion = context_.ScanCompletion();
+
+    EXPECT_FALSE(pendingCompletion.has_value());
+    EXPECT_EQ(ring_.Head(), 0u);
+    EXPECT_FALSE(ring_.IsEmpty());
+
+    auto* payload = ring_.At(2);
+    ASSERT_NE(payload, nullptr);
+    payload->xferStatus =
+        static_cast<uint16_t>(Async::OHCIEventCode::kAckComplete);
+
+    const auto completion = context_.ScanCompletion();
+
+    ASSERT_TRUE(completion.has_value());
+    EXPECT_EQ(completion->eventCode, Async::OHCIEventCode::kAckComplete);
+    EXPECT_EQ(completion->timeStamp, kTimestamp);
+    EXPECT_EQ(completion->tLabel, kTLabel);
+    EXPECT_EQ(completion->descriptor, payload);
+    EXPECT_EQ(ring_.Head(), 3u);
+    EXPECT_TRUE(ring_.IsEmpty());
+}
+
+TEST_F(ATContextCompletionTest, AdvancesTrulyOrphanedPendingDescriptor) {
+    auto* descriptor = ring_.At(0);
+    ASSERT_NE(descriptor, nullptr);
+    descriptor->control = Async::HW::OHCIDescriptor::BuildControl({
+        .reqCount = 8,
+        .command = Async::HW::OHCIDescriptor::kCmdOutputLast,
+        .key = Async::HW::OHCIDescriptor::kKeyStandard,
+        .interruptBits = Async::HW::OHCIDescriptor::kIntAlways,
+        .branchBits = Async::HW::OHCIDescriptor::kBranchNever,
+    });
+    descriptor->xferStatus = 0;
+    ring_.SetTail(1);
+    hardware_.SetTestRegister(Async::ATRequestTag::kControlSetReg, 0);
+    hardware_.SetTestRegister(
+        Async::ATRequestTag::kCommandPtrReg,
+        ring_.CommandPtrWordTo(descriptor, 1));
+
+    const auto completion = context_.ScanCompletion();
+
+    EXPECT_FALSE(completion.has_value());
+    EXPECT_EQ(ring_.Head(), 1u);
+    EXPECT_TRUE(ring_.IsEmpty());
+}
+
 } // namespace
 } // namespace ASFW::Testing
