@@ -85,13 +85,34 @@ public:
         IOLockUnlock(lock);
     }
 
+    void MarkRemoteDeviceLost(uint64_t guid) noexcept {
+        IOLock* const lock = *lockRef_;
+        if (!lock || guid == 0) {
+            return;
+        }
+        IOLockLock(lock);
+        remoteLostGuids_.insert(guid);
+        IOLockUnlock(lock);
+    }
+
+    void AcknowledgeDevicePresent(uint64_t guid) noexcept {
+        IOLock* const lock = *lockRef_;
+        if (!lock || guid == 0) {
+            return;
+        }
+        IOLockLock(lock);
+        remoteLostGuids_.erase(guid);
+        IOLockUnlock(lock);
+    }
+
     [[nodiscard]] bool IsStopRequested(uint64_t guid) const noexcept {
         IOLock* const lock = *lockRef_;
         if (!lock || guid == 0) {
             return false;
         }
         IOLockLock(lock);
-        const bool requested = stopRequestedGuids_.find(guid) != stopRequestedGuids_.end();
+        const bool requested = stopRequestedGuids_.find(guid) != stopRequestedGuids_.end() ||
+                               remoteLostGuids_.find(guid) != remoteLostGuids_.end();
         IOLockUnlock(lock);
         return requested;
     }
@@ -124,6 +145,9 @@ private:
     IOLock** lockRef_;  // borrowed: &coordinator.lock_ (not owned; never allocated/freed here)
     std::unordered_set<uint64_t> activeGuids_{};
     std::unordered_set<uint64_t> stopRequestedGuids_{};
+    // Persist across the CoreAudio StopIO callback that follows nub removal.
+    // Discovery clears it only after the GUID is observed again in a new scan.
+    std::unordered_set<uint64_t> remoteLostGuids_{};
 };
 
 } // namespace ASFW::Audio::Backends

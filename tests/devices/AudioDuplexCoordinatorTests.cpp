@@ -725,6 +725,21 @@ TEST_F(AudioDuplexCoordinatorTests, ColdStartTransitionsIdleToRunning) {
                              }));
 }
 
+TEST_F(AudioDuplexCoordinatorTests, RemoteDeviceLossRejectsRestartUntilRediscovery) {
+    coordinator_.CancelRemoteDevice(kTestGuid);
+    EXPECT_TRUE(coordinator_.IsDeviceOperationCancelled(kTestGuid));
+
+    EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNoDevice);
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnAborted);
+    EXPECT_EQ(hostTransport_.beginCalls, 0);
+    EXPECT_EQ(protocol_->prepareCalls, 0);
+
+    coordinator_.AcknowledgeDevicePresent(kTestGuid);
+    EXPECT_FALSE(coordinator_.IsDeviceOperationCancelled(kTestGuid));
+    EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+}
+
 TEST_F(AudioDuplexCoordinatorTests,
        AvcProfileReservesBothDirectionsAndInterleavesHostStartsWithDeviceStages) {
     (void)registry_.UpsertFromROM(

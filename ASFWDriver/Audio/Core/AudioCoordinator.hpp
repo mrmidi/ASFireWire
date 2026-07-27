@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstdint>
 #include <optional>
+#include <unordered_set>
 
 class IOService;
 
@@ -71,7 +72,8 @@ public:
 
 private:
     [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
-    [[nodiscard]] kern_return_t StopHostTransport(const char* reason) noexcept;
+    [[nodiscard]] kern_return_t StopHostTransport(const char* reason,
+                                                   bool generationInvalidated = false) noexcept;
     void HandleHostTimingLoss(uint64_t guid) noexcept;
 
     AudioNubPublisher publisher_;
@@ -88,6 +90,9 @@ private:
 
     IOLock* lock_{nullptr};
     uint64_t activeGuid_{0};
+    // A CoreAudio StopIO can arrive after discovery has retired the GUID. Keep
+    // that callback from re-entering a backend that now has no remote device.
+    std::unordered_set<uint64_t> remoteLostGuids_{};
 };
 
 } // namespace ASFW::Audio

@@ -51,6 +51,14 @@ public:
         DuplexRestartReason reason) noexcept;
     [[nodiscard]] IOReturn RecoverStreaming(uint64_t guid, DuplexRestartReason reason) noexcept;
 
+    // Called once discovery has conclusively retired a GUID after a bus reset.
+    // It cancels this GUID's queued work without treating the whole controller
+    // as gone; AcknowledgeDevicePresent reopens it after rediscovery.
+    void CancelRemoteDevice(uint64_t guid) noexcept;
+    void AcknowledgeDevicePresent(uint64_t guid) noexcept;
+    // Backend work queues use this before any device-side probe or recovery.
+    // It covers both service teardown and a GUID retired by discovery.
+    [[nodiscard]] bool IsDeviceOperationCancelled(uint64_t guid) const noexcept;
     void ClearSession(uint64_t guid) noexcept;
     [[nodiscard]] std::optional<DuplexRestartSession> GetSession(uint64_t guid) const noexcept;
     // True while a host-initiated duplex operation (start/stop/clock change/recovery) holds the

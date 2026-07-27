@@ -42,7 +42,9 @@ public:
     [[nodiscard]] const char* Name() const noexcept override { return "DICE"; }
 
     void OnDeviceRecordUpdated(uint64_t guid) noexcept;
-    void OnDeviceRemoved(uint64_t guid) noexcept;
+    // The coordinator owns remote-device teardown. DICE only cancels its
+    // per-device notification/recovery work so it cannot revive a dead GUID.
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept;
     void HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;

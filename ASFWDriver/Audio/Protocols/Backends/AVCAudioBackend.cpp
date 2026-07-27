@@ -3,8 +3,6 @@
 
 #include "AVCAudioBackend.hpp"
 
-#include <vector>
-
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
@@ -62,36 +60,23 @@ void AVCAudioBackend::OnAudioConfigurationReady(uint64_t guid, const Model::ASFW
     (void)publisher_.EnsureNub(guid, config, "AVC");
 }
 
-void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
+void AVCAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
     if (guid == 0) return;
 
-    bool shouldStop = false;
     if (lock_) {
         IOLockLock(lock_);
-        shouldStop = (activeGuid_ == guid);
+        configByGuid_.erase(guid);
+        recoveringGuids_.erase(guid);
+        timingLossAttempts_.erase(guid);
+        if (activeGuid_ == guid) {
+            activeGuid_ = 0;
+        }
         IOLockUnlock(lock_);
     }
 
-    if (shouldStop) {
-        const IOReturn stopStatus = StopStreaming(guid);
-        if (!IsRemovalStopSettled(guid, stopStatus)) {
-            // StopStreaming only succeeds after every OHCI context reports
-            // ACTIVE clear.  Removing the nub sooner can revoke the backing
-            // mapping while DMA still owns it, which is fatal on Apple silicon.
-            //
-            // FW-144: deferring here used to mean abandoning. The nub — and so
-            // the CoreAudio device — survived the device it represents, until a
-            // full driver teardown happened to free it. Record the removal as
-            // owed and re-attempt it instead.
-            DeferNubRemoval(guid, stopStatus);
-            return;
-        }
-    } else {
-        ASFW_LOG(Audio,
-                 "AVCAudioBackend: OnDeviceRemoved skipping stop for inactive GUID=0x%016llx",
-                 guid);
-    }
-    FinishDeviceRemoval(guid);
+    ASFW_LOG(Audio,
+             "AVCAudioBackend: remote-device work cancelled GUID=0x%016llx",
+             guid);
 }
 
 bool AVCAudioBackend::IsActiveDevice(uint64_t guid) noexcept {
@@ -102,107 +87,6 @@ bool AVCAudioBackend::IsActiveDevice(uint64_t guid) noexcept {
     const bool active = (activeGuid_ == guid);
     IOLockUnlock(lock_);
     return active;
-}
-
-bool AVCAudioBackend::IsRemovalStopSettled(uint64_t guid, IOReturn stopStatus) noexcept {
-    if (stopStatus == kIOReturnSuccess) {
-        return true;
-    }
-    if (stopStatus != kIOReturnNoDevice) {
-        return false;
-    }
-
-    // The device record is already gone, so every device-side stop stage is
-    // moot — there is no plug to break and no node to address, and no amount of
-    // waiting brings the record back. Deferring on this status is what kept the
-    // CoreAudio device alive after an unplug (FW-144): the retry asked again,
-    // got the same permanent answer, and never terminated the nub.
-    //
-    // What still has to happen is the host-side cleanup, which needs no device:
-    // release the reserved profile and clear the active GUID. Then the removal
-    // is safe to complete.
-    const kern_return_t hostStatus = hostTeardownRequest_ ? hostTeardownRequest_()
-                                                          : kIOReturnNotReady;
-    if (hostStatus != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio,
-                       "AVCAudioBackend: host cleanup incomplete for removed device "
-                       "GUID=0x%016llx kr=0x%08x; completing removal anyway",
-                       guid, hostStatus);
-    } else {
-        ASFW_LOG(Audio,
-                 "AVCAudioBackend: device record already gone; host cleanup done GUID=0x%016llx",
-                 guid);
-    }
-    return true;
-}
-
-void AVCAudioBackend::DeferNubRemoval(uint64_t guid, IOReturn stopStatus) noexcept {
-    bool alreadyPending = false;
-    if (lock_) {
-        IOLockLock(lock_);
-        alreadyPending = !pendingNubRemoval_.insert(guid).second;
-        IOLockUnlock(lock_);
-    }
-
-    ASFW_LOG_ERROR(Audio,
-                   "AVCAudioBackend: deferring nub removal after unsafe device-removal stop "
-                   "GUID=0x%016llx kr=0x%08x alreadyPending=%u",
-                   guid, stopStatus, alreadyPending ? 1U : 0U);
-
-    // The blocking condition is local isoch quiescence, and on the observed
-    // trace it cleared a few microseconds later — the ADK side frees the TX
-    // isoch resources from its own stop path, after this one has already given
-    // up. Re-attempting once the current teardown chain unwinds is therefore
-    // the cheapest trigger that actually catches it. Anything still blocked
-    // after that is retried from the next backend event.
-    if (workQueue_) {
-        workQueue_->DispatchAsync(^{
-            RetryPendingNubRemovals();
-        });
-    }
-}
-
-void AVCAudioBackend::RetryPendingNubRemovals() noexcept {
-    std::vector<uint64_t> pending;
-    if (lock_) {
-        IOLockLock(lock_);
-        pending.assign(pendingNubRemoval_.begin(), pendingNubRemoval_.end());
-        IOLockUnlock(lock_);
-    }
-    if (pending.empty()) {
-        return;
-    }
-
-    for (const uint64_t guid : pending) {
-        const IOReturn stopStatus = StopStreaming(guid);
-        if (!IsRemovalStopSettled(guid, stopStatus)) {
-            // Still not safe. Stay pending rather than forcing it — the whole
-            // point of the guard is that revoking a live DMA mapping is fatal.
-            ASFW_LOG_ERROR(Audio,
-                           "AVCAudioBackend: nub removal still blocked GUID=0x%016llx kr=0x%08x",
-                           guid, stopStatus);
-            continue;
-        }
-        ASFW_LOG(Audio, "AVCAudioBackend: completing deferred nub removal GUID=0x%016llx", guid);
-        FinishDeviceRemoval(guid);
-    }
-}
-
-void AVCAudioBackend::FinishDeviceRemoval(uint64_t guid) noexcept {
-    publisher_.TerminateNub(guid, "AVC-Removed");
-    duplexCoordinator_.ClearSession(guid);
-
-    if (lock_) {
-        IOLockLock(lock_);
-        configByGuid_.erase(guid);
-        recoveringGuids_.erase(guid);
-        timingLossAttempts_.erase(guid);
-        pendingNubRemoval_.erase(guid);
-        if (activeGuid_ == guid) {
-            activeGuid_ = 0;
-        }
-        IOLockUnlock(lock_);
-    }
 }
 
 void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
@@ -313,8 +197,8 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
         // unplugged during the settle window — that is the ordinary case, not
         // an edge one — and nothing else cancels this block, so without the
         // liveness check the escalation runs against a device whose record,
-        // nub and CoreAudio presence are already gone (FW-146). FinishDeviceRemoval
-        // clears activeGuid_, which is what makes the device observable as gone.
+        // nub and CoreAudio presence are already gone (FW-146). The generic
+        // remote-device owner clears activeGuid_ before it unpublishes the nub.
         for (uint32_t waited = 0; waited < kTimingLossSettleMs;
              waited += kTimingLossPollMs) {
             if (stopping_.load(std::memory_order_acquire)) {

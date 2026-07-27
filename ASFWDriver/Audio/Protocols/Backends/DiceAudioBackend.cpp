@@ -123,12 +123,8 @@ void DiceAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
     EnsureNubForGuid(guid);
 }
 
-void DiceAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
+void DiceAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
     if (guid == 0) return;
-
-    (void)StopStreaming(guid);
-    publisher_.TerminateNub(guid, "DICE-Removed");
-    restartCoordinator_.ClearSession(guid);
 
     if (lock_) {
         IOLockLock(lock_);
@@ -138,6 +134,10 @@ void DiceAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
         recoveringGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
+
+    ASFW_LOG(Audio,
+             "DiceAudioBackend: remote-device work cancelled GUID=0x%016llx",
+             guid);
 }
 
 void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept {
@@ -145,10 +145,12 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
         return;
     }
 
-    if (stopping_.load(std::memory_order_acquire)) {
+    if (stopping_.load(std::memory_order_acquire) ||
+        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
         recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
-                 "DiceAudioBackend: recovery event ignored by teardown GUID=%llx reason=%u",
+                 "DiceAudioBackend: recovery event ignored by lifecycle cancellation "
+                 "GUID=%llx reason=%u",
                  guid,
                  static_cast<unsigned>(reason));
         return;
@@ -192,10 +194,12 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
     auto recover = ^{
         // FW-61: a block enqueued just before BeginTeardown's drain bails here before any
         // MMIO, so it cannot run after ASFWDriver::Stop detaches hardware.
-        if (stopping_.load(std::memory_order_acquire)) {
+        if (stopping_.load(std::memory_order_acquire) ||
+            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
             recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
             ASFW_LOG(Audio,
-                     "DiceAudioBackend: queued recovery aborted by teardown GUID=%llx reason=%u",
+                     "DiceAudioBackend: queued recovery aborted by lifecycle cancellation "
+                     "GUID=%llx reason=%u",
                      guid,
                      static_cast<unsigned>(reason));
             FinishRecovery(guid);
@@ -304,10 +308,12 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
 
     for (const uint64_t guid : guids) {
         auto probe = ^{
-            if (stopping_.load(std::memory_order_acquire)) {
+            if (stopping_.load(std::memory_order_acquire) ||
+                restartCoordinator_.IsDeviceOperationCancelled(guid)) {
                 probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
                 ASFW_LOG(Audio,
-                         "DiceAudioBackend: queued health probe ignored by teardown GUID=%llx bits=0x%08x",
+                         "DiceAudioBackend: queued health probe ignored by lifecycle cancellation "
+                         "GUID=%llx bits=0x%08x",
                          guid,
                          bits);
                 return;
@@ -324,10 +330,12 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
 }
 
 void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept {
-    if (stopping_.load(std::memory_order_acquire)) {
+    if (stopping_.load(std::memory_order_acquire) ||
+        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
-                 "DiceAudioBackend: health probe refused by teardown GUID=%llx bits=0x%08x",
+                 "DiceAudioBackend: health probe refused by lifecycle cancellation "
+                 "GUID=%llx bits=0x%08x",
                  guid,
                  notificationBits);
         return;
@@ -340,10 +348,12 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     if (!diceProtocol) {
         return;
     }
-    if (stopping_.load(std::memory_order_acquire)) {
+    if (stopping_.load(std::memory_order_acquire) ||
+        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
         probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         ASFW_LOG(Audio,
-                 "DiceAudioBackend: health probe refused by teardown before read GUID=%llx bits=0x%08x",
+                 "DiceAudioBackend: health probe refused by lifecycle cancellation before read "
+                 "GUID=%llx bits=0x%08x",
                  guid,
                  notificationBits);
         return;
@@ -366,10 +376,12 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         if (waitState->done.load(std::memory_order_acquire)) {
             break;
         }
-        if (stopping_.load(std::memory_order_acquire)) {
+        if (stopping_.load(std::memory_order_acquire) ||
+            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
             probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
             ASFW_LOG(Audio,
-                     "DiceAudioBackend: health probe aborted by teardown GUID=%llx bits=0x%08x kr=0x%x",
+                     "DiceAudioBackend: health probe aborted by lifecycle cancellation "
+                     "GUID=%llx bits=0x%08x kr=0x%x",
                      guid,
                      notificationBits,
                      kIOReturnAborted);
@@ -465,7 +477,8 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
 }
 
 bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
-    if (stopping_.load(std::memory_order_acquire)) {
+    if (stopping_.load(std::memory_order_acquire) ||
+        restartCoordinator_.IsDeviceOperationCancelled(guid)) {
         return false;
     }
     // Hold the protocol alive for the blocking read (same discipline as
@@ -492,7 +505,8 @@ bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
         if (waitState->done.load(std::memory_order_acquire)) {
             break;
         }
-        if (stopping_.load(std::memory_order_acquire)) {
+        if (stopping_.load(std::memory_order_acquire) ||
+            restartCoordinator_.IsDeviceOperationCancelled(guid)) {
             return false;
         }
         IOSleep(kHealthBridgePollMs);

@@ -60,6 +60,19 @@ TEST_F(DuplexOperationGateTest, StopIntentSetAndClear) {
     EXPECT_TRUE(gate_.IsStopRequested(0x22));
 }
 
+TEST_F(DuplexOperationGateTest, RemoteLossPersistsPastStopCallbackUntilRediscovery) {
+    gate_.MarkRemoteDeviceLost(0x11);
+    EXPECT_TRUE(gate_.IsStopRequested(0x11));
+
+    // CoreAudio can deliver StopIO after discovery has retired the GUID. Its
+    // ordinary stop cleanup must not reopen the old session.
+    gate_.ClearStop(0x11);
+    EXPECT_TRUE(gate_.IsStopRequested(0x11));
+
+    gate_.AcknowledgeDevicePresent(0x11);
+    EXPECT_FALSE(gate_.IsStopRequested(0x11));
+}
+
 // The two sets are orthogonal: claiming a GUID does not set stop-intent, stop-intent does not
 // release the claim, and intent on one GUID does not affect another.
 TEST_F(DuplexOperationGateTest, ActiveAndStopIntentAreIndependent) {

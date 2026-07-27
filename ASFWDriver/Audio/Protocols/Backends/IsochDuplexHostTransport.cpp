@@ -188,6 +188,23 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochDuplexHostTransport::StopAllAfterBusReset() noexcept {
+    const kern_return_t status = isoch_.StopAll();
+    if (status != kIOReturnSuccess) {
+        return status;
+    }
+
+    DetachReceiveConsumers();
+    // A reset is the allocation invalidation boundary: retain no local lease
+    // and do not attempt an IRM release in the new generation. Cross-validated
+    // with IOFireWireFamily/IOFWIsochChannel.cpp:1243-1269.
+    reservations_.InvalidateAfterGenerationChange();
+    ASFW_LOG(Isoch,
+             "[Lifecycle] IsochDuplexHostTransport StopAll generation-invalidated "
+             "action=invalidate-irm-reservations");
+    return kIOReturnSuccess;
+}
+
 bool IsochDuplexHostTransport::IsReceiveReplayEstablished() const noexcept {
     // Replay cadence is content policy. The transport owns no audio state;
     // this audio-side adapter owns the master receive consumer that does.
