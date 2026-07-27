@@ -75,6 +75,24 @@ public:
     static std::optional<std::array<uint32_t, 2>> ExtractPhyPacketQuadletsHostOrder(
         std::span<const uint8_t> header);
 
+    // Extract selfIDGeneration from the controller-synthesized bus-reset marker that
+    // OHCI delivers to the AR Request context on every bus reset.
+    //
+    // The field lives in **quadlet 2**, bits [23:16] — i.e. raw byte offset 10 of the
+    // AR packet. Independently confirmed by both reference stacks:
+    //   - Linux  drivers/firewire/ohci.c:981 — `(p.header[2] >> 16) & 0xff`, where
+    //     p.header[0..2] == buffer[0..2] and header_length == 12 for TCODE_LINK_INTERNAL.
+    //   - Apple  AppleFWOHCI_AsyncReceiveRequest::checkForReceivedPackets, case 0xE —
+    //     `*(_DWORD *)(link + 3220) = *((unsigned __int8 *)pkt + 10)`, after a
+    //     getPacket(0x10) of 3 header quadlets + trailer.
+    // Both take the same field of the same quadlet from the same base, so quadlet 1
+    // (which an earlier revision read, and which reads 0 on real hardware) is wrong.
+    //
+    // Returns nullopt when the header is shorter than the 3 quadlets a link-internal
+    // packet always carries.
+    static std::optional<uint8_t> ExtractBusResetMarkerGeneration(
+        std::span<const uint8_t> header);
+
 private:
     // tCode values per IEEE 1394-1995 Table 6-1
     static constexpr uint8_t kTCodeWriteQuadlet = 0x0;

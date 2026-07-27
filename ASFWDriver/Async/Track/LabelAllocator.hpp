@@ -48,7 +48,7 @@ public:
     // Only GenerationTracker (ASFW::Async::Bus::GenerationTracker) is permitted
     // to read or update the internal generation value. This prevents fragmented
     // generation updates from multiple components and keeps interrupt-safe
-    // semantics for OnSyntheticBusReset.
+    // semantics for OnConfirmedBusGeneration.
     friend class ASFW::Async::Bus::GenerationTracker;
 
 private:
