@@ -295,6 +295,17 @@ void SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
     ASFW_LOG(Hardware, "IntMask seeded: base|master=0x%08x", initialMask);
 }
 
+// The one sanctioned direct InitiateBusReset in the driver.
+//
+// Every other software reset goes through BusResetCoordinator, which owns the §8.2.1
+// holdoff and the PHY-config pairing. This one cannot: it runs during bring-up, before
+// any Self-ID has completed and before the coordinator is wired to hardware. There is
+// nothing to hold off from (the holdoff is armed at Self-ID completion, so it reads 0)
+// and no accepted topology whose gap count could be preserved, so routing it would add
+// a dependency without changing a single bus-visible byte.
+//
+// If you are adding a new software reset, it does NOT belong here — see
+// BusResetCoordinator::RequestConfigRomRestageReset for the pattern to copy.
 void MaybeForceInitialBusReset(ASFW::Driver::HardwareInterface& hw,
                                bool phyProgramSupported,
                                bool phyConfigOk) {
@@ -841,10 +852,21 @@ kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
         return kr;
     }
     ASFW_LOG(Controller,
-             "ApplyRolePolicy: roleMode=%u activity=%u — re-staged BIB, forcing bus reset",
+             "ApplyRolePolicy: roleMode=%u activity=%u — re-staged BIB, requesting bus reset",
              static_cast<unsigned>(rolePolicy_.roleMode),
              static_cast<unsigned>(rolePolicy_.fullBMActivityLevel));
-    hw.InitiateBusReset(/*shortReset=*/false);
+
+    // Route through the coordinator rather than hitting the PHY directly: it owns the
+    // IEEE 1394-2008 §8.2.1 repeated-reset holdoff, the gap-count-preserving PHY config
+    // that must precede a software reset, and the reset-origin attribution that makes
+    // reset storms diagnosable. A direct InitiateBusReset here bypassed all three.
+    if (auto* coordinator = GetBusResetCoordinator(); coordinator != nullptr) {
+        coordinator->RequestConfigRomRestageReset("Role policy BIB re-stage");
+    } else {
+        ASFW_LOG(Controller,
+                 "ApplyRolePolicy: no bus reset coordinator — BIB re-staged but peers will "
+                 "not re-read the ROM until the next reset");
+    }
     return kIOReturnSuccess;
 }
 

@@ -199,6 +199,17 @@ class BusResetCoordinator {
     /// static string surfaced in the reset-cycle logs.
     void RequestUserReset(bool shortReset, const char* reason = "UserClient-initiated");
 
+    /// Request the long bus reset that must follow a runtime Config ROM / BIB
+    /// re-stage, so peers re-read the local ROM. Carries no PHY config of its own;
+    /// the coordinator still restates the current gap count per §8.2.1.
+    ///
+    /// Routed here rather than poking HardwareInterface::InitiateBusReset directly:
+    /// the coordinator is the sole software reset issuer, owning the §8.2.1 holdoff,
+    /// the PHY-config pairing and the reset-origin attribution. Apple draws the same
+    /// line — IOFireWireUserClient::busReset() only reaches the raw link when the
+    /// debug-only "unsafe bus resets" property is set.
+    void RequestConfigRomRestageReset(const char* reason = "Config ROM re-stage");
+
     /// Request a RoleCoordinator-initiated PHY config + bus reset.
     void RequestRolePolicyReset(uint8_t targetRoot, bool longReset,
                                 std::optional<uint8_t> gapCount,
@@ -214,7 +225,19 @@ class BusResetCoordinator {
 
     enum class StepResult : uint8_t { Continue, Yield, Finish };
 
-    enum class ResetRequestKind : uint8_t { Recovery, GapCorrection, Delegation, ManualBusManager };
+    // Why a software reset was asked for. Kept distinct per cause rather than
+    // collapsed onto Recovery: the kind is the only attribution a trace carries, and
+    // "which path issued this reset" is the first question every reset investigation
+    // asks.
+    enum class ResetRequestKind : uint8_t {
+        Recovery,
+        GapCorrection,
+        Delegation,
+        ManualBusManager,
+        // Config ROM / BIB capabilities were re-staged at runtime; peers must be made
+        // to re-read the local ROM. Long reset, no PHY config of its own.
+        RolePolicyRestage,
+    };
 
     enum class ResetFlavor : uint8_t { Short, Long };
 
@@ -302,6 +325,10 @@ class BusResetCoordinator {
     void ClearSoftwareResetTracking(const ResetRequest& request, bool carriesDelegation);
     [[nodiscard]] bool ApplySoftwareResetPhyConfig(const ResetRequest& request,
                                                    bool carriesDelegation);
+    // Gap count to restate ahead of a software reset that carries no PHY config of its
+    // own (IEEE 1394-2008 §8.2.1; Linux core-card.c:252). nullopt when there is nothing
+    // worth preserving: no accepted topology, inconsistent gap counts, or already 63.
+    [[nodiscard]] std::optional<uint8_t> CurrentGapCountForBareReset() const noexcept;
     void NoteIssuedGapReset(const ResetRequest& request);
     bool DispatchSoftwareReset(const ResetRequest& request);
     void ClearDelegationAttempt();
