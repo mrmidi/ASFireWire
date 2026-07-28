@@ -358,6 +358,7 @@
 		F4A99690858D37ACCC9CECB6 /* SystemLogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FB2E35051CCCFD3E4CD6E2F /* SystemLogsView.swift */; };
 		F576426B7995BB3474228911 /* ASFWDriverUserClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5364BA023A0C10D7791261A1 /* ASFWDriverUserClient.cpp */; };
 		F62328EAD744B4AA552D6E91 /* ASFWAudioDriver.iig in Sources */ = {isa = PBXBuildFile; fileRef = 2A74ECB6BAB486C9BA62AFC2 /* ASFWAudioDriver.iig */; };
+		F807AB38E6C8A4E3EA502788 /* AlesisMultiMixProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B33BA306B96A139E7B5C959F /* AlesisMultiMixProfile.cpp */; };
 		F8FEBF54A8FC8898B66F6835 /* RuntimeLifecycleCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C4428DAA8DA9967C8DC18F26 /* RuntimeLifecycleCoordinator.cpp */; };
 		F9079357980132495EE8D5C0 /* LoggingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0ACF327198028F1B5462DA0 /* LoggingSettingsView.swift */; };
 		F9082ECD47629C0EABD9CC93 /* DiagnosticsTextFormatter+Bus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 934A97DC159F9DBB258CEAA8 /* DiagnosticsTextFormatter+Bus.swift */; };
@@ -413,6 +414,7 @@
 		027ACBE2BF90D7A3225D3DF2 /* RomParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomParser.swift; sourceTree = "<group>"; };
 		0305E1A8A4D9799CD3CB2887 /* ASFWAudioDriverGraph.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverGraph.cpp; sourceTree = "<group>"; };
 		030DE44371FB8109F515F09E /* MCPTransactionSchemaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTransactionSchemaTests.swift; sourceTree = "<group>"; };
+		032CA480750A71DDD179CE7D /* AlesisMultiMixProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AlesisMultiMixProfile.hpp; sourceTree = "<group>"; };
 		03627F2DBAE568BDFB6E1E7F /* IRMCSRConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMCSRConstants.hpp; sourceTree = "<group>"; };
 		037576E0DAB3B87F0D80A8B3 /* BusResetPacketDiagram.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusResetPacketDiagram.swift; sourceTree = "<group>"; };
 		040E3246E90734BBE6ED2380 /* MCPConsoleLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPConsoleLogTests.swift; sourceTree = "<group>"; };
@@ -952,6 +954,7 @@
 		B249219CD87475D654686813 /* Transaction.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Transaction.cpp; sourceTree = "<group>"; };
 		B2B12F1219B1AE79B6B8AF8E /* ReadCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ReadCommand.cpp; sourceTree = "<group>"; };
 		B31D2FEE1FD985CD7AE779D2 /* fwicons.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = fwicons.icon; sourceTree = "<group>"; };
+		B33BA306B96A139E7B5C959F /* AlesisMultiMixProfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AlesisMultiMixProfile.cpp; sourceTree = "<group>"; };
 		B3F76378A96EF757865E11C4 /* AsyncSubsystemInterrupts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemInterrupts.cpp; sourceTree = "<group>"; };
 		B40E9ACE9D95CBEBF879D45C /* OxfwStreamFormats.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OxfwStreamFormats.cpp; sourceTree = "<group>"; };
 		B4C0FA13AF98CB5D82ABE191 /* AVCWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCWireFormats.hpp; sourceTree = "<group>"; };
@@ -1216,6 +1219,8 @@
 		022FBC38A7D40A0C69C24256 /* Profiles */ = {
 			isa = PBXGroup;
 			children = (
+				B33BA306B96A139E7B5C959F /* AlesisMultiMixProfile.cpp */,
+				032CA480750A71DDD179CE7D /* AlesisMultiMixProfile.hpp */,
 				7B882FD0DA3D8C7A7845DA54 /* FocusriteSaffireProfile.cpp */,
 				F85F69E1C47968DBCD351C13 /* FocusriteSaffireProfile.hpp */,
 				A638E889D072CE33AEFCBDEA /* GenericDiceProfile.cpp */,
@@ -3078,6 +3083,7 @@
 				66819CBA16A29DA5186EF651 /* AVCInfoBlock.cpp in Sources */,
 				727AEB7C9C6F7E1B7D07CF7F /* AVCUnit.cpp in Sources */,
 				9EDB35B4B0F9F503A82DB7A8 /* AddressSpaceManager.cpp in Sources */,
+				F807AB38E6C8A4E3EA502788 /* AlesisMultiMixProfile.cpp in Sources */,
 				0DED616BF959B0096A4DC065 /* AmdtpCadence.cpp in Sources */,
 				1AA921B5214974B982C6AF6D /* AmdtpPacketTimeline.cpp in Sources */,
 				0D45E9D5217493F2CA468B66 /* AmdtpPayloadWriter.cpp in Sources */,

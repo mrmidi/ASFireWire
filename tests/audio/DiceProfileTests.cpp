@@ -10,6 +10,7 @@
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceDeviceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceProfileRegistry.hpp"
+#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/AlesisMultiMixProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
@@ -220,6 +221,73 @@ TEST(DiceProfileTests, PreSonusVendorWithWrongModelDoesNotMatchStudioLiveProfile
         const auto* profile = AudioProfileRegistry::FindProfile(0x000A92, modelId, 0x0ULL);
         if (profile != nullptr) {
             EXPECT_STRNE(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
+        }
+    }
+}
+
+TEST(DiceProfileTests, ResolvesAlesisMultiMixProfileByVendorAndModel) {
+    // Alesis MultiMix 8/12/16 FireWire all share vendor 0x000595 / model 0x000000
+    // (libffado configuration:622-628; snd-firewire-ctl-services model.rs:140).
+    const auto* profile = AudioProfileRegistry::FindProfile(0x000595, 0x000000, 0x000595040000ABCDULL);
+
+    ASSERT_NE(profile, nullptr);
+    EXPECT_STREQ(profile->Name(), "Alesis MultiMix FireWire (DICE)");
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+
+    // Seed geometry only — the real per-variant counts are read back from the
+    // device's TX/RX stream-format registers and overwrite these via
+    // ApplyDiceRuntimeCapsToDeviceConfig. Pinned here so a change is deliberate.
+    EXPECT_EQ(profile->TxChannelCount(), 2);
+    EXPECT_EQ(profile->RxChannelCount(), 16);
+    EXPECT_EQ(profile->TxMidiSlots(), 0);
+    EXPECT_EQ(profile->RxMidiSlots(), 0);
+    EXPECT_EQ(profile->TxDbs(), 2);
+    EXPECT_EQ(profile->RxDbs(), 16);
+
+    const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
+    // ONE stream per direction. The device over-reports its host-to-device
+    // stream count (libffado dice_avdevice.cpp:1684-1693 forces nb_rx = 1 for
+    // Alesis models 0x000000/0x000001), so these must stay at 1.
+    EXPECT_EQ(diceProfile->TxStreamCount(), 1u);
+    EXPECT_EQ(diceProfile->RxStreamCount(), 1u);
+    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+    EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
+              ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+
+    // The MultiMix has no MIDI I/O: the host-to-device block is pure PCM
+    // (DBS == pcmChannels), so there is no non-audio slot and the 0x80000000
+    // MIDI-slot fill the other TCAT profiles carry stays off. If a non-audio
+    // slot is ever confirmed, midiSlots and this flag must be raised together.
+    EXPECT_FALSE(diceProfile->Quirks().tx.initializeNonAudioSlots);
+    EXPECT_EQ(profile->TxDbs(), profile->TxChannelCount());
+}
+
+TEST(DiceProfileTests, AlesisMultiMixSafetyOffsetsAndLatencies) {
+    const auto* profile = AudioProfileRegistry::FindProfile(0x000595, 0x000000, 0x000595040000ABCDULL);
+    ASSERT_NE(profile, nullptr);
+
+    // Focusrite Saffire baseline ladder: Tx = 6 * 8 = 48, Rx = 16 * 8 = 128.
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 48);
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 128);
+    EXPECT_EQ(profile->TxReportedLatencyFrames(48000.0), 29);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(48000.0), 29);
+
+    // 96 kHz: Tx = 8 * 16 = 128, Rx = 18 * 16 = 288.
+    EXPECT_EQ(profile->TxSafetyOffsetFrames(96000.0), 128);
+    EXPECT_EQ(profile->RxSafetyOffsetFrames(96000.0), 288);
+    EXPECT_EQ(profile->TxReportedLatencyFrames(96000.0), 59);
+    EXPECT_EQ(profile->RxReportedLatencyFrames(96000.0), 59);
+}
+
+TEST(DiceProfileTests, AlesisVendorWithWrongModelDoesNotMatchMultiMixProfile) {
+    // The Alesis OUI also covers the iO14/iO26 (0x000001) and MasterControl
+    // (0x000002), which have different stream geometry and their own format
+    // detection in Linux (dice-alesis.c). Neither may inherit MultiMix geometry.
+    for (const uint32_t modelId : {0x000001u, 0x000002u}) {
+        const auto* profile = AudioProfileRegistry::FindProfile(0x000595, modelId, 0x0ULL);
+        if (profile != nullptr) {
+            EXPECT_STRNE(profile->Name(), "Alesis MultiMix FireWire (DICE)");
         }
     }
 }

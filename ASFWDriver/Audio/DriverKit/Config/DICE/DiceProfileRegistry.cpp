@@ -5,6 +5,7 @@
 // Matcher registry database for DICE profiles.
 
 #include "DiceProfileRegistry.hpp"
+#include "Isoch/Profiles/AlesisMultiMixProfile.hpp"
 #include "Isoch/Profiles/FocusriteSaffireProfile.hpp"
 #include "Isoch/Profiles/GenericDiceProfile.hpp"
 #include "Isoch/Profiles/MidasVeniceProfile.hpp"
@@ -17,12 +18,14 @@ Profiles::GenericDiceProfile gGenericProfile{};
 Profiles::FocusriteSaffireProfile gFocusriteProfile{};
 Profiles::MidasVeniceProfile gMidasVeniceProfile{};
 Profiles::PreSonusStudioLiveProfile gPreSonusStudioLiveProfile{};
+Profiles::AlesisMultiMixProfile gAlesisMultiMixProfile{};
 } // namespace
 
 DiceProfileRegistry::DiceProfileRegistry() noexcept {
     (void)RegisterProfile(&gFocusriteProfile);
     (void)RegisterProfile(&gMidasVeniceProfile);
     (void)RegisterProfile(&gPreSonusStudioLiveProfile);
+    (void)RegisterProfile(&gAlesisMultiMixProfile);
 }
 
 bool DiceProfileRegistry::RegisterProfile(const IDiceDeviceProfile* profile) noexcept {
