@@ -155,27 +155,82 @@ TEST_F(ATContextCompletionTest, AdvancesTrulyOrphanedPendingDescriptor) {
     EXPECT_TRUE(ring_.IsEmpty());
 }
 
-// A quiesced context will never write a status into the OUTPUT_LAST, so the
-// recognized-chain path must not hold the head hostage waiting for one. Both
-// references drain unconditionally once the context is stopped: Linux gates
-// handle_at_packet()'s early return on !ctx->flushing and calls
-// at_context_flush() after context_stop() (ohci.c:1364, 2000-2010); AppleFWOHCI
-// calls resetDMA() after stopDMA() in handleBusResetInt(). OHCI 1.2 draft
-// clause 7.2.3.3 requires software to drain what hardware left unsent.
-TEST_F(ATContextCompletionTest, DrainsRecognizedChainWhenContextIsQuiesced) {
+// A stopped context will never write a status, but an ordinary scan must still
+// leave the chain alone: FlushScope is what reports it and fails the owning
+// transaction. A scan that landed between StopATContextsOnly() and
+// FlushATContexts() (the watchdog drain runs on a timer) would otherwise consume
+// the descriptors first, leaving the transaction to time out instead.
+TEST_F(ATContextCompletionTest, HoldsQuiescedChainSoTheFlushCanReportIt) {
     PrepareBlockWriteChain(0);
     hardware_.SetTestRegister(Async::ATRequestTag::kControlSetReg, 0);
 
-    while (!ring_.IsEmpty()) {
+    for (int i = 0; i < 4; ++i) {
         const auto completion = context_.ScanCompletion();
-        ASSERT_FALSE(completion.has_value());
-        if (ring_.Head() == 0u) {
-            FAIL() << "quiesced context wedged the ring head at 0";
-        }
+        EXPECT_FALSE(completion.has_value());
     }
 
+    EXPECT_EQ(ring_.Head(), 0u);
+    EXPECT_FALSE(ring_.IsEmpty());
+
+    Async::ATRequestContext::FlushScope flush(context_);
+    const auto flushed = context_.ScanCompletion();
+
+    ASSERT_TRUE(flushed.has_value());
+    EXPECT_EQ(flushed->eventCode, Async::OHCIEventCode::kEvtFlushed);
+    EXPECT_EQ(flushed->tLabel, kTLabel);
+    EXPECT_TRUE(ring_.IsEmpty());
+}
+
+// The quiesced-context drain above releases the ring but reports nothing, so the
+// owning transaction only fails once it times out. Inside a FlushScope the same
+// chain is reported as evt_flushed, which TransactionCompletionHandler maps to
+// kIOReturnAborted — Linux calls the equivalent RCODE_GENERATION "the same error
+// as when we try to use a stale generation count" (ohci.c:1387-1393).
+TEST_F(ATContextCompletionTest, FlushScopeReportsUnsentChainAsFlushed) {
+    PrepareBlockWriteChain(0);
+    hardware_.SetTestRegister(Async::ATRequestTag::kControlSetReg, 0);
+
+    Async::ATRequestContext::FlushScope flush(context_);
+
+    const auto completion = context_.ScanCompletion();
+
+    ASSERT_TRUE(completion.has_value());
+    EXPECT_EQ(completion->eventCode, Async::OHCIEventCode::kEvtFlushed);
+    EXPECT_EQ(completion->tLabel, kTLabel);
+    EXPECT_EQ(completion->descriptor, ring_.At(2));
     EXPECT_EQ(ring_.Head(), 3u);
     EXPECT_TRUE(ring_.IsEmpty());
+}
+
+// A genuinely completed packet keeps its real status while flushing; only the
+// zero-status descriptors are synthesized.
+TEST_F(ATContextCompletionTest, FlushScopePreservesRealCompletionStatus) {
+    PrepareBlockWriteChain();
+
+    Async::ATRequestContext::FlushScope flush(context_);
+
+    const auto completion = context_.ScanCompletion();
+
+    ASSERT_TRUE(completion.has_value());
+    EXPECT_EQ(completion->eventCode, Async::OHCIEventCode::kAckComplete);
+    EXPECT_EQ(completion->timeStamp, kTimestamp);
+    EXPECT_EQ(completion->tLabel, kTLabel);
+    EXPECT_TRUE(ring_.IsEmpty());
+}
+
+// Leaving the scope must restore normal pending semantics, otherwise a live
+// context would start reporting in-flight packets as flushed.
+TEST_F(ATContextCompletionTest, FlushScopeRestoresPendingSemanticsOnExit) {
+    PrepareBlockWriteChain(0);
+    {
+        Async::ATRequestContext::FlushScope flush(context_);
+    }
+
+    const auto completion = context_.ScanCompletion();
+
+    EXPECT_FALSE(completion.has_value());
+    EXPECT_EQ(ring_.Head(), 0u);
+    EXPECT_FALSE(ring_.IsEmpty());
 }
 
 } // namespace

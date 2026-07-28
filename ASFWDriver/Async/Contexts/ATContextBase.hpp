@@ -276,6 +276,46 @@ public:
     [[nodiscard]] std::optional<TxCompletion> ScanCompletion() noexcept;
 
     /**
+     * \brief RAII scope that makes ScanCompletion() report unsent packets.
+     *
+     * While held, a descriptor whose xferStatus is still zero is reported as
+     * evt_flushed instead of being treated as pending. OHCI 1.2 draft clause
+     * 7.2.3.3 leaves such packets in the AT queue once the context stops, and
+     * the transaction owning them would otherwise wait for a status hardware
+     * will never write.
+     *
+     * \warning The context must already be stopped. Entering this scope while
+     *          hardware can still write a status would report packets that are
+     *          merely in flight as flushed.
+     *
+     * **Reference Pattern**
+     * Linux at_context_flush() sets ctx->flushing around ohci_at_context_work()
+     * so the ordinary handle_at_packet() body drains the queue instead of
+     * stopping at the first zero status (ohci.c:1331-1343, 1364). AppleFWOHCI
+     * reaches the same end state through resetDMA(), which frees every pending
+     * ATxElement after stopDMA() (symbol offsets 0x5fae-0x5fd2).
+     */
+    class [[nodiscard]] FlushScope {
+    public:
+        explicit FlushScope(ATContextBase& context) noexcept : context_(&context) {
+            context_->flushing_ = true;
+        }
+        ~FlushScope() {
+            if (context_) {
+                context_->flushing_ = false;
+            }
+        }
+
+        FlushScope(const FlushScope&) = delete;
+        FlushScope& operator=(const FlushScope&) = delete;
+        FlushScope(FlushScope&&) = delete;
+        FlushScope& operator=(FlushScope&&) = delete;
+
+    private:
+        ATContextBase* context_{nullptr};
+    };
+
+    /**
      * \brief Get descriptor ring for diagnostics.
      *
      * \return Reference to descriptor ring (const access)
@@ -327,6 +367,10 @@ private:
         Advanced,
     };
 
+    /// Set by FlushScope: report zero-status descriptors as evt_flushed.
+    /// Touched only under submitLock_ (set/cleared while the context is stopped).
+    bool flushing_{false};
+
     /// Descriptor ring for tracking in-flight chains
     DescriptorRing* ring_{nullptr};
 
@@ -356,7 +400,6 @@ private:
     void FetchScanDescriptor(const ScanState& state) noexcept;
     [[nodiscard]] ChainTailScanResult InspectChainTail(
         const ScanState& state) noexcept;
-    [[nodiscard]] bool IsContextQuiesced() noexcept;
     void HandlePendingDescriptor(const ScanState& state) noexcept;
     [[nodiscard]] bool IsOrphanedDescriptor(const ScanState& state,
                                             uint32_t& commandPtrAddr,
@@ -619,6 +662,18 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         if (!LoadScanState(state)) {
             unlock();
             return std::nullopt;
+        }
+
+        // OHCI 1.2 draft clause 7.2.3.3: after the context stops, hardware may
+        // leave packets in the AT queue that it never transmitted and will never
+        // write a status for. Reporting them as evt_flushed is what releases the
+        // ring and fails their transactions instead of letting them time out.
+        // Linux does exactly this by re-running handle_at_packet() with
+        // ctx->flushing set (ohci.c:1364, at_context_flush() at 1331-1343);
+        // AppleFWOHCI's resetDMA() frees every pending ATxElement after stopDMA()
+        // (symbol offsets 0x5fae-0x5fd2).
+        if (state.xferStatus == 0 && flushing_) {
+            state.xferStatus = static_cast<uint16_t>(OHCIEventCode::kEvtFlushed);
         }
 
         if (state.xferStatus == 0) {
@@ -900,19 +955,10 @@ ATContextBase<Derived, Tag>::InspectChainTail(const ScanState& state) noexcept {
         // handle_at_packet() to stop iteration:
         // references/linux-ohci-firewire-low-level-stack/drivers/firewire/ohci.c:1354-1366.
         //
-        // A quiesced context is different: hardware will never write a status,
-        // so treating the chain as merely pending would wedge the ring head
-        // forever. Linux gates the same early return on !ctx->flushing
-        // (ohci.c:1364) and drains via at_context_flush() after context_stop()
-        // (ohci.c:2000-2010); AppleFWOHCI calls resetDMA() after stopDMA() in
-        // handleBusResetInt() (symbol offsets 0x5fae-0x5fd2), which frees every
-        // pending element regardless of status. OHCI 1.2 draft clause 7.2.3.3:
-        // hardware may leave unsent packets in the AT queues for software to
-        // drain. ASFW has no equivalent flush entry point yet, so fall through
-        // to the orphan path, which is what releases the ring today.
-        if (IsContextQuiesced()) {
-            return ChainTailScanResult::NotRecognized;
-        }
+        // A stopped context never writes a status either, but the chain must
+        // still be held here: FlushScope is what reports it as evt_flushed and
+        // fails the owning transaction. Releasing it from this path instead
+        // would consume the descriptors before the flush could see them.
         return ChainTailScanResult::Pending;
     }
 
@@ -924,17 +970,6 @@ ATContextBase<Derived, Tag>::InspectChainTail(const ScanState& state) noexcept {
                 "ScanCompletion: head %zu→%zu (completed OUTPUT_LAST after OUTPUT_MORE)",
                 state.headIndex, tailIndex);
     return ChainTailScanResult::Advanced;
-}
-
-template<typename Derived, ContextRole Tag>
-bool ATContextBase<Derived, Tag>::IsContextQuiesced() noexcept {
-    // Deliberately narrower than IsOrphanedDescriptor(): only run==0 && active==0
-    // proves hardware will never write another status. That function's second
-    // clause (commandPtr != headIOVA) also fires for a *live* chain whose command
-    // pointer has already advanced to a pending OUTPUT_LAST, which is exactly the
-    // false positive this scan path must not reintroduce.
-    const uint32_t controlReg = this->ReadControl();
-    return (controlReg & (kContextControlRunBit | kContextControlActiveBit)) == 0;
 }
 
 template<typename Derived, ContextRole Tag>

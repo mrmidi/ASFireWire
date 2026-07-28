@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "AsyncSubsystem.hpp"
 
+#include "Contexts/ATRequestContext.hpp"
+#include "Contexts/ATResponseContext.hpp"
 #include "Tx/Submitter.hpp"
 
 #include "../Logging/Logging.hpp"
 #include "Track/LabelAllocator.hpp"
 #include "Track/PayloadRegistry.hpp"
+
+#include <optional>
 
 #include <DriverKit/IOLib.h>
 
@@ -167,7 +171,29 @@ void AsyncSubsystem::FlushATContexts() {
     if (!txnMgr_) {
         return;
     }
-    (void)DrainTxCompletions(nullptr);
+
+    // Callers reach here only after StopATContextsOnly(), so hardware can no
+    // longer write descriptor status. Anything still queued was left unsent by
+    // the bus reset (OHCI 1.2 draft clause 7.2.3.3) and must be reported as
+    // evt_flushed rather than waited on — the same ordering Linux uses
+    // (context_stop() then at_context_flush(), ohci.c:2000-2010) and Apple uses
+    // (stopDMA() then resetDMA() in handleBusResetInt()).
+    auto* atRequest = ResolveAtRequestContext();
+    auto* atResponse = ResolveAtResponseContext();
+
+    std::optional<ATRequestContext::FlushScope> requestFlush;
+    if (atRequest) {
+        requestFlush.emplace(*atRequest);
+    }
+    std::optional<ATResponseContext::FlushScope> responseFlush;
+    if (atResponse) {
+        responseFlush.emplace(*atResponse);
+    }
+
+    const uint32_t flushed = DrainTxCompletions("bus-reset-flush");
+    if (flushed > 0) {
+        ASFW_LOG(Async, "FlushATContexts: flushed %u unsent AT packet(s)", flushed);
+    }
 }
 
 void AsyncSubsystem::ConfirmBusGeneration(uint8_t confirmedGeneration) {
