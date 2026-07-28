@@ -50,6 +50,54 @@ Run these commands from the ASFireWire repository root.
 
 Pass `--endpoint` or set `ASFW_MCP_ENDPOINT` when the server uses a non-default loopback port.
 
+## Config-ROM explorer
+
+`asfw_get_config_rom` is a **read-only projection of the driver's discovery
+cache**. It never starts a ROM fetch and never issues a FireWire transaction.
+First obtain the current `nodeId` and generation from `summary`; after any bus
+reset, refresh them before asking for another view.
+
+The default `summary` view is deliberately compact: cache/generation status,
+GUID, vendor/model/unit identity, parser diagnostics, and two reminders that
+avoid common false conclusions. Use it before requesting the more detailed
+views:
+
+```bash
+# Compact normal entry point: summary is default.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17
+
+# BIB bitfields, each with bit position, decoded value, and a short meaning.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view bib
+
+# Parsed IEEE 1212 directory tree (default 64 entries; raw leaf bytes omitted).
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view tree
+
+# Big-endian cached quadlets; bounded to 64 per response and page by index.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view raw --start-quadlet 0 --max-quadlets 32
+```
+
+Equivalent direct calls are useful when another MCP client does not use the
+bundled script:
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_config_rom \
+  '{"nodeId":0,"generation":17,"view":"bib"}'
+```
+
+Interpret the annotated BIB carefully:
+
+- `IRMC`, `BMC`, `CMC`, and `ISC` are the device's Config-ROM capability
+  claims. They do not establish physical root, designated IRM, or Bus Manager
+  ownership.
+- `generation` in the BIB is the device's four-bit ROM field; it can differ
+  from the current host topology generation supplied to the tool.
+- `max_rec` describes an asynchronous payload code. It is not an isochronous
+  audio packet size.
+- A tree leaf reported as `not fetched from partial cache` is not evidence of a
+  malformed ROM. The discovery cache may contain only a prefix. Likewise, a
+  cached result from another generation is useful only as stale description,
+  never as a target for a follow-up transaction.
+
 ## Tool visibility is not device capability
 
 `tools` lists a filtered view, never the full catalog. Two independent filters

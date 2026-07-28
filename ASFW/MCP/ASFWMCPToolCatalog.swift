@@ -38,7 +38,7 @@ enum ASFWMCPToolCatalog {
     ]
 
     static let configRomTools: [ASFWMCPToolDefinition] = [
-        ASFWMCPToolDefinition(name: "asfw_get_config_rom", group: "config_rom", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return cached Config ROM summary.")
+        ASFWMCPToolDefinition(name: "asfw_get_config_rom", group: "config_rom", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Inspect the cached Config ROM through compact Summary, annotated BIB, Tree, or bounded Raw views. Never reads the device.")
     ]
 
     static let asyncTransactionTools: [ASFWMCPToolDefinition] = [

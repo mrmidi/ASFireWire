@@ -1464,6 +1464,13 @@ private extension ASFWMCPCore {
         do {
             let nodeId = try decoder.uint32("nodeId")
             let generation = try decoder.uint32("generation")
+            let viewName = try decoder.string("view", default: ASFWMCPConfigRomView.summary.rawValue)
+            guard let view = ASFWMCPConfigRomView(rawValue: viewName) else {
+                throw ASFWMCPToolArgumentError.malformed("view must be one of: summary, bib, tree, raw")
+            }
+            let startQuadlet = try decoder.int("startQuadlet", default: 0, range: 0...Int.max)
+            let maxQuadlets = try decoder.int("maxQuadlets", default: 32, range: 1...64)
+            let maxTreeEntries = try decoder.int("maxTreeEntries", default: 64, range: 1...128)
             guard let summary = await driver.fetchConfigROM(nodeId: nodeId, generation: generation) else {
                 return .failure(
                     toolName: toolName,
@@ -1471,7 +1478,15 @@ private extension ASFWMCPCore {
                     reason: "No Config ROM is cached for node \(nodeId) in generation \(generation)."
                 )
             }
-            return .success(toolName: toolName, data: summary.mcpValue)
+            return .success(
+                toolName: toolName,
+                data: summary.mcpValue(
+                    view: view,
+                    startQuadlet: startQuadlet,
+                    maxQuadlets: maxQuadlets,
+                    maxTreeEntries: maxTreeEntries
+                )
+            )
         } catch {
             return .failure(toolName: toolName, code: .malformedRequest, reason: error.localizedDescription)
         }

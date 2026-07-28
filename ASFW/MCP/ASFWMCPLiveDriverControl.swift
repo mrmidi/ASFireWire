@@ -152,6 +152,21 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     private var fcpRecords: [ASFWMCPFcpRecord] = []
     private static let fcpRecordCapacity = 64
 
+    private static func bigEndianQuadlets(from data: Data) -> [UInt32] {
+        guard data.count >= 4 else { return [] }
+        let end = data.count - (data.count % 4)
+        var result: [UInt32] = []
+        result.reserveCapacity(end / 4)
+        for offset in stride(from: 0, to: end, by: 4) {
+            let high = UInt32(data[offset]) << 24
+            let upperMiddle = UInt32(data[offset + 1]) << 16
+            let lowerMiddle = UInt32(data[offset + 2]) << 8
+            let low = UInt32(data[offset + 3])
+            result.append(high | upperMiddle | lowerMiddle | low)
+        }
+        return result
+    }
+
     init(
         backend: any ASFWLiveDriverBackend,
         transactionTimeout: TimeInterval = 2.0,
@@ -298,6 +313,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         }
 
         let byteCount = fetched.data.count
+        let rawQuadlets = Self.bigEndianQuadlets(from: fetched.data)
         let base = ASFWMCPConfigRomSummary(
             nodeId: nodeId,
             requestedGeneration: UInt32(fetched.requestedGeneration),
@@ -305,6 +321,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             exactGenerationMatch: fetched.isExactGenerationMatch,
             byteCount: byteCount,
             quadletCount: byteCount / 4,
+            rootDirectoryStartQuadlet: nil,
             parsed: false,
             parseNote: nil,
             guid: nil,
@@ -312,8 +329,12 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             irmc: nil, cmc: nil, isc: nil, bmc: nil,
             maxRec: nil, linkSpeed: nil,
             vendorName: nil, modelName: nil,
+            vendorId: nil, modelId: nil, modalias: nil,
             units: [],
-            diagnostics: []
+            diagnostics: [],
+            bibFields: [],
+            rawQuadlets: rawQuadlets,
+            tree: []
         )
 
         // The discovery cache legitimately holds only a fetched prefix of a ROM, so a
@@ -334,6 +355,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             exactGenerationMatch: fetched.isExactGenerationMatch,
             byteCount: byteCount,
             quadletCount: byteCount / 4,
+            rootDirectoryStartQuadlet: tree.rootDirectoryStartQ,
             parsed: true,
             parseNote: nil,
             guid: String(format: "0x%016llX", tree.busInfo.guid),
@@ -346,6 +368,9 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             linkSpeed: options.linkSpd,
             vendorName: summary.vendorName,
             modelName: summary.modelName,
+            vendorId: summary.vendorId,
+            modelId: summary.modelId,
+            modalias: summary.modalias,
             units: summary.units.map {
                 ASFWMCPConfigRomUnit(
                     specifierId: $0.specifierId,
@@ -354,7 +379,10 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
                     modelName: $0.modelName
                 )
             },
-            diagnostics: tree.diagnostics.map { "\($0.severity.rawValue): \($0.message)" }
+            diagnostics: tree.diagnostics.map { "\($0.severity.rawValue): \($0.message)" },
+            bibFields: ASFWMCPConfigRomBIBField.makeFields(from: tree.busInfo),
+            rawQuadlets: rawQuadlets,
+            tree: tree.rootDirectory.map(ASFWMCPConfigRomTreeEntry.init(entry:))
         )
     }
 

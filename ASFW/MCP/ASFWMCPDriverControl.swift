@@ -152,6 +152,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             exactGenerationMatch: requestedGeneration == generation,
             byteCount: 256,
             quadletCount: 64,
+            rootDirectoryStartQuadlet: 5,
             parsed: true,
             parseNote: nil,
             guid: node.guid,
@@ -164,8 +165,14 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             linkSpeed: 2,
             vendorName: node.vendorName,
             modelName: node.modelName,
+            vendorId: nil,
+            modelId: nil,
+            modalias: nil,
             units: [],
-            diagnostics: []
+            diagnostics: [],
+            bibFields: [],
+            rawQuadlets: [],
+            tree: []
         )
     }
 

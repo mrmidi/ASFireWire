@@ -94,6 +94,30 @@ struct MCPLiveDriverControlTests {
         #expect(dice?.protocolHints == ["dice_tcat", "sbp2"])
     }
 
+    @Test func configRomProjectsAnnotatedBIBTreeAndBoundedRawCache() async throws {
+        let backend = FakeLiveDriverBackend()
+        backend.configROM = ASFWDriverConnector.ConfigROMFetchResult(
+            data: configRomFixture(),
+            requestedGeneration: 17,
+            resolvedGeneration: 17
+        )
+
+        let report = try #require(await LiveASFWDriverControl(backend: backend).fetchConfigROM(nodeId: 0, generation: 17))
+
+        #expect(report.parsed)
+        #expect(report.rootDirectoryStartQuadlet == 5)
+        #expect(report.guid == "0x00130E0402004713")
+        #expect(report.vendorId == 0x00130E)
+        #expect(report.modelId == 0x000008)
+        #expect(report.rawQuadlets == [
+            0x0404_0000, 0x3133_3934, 0xE0FF_8112, 0x0013_0E04,
+            0x0200_4713, 0x0002_0000, 0x0300_130E, 0x1700_0008
+        ])
+        #expect(report.bibFields.first?.name == "bus_info_length")
+        #expect(report.bibFields.first?.meaning.contains("root directory") == true)
+        #expect(report.tree.map(\.key) == ["VENDOR", "MODEL"])
+    }
+
     @Test func avcInspectionMapsDriverEvidenceWithoutFcpTraffic() async throws {
         let backend = FakeLiveDriverBackend()
         backend.avcUnits = [
@@ -276,6 +300,25 @@ struct MCPLiveDriverControlTests {
             addressHigh: 0xFFFF,
             addressLow: 0xF0000400
         )
+    }
+
+    private func configRomFixture() -> Data {
+        let quadlets: [UInt32] = [
+            0x0404_0000, // q0: BIB has q1...q4
+            0x3133_3934, // q1: "1394"
+            0xE0FF_8112, // q2: IRMC/CMC/ISC, max_rec=8, max_rom=1, gen=1, S400
+            0x0013_0E04, // q3: GUID high
+            0x0200_4713, // q4: GUID low
+            0x0002_0000, // q5: root directory with two entries
+            0x0300_130E, // q6: VENDOR immediate
+            0x1700_0008  // q7: MODEL immediate
+        ]
+        return Data(quadlets.flatMap { word in
+            [
+                UInt8((word >> 24) & 0xFF), UInt8((word >> 16) & 0xFF),
+                UInt8((word >> 8) & 0xFF), UInt8(word & 0xFF)
+            ]
+        })
     }
 
     private func sbp2Unit() -> FWUnitInfo {
