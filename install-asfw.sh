@@ -20,6 +20,10 @@ SYSTEM_EXTENSION_ID="net.mrmidi.ASFW.ASFWDriver"
 DEXT_REL="Contents/Library/SystemExtensions/${SYSTEM_EXTENSION_ID}.dext"
 DEXT_BINARY_REL="${DEXT_REL}/${SYSTEM_EXTENSION_ID}"
 SYSTEM_EXTENSION_ROOT="/Library/SystemExtensions"
+# Every install keeps the app it replaced so a bad build can be rolled back by
+# hand. Without pruning, a day of iterating leaves a pile of app bundles in
+# /Applications. Keep the most recent few and drop the rest.
+BACKUP_KEEP_COUNT=3
 
 usage() {
   cat <<'EOF'
@@ -281,6 +285,42 @@ reject_test_host_artifacts() {
     "Build product contains ${test_bundle}; rerun without --no-build after testing"
 }
 
+prune_old_app_backups() {
+  local keep="${BACKUP_KEEP_COUNT}"
+  local backups=()
+  local candidate
+  local index
+
+  # Match the exact shape install_app_atomically writes (%Y%m%d-%H%M%S), not a
+  # bare backup-* glob: an unrelated directory would sort above the timestamps
+  # and take a slot that should have kept a real backup. Zero-padded timestamps
+  # make a reverse name sort newest-first, and -maxdepth 1 keeps find from ever
+  # descending into a bundle.
+  local stamp_glob='[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]'
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    backups+=("${candidate}")
+  done < <(
+    find /Applications -maxdepth 1 -type d -name "ASFW.app.backup-${stamp_glob}" \
+      -print 2>/dev/null | sort -r
+  )
+
+  (( ${#backups[@]} > keep )) || return 0
+
+  for (( index = keep; index < ${#backups[@]}; index++ )); do
+    candidate="${backups[index]}"
+    # Re-check the shape immediately before removing. This function only ever
+    # deletes paths it just enumerated out of /Applications, and only ones that
+    # still match the backup name exactly.
+    if [[ "${candidate}" != /Applications/ASFW.app.backup-* || ! -d "${candidate}" ]]; then
+      continue
+    fi
+    log "Pruning old backup ${candidate}..."
+    run_maybe_sudo rm -rf "${candidate}" \
+      || log "Could not remove ${candidate}; leaving it in place."
+  done
+}
+
 install_app_atomically() {
   local source_app="$1"
   local timestamp
@@ -317,6 +357,10 @@ install_app_atomically() {
   verify_artifact "${APP_DEST}"
   log "Installed dext hash: $(sha256_file "${APP_DEST}/${DEXT_BINARY_REL}")"
   [[ -z "${backup}" ]] || log "Previous app backup: ${backup}"
+
+  # Only after the freshly installed app verifies. A failed install must keep
+  # every backup it might have to roll back to.
+  prune_old_app_backups
 }
 
 launch_installed_app() {
