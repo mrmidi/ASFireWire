@@ -338,7 +338,11 @@ if ${AUTO_ACTIVATE} && ! ${LAUNCH_APP}; then
   die "--activate cannot be combined with --no-launch"
 fi
 
-csrutil status | grep -qi 'disabled' \
+# Match the status line only. Under a Custom Configuration csrutil prints a
+# per-protection breakdown, and a bare 'disabled' search matches any single
+# disabled entry (e.g. "Apple Internal: disabled") on a machine where SIP is
+# otherwise on — letting the install proceed and fail later in a confusing way.
+csrutil status | head -n 1 | grep -qi 'status: disabled' \
   || die "SIP must be disabled for the README ad-hoc install workflow"
 systemextensionsctl developer 2>&1 | grep -qi 'developer mode is on' \
   || die "Enable system-extension developer mode before installing"
