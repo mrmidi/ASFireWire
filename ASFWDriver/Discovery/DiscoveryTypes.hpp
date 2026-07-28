@@ -130,10 +130,15 @@ struct UnitDirectory {
 };
 
 // ROM lifecycle state (matching Apple IOFireWireROMCache patterns)
+//
+// A device that reappears after a bus reset is re-entered through
+// ConfigROMStore::Insert(), which overwrites the whole entry — including this
+// field — rather than transitioning a suspended one back in place. There is
+// therefore no separate "validated" state; Suspended entries are keyed to the
+// generation that is now stale and are simply never looked up again.
 enum class ROMState : uint8_t {
     Fresh,      // Just read in current generation
-    Validated,  // Confirmed valid across bus reset (device reappeared)
-    Suspended,  // From previous generation, not yet validated (bus reset occurred)
+    Suspended,  // From previous generation (bus reset occurred)
     Invalid     // Marked for removal (device disappeared or ROM changed)
 };
 
