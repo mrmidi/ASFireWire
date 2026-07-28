@@ -152,9 +152,15 @@ print_active_dext_status() {
 wait_for_active_dext_hash() {
   local expected_hash="$1"
   local attempts="${2:-30}"
+  # macOS parks the extension in "activated waiting for user" until someone
+  # approves it in System Settings and authenticates. That is a human step, not
+  # machine progress the installer can wait out, so it draws on its own much
+  # larger budget instead of consuming the transition budget.
+  local approval_attempts="${3:-300}"
   local extension_lines
+  local prompted=false
 
-  while (( attempts > 0 )); do
+  while (( attempts > 0 && approval_attempts > 0 )); do
     extension_lines="$(system_extension_lines)" \
       || die "Unable to query the current system-extension state"
     if [[ -n "${extension_lines}" ]] \
@@ -163,11 +169,29 @@ wait_for_active_dext_hash() {
       log "Active dext matches the installed build: ${expected_hash}"
       return 0
     fi
+
+    if grep -Eq '\[activated waiting for user' <<<"${extension_lines}"; then
+      if ! ${prompted}; then
+        prompted=true
+        log "macOS is waiting for you to approve the extension."
+        log "  System Settings > General > Login Items & Extensions >"
+        log "  Driver Extensions > enable ASFW, then authenticate."
+        log "Waiting up to ${approval_attempts}s for that approval..."
+      fi
+      sleep 1
+      ((approval_attempts--))
+      continue
+    fi
+
     sleep 1
     ((attempts--))
   done
 
-  log "The active dext did not switch to the installed build."
+  if ${prompted}; then
+    log "The extension was never approved, so activation did not complete."
+  else
+    log "The active dext did not switch to the installed build."
+  fi
   print_active_dext_status
   return 1
 }
@@ -370,9 +394,15 @@ EXPECTED_DEXT_HASH="$(sha256_file "${APP_DEST}/${DEXT_BINARY_REL}")"
 if ${LAUNCH_APP}; then
   launch_installed_app
   if ${AUTO_ACTIVATE}; then
-    wait_for_active_dext_hash "${EXPECTED_DEXT_HASH}" 30 \
-      || die "Automatic activation did not produce the expected active dext"
+    activation_ok=true
+    wait_for_active_dext_hash "${EXPECTED_DEXT_HASH}" || activation_ok=false
+    # Reopen either way. The instance launched with --activate-driver stays on
+    # the activation path and never connects its debug client, so returning
+    # without this leaves the app running but disconnected — including when the
+    # approval simply took longer than the wait above.
     reopen_installed_app_for_debugging
+    ${activation_ok} \
+      || die "Automatic activation did not produce the expected active dext"
   else
     log "Use the visible Install button to submit the extension replacement."
   fi
