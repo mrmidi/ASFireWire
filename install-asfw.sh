@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build, sign, and stage ASFW.app using the workflow documented in README.md.
-# System-extension activation remains an explicit action in ASFW.app.
+# Build, sign, stage, and optionally activate ASFW.app using the workflow
+# documented in README.md.
 
 set -Eeuo pipefail
 
@@ -11,16 +11,15 @@ cd "${SCRIPT_DIR}"
 CONFIGURATION="Release"
 DO_BUILD=true
 ENABLE_SCSI=false
-INSTALL_MCP_SKILL=false
 LAUNCH_APP=true
 FRESH_REPLACE=false
+AUTO_ACTIVATE=false
 
 APP_DEST="/Applications/ASFW.app"
 SYSTEM_EXTENSION_ID="net.mrmidi.ASFW.ASFWDriver"
 DEXT_REL="Contents/Library/SystemExtensions/${SYSTEM_EXTENSION_ID}.dext"
 DEXT_BINARY_REL="${DEXT_REL}/${SYSTEM_EXTENSION_ID}"
-MCP_SKILL_SOURCE="${SCRIPT_DIR}/skills/asfw-mcp-control-plane"
-CODEX_ROOT="${CODEX_HOME:-${HOME}/.codex}"
+SYSTEM_EXTENSION_ROOT="/Library/SystemExtensions"
 
 usage() {
   cat <<'EOF'
@@ -30,8 +29,8 @@ Options:
   --config Debug|Release  Build configuration (default: Release)
   --scsi                  Include the experimental SCSI HBA
   --no-build              Reuse an existing build product
-  --install-mcp-skill     Install or refresh the bundled Codex MCP skill
   --fresh, --replace      Uninstall existing dext state before staging the app
+  --activate, --refresh   Submit activation after install and verify the active dext
   --no-launch             Do not open ASFW.app after installation
   -h, --help              Show this help
 
@@ -40,8 +39,8 @@ app or dext requires administrator access.
 
 Examples:
   ./install-asfw.sh
-  ./install-asfw.sh --scsi --install-mcp-skill
-  ./install-asfw.sh --config Debug --scsi --fresh
+  ./install-asfw.sh --config Debug --scsi --activate
+  ./install-asfw.sh --config Debug --scsi --fresh --activate
   ./install-asfw.sh --config Release --scsi --no-build
 EOF
 }
@@ -108,6 +107,69 @@ system_extension_lines() {
   local extension_list
   extension_list="$(systemextensionsctl list 2>/dev/null)" || return 2
   grep -F "${SYSTEM_EXTENSION_ID}" <<<"${extension_list}" || true
+}
+
+system_dext_binary_paths() {
+  find "${SYSTEM_EXTENSION_ROOT}" -maxdepth 3 -type f \
+    -path "*/${SYSTEM_EXTENSION_ID}.dext/${SYSTEM_EXTENSION_ID}" \
+    -print 2>/dev/null
+}
+
+system_dext_hashes_match() {
+  local expected_hash="$1"
+  local binary_path
+  local installed_hash
+  local found_binary=false
+
+  while IFS= read -r binary_path; do
+    [[ -n "${binary_path}" ]] || continue
+    found_binary=true
+    installed_hash="$(sha256_file "${binary_path}")"
+    [[ "${installed_hash}" == "${expected_hash}" ]] || return 1
+  done < <(system_dext_binary_paths)
+
+  ${found_binary}
+}
+
+print_active_dext_status() {
+  local extension_lines
+  local binary_path
+
+  extension_lines="$(system_extension_lines)" \
+    || die "Unable to query the current system-extension state"
+  if [[ -n "${extension_lines}" ]]; then
+    printf '%s\n' "${extension_lines}"
+  else
+    log "No ASFW system-extension entry is visible."
+  fi
+
+  while IFS= read -r binary_path; do
+    [[ -n "${binary_path}" ]] || continue
+    log "Installed system dext hash: $(sha256_file "${binary_path}")"
+  done < <(system_dext_binary_paths)
+}
+
+wait_for_active_dext_hash() {
+  local expected_hash="$1"
+  local attempts="${2:-30}"
+  local extension_lines
+
+  while (( attempts > 0 )); do
+    extension_lines="$(system_extension_lines)" \
+      || die "Unable to query the current system-extension state"
+    if [[ -n "${extension_lines}" ]] \
+      && ! grep -Fqv '[activated enabled]' <<<"${extension_lines}" \
+      && system_dext_hashes_match "${expected_hash}"; then
+      log "Active dext matches the installed build: ${expected_hash}"
+      return 0
+    fi
+    sleep 1
+    ((attempts--))
+  done
+
+  log "The active dext did not switch to the installed build."
+  print_active_dext_status
+  return 1
 }
 
 ensure_replace_mode_for_pending_transition() {
@@ -181,6 +243,20 @@ verify_artifact() {
   fi
 }
 
+reject_test_host_artifacts() {
+  local app_path="$1"
+  local plugins_path="${app_path}/Contents/PlugIns"
+  local test_bundle
+
+  [[ -d "${plugins_path}" ]] || return 0
+  test_bundle="$(
+    find "${plugins_path}" -maxdepth 1 -type d \
+      -name '*.xctest' -print -quit 2>/dev/null
+  )"
+  [[ -z "${test_bundle}" ]] || die \
+    "Build product contains ${test_bundle}; rerun without --no-build after testing"
+}
+
 install_app_atomically() {
   local source_app="$1"
   local timestamp
@@ -219,33 +295,21 @@ install_app_atomically() {
   [[ -z "${backup}" ]] || log "Previous app backup: ${backup}"
 }
 
-install_mcp_skill() {
-  [[ -f "${MCP_SKILL_SOURCE}/SKILL.md" ]] \
-    || die "Bundled MCP skill not found: ${MCP_SKILL_SOURCE}"
-
-  local skill_parent="${CODEX_ROOT}/skills"
-  local skill_target="${skill_parent}/asfw-mcp-control-plane"
-  local timestamp
-  local backup=""
-  timestamp="$(date '+%Y%m%d-%H%M%S')"
-
-  mkdir -p "${skill_parent}" \
-    || die "Failed to create Codex skills directory: ${skill_parent}"
-  if [[ -e "${skill_target}" ]]; then
-    backup="${skill_target}.backup-${timestamp}"
-    mv "${skill_target}" "${backup}" \
-      || die "Failed to back up the existing Codex MCP skill"
+launch_installed_app() {
+  if ${AUTO_ACTIVATE}; then
+    log "Opening ${APP_DEST} and submitting the activation request..."
+    open "${APP_DEST}" --args --activate-driver \
+      || die "Failed to open ASFW.app for automatic activation"
+  else
+    log "Opening ${APP_DEST}..."
+    open "${APP_DEST}" || die "Failed to open ASFW.app"
   fi
+}
 
-  if ! cp -R "${MCP_SKILL_SOURCE}" "${skill_target}" \
-    || ! diff -qr "${MCP_SKILL_SOURCE}" "${skill_target}" >/dev/null; then
-    [[ ! -e "${skill_target}" ]] \
-      || mv "${skill_target}" "${skill_target}.failed-${timestamp}"
-    [[ -z "${backup}" ]] || mv "${backup}" "${skill_target}"
-    die "Failed to install the Codex MCP skill"
-  fi
-  log "Installed MCP skill: ${skill_target}"
-  [[ -z "${backup}" ]] || log "Previous MCP skill backup: ${backup}"
+reopen_installed_app_for_debugging() {
+  close_existing_app
+  log "Reopening ${APP_DEST} for debugging..."
+  open "${APP_DEST}" || die "Failed to reopen ASFW.app"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -257,8 +321,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --scsi) ENABLE_SCSI=true; shift ;;
     --no-build) DO_BUILD=false; shift ;;
-    --install-mcp-skill) INSTALL_MCP_SKILL=true; shift ;;
     --fresh|--replace) FRESH_REPLACE=true; shift ;;
+    --activate|--refresh) AUTO_ACTIVATE=true; shift ;;
     --no-launch) LAUNCH_APP=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
@@ -269,6 +333,10 @@ case "${CONFIGURATION}" in
   Debug|Release) ;;
   *) die "--config must be Debug or Release" ;;
 esac
+
+if ${AUTO_ACTIVATE} && ! ${LAUNCH_APP}; then
+  die "--activate cannot be combined with --no-launch"
+fi
 
 csrutil status | grep -qi 'disabled' \
   || die "SIP must be disabled for the README ad-hoc install workflow"
@@ -285,19 +353,25 @@ fi
 
 APP_SOURCE="${SCRIPT_DIR}/build/DerivedData/Build/Products/${CONFIGURATION}/ASFW.app"
 [[ -d "${APP_SOURCE}" ]] || die "Build product not found: ${APP_SOURCE}"
+reject_test_host_artifacts "${APP_SOURCE}"
 
 log "Signing the app and its bundled dext..."
 CONFIGURATION="${CONFIGURATION}" ./sign.sh "${APP_SOURCE}"
 verify_artifact "${APP_SOURCE}"
 
-${INSTALL_MCP_SKILL} && install_mcp_skill
 ${FRESH_REPLACE} && uninstall_existing_system_extension
 install_app_atomically "${APP_SOURCE}"
+EXPECTED_DEXT_HASH="$(sha256_file "${APP_DEST}/${DEXT_BINARY_REL}")"
 
 if ${LAUNCH_APP}; then
-  log "Opening ${APP_DEST}..."
-  open "${APP_DEST}"
-  log "Use the visible Install button to submit the extension replacement."
+  launch_installed_app
+  if ${AUTO_ACTIVATE}; then
+    wait_for_active_dext_hash "${EXPECTED_DEXT_HASH}" 30 \
+      || die "Automatic activation did not produce the expected active dext"
+    reopen_installed_app_for_debugging
+  else
+    log "Use the visible Install button to submit the extension replacement."
+  fi
 fi
 
 systemextensionsctl list 2>/dev/null \

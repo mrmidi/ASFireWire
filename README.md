@@ -492,8 +492,9 @@ boot normally, uninstall the extension
 
 Use `install-asfw.sh` to follow the development build, ad-hoc signing, artifact
 verification, and `/Applications` staging flow in one command. The script does
-not submit the system-extension activation request itself. It opens the installed
-app so you can review the visible state and use the **Install** button.
+not submit the system-extension activation request by default. It opens the
+installed app so you can review the visible state and use the **Install**
+button.
 
 The script never opens a password prompt. If `/Applications` or the uninstall
 operation needs administrator access, prime a short-lived credential first:
@@ -503,22 +504,29 @@ sudo -v
 ./install-asfw.sh --config Debug
 ```
 
-Pass `--fresh` when replacing an active dext or clearing a pending ASFW
-upgrade or uninstall. The script closes the installed app, asks
-`systemextensionsctl` to remove the existing ASFW state, and waits for all old
-dext entries to disappear before it replaces the app. Pass `--no-build` to reuse
-the current build product. The experimental SCSI HBA and bundled Codex MCP
-skill remain explicit:
+For a one-command development replacement, pass `--activate`. The script opens
+the installed app with an explicit automatic activation request, waits for the
+active dext hash to match the installed build, and fails if macOS doesn't
+complete the replacement. `--refresh` is a compatibility alias for
+`--activate`.
 
 ```bash
 sudo -v
-./install-asfw.sh --config Debug --scsi --fresh --install-mcp-skill
+./install-asfw.sh --config Debug --scsi --activate
 ```
 
-Without `--fresh`, the script stops when it finds an ASFW upgrade or uninstall
-in progress and tells you to rerun with `--fresh`. A restart is only required
-if `systemextensionsctl uninstall` succeeds but macOS still retains the old
-dext state after the unload timeout.
+Pass `--fresh` only when you need to clear an existing or pending ASFW system
+extension state. The script closes the installed app, asks
+`systemextensionsctl` to remove the existing ASFW state, and waits for all old
+dext entries to disappear before it replaces the app. Start routine
+development replacements without `--fresh`; use it when the script reports a
+pending transition.
+
+Pass `--no-build` to reuse the current build product. Without `--fresh`, the
+script stops when it finds an ASFW upgrade or uninstall in progress and tells
+you to rerun with `--fresh`. A restart is only required if
+`systemextensionsctl uninstall` succeeds but macOS still retains the old dext
+state after the unload timeout.
 
 Keep an SBP-2 device powered on before installing or testing a `--scsi` build.
 The cold-boot and teardown warning in the preceding section still applies.

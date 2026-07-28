@@ -9,6 +9,7 @@ import SwiftUI
 import Foundation
 
 struct ModernContentView: View {
+    let autoActivateDriverOnLaunch: Bool
     @StateObject private var driverVM = DriverViewModel()
     @StateObject private var debugVM = DebugViewModel()
     @StateObject private var topologyVM: TopologyViewModel
@@ -17,8 +18,10 @@ struct ModernContentView: View {
     @StateObject private var mcpVM: ASFWMCPControlViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
+    @State private var didTriggerAutoDriverActivation = false
 
-    init() {
+    init(autoActivateDriverOnLaunch: Bool = false) {
+        self.autoActivateDriverOnLaunch = autoActivateDriverOnLaunch
         let driverViewModel = DriverViewModel()
         let debugViewModel = DebugViewModel()
         let topologyViewModel = TopologyViewModel(connector: debugViewModel.connector)
@@ -183,7 +186,12 @@ struct ModernContentView: View {
         }
         .onAppear {
             debugVM.setDriverViewModel(driverVM)
-            debugVM.connect()
+            if autoActivateDriverOnLaunch && !didTriggerAutoDriverActivation {
+                didTriggerAutoDriverActivation = true
+                activateDriverOnLaunch()
+            } else {
+                debugVM.connect()
+            }
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
             loadLoggingPreset()
@@ -200,6 +208,12 @@ struct ModernContentView: View {
             // Update available nodes when topology generation changes
             romExplorerVM.refreshAvailableNodes()
         }
+    }
+
+    private func activateDriverOnLaunch() {
+        debugVM.disconnect()
+        driverVM.driverVersion = nil
+        driverVM.installDriver()
     }
     
     enum LoggingPreset: String, CaseIterable, Identifiable {
