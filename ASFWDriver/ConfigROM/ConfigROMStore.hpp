@@ -113,15 +113,6 @@ class ConfigROMStore {
     void SuspendAll(Generation newGen);
 
     /**
-     * @brief Validates a ROM after a bus reset (device reappeared).
-     *
-     * @param guid The 64-bit GUID.
-     * @param gen The current generation.
-     * @param nodeId The new node ID of the device.
-     */
-    void ValidateROM(Guid64 guid, Generation gen, uint8_t nodeId);
-
-    /**
      * @brief Marks a ROM as invalid (device disappeared or ROM content changed).
      *
      * @param guid The 64-bit GUID to invalidate.

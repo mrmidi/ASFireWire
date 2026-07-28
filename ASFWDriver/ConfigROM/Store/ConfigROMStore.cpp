@@ -248,56 +248,20 @@ void ConfigROMStore::SuspendAll(Generation newGen) {
     uint32_t suspendedCount = 0;
 
     for (auto& [key, rom] : romsByGenNode_) {
-        if (rom.state == Fresh || rom.state == Validated) {
+        if (rom.state == Fresh) {
             rom.state = Suspended;
             suspendedCount++;
         }
     }
 
     for (auto& [guid, rom] : romsByGuid_) {
-        if (rom.state == Fresh || rom.state == Validated) {
+        if (rom.state == Fresh) {
             rom.state = Suspended;
         }
     }
 
     ASFW_LOG(ConfigROM, "ConfigROMStore::SuspendAll: Suspended %u ROMs for generation %u",
              suspendedCount, newGen.value);
-}
-
-void ConfigROMStore::ValidateROM(Guid64 guid, Generation gen, uint8_t nodeId) {
-    LockGuard guard(lock_);
-
-    auto guidIt = romsByGuid_.find(guid);
-    if (guidIt == romsByGuid_.end()) {
-        ASFW_LOG(ConfigROM, "ConfigROMStore::ValidateROM: GUID 0x%016llx not found", guid);
-        return;
-    }
-
-    auto& rom = guidIt->second;
-
-    if (rom.state != ROMState::Suspended) {
-        ASFW_LOG(ConfigROM,
-                 "ConfigROMStore::ValidateROM: GUID 0x%016llx not in suspended state (state=%u)",
-                 guid, static_cast<uint8_t>(rom.state));
-        return;
-    }
-
-    if (rom.nodeId != nodeId) {
-        ASFW_LOG(ConfigROM,
-                 "ConfigROMStore::ValidateROM: GUID 0x%016llx moved node %u→%u in gen %u", guid,
-                 rom.nodeId, nodeId, gen.value);
-        rom.nodeId = nodeId;
-    }
-
-    rom.gen = gen;
-    rom.state = ROMState::Validated;
-    rom.lastValidated = gen;
-
-    const GenNodeKey newKey = MakeKey(gen, nodeId);
-    romsByGenNode_[newKey] = rom;
-
-    ASFW_LOG(ConfigROM, "ConfigROMStore::ValidateROM: Validated GUID 0x%016llx at node %u gen %u",
-             guid, nodeId, gen.value);
 }
 
 void ConfigROMStore::InvalidateROM(Guid64 guid) {
