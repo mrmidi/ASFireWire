@@ -218,6 +218,27 @@ TEST_F(ATContextCompletionTest, FlushScopePreservesRealCompletionStatus) {
     EXPECT_TRUE(ring_.IsEmpty());
 }
 
+// FlushATContexts() gates FlushScope on IsActive(). This pins the property that
+// gate depends on: a context whose ACTIVE bit is still set must not be flushed,
+// because its queued packets are in flight rather than stranded, and clearing
+// their descriptor words would cut the chain the controller is traversing.
+TEST_F(ATContextCompletionTest, ActiveContextIsNotEligibleForFlush) {
+    PrepareBlockWriteChain(0);
+    hardware_.SetTestRegister(
+        Async::ATRequestTag::kControlSetReg,
+        Driver::kContextControlRunBit | Driver::kContextControlActiveBit);
+
+    ASSERT_TRUE(context_.IsActive());
+
+    // What FlushATContexts() does when IsActive() reports true: no FlushScope.
+    const auto completion = context_.ScanCompletion();
+
+    EXPECT_FALSE(completion.has_value());
+    EXPECT_EQ(ring_.Head(), 0u);
+    EXPECT_FALSE(ring_.IsEmpty());
+    EXPECT_EQ(ring_.At(2)->xferStatus, 0);
+}
+
 // Leaving the scope must restore normal pending semantics, otherwise a live
 // context would start reporting in-flight packets as flushed.
 TEST_F(ATContextCompletionTest, FlushScopeRestoresPendingSemanticsOnExit) {

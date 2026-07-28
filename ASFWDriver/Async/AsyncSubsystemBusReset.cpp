@@ -178,16 +178,40 @@ void AsyncSubsystem::FlushATContexts() {
     // evt_flushed rather than waited on — the same ordering Linux uses
     // (context_stop() then at_context_flush(), ohci.c:2000-2010) and Apple uses
     // (stopDMA() then resetDMA() in handleBusResetInt()).
+    //
+    // Confirm ACTIVE is clear per context before flushing. Both references stop
+    // both contexts unconditionally and then flush unconditionally, but neither
+    // can prove the stop succeeded: OHCI §7.2.3 lets a context keep the ACTIVE
+    // bit set past the stop timeout. Flushing such a context would report packets
+    // that are merely in flight and zero descriptor words the controller is still
+    // traversing, so skip it and leave the ring for the next scan instead.
     auto* atRequest = ResolveAtRequestContext();
     auto* atResponse = ResolveAtResponseContext();
 
+    const auto flushable = [](auto* context, const char* name) {
+        if (!context) {
+            return false;
+        }
+        if (context->IsActive()) {
+            ASFW_LOG_ERROR(Async,
+                           "FlushATContexts: %{public}s still ACTIVE after stop; "
+                           "skipping flush to avoid rewriting live descriptors",
+                           name);
+            return false;
+        }
+        return true;
+    };
+
     std::optional<ATRequestContext::FlushScope> requestFlush;
-    if (atRequest) {
+    if (flushable(atRequest, "AT request")) {
         requestFlush.emplace(*atRequest);
     }
     std::optional<ATResponseContext::FlushScope> responseFlush;
-    if (atResponse) {
+    if (flushable(atResponse, "AT response")) {
         responseFlush.emplace(*atResponse);
+    }
+    if (!requestFlush && !responseFlush) {
+        return;
     }
 
     const uint32_t flushed = DrainTxCompletions("bus-reset-flush");
