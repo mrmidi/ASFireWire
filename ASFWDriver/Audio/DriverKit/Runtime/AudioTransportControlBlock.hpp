@@ -586,6 +586,32 @@ struct AudioTransportControlBlock final {
     std::atomic<uint32_t> txTransferDelayTicks{12800};
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
+
+    // Bring-up attribution. Every packet the master stream decodes bumps
+    // rxPacketsSeen plus at most one outcome counter, so a stream that never
+    // establishes can be explained without a packet analyser:
+    //
+    //   all zero                        -> nothing arrived; the IR context is
+    //                                      not delivering (wrong channel, never
+    //                                      started, device not enabled).
+    //   seen == noData                  -> the device really is sending only
+    //                                      CIP NO-DATA (SYT 0xFFFF).
+    //   any reject counter non-zero     -> WE rejected its packets; the device
+    //                                      may be streaming fine. geometry in
+    //                                      particular means our profile and the
+    //                                      device disagree on channels/DBS.
+    //   data > 0 but never established  -> valid SYTs arrive but the cadence
+    //                                      detector refuses them; see
+    //                                      RxSytCadence::Observe.
+    //
+    // Without the split these are one indistinguishable silence.
+    std::atomic<uint64_t> rxPacketsSeen{0};
+    std::atomic<uint64_t> rxDataPackets{0};
+    std::atomic<uint64_t> rxNoDataPackets{0};
+    std::atomic<uint64_t> rxShortPackets{0};
+    std::atomic<uint64_t> rxInvalidCipHeaders{0};
+    std::atomic<uint64_t> rxZeroDataBlockSize{0};
+    std::atomic<uint64_t> rxGeometryMismatch{0};
     std::atomic<uint64_t> txReplayEntries{0};
     std::atomic<uint64_t> txReplayUnderflows{0};
     std::atomic<uint64_t> txReplayInvalidSyt{0};
@@ -698,6 +724,13 @@ struct AudioTransportControlBlock final {
         rxSequenceReplay.Reset();
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
+        rxPacketsSeen.store(0, std::memory_order_relaxed);
+        rxDataPackets.store(0, std::memory_order_relaxed);
+        rxNoDataPackets.store(0, std::memory_order_relaxed);
+        rxShortPackets.store(0, std::memory_order_relaxed);
+        rxInvalidCipHeaders.store(0, std::memory_order_relaxed);
+        rxZeroDataBlockSize.store(0, std::memory_order_relaxed);
+        rxGeometryMismatch.store(0, std::memory_order_relaxed);
         txReplayEntries.store(0, std::memory_order_relaxed);
         txReplayUnderflows.store(0, std::memory_order_relaxed);
         txReplayInvalidSyt.store(0, std::memory_order_relaxed);

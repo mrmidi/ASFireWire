@@ -189,6 +189,47 @@ audio callback/TX-preparation boundary.  Interpret a cursor mismatch or a
 cursor-epoch change as evidence for a timeline transition; do not treat the
 diagnostic snapshot as a synchronization primitive.
 
+### Stream will not start: attribute it before theorising
+
+When a device enumerates but audio never flows, ask
+`asfw_get_audio_stream_health` **first**. It is a read-only projection of
+driver-held counters — no FireWire transaction, safe during an active run — and
+it separates three failures that otherwise present identically as silence.
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_audio_stream_health '{}'
+```
+
+Each endpoint carries a `verdict` and the raw `counters` behind it:
+
+| `verdict` | Means |
+|---|---|
+| `noPacketsReceived` | No packet reached the audio consumer. The IR context is not delivering — wrong iso channel, context never started, or the device stream was never enabled. Not a device-side fault yet. |
+| `geometryMismatch` | Packets arrived whose data block shape our stream config rejects. The **profile and the device disagree** on channels/DBS. Host-side rejection. |
+| `packetsRejected` | Packets arrived but failed decode (runt, undecodable CIP header, zero DBS). The device may be streaming correctly. |
+| `deviceSendsOnlyNoData` | Valid CIP headers with SYT `0xFFFF` and no audio frames. |
+| `dataNotAccepted` | Valid SYTs arrived but no replay entry was published. Inspect the SYT cadence detector, not the device. |
+| `receivingData` | Data is arriving and being accepted. |
+
+Read `deviceSendsOnlyNoData` precisely: it states **what the device sent**, not
+what the device is waiting for. It is not evidence that the device requires host
+timestamps first — the TCAT and Linux DICE stacks both withhold host SYT until
+the device has already sent valid ones, so a NO-DATA stall does not by itself
+imply a host-side handshake obligation. Report the counters; do not infer intent.
+
+`packetsSeen` counts every packet the master stream decoded, so
+`packetsSeen == noDataPackets` is the only sound basis for "the device is sending
+only NO-DATA". A non-zero reject counter with `packetsSeen > 0` means the device
+did send us something we threw away.
+
+Pair it with the bring-up records, which are emitted for a stream that has **not**
+established yet (bounded per start, so a healthy stream stays silent):
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
+  '{"categories":["DirectAudio"],"contains":"[RxReplayReset] phase=bootstrap","maxLevel":"debug","maxRecords":20}'
+```
+
 ### Audio timing-loss first-fault query
 
 For an AV/C duplex click, stall, or timing-loss recovery, query the driver ring

@@ -127,6 +127,8 @@ extension ASFWMCPCore {
             return await dispatchSbp2Login(name, decoder: decoder)
         case "asfw_sbp2_submit_orb_dev":
             return await dispatchSbp2Orb(name, decoder: decoder)
+        case "asfw_get_audio_stream_health":
+            return await dispatchAudioStreamHealth(name)
         case "asfw_dice_decode_status":
             return notImplementedToolResult(name, reason: "DICE decode dispatch needs a concrete decoder surface.")
         case "asfw_dice_write_register":
@@ -366,6 +368,21 @@ extension ASFWMCPCore {
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }
+    }
+
+    /// Read-only projection of driver-held RX counters. Issues no transaction,
+    /// so it is safe to call while audio is running.
+    private func dispatchAudioStreamHealth(_ name: String) async -> ASFWMCPToolCallResult {
+        let endpoints = await driver.fetchAudioStreamHealth()
+        return ASFWMCPToolCallResult(
+            toolName: name,
+            ok: true,
+            data: .object([
+                "endpointCount": .int(endpoints.count),
+                "endpoints": .array(endpoints.map { $0.mcpValue() })
+            ]),
+            errors: []
+        )
     }
 
     private func dispatchIrmSnapshot(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {

@@ -26,6 +26,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
     func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse?
     func mcpLogRingStats() -> ASFWLogRingStats?
+    func mcpAudioTelemetry() -> AudioTelemetrySnapshot?
 }
 
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
@@ -42,6 +43,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot {
         try ASFWDiagnosticsClient(connector: self).fetchSnapshot()
+    }
+
+    func mcpAudioTelemetry() -> AudioTelemetrySnapshot? {
+        getAudioTelemetry()
     }
 
     func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot? {
@@ -797,6 +802,12 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     func logRingStats() async -> ASFWLogRingStats? {
         guard backend.mcpIsConnected else { return nil }
         return backend.mcpLogRingStats()
+    }
+
+    func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth] {
+        guard backend.mcpIsConnected else { return [] }
+        guard let snapshot = backend.mcpAudioTelemetry() else { return [] }
+        return snapshot.endpoints.map { $0.mcpStreamHealth }
     }
 
     private func executeTransaction(

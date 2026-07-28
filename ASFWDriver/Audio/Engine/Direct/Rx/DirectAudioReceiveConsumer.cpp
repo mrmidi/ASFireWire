@@ -130,6 +130,7 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
             inputView_.control->rxSequenceReplay.Reset();
             inputView_.control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed);
             replayResetForStart_ = true;
+            bootstrapResetLogBudget_ = kBootstrapResetLogBudget;
         }
         inputWriter_.Bind(&inputView_);
         if (!configuration_.isSecondary) {
@@ -175,6 +176,36 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
         configuration_.channelOffset, !configuration_.isSecondary);
+    // Attribute every decoded packet before the reject branch returns; the
+    // master stream only, so a second slice cannot double-count.
+    if (!configuration_.isSecondary && inputView_.control) {
+        auto* counters = inputView_.control;
+        counters->rxPacketsSeen.fetch_add(1, std::memory_order_relaxed);
+        switch (result.status) {
+            case DirectRxWriteStatus::kShortPacket:
+                counters->rxShortPackets.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case DirectRxWriteStatus::kInvalidCipHeader:
+                counters->rxInvalidCipHeaders.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case DirectRxWriteStatus::kZeroDataBlockSize:
+                counters->rxZeroDataBlockSize.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case DirectRxWriteStatus::kGeometryMismatch:
+                counters->rxGeometryMismatch.fetch_add(1, std::memory_order_relaxed);
+                break;
+            default:
+                break;
+        }
+        if (result.hasValidCip) {
+            if (result.syt == 0xffff) {
+                counters->rxNoDataPackets.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                counters->rxDataPackets.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+
     if (result.status == DirectRxWriteStatus::kAvailable ||
         result.status == DirectRxWriteStatus::kInvalidBinding) {
         absoluteFrameCursor_ += result.framesDecoded;
@@ -378,12 +409,24 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
     dbcInitialized_ = false;
-    if (wasEstablished) {
+    // Before this was gated on `wasEstablished` alone, which made the one record
+    // that explains a reset unreachable in the only case where nothing else
+    // explains it: a stream that never established. A device that is rejected on
+    // every packet, or that never sends one, produced total silence here. Emit a
+    // bounded number of bring-up records too — budget is re-armed per start, so
+    // a healthy stream still logs nothing and a stuck one cannot flood at the
+    // 8 kHz packet rate.
+    const bool logBootstrap = !wasEstablished && bootstrapResetLogBudget_ > 0;
+    if (logBootstrap) {
+        --bootstrapResetLogBudget_;
+    }
+    if (wasEstablished || logBootstrap) {
         ASFW_LOG_ERROR(
             DirectAudio,
-            "[RxReplayReset] epoch=%llu reason=%{public}s desc=%u bytes=%u "
+            "[RxReplayReset] phase=%{public}s epoch=%llu reason=%{public}s desc=%u bytes=%u "
             "drain=0x%08x rawTs=0x%04x syt=0x%04x expectedCycle=%u observedCycle=%u "
             "status=%u frame=%llu validTs=%llu invalidTs=%llu",
+            wasEstablished ? "established" : "bootstrap",
             resetEpoch, ReplayResetReasonName(reason), context.descriptorIndex,
             context.payloadBytes, context.drainCycleTimer, context.receiveCycleTimestamp,
             context.syt, context.expectedCycleOrdinal, context.observedCycleOrdinal,
