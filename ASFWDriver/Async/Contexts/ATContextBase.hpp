@@ -259,6 +259,13 @@ public:
      * - Leaves the element queued while the terminal status is zero
      * - Dispatches completion only after the terminal status becomes non-zero
      *
+     * Apple walks a linked list of ATxElements, so a zero-status element only
+     * clears its "reap the predecessor" flag and iteration continues past it
+     * (symbol offsets 0xf0e8-0xf10a, 0xf188-0xf195). This ring has a single
+     * head cursor instead, so a zero-status chain at head necessarily blocks
+     * everything behind it — hence the quiesced-context escape in
+     * InspectChainTail(), which Apple gets from resetDMA() instead.
+     *
      * **Thread Safety**
      * Serialized via IOLock. Safe to call concurrently with SubmitChain().
      *
@@ -349,6 +356,7 @@ private:
     void FetchScanDescriptor(const ScanState& state) noexcept;
     [[nodiscard]] ChainTailScanResult InspectChainTail(
         const ScanState& state) noexcept;
+    [[nodiscard]] bool IsContextQuiesced() noexcept;
     void HandlePendingDescriptor(const ScanState& state) noexcept;
     [[nodiscard]] bool IsOrphanedDescriptor(const ScanState& state,
                                             uint32_t& commandPtrAddr,
@@ -883,13 +891,28 @@ ATContextBase<Derived, Tag>::InspectChainTail(const ScanState& state) noexcept {
     }
 
     if (HW::AT_xferStatus(*tailState.desc) == 0) {
-        // AppleFWOHCI 5.5.9 checkForCompletedElements() reads each pending
-        // ATxElement's terminal descriptor status and leaves the element queued
-        // while that status is zero (symbol offsets 0xf0e8-0xf10a).
-        // Linux leaves the packet queued until its OUTPUT_LAST transfer status becomes
-        // non-zero: references/linux-ohci-firewire-low-level-stack/drivers/firewire/ohci.c:1354-1366.
-        // The command pointer may already reference this pending tail, so the
-        // OUTPUT_MORE precursor is not orphaned.
+        // A running context has simply not finished this packet yet. The command
+        // pointer may already reference the pending tail, so the OUTPUT_MORE
+        // precursor is NOT orphaned and must stay queued.
+        // AppleFWOHCI 5.5.9 checkForCompletedElements() likewise leaves an
+        // ATxElement queued while its terminal descriptor status is zero
+        // (symbol offsets 0xf0e8-0xf10a), and Linux returns 0 from
+        // handle_at_packet() to stop iteration:
+        // references/linux-ohci-firewire-low-level-stack/drivers/firewire/ohci.c:1354-1366.
+        //
+        // A quiesced context is different: hardware will never write a status,
+        // so treating the chain as merely pending would wedge the ring head
+        // forever. Linux gates the same early return on !ctx->flushing
+        // (ohci.c:1364) and drains via at_context_flush() after context_stop()
+        // (ohci.c:2000-2010); AppleFWOHCI calls resetDMA() after stopDMA() in
+        // handleBusResetInt() (symbol offsets 0x5fae-0x5fd2), which frees every
+        // pending element regardless of status. OHCI 1.2 draft clause 7.2.3.3:
+        // hardware may leave unsent packets in the AT queues for software to
+        // drain. ASFW has no equivalent flush entry point yet, so fall through
+        // to the orphan path, which is what releases the ring today.
+        if (IsContextQuiesced()) {
+            return ChainTailScanResult::NotRecognized;
+        }
         return ChainTailScanResult::Pending;
     }
 
@@ -901,6 +924,17 @@ ATContextBase<Derived, Tag>::InspectChainTail(const ScanState& state) noexcept {
                 "ScanCompletion: head %zu→%zu (completed OUTPUT_LAST after OUTPUT_MORE)",
                 state.headIndex, tailIndex);
     return ChainTailScanResult::Advanced;
+}
+
+template<typename Derived, ContextRole Tag>
+bool ATContextBase<Derived, Tag>::IsContextQuiesced() noexcept {
+    // Deliberately narrower than IsOrphanedDescriptor(): only run==0 && active==0
+    // proves hardware will never write another status. That function's second
+    // clause (commandPtr != headIOVA) also fires for a *live* chain whose command
+    // pointer has already advanced to a pending OUTPUT_LAST, which is exactly the
+    // false positive this scan path must not reintroduce.
+    const uint32_t controlReg = this->ReadControl();
+    return (controlReg & (kContextControlRunBit | kContextControlActiveBit)) == 0;
 }
 
 template<typename Derived, ContextRole Tag>

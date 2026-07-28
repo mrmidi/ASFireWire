@@ -155,5 +155,28 @@ TEST_F(ATContextCompletionTest, AdvancesTrulyOrphanedPendingDescriptor) {
     EXPECT_TRUE(ring_.IsEmpty());
 }
 
+// A quiesced context will never write a status into the OUTPUT_LAST, so the
+// recognized-chain path must not hold the head hostage waiting for one. Both
+// references drain unconditionally once the context is stopped: Linux gates
+// handle_at_packet()'s early return on !ctx->flushing and calls
+// at_context_flush() after context_stop() (ohci.c:1364, 2000-2010); AppleFWOHCI
+// calls resetDMA() after stopDMA() in handleBusResetInt(). OHCI 1.2 draft
+// clause 7.2.3.3 requires software to drain what hardware left unsent.
+TEST_F(ATContextCompletionTest, DrainsRecognizedChainWhenContextIsQuiesced) {
+    PrepareBlockWriteChain(0);
+    hardware_.SetTestRegister(Async::ATRequestTag::kControlSetReg, 0);
+
+    while (!ring_.IsEmpty()) {
+        const auto completion = context_.ScanCompletion();
+        ASSERT_FALSE(completion.has_value());
+        if (ring_.Head() == 0u) {
+            FAIL() << "quiesced context wedged the ring head at 0";
+        }
+    }
+
+    EXPECT_EQ(ring_.Head(), 3u);
+    EXPECT_TRUE(ring_.IsEmpty());
+}
+
 } // namespace
 } // namespace ASFW::Testing
