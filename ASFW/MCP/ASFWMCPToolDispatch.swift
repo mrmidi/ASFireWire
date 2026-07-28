@@ -68,8 +68,10 @@ extension ASFWMCPCore {
             return await dispatchWriteBlock(name, decoder: decoder)
         case "asfw_compare_swap", "asfw_cas_quadlet":
             return await dispatchCompareSwap(name, decoder: decoder, protocolHint: nil)
-        case "asfw_read_device_register", "asfw_dice_read_register":
+        case "asfw_read_device_register":
             return await dispatchReadQuadlet(name, decoder: decoder)
+        case "asfw_dice_read_register":
+            return await dispatchDiceReadRegister(name, decoder: decoder)
         case "asfw_read_device_register_block", "asfw_dice_read_block", "asfw_tcat_read_application_block":
             return await dispatchReadBlock(name, decoder: decoder)
         case "asfw_write_device_register":
@@ -130,7 +132,7 @@ extension ASFWMCPCore {
         case "asfw_get_audio_stream_health":
             return await dispatchAudioStreamHealth(name)
         case "asfw_dice_decode_status":
-            return notImplementedToolResult(name, reason: "DICE decode dispatch needs a concrete decoder surface.")
+            return await dispatchDiceDecodeStatus(name, decoder: decoder)
         case "asfw_dice_write_register":
             return await dispatchWriteQuadlet(name, decoder: decoder, protocolHint: "dice_tcat")
         case "asfw_tcat_write_application_block":
@@ -157,6 +159,148 @@ extension ASFWMCPCore {
         do {
             let request = ASFWMCPReadQuadletRequest(address: try decoder.address())
             return transactionToolResult(name, await driver.executeReadQuadlet(request))
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    /// `asfw_dice_read_register` with a symbolic `register` instead of a raw
+    /// address. Resolves against the device's own section table, so no section
+    /// base is ever assumed. Falls back to the raw-address path when `register`
+    /// is absent, keeping the previous contract intact.
+    private func dispatchDiceReadRegister(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        guard let registerName = try? decoder.string("register"), !registerName.isEmpty else {
+            return await dispatchReadQuadlet(name, decoder: decoder)
+        }
+        do {
+            guard let register = ASFWMCPDiceRegisterMap.register(named: registerName) else {
+                let known = ASFWMCPDiceRegisterMap.all.map(\.name).joined(separator: ", ")
+                return malformedToolResult(name, reason: "unknown register '\(registerName)'. Known: \(known).")
+            }
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let streamIndex = (try? decoder.uint32("streamIndex")) ?? 0
+            let decode = try decoder.bool("decode", default: false)
+
+            func address(_ low: UInt32) -> ASFWMCPAddress {
+                ASFWMCPAddress(nodeId: nodeId,
+                               generation: generation,
+                               addressHigh: ASFWMCPDiceSpace.baseAddressHigh,
+                               addressLow: low)
+            }
+
+            // 1. The device's section table: five (offset, size) quadlet pairs.
+            let tableResult = await driver.executeReadBlock(
+                ASFWMCPReadBlockRequest(address: address(ASFWMCPDiceSpace.baseAddressLow),
+                                        length: ASFWMCPDiceSpace.sectionTableBytes)
+            )
+            guard tableResult.ok, let tableBytes = tableResult.payload,
+                  let table = ASFWMCPDiceSectionTable.decode(tableBytes),
+                  let sectionEntry = table.entry(for: register.section) else {
+                return ASFWMCPToolCallResult(
+                    toolName: name,
+                    ok: false,
+                    data: .object([
+                        "stage": .string("sectionTable"),
+                        "register": .string(register.name)
+                    ]),
+                    errors: [ASFWMCPResourceError(
+                        code: .capabilityUnavailable,
+                        reason: "Could not read or decode the DICE section table; the node may not be a DICE device, or the generation is stale."
+                    )]
+                )
+            }
+
+            // 2. Per-stream registers need the section's own stream config size;
+            //    it is a device value, never assumed.
+            var streamConfigSizeBytes: UInt32 = 0
+            if register.perStream {
+                let sizeOffset = register.section == .txStreamFormat ? UInt32(0x04) : UInt32(0x04)
+                let sizeAddress = ASFWMCPDiceSpace.baseAddressLow &+ sectionEntry.offsetBytes &+ sizeOffset
+                let sizeResult = await driver.executeReadQuadlet(
+                    ASFWMCPReadQuadletRequest(address: address(sizeAddress))
+                )
+                guard sizeResult.ok,
+                      let sizeQuadlets = sizeResult.payload?.readBigEndianUInt32(at: 0),
+                      sizeQuadlets > 0 else {
+                    return ASFWMCPToolCallResult(
+                        toolName: name,
+                        ok: false,
+                        data: .object([
+                            "stage": .string("streamConfigSize"),
+                            "register": .string(register.name)
+                        ]),
+                        errors: [ASFWMCPResourceError(
+                            code: .capabilityUnavailable,
+                            reason: "Could not read the section's SIZE register, so a per-stream address cannot be derived."
+                        )]
+                    )
+                }
+                streamConfigSizeBytes = sizeQuadlets &* 4
+            }
+
+            guard let low = ASFWMCPDiceRegisterMap.addressLow(
+                for: register,
+                sectionOffsetBytes: sectionEntry.offsetBytes,
+                streamIndex: streamIndex,
+                streamConfigSizeBytes: streamConfigSizeBytes
+            ) else {
+                return malformedToolResult(
+                    name,
+                    reason: register.perStream
+                        ? "streamIndex \(streamIndex) does not resolve to a valid address."
+                        : "\(register.name) is section-scalar; streamIndex must be 0."
+                )
+            }
+
+            // 3. The register itself.
+            let result = await driver.executeReadQuadlet(
+                ASFWMCPReadQuadletRequest(address: address(low))
+            )
+            var data: [String: ASFWMCPValue] = [
+                "register": .string(register.name),
+                "section": .string(register.section.rawValue),
+                "summary": .string(register.summary),
+                "perStream": .bool(register.perStream),
+                "streamIndex": .int(Int(streamIndex)),
+                "resolvedAddress": .string(String(format: "0x%04X%08X",
+                                                  ASFWMCPDiceSpace.baseAddressHigh, low)),
+                "sectionOffsetBytes": .int(Int(sectionEntry.offsetBytes)),
+                "ok": .bool(result.ok)
+            ]
+            if register.perStream {
+                data["streamConfigSizeBytes"] = .int(Int(streamConfigSizeBytes))
+            }
+            if let value = result.payload?.readBigEndianUInt32(at: 0) {
+                data["value"] = .uint64(UInt64(value))
+                data["valueHex"] = .string(String(format: "0x%08X", value))
+                if decode, let decoded = ASFWMCPDiceDecoder.decode(registerName: register.name, value: value) {
+                    data["decoded"] = decoded
+                }
+            }
+            return ASFWMCPToolCallResult(toolName: name, ok: result.ok, data: .object(data), errors: [])
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    /// Decode a supplied DICE register value without touching the bus.
+    private func dispatchDiceDecodeStatus(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let registerName = try decoder.string("register", default: "GLOBAL_STATUS")
+            let value = try decoder.uint32("value")
+            guard let decoded = ASFWMCPDiceDecoder.decode(registerName: registerName, value: value) else {
+                return malformedToolResult(
+                    name,
+                    reason: "no decoder for '\(registerName)'. Decodable: GLOBAL_STATUS, GLOBAL_EXTENDED_STATUS, GLOBAL_CLOCK_SELECT."
+                )
+            }
+            return ASFWMCPToolCallResult(
+                toolName: name,
+                ok: true,
+                data: .object(["register": .string(registerName.uppercased()), "decoded": decoded]),
+                errors: []
+            )
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }

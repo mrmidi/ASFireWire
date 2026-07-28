@@ -98,6 +98,50 @@ Interpret the annotated BIB carefully:
   cached result from another generation is useful only as stale description,
   never as a target for a follow-up transaction.
 
+## DICE registers by name
+
+`asfw_dice_read_register` accepts a **symbolic** `register` instead of a raw
+address. It resolves against the device's own section table, so no section base
+is ever assumed:
+
+```bash
+# How many PCM channels does the device's playback (host->device) stream carry?
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_dice_read_register \
+  '{"nodeId":0,"generation":17,"register":"RX_NUMBER_AUDIO","streamIndex":0}'
+
+# Clock source and rate, decoded.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_dice_read_register \
+  '{"nodeId":0,"generation":17,"register":"GLOBAL_CLOCK_SELECT","decode":true}'
+```
+
+The response carries `resolvedAddress`, `sectionOffsetBytes` and (for per-stream
+registers) `streamConfigSizeBytes`, so the derivation is auditable rather than
+trusted. Omitting `register` falls back to the raw-address behaviour unchanged.
+
+**TX and RX are the device's directions, not the host's.** DICE `TX` is what the
+device transmits — the host's *capture*. DICE `RX` is what the device receives —
+the host's *playback*. ASFW's own profile fields use the opposite convention
+(`TxChannelCount` is playback), so never transcribe one onto the other. The
+offsets differ too: `TX_NUMBER_AUDIO` is at `0x0C` while `RX_NUMBER_AUDIO` is at
+`0x10`, because RX inserts `SEQ_START` ahead of it.
+
+Registers with no defined decoding return the raw value only; `decode: true`
+never invents an interpretation. `asfw_dice_decode_status` decodes a value you
+already hold, without touching the bus:
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_dice_decode_status \
+  '{"register":"GLOBAL_EXTENDED_STATUS","value":64}'
+```
+
+`GLOBAL_EXTENDED_STATUS` splits into `locked` and `slipping`; `arx1..arx4` are
+the device's *receive* streams, so `arx1` reflects the host-to-device transmit.
+
+These reads are `readOnly` but **not idempotent** — each issues a real FireWire
+transaction against a live generation. Do not run them during an active audio
+endurance run; prefer `asfw_get_audio_stream_health`, which reads driver-held
+counters and touches no bus.
+
 ## Tool visibility is not device capability
 
 `tools` lists a filtered view, never the full catalog. Two independent filters

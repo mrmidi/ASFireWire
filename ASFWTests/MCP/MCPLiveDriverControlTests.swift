@@ -460,4 +460,10 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     func mcpLogRingStats() -> ASFWLogRingStats? {
         logStats
     }
+
+    // Audio telemetry is not exercised by these transaction-path tests; the
+    // stream-health projection is covered where the counters are produced.
+    func mcpAudioTelemetry() -> AudioTelemetrySnapshot? {
+        nil
+    }
 }
