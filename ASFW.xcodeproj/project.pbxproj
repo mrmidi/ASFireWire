@@ -261,6 +261,7 @@
 		AFC2E3AB6C936BA99AE2EA14 /* BeBoBProtocol.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3287F0F488601696A613BF7E /* BeBoBProtocol.cpp */; };
 		B07CDAE71C02447EAFF0D87F /* MCPSbp2ToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D052AC7D4757845AB77B75B1 /* MCPSbp2ToolsTests.swift */; };
 		B0F2BC5D0380C0A6C5D22E96 /* IsochTxDmaRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94EF7FD118B54788C8319EFE /* IsochTxDmaRing.cpp */; };
+		B1B039506A55599CAB9BD7F4 /* DriverInstallErrorFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034B69484ACD3D09EF6D4A5F /* DriverInstallErrorFormatterTests.swift */; };
 		B20580E11D942850F1B8C005 /* ModernContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 736A4C5A335E4750AF418976 /* ModernContentView.swift */; };
 		B2065E363F1AC2D5DB5EF5DA /* PhyDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E98670FC8D8008C5956DED82 /* PhyDiagnostics.swift */; };
 		B48FA948465DEDE30BA18B47 /* AVCUnitWireParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF378D7A8CBF72942CB67F13 /* AVCUnitWireParsingTests.swift */; };
@@ -418,6 +419,7 @@
 		0305E1A8A4D9799CD3CB2887 /* ASFWAudioDriverGraph.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverGraph.cpp; sourceTree = "<group>"; };
 		030DE44371FB8109F515F09E /* MCPTransactionSchemaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTransactionSchemaTests.swift; sourceTree = "<group>"; };
 		032CA480750A71DDD179CE7D /* AlesisMultiMixProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AlesisMultiMixProfile.hpp; sourceTree = "<group>"; };
+		034B69484ACD3D09EF6D4A5F /* DriverInstallErrorFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverInstallErrorFormatterTests.swift; sourceTree = "<group>"; };
 		03627F2DBAE568BDFB6E1E7F /* IRMCSRConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMCSRConstants.hpp; sourceTree = "<group>"; };
 		037576E0DAB3B87F0D80A8B3 /* BusResetPacketDiagram.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusResetPacketDiagram.swift; sourceTree = "<group>"; };
 		040E3246E90734BBE6ED2380 /* MCPConsoleLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPConsoleLogTests.swift; sourceTree = "<group>"; };
@@ -1700,6 +1702,7 @@
 				AB92C50A509F45F51EFD3F03 /* AVCNestedChannelTests.swift */,
 				8AC380D7BBAE68986EC3385C /* AVCSampleRateMappingTests.swift */,
 				DF378D7A8CBF72942CB67F13 /* AVCUnitWireParsingTests.swift */,
+				034B69484ACD3D09EF6D4A5F /* DriverInstallErrorFormatterTests.swift */,
 				C3C3C0A53557FD4630647F63 /* DuetCodecTests.swift */,
 				51751F4E2707BF3956287D1F /* DuetViewModelLogicTests.swift */,
 				AA63228416151FD72A8A9C49 /* MCP */,
@@ -3014,8 +3017,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				EE5A446B3669D0171F9606EE /* ASFW */,
 				0EB9A8DA75D08971084A440A /* ASFWDriver */,
+				EE5A446B3669D0171F9606EE /* ASFW */,
 				348672D607701677ABCB567C /* ASFWTests */,
 			);
 		};
@@ -3300,6 +3303,7 @@
 				47C7D2797F3974490450A45A /* AVCNestedChannelTests.swift in Sources */,
 				BFA67B801CE2FD081CFA4BF5 /* AVCSampleRateMappingTests.swift in Sources */,
 				B48FA948465DEDE30BA18B47 /* AVCUnitWireParsingTests.swift in Sources */,
+				B1B039506A55599CAB9BD7F4 /* DriverInstallErrorFormatterTests.swift in Sources */,
 				38FE60619DFBA6ECB035BE64 /* DuetCodecTests.swift in Sources */,
 				BBC4374CAF02DA7A26022E78 /* DuetViewModelLogicTests.swift in Sources */,
 				AB26C52B22F65434EA8E93A7 /* MCPAvcFcpToolsTests.swift in Sources */,
