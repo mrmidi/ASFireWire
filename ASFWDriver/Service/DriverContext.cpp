@@ -70,6 +70,15 @@ void ServiceContext::Reset(ResetMode mode) {
         sbp2Bridge.reset();
     }
     (void)isoch.StopAll();
+    // The ROM scanner holds a bare IFireWireBus& into the controller-owned
+    // FireWireBusImpl, fixed at construction. Destroy it while the bus is still
+    // alive (the controller's own shared_ptr copy is dropped first) so the
+    // rebuild path in EnsureRomScanner creates a fresh scanner against the new
+    // controller's bus, instead of reusing one bound to freed memory.
+    if (controller) {
+        controller->AttachROMScanner(nullptr);
+    }
+    deps.romScanner.reset();
     controller.reset();
     audioCoordinator.reset();
     // Tear down the runtime audio protocols while the services they were built from
