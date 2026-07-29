@@ -155,11 +155,12 @@ TEST_F(ATContextCompletionTest, AdvancesTrulyOrphanedPendingDescriptor) {
     EXPECT_TRUE(ring_.IsEmpty());
 }
 
-// A stopped context will never write a status, but an ordinary scan must still
-// leave the chain alone: FlushScope is what reports it and fails the owning
-// transaction. A scan that landed between StopATContextsOnly() and
-// FlushATContexts() (the watchdog drain runs on a timer) would otherwise consume
-// the descriptors first, leaving the transaction to time out instead.
+// Once a context has stopped, hardware can no longer write a final status, but
+// an ordinary scan must still leave the chain alone: FlushScope is what reports
+// it and fails the owning transaction. A scan that landed between
+// StopATContextsOnly() and FlushATContexts() (the watchdog drain runs on a timer)
+// would otherwise consume the descriptors first, leaving the transaction to
+// time out instead.
 TEST_F(ATContextCompletionTest, HoldsQuiescedChainSoTheFlushCanReportIt) {
     PrepareBlockWriteChain(0);
     hardware_.SetTestRegister(Async::ATRequestTag::kControlSetReg, 0);
@@ -186,7 +187,7 @@ TEST_F(ATContextCompletionTest, HoldsQuiescedChainSoTheFlushCanReportIt) {
 // chain is reported as evt_flushed, which TransactionCompletionHandler maps to
 // kIOReturnAborted — Linux calls the equivalent RCODE_GENERATION "the same error
 // as when we try to use a stale generation count" (ohci.c:1387-1393).
-TEST_F(ATContextCompletionTest, FlushScopeReportsUnsentChainAsFlushed) {
+TEST_F(ATContextCompletionTest, FlushScopeReportsStatuslessChainAsFlushed) {
     PrepareBlockWriteChain(0);
     hardware_.SetTestRegister(Async::ATRequestTag::kControlSetReg, 0);
 
@@ -202,7 +203,7 @@ TEST_F(ATContextCompletionTest, FlushScopeReportsUnsentChainAsFlushed) {
     EXPECT_TRUE(ring_.IsEmpty());
 }
 
-// A genuinely completed packet keeps its real status while flushing; only the
+// A descriptor with a real completion keeps that status while flushing; only
 // zero-status descriptors are synthesized.
 TEST_F(ATContextCompletionTest, FlushScopePreservesRealCompletionStatus) {
     PrepareBlockWriteChain();
@@ -220,8 +221,8 @@ TEST_F(ATContextCompletionTest, FlushScopePreservesRealCompletionStatus) {
 
 // FlushATContexts() gates FlushScope on IsActive(). This pins the property that
 // gate depends on: a context whose ACTIVE bit is still set must not be flushed,
-// because its queued packets are in flight rather than stranded, and clearing
-// their descriptor words would cut the chain the controller is traversing.
+// because its queued packets may still be in flight, and clearing their
+// descriptor words would cut the chain the controller is traversing.
 TEST_F(ATContextCompletionTest, ActiveContextIsNotEligibleForFlush) {
     PrepareBlockWriteChain(0);
     hardware_.SetTestRegister(

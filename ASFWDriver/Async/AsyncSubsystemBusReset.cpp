@@ -172,12 +172,15 @@ void AsyncSubsystem::FlushATContexts() {
         return;
     }
 
-    // Callers reach here only after StopATContextsOnly(), so hardware can no
-    // longer write descriptor status. Anything still queued was left unsent by
-    // the bus reset (OHCI 1.2 draft clause 7.2.3.3) and must be reported as
-    // evt_flushed rather than waited on — the same ordering Linux uses
-    // (context_stop() then at_context_flush(), ohci.c:2000-2010) and Apple uses
-    // (stopDMA() then resetDMA() in handleBusResetInt()).
+    // Callers reach here only after StopATContextsOnly(). Once ACTIVE is clear,
+    // hardware can no longer write a final descriptor status. OHCI 1.2 draft
+    // §7.2.3.3 (p. 7-14) permits optional controller behavior that leaves
+    // outstanding AT descriptors without a final status after a bus reset.
+    // Complete those descriptors as evt_flushed rather than waiting forever.
+    // Linux uses the same stop-then-flush ordering and maps zero/no-status
+    // entries to RCODE_GENERATION (context_stop() then at_context_flush(),
+    // ohci.c:2000-2010); Apple uses stopDMA() then resetDMA() in
+    // handleBusResetInt().
     //
     // Confirm ACTIVE is clear per context before flushing. Both references stop
     // both contexts unconditionally and then flush unconditionally, but neither
@@ -214,9 +217,11 @@ void AsyncSubsystem::FlushATContexts() {
         return;
     }
 
-    const uint32_t flushed = DrainTxCompletions("bus-reset-flush");
-    if (flushed > 0) {
-        ASFW_LOG(Async, "FlushATContexts: flushed %u unsent AT packet(s)", flushed);
+    const uint32_t drained = DrainTxCompletions("bus-reset-flush");
+    if (drained > 0) {
+        ASFW_LOG(Async,
+                 "FlushATContexts: drained %u AT completion(s) during bus-reset flush",
+                 drained);
     }
 }
 

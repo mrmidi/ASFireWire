@@ -276,13 +276,15 @@ public:
     [[nodiscard]] std::optional<TxCompletion> ScanCompletion() noexcept;
 
     /**
-     * \brief RAII scope that makes ScanCompletion() report unsent packets.
+     * \brief RAII scope that makes ScanCompletion() complete statusless descriptors.
      *
      * While held, a descriptor whose xferStatus is still zero is reported as
-     * evt_flushed instead of being treated as pending. OHCI 1.2 draft clause
-     * 7.2.3.3 leaves such packets in the AT queue once the context stops, and
-     * the transaction owning them would otherwise wait for a status hardware
-     * will never write.
+     * evt_flushed instead of being treated as pending. OHCI 1.2 draft
+     * §7.2.3.3 (p. 7-14) permits a controller to leave outstanding AT
+     * descriptors without a final status after a bus reset. This does not prove
+     * that the corresponding packet was never transmitted, but the transaction
+     * must still be completed because hardware can no longer update it once the
+     * context is stopped.
      *
      * \warning The context must already be stopped. Entering this scope while
      *          hardware can still write a status would report packets that are
@@ -664,14 +666,15 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
             return std::nullopt;
         }
 
-        // OHCI 1.2 draft clause 7.2.3.3: after the context stops, hardware may
-        // leave packets in the AT queue that it never transmitted and will never
-        // write a status for. Reporting them as evt_flushed is what releases the
-        // ring and fails their transactions instead of letting them time out.
-        // Linux does exactly this by re-running handle_at_packet() with
-        // ctx->flushing set (ohci.c:1364, at_context_flush() at 1331-1343);
-        // AppleFWOHCI's resetDMA() frees every pending ATxElement after stopDMA()
-        // (symbol offsets 0x5fae-0x5fd2).
+        // OHCI 1.2 draft §7.2.3.3 (p. 7-14): after a bus reset, optional
+        // controller behavior may leave outstanding AT descriptors without a
+        // final status. Reporting zero-status descriptors as evt_flushed
+        // releases the ring and fails their transactions instead of letting
+        // them time out; it does not imply that the packets were never sent.
+        // Linux uses the same flush-mode scan shape, mapping zero/no-status
+        // entries to RCODE_GENERATION (handle_at_packet() at ohci.c:1364,
+        // at_context_flush() at 1331-1343). AppleFWOHCI's resetDMA() frees every
+        // pending ATxElement after stopDMA() (symbol offsets 0x5fae-0x5fd2).
         if (state.xferStatus == 0 && flushing_) {
             state.xferStatus = static_cast<uint16_t>(OHCIEventCode::kEvtFlushed);
         }
