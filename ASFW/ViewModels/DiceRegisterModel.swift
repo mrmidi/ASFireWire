@@ -183,6 +183,13 @@ struct DiceSection {
 }
 
 struct DiceSectionTable {
+    /// Section descriptors are supplied by the remote device. Keep them within
+    /// the DICE private address space and small enough that diagnostics cannot
+    /// turn a corrupt responder into an unbounded allocation/read loop. The
+    /// largest known section is the Saffire application area at about 146 KiB.
+    static let maxSectionOffsetQuadlets: UInt32 = 0x0040_0000 // 16 MiB
+    static let maxSectionSizeQuadlets: UInt32 = 0x0004_0000 // 1 MiB
+
     let names: [String]
     let sections: [DiceSection]
 
@@ -191,12 +198,28 @@ struct DiceSectionTable {
         return sections[i]
     }
 
-    static func decode(_ data: Data, names: [String]) -> DiceSectionTable? {
+    static func decode(_ data: Data, names: [String],
+                       requiresPresentSection: Bool = false) -> DiceSectionTable? {
         var out = [DiceSection]()
         for i in 0..<names.count {
             guard let off = DiceWire.u32(data, i * 8),
-                  let size = DiceWire.u32(data, i * 8 + 4) else { return nil }
+                  let size = DiceWire.u32(data, i * 8 + 4),
+                  off <= maxSectionOffsetQuadlets,
+                  size <= maxSectionSizeQuadlets else { return nil }
+            if size > 0 {
+                // Present sections must begin after their descriptor table.
+                guard off >= UInt32(names.count * 2),
+                      off <= maxSectionOffsetQuadlets - size else { return nil }
+            }
             out.append(DiceSection(offsetQuadlets: off, sizeQuadlets: size))
+        }
+        guard !requiresPresentSection || out.contains(where: \.isPresent) else { return nil }
+
+        let present = out.filter(\.isPresent).sorted { $0.offsetQuadlets < $1.offsetQuadlets }
+        for pair in zip(present, present.dropFirst()) {
+            guard pair.0.offsetQuadlets + pair.0.sizeQuadlets <= pair.1.offsetQuadlets else {
+                return nil
+            }
         }
         return DiceSectionTable(names: names, sections: out)
     }
@@ -291,7 +314,11 @@ enum DiceStreamSection {
 
         var entries = [DiceStreamEntry]()
         let stride = Int(size) * 4
-        for i in 0..<Int(count) {
+        // A corrupt NUMBER/SIZE pair must not make a report spend unbounded
+        // time walking default values beyond the bounded section read.
+        guard stride >= 8 else { return (count, size, []) }
+        let availableEntries = d.count / stride
+        for i in 0..<min(Int(count), availableEntries) {
             let b = i * stride
             var e = DiceStreamEntry()
             e.index = i
@@ -392,8 +419,8 @@ struct DiceEapCaps {
         c.mixerExposed = m & 0x01 != 0
         c.mixerReadOnly = m & 0x02 != 0
         c.mixerStorable = m & 0x04 != 0
-        c.mixerInputDeviceId = UInt8((m >> 8) & 0x0F)
-        c.mixerOutputDeviceId = UInt8((m >> 12) & 0x0F)
+        c.mixerInputDeviceId = UInt8((m >> 4) & 0x0F)
+        c.mixerOutputDeviceId = UInt8((m >> 8) & 0x0F)
         c.mixerInputCount = UInt8((m >> 16) & 0xFF)
         c.mixerOutputCount = UInt8((m >> 24) & 0xFF)
 
@@ -403,7 +430,7 @@ struct DiceEapCaps {
         c.maxTxStreams = UInt8((g & 0x0000_00F0) >> 4)
         c.maxRxStreams = UInt8((g & 0x0000_0F00) >> 8)
         c.streamFormatStorable = g & 0x1000 != 0
-        c.asicTypeRaw = (g >> 16) & 0xFF
+        c.asicTypeRaw = (g >> 16) & 0xFFFF
         return c
     }
 }
@@ -455,7 +482,7 @@ struct DiceRouterEntry {
         let src = UInt8((v >> 8) & 0xFF)
         return DiceRouterEntry(dstId: (dst & 0xF0) >> 4, dstChannel: dst & 0x0F,
                                srcId: (src & 0xF0) >> 4, srcChannel: src & 0x0F,
-                               peak: UInt16((v >> 16) & 0xFFFF))
+                               peak: UInt16((v >> 16) & 0x0FFF))
     }
 
     /// `hasLeadingCount` distinguishes the router section (quadlet 0 is the
@@ -574,8 +601,9 @@ struct DiceStandalone {
         }
     }
 
-    var wordClockNumerator: UInt16 { UInt16((wordClockRaw >> 4) & 0xFFF) }
-    var wordClockDenominator: UInt16 { UInt16((wordClockRaw >> 16) & 0xFFFF) }
+    // TCAT stores both ratio components as (value - 1).
+    var wordClockNumerator: UInt16 { UInt16((wordClockRaw >> 4) & 0xFFF) + 1 }
+    var wordClockDenominator: UInt16 { UInt16((wordClockRaw >> 16) & 0xFFFF) + 1 }
 
     /// standalone_section.rs:11-15 (offsets) and :63-74 (fields).
     static func decode(_ d: Data) -> DiceStandalone {
@@ -617,6 +645,29 @@ struct DiceMixer {
 
 // MARK: - Snapshot
 
+/// A report must distinguish a genuine empty value from a section that could
+/// not be read. Carry this state through to the formatter instead of relying on
+/// default-initialized decoded models.
+enum DiceSectionReadState: Equatable {
+    case absent
+    case decoded
+    case unreadable
+    case malformed
+    case bounded
+    case skipped
+
+    var reportLabel: String {
+        switch self {
+        case .absent: return "<absent>"
+        case .decoded: return "<decoded>"
+        case .unreadable: return "<unreadable>"
+        case .malformed: return "<malformed>"
+        case .bounded: return "<not read: exceeds diagnostic safety cap>"
+        case .skipped: return "<not read: capability unavailable>"
+        }
+    }
+}
+
 struct DiceSnapshot {
     var nodeId: UInt16 = 0
     var generation: UInt32 = 0
@@ -645,8 +696,17 @@ struct DiceSnapshot {
     var eapStandalone: DiceStandalone?
     var eapCurrentRouters: [DiceRateMode: [DiceRouterEntry]] = [:]
     var eapCurrentFormats: [DiceRateMode: DiceEapStreamFormats] = [:]
+    var sectionReadStates: [String: DiceSectionReadState] = [:]
 
     var notes: [String] = []
+
+    mutating func mark(_ section: String, _ state: DiceSectionReadState) {
+        sectionReadStates[section] = state
+    }
+
+    func readState(for section: String) -> DiceSectionReadState? {
+        sectionReadStates[section]
+    }
 
     /// The rate mode the device is currently in, derived from the nominal rate
     /// in GLOBAL_STATUS. Peak meters and the active router belong to this mode.

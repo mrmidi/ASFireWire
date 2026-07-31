@@ -18,7 +18,22 @@ enum DiceReportTextFormatter {
             : text + String(repeating: " ", count: width - text.count)
     }
 
-    static func format(snapshot s: DiceSnapshot, appVersion: String?) -> String {
+    private static func leftPad(_ text: String, _ width: Int) -> String {
+        text.count >= width ? text
+            : String(repeating: " ", count: width - text.count) + text
+    }
+
+    /// TCAT mixer coefficients are unsigned 2:14 fixed-point gains. Zero is
+    /// a true mute; every nonzero coefficient is shown as gain relative to
+    /// unity, rounded for report readability.
+    private static func mixerGainLabel(_ coefficient: UInt16) -> String {
+        guard coefficient != 0 else { return "mute" }
+        let dB = 20.0 * log10(Double(coefficient) / 16_384.0)
+        return abs(dB) < 0.05 ? "0.0" : String(format: "%+.1f", dB)
+    }
+
+    static func format(snapshot s: DiceSnapshot, appVersion: String?,
+                       driverVersion: String? = nil) -> String {
         var o = ""
         func line(_ t: String = "") { o += t + "\n" }
         func head(_ t: String) {
@@ -30,7 +45,8 @@ enum DiceReportTextFormatter {
         line("ASFW DICE DEVICE REPORT")
         line("=======================")
         line("Generated: \(ISO8601DateFormatter().string(from: Date()))")
-        if let v = appVersion { line("ASFW:      \(v)") }
+        if let v = appVersion { line("Report app: \(v)") }
+        if let v = driverVersion { line("Driver:     \(v)") }
         if let mode = s.activeRateMode { line("Rate mode: \(mode.label)") }
         line()
         line("This is a read-only dump of the device's DICE register spaces.")
@@ -115,17 +131,25 @@ enum DiceReportTextFormatter {
                 line("    " + pad("\(i)", 4) + pad(spec, 10) + "'\(n)'")
             }
         } else {
-            line("<unreadable>")
+            line(s.readState(for: "general.global")?.reportLabel ?? "<unreadable>")
         }
 
         // MARK: Streams
         head("TX STREAMS  (device transmits -> host capture)")
-        line("NUMBER = \(s.txCount)   SIZE = \(s.txSizeQuadlets) quadlets (\(s.txSizeQuadlets * 4) bytes)")
-        for e in s.txStreams { emitStream(e, isTx: true, into: &o) }
+        if let state = s.readState(for: "general.tx"), state != .decoded {
+            line(state.reportLabel)
+        } else {
+            line("NUMBER = \(s.txCount)   SIZE = \(s.txSizeQuadlets) quadlets (\(s.txSizeQuadlets * 4) bytes)")
+            for e in s.txStreams { emitStream(e, isTx: true, into: &o) }
+        }
 
         head("RX STREAMS  (device receives <- host playback)")
-        line("NUMBER = \(s.rxCount)   SIZE = \(s.rxSizeQuadlets) quadlets (\(s.rxSizeQuadlets * 4) bytes)")
-        for e in s.rxStreams { emitStream(e, isTx: false, into: &o) }
+        if let state = s.readState(for: "general.rx"), state != .decoded {
+            line(state.reportLabel)
+        } else {
+            line("NUMBER = \(s.rxCount)   SIZE = \(s.rxSizeQuadlets) quadlets (\(s.rxSizeQuadlets * 4) bytes)")
+            for e in s.rxStreams { emitStream(e, isTx: false, into: &o) }
+        }
 
         // MARK: Ext sync
         head("EXT_SYNC")
@@ -135,7 +159,7 @@ enum DiceReportTextFormatter {
             line("RATE           = \(x.rateIndex) (\(DiceClockRate.name(x.rateIndex)))")
             line("ADAT_USER_DATA = " + (x.adatUserData.map { String(format: "0x%X", $0) } ?? "no-data"))
         } else {
-            line("<absent>")
+            line(s.readState(for: "general.ext_sync")?.reportLabel ?? "<absent>")
         }
 
         // MARK: EAP
@@ -147,7 +171,7 @@ enum DiceReportTextFormatter {
             line("         maxTxStreams=\(c.maxTxStreams) maxRxStreams=\(c.maxRxStreams) formatStorable=\(c.streamFormatStorable)")
             line("         asic=\(c.asicLabel)")
         } else {
-            line("<absent>")
+            line(s.readState(for: "eap.caps")?.reportLabel ?? "<absent>")
         }
 
         // The router and stream_format sections are staging areas: software
@@ -155,21 +179,32 @@ enum DiceReportTextFormatter {
         // make them active (cmd_section.rs:75-79). What the device is actually
         // running lives in current_config. Empty here is normal.
         head("EAP STREAM FORMAT STAGING AREA  (written, then LOADed — not the live config)")
-        if let f = s.eapStreamFormats, f.txEntries.isEmpty == false || f.rxEntries.isEmpty == false {
-            emitFormats(f, into: &o)
+        if let f = s.eapStreamFormats {
+            if f.txEntries.isEmpty == false || f.rxEntries.isEmpty == false {
+                emitFormats(f, into: &o)
+            } else {
+                line("  <empty — nothing staged>")
+            }
+        } else if let state = s.readState(for: "eap.stream_format") {
+            line("  \(state.reportLabel)")
         } else {
             line("  <empty — nothing staged>")
         }
 
-        if !s.eapCurrentFormats.isEmpty {
+        if !s.eapCurrentFormats.isEmpty || DiceRateMode.allCases.contains(where: {
+            s.readState(for: "eap.current_format.\($0.rawValue)") != nil
+        }) {
             head("EAP CURRENT CONFIG — STREAM FORMATS PER RATE MODE")
             line("These describe the layout at EVERY rate mode. The plain TX/RX")
             line("registers above only describe the mode the device is in now.")
             for mode in DiceRateMode.allCases {
-                guard let f = s.eapCurrentFormats[mode] else { continue }
                 line()
                 line("[\(mode.label)]")
-                emitFormats(f, into: &o)
+                if let f = s.eapCurrentFormats[mode] {
+                    emitFormats(f, into: &o)
+                } else {
+                    line("  \(s.readState(for: "eap.current_format.\(mode.rawValue)")?.reportLabel ?? "<not read>")")
+                }
             }
         }
 
@@ -180,10 +215,15 @@ enum DiceReportTextFormatter {
             line("adatMode        = \(st.adatModeLabel)")
             line("wordClockMode   = \(st.wordClockModeLabel)  rate=\(st.wordClockNumerator)/\(st.wordClockDenominator)")
             line("internalRate    = \(DiceClockRate.name(st.internalRateIndex))")
+        } else if let state = s.readState(for: "eap.standalone") {
+            head("EAP STANDALONE  (behaviour with no host attached)")
+            line(state.reportLabel)
         }
 
         head("EAP ROUTER STAGING AREA  (written, then LOADed — not the live config)")
-        if s.eapRouter.isEmpty {
+        if let state = s.readState(for: "eap.router"), state != .decoded {
+            line("  \(state.reportLabel)")
+        } else if s.eapRouter.isEmpty {
             line("  <empty — nothing staged>")
         } else {
             emitRouter(s.eapRouter, showPeak: false, into: &o)
@@ -198,13 +238,16 @@ enum DiceReportTextFormatter {
             if let r, r.isEmpty == false {
                 emitRouter(r, showPeak: false, into: &o)
             } else if r == nil {
-                line("  <not read>")
+                line("  \(s.readState(for: "eap.current_router.\(mode.rawValue)")?.reportLabel ?? "<not read>")")
             } else {
                 line("  <empty — this device advertises no rates in this mode>")
             }
         }
 
-        if s.eapPeak.isEmpty == false {
+        if let state = s.readState(for: "eap.peak"), state != .decoded {
+            head("EAP PEAK")
+            line(state.reportLabel)
+        } else if s.eapPeak.isEmpty == false {
             // The section is sized by routerMaxEntries; only the entries that
             // mirror a live route carry data. The rest is uninitialised memory
             // and would read as plausible-looking nonsense.
@@ -218,26 +261,35 @@ enum DiceReportTextFormatter {
                 line("  (\(s.eapPeak.count - n) further slots are beyond the active router "
                      + "and hold uninitialised data — omitted)")
             }
+        } else if s.readState(for: "eap.peak") == .decoded {
+            head("EAP PEAK")
+            line("<empty>")
         }
 
-        if let m = s.eapMixer, !m.coefficients.isEmpty {
+        if let state = s.readState(for: "eap.mixer"), state != .decoded {
+            head("EAP MIXER")
+            line(state.reportLabel)
+        } else if let m = s.eapMixer, !m.coefficients.isEmpty {
             head("EAP MIXER  (\(m.coefficients.count) outputs x \(m.coefficients[0].count) inputs)")
             // tcd22xx_ctl.rs:700-702 -- range 0..0xFFFF, "2:14 Fixed-point".
-            line("Coefficients are 2:14 fixed point: gain = value/16384.")
-            line("  0 = muted,  16384 (0x4000) = unity (0 dB),  0xFFFF = +12.04 dB")
-            line("  dB = 20*log10(value/16384)")
+            line("Gains are dB relative to unity (0.0 dB); mute is a zero coefficient.")
+            line("  Values are 2:14 fixed-point internally and rounded to 0.1 dB here.")
+            line("  Maximum gain is +12.0 dB.")
             line(String(format: "saturation = 0x%08X   (bit n set = output n clipped)",
                         m.saturation))
             var header = "      "
             for i in 0..<m.coefficients[0].count {
-                header += String(format: "%6d", i)
+                header += String(format: "%7d", i)
             }
             line(header)
             for (o0, row) in m.coefficients.enumerated() {
                 var r = String(format: "  %3d ", o0)
-                for v in row { r += String(format: "%6d", v) }
+                for v in row { r += leftPad(mixerGainLabel(v), 7) }
                 line(r)
             }
+        } else if s.readState(for: "eap.mixer") == .decoded {
+            head("EAP MIXER")
+            line("<empty>")
         }
 
         if !s.notes.isEmpty {

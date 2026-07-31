@@ -50,6 +50,16 @@ struct DiceReportTextFormatterTests {
         #expect(report.contains("Focusrite"))
         #expect(report.contains("Saffire Pro 24 DSP"))
         #expect(report.contains("1.2.3"))
+        #expect(report.contains("Report app:"))
+    }
+
+    @Test func distinguishesUnreadableSectionsFromReadEmptySections() {
+        var s = Self.saffireSnapshot()
+        s.mark("eap.stream_format", .unreadable)
+        s.mark("eap.router", .decoded)
+        let text = DiceReportTextFormatter.format(snapshot: s, appVersion: nil)
+        #expect(text.contains("<unreadable>"))
+        #expect(text.contains("<empty — nothing staged>"))
     }
 
     @Test func reportsClockStateInDecodedForm() {
@@ -169,6 +179,8 @@ struct DiceReportTextFormatterTests {
         #expect(text.contains("EAP MIXER"))
         #expect(text.contains("2 outputs x 2 inputs"))
         #expect(text.contains("0x000000FF"))
+        #expect(text.contains("mute"))
+        #expect(text.contains("-84.3"))
     }
 }
 
@@ -260,9 +272,10 @@ struct DiceReportScaleTests {
     @Test func documentsTheMixerFixedPointScale() {
         let text = DiceReportTextFormatter.format(snapshot: snapshotWithMixerAndPeak(),
                                                   appVersion: nil)
-        #expect(text.contains("2:14 fixed point"))
-        #expect(text.contains("16384"))
-        #expect(text.contains("unity"))
+        #expect(text.contains("2:14 fixed-point"))
+        #expect(text.contains("0.0 dB"))
+        #expect(text.contains("-6.0"))
+        #expect(text.contains("mute"))
     }
 
     @Test func explainsTheSaturationBitmask() {

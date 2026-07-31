@@ -54,6 +54,20 @@ struct DiceSectionTableTests {
                                         names: DiceSectionTable.generalNames) == nil)
     }
 
+    @Test func rejectsAnEmptyGeneralTableWhenADeviceIsBeingClassified() {
+        #expect(DiceSectionTable.decode(DiceFixtures.zeros(40),
+                                        names: DiceSectionTable.generalNames,
+                                        requiresPresentSection: true) == nil)
+    }
+
+    @Test func rejectsOutOfRangeAndOverlappingSections() {
+        let outOfRange = DiceFixtures.quads([0x0040_0001, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+        #expect(DiceSectionTable.decode(outOfRange, names: DiceSectionTable.generalNames) == nil)
+
+        let overlapping = DiceFixtures.quads([10, 8, 17, 2, 0, 0, 0, 0, 0, 0])
+        #expect(DiceSectionTable.decode(overlapping, names: DiceSectionTable.generalNames) == nil)
+    }
+
     @Test func unknownSectionNameReturnsNil() throws {
         let t = try #require(DiceSectionTable.decode(DiceFixtures.Saffire.generalSectionTable,
                                                      names: DiceSectionTable.generalNames))
@@ -350,7 +364,7 @@ struct DiceEapCapsTests {
         #expect(c.mixerReadOnly == false)
         #expect(c.mixerStorable == true)
         #expect(c.mixerInputDeviceId == 2)
-        #expect(c.mixerOutputDeviceId == 0)
+        #expect(c.mixerOutputDeviceId == 2)
         #expect(c.mixerInputCount == 18)
         #expect(c.mixerOutputCount == 16)
 
@@ -376,6 +390,12 @@ struct DiceEapCapsTests {
         #expect(c.asicLabel == "unknown(255)")
     }
 
+    @Test func preservesTheFullSixteenBitAsicType() throws {
+        let d = DiceFixtures.quads([0, 0, 0xABCD_0000])
+        let c = try #require(DiceEapCaps.decode(d))
+        #expect(c.asicLabel == "unknown(43981)")
+    }
+
     @Test func rejectsTruncatedCapabilities() {
         #expect(DiceEapCaps.decode(DiceFixtures.zeros(8)) == nil)
     }
@@ -386,13 +406,14 @@ struct DiceEapCapsTests {
 struct DiceRouterEntryTests {
 
     @Test func decodesPackedEntry() {
-        // peak 0x1234, src Mixer(2) ch 5 -> 0x25, dst Avs0(11) ch 3 -> 0xB3
+        // Peak reserves its upper nibble, so 0x1234 decodes as 0x234.
+        // src Mixer(2) ch 5 -> 0x25, dst Avs0(11) ch 3 -> 0xB3.
         let e = DiceRouterEntry.decode(0x1234_25B3)
         #expect(e.dstId == 11)
         #expect(e.dstChannel == 3)
         #expect(e.srcId == 2)
         #expect(e.srcChannel == 5)
-        #expect(e.peak == 0x1234)
+        #expect(e.peak == 0x0234)
         #expect(e.dstLabel == "Avs0:3")
         #expect(e.srcLabel == "Mixer:5")
     }
@@ -586,9 +607,15 @@ struct DiceStandaloneTests {
         #expect(s.aesHighRate == true)
         #expect(s.adatModeLabel == "SMUX4")
         #expect(s.wordClockModeLabel == "Low")
-        #expect(s.wordClockNumerator == 2)
-        #expect(s.wordClockDenominator == 1)
+        #expect(s.wordClockNumerator == 3)
+        #expect(s.wordClockDenominator == 2)
         #expect(DiceClockRate.name(s.internalRateIndex) == "96000")
+    }
+
+    @Test func decodesZeroEncodedWordClockRatioAsOneOverOne() {
+        let s = DiceStandalone.decode(DiceFixtures.quads([0, 0, 0, 0, 0]))
+        #expect(s.wordClockNumerator == 1)
+        #expect(s.wordClockDenominator == 1)
     }
 
     @Test(arguments: zip([UInt32(0), 1, 2, 3], ["Normal", "SMUX2", "SMUX4", "Auto"]))
