@@ -46,9 +46,10 @@ public:
     using NotifyFn = std::function<void(uint64_t guid, bool loggedIn)>;
 
     // Probe budget caps the fail-open wait at ~kProbeBudget × kRetryDelayNs
-    // (immediate UA re-probes share the budget). LS-9000 warm-up is well under
-    // a minute on HW; 90 s leaves slack without stranding a broken device.
-    static constexpr uint32_t kProbeBudget = 90;
+    // (immediate UA re-probes share the budget). HW: the LS-9000 answered
+    // ready after 72 probes (~71 s warm-up), so 90 was too tight a margin —
+    // 150 covers a slow lamp without stranding a broken device forever.
+    static constexpr uint32_t kProbeBudget = 150;
     static constexpr uint64_t kRetryDelayNs = 1'000'000'000ULL;
 
     TargetReadinessGate(Scheduling::ITimerScheduler& scheduler,
