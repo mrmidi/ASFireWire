@@ -188,7 +188,12 @@ void HandleLoginEdge(ASFWSCSIController* self, PendingState* ps,
 
     if (loggedIn) {
         if (IsTargetAttached(ps)) {
-            return; // reconnect re-assert or duplicate catch-up — already attached
+            // Reconnect re-assert or duplicate catch-up — the login is
+            // continuous, keep the target. (A lost session re-login is NOT
+            // this case: LoginSession::NotifySessionLost emits a terminal
+            // down-edge first, so the destroy leg below has already cleared
+            // the flag before the fresh login's up-edge arrives.)
+            return;
         }
         // Re-check the session NOW (this block may run long after the edge was
         // queued — a stale Start catch-up must not create a target for a
@@ -198,6 +203,22 @@ void HandleLoginEdge(ASFWSCSIController* self, PendingState* ps,
         if (!bridge || !bridge->IsReady()) {
             ASFW_LOG(Controller, "[SCSIHBA] login edge stale (session not ready) — create skipped");
             return;
+        }
+        // With UserDoesHBAPerformDeviceManagement=false the family runs its own
+        // bring-up scan and creates a target-0 node at HBA start, and
+        // CreateTargetForID hard-fails on an existing ID
+        // (IOSCSIParallelFamily, IOSCSIParallelInterfaceController.cpp:
+        // `GetTargetForID != NULL` reject in CreateTargetForID) while
+        // DestroyTargetForID on a missing ID is a silent no-op. Clear any
+        // pre-existing node — the family's boot node, or a stray from a lost
+        // session — so the create below is deterministic and the SAM probe runs
+        // against the live login, not the family's boot-time INQUIRY retry
+        // (whose window closes ~1 s after start; HW finding 1, 2026-07-29).
+        const kern_return_t destroyKr = self->UserDestroyTargetForID(0);
+        if (destroyKr != kIOReturnSuccess) {
+            // Expected when no node pre-exists; also the breadcrumb if the
+            // DriverKit shim refuses to destroy a family-created node.
+            ASFW_LOG(Controller, "[SCSIHBA] pre-create destroy: 0x%x", destroyKr);
         }
         OSDictionary* dict = OSDictionary::withCapacity(1);
         if (dict == nullptr) {
