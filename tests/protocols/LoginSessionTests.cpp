@@ -301,6 +301,109 @@ TEST(LoginSessionTests, ReconnectAckStartsStatusTimeoutAndFallsBackToLogin) {
     EXPECT_EQ(reconnectWriteIndex + 2, rig.bus.WriteCount());
 }
 
+// A rejected reconnect (device power-cycled → LoginIDNotRecognized) is terminal
+// for the old login: the session must emit a down-edge BEFORE the fallback
+// login, then the fresh login's up-edge. Observers (the SCSI HBA) key target
+// lifetime to these edges — without the down-edge the stale target survives the
+// device reboot (HW finding 2, 2026-07-29: data-out 5/26 after power-cycle).
+TEST(LoginSessionTests, ReconnectRejectionEmitsSessionLostThenFreshLoginUpEdge) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+
+    std::vector<int> statuses;
+    rig.session.SetLoginCallback(
+        [&statuses](const ASFW::Protocols::SBP2::LoginCompleteParams& params) {
+            statuses.push_back(params.status);
+        });
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    ASSERT_TRUE(rig.session.Reconnect());
+
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    const uint64_t reconnectOrbAddress =
+        DecodeOrbAddressFromPayload(rig.bus.WriteAt(reconnectWriteIndex).data);
+    const uint64_t reconnectStatusAddress =
+        ReadORBAddress(rig.addressManager, reconnectOrbAddress,
+                       offsetof(ReconnectORB, statusFIFOAddressHi),
+                       offsetof(ReconnectORB, statusFIFOAddressLo));
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+
+    StatusBlock rejection{};
+    rejection.details = 0;
+    rejection.sbpStatus = SBPStatus::kLoginIDNotRecognized;
+    rig.addressManager.ApplyRemoteWrite(
+        reconnectStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&rejection),
+                                 sizeof(rejection)});
+
+    // Down-edge fired for the lost session; fallback login already in flight.
+    ASSERT_EQ(1u, statuses.size());
+    EXPECT_LT(statuses[0], 0);
+    ASSERT_EQ(LoginState::LoggingIn, rig.session.State());
+
+    // Complete the fallback login → up-edge with status 0.
+    const size_t loginWriteIndex = rig.bus.WriteCount() - 1;
+    const uint64_t loginOrbAddress =
+        DecodeOrbAddressFromPayload(rig.bus.WriteAt(loginWriteIndex).data);
+    const uint64_t loginResponseAddress =
+        ReadORBAddress(rig.addressManager, loginOrbAddress,
+                       offsetof(LoginORB, loginResponseAddressHi),
+                       offsetof(LoginORB, loginResponseAddressLo));
+    const uint64_t statusAddress =
+        ReadORBAddress(rig.addressManager, loginOrbAddress,
+                       offsetof(LoginORB, statusFIFOAddressHi),
+                       offsetof(LoginORB, statusFIFOAddressLo));
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(loginWriteIndex).handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+
+    LoginResponse response{};
+    response.length = OSSwapHostToBigInt16(LoginResponse::kSize);
+    response.loginID = OSSwapHostToBigInt16(0x0055);
+    response.commandBlockAgentAddressHi = OSSwapHostToBigInt32(0x0000'FFFFu);
+    response.commandBlockAgentAddressLo = OSSwapHostToBigInt32(0x0020'0000u);
+    response.reconnectHold = OSSwapHostToBigInt16(1);
+    rig.addressManager.ApplyRemoteWrite(
+        loginResponseAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&response), sizeof(response)});
+
+    StatusBlock good{};
+    good.details = 0;
+    good.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        statusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&good), sizeof(good)});
+
+    ASSERT_EQ(2u, statuses.size());
+    EXPECT_EQ(0, statuses[1]);
+    EXPECT_EQ(LoginState::LoggedIn, rig.session.State());
+}
+
+TEST(LoginSessionTests, ReconnectTimeoutEmitsSessionLostBeforeFallbackLogin) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+
+    std::vector<int> statuses;
+    rig.session.SetLoginCallback(
+        [&statuses](const ASFW::Protocols::SBP2::LoginCompleteParams& params) {
+            statuses.push_back(params.status);
+        });
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    ASSERT_TRUE(rig.session.Reconnect());
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+
+    rig.AdvanceMs(1010);  // past the reconnect status timeout
+
+    ASSERT_EQ(1u, statuses.size());
+    EXPECT_LT(statuses[0], 0);
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+}
+
 TEST(LoginSessionTests, BusyTimeoutReplayCancelsInFlightWrite) {
     SessionRig rig;
 

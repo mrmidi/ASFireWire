@@ -216,6 +216,7 @@ private:
     void OnReconnectTimeout() noexcept;
     void OnLogoutWriteComplete(uint16_t expectedGeneration, Async::AsyncStatus status) noexcept;
     void OnLogoutTimeout() noexcept;
+    void NotifySessionLost() noexcept;
 
     // Status block handling ---------------------------------------------------
     void OnStatusBlockRemoteWrite(uint32_t offset, std::span<const uint8_t> payload) noexcept;
@@ -271,6 +272,9 @@ private:
     uint32_t loginRetryCount_{0};
     static constexpr uint32_t kLoginRetryMax = 32;
     static constexpr uint64_t kLoginRetryDelayMs = 1000;
+    // LoginCompleteParams.status for a lost session (reconnect rejected/timed
+    // out): terminal for the OLD login; a fresh fallback login follows.
+    static constexpr int kStatusSessionLost = -3;
 
     // Address space handles ---------------------------------------------------
     uint64_t loginORBHandle_{0};

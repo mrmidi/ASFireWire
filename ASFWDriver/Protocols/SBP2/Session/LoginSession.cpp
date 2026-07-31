@@ -636,8 +636,28 @@ void LoginSession::OnReconnectTimeout() noexcept {
         return;
     }
     ASFW_LOG_SBP2( "LoginSession: reconnect timeout, falling back to full login");
+    NotifySessionLost();
     SetState(LoginState::Idle);
     (void)Login();
+}
+
+// A rejected or unanswered reconnect means the target dropped the old login —
+// typically a device power-cycle, which also reverts its command state
+// (initialization such as MODE SELECT is gone). Emit the terminal down-edge
+// for the old session BEFORE the fallback login: observers tear down state
+// keyed to it (the HBA destroys SCSI target 0), and the fresh login's up-edge
+// rebuilds it, forcing a full SAM re-probe/re-init against the rebooted device
+// instead of reusing its stale identity. Matches Apple's model — IOFireWireSBP2
+// reports a failed reconnect as a lost session to its clients rather than
+// silently re-logging-in underneath them.
+void LoginSession::NotifySessionLost() noexcept {
+    if (!loginCallback_) {
+        return;
+    }
+    LoginCompleteParams params{};
+    params.status = kStatusSessionLost;
+    params.generation = loginGeneration_;
+    loginCallback_(params);
 }
 
 void LoginSession::OnLogoutWriteComplete(uint16_t expectedGeneration,
@@ -822,6 +842,7 @@ void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& blo
     if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
         ASFW_LOG_SBP2( "LoginSession: reconnect failed — sbpStatus=%u, falling back to full login",
                  block.sbpStatus);
+        NotifySessionLost();
         SetState(LoginState::Idle);
         (void)Login();
         return;
