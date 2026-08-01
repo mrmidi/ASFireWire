@@ -9,8 +9,6 @@
 #include "../../../../Common/WireFormat.hpp"
 #include "../../../../Logging/Logging.hpp"
 
-#include <DriverKit/IOLib.h>
-
 #include <atomic>
 #include <limits>
 #include <memory>
@@ -20,9 +18,12 @@ namespace ASFW::Audio::DICE {
 
 namespace {
 
-constexpr uint32_t kAsyncTimeoutMs = 2000;
+// Linux DICE waits for CLOCK_ACCEPTED for NOTIFICATION_TIMEOUT_MS (150 ms) after
+// GLOBAL_CLOCK_SELECT. Source-lock policy is a separate, device-profile decision.
+// Cross-validated with linux-sound-firewire-stack/firewire/dice/dice-stream.c:60-98.
+constexpr uint32_t kClockAcceptedTimeoutMs = 150;
+constexpr uint32_t kStreamingClockLockTimeoutMs = 2000;
 constexpr uint32_t kPollIntervalMs = 10;
-constexpr uint32_t kActiveStatusPollIntervalMs = 200;
 constexpr uint32_t kReadyTimeoutMs = 200;
 constexpr uint32_t kStopSyncTimeoutMs = 5000;
 constexpr uint32_t kStopSyncPollMs = 10;
@@ -104,12 +105,18 @@ DICEDuplexBringupController::DICEDuplexBringupController(
     Protocols::Ports::ProtocolRegisterIO& io,
     Protocols::Ports::FireWireBusInfo& busInfo,
     IODispatchQueue* workQueue,
-    GeneralSections sections)
+    GeneralSections sections,
+    Scheduling::ITimerScheduler* timerScheduler)
     : diceReader_(diceReader)
     , io_(io)
     , busInfo_(busInfo)
     , workQueue_(workQueue)
+    , timerScheduler_(timerScheduler)
     , sections_(sections) {
+}
+
+DICEDuplexBringupController::~DICEDuplexBringupController() {
+    CancelScheduledRetry();
 }
 
 void DICEDuplexBringupController::ProgramRx(StageCallback callback) {
@@ -174,6 +181,7 @@ void DICEDuplexBringupController::ApplyClockConfig(
         return;
     }
 
+    CancelScheduledRetry();
     flowMode_ = FlowMode::kClockApply;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
@@ -202,40 +210,36 @@ void DICEDuplexBringupController::ApplyClockConfig(
                        });
 }
 
-void DICEDuplexBringupController::ScheduleRetry(uint64_t delayMs, std::function<void()> work) {
-    if (!work) {
-        return;
+bool DICEDuplexBringupController::ScheduleRetry(uint64_t delayMs, std::function<void()> work) {
+    if (!work || timerScheduler_ == nullptr) {
+        return false;
     }
 
-    if (!workQueue_) {
-        if (delayMs > 0) {
-            IOSleep(static_cast<unsigned int>(delayMs));
-        }
-        work();
-        return;
+    CancelScheduledRetry();
+    const uint64_t epoch = scheduledRetryEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const auto token = timerScheduler_->ScheduleAfter(
+        delayMs * 1'000'000ULL,
+        [this, epoch, work = std::move(work)]() mutable {
+            if (scheduledRetryEpoch_.load(std::memory_order_acquire) != epoch) {
+                return;
+            }
+            scheduledRetry_.store(Scheduling::kInvalidTimerToken, std::memory_order_release);
+            work();
+        });
+    if (token == Scheduling::kInvalidTimerToken) {
+        return false;
     }
+    scheduledRetry_.store(token, std::memory_order_release);
+    return true;
+}
 
-#ifdef ASFW_HOST_TEST
-    if (workQueue_->UsesManualDispatchForTesting()) {
-        workQueue_->DispatchAsyncAfter(delayMs * 1'000'000ULL, std::move(work));
-        return;
+void DICEDuplexBringupController::CancelScheduledRetry() noexcept {
+    scheduledRetryEpoch_.fetch_add(1, std::memory_order_acq_rel);
+    const auto token = scheduledRetry_.exchange(Scheduling::kInvalidTimerToken,
+                                                std::memory_order_acq_rel);
+    if (token != Scheduling::kInvalidTimerToken && timerScheduler_ != nullptr) {
+        timerScheduler_->Cancel(token);
     }
-
-    workQueue_->DispatchAsync([delayMs, work = std::move(work)]() mutable {
-        if (delayMs > 0) {
-            IOSleep(static_cast<unsigned int>(delayMs));
-        }
-        work();
-    });
-#else
-    auto sharedWork = std::make_shared<std::function<void()>>(std::move(work));
-    workQueue_->DispatchAsync(^{
-        if (delayMs > 0) {
-            IOSleep(static_cast<unsigned int>(delayMs));
-        }
-        (*sharedWork)();
-    });
-#endif
 }
 
 bool DICEDuplexBringupController::EnsureRouteCurrent() const noexcept {
@@ -286,6 +290,7 @@ void DICEDuplexBringupController::PrepareDuplex48k(
         callback(kIOReturnNotReady);
         return;
     }
+    CancelScheduledRetry();
     if (HasAnyRestartState(restartSession_)) {
         const IOReturn stopStatus = StopDuplex();
         if (stopStatus != kIOReturnSuccess) {
@@ -342,6 +347,7 @@ void DICEDuplexBringupController::PrepareDuplex(
         callback(kIOReturnUnsupported, {});
         return;
     }
+    CancelScheduledRetry();
     if (HasAnyRestartState(restartSession_)) {
         const IOReturn stopStatus = StopDuplex();
         if (stopStatus != kIOReturnSuccess) {
@@ -648,27 +654,22 @@ void DICEDuplexBringupController::DoWaitClockAccepted(
         return;
     }
 
-    if (attempt * kPollIntervalMs >= kAsyncTimeoutMs) {
+    if (attempt * kPollIntervalMs >= kClockAcceptedTimeoutMs) {
         ASFW_LOG(DICE,
                  "PrepareDuplex48k: CLOCK_ACCEPTED wait reached %u ms; performing final confirmation",
-                 kAsyncTimeoutMs);
+                 kClockAcceptedTimeoutMs);
         DoConfirmClockAccepted(channels, mailboxBits, std::move(cb));
         return;
     }
 
-    // Periodically do an active global status read instead of only checking the mailbox
-    const uint32_t elapsedMs = attempt * kPollIntervalMs;
-    if (elapsedMs > 0 && (elapsedMs % kActiveStatusPollIntervalMs) == 0) {
-        ASFW_LOG(DICE,
-                 "PrepareDuplex48k: active status poll at %u ms",
-                 elapsedMs);
-        DoActiveClockCheck(channels, mailboxBits, std::move(cb));
-        return;
+    if (!ScheduleRetry(kPollIntervalMs,
+                       [this, channels, attempt, cb]() mutable {
+                           DoWaitClockAccepted(channels, attempt + 1, std::move(cb));
+                       })) {
+        ASFW_LOG_ERROR(DICE,
+                       "PrepareDuplex48k: cannot schedule CLOCK_ACCEPTED deadline continuation");
+        DoRollback(kIOReturnNotReady, std::move(cb));
     }
-
-    ScheduleRetry(kPollIntervalMs, [this, channels, attempt, cb = std::move(cb)]() mutable {
-        DoWaitClockAccepted(channels, attempt + 1, std::move(cb));
-    });
 }
 
 void DICEDuplexBringupController::DoConfirmClockAccepted(
@@ -798,18 +799,23 @@ void DICEDuplexBringupController::DoAwaitStreamingClockLock(
                 return;
             }
 
-            if (attempt * kPollIntervalMs >= kAsyncTimeoutMs) {
+            if (attempt * kPollIntervalMs >= kStreamingClockLockTimeoutMs) {
                 ASFW_LOG(DICE,
                          "PrepareDuplex48k: clock not stable-locked within %u ms (status=0x%08x rate=%u target=%u); aborting bring-up",
-                         kAsyncTimeoutMs, state.status, state.sampleRate,
+                         kStreamingClockLockTimeoutMs, state.status, state.sampleRate,
                          restartSession_.desiredClock.sampleRateHz);
                 DoRollback(kIOReturnTimeout, std::move(cb));
                 return;
             }
 
-            ScheduleRetry(kPollIntervalMs, [this, channels, attempt, cb = std::move(cb)]() mutable {
-                DoAwaitStreamingClockLock(channels, attempt + 1, std::move(cb));
-            });
+            if (!ScheduleRetry(kPollIntervalMs,
+                               [this, channels, attempt, cb]() mutable {
+                                   DoAwaitStreamingClockLock(channels, attempt + 1, std::move(cb));
+                               })) {
+                ASFW_LOG_ERROR(DICE,
+                               "PrepareDuplex48k: cannot schedule streaming clock-lock continuation");
+                DoRollback(kIOReturnNotReady, std::move(cb));
+            }
         });
 }
 
@@ -1244,6 +1250,7 @@ void DICEDuplexBringupController::RefreshRuntimeCaps(VoidCallback cb) {
 }
 
 void DICEDuplexBringupController::DoRollback(IOReturn error, VoidCallback cb) {
+    CancelScheduledRetry();
     restartSession_.phase = DiceRestartPhase::kFailed;
     restartSession_.terminalError = error;
 
@@ -1358,10 +1365,14 @@ void DICEDuplexBringupController::DoPollSourceLock(
                             return;
                         }
 
-                        ScheduleRetry(kPollIntervalMs,
-                                      [this, attempt, notify, cb = std::move(cb)]() mutable {
-                                          DoPollSourceLock(attempt + 1, notify, std::move(cb));
-                                      });
+                        if (!ScheduleRetry(kPollIntervalMs,
+                                           [this, attempt, notify, cb]() mutable {
+                                               DoPollSourceLock(attempt + 1, notify, std::move(cb));
+                                           })) {
+                            ASFW_LOG_ERROR(DICE,
+                                           "ConfirmDuplex48kStart: cannot schedule source-lock continuation");
+                            DoRollback(kIOReturnNotReady, std::move(cb));
+                        }
                     });
 }
 
@@ -1407,12 +1418,14 @@ void DICEDuplexBringupController::ConfirmDuplex48kStart(VoidCallback callback) {
         return;
     }
 
+    CancelScheduledRetry();
     restartSession_.phase = DiceRestartPhase::kConfirmingDeviceStart;
     NotificationMailbox::Reset();
     DoPollSourceLock(0, 0, std::move(callback));
 }
 
 IOReturn DICEDuplexBringupController::StopDuplex() {
+    CancelScheduledRetry();
     if (!HasDeviceRestartState(restartSession_)) {
         return kIOReturnSuccess;
     }
@@ -1453,6 +1466,7 @@ IOReturn DICEDuplexBringupController::StopDuplex() {
 }
 
 void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
+    CancelScheduledRetry();
     if (!restartSession_.ownerClaimed) {
         callback(kIOReturnSuccess);
         return;

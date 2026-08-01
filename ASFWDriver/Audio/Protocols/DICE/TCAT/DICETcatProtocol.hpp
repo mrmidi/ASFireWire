@@ -20,6 +20,10 @@ namespace ASFW::IRM {
 class IRMClient;
 }
 
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+}
+
 namespace ASFW::Audio::DICE::TCAT {
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
@@ -36,7 +40,8 @@ public:
                      Protocols::Ports::FireWireBusInfo& busInfo,
                      Discovery::DeviceRegistry& routeRegistry,
                      const Discovery::DeviceRouteToken& route,
-                     ::ASFW::IRM::IRMClient* irmClient = nullptr);
+                     ::ASFW::IRM::IRMClient* irmClient = nullptr,
+                     ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr);
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -92,6 +97,7 @@ private:
     DICETransaction diceReader_;
     std::optional<ASFW::Audio::DICE::DICEDuplexBringupController> duplexCtrl_;
     const std::atomic<bool>* teardownCancel_{nullptr};
+    ::ASFW::Scheduling::ITimerScheduler* timerScheduler_{nullptr};  // driver-owned
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};

@@ -46,7 +46,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                      modelId,
                      nodeId);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                    route, irmClient);
+                                                                    route, irmClient, timerScheduler);
         }
     }
 
@@ -57,7 +57,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  modelId,
                  nodeId);
         return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                route, irmClient);
+                                                                route, irmClient, timerScheduler);
     }
 
     if (vendorId == kMidasVendorId && modelId == kMidasVeniceModelId) {
@@ -67,7 +67,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  modelId,
                  nodeId);
         return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                route, irmClient);
+                                                                route, irmClient, timerScheduler);
     }
 
     if (vendorId == kPreSonusVendorId && modelId == kStudioLive1602ModelId) {
@@ -77,7 +77,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  modelId,
                  nodeId);
         return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
-                                                                route, irmClient);
+                                                                route, irmClient, timerScheduler);
     }
 
     // Check for Apogee Duet FireWire (AV/C + vendor-dependent commands).

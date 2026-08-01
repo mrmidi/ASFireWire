@@ -11,6 +11,7 @@
 #include "DICETransaction.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
+#include "../../../../Scheduling/ITimerScheduler.hpp"
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOReturn.h>
 #include <atomic>
@@ -22,9 +23,9 @@ namespace ASFW::Audio::DICE {
 /// Manages generic DICE duplex startup/teardown.
 ///
 /// All long-running methods (PrepareDuplex48k, ProgramRxForDuplex48k,
-/// ProgramTxAndEnableDuplex48k, ConfirmDuplex48kStart, ReleaseOwner) are fully async — they use
-/// DICETransaction callbacks directly and DispatchAsyncAfter for polling
-/// retries.  No IOSleep anywhere in this class.
+/// ProgramTxAndEnableDuplex48k, ConfirmDuplex48kStart, ReleaseOwner) are fully async. Delayed
+/// retry continuations use the injected timer scheduler rather than blocking a DriverKit queue.
+/// StopDuplex remains a transitional synchronous compatibility boundary.
 class DICEDuplexBringupController {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
@@ -38,7 +39,10 @@ public:
         Protocols::Ports::ProtocolRegisterIO& io,
         Protocols::Ports::FireWireBusInfo& busInfo,
         IODispatchQueue* workQueue,
-        GeneralSections sections);
+        GeneralSections sections,
+        Scheduling::ITimerScheduler* timerScheduler = nullptr);
+
+    ~DICEDuplexBringupController();
 
     DICEDuplexBringupController(const DICEDuplexBringupController&) = delete;
     DICEDuplexBringupController& operator=(const DICEDuplexBringupController&) = delete;
@@ -134,13 +138,20 @@ private:
     void RecordStopTeardownAbort(const char* stage) const noexcept;
     bool AbortStopIfTeardown(const char* stage, VoidCallback& cb);
 
-    void ScheduleRetry(uint64_t delayMs, std::function<void()> work);
+    [[nodiscard]] bool ScheduleRetry(uint64_t delayMs, std::function<void()> work);
+    void CancelScheduledRetry() noexcept;
 
     DICETransaction& diceReader_;
     Protocols::Ports::ProtocolRegisterIO& io_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     IODispatchQueue* workQueue_;   // NOT owned — borrowed from caller
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};  // NOT owned — driver lifetime
     GeneralSections sections_;
+
+    // One delayed continuation is valid for this serialized state machine at a time. The epoch
+    // makes an already-dispatched timer harmless after a new operation, rollback, or teardown.
+    std::atomic<Scheduling::TimerToken> scheduledRetry_{Scheduling::kInvalidTimerToken};
+    std::atomic<uint64_t> scheduledRetryEpoch_{0};
 
     DiceRestartSession restartSession_{};
     DiceClockConfiguration diceClock_{};

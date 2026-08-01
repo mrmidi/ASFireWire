@@ -71,16 +71,19 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                    Protocols::Ports::FireWireBusInfo& busInfo,
                                    Discovery::DeviceRegistry& routeRegistry,
                                    const Discovery::DeviceRouteToken& route,
-                                   ::ASFW::IRM::IRMClient* irmClient)
+                                   ::ASFW::IRM::IRMClient* irmClient,
+                                   ::ASFW::Scheduling::ITimerScheduler* timerScheduler)
     : busInfo_(busInfo)
     , irmClient_(irmClient)
     , io_(busOps, busInfo, routeRegistry, route)
-    , diceReader_(io_) {
+    , diceReader_(io_)
+    , timerScheduler_(timerScheduler) {
 }
 
 IOReturn DICETcatProtocol::Initialize() {
     if (!duplexCtrl_) {
-        duplexCtrl_.emplace(diceReader_, io_, busInfo_, nullptr /*workQueue*/, GeneralSections{});
+        duplexCtrl_.emplace(diceReader_, io_, busInfo_, nullptr /*workQueue*/, GeneralSections{},
+                            timerScheduler_);
         duplexCtrl_->SetTeardownCancelToken(teardownCancel_);
     }
 
