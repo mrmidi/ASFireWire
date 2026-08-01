@@ -25,6 +25,10 @@ struct ASFWDiagnosticsSnapshot {
 /// Client to invoke diagnostic selectors on the ASFW driver.
 final class ASFWDiagnosticsClient {
     private let connector: ASFWDriverConnector
+
+    private static let diagStatusOK: UInt32 = 0
+    private static let diagStatusUnavailable: UInt32 = 1
+    private static let diagStatusStaleGeneration: UInt32 = 2
     
     init(connector: ASFWDriverConnector) {
         self.connector = connector
@@ -96,7 +100,8 @@ final class ASFWDiagnosticsClient {
         
         let phy: ASFWDiagPHY = try loadDiagStruct(
             selector: 1004,
-            expectedSize: MemoryLayout<ASFWDiagPHY>.size
+            expectedSize: MemoryLayout<ASFWDiagPHY>.size,
+            allowUnavailable: true
         )
         
         let csrContract: ASFWDiagCSRContract = try loadDiagStruct(
@@ -127,9 +132,10 @@ final class ASFWDiagnosticsClient {
         // Verify cross-struct generation consistency.
         // We compare generation IDs across all collected structures.
         let gen = busContract.header.generation
+        let phyUnavailable = phy.header.status == Self.diagStatusUnavailable
         if topology.header.generation != gen ||
            roleCoordinator.header.generation != gen ||
-           phy.header.generation != gen ||
+           (!phyUnavailable && phy.header.generation != gen) ||
            asyncTrace.header.generation != gen ||
            busManager.header.generation != gen ||
            postResetTiming.header.generation != gen {
@@ -158,7 +164,9 @@ final class ASFWDiagnosticsClient {
     /// for realistic topologies/traces and loadDiagStruct zero-fills the rest.
     private static let structOutputLimit = 4096
 
-    private func loadDiagStruct<T>(selector: UInt32, expectedSize: Int) throws -> T {
+    private func loadDiagStruct<T>(selector: UInt32,
+                                   expectedSize: Int,
+                                   allowUnavailable: Bool = false) throws -> T {
         guard connector.isConnected else {
             throw DiagnosticsError.notConnected
         }
@@ -191,9 +199,10 @@ final class ASFWDiagnosticsClient {
         }
         
         // Check internal status code
-        if header.status == 2 { // ASFWDiagStatusStaleGeneration
+        if header.status == Self.diagStatusStaleGeneration {
             throw DiagnosticsError.staleGeneration
-        } else if header.status != 0 { // ASFWDiagStatusStatusOK
+        } else if header.status != Self.diagStatusOK &&
+                    !(allowUnavailable && header.status == Self.diagStatusUnavailable) {
             throw DiagnosticsError.driverError(status: header.status)
         }
         

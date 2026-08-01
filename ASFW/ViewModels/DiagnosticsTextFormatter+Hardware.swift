@@ -41,6 +41,11 @@ extension DiagnosticsTextFormatter {
                           _ snapshot: ASFWDiagnosticsSnapshot) {
         // --- PHY Status ---
         r.title("PHY Interface Snapshot")
+        guard snapshot.phy.header.status == 0 else {
+            r.row("Availability", "Unavailable while isochronous streaming is active")
+            r.raw("\nPHY register reads are intentionally suppressed while an isochronous context is running.\n")
+            return
+        }
         r.row("Link On", snapshot.phy.linkOn != 0 ? "Yes" : "No")
         r.row("Contender", snapshot.phy.contender != 0 ? "Yes" : "No")
         r.row("PHY Gap Count", snapshot.phy.gapCount)

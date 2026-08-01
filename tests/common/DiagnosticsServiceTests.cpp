@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 #include "ASFWDiagnosticsABI.h"
+#include "UserClient/WireFormats/DiagnosticsWireEnvelope.hpp"
 #include <cstddef>
 
 // Static assert compile-time checks to ensure structural alignment and size invariants.
@@ -96,4 +97,29 @@ TEST_F(DiagnosticsServiceTests, VerifyEnumValues) {
     EXPECT_EQ(ASFWDiagStatusUnsupported, 4);
     EXPECT_EQ(ASFWDiagStatusBusy, 5);
     EXPECT_EQ(ASFWDiagStatusFailed, 6);
+}
+
+TEST_F(DiagnosticsServiceTests, UnavailableResponseRetainsABIWireEnvelope) {
+    ASFWDiagPHY phy{};
+    ASFW::UserClient::Wire::EnsureDiagnosticsWireEnvelope(phy);
+    phy.header.status = ASFWDiagStatusUnavailable;
+
+    EXPECT_EQ(phy.header.abiVersion, ASFW_DIAG_ABI_VERSION);
+    EXPECT_EQ(phy.header.structSize, sizeof(ASFWDiagPHY));
+    EXPECT_EQ(phy.header.status, ASFWDiagStatusUnavailable);
+}
+
+TEST_F(DiagnosticsServiceTests, ValidResponseRetainsSnapshotHeader) {
+    ASFWDiagPHY phy{};
+    phy.header.abiVersion = ASFW_DIAG_ABI_VERSION;
+    phy.header.structSize = sizeof(ASFWDiagPHY);
+    phy.header.timestampNs = 42;
+    phy.header.generation = 7;
+    phy.header.snapshotSeq = 13;
+
+    ASFW::UserClient::Wire::EnsureDiagnosticsWireEnvelope(phy);
+
+    EXPECT_EQ(phy.header.timestampNs, 42u);
+    EXPECT_EQ(phy.header.generation, 7u);
+    EXPECT_EQ(phy.header.snapshotSeq, 13u);
 }

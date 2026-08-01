@@ -9,6 +9,7 @@
 #include "../../Logging/Logging.hpp"
 #include "ASFWDriver.h"
 #include "ControllerCoreAccess.hpp"
+#include "../WireFormats/DiagnosticsWireEnvelope.hpp"
 
 #include <DriverKit/OSData.h>
 #include <cstddef>
@@ -82,6 +83,11 @@ kern_return_t CollectAndPack(Diagnostics::DiagnosticsService* service, IOUserCli
 
     StructType val{};
     ASFWDiagStatus status = (service->*collectFn)(&val);
+
+    // Collectors intentionally return status-only failures when a hardware
+    // snapshot is unsafe (for example PHY reads while isochronous DMA runs).
+    // Always preserve a valid ABI envelope so the app can consume that status.
+    Wire::EnsureDiagnosticsWireEnvelope(val);
     val.header.status = static_cast<uint32_t>(status);
 
     size_t sizeToCopy = PrepareForWire(val);

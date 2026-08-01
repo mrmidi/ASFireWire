@@ -907,6 +907,7 @@
 		9B644C7B7FE0269C2B618741 /* ASFWMCPToolDispatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPToolDispatch.swift; sourceTree = "<group>"; };
 		9BAFD5B8AE3A411B131C623F /* AVCCommandView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVCCommandView.swift; sourceTree = "<group>"; };
 		9BBEF8C13C2CAC2B994BD429 /* TopologyMapService.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyMapService.hpp; sourceTree = "<group>"; };
+		9C5060DA34CD531A0687B238 /* DiagnosticsWireEnvelope.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiagnosticsWireEnvelope.hpp; sourceTree = "<group>"; };
 		9CFCDBBEAFF6591067556D82 /* MetricsSink.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MetricsSink.hpp; sourceTree = "<group>"; };
 		9D63937D5D5E665DA45C4D17 /* DICETransaction.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DICETransaction.hpp; sourceTree = "<group>"; };
 		9D6A93FFD51132B2A4F8B00E /* ASFWMCPBusResetTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPBusResetTools.swift; sourceTree = "<group>"; };
@@ -2366,6 +2367,7 @@
 				B4C0FA13AF98CB5D82ABE191 /* AVCWireFormats.hpp */,
 				582742484D61634C43CE6873 /* BusResetWireFormats.hpp */,
 				F7AAEEA6F540F467BB7E4B7D /* DeviceDiscoveryWireFormats.hpp */,
+				9C5060DA34CD531A0687B238 /* DiagnosticsWireEnvelope.hpp */,
 				0EFBB31EBA1674516A0A39D7 /* SBP2CommandWireFormats.hpp */,
 				C5D522A9AAE5F57C8A93153F /* StatusWireFormats.hpp */,
 				43359B0FF771906DB148DBFB /* TopologyWireFormats.hpp */,
