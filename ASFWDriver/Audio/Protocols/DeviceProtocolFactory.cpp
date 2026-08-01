@@ -67,7 +67,11 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
             route,
             irmClient,
             timerScheduler,
-            DICE::TCAT::DICETcatRuntimePolicy{.exposeDeviceToHostToCoreAudio = false});
+            DICE::TCAT::DICETcatRuntimePolicy{
+                .exposeDeviceToHostToCoreAudio = false,
+                .requireSourceLockBeforeStreamEnable = false,
+                .requireSourceLockAtConfirm = false,
+            });
     }
 
     if (vendorId == kAlesisVendorId && modelId == kAlesisMultiMixModelId) {

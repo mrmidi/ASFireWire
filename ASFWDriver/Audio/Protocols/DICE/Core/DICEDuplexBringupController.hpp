@@ -20,6 +20,16 @@
 
 namespace ASFW::Audio::DICE {
 
+// DICE devices normally require a stable GLOBAL source-lock indication before
+// stream enable and confirmation. Some playback-only products need host IT
+// packets before their selected receive-clock path can report that lock; those
+// products retain the target-rate check but treat source lock as post-start
+// telemetry instead of an admission gate.
+struct DICEBringupPolicy final {
+    bool requireSourceLockBeforeStreamEnable{true};
+    bool requireSourceLockAtConfirm{true};
+};
+
 /// Manages generic DICE duplex startup/teardown.
 ///
 /// All long-running methods (PrepareDuplex48k, ProgramRxForDuplex48k,
@@ -40,7 +50,8 @@ public:
         Protocols::Ports::FireWireBusInfo& busInfo,
         IODispatchQueue* workQueue,
         GeneralSections sections,
-        Scheduling::ITimerScheduler* timerScheduler = nullptr);
+        Scheduling::ITimerScheduler* timerScheduler = nullptr,
+        DICEBringupPolicy bringupPolicy = {});
 
     ~DICEDuplexBringupController();
 
@@ -92,9 +103,9 @@ private:
     void DoWaitClockAccepted(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoConfirmClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, VoidCallback cb);
     void DoReadGlobalAfterClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, IOReturn failureStatus, VoidCallback cb);
-    // Gate between clock-confirm and stream enable: poll until the PLL is stable-locked
-    // at the target rate, so streams are never enabled while the device is still
-    // relocking (which wedges it until a hard reset).
+    // Gate between clock-confirm and stream enable: always wait for the target
+    // rate. The product policy decides whether GLOBAL source lock is also
+    // required before the host stream can provide its clock reference.
     void DoAwaitStreamingClockLock(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoDiscoverStreams(AudioDuplexChannels channels, uint32_t step, VoidCallback cb);
     // Per-stream stop-side disables. The stop sequence must clear EVERY stream's
@@ -122,6 +133,8 @@ private:
 
     // Async step chain for ConfirmDuplex48kStart
     void DoPollSourceLock(uint32_t attempt, uint32_t accumulatedNotify, VoidCallback cb);
+    void DoCompleteConfirm(uint32_t notification, uint32_t status, uint32_t extStatus,
+                           VoidCallback cb);
 
     // Async stop / rollback sequencing
     void DoStopSequence(bool releaseOwner, VoidCallback cb);
@@ -147,6 +160,7 @@ private:
     IODispatchQueue* workQueue_;   // NOT owned — borrowed from caller
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};  // NOT owned — driver lifetime
     GeneralSections sections_;
+    DICEBringupPolicy bringupPolicy_{};
 
     // One delayed continuation is valid for this serialized state machine at a time. The epoch
     // makes an already-dispatched timer harmless after a new operation, rollback, or teardown.

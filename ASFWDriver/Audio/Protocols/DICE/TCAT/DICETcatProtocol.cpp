@@ -90,7 +90,13 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
 IOReturn DICETcatProtocol::Initialize() {
     if (!duplexCtrl_) {
         duplexCtrl_.emplace(diceReader_, io_, busInfo_, nullptr /*workQueue*/, GeneralSections{},
-                            timerScheduler_);
+                            timerScheduler_,
+                            DICEBringupPolicy{
+                                .requireSourceLockBeforeStreamEnable =
+                                    runtimePolicy_.requireSourceLockBeforeStreamEnable,
+                                .requireSourceLockAtConfirm =
+                                    runtimePolicy_.requireSourceLockAtConfirm,
+                            });
         duplexCtrl_->SetTeardownCancelToken(teardownCancel_);
     }
 

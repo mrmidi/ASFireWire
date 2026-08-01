@@ -31,6 +31,12 @@ namespace ASFW::Audio::DICE::TCAT {
 // firmware protocol while exposing only one analog/audio direction to users.
 struct DICETcatRuntimePolicy final {
     bool exposeDeviceToHostToCoreAudio{true};
+    // Keep the target-rate transition strict, but do not require a GLOBAL
+    // source-lock indication before/just after host IT starts. This is for
+    // devices whose selected receive-clock path only locks once host packets
+    // are flowing; it does not select ARX1 as a clock source.
+    bool requireSourceLockBeforeStreamEnable{true};
+    bool requireSourceLockAtConfirm{true};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,

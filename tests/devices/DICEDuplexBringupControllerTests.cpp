@@ -33,6 +33,7 @@ using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioDuplexChannels;
 using ASFW::Audio::DICE::ClockSource;
 using ASFW::Audio::DICE::DICETransaction;
+using ASFW::Audio::DICE::DICEBringupPolicy;
 using ASFW::Audio::DICE::DiceDuplexConfirmResult;
 using ASFW::Audio::DICE::DiceDuplexPrepareResult;
 using ASFW::Audio::DICE::DiceDuplexStageResult;
@@ -813,11 +814,11 @@ struct DuplexRig {
     std::atomic<bool> cancel{false};
     DICEDuplexBringupController controller;
 
-    DuplexRig()
+    explicit DuplexRig(DICEBringupPolicy bringupPolicy = {})
         : io(bus, bus, routeState.registry, routeState.route)
         , tx(io)
         , irm(bus)
-        , controller(tx, io, bus, nullptr, MakeGeneralSections(), &timer) {
+        , controller(tx, io, bus, nullptr, MakeGeneralSections(), &timer, bringupPolicy) {
         controller.SetTeardownCancelToken(&cancel);
         irm.SetIRMNode(0x03, Generation{1});
     }
@@ -1319,6 +1320,52 @@ TEST(DICEDuplexBringupControllerTests,
     ASSERT_TRUE(confirmStatus.has_value());
     EXPECT_EQ(*confirmStatus, kIOReturnNotReady);
     EXPECT_FALSE(rig.controller.IsRunning());
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     AdvisorySourceLockPreservesTargetRateAndCompletesStart) {
+    DuplexRig rig(DICEBringupPolicy{
+        .requireSourceLockBeforeStreamEnable = false,
+        .requireSourceLockAtConfirm = false,
+    });
+    NotificationMailbox::Reset();
+    rig.bus.SetGlobalClockState(
+        ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+        48000U,
+        NotifyBits::kClockAccepted);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.SetGlobalClockState(
+            ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+            48000U,
+            NotifyBits::kClockAccepted);
+        NotificationMailbox::Publish(NotifyBits::kClockAccepted);
+    });
+
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+    std::optional<IOReturn> prepareStatus;
+    rig.controller.PrepareDuplex48k(
+        channels, [&prepareStatus](IOReturn status) { prepareStatus = status; });
+    ASSERT_EQ(prepareStatus, kIOReturnSuccess);
+    ASSERT_TRUE(rig.controller.IsPrepared());
+
+    std::optional<IOReturn> rxStatus;
+    rig.controller.ProgramRxForDuplex48k(
+        [&rxStatus](IOReturn status) { rxStatus = status; });
+    ASSERT_EQ(rxStatus, kIOReturnSuccess);
+
+    std::optional<IOReturn> txStatus;
+    rig.controller.ProgramTxAndEnableDuplex48k(
+        [&txStatus](IOReturn status) { txStatus = status; });
+    ASSERT_EQ(txStatus, kIOReturnSuccess);
+
+    std::optional<IOReturn> confirmStatus;
+    rig.controller.ConfirmDuplex48kStart(
+        [&confirmStatus](IOReturn status) { confirmStatus = status; });
+    EXPECT_EQ(confirmStatus, kIOReturnSuccess);
+    EXPECT_TRUE(rig.controller.IsRunning());
 }
 
 TEST(DICEDuplexBringupControllerTests,
