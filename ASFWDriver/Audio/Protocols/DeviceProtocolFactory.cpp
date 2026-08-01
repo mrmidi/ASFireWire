@@ -50,6 +50,26 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         }
     }
 
+    if (vendorId == kWeissVendorId &&
+        (modelId == kWeissInt202ModelId || modelId == kWeissInt203ModelId)) {
+        const auto known = LookupKnownIdentity(vendorId, modelId);
+        ASFW_LOG(DICE,
+                 "Creating Weiss DICETcatProtocol for %{public}s vendor=0x%06x model=0x%06x node=0x%04x; "
+                 "DICE remains duplex while CoreAudio hides device->host channels",
+                 (known.has_value() && known->modelName) ? known->modelName : "Weiss INT",
+                 vendorId,
+                 modelId,
+                 nodeId);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(
+            busOps,
+            busInfo,
+            routeRegistry,
+            route,
+            irmClient,
+            timerScheduler,
+            DICE::TCAT::DICETcatRuntimePolicy{.exposeDeviceToHostToCoreAudio = false});
+    }
+
     if (vendorId == kAlesisVendorId && modelId == kAlesisMultiMixModelId) {
         ASFW_LOG(DICE,
                  "Creating generic DICETcatProtocol for Alesis MultiMix vendor=0x%06x model=0x%06x node=0x%04x",

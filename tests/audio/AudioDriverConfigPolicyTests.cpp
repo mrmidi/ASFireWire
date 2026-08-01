@@ -70,6 +70,22 @@ TEST(AudioDriverConfigPolicyTests, ClampChannelsRespectsMaxSupportedForExplicitD
     EXPECT_EQ(config.channelCount, 16u);
 }
 
+TEST(AudioDriverConfigPolicyTests, ClampChannelsPreservesExplicitPlaybackOnlyTopology) {
+    ParsedAudioDriverConfig config{};
+    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
+    config.channelCount = 2;
+    config.inputChannelCount = 0;
+    config.outputChannelCount = 2;
+    config.hasExplicitInputChannelCount = true;
+    config.hasExplicitOutputChannelCount = true;
+
+    ASFW::Isoch::Audio::ClampAudioDriverChannels(config, 16);
+
+    EXPECT_EQ(config.inputChannelCount, 0U);
+    EXPECT_EQ(config.outputChannelCount, 2U);
+    EXPECT_EQ(config.channelCount, 2U);
+}
+
 TEST(AudioDriverConfigPolicyTests, RuntimeDirectionalCountsWinOverProfileFallback) {
     ParsedAudioDriverConfig config{};
     ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);

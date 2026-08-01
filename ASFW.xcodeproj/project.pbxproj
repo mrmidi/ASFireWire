@@ -109,6 +109,7 @@
 		3D97308CA3A11622955D8461 /* ApogeeDuetProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E63A4F43A53A0611B8354DAD /* ApogeeDuetProfile.cpp */; };
 		3D9D02951035C22384C1CBF0 /* AmdtpTxPacketizer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A63F3E78327A5940C2725365 /* AmdtpTxPacketizer.cpp */; };
 		3DA9E274A44D3A82390F4FFC /* ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 84EE5D95253736515AA645E1 /* ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3DC26E54C9C5CB1B8449BE6F /* WeissIntProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94ECC13ADC5AECCFDDE34BF8 /* WeissIntProfile.cpp */; };
 		3ECDDF5924BE520E1750A8FF /* PostResetTimingCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 55C248E22BAFC97B171317B1 /* PostResetTimingCoordinator.cpp */; };
 		3F06A581426B748164BDD62D /* BeBoBProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BBA739B8653FE3A62D143F8 /* BeBoBProfile.cpp */; };
 		3F5CE89F15F8E532332EEFDA /* AudioCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F71A638FD501761865722676 /* AudioCoordinator.cpp */; };
@@ -471,6 +472,7 @@
 		0D97F81936B9E88427C69E25 /* AmdtpPayloadWriter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AmdtpPayloadWriter.cpp; sourceTree = "<group>"; };
 		0E15E59914A4531C4DF4BA41 /* RingHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RingHelpers.hpp; sourceTree = "<group>"; };
 		0E29971B91B76C420357B5F3 /* ApogeeVendorCodec.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeVendorCodec.hpp; sourceTree = "<group>"; };
+		0E4D3FD5E343D4EB24DFAC41 /* WeissIntProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WeissIntProfile.hpp; sourceTree = "<group>"; };
 		0E63C96EE7B8535670E083C6 /* PhyCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhyCommand.cpp; sourceTree = "<group>"; };
 		0E9534FDE6EA1C49B6D44A4B /* ASFWAudioDriverLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverLifecycle.cpp; sourceTree = "<group>"; };
 		0EFBB31EBA1674516A0A39D7 /* SBP2CommandWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2CommandWireFormats.hpp; sourceTree = "<group>"; };
@@ -632,6 +634,7 @@
 		40B5596E889581A72B7E3E95 /* SelfIDDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfIDDetailView.swift; sourceTree = "<group>"; };
 		40CD6FCED919DD90FE9A1B9C /* SPro24DspProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SPro24DspProtocol.hpp; sourceTree = "<group>"; };
 		40E35CBBC53D00A9AAAF9A66 /* IAsyncSubsystemPort.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAsyncSubsystemPort.hpp; sourceTree = "<group>"; };
+		412524B37EC4952EC678514D /* WeissAudioProfiles.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WeissAudioProfiles.hpp; sourceTree = "<group>"; };
 		413ED646922E3ACEA8B026DF /* DiagnosticsTextFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsTextFormatter.swift; sourceTree = "<group>"; };
 		4156CF4854D29F046519DDED /* RxAudioPacketProcessor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RxAudioPacketProcessor.cpp; sourceTree = "<group>"; };
 		418EE81290D82446BB30E39A /* InputSafetyPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = InputSafetyPolicy.hpp; sourceTree = "<group>"; };
@@ -884,6 +887,7 @@
 		9404F1D903E3DB56F0EBE15A /* HardwareAccessScope.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareAccessScope.hpp; sourceTree = "<group>"; };
 		946BBCA8486877BE473DE22E /* DiceReportStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceReportStore.swift; sourceTree = "<group>"; };
 		94AB388B752AED59FB03D3B1 /* SBP2TargetBridge.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2TargetBridge.hpp; sourceTree = "<group>"; };
+		94ECC13ADC5AECCFDDE34BF8 /* WeissIntProfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WeissIntProfile.cpp; sourceTree = "<group>"; };
 		94EF7FD118B54788C8319EFE /* IsochTxDmaRing.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IsochTxDmaRing.cpp; sourceTree = "<group>"; };
 		952F5CA89413DC995453B82F /* DeviceStreamModeQuirks.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceStreamModeQuirks.hpp; sourceTree = "<group>"; };
 		958B3305F2AA2E420FDE4795 /* IRMFallbackCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMFallbackCoordinator.hpp; sourceTree = "<group>"; };
@@ -1253,6 +1257,8 @@
 				EA4A3A7151ACC516CDBACBBB /* MidasVeniceProfile.hpp */,
 				4DB5C96A84E71BA9F2E5835A /* PreSonusStudioLiveProfile.cpp */,
 				5957661337393346DFB33B79 /* PreSonusStudioLiveProfile.hpp */,
+				94ECC13ADC5AECCFDDE34BF8 /* WeissIntProfile.cpp */,
+				0E4D3FD5E343D4EB24DFAC41 /* WeissIntProfile.hpp */,
 			);
 			path = Profiles;
 			sourceTree = "<group>";
@@ -2777,6 +2783,7 @@
 				ADA183665D23E96057546B82 /* MidasAudioProfiles.hpp */,
 				0C844DC3BD4E0AE7D1081F52 /* PreSonusAudioProfiles.hpp */,
 				C9474A3E174E5254247327C6 /* TerraTecAudioProfiles.hpp */,
+				412524B37EC4952EC678514D /* WeissAudioProfiles.hpp */,
 			);
 			path = Vendors;
 			sourceTree = "<group>";
@@ -3313,6 +3320,7 @@
 				DEDDAD0E6D847EE68A270A23 /* TransactionManager.cpp in Sources */,
 				1E18B2BA4293585F5088FAFD /* TransactionStorage.cpp in Sources */,
 				69F57BF9E547B5FF38CC2533 /* WatchdogCoordinator.cpp in Sources */,
+				3DC26E54C9C5CB1B8449BE6F /* WeissIntProfile.cpp in Sources */,
 				670B59991ECCD488B68062A6 /* WriteCommand.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

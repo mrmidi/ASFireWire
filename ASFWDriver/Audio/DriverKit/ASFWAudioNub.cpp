@@ -123,6 +123,8 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
     uint32_t input = iv->inputChannelCount;
     uint32_t output = iv->outputChannelCount;
     uint32_t sampleRate = iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000;
+    bool hasInputCountProperty = false;
+    bool hasOutputCountProperty = false;
 
     namespace Keys = ASFW::Audio::Model::PropertyKeys;
 
@@ -131,23 +133,25 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
     }
     if (auto* inputCount = OSDynamicCast(OSNumber, props->getObject(Keys::kInputChannelCount))) {
         input = ClampAudioChannels(inputCount->unsigned32BitValue());
+        hasInputCountProperty = true;
     }
     if (auto* outputCount = OSDynamicCast(OSNumber, props->getObject(Keys::kOutputChannelCount))) {
         output = ClampAudioChannels(outputCount->unsigned32BitValue());
+        hasOutputCountProperty = true;
     }
     if (auto* currentRate = OSDynamicCast(OSNumber, props->getObject(Keys::kCurrentSampleRate))) {
         sampleRate = currentRate->unsigned32BitValue();
     }
 
-    if (input == 0) {
+    if (!hasInputCountProperty && input == 0) {
         input = aggregate;
     }
-    if (output == 0) {
+    if (!hasOutputCountProperty && output == 0) {
         output = aggregate;
     }
     aggregate = std::max(input, output);
 
-    if (aggregate == 0 || input == 0 || output == 0) {
+    if (aggregate == 0) {
         return;
     }
 
@@ -715,13 +719,13 @@ uint32_t ASFWAudioNub::GetChannelCount() const
 uint32_t ASFWAudioNub::GetInputChannelCount() const
 {
     if (!ivars) return 0;
-    return ivars->inputChannelCount ? ivars->inputChannelCount : ivars->channelCount;
+    return ivars->inputChannelCount;
 }
 
 uint32_t ASFWAudioNub::GetOutputChannelCount() const
 {
     if (!ivars) return 0;
-    return ivars->outputChannelCount ? ivars->outputChannelCount : ivars->channelCount;
+    return ivars->outputChannelCount;
 }
 
 void ASFWAudioNub::SetGuid(uint64_t guid)

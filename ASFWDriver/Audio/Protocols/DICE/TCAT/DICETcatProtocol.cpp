@@ -15,9 +15,14 @@ namespace ASFW::Audio::DICE::TCAT {
 namespace {
 
 [[nodiscard]] bool HasUsableRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept {
+    // CoreAudio visibility is not a wire-topology signal. A Weiss INT202, for
+    // example, deliberately has zero HAL input channels while still reporting
+    // and using a device->host DICE stream. Validate the physical DICE sections
+    // through their slot counts instead.
     return caps.sampleRateHz != 0 &&
-        caps.hostInputPcmChannels != 0 &&
-        caps.hostOutputPcmChannels != 0;
+        caps.hostOutputPcmChannels != 0 &&
+        caps.deviceToHostAm824Slots != 0 &&
+        caps.hostToDeviceAm824Slots != 0;
 }
 
 void LogRuntimeCaps(const char* source, const AudioStreamRuntimeCaps& caps) {
@@ -72,12 +77,14 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                    Discovery::DeviceRegistry& routeRegistry,
                                    const Discovery::DeviceRouteToken& route,
                                    ::ASFW::IRM::IRMClient* irmClient,
-                                   ::ASFW::Scheduling::ITimerScheduler* timerScheduler)
+                                   ::ASFW::Scheduling::ITimerScheduler* timerScheduler,
+                                   DICETcatRuntimePolicy runtimePolicy)
     : busInfo_(busInfo)
     , irmClient_(irmClient)
     , io_(busOps, busInfo, routeRegistry, route)
     , diceReader_(io_)
-    , timerScheduler_(timerScheduler) {
+    , timerScheduler_(timerScheduler)
+    , runtimePolicy_(runtimePolicy) {
 }
 
 IOReturn DICETcatProtocol::Initialize() {
@@ -529,7 +536,9 @@ bool DICETcatProtocol::GetChannelLabels(std::vector<std::string>& inNames,
     if (!runtimeCapsValid_.load(std::memory_order_acquire)) {
         return false;
     }
-    const uint32_t inCount = inputChannelLabelCount_.load(std::memory_order_relaxed);
+    const uint32_t inCount = runtimePolicy_.exposeDeviceToHostToCoreAudio
+                                 ? inputChannelLabelCount_.load(std::memory_order_relaxed)
+                                 : 0;
     const uint32_t outCount = outputChannelLabelCount_.load(std::memory_order_relaxed);
     inNames.clear();
     outNames.clear();
@@ -543,7 +552,10 @@ bool DICETcatProtocol::GetChannelLabels(std::vector<std::string>& inNames,
 }
 
 void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept {
-    hostInputPcmChannels_.store(caps.hostInputPcmChannels, std::memory_order_relaxed);
+    const uint32_t exposedInputChannels = runtimePolicy_.exposeDeviceToHostToCoreAudio
+                                              ? caps.hostInputPcmChannels
+                                              : 0;
+    hostInputPcmChannels_.store(exposedInputChannels, std::memory_order_relaxed);
     deviceToHostAm824Slots_.store(caps.deviceToHostAm824Slots, std::memory_order_relaxed);
     hostOutputPcmChannels_.store(caps.hostOutputPcmChannels, std::memory_order_relaxed);
     hostToDeviceAm824Slots_.store(caps.hostToDeviceAm824Slots, std::memory_order_relaxed);

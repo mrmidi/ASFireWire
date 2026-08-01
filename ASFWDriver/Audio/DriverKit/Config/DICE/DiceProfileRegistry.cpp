@@ -10,6 +10,7 @@
 #include "Isoch/Profiles/GenericDiceProfile.hpp"
 #include "Isoch/Profiles/MidasVeniceProfile.hpp"
 #include "Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
+#include "Isoch/Profiles/WeissIntProfile.hpp"
 
 namespace ASFW::Isoch::Audio::DICE {
 
@@ -19,6 +20,7 @@ Profiles::FocusriteSaffireProfile gFocusriteProfile{};
 Profiles::MidasVeniceProfile gMidasVeniceProfile{};
 Profiles::PreSonusStudioLiveProfile gPreSonusStudioLiveProfile{};
 Profiles::AlesisMultiMixProfile gAlesisMultiMixProfile{};
+Profiles::WeissIntProfile gWeissIntProfile{};
 } // namespace
 
 DiceProfileRegistry::DiceProfileRegistry() noexcept {
@@ -26,6 +28,7 @@ DiceProfileRegistry::DiceProfileRegistry() noexcept {
     (void)RegisterProfile(&gMidasVeniceProfile);
     (void)RegisterProfile(&gPreSonusStudioLiveProfile);
     (void)RegisterProfile(&gAlesisMultiMixProfile);
+    (void)RegisterProfile(&gWeissIntProfile);
 }
 
 bool DiceProfileRegistry::RegisterProfile(const IDiceDeviceProfile* profile) noexcept {

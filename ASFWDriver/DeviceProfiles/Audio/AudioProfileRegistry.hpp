@@ -21,6 +21,7 @@
 #include "Vendors/MidasAudioProfiles.hpp"
 #include "Vendors/PreSonusAudioProfiles.hpp"
 #include "Vendors/TerraTecAudioProfiles.hpp"
+#include "Vendors/WeissAudioProfiles.hpp"
 
 #include <optional>
 
@@ -33,6 +34,7 @@ public:
     [[nodiscard]] static constexpr std::optional<DeviceIdentityHint>
     LookupIdentity(const DeviceProfileQuery& query) noexcept {
         if (auto hint = Focusrite::LookupIdentity(query)) { return hint; }
+        if (auto hint = Weiss::LookupIdentity(query)) { return hint; }
         if (auto hint = Apogee::LookupIdentity(query)) { return hint; }
         if (auto hint = Alesis::LookupIdentity(query)) { return hint; }
         if (auto hint = Midas::LookupIdentity(query)) { return hint; }
@@ -49,6 +51,7 @@ public:
     [[nodiscard]] static constexpr std::optional<AudioProfileHint>
     LookupBestAudioProfile(const DeviceProfileQuery& query) noexcept {
         if (auto hint = Focusrite::LookupAudioProfile(query)) { return hint; }
+        if (auto hint = Weiss::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Apogee::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Alesis::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Midas::LookupAudioProfile(query)) { return hint; }

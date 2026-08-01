@@ -88,4 +88,24 @@ TEST(DiceRuntimeDeviceConfigTests, RejectsPartialCapsWithoutChangingFallbackConf
     EXPECT_EQ(config.sampleRates, before.sampleRates);
 }
 
+TEST(DiceRuntimeDeviceConfigTests, AppliesPlaybackOnlyCoreAudioGeometryWithDuplexWireCaps) {
+    ASFWAudioDevice config{};
+    config.sampleRates = {44100U, 48000U};
+    config.currentSampleRate = 48000U;
+    const AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 0,
+        .hostOutputPcmChannels = 2,
+        .deviceToHostAm824Slots = 2,
+        .hostToDeviceAm824Slots = 2,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+
+    ASSERT_TRUE(ApplyDiceRuntimeCapsToDeviceConfig(caps, config));
+    EXPECT_EQ(config.inputChannelCount, 0U);
+    EXPECT_EQ(config.outputChannelCount, 2U);
+    EXPECT_EQ(config.channelCount, 2U);
+}
+
 } // namespace

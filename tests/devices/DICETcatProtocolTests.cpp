@@ -54,6 +54,7 @@ using ASFW::Audio::DICE::DiceClockConfiguration;
 using ASFW::Audio::DICE::Focusrite::SPro24DspProtocol;
 using ASFW::Audio::DICE::Focusrite::kEffectGeneralOffset;
 using ASFW::Audio::DICE::TCAT::DICETcatProtocol;
+using ASFW::Audio::DICE::TCAT::DICETcatRuntimePolicy;
 using ASFW::FW::FwSpeed;
 using ASFW::FW::Generation;
 using ASFW::FW::LockOp;
@@ -333,6 +334,51 @@ TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
     EXPECT_EQ(caps.deviceToHostIsoChannel, 1U);
     EXPECT_EQ(caps.hostToDeviceIsoChannel, 0U);
+}
+
+TEST(DICETcatProtocolTests, RuntimePolicyHidesCoreAudioInputWithoutChangingWireGeometry) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus,
+                              bus,
+                              routeState.registry,
+                              routeState.route,
+                              nullptr,
+                              nullptr,
+                              DICETcatRuntimePolicy{.exposeDeviceToHostToCoreAudio = false});
+
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+    ASFW::Audio::DICE::StreamConfig tx{};
+    tx.numStreams = 1;
+    tx.streams[0].isoChannel = 0;
+    tx.streams[0].pcmChannels = 2;
+    strlcpy(tx.streams[0].labels, "Return L\\Return R\\\\", sizeof(tx.streams[0].labels));
+    ASFW::Audio::DICE::StreamConfig rx{};
+    rx.numStreams = 1;
+    rx.streams[0].isoChannel = 1;
+    rx.streams[0].pcmChannels = 2;
+    strlcpy(rx.streams[0].labels, "Out L\\Out R\\\\", sizeof(rx.streams[0].labels));
+
+    ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
+
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 0U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 2U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 2U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 2U);
+    ASSERT_EQ(caps.deviceToHostStreamCount, 1U);
+    ASSERT_EQ(caps.hostToDeviceStreamCount, 1U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].pcmChannels, 2U);
+    EXPECT_EQ(caps.hostToDeviceStreams[0].pcmChannels, 2U);
+
+    std::vector<std::string> inNames;
+    std::vector<std::string> outNames;
+    ASSERT_TRUE(protocol.GetChannelLabels(inNames, outNames));
+    EXPECT_TRUE(inNames.empty());
+    ASSERT_EQ(outNames.size(), 2U);
+    EXPECT_EQ(outNames[0], "Out L");
 }
 
 TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {

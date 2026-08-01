@@ -26,6 +26,13 @@ class ITimerScheduler;
 
 namespace ASFW::Audio::DICE::TCAT {
 
+// Separates DICE's operational stream topology from the channels the HAL
+// publishes. Some hardware needs both DICE directions active for its clock or
+// firmware protocol while exposing only one analog/audio direction to users.
+struct DICETcatRuntimePolicy final {
+    bool exposeDeviceToHostToCoreAudio{true};
+};
+
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
                                public Audio::IDuplexDeviceControl {
 public:
@@ -41,7 +48,8 @@ public:
                      Discovery::DeviceRegistry& routeRegistry,
                      const Discovery::DeviceRouteToken& route,
                      ::ASFW::IRM::IRMClient* irmClient = nullptr,
-                     ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr);
+                     ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr,
+                     DICETcatRuntimePolicy runtimePolicy = {});
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -98,6 +106,7 @@ private:
     std::optional<ASFW::Audio::DICE::DICEDuplexBringupController> duplexCtrl_;
     const std::atomic<bool>* teardownCancel_{nullptr};
     ::ASFW::Scheduling::ITimerScheduler* timerScheduler_{nullptr};  // driver-owned
+    DICETcatRuntimePolicy runtimePolicy_{};
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};

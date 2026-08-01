@@ -210,7 +210,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                  ivars->audioDevice->GetObjectID());
         return kIOReturnBadArgument;
     }
-    if (!ivars->inputStream || !ivars->outputStream || !ivars->device.audioNub) {
+    if ((!ivars->inputStream && !ivars->outputStream) || !ivars->device.audioNub) {
         ASFW_LOG(Audio,
                  "ASFWAudioDriver: StartDevice failed - incomplete graph input=%p output=%p nub=%p",
                  static_cast<void*>(ivars->inputStream.get()),

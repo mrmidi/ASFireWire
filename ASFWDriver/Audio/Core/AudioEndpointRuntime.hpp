@@ -459,6 +459,11 @@ private:
             return kIOReturnNotReady;
         }
 
+        // Direct memory serves the physical DICE transport, not only visible
+        // CoreAudio streams. A playback-only device can retain an operational
+        // device->host stream for its firmware/clock protocol while explicitly
+        // publishing zero CoreAudio input channels. In that case the aggregate
+        // count is the transport buffer's safe fallback geometry.
         const uint32_t outputChannels = ClampAudioChannels(
             config_.outputChannelCount ? config_.outputChannelCount : config_.channelCount);
         const uint32_t inputChannels = ClampAudioChannels(
