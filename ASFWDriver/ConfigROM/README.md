@@ -88,8 +88,9 @@ A persistent, thread-safe registry for all discovered ROMs.
 - **Generation-Aware**: Tracks which ROMs are valid for the current topology.
 - **GUID Deduplication**: Ensures only one entry exists per unique EUI-64.
 - **Lifecycle Management**: 
-  - **Suspended**: ROMs from a previous generation waiting for validation.
-  - **Validated**: ROMs confirmed to still exist after a bus reset.
+  - **Suspended**: ROMs from a previous generation. A device that reappears is
+    re-entered through `Insert()`, which overwrites the entry; suspended entries
+    are keyed to a stale generation and are never looked up again.
   - **Invalid**: Devices that have disappeared from the bus.
 
 ---
