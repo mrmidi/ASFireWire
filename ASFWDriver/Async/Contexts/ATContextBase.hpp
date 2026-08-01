@@ -230,9 +230,9 @@ public:
     /**
      * \brief Scan for completed descriptors and extract completion status.
      *
-     * Walks the descriptor ring from head index, checking xferStatus field
-     * for hardware completion. Extracts event code, timestamp, and tLabel
-     * on first completed descriptor found.
+     * Walks the descriptor ring from head index, checking the packet chain's
+     * OUTPUT_LAST xferStatus for hardware completion. Extracts event code,
+     * timestamp, and tLabel on the first completed packet found.
      *
      * \return TxCompletion if descriptor completed, std::nullopt if none ready
      *
@@ -245,19 +245,26 @@ public:
      * 2. Load head index (atomic acquire)
      * 3. If head == tail, ring is empty → return nullopt
      * 4. Read descriptor at head index
-     * 5. If xferStatus == 0, descriptor not yet completed → return nullopt
-     * 6. Extract event code from xferStatus[4:0]
-     * 7. Extract timestamp from timeStamp field
-     * 8. If OUTPUT_LAST_Immediate, extract tLabel from packet header
-     * 9. Advance head index: (head + N) % capacity, where N = descriptor block count
-     * 10. Unlock context, return TxCompletion
+     * 5. For OUTPUT_MORE, check the following OUTPUT_LAST completion status
+     * 6. If the packet's terminal xferStatus == 0, return nullopt
+     * 7. Extract event code from xferStatus[4:0]
+     * 8. Extract timestamp from timeStamp field
+     * 9. Extract tLabel from the immediate packet header
+     * 10. Advance head beyond the completed packet chain
+     * 11. Unlock context, return TxCompletion
      *
      * **Apple Pattern**
-     * ChannelBundle::ScanNextATReqCompletion():
-     * - Checks xferStatus != 0 for completion
-     * - Extracts ack code and event code from status word
-     * - Extracts tLabel from packet header for response matching
-     * - Advances completion cursor
+     * AppleFWOHCI_AsyncTransmit::checkForCompletedElements():
+     * - Checks the terminal descriptor status of each pending ATxElement
+     * - Leaves the element queued while the terminal status is zero
+     * - Dispatches completion only after the terminal status becomes non-zero
+     *
+     * Apple walks a linked list of ATxElements, so a zero-status element only
+     * clears its "reap the predecessor" flag and iteration continues past it
+     * (symbol offsets 0xf0e8-0xf10a, 0xf188-0xf195). This ring has a single
+     * head cursor instead, so a zero-status chain at head necessarily blocks
+     * everything behind it — hence the quiesced-context escape in
+     * InspectChainTail(), which Apple gets from resetDMA() instead.
      *
      * **Thread Safety**
      * Serialized via IOLock. Safe to call concurrently with SubmitChain().
@@ -267,6 +274,48 @@ public:
      *       from interrupt handler or timer callback.
      */
     [[nodiscard]] std::optional<TxCompletion> ScanCompletion() noexcept;
+
+    /**
+     * \brief RAII scope that makes ScanCompletion() complete statusless descriptors.
+     *
+     * While held, a descriptor whose xferStatus is still zero is reported as
+     * evt_flushed instead of being treated as pending. OHCI 1.2 draft
+     * §7.2.3.3 (p. 7-14) permits a controller to leave outstanding AT
+     * descriptors without a final status after a bus reset. This does not prove
+     * that the corresponding packet was never transmitted, but the transaction
+     * must still be completed because hardware can no longer update it once the
+     * context is stopped.
+     *
+     * \warning The context must already be stopped. Entering this scope while
+     *          hardware can still write a status would report packets that are
+     *          merely in flight as flushed.
+     *
+     * **Reference Pattern**
+     * Linux at_context_flush() sets ctx->flushing around ohci_at_context_work()
+     * so the ordinary handle_at_packet() body drains the queue instead of
+     * stopping at the first zero status (ohci.c:1331-1343, 1364). AppleFWOHCI
+     * reaches the same end state through resetDMA(), which frees every pending
+     * ATxElement after stopDMA() (symbol offsets 0x5fae-0x5fd2).
+     */
+    class [[nodiscard]] FlushScope {
+    public:
+        explicit FlushScope(ATContextBase& context) noexcept : context_(&context) {
+            context_->flushing_ = true;
+        }
+        ~FlushScope() {
+            if (context_) {
+                context_->flushing_ = false;
+            }
+        }
+
+        FlushScope(const FlushScope&) = delete;
+        FlushScope& operator=(const FlushScope&) = delete;
+        FlushScope(FlushScope&&) = delete;
+        FlushScope& operator=(FlushScope&&) = delete;
+
+    private:
+        ATContextBase* context_{nullptr};
+    };
 
     /**
      * \brief Get descriptor ring for diagnostics.
@@ -314,6 +363,16 @@ private:
         uint16_t timeStamp{0};
     };
 
+    enum class ChainTailScanResult : uint8_t {
+        NotRecognized,
+        Pending,
+        Advanced,
+    };
+
+    /// Set by FlushScope: report zero-status descriptors as evt_flushed.
+    /// Touched only under submitLock_ (set/cleared while the context is stopped).
+    bool flushing_{false};
+
     /// Descriptor ring for tracking in-flight chains
     DescriptorRing* ring_{nullptr};
 
@@ -341,6 +400,8 @@ private:
                                               size_t capacity) noexcept;
     [[nodiscard]] bool LoadScanState(ScanState& state) noexcept;
     void FetchScanDescriptor(const ScanState& state) noexcept;
+    [[nodiscard]] ChainTailScanResult InspectChainTail(
+        const ScanState& state) noexcept;
     void HandlePendingDescriptor(const ScanState& state) noexcept;
     [[nodiscard]] bool IsOrphanedDescriptor(const ScanState& state,
                                             uint32_t& commandPtrAddr,
@@ -605,7 +666,30 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
             return std::nullopt;
         }
 
+        // OHCI 1.2 draft §7.2.3.3 (p. 7-14): after a bus reset, optional
+        // controller behavior may leave outstanding AT descriptors without a
+        // final status. Reporting zero-status descriptors as evt_flushed
+        // releases the ring and fails their transactions instead of letting
+        // them time out; it does not imply that the packets were never sent.
+        // Linux uses the same flush-mode scan shape, mapping zero/no-status
+        // entries to RCODE_GENERATION (handle_at_packet() at ohci.c:1364,
+        // at_context_flush() at 1331-1343). AppleFWOHCI's resetDMA() frees every
+        // pending ATxElement after stopDMA() (symbol offsets 0x5fae-0x5fd2).
+        if (state.xferStatus == 0 && flushing_) {
+            state.xferStatus = static_cast<uint16_t>(OHCIEventCode::kEvtFlushed);
+        }
+
         if (state.xferStatus == 0) {
+            switch (InspectChainTail(state)) {
+                case ChainTailScanResult::Advanced:
+                    continue;
+                case ChainTailScanResult::Pending:
+                    unlock();
+                    return std::nullopt;
+                case ChainTailScanResult::NotRecognized:
+                    break;
+            }
+
             HandlePendingDescriptor(state);
             unlock();
             return std::nullopt;
@@ -824,6 +908,71 @@ void ATContextBase<Derived, Tag>::FetchScanDescriptor(const ScanState& state) no
         ASFW_LOG(Async,
                  "  🔍 ScanCompletion: ReadBarrier DISABLED (uncached device memory, DSB sufficient)");
     }
+}
+
+template<typename Derived, ContextRole Tag>
+typename ATContextBase<Derived, Tag>::ChainTailScanResult
+ATContextBase<Derived, Tag>::InspectChainTail(const ScanState& state) noexcept {
+    const uint16_t controlHi = static_cast<uint16_t>(
+        state.desc->control >> HW::OHCIDescriptor::kControlHighShift);
+    const uint8_t command = static_cast<uint8_t>(
+        (controlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
+    if (command != HW::OHCIDescriptor::kCmdOutputMore) {
+        return ChainTailScanResult::NotRecognized;
+    }
+
+    const uint8_t key = static_cast<uint8_t>(
+        (controlHi >> HW::OHCIDescriptor::kKeyShift) & 0x7);
+    const uint8_t precursorBlocks =
+        (key == HW::OHCIDescriptor::kKeyImmediate) ? 2 : 1;
+    const size_t tailIndex =
+        (state.headIndex + precursorBlocks) % state.capacity;
+    if (tailIndex == state.tailIndex) {
+        return ChainTailScanResult::NotRecognized;
+    }
+
+    ScanState tailState;
+    tailState.capacity = state.capacity;
+    tailState.headIndex = tailIndex;
+    tailState.desc = ring_->At(tailIndex);
+    if (!tailState.desc) {
+        return ChainTailScanResult::NotRecognized;
+    }
+    tailState.isImmediate = HW::IsImmediate(*tailState.desc);
+    FetchScanDescriptor(tailState);
+    const uint16_t tailControlHi = static_cast<uint16_t>(
+        tailState.desc->control >> HW::OHCIDescriptor::kControlHighShift);
+    const uint8_t tailCommand = static_cast<uint8_t>(
+        (tailControlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
+    if (tailCommand != HW::OHCIDescriptor::kCmdOutputLast) {
+        return ChainTailScanResult::NotRecognized;
+    }
+
+    if (HW::AT_xferStatus(*tailState.desc) == 0) {
+        // A running context has simply not finished this packet yet. The command
+        // pointer may already reference the pending tail, so the OUTPUT_MORE
+        // precursor is NOT orphaned and must stay queued.
+        // AppleFWOHCI 5.5.9 checkForCompletedElements() likewise leaves an
+        // ATxElement queued while its terminal descriptor status is zero
+        // (symbol offsets 0xf0e8-0xf10a), and Linux returns 0 from
+        // handle_at_packet() to stop iteration:
+        // references/linux-ohci-firewire-low-level-stack/drivers/firewire/ohci.c:1354-1366.
+        //
+        // A stopped context never writes a status either, but the chain must
+        // still be held here: FlushScope is what reports it as evt_flushed and
+        // fails the owning transaction. Releasing it from this path instead
+        // would consume the descriptors before the flush could see them.
+        return ChainTailScanResult::Pending;
+    }
+
+    // Linux records completion on the packet's OUTPUT_LAST descriptor:
+    // references/linux-ohci-firewire-low-level-stack/drivers/firewire/ohci.c:1298-1310,1354-1366.
+    ClearDescriptorBlocks(state.headIndex, precursorBlocks, state.capacity);
+    ring_->SetHead(tailIndex);
+    ASFW_LOG_V2(Async,
+                "ScanCompletion: head %zu→%zu (completed OUTPUT_LAST after OUTPUT_MORE)",
+                state.headIndex, tailIndex);
+    return ChainTailScanResult::Advanced;
 }
 
 template<typename Derived, ContextRole Tag>

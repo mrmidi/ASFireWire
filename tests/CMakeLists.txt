@@ -50,6 +50,8 @@ if (NOT GTest_FOUND)
 endif()
 
 include(GoogleTest)
+# Avoid parallel post-build discovery racing on empty GoogleTest JSON output.
+set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
 
 # Define common test settings interface library
 add_library(asfw_test_common_interface INTERFACE)

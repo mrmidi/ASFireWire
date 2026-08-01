@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "AsyncSubsystem.hpp"
 
+#include "Contexts/ATRequestContext.hpp"
+#include "Contexts/ATResponseContext.hpp"
 #include "Tx/Submitter.hpp"
 
 #include "../Logging/Logging.hpp"
 #include "Track/LabelAllocator.hpp"
 #include "Track/PayloadRegistry.hpp"
+
+#include <optional>
 
 #include <DriverKit/IOLib.h>
 
@@ -167,7 +171,58 @@ void AsyncSubsystem::FlushATContexts() {
     if (!txnMgr_) {
         return;
     }
-    (void)DrainTxCompletions(nullptr);
+
+    // Callers reach here only after StopATContextsOnly(). Once ACTIVE is clear,
+    // hardware can no longer write a final descriptor status. OHCI 1.2 draft
+    // §7.2.3.3 (p. 7-14) permits optional controller behavior that leaves
+    // outstanding AT descriptors without a final status after a bus reset.
+    // Complete those descriptors as evt_flushed rather than waiting forever.
+    // Linux uses the same stop-then-flush ordering and maps zero/no-status
+    // entries to RCODE_GENERATION (context_stop() then at_context_flush(),
+    // ohci.c:2000-2010); Apple uses stopDMA() then resetDMA() in
+    // handleBusResetInt().
+    //
+    // Confirm ACTIVE is clear per context before flushing. Both references stop
+    // both contexts unconditionally and then flush unconditionally, but neither
+    // can prove the stop succeeded: OHCI §7.2.3 lets a context keep the ACTIVE
+    // bit set past the stop timeout. Flushing such a context would report packets
+    // that are merely in flight and zero descriptor words the controller is still
+    // traversing, so skip it and leave the ring for the next scan instead.
+    auto* atRequest = ResolveAtRequestContext();
+    auto* atResponse = ResolveAtResponseContext();
+
+    const auto flushable = [](auto* context, const char* name) {
+        if (!context) {
+            return false;
+        }
+        if (context->IsActive()) {
+            ASFW_LOG_ERROR(Async,
+                           "FlushATContexts: %{public}s still ACTIVE after stop; "
+                           "skipping flush to avoid rewriting live descriptors",
+                           name);
+            return false;
+        }
+        return true;
+    };
+
+    std::optional<ATRequestContext::FlushScope> requestFlush;
+    if (flushable(atRequest, "AT request")) {
+        requestFlush.emplace(*atRequest);
+    }
+    std::optional<ATResponseContext::FlushScope> responseFlush;
+    if (flushable(atResponse, "AT response")) {
+        responseFlush.emplace(*atResponse);
+    }
+    if (!requestFlush && !responseFlush) {
+        return;
+    }
+
+    const uint32_t drained = DrainTxCompletions("bus-reset-flush");
+    if (drained > 0) {
+        ASFW_LOG(Async,
+                 "FlushATContexts: drained %u AT completion(s) during bus-reset flush",
+                 drained);
+    }
 }
 
 void AsyncSubsystem::ConfirmBusGeneration(uint8_t confirmedGeneration) {

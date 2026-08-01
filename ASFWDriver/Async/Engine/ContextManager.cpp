@@ -350,11 +350,25 @@ kern_return_t ContextManager::stopAT() noexcept {
 
     ASFW_LOG(Async, "ContextManager::stopAT - stopping AT contexts");
 
-    kern_return_t kr = state_->atReqCtx.Stop();
-    if (kr != kIOReturnSuccess) return kr;
+    // Stop both contexts unconditionally, then report the first failure. An
+    // early return would leave the response context running while callers treat
+    // AT as quiesced — AsyncSubsystem::FlushATContexts() would then rewrite
+    // descriptors the controller still owns. Linux issues both context_stop()
+    // calls back to back for the same reason (ohci.c:1999-2000), as does
+    // AppleFWOHCI's handleBusResetInt() (stopDMA at symbol offsets
+    // 0x5fae and 0x5fba).
+    const kern_return_t reqKr = state_->atReqCtx.Stop();
+    if (reqKr != kIOReturnSuccess) {
+        ASFW_LOG(Async, "ContextManager::stopAT - AT req stop failed (kr=0x%08x)", reqKr);
+    }
 
-    kr = state_->atRspCtx.Stop();
-    if (kr != kIOReturnSuccess) return kr;
+    const kern_return_t rspKr = state_->atRspCtx.Stop();
+    if (rspKr != kIOReturnSuccess) {
+        ASFW_LOG(Async, "ContextManager::stopAT - AT rsp stop failed (kr=0x%08x)", rspKr);
+    }
+
+    if (reqKr != kIOReturnSuccess) return reqKr;
+    if (rspKr != kIOReturnSuccess) return rspKr;
 
     ASFW_LOG(Async, "ContextManager::stopAT - SUCCESS");
     return kIOReturnSuccess;

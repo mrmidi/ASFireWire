@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "../../Hardware/HardwareInterface.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
 
 namespace ASFW::Async {
@@ -254,8 +255,7 @@ public:
      * Used for polling during context stop sequence.
      */
     [[nodiscard]] bool IsActive() const noexcept {
-        constexpr uint32_t kActiveBit = 1u << 13;
-        return (ReadControl() & kActiveBit) != 0;
+        return (ReadControl() & Driver::kContextControlActiveBit) != 0;
     }
 
     /**
@@ -264,8 +264,7 @@ public:
      * \return true if ContextControl.run bit is set
      */
     [[nodiscard]] bool IsRunning() const noexcept {
-        constexpr uint32_t kRunBit = 1u << 15;
-        return (ReadControl() & kRunBit) != 0;
+        return (ReadControl() & Driver::kContextControlRunBit) != 0;
     }
 
     /**
