@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
 // DiceDeviceProfile.hpp
@@ -6,11 +6,12 @@
 
 #pragma once
 
-#include "../IAudioDeviceProfile.hpp"
+#include "../AudioStreamProfile.hpp"
 #include "Async/DiceQuirks.hpp"
 #include "Isoch/DiceStreamConfig.hpp"
 
 #include <cstdint>
+#include <vector>
 
 namespace ASFW::Isoch::Audio::DICE {
 
@@ -20,7 +21,7 @@ struct DiceDeviceIdentity final {
     uint32_t modelId{0};
 };
 
-class IDiceDeviceProfile : public IAudioDeviceProfile {
+class IDiceDeviceProfile : public IAudioStreamProfile {
 public:
     virtual ~IDiceDeviceProfile() override = default;
 
@@ -30,13 +31,16 @@ public:
     /// Returns the DICE specific hardware/software quirks (e.g. PCM format, DBS policy).
     [[nodiscard]] virtual DiceDeviceQuirks Quirks() const noexcept = 0;
 
-    /// Builds the default transmit (host-to-device) stream configuration.
-    [[nodiscard]] virtual bool BuildDefaultTxStreamConfig(DiceStreamConfig& outConfig) const noexcept = 0;
+    /// Sample rates advertised to CoreAudio. Default is the universal DICE 1x
+    /// baseline (44.1/48 kHz); 2x/4x are omitted until their stream geometry is
+    /// verified end-to-end (see kDiceMaxSupportedRateHz). Profiles for devices
+    /// with a different 1x set may override.
+    [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override {
+        return {44100u, 48000u};
+    }
 
-    /// Builds the default receive (device-to-host) stream configuration.
-    [[nodiscard]] virtual bool BuildDefaultRxStreamConfig(DiceStreamConfig& outConfig) const noexcept = 0;
-
-    // Default implementations mapping DICE structures to the unified IAudioDeviceProfile:
+    // DICE control profiles retain their wire-format and quirk policy here;
+    // neutral stream geometry lives in IAudioStreamProfile.
     [[nodiscard]] Encoding::AudioWireFormat TxWireFormat() const noexcept override {
         return Quirks().tx.hostToDevicePcmEncoding;
     }
@@ -45,52 +49,16 @@ public:
         return Quirks().rx.deviceToHostPcmEncoding;
     }
 
-    [[nodiscard]] uint32_t TxChannelCount() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultTxStreamConfig(config)) {
-            return config.pcmChannels;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t RxChannelCount() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultRxStreamConfig(config)) {
-            return config.pcmChannels;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t TxMidiSlots() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultTxStreamConfig(config)) {
-            return config.midiSlots;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t RxMidiSlots() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultRxStreamConfig(config)) {
-            return config.midiSlots;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t TxDbs() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultTxStreamConfig(config)) {
-            return config.dbs;
-        }
-        return 0;
-    }
-
-    [[nodiscard]] uint32_t RxDbs() const noexcept override {
-        DiceStreamConfig config{};
-        if (BuildDefaultRxStreamConfig(config)) {
-            return config.dbs;
-        }
-        return 0;
+    [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override {
+        const DiceDeviceQuirks quirks = Quirks();
+        const DiceTxQuirks& tx = quirks.tx;
+        return AudioStreamTxPolicy{
+            .hostToDevicePcmEncoding = tx.hostToDevicePcmEncoding,
+            .variableDbs = tx.dbsPolicy == DbsPolicy::VariablePerPacket,
+            .defaultNonAudioSlotWord = tx.defaultNonAudioSlotWord,
+            .initializeNonAudioSlots = tx.initializeNonAudioSlots,
+            .preserveFdfInNoDataPackets = tx.preserveFdfInNoDataPackets,
+        };
     }
 
     [[nodiscard]] virtual uint32_t SafetyOffsetFrames(double sampleRate) const noexcept {

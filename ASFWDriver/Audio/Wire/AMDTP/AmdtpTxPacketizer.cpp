@@ -1,5 +1,6 @@
 #include "AmdtpTxPacketizer.hpp"
 
+#include "AmdtpRateGeometry.hpp"
 #include "../IEC61883/Syt.hpp"
 
 namespace ASFW::Protocols::Audio::AMDTP {
@@ -40,11 +41,24 @@ inline void WriteBE32(uint8_t* dest, uint32_t value) noexcept {
 
 bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
                                   const AmdtpTxPolicy& txPolicy) noexcept {
-    if (streamConfig.sampleRate != 48000) {
-        return false; // only 48 kHz cadences exist; reject untested rates
+    // Resolve the rate's AMDTP geometry (SYT interval + AM824 FDF/SFC). Unknown
+    // rates are rejected. Blocking mode handles any rate via the rational
+    // cadence; non-blocking has no fractional form, so it stays integral-rate
+    // (48 kHz) only.
+    const auto geometry =
+        ASFW::Encoding::AmdtpRateGeometryForSampleRate(streamConfig.sampleRate);
+    if (!geometry) {
+        return false;
+    }
+    if (streamConfig.streamMode != StreamMode::Blocking &&
+        streamConfig.sampleRate != 48000) {
+        return false;
     }
 
     AmdtpStreamConfig config = streamConfig;
+    // FDF (AM824 SFC) must match the actual rate, not whatever the profile
+    // defaulted (profiles hardcode the 48 kHz SFC 0x02).
+    config.fdf = geometry->fdf;
     if (config.dbs == 0) {
         config.dbs = static_cast<uint8_t>(config.pcmChannels + config.midiSlots);
     }
@@ -74,9 +88,16 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
         txPolicy.preserveFdfInNoDataPackets ? config.fdf : 0xFF;
     cipBuilder_.Configure(cipConfig);
 
-    cadence_ = (config.streamMode == StreamMode::Blocking)
-                   ? static_cast<IAmdtpCadence*>(&blocking48kCadence_)
-                   : static_cast<IAmdtpCadence*>(&nonBlocking48kCadence_);
+    if (config.streamMode == StreamMode::Blocking) {
+        if (!blocking48kCadence_.Configure(
+                config.sampleRate,
+                static_cast<uint8_t>(geometry->sytIntervalFrames))) {
+            return false;
+        }
+        cadence_ = static_cast<IAmdtpCadence*>(&blocking48kCadence_);
+    } else {
+        cadence_ = static_cast<IAmdtpCadence*>(&nonBlocking48kCadence_);
+    }
 
     Reset(0, 0);
     return true;
@@ -91,9 +112,15 @@ void AmdtpTxPacketizer::Reset(uint8_t initialDbc,
     dbcCounter_.Reset(initialDbc);
     nextAudioFrame_ = initialAudioFrame;
     frameCursorAligned_ = false;
+    ++cursorEpoch_;
+    lastDataFirstAudioFrame_ = 0;
+    lastDataEndAudioFrame_ = 0;
+    lastDataPacketIndex_ = 0;
+    hasLastDataPacket_ = false;
     if (cadence_ != nullptr) {
         cadence_->Reset();
     }
+    PublishTelemetrySnapshot();
 }
 
 bool AmdtpTxPacketizer::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
@@ -102,7 +129,15 @@ bool AmdtpTxPacketizer::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
     }
     nextAudioFrame_ = frameIndex;
     frameCursorAligned_ = true;
+    ++cursorEpoch_;
+    PublishTelemetrySnapshot();
     return true;
+}
+
+void AmdtpTxPacketizer::ReArmFrameCursorAlignment() noexcept {
+    frameCursorAligned_ = false;
+    ++cursorEpoch_;
+    PublishTelemetrySnapshot();
 }
 
 bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
@@ -130,8 +165,11 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     }
     const uint32_t payloadBytes =
         static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
+
+    const bool isEmptyPacket = !isData && txPolicy_.emptyPacketsDuringIdle;
+
     const uint32_t byteCount =
-        isData ? (kCipHeaderBytes + payloadBytes) : kCipHeaderBytes;
+        isEmptyPacket ? 0 : (isData ? (kCipHeaderBytes + payloadBytes) : kCipHeaderBytes);
 
     if (slot.capacityBytes < byteCount) {
         return false; // no state advanced; caller may retry
@@ -163,14 +201,23 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
 
         dbcCounter_.AdvanceDataBlocks(frames);
         nextAudioFrame_ += frames;
+        lastDataFirstAudioFrame_ = outPacket.firstAudioFrame;
+        lastDataEndAudioFrame_ = nextAudioFrame_;
+        lastDataPacketIndex_ = outPacket.packetIndex;
+        hasLastDataPacket_ = true;
+        PublishTelemetrySnapshot();
     } else {
         outPacket.syt = IEC61883::SytFormatter::kNoInfo;
 
-        // CIP-header-only: no payload, even as padding (DICE-II rejects it).
-        WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
-
-        timeline_->MarkNoDataPacket(slot.packetIndex);
-        // DBC deliberately not advanced.
+        if (isEmptyPacket) {
+            // Emitting genuine empty packets: byteCount = 0. No CIP header or payload is written.
+            timeline_->MarkNoDataPacket(slot.packetIndex);
+        } else {
+            // CIP-header-only: no payload, even as padding (DICE-II rejects it).
+            WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
+            timeline_->MarkNoDataPacket(slot.packetIndex);
+            // DBC deliberately not advanced.
+        }
     }
 
     cadence_->AdvanceCycle();
@@ -187,6 +234,43 @@ const AmdtpTxPolicy& AmdtpTxPacketizer::TxPolicy() const noexcept {
 
 bool AmdtpTxPacketizer::NextPacketWouldCarryData() const noexcept {
     return cadence_ != nullptr && cadence_->CurrentCycleIsData();
+}
+
+AmdtpTxPacketizerTelemetrySnapshot
+AmdtpTxPacketizer::TelemetrySnapshot() const noexcept {
+    AmdtpTxPacketizerTelemetrySnapshot snapshot{};
+    snapshot.nextAudioFrame =
+        telemetryNextAudioFrame_.load(std::memory_order_acquire);
+    snapshot.lastDataFirstAudioFrame =
+        telemetryLastDataFirstAudioFrame_.load(std::memory_order_relaxed);
+    snapshot.lastDataEndAudioFrame =
+        telemetryLastDataEndAudioFrame_.load(std::memory_order_relaxed);
+    snapshot.lastDataPacketIndex =
+        telemetryLastDataPacketIndex_.load(std::memory_order_relaxed);
+    snapshot.cursorEpoch = telemetryCursorEpoch_.load(std::memory_order_relaxed);
+    snapshot.frameCursorAligned =
+        telemetryFrameCursorAligned_.load(std::memory_order_relaxed);
+    snapshot.hasLastDataPacket =
+        telemetryHasLastDataPacket_.load(std::memory_order_relaxed);
+    return snapshot;
+}
+
+void AmdtpTxPacketizer::PublishTelemetrySnapshot() noexcept {
+    // Publish data fields before the acquire load of nextAudioFrame in
+    // TelemetrySnapshot(). The snapshot is deliberately best-effort: it is
+    // diagnostic only and never participates in packet preparation.
+    telemetryLastDataFirstAudioFrame_.store(lastDataFirstAudioFrame_,
+                                            std::memory_order_relaxed);
+    telemetryLastDataEndAudioFrame_.store(lastDataEndAudioFrame_,
+                                          std::memory_order_relaxed);
+    telemetryLastDataPacketIndex_.store(lastDataPacketIndex_,
+                                        std::memory_order_relaxed);
+    telemetryCursorEpoch_.store(cursorEpoch_, std::memory_order_relaxed);
+    telemetryFrameCursorAligned_.store(frameCursorAligned_,
+                                       std::memory_order_relaxed);
+    telemetryHasLastDataPacket_.store(hasLastDataPacket_,
+                                      std::memory_order_relaxed);
+    telemetryNextAudioFrame_.store(nextAudioFrame_, std::memory_order_release);
 }
 
 void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,

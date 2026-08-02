@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // DICEDuplexBringupController.hpp - Generic async duplex startup state machine for DICE devices
 
 #pragma once
 
-#include "IDICEDuplexProtocol.hpp"
+#include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "DICERestartSession.hpp"
 #include "DICETypes.hpp"
 #include "DICETransaction.hpp"
@@ -28,10 +28,10 @@ namespace ASFW::Audio::DICE {
 class DICEDuplexBringupController {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
-    using PrepareCallback = IDICEDuplexProtocol::PrepareCallback;
-    using StageCallback = IDICEDuplexProtocol::StageCallback;
-    using ConfirmCallback = IDICEDuplexProtocol::ConfirmCallback;
-    using ClockApplyCallback = IDICEDuplexProtocol::ClockApplyCallback;
+    using PrepareCallback = IDuplexDeviceControl::PrepareCallback;
+    using StageCallback = IDuplexDeviceControl::StageCallback;
+    using ConfirmCallback = IDuplexDeviceControl::ConfirmCallback;
+    using ClockApplyCallback = IDuplexDeviceControl::ClockApplyCallback;
 
     DICEDuplexBringupController(
         DICETransaction& diceReader,
@@ -45,12 +45,13 @@ public:
 
     // Async duplex methods (were IOReturn, now void + callback)
     void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const DiceDesiredClockConfig& desiredClock,
+                       const DiceClockConfiguration& desiredClock,
                        PrepareCallback callback);
     void ProgramRx(StageCallback callback);
     void ProgramTxAndEnableDuplex(StageCallback callback);
     void ConfirmDuplexStart(ConfirmCallback callback);
-    void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock, ClockApplyCallback callback);
+    void ApplyClockConfig(const DiceClockConfiguration& desiredClock,
+                          ClockApplyCallback callback);
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
         teardownCancel_ = cancel;
     }
@@ -87,9 +88,29 @@ private:
     void DoWaitClockAccepted(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoConfirmClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, VoidCallback cb);
     void DoReadGlobalAfterClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, IOReturn failureStatus, VoidCallback cb);
+    // Gate between clock-confirm and stream enable: poll until the PLL is stable-locked
+    // at the target rate, so streams are never enabled while the device is still
+    // relocking (which wedges it until a hard reset).
+    void DoAwaitStreamingClockLock(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoDiscoverStreams(AudioDuplexChannels channels, uint32_t step, VoidCallback cb);
-    void DoProgramRx(AudioDuplexChannels channels, VoidCallback cb);
-    void DoProgramTx(AudioDuplexChannels channels, VoidCallback cb);
+    // Per-stream stop-side disables. The stop sequence must clear EVERY stream's
+    // ISOC register (FFADO stopStreamByIndex writes 0xFFFFFFFF per stream); a
+    // stream[0]-only clear leaves the secondary's stale channel in the device,
+    // which the next bring-up's FirstActiveIsoChannel then adopts as stream[0]
+    // (channel-map drift) — and a start over a stale duplicate channel wedges the
+    // device until a power cycle.
+    void DoStopDisableTxStream(uint32_t streamIndex, uint32_t entrySizeBytes, bool releaseOwner, VoidCallback cb);
+    void DoStopDisableRxStream(uint32_t streamIndex, uint32_t entrySizeBytes, bool releaseOwner, VoidCallback cb);
+    // Per-stream device programming. A multi-stream DICE device (e.g. Venice F32,
+    // 2×16 channels) requires every advertised stream's ISOC register written
+    // before the single GLOBAL_ENABLE, so these recurse over the stream index.
+    // entrySizeBytes is the per-stream register stride (kSize*4), read once at
+    // streamIndex 0 and threaded through.
+    void DoProgramRx(AudioDuplexChannels channels, uint32_t streamIndex,
+                     uint32_t entrySizeBytes, VoidCallback cb);
+    void DoProgramTx(AudioDuplexChannels channels, uint32_t streamIndex,
+                     uint32_t entrySizeBytes, VoidCallback cb);
+    void DoEnableGlobal(AudioDuplexChannels channels, VoidCallback cb);
     void DoFinishPrepare(VoidCallback cb);
     void DoRollback(IOReturn error, VoidCallback cb);
     void DoCompleteClockApply(VoidCallback cb);
@@ -122,6 +143,7 @@ private:
     GeneralSections sections_;
 
     DiceRestartSession restartSession_{};
+    DiceClockConfiguration diceClock_{};
     FlowMode flowMode_{FlowMode::kNone};
     AudioStreamRuntimeCaps runtimeCaps_{};
     uint32_t confirmNotification_{0};
@@ -129,6 +151,11 @@ private:
     uint32_t confirmExtStatus_{0};
     IOReturn stopSequenceError_{kIOReturnSuccess};
     bool refreshRuntimeCapsOnPrepare_{true};
+    // CLOCK_SELECT read at the start of the current bring-up (DoReadGlobalBeforeClaim).
+    // Lets DoWriteClockSelect skip a redundant write when the device is already at the
+    // target clock, so the PLL relock happens once (during the idle ApplyClockConfig)
+    // instead of again mid-bring-up where it disrupts the streams being enabled.
+    uint32_t preClaimClockSelect_{0};
     const std::atomic<bool>* teardownCancel_{nullptr};
 };
 

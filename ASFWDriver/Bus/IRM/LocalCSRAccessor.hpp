@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // LocalCSRAccessor.hpp — Thin wrapper for local autonomous CSR access.

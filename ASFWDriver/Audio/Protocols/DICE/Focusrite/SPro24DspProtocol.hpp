@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // SPro24DspProtocol.hpp - Focusrite Saffire Pro 24 DSP protocol implementation
@@ -63,8 +63,12 @@ public:
     
     /// Get device name
     const char* GetName() const override { return "Focusrite Saffire Pro 24 DSP"; }
-    Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() noexcept override { return tcat_.AsDiceDuplexProtocol(); }
-    const Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept override { return tcat_.AsDiceDuplexProtocol(); }
+    Audio::IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override {
+        return tcat_.AsDuplexDeviceControl();
+    }
+    const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
+        return tcat_.AsDuplexDeviceControl();
+    }
     
     /// Device has DSP effects
     bool HasDsp() const override { return true; }

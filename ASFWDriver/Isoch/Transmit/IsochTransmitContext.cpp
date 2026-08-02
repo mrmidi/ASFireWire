@@ -6,7 +6,6 @@
 //
 
 #include "IsochTransmitContext.hpp"
-#include "../../Common/DriverKitOwnership.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Common/TimingUtils.hpp"
@@ -53,7 +52,7 @@ IsochTransmitContext::~IsochTransmitContext() noexcept = default;
 
 kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
-        ASFW_LOG(Isoch, "IT: Configure rejected - state=%s", TxStateName(state_));
+        ASFW_LOG(Isoch, "IT: Configure rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnBusy;
     }
 
@@ -80,8 +79,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     IOMemoryDescriptor* payloadSlab,
     IOMemoryDescriptor* metadataRing,
     IOMemoryDescriptor* controlBlock,
-    uint32_t interruptInterval,
-    uint32_t ztsPeriodFrames) noexcept {
+    uint32_t interruptInterval) noexcept {
 
     if (!payloadSlab || !metadataRing || !controlBlock) {
         return kIOReturnBadArgument;
@@ -107,7 +105,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         ASFW_LOG(Isoch, "IT: Failed to map payload slab: 0x%08x", kr);
         return kr;
     }
-    payloadMap_ = ASFW::Common::AdoptRetained(pMap);
+    payloadMap_ = OSSharedPtr<IOMemoryMap>(pMap, OSNoRetain);
     payloadBase_ = reinterpret_cast<uint8_t*>(payloadMap_->GetAddress());
 
     // Prepare Payload Slab for DMA (to get IOVA)
@@ -193,8 +191,8 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         ASFW_LOG(Isoch, "IT: Failed to map metadata ring: 0x%08x", kr);
         return kr;
     }
-    metadataMap_ = ASFW::Common::AdoptRetained(mMap);
-    metadataRing_ = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(metadataMap_->GetAddress());
+    metadataMap_ = OSSharedPtr<IOMemoryMap>(mMap, OSNoRetain);
+    metadataRing_ = reinterpret_cast<IsochTxPacketMeta*>(metadataMap_->GetAddress());
 
     // 3. Map Control Block
     IOMemoryMap* cMap = nullptr;
@@ -203,47 +201,46 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         ASFW_LOG(Isoch, "IT: Failed to map control block: 0x%08x", kr);
         return kr;
     }
-    controlMap_ = ASFW::Common::AdoptRetained(cMap);
-    controlBlock_ = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(controlMap_->GetAddress());
+    controlMap_ = OSSharedPtr<IOMemoryMap>(cMap, OSNoRetain);
+    controlBlock_ = reinterpret_cast<IsochTxQueueControl*>(controlMap_->GetAddress());
 
     // Populate structural fields
     uint64_t metadataLen = 0;
     metadataRing->GetLength(&metadataLen);
     uint64_t payloadLen = 0;
     payloadSlab->GetLength(&payloadLen);
+    uint64_t controlLen = 0;
+    controlBlock->GetLength(&controlLen);
 
-    const uint32_t numSlots = static_cast<uint32_t>(metadataLen / sizeof(ASFW::IsochTransport::TxPacketMeta));
+    if (metadataLen == 0 ||
+        (metadataLen % sizeof(IsochTxPacketMeta)) != 0 ||
+        controlLen < sizeof(IsochTxQueueControl)) {
+        ASFW_LOG(Isoch,
+                 "IT: Invalid TX queue mapping metadataBytes=%llu controlBytes=%llu",
+                 metadataLen, controlLen);
+        return kIOReturnBadArgument;
+    }
+
+    const uint32_t numSlots = static_cast<uint32_t>(metadataLen / sizeof(IsochTxPacketMeta));
+    if (numSlots == 0 || payloadLen == 0 || payloadLen % numSlots != 0) {
+        ASFW_LOG(Isoch,
+                 "IT: Invalid TX queue geometry payloadBytes=%llu slots=%u",
+                 payloadLen, numSlots);
+        return kIOReturnBadArgument;
+    }
     const uint32_t maxPacketBytes = static_cast<uint32_t>(payloadLen / numSlots);
 
-    controlBlock_->abiVersion = ASFW::IsochTransport::kTransportAbiVersion;
+    controlBlock_->abiVersion = kTxQueueAbiVersion;
     controlBlock_->numSlots = numSlots;
     controlBlock_->slotStrideBytes = maxPacketBytes;
     controlBlock_->maxPacketBytes = maxPacketBytes;
     controlBlock_->interruptInterval = interruptInterval;
-    controlBlock_->ztsPeriodFrames = ztsPeriodFrames;
-
-    // Reset consumer-owned runtime counters / status only. exposeCursor is
-    // PRODUCER-owned (the audio side advances it as it commits slots) and the
-    // audio-side prefill has already run by the time this consumer maps the
-    // block — resetting it here would stomp the prefill's committed lead back to
-    // zero, desyncing the pump's lead math and starving the ring after the
-    // prefilled packets drain. The buffer is freshly allocated (zero-filled)
-    // each start, so exposeCursor is 0 unless the prefill legitimately set it.
-    controlBlock_->streamGeneration.store(0, std::memory_order_relaxed);
-    controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_relaxed);
-    controlBlock_->completionCursor.store(0, std::memory_order_relaxed);
-    controlBlock_->completionStampCount.store(0, std::memory_order_relaxed);
-    controlBlock_->preparationRequestGeneration.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationHandledGeneration.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationRequestHostTicks.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationRequestCount.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->preparationCoalescedCount.store(
-        0, std::memory_order_relaxed);
-    controlBlock_->producerFailure.Reset();
+    controlBlock_->ResetConsumerForArm();
+    if (controlBlock_->abiVersion != kTxQueueAbiVersion) {
+        ASFW_LOG(Isoch, "IT: TX queue ABI write validation failed abi=%u",
+                 controlBlock_->abiVersion);
+        return kIOReturnInternalError;
+    }
 
     ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadSegments=%zu metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
              payloadDmaMap_.SegmentCount(), metadataRing_, controlBlock_, numSlots, maxPacketBytes);
@@ -252,7 +249,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
 
 kern_return_t IsochTransmitContext::Start() noexcept {
     if (state_ != State::Configured && state_ != State::Stopped) {
-        ASFW_LOG(Isoch, "IT: Start rejected - state=%s", TxStateName(state_));
+        ASFW_LOG(Isoch, "IT: Start rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnNotReady;
     }
 
@@ -291,7 +288,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
 
-    const uint64_t preFillCount = controlBlock_->exposeCursor.load(std::memory_order_relaxed);
+    const uint64_t preFillCount = controlBlock_->committedEnd.load(std::memory_order_relaxed);
     const auto primeStats =
         ring_.Prime(payloadDmaMap_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, preFillCount);
     if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
@@ -300,7 +297,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     }
     packetsAssembled_ = primeStats.packetsAssembled;
     controlBlock_->statusWord.store(
-        ASFW::IsochTransport::TxStreamStatus::kRunning,
+        IsochTxQueueStatus::kRunning,
         std::memory_order_release);
     
     Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
@@ -348,42 +345,63 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     return kIOReturnSuccess;
 }
 
-void IsochTransmitContext::Stop() noexcept {
+kern_return_t IsochTransmitContext::Stop() noexcept {
     if (state_ == State::Running && hardware_) {
-        Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
-        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
-
-        Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_));
-        constexpr uint32_t kPollIntervalMs = 1;
-        constexpr uint32_t kTimeoutMs = 100;
-        for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
-            uint32_t ctl = hardware_->Read(ctrlReg);
-            if (ctl == 0xFFFFFFFFu || (ctl & Driver::ContextControl::kActive) == 0) {
-                break;
-            }
-            IOSleep(kPollIntervalMs);
+        // This gate also covers watchdog Poll().  Acquire it before clearing
+        // RUN so an already-dispatched refill cannot retain a direct-audio
+        // mapping past the point this function reports quiesced.
+        while (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+            IODelay(5);
         }
 
+        Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+        const Register32 ctrlSetReg =
+            static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
+
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+        // A posted CLEAR must reach OHCI before ACTIVE is meaningful.  Linux
+        // firewire/ohci.c:1361-1378 follows this same RUN-clear/ACTIVE-clear
+        // barrier before it lets DMA resources go away.
+        hardware_->WriteAndFlush(ctrlClrReg, Driver::ContextControl::kRun);
+
+        const uint32_t initialControl = hardware_->Read(ctrlSetReg);
+        if (initialControl != 0xFFFFFFFFu &&
+            (initialControl & Driver::ContextControl::kActive) != 0) {
+            IODelay(5);
+            constexpr uint32_t kMaxIterations = 250;
+            constexpr uint32_t kBaseDelayMicros = 6;
+            for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
+                const uint32_t polledControl = hardware_->Read(ctrlSetReg);
+                if (polledControl == 0xFFFFFFFFu ||
+                    (polledControl & Driver::ContextControl::kActive) == 0) {
+                    break;
+                }
+                IODelay(kBaseDelayMicros + iteration);
+            }
+        }
+
+        const uint32_t control = hardware_->Read(ctrlSetReg);
+        if (control != 0xFFFFFFFFu &&
+            (control & Driver::ContextControl::kActive) != 0) {
+            const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
+                ? kIOReturnDMAError
+                : kIOReturnTimeout;
+            ASFW_LOG_ERROR(Isoch,
+                           "IT: stop did not quiesce context=%u control=0x%08x kr=0x%08x; retaining DMA bindings",
+                           contextIndex_, control, failure);
+            refillInProgress_.clear(std::memory_order_release);
+            return failure;
+        }
 
         if (controlBlock_) {
-            controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_release);
+            controlBlock_->statusWord.store(IsochTxQueueStatus::kStopped, std::memory_order_release);
         }
 
         state_ = State::Stopped;
         refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped. Stats: %llu pkts IRQs=%llu",
                  packetsAssembled_, interruptCount_.load(std::memory_order_relaxed));
-        const auto& rc = ring_.RTCounters();
-        ASFW_LOG(Isoch,
-                 "IT WIRE final data=%llu zeroPcm=%llu infoQuads=%llu dropouts=%llu maxAbs24=%u lastQuad=0x%08x firstInfoAbsIdx=%llu",
-                 rc.wireDataPackets.load(std::memory_order_relaxed),
-                 rc.wireZeroPcmPackets.load(std::memory_order_relaxed),
-                 rc.wireInfoQuads.load(std::memory_order_relaxed),
-                 rc.wirePcmDropouts.load(std::memory_order_relaxed),
-                 rc.wireMaxAbs24.load(std::memory_order_relaxed),
-                 rc.wireLastInfoQuad.load(std::memory_order_relaxed),
-                 rc.wireFirstInfoAbsIdx.load(std::memory_order_relaxed));
+        return kIOReturnSuccess;
     }
 
     if (state_ == State::Configured) {
@@ -391,6 +409,7 @@ void IsochTransmitContext::Stop() noexcept {
         refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped from configured state before hardware run");
     }
+    return kIOReturnSuccess;
 }
 
 void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
@@ -415,31 +434,6 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         payloadDmaMap_);
     if (!outcome.ok) {
         const auto& counters = ring_.RTCounters();
-        if (outcome.failureReason ==
-                Tx::IsochTxDmaRing::RefillFailureReason::
-                    ProducerFatalStatus &&
-            outcome.producerFailureAvailable) {
-            const auto& failure = outcome.producerFailure;
-            ASFW_LOG(
-                Isoch,
-                "IT: Producer fatal stage=%{public}s reason=%{public}s "
-                "generation=%llu packet=%llu range=[%llu,%llu) "
-                "prepared=%u completion=%llu expose=%llu "
-                "replayProducer=%llu replayEpoch=%u",
-                ASFW::IsochTransport::TxProducerStageName(
-                    failure.stage),
-                ASFW::IsochTransport::TxProducerFailureReasonName(
-                    failure.reason),
-                failure.generation,
-                failure.packetIndex,
-                failure.rangeStart,
-                failure.rangeTarget,
-                failure.preparedCount,
-                failure.completionCursor,
-                failure.exposeCursor,
-                failure.replayProducerCursor,
-                failure.replayEpoch);
-        }
         ASFW_LOG(
             Isoch,
             "IT: Refill failed reason=%{public}s ctrl=0x%08x streamStatus=%u "
@@ -468,9 +462,9 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         if (outcome.packetsFilled > 0) {
             ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
         }
-        if (outcome.preparationRequestGeneration != 0 &&
+        if (outcome.refillRequestGeneration != 0 &&
             txPreparationCallback_) {
-            txPreparationCallback_(outcome.preparationRequestGeneration);
+            txPreparationCallback_(outcome.refillRequestGeneration);
         }
     }
 }
@@ -489,26 +483,12 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
             static_cast<Register32>(
                 DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
         hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
-
-        const Register32 ctrlReg =
-            static_cast<Register32>(
-                DMAContextHelpers::IsoXmitContextControl(contextIndex_));
-        constexpr uint32_t kPollIntervalMs = 1;
-        constexpr uint32_t kTimeoutMs = 100;
-        for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
-            uint32_t ctl = hardware_->Read(ctrlReg);
-            if (ctl == 0xFFFFFFFFu || (ctl & Driver::ContextControl::kActive) == 0) {
-                break;
-            }
-            IOSleep(kPollIntervalMs);
-        }
-
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
     }
     if (controlBlock_) {
         const auto currentStatus = controlBlock_->statusWord.load(std::memory_order_acquire);
-        if (currentStatus != ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal) {
-            controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
+        if (currentStatus != IsochTxQueueStatus::kProducerFault) {
+            controlBlock_->statusWord.store(IsochTxQueueStatus::kDeadContext, std::memory_order_release);
         }
     }
     state_ = State::Stopped;
@@ -525,7 +505,14 @@ void IsochTransmitContext::Poll() noexcept {
         if (irqStallTicks_ >= 5) {
             irqStallTicks_ = 0;
             irqWatchdogKicks_.fetch_add(1, std::memory_order_relaxed);
-            DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/false);
+            if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+                // Stop() may have acquired the gate after the first state
+                // check. Re-check while holding it before touching the slab.
+                if (state_ == State::Running) {
+                    DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/false);
+                }
+                refillInProgress_.clear(std::memory_order_release);
+            }
         }
     } else {
         lastInterruptCountSeen_ = currentInterrupts;
@@ -538,6 +525,13 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
     interruptCount_.fetch_add(1, std::memory_order_relaxed);
 
     if (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        return;
+    }
+
+    // Stop() can acquire the gate between the initial state check and this
+    // point. Do not start a refill after it has fenced the stream.
+    if (state_ != State::Running) {
+        refillInProgress_.clear(std::memory_order_release);
         return;
     }
 

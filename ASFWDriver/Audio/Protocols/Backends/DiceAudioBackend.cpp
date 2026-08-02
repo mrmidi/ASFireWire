@@ -1,12 +1,16 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
 #include "DiceAudioBackend.hpp"
+#include "DiceRuntimeDeviceConfig.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../DICE/Core/DICENotificationMailbox.hpp"
+#include "../DICE/Core/DICETypes.hpp"
+#include "../Duplex/IDuplexDeviceControl.hpp"
+#include "../IDeviceProtocol.hpp"
 #include "../DeviceProtocolFactory.hpp"
 #include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
 
@@ -110,6 +114,11 @@ void DiceAudioBackend::BeginTeardown() noexcept {
 #endif
     }
 
+    // Releases every generic-runner IRM reservation while the IRM client is
+    // still alive. IsochService::StopAll remains idempotent when the outer
+    // service teardown invokes it again.
+    (void)hostTransport_.StopAll();
+
     const uint64_t endMs = UptimeMilliseconds();
     const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;
     const uint64_t coordinatorAborted =
@@ -164,6 +173,37 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
         return;
     }
 
+    // Runtime-fault recoveries (timing loss, cycle-inconsistent, ...) are only valid
+    // for the session that raised them. CoreAudio re-probes a fresh rate with rapid
+    // StartIO/StopIO cycles, and each ordered teardown fires the same replay-
+    // discontinuity detectors as a genuine mid-run fault; a recovery queued from
+    // that churn executes after the next start goes live, tears down the healthy
+    // session, and its restart then fails TX prime (stale producer cursors -- the
+    // cursor reset only runs in ADK StartIO) leaving the HAL running silent IO.
+    // Drop the event when the coordinator is already running an operation (the
+    // "fault" is that transition), and re-check the restart epoch when the queued
+    // block finally runs. Bus-reset rebinds stay unguarded: they are external
+    // topology events that must always rebind.
+    const bool isRuntimeFault =
+        reason == DICE::DiceRestartReason::kRecoverAfterTimingLoss ||
+        reason == DICE::DiceRestartReason::kRecoverAfterCycleInconsistent ||
+        reason == DICE::DiceRestartReason::kRecoverAfterLockLoss ||
+        reason == DICE::DiceRestartReason::kRecoverAfterTxFault;
+    uint64_t faultRestartId = 0;
+    if (isRuntimeFault) {
+        if (restartCoordinator_.IsOperationInFlight(guid)) {
+            recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: recovery event dropped (duplex operation in "
+                     "flight) GUID=%llx reason=%u",
+                     guid,
+                     static_cast<unsigned>(reason));
+            return;
+        }
+        const auto session = restartCoordinator_.GetSession(guid);
+        faultRestartId = session ? session->restartId : 0;
+    }
+
     if (!TryBeginRecovery(guid)) {
         return;
     }
@@ -179,6 +219,50 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
                      static_cast<unsigned>(reason));
             FinishRecovery(guid);
             return;
+        }
+        if (isRuntimeFault) {
+            // Re-validate at execution time: an operation may have started, or a
+            // restart may have completed, while this block sat on the queue. In
+            // either case the fault belongs to a superseded session -- recovering
+            // now would tear down healthy state.
+            const auto session = restartCoordinator_.GetSession(guid);
+            const uint64_t currentRestartId = session ? session->restartId : 0;
+            if (restartCoordinator_.IsOperationInFlight(guid) ||
+                currentRestartId != faultRestartId) {
+                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend: queued recovery dropped as stale GUID=%llx "
+                         "reason=%u faultRestartId=%llu currentRestartId=%llu",
+                         guid,
+                         static_cast<unsigned>(reason),
+                         faultRestartId,
+                         currentRestartId);
+                FinishRecovery(guid);
+                return;
+            }
+
+            // Health gate: a host-side replay discontinuity (aggregate-device
+            // StartIO/StopIO churn, an RX packet gap) fires the same timing-loss
+            // detector as a genuine device clock drop. When the device still
+            // reports a locked, healthy clock the discontinuity is host-side and
+            // the RX epoch reset (ResetReplayEpochForDiscontinuity) already
+            // re-establishes cadence and replay for both directions. A destructive
+            // coordinator restart here would only tear down a healthy running
+            // session -- and it cannot re-prime TX (the producer-cursor reset lives
+            // in ADK StartIO), so it lands Failed and leaves the HAL running silent
+            // IO. Only escalate to a restart when the device clock is genuinely
+            // unhealthy. (Read failure returns false -> recover, never suppress on
+            // missing evidence.)
+            if (DeviceReportsHealthyClock(guid)) {
+                recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend: runtime-fault recovery dropped (device clock "
+                         "locked+healthy; RX self-heals) GUID=%llx reason=%u",
+                         guid,
+                         static_cast<unsigned>(reason));
+                FinishRecovery(guid);
+                return;
+            }
         }
         const IOReturn status = restartCoordinator_.RecoverStreaming(guid, reason);
         if (status == kIOReturnSuccess) {
@@ -261,7 +345,7 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     // Hold a shared_ptr for the duration of the (blocking) health probe so the
     // protocol cannot be torn down underneath us by a concurrent device removal.
     auto protocol = runtime_.FindShared(guid);
-    auto* diceProtocol = protocol ? protocol->AsDiceDuplexProtocol() : nullptr;
+    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
     if (!diceProtocol) {
         return;
     }
@@ -320,14 +404,8 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
         return;
     }
 
-    const bool sourceLocked = DICE::IsSourceLocked(waitState->result.status);
-    bool extClockHealthy = true;
-    const uint32_t clockSource = waitState->result.appliedClock.clockSelect & DICE::ClockSelect::kSourceMask;
-    if (clockSource == static_cast<uint32_t>(DICE::ClockSource::ARX1)) {
-        extClockHealthy =
-            DICE::IsArx1Locked(waitState->result.extStatus) &&
-            !DICE::HasArx1Slip(waitState->result.extStatus);
-    }
+    const bool sourceLocked = waitState->result.sourceLocked;
+    const bool extClockHealthy = waitState->result.clockReferenceHealthy;
 
     char notifyStr[96];
     char clockStr[40];
@@ -337,8 +415,50 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     DICE::FormatExtStatus(waitState->result.extStatus, extStr, sizeof(extStr));
 
     if (sourceLocked && extClockHealthy) {
-        // Healthy: the device is just narrating its clock/ext status. Surface
-        // what it actually reports (rate-limited) instead of staying silent.
+        // Healthy — but the device may have moved to a different rate on its
+        // own (front-panel clock change / external sync source). Compare the
+        // PLL's locked nominal rate against the host's current belief and, on
+        // a mismatch, tell the audio driver to re-sync the HAL (forced format
+        // change; AppleUSBAudio's device-driven rate-move analog).
+        const uint32_t deviceRateHz = waitState->result.nominalRateHz;
+        auto* nub = publisher_.GetNub(guid);
+        const uint32_t hostRateHz = nub ? nub->GetCurrentSampleRateHz() : 0;
+        if (nub && deviceRateHz != 0 && hostRateHz != 0 &&
+            deviceRateHz != hostRateHz) {
+            // A mismatch here is only device-initiated if the host isn't the
+            // one moving the clock. During a host-initiated rate change the
+            // PLL relocks at the new rate while the nub's belief still holds
+            // the old one (it updates only after RequestClockConfig returns),
+            // and the device's lock-change notifications land exactly in that
+            // window. Notifying then would inject a second, competing
+            // config-change into the middle of the host's own change (HAL
+            // rate switches wedge until the client reopens the device).
+            // Suppress while the coordinator holds the gate / has a queued
+            // clock request, and when the "new" device rate is just the echo
+            // of the clock the host itself asked for.
+            const auto session = restartCoordinator_.GetSession(guid);
+            const bool echoesHostClock =
+                session.has_value() &&
+                (session->hasPendingClockRequest ||
+                 session->pendingClock.sampleRateHz == deviceRateHz ||
+                 session->desiredClock.sampleRateHz == deviceRateHz);
+            if (echoesHostClock || restartCoordinator_.IsOperationInFlight(guid)) {
+                ASFW_LOG_RL(Audio, "dice/rate-echo", 1000, OS_LOG_TYPE_DEFAULT,
+                            "DiceAudioBackend: rate mismatch is host-initiated "
+                            "(in flight) GUID=%llx device=%u Hz host=%u Hz -> no resync",
+                            guid, deviceRateHz, hostRateHz);
+                return;
+            }
+            ASFW_LOG_WARNING(Audio,
+                             "DiceAudioBackend: device-initiated clock change "
+                             "GUID=%llx device=%u Hz host=%u Hz -> notify audio driver",
+                             guid, deviceRateHz, hostRateHz);
+            nub->NotifyDeviceClockChanged(deviceRateHz);
+            return;
+        }
+
+        // The device is just narrating its clock/ext status. Surface what it
+        // actually reports (rate-limited) instead of staying silent.
         ASFW_LOG_RL(Audio, "dice/notify-confirm", 1000, OS_LOG_TYPE_DEFAULT,
                     "DiceAudioBackend: notify confirm GUID=%llx notify=%{public}s clock=%{public}s ext=%{public}s healthy",
                     guid, notifyStr, clockStr, extStr);
@@ -351,6 +471,47 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
 
     (void)guid;
     (void)notificationBits;
+}
+
+bool DiceAudioBackend::DeviceReportsHealthyClock(uint64_t guid) noexcept {
+    if (stopping_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    // Hold the protocol alive for the blocking read (same discipline as
+    // ProbeDuplexHealth) so a concurrent device removal cannot free it underneath.
+    auto protocol = runtime_.FindShared(guid);
+    auto* diceProtocol = protocol ? protocol->AsDuplexDeviceControl() : nullptr;
+    if (!diceProtocol) {
+        return false;
+    }
+
+    struct WaitState {
+        std::atomic<bool> done{false};
+        IOReturn status{kIOReturnTimeout};
+        DICE::DiceDuplexHealthResult result{};
+    };
+    auto waitState = std::make_shared<WaitState>();
+    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
+        waitState->status = status;
+        waitState->result = std::move(result);
+        waitState->done.store(true, std::memory_order_release);
+    });
+
+    for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
+        if (waitState->done.load(std::memory_order_acquire)) {
+            break;
+        }
+        if (stopping_.load(std::memory_order_acquire)) {
+            return false;
+        }
+        IOSleep(kHealthBridgePollMs);
+    }
+
+    if (!waitState->done.load(std::memory_order_acquire) ||
+        waitState->status != kIOReturnSuccess) {
+        return false;
+    }
+    return waitState->result.sourceLocked && waitState->result.clockReferenceHealthy;
 }
 
 bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {
@@ -386,10 +547,16 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     if (guid == 0) return;
 
     const auto* record = registry_.FindByGuid(guid);
-    if (!record) return;
+    if (!record) {
+        ASFW_LOG(Audio, "DiceAudioBackend::EnsureNubForGuid: no registry record for GUID=0x%016llx", guid);
+        return;
+    }
 
     const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
     if (integration != DeviceIntegrationMode::kHardcodedNub) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend::EnsureNubForGuid: skipping GUID=0x%016llx vendor=0x%06x model=0x%06x integration=%u (not hardcodedNub)",
+                 guid, record->vendorId, record->modelId, static_cast<unsigned>(integration));
         return;
     }
 
@@ -402,11 +569,15 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     static ASFW::Isoch::Audio::DICE::DiceProfileRegistry diceRegistry{};
     const auto* profile = diceRegistry.FindProfile(identity);
     if (!profile) {
-        // We neither retrieve stream geometry for unknown device nor fail loudly.
-        // Skip the logic of retrieving geometry and stick to only known profiles for now.
-        // TODO: Support dynamic stream geometry retrieval for unknown devices.
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend::EnsureNubForGuid: no isoch profile for GUID=0x%016llx vendor=0x%06x model=0x%06x (profileCount=%u)",
+                 guid, record->vendorId, record->modelId, diceRegistry.ProfileCount());
         return;
     }
+
+    ASFW_LOG(Audio,
+             "DiceAudioBackend::EnsureNubForGuid: matched profile=%{public}s for GUID=0x%016llx",
+             profile->Name(), guid);
 
     auto protocol = runtime_.FindShared(guid);
 
@@ -420,12 +591,66 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
-
-    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
-        endpoint->UpdateConfig(dev);
+    dev.sampleRates = profile->SupportedSampleRates();
+    if (dev.sampleRates.empty()) {
+        dev.sampleRates = {48000u};
     }
+    dev.currentSampleRate = 48000u;
 
-    (void)publisher_.EnsureNub(guid, dev, "DICE");
+    // Enrich with the device's real per-channel labels (if the protocol has
+    // loaded them), update the endpoint runtime, then publish the nub. Host
+    // input == device TX, host output == device RX (see AudioTypes.hpp), which
+    // is exactly how GetChannelLabels reports them.
+    auto finish = [this, guid](Model::ASFWAudioDevice dev,
+                               const std::shared_ptr<IDeviceProtocol>& protocol) {
+        if (stopping_.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (protocol) {
+            AudioStreamRuntimeCaps caps{};
+            if (protocol->GetRuntimeAudioStreamCaps(caps) &&
+                ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry rate=%u in=%u out=%u (GUID=0x%016llx)",
+                         dev.currentSampleRate,
+                         dev.inputChannelCount,
+                         dev.outputChannelCount,
+                         guid);
+            }
+
+            std::vector<std::string> inNames;
+            std::vector<std::string> outNames;
+            if (protocol->GetChannelLabels(inNames, outNames)) {
+                if (!inNames.empty()) {
+                    dev.inputChannelNames = std::move(inNames);
+                }
+                if (!outNames.empty()) {
+                    dev.outputChannelNames = std::move(outNames);
+                }
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend::EnsureNubForGuid: applied device channel labels in=%zu out=%zu (GUID=0x%016llx)",
+                         dev.inputChannelNames.size(), dev.outputChannelNames.size(), guid);
+            }
+        }
+        if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+            endpoint->UpdateConfig(dev);
+        }
+        (void)publisher_.EnsureNub(guid, dev, "DICE");
+    };
+
+    // Channel labels live in the TCAT stream-format name sections, cached only
+    // once runtime caps load (during the first stream discovery). Load them
+    // once before the first publish so CoreAudio shows the real names from the
+    // start. The load early-returns if caps are already cached; publish happens
+    // regardless of outcome (names fall back to synthesized "<plug> N").
+    if (auto* dice = protocol ? protocol->AsDuplexDeviceControl() : nullptr) {
+        dice->EnsureRuntimeStreamGeometry(
+            [finish, dev, protocol](IOReturn /*status*/) mutable {
+                finish(std::move(dev), protocol);
+            });
+        return;
+    }
+    finish(std::move(dev), protocol);
 }
 
 IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
@@ -494,8 +719,8 @@ IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
 }
 
 IOReturn DiceAudioBackend::RequestClockConfig(uint64_t guid,
-                                              const DICE::DiceDesiredClockConfig& desiredClock,
-                                              DICE::DiceRestartReason reason) noexcept {
+                                              const AudioClockConfig& desiredClock,
+                                              DuplexRestartReason reason) noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
         ASFW_LOG(Audio,
                  "DiceAudioBackend: RequestClockConfig refused by teardown GUID=0x%016llx",

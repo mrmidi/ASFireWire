@@ -49,6 +49,16 @@ SWIFT_TEST_ONLY=false
 # When true, generate Swift code coverage
 SWIFT_COVERAGE=false
 SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
+# When true, include the SCSI HBA: the ASFWSCSIControllerService personality in
+# Info.plist and the restricted scsicontroller entitlement in the dext signature.
+# Default OFF: the personality matches the FireWire card at boot, and with no
+# powered SBP-2 device on the bus the HBA's probe INQUIRY stalls target-0
+# registration past watchdogd's 60 s boot quiesce (registry busy-timeout panic,
+# IOService.cpp:5986) — regardless of SIP state. On AMFI-enforcing machines the
+# ad-hoc signature carrying the restricted entitlement additionally gets the dext
+# killed at launch, stranding the orphaned kernel stub in the same panic.
+# See README "SCSI HBA — opt-in".
+ENABLE_SCSI=false
 
 usage() {
   cat <<EOF
@@ -61,6 +71,9 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --swift-coverage   Run Swift tests with coverage and export to LCOV
   --commands         Generate compile_commands.json via xcpretty
   --analyze          Run PVS-Studio static analyzer after build
+  --scsi             Include the SCSI HBA (personality + restricted entitlement);
+                     requires SIP disabled, and is NOT cold-boot-safe without a
+                     powered-on SBP-2 device attached — see README
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})
@@ -79,6 +92,7 @@ while [[ $# -gt 0 ]]; do
     --test-filter) SELECTED_TESTS_PATTERN="$2"; shift 2;;
     --commands) GENERATE_COMMANDS=true; shift;;
     --analyze) RUN_ANALYZER=true; shift;;
+    --scsi) ENABLE_SCSI=true; shift;;
     --scheme) SCHEME_NAME="$2"; shift 2;;
     --config) CONFIGURATION="$2"; shift 2;;
     --arch) ARCH_NAME="$2"; shift 2;;
@@ -101,6 +115,14 @@ preflight() {
   # When running test-only we don't need xcodebuild or the Xcode project present.
   if ! $TEST_ONLY; then
     require_cmd xcodebuild
+    # The Xcode project is generated from project.yml (XcodeGen). Regenerate so
+    # source globs pick up added/removed files; output is deterministic, so this
+    # is a no-op when nothing changed. Falls through to the committed project
+    # when xcodegen isn't installed (e.g. CI runners).
+    if [[ -f "project.yml" ]] && command -v xcodegen >/dev/null 2>&1; then
+      log "Regenerating ${PROJECT_NAME}.xcodeproj from project.yml..."
+      xcodegen generate --quiet || { err "xcodegen generate failed"; exit 1; }
+    fi
     [[ -f "${PROJECT_NAME}.xcodeproj/project.pbxproj" ]] || { err "Run from project root (missing ${PROJECT_NAME}.xcodeproj)"; exit 1; }
   fi
   if $GENERATE_COMMANDS; then
@@ -166,8 +188,16 @@ run_tests() {
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 
   log "Building tests..."
+  local build_jobs="${ASFW_BUILD_JOBS:-}"
+  if [[ -z "$build_jobs" ]]; then
+    build_jobs=$(sysctl -n hw.ncpu 2>/dev/null || true)
+  fi
+  if [[ ! "$build_jobs" =~ ^[1-9][0-9]*$ ]]; then
+    build_jobs=4
+  fi
   # Use cmake --build for portability; forward config for multi-config generators
-  cmake --build "${TEST_BUILD_DIR}" --config "${CONFIGURATION}" -- -j$(sysctl -n hw.ncpu) >/dev/null
+  cmake --build "${TEST_BUILD_DIR}" --config "${CONFIGURATION}" \
+    --parallel "$build_jobs" >/dev/null
 
   log "Running tests (verbose output)..."
   # If user supplied a filter pattern, pass -R to ctest. Use -V for verbose output of all tests.
@@ -302,6 +332,11 @@ run_build() {
   log "Building ${PROJECT_NAME} (scheme=${SCHEME_NAME}, config=${CONFIGURATION})…"
   local QUIET_FLAG=()
   $VERBOSE || QUIET_FLAG=(-quiet)
+  local SCSI_FLAG=()
+  if $ENABLE_SCSI; then
+    SCSI_FLAG=(ASFW_ENABLE_SCSI=YES)
+    log "SCSI HBA enabled (ASFW_ENABLE_SCSI=YES): personality + scsicontroller entitlement included"
+  fi
 
   # Run xcodebuild. We capture everything to RAW_LOG.
   set +e
@@ -315,6 +350,7 @@ run_build() {
 	    CODE_SIGNING_ALLOWED=NO \
 	    CODE_SIGNING_REQUIRED=NO \
 	    CODE_SIGN_IDENTITY="" \
+    ${SCSI_FLAG[@]+"${SCSI_FLAG[@]}"} \
     ${QUIET_FLAG[@]+"${QUIET_FLAG[@]}"} \
     build \
     2>&1 | tee "${RAW_LOG}"

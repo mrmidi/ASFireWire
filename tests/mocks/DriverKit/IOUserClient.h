@@ -6,12 +6,14 @@ struct IOUserClientMethodArguments {
     uint64_t* scalarInput;
     uint32_t scalarInputCount;
     void* structureInput;
+    class IOMemoryDescriptor* structureInputDescriptor;
     uint64_t structureInputSize;
-    
+
     uint64_t* scalarOutput;
     uint32_t scalarOutputCount;
     class OSData* structureOutput;
-    class IOBufferMemoryDescriptor* structureOutputDescriptor;
+    // Matches the real SDK: caller-supplied descriptor for large struct output.
+    class IOMemoryDescriptor* structureOutputDescriptor;
 };
 
 class IOUserClient : public OSObject {

@@ -14,7 +14,17 @@ AudioFunctionBlockCommand::AudioFunctionBlockCommand(IAVCCommandSubmitter& submi
                                                      ControlSelector selector,
                                                      std::vector<uint8_t> data)
     : submitter_(submitter)
-    , cdb_(BuildCdb(subunitAddr, type, functionBlockId, selector, data)) {}
+    , cdb_(BuildCdb(subunitAddr, type, BlockType::kFeature, functionBlockId, selector, data)) {}
+
+AudioFunctionBlockCommand::AudioFunctionBlockCommand(IAVCCommandSubmitter& submitter,
+                                                     uint8_t subunitAddr,
+                                                     CommandType type,
+                                                     BlockType blockType,
+                                                     uint8_t functionBlockId,
+                                                     ControlSelector selector,
+                                                     std::vector<uint8_t> data)
+    : submitter_(submitter)
+    , cdb_(BuildCdb(subunitAddr, type, blockType, functionBlockId, selector, data)) {}
 
 void AudioFunctionBlockCommand::Submit(std::function<void(AVCResult, const std::vector<uint8_t>&)> completion) {
     submitter_.SubmitCommand(cdb_, [completion](AVCResult result, const AVCCdb& response) {
@@ -38,6 +48,7 @@ void AudioFunctionBlockCommand::Submit(std::function<void(AVCResult, const std::
 
 AVCCdb AudioFunctionBlockCommand::BuildCdb(uint8_t subunitAddr,
                                            CommandType type,
+                                           BlockType blockType,
                                            uint8_t functionBlockId,
                                            ControlSelector selector,
                                            const std::vector<uint8_t>& data) {
@@ -48,8 +59,8 @@ AVCCdb AudioFunctionBlockCommand::BuildCdb(uint8_t subunitAddr,
 
     size_t offset = 0;
 
-    // Function Block Type: Feature (0x81)
-    cdb.operands[offset++] = 0x81;
+    // Function Block Type: Feature (0x81) or Selector (0x80)
+    cdb.operands[offset++] = static_cast<uint8_t>(blockType);
 
     // Function Block ID
     cdb.operands[offset++] = functionBlockId;
@@ -62,12 +73,18 @@ AVCCdb AudioFunctionBlockCommand::BuildCdb(uint8_t subunitAddr,
     // 1 (Selector) + Data Length
     cdb.operands[offset++] = static_cast<uint8_t>(1 + data.size());
 
+    // In AV/C Audio Subunit function blocks, the sub-address/channel/plug ID (data[0])
+    // always comes before the control selector byte.
+    if (!data.empty()) {
+        cdb.operands[offset++] = data[0];
+    }
+
     // Control Selector
     cdb.operands[offset++] = static_cast<uint8_t>(selector);
 
-    // Control Data
-    for (uint8_t byte : data) {
-        cdb.operands[offset++] = byte;
+    // Control Data (remaining bytes)
+    for (size_t i = 1; i < data.size(); ++i) {
+        cdb.operands[offset++] = data[i];
     }
 
     cdb.operandLength = offset;

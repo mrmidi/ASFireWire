@@ -150,7 +150,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
             : snapshot.txMaximumLeadTicks + transferDelayTicks;
     ASFW_LOG(
         DirectAudio,
-        "ADK timing anchor(generation=%llu frame=%llu updates=%llu mirrors=%llu invalid=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
+        "ADK timing anchor(generation=%llu frame=%llu updates=%llu mirrors=%llu invalid=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu empty=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
         snapshot.hostAnchorGeneration,
         snapshot.hostAnchorFrame,
         snapshot.hostAnchorUpdates,
@@ -164,6 +164,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         wireLeadMaximum,
         snapshot.txDataPackets,
         snapshot.txNoDataPackets,
+        snapshot.txEmptyPackets,
         snapshot.txPostLockNoDataPackets,
         snapshot.txLastPreparationLatencyTicks,
         snapshot.txMaxPreparationLatencyTicks,
@@ -326,7 +327,7 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
     ivars.runtime.directAudioSkeletonBound.store(true, std::memory_order_release);
     ASFW_LOG(DirectAudio,
-             "ADK DBG BIND skeleton %s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
+             "ADK DBG BIND skeleton %{public}s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
              "bound",
              static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
              ivars.runtime.directAudioGraph.memory.outputFrameCapacity,

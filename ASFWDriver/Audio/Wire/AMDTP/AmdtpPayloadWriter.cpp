@@ -129,10 +129,16 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)
                                       ? streamConfig_.pcmChannels
                                       : snap.dbs;
+        // This stream encodes the host channels [sourceChannelOffset,
+        // sourceChannelOffset + pcmChannels) of the shared interleaved buffer —
+        // the de-interleave that mirrors the RX side's channelOffset. Host
+        // channels outside the buffer encode PCM zero.
+        const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
         bool frameNonZero = false;
         for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
+            const uint32_t srcCh = srcOffset + ch;
             const float sample =
-                (ch < hostBuffer.channels) ? source[ch] : 0.0f;
+                (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
             WriteBE32(dest + ch * kBytesPerSlot,
                       PcmSlotCodec::EncodeFloat32(
                           sample, txPolicy_.hostToDevicePcmEncoding));

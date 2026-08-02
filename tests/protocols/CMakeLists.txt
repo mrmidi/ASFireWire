@@ -30,6 +30,34 @@ target_link_libraries(FCPPacketParsingTests PRIVATE
 )
 gtest_discover_tests(FCPPacketParsingTests)
 
+# BeBoB STATUS-only inventory codec tests (plug-0 scope)
+add_protocols_test(BeBoBPlug0StreamDiscoveryTests
+    BeBoBPlug0StreamDiscoveryTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.cpp"
+)
+
+# FCP transport lifecycle tests (write completion, cancellable timeout, teardown)
+add_protocols_test(FCPTransportTests
+    FCPTransportTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
+# FCP response CSR range and transport-lifetime routing tests
+add_protocols_test(FCPResponseRouterTests
+    FCPResponseRouterTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
+# CMP device leases, MPR validation, and compare-swap contention tests
+add_protocols_test(CMPConnectionTests
+    CMPConnectionTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+)
+
 # Music Subunit Identifier Parser Tests
 add_executable(MusicSubunitIdentifierParserTests
     MusicSubunitIdentifierParserTests.cpp
@@ -65,12 +93,6 @@ add_protocols_test(AVCInfoBlockTests
 add_protocols_test(ClusterInfoParsingTests
     ClusterInfoParsingTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
-)
-
-# Extended Stream Format Command Tests
-add_protocols_mock_test(ExtendedStreamFormatCommandTests
-    ExtendedStreamFormatCommandTests.cpp
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/ExtendedStreamFormatCommand.cpp"
 )
 
 # AVC Stream Format Command Tests

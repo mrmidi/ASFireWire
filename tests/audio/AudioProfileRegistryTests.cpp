@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 //
 // Pins the metadata behavior of the DeviceProfiles audio layer: identity enrichment,
 // Focusrite GUID inference (including the Pro 40 / TCD3070 quirk), and the integration
@@ -47,7 +47,13 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
               AudioIntegrationMode::kNone);
     EXPECT_EQ(ModeFor(ids::kApogeeVendorId, ids::kApogeeDuetModelId),
               AudioIntegrationMode::kAVCDriven);
+    EXPECT_EQ(ModeFor(ids::kTerraTecVendorId, ids::kPhase88RackFwModelId),
+              AudioIntegrationMode::kAVCDriven);
     EXPECT_EQ(ModeFor(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId),
+              AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(ModeFor(ids::kMidasVendorId, ids::kMidasVeniceModelId),
+              AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(ModeFor(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId),
               AudioIntegrationMode::kHardcodedNub);
 }
 
@@ -85,7 +91,16 @@ TEST(AudioProfileRegistryTests, RecognizesKnownVendorModelPairs) {
                     ByVendorModel(ids::kApogeeVendorId, ids::kApogeeDuetModelId))
                     .has_value());
     EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                    ByVendorModel(ids::kTerraTecVendorId, ids::kPhase88RackFwModelId))
+                    .has_value());
+    EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
                     ByVendorModel(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId))
+                    .has_value());
+    EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                    ByVendorModel(ids::kMidasVendorId, ids::kMidasVeniceModelId))
+                    .has_value());
+    EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                    ByVendorModel(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId))
                     .has_value());
 }
 
@@ -127,6 +142,69 @@ TEST(AudioProfileRegistryTests, RecognizesAlesisMultiMixDiceProfile) {
 
     const auto profile = AudioProfileRegistry::LookupBestAudioProfile(
         ByVendorModel(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId));
+    ASSERT_TRUE(profile.has_value());
+    EXPECT_EQ(profile->mode, AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
+}
+
+TEST(AudioProfileRegistryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
+    const auto identity = AudioProfileRegistry::LookupIdentity(
+        ByVendorModel(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId));
+    ASSERT_TRUE(identity.has_value());
+    EXPECT_STREQ(identity->vendorName, ids::kPreSonusVendorName);
+    EXPECT_STREQ(identity->modelName, ids::kStudioLive1602ModelName);
+
+    const auto profile = AudioProfileRegistry::LookupBestAudioProfile(
+        ByVendorModel(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId));
+    ASSERT_TRUE(profile.has_value());
+    EXPECT_EQ(profile->mode, AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
+}
+
+TEST(AudioProfileRegistryTests, RejectsOtherPreSonusModels) {
+    // PreSonus BeBoB devices (FireBox/FP10/Inspire) and the DICE FireStudio share
+    // the OUI but must not resolve to the StudioLive profile.
+    EXPECT_FALSE(AudioProfileRegistry::LookupIdentity(
+                     ByVendorModel(ids::kPreSonusVendorId, 0x000008))
+                     .has_value());
+    EXPECT_FALSE(AudioProfileRegistry::LookupBestAudioProfile(
+                     ByVendorModel(ids::kPreSonusVendorId, 0x000008))
+                     .has_value());
+}
+
+TEST(AudioProfileRegistryTests, KeepsStudioLiveSiblingsRecognizedButDisabled) {
+    // 16.4.2 / 24.4.2 / 32.4.2 share the StudioLive series but their stream
+    // geometry (channel counts) has not been captured from hardware, so they are
+    // recognized by name only — same pattern as the multistream Focusrite models.
+    struct Sibling {
+        uint32_t modelId;
+        const char* modelName;
+    };
+    const Sibling siblings[] = {
+        {ids::kStudioLive1642ModelId, ids::kStudioLive1642ModelName},
+        {ids::kStudioLive2442ModelId, ids::kStudioLive2442ModelName},
+        {ids::kStudioLive3242ModelId, ids::kStudioLive3242ModelName},
+    };
+    for (const auto& sibling : siblings) {
+        const auto identity = AudioProfileRegistry::LookupIdentity(
+            ByVendorModel(ids::kPreSonusVendorId, sibling.modelId));
+        ASSERT_TRUE(identity.has_value());
+        EXPECT_STREQ(identity->vendorName, ids::kPreSonusVendorName);
+        EXPECT_STREQ(identity->modelName, sibling.modelName);
+        EXPECT_EQ(ModeFor(ids::kPreSonusVendorId, sibling.modelId),
+                  AudioIntegrationMode::kNone);
+    }
+}
+
+TEST(AudioProfileRegistryTests, RecognizesMidasVeniceDiceProfile) {
+    const auto identity = AudioProfileRegistry::LookupIdentity(
+        ByVendorModel(ids::kMidasVendorId, ids::kMidasVeniceModelId));
+    ASSERT_TRUE(identity.has_value());
+    EXPECT_STREQ(identity->vendorName, ids::kMidasVendorName);
+    EXPECT_STREQ(identity->modelName, ids::kMidasVeniceModelName);
+
+    const auto profile = AudioProfileRegistry::LookupBestAudioProfile(
+        ByVendorModel(ids::kMidasVendorId, ids::kMidasVeniceModelId));
     ASSERT_TRUE(profile.has_value());
     EXPECT_EQ(profile->mode, AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);

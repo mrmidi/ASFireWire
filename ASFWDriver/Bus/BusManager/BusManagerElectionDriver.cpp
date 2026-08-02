@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // BusManagerElectionDriver.cpp — see BusManagerElectionDriver.hpp
@@ -363,7 +363,7 @@ void BusManagerElectionDriver::HandleCompareSwapResult(uint32_t generation, uint
     }
 
     if (status != ASFW::Async::AsyncStatus::kSuccess) {
-        ASFW_LOG(Controller, "[BM Election] CompareSwap failed with status %d (%s)",
+        ASFW_LOG(Controller, "[BM Election] CompareSwap failed with status %d (%{public}s)",
                  static_cast<int>(status), ASFW::Async::ToString(status));
         if (observer_) {
             observer_->OnBMElectionFailed(generation, status);

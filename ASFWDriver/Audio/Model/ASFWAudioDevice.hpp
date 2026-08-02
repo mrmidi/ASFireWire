@@ -46,6 +46,9 @@ struct ASFWAudioDevice {
     uint32_t currentSampleRate{48000};
     std::string inputPlugName{"Input"};
     std::string outputPlugName{"Output"};
+    // Per-channel device labels in channel order (empty = synthesize names).
+    std::vector<std::string> inputChannelNames{};
+    std::vector<std::string> outputChannelNames{};
     StreamMode streamMode{StreamMode::kNonBlocking};
     bool hasPhantomOverride{false};
     uint32_t phantomSupportedMask{0};
@@ -60,20 +63,96 @@ struct ASFWAudioDevice {
         }
 
         auto deviceNameStr = OSSharedPtr(OSString::withCString(deviceName.c_str()), OSNoRetain);
+        auto channelCountNum = OSSharedPtr(OSNumber::withNumber(channelCount, 32), OSNoRetain);
         auto guidNum = OSSharedPtr(OSNumber::withNumber(guid, 64), OSNoRetain);
         auto vendorIdNum = OSSharedPtr(OSNumber::withNumber(vendorId, 32), OSNoRetain);
         auto modelIdNum = OSSharedPtr(OSNumber::withNumber(modelId, 32), OSNoRetain);
+        auto inputChannelCountNum =
+            OSSharedPtr(OSNumber::withNumber(inputChannelCount, 32), OSNoRetain);
+        auto outputChannelCountNum =
+            OSSharedPtr(OSNumber::withNumber(outputChannelCount, 32), OSNoRetain);
+        auto sampleRatesArray = OSSharedPtr(
+            OSArray::withCapacity(static_cast<uint32_t>(sampleRates.size())), OSNoRetain);
+        auto inputPlugNameStr = OSSharedPtr(OSString::withCString(inputPlugName.c_str()), OSNoRetain);
+        auto outputPlugNameStr = OSSharedPtr(OSString::withCString(outputPlugName.c_str()), OSNoRetain);
+        auto currentRateNum = OSSharedPtr(OSNumber::withNumber(currentSampleRate, 32), OSNoRetain);
+        auto streamModeNum = OSSharedPtr(
+            OSNumber::withNumber(static_cast<uint32_t>(streamMode), 32), OSNoRetain);
 
-        if (!deviceNameStr || !guidNum || !vendorIdNum || !modelIdNum) {
+        if (!deviceNameStr || !channelCountNum || !guidNum || !vendorIdNum || !modelIdNum ||
+            !inputChannelCountNum || !outputChannelCountNum || !sampleRatesArray ||
+            !inputPlugNameStr || !outputPlugNameStr || !currentRateNum || !streamModeNum) {
             return false;
         }
 
+        for (uint32_t rate : sampleRates) {
+            auto rateNum = OSSharedPtr(OSNumber::withNumber(rate, 32), OSNoRetain);
+            if (rateNum) {
+                sampleRatesArray->setObject(rateNum.get());
+            }
+        }
+
         properties->setObject(PropertyKeys::kDeviceName, deviceNameStr.get());
+        properties->setObject(PropertyKeys::kChannelCount, channelCountNum.get());
+        properties->setObject(PropertyKeys::kSampleRates, sampleRatesArray.get());
         properties->setObject(PropertyKeys::kGuid, guidNum.get());
         properties->setObject(PropertyKeys::kVendorId, vendorIdNum.get());
         properties->setObject(PropertyKeys::kModelId, modelIdNum.get());
+        properties->setObject(PropertyKeys::kInputChannelCount, inputChannelCountNum.get());
+        properties->setObject(PropertyKeys::kOutputChannelCount, outputChannelCountNum.get());
+        properties->setObject(PropertyKeys::kInputPlugName, inputPlugNameStr.get());
+        properties->setObject(PropertyKeys::kOutputPlugName, outputPlugNameStr.get());
+        properties->setObject(PropertyKeys::kCurrentSampleRate, currentRateNum.get());
+        properties->setObject(PropertyKeys::kStreamMode, streamModeNum.get());
+
+        // Sample rates advertised to CoreAudio. The HAL builds a stream format
+        // per entry (ASFWAudioDriverGraph), so this is what the user can select.
+        if (!sampleRates.empty()) {
+            auto rateArray = OSSharedPtr(OSArray::withCapacity(
+                static_cast<uint32_t>(sampleRates.size())), OSNoRetain);
+            if (rateArray) {
+                for (uint32_t hz : sampleRates) {
+                    auto n = OSSharedPtr(OSNumber::withNumber(hz, 32), OSNoRetain);
+                    if (n) {
+                        rateArray->setObject(n.get());
+                    }
+                }
+                properties->setObject(PropertyKeys::kSampleRates, rateArray.get());
+            }
+        }
+        if (auto curRate = OSSharedPtr(OSNumber::withNumber(currentSampleRate, 32), OSNoRetain)) {
+            properties->setObject(PropertyKeys::kCurrentSampleRate, curRate.get());
+        }
+
+        // Per-channel device labels (optional). The audio side reads these in
+        // channel order and prefers them over synthesized names.
+        PublishChannelNames(properties, PropertyKeys::kInputChannelNames, inputChannelNames);
+        PublishChannelNames(properties, PropertyKeys::kOutputChannelNames, outputChannelNames);
 
         return true;
+    }
+
+private:
+    static void PublishChannelNames(OSDictionary* properties,
+                                    const char* key,
+                                    const std::vector<std::string>& names) {
+        if (names.empty()) {
+            return;
+        }
+        auto array = OSSharedPtr(OSArray::withCapacity(
+            static_cast<uint32_t>(names.size())), OSNoRetain);
+        if (!array) {
+            return;
+        }
+        for (const auto& name : names) {
+            auto str = OSSharedPtr(OSString::withCString(name.c_str()), OSNoRetain);
+            // Keep the index aligned with the channel index even for empty
+            // labels; the audio side falls back to a synthesized name per slot.
+            if (str) {
+                array->setObject(str.get());
+            }
+        }
+        properties->setObject(key, array.get());
     }
 };
 

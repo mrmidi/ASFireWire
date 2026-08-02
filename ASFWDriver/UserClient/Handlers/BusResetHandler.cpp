@@ -6,6 +6,7 @@
 //
 
 #include "BusResetHandler.hpp"
+#include "../../Bus/BusResetCoordinator.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Debug/BusResetPacketCapture.hpp"
 #include "../../Diagnostics/ControllerMetrics.hpp"
@@ -169,6 +170,48 @@ kern_return_t BusResetHandler::ClearHistory(IOUserClientMethodArguments* args) {
         capture->Clear();
     }
 
+    return kIOReturnSuccess;
+}
+
+kern_return_t BusResetHandler::RequestUserReset(IOUserClientMethodArguments* args) {
+    // Input: expected generation, short-reset flag. Output: accepted generation.
+    // A caller must pin the request to current topology; a reset triggered from
+    // a stale route is indistinguishable from an unrelated recovery reset.
+    if (!args || !args->scalarInput || args->scalarInputCount < 2 ||
+        !args->scalarOutput || args->scalarOutputCount < 1) {
+        return kIOReturnBadArgument;
+    }
+
+    auto* controller = GetControllerCorePtr(driver_);
+    if (!controller) {
+        return kIOReturnNotReady;
+    }
+    auto* coordinator = controller->GetBusResetCoordinator();
+    const auto topology = controller->LatestTopology();
+    if (!coordinator || !topology.has_value()) {
+        return kIOReturnNotReady;
+    }
+
+    const uint32_t expectedGeneration = static_cast<uint32_t>(args->scalarInput[0]);
+    const bool shortReset = args->scalarInput[1] != 0;
+    if (expectedGeneration != topology->generation) {
+        ASFW_LOG(UserClient,
+                 "RequestUserReset refused stale generation requested=%u current=%u",
+                 expectedGeneration,
+                 topology->generation);
+        return kIOReturnNotReady;
+    }
+    if (coordinator->GetState() != ASFW::Driver::BusResetCoordinator::State::Idle) {
+        return kIOReturnBusy;
+    }
+
+    coordinator->RequestUserReset(shortReset, "MCP developer-requested reset");
+    args->scalarOutput[0] = topology->generation;
+    args->scalarOutputCount = 1;
+    ASFW_LOG(UserClient,
+             "RequestUserReset accepted generation=%u flavor=%{public}s",
+             topology->generation,
+             shortReset ? "short" : "long");
     return kIOReturnSuccess;
 }
 

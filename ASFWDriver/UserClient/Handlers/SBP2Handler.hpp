@@ -17,6 +17,7 @@
 #include <span>
 #include <vector>
 
+#include <DriverKit/IOMemoryDescriptor.h>
 #include <DriverKit/IOUserClient.h>
 #include <DriverKit/OSData.h>
 
@@ -264,17 +265,48 @@ public:
         if (!registry_) {
             return kIOReturnNotReady;
         }
-        if (!args || !args->scalarInput || args->scalarInputCount < 1 || !args->structureInput) {
+        if (!args || !args->scalarInput || args->scalarInputCount < 1 ||
+            (!args->structureInput && !args->structureInputDescriptor)) {
             return kIOReturnBadArgument;
         }
 
-        OSData* input = OSDynamicCast(OSData, args->structureInput);
-        if (!input) {
-            return kIOReturnBadArgument;
+        // Inputs past the inband limit (~4 KB — e.g. SEND LUT's 32 KB data-OUT
+        // payload) arrive as a memory descriptor instead of inline OSData.
+        const uint8_t* bytes = nullptr;
+        size_t inputLength = 0;
+        std::vector<uint8_t> mappedInput;
+        if (args->structureInput) {
+            OSData* input = OSDynamicCast(OSData, args->structureInput);
+            if (!input) {
+                return kIOReturnBadArgument;
+            }
+            bytes = static_cast<const uint8_t*>(input->getBytesNoCopy());
+            inputLength = input->getLength();
+        } else {
+            constexpr uint64_t kMaxInputLength =
+                sizeof(Wire::SBP2CommandRequestWire) +
+                Wire::kSBP2CommandMaxCDBLength +
+                Wire::kSBP2CommandMaxTransferLength;
+            uint64_t descLength = 0;
+            if (args->structureInputDescriptor->GetLength(&descLength) != kIOReturnSuccess ||
+                descLength < sizeof(Wire::SBP2CommandRequestWire) ||
+                descLength > kMaxInputLength) {
+                return kIOReturnBadArgument;
+            }
+            IOMemoryMap* map = nullptr;
+            const kern_return_t mapKr =
+                args->structureInputDescriptor->CreateMapping(0, 0, 0, 0, 0, &map);
+            if (mapKr != kIOReturnSuccess || !map) {
+                return kIOReturnVMError;
+            }
+            const auto* src = reinterpret_cast<const uint8_t*>(map->GetAddress());
+            if (src) {
+                mappedInput.assign(src, src + descLength);
+            }
+            map->release();
+            bytes = mappedInput.data();
+            inputLength = mappedInput.size();
         }
-
-        const auto* bytes = static_cast<const uint8_t*>(input->getBytesNoCopy());
-        const size_t inputLength = input->getLength();
         if (!bytes || inputLength < sizeof(Wire::SBP2CommandRequestWire)) {
             return kIOReturnBadArgument;
         }
@@ -353,11 +385,53 @@ public:
         Wire::SBP2CommandResultWire header{};
         header.transportStatus = result->transportStatus;
         header.sbpStatus = result->sbpStatus;
+        header.scsiStatusValid = result->scsiStatusValid ? 1 : 0;
+        header.scsiStatus = result->scsiStatus;
         header.payloadLength = static_cast<uint32_t>(result->payload.size());
         header.senseLength = static_cast<uint32_t>(result->senseData.size());
 
-        std::vector<uint8_t> serialized(sizeof(Wire::SBP2CommandResultWire) +
-                                        result->payload.size() + result->senseData.size());
+        const size_t totalSize = sizeof(Wire::SBP2CommandResultWire) +
+                                 result->payload.size() + result->senseData.size();
+
+        // Results past the inband limit (large READ(10) payloads) return through
+        // a caller-supplied descriptor — mirror of SubmitSBP2Command's
+        // structureInputDescriptor path. The kernel sets it when the caller
+        // requests > one inband page of output; setting structureOutput instead
+        // is an error per the IOUserClient contract.
+        // NOTE: the result was already consumed from the registry above, so a
+        // too-small buffer loses it — callers must size from transferLength.
+        if (args->structureOutputDescriptor) {
+            uint64_t descLength = 0;
+            if (args->structureOutputDescriptor->GetLength(&descLength) != kIOReturnSuccess ||
+                descLength < totalSize) {
+                return kIOReturnNoSpace;
+            }
+            IOMemoryMap* map = nullptr;
+            const kern_return_t mapKr =
+                args->structureOutputDescriptor->CreateMapping(0, 0, 0, 0, 0, &map);
+            if (mapKr != kIOReturnSuccess || !map) {
+                return kIOReturnVMError;
+            }
+            auto* dst = reinterpret_cast<uint8_t*>(map->GetAddress());
+            if (!dst) {
+                map->release();
+                return kIOReturnVMError;
+            }
+            std::memcpy(dst, &header, sizeof(header));
+            size_t descOffset = sizeof(Wire::SBP2CommandResultWire);
+            if (!result->payload.empty()) {
+                std::memcpy(dst + descOffset, result->payload.data(), result->payload.size());
+                descOffset += result->payload.size();
+            }
+            if (!result->senseData.empty()) {
+                std::memcpy(dst + descOffset, result->senseData.data(),
+                            result->senseData.size());
+            }
+            map->release();
+            return kIOReturnSuccess;
+        }
+
+        std::vector<uint8_t> serialized(totalSize);
         std::memcpy(serialized.data(), &header, sizeof(header));
 
         size_t offset = sizeof(Wire::SBP2CommandResultWire);

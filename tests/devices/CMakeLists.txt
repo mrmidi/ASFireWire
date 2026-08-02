@@ -47,12 +47,60 @@ add_device_test(DICERestartSessionTests
 )
 
 # DICE duplex restart coordinator FSM tests
-add_device_test(DiceDuplexRestartCoordinatorTests
-    DiceDuplexRestartCoordinatorTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceDuplexRestartCoordinator.cpp"
+add_device_test(AudioDuplexCoordinatorTests
+    AudioDuplexCoordinatorTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+)
+
+# FW-74: resolver-owned duplex stream geometry, wire-format quirks, and host recipe.
+add_device_test(DuplexStreamProfileTests
+    DuplexStreamProfileTests.cpp
+)
+
+# BeBoBProtocol base-class: async ApplyClockConfig chain, timer settle, epoch cancel.
+add_device_test(BeBoBProtocolTests
+    BeBoBProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+)
+
+add_device_test(DiceRuntimeDeviceConfigTests
+    DiceRuntimeDeviceConfigTests.cpp
+)
+
+# FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
+add_device_test(WaitForAsyncResultTests
+    WaitForAsyncResultTests.cpp
+)
+
+# DICE recovery-policy classification kernel tests (FW-66, header-only policy)
+add_device_test(DiceRecoveryPolicyTests
+    DiceRecoveryPolicyTests.cpp
+)
+
+# DICE duplex operation gate (active/stop-intent) tests (FW-68, header-only gate)
+add_device_test(DuplexOperationGateTests
+    DuplexOperationGateTests.cpp
+)
+
+# DICE restart-journal FSM mutator tests (FW-69a, header-only journal)
+add_device_test(RestartJournalTests
+    RestartJournalTests.cpp
+)
+
+# DICE restart-session store tests (FW-69b, header-only lock-borrowing store)
+add_device_test(RestartSessionStoreTests
+    RestartSessionStoreTests.cpp
+)
+
+# DICE clock-request broker tests (FW-67, header-only lock-borrowing broker)
+add_device_test(ClockRequestBrokerTests
+    ClockRequestBrokerTests.cpp
 )
 
 # Apogee protocol boolean control mapping tests
@@ -64,6 +112,10 @@ add_device_test(ApogeeBooleanControlMappingTests
 add_device_test(ApogeeDuetVendorCmdTests
     ApogeeDuetVendorCmdTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
 )
 
-
+add_device_test(AVCStartReadinessTests
+    AVCStartReadinessTests.cpp
+)

@@ -229,7 +229,8 @@ Tools:
 | `asfw_avc_get_subunit_capabilities` | read-only | Return decoded subunit capabilities where available. |
 | `asfw_avc_get_subunit_descriptor` | read-only | Return bounded descriptor bytes and parsed summary when available. |
 | `asfw_fcp_send_command` | read-only by default | Send raw FCP/AV/C command that is inquiry/status-only by schema. |
-| `asfw_fcp_send_command_dev` | developer-write | Developer-tier raw FCP command for commands that may mutate device state. |
+| `asfw_apogee_duet_apply_format_dev` | developer-write | Apply one validated Apogee Duet AM824 format (32/44.1/48 kHz): verify the discovered Duet Music subunit and format support, capture both unit-plug formations, set input then output, wait, and re-read both plugs. Requires explicit interruption acknowledgement. |
+| `asfw_fcp_send_command_dev` | developer-write | Developer-tier raw FCP command for commands that may mutate device state; requires target GUID, node ID, and generation and returns an FCP receipt. |
 | `asfw_fcp_get_recent_responses` | read-only | Inspect recent command/response records. |
 
 The raw FCP tool must require a declared command intent:
@@ -242,6 +243,11 @@ The raw FCP tool must require a declared command intent:
 
 Only inquiry/status intents are listed in read-only mode. Control, notify, and
 vendor-dependent mutation paths are developer-write.
+
+The named Duet transition is not a raw-command shortcut. It accepts only the
+FCP command register, refuses non-Duet discovery evidence and unvalidated
+rates, and attempts best-effort restoration only while the captured generation
+remains current. It is never an implicit audio-start operation.
 
 Resources:
 

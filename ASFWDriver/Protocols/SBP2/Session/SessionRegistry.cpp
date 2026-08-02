@@ -85,6 +85,7 @@ SessionRegistry::SessionRegistry(Async::IFireWireBus& bus,
 }
 
 SessionRegistry::~SessionRegistry() {
+    lifetimeToken_.reset();  // fizzle any queued deferred completion bodies
     {
         IOLockGuard lock(lock_);
         for (auto& [handle, record] : sessions_) {
@@ -156,7 +157,8 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     // record.lastError lives at a stable address (map node), so the executor may
     // bind a reference to it.
     record.executor = std::make_unique<CommandExecutor>(
-        bus_, busInfo_, addrSpaceMgr_, *record.session, owner, record.lastError, workQueue_);
+        bus_, busInfo_, addrSpaceMgr_, *record.session, scheduler_, owner, record.lastError);
+    record.executor->SetBusResetRequester(busResetRequester_);
 
     ASFW_LOG(Async, "SessionRegistry: created session handle=%llu guid=0x%016llx romOffset=%u",
              handle, guid, romOffset);
@@ -164,25 +166,39 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
 }
 
 bool SessionRegistry::StartLogin(void* owner, uint64_t handle) {
-    IOLockGuard lock(lock_);
-    auto* record = FindByHandleForOwner(owner, handle);
-    if (!record || !record->session) {
-        return false;
-    }
-    if (record->session->State() != LoginState::Idle) {
-        return false;
-    }
-
-    record->session->SetLoginCallback([this, handle](const LoginCompleteParams& params) {
-        IOLockGuard cbLock(lock_);
-        auto* rec = FindByHandle(handle);
-        if (rec == nullptr) {
-            return;
+    std::shared_ptr<LoginSession> session;
+    {
+        IOLockGuard lock(lock_);
+        auto* record = FindByHandleForOwner(owner, handle);
+        if (!record || !record->session) {
+            return false;
         }
-        rec->lastError = params.status;
-    });
+        if (record->session->State() != LoginState::Idle) {
+            return false;
+        }
 
-    return record->session->Login();
+        std::weak_ptr<int> alive = lifetimeToken_;
+        record->session->SetLoginCallback(
+            [this, handle, alive](const LoginCompleteParams& params) {
+                if (alive.expired()) {
+                    return;  // registry destroyed; session outlived it
+                }
+                IOLockGuard cbLock(lock_);
+                auto* rec = FindByHandle(handle);
+                if (rec == nullptr) {
+                    return;
+                }
+                rec->lastError = params.status;
+                // status==0 is LoggedIn (fresh login or reconnect, which re-fires
+                // this callback); non-zero is a terminal login failure.
+                EmitLoginStateLocked(rec->guid, params.status == 0);
+            });
+        session = record->session;
+    }
+    // Outside lock_: a synchronously failing management write invokes the login
+    // callback INLINE, and the callback re-takes lock_ (os_unfair_lock recursion
+    // aborts the dext).
+    return session->Login();
 }
 
 std::optional<SBP2SessionState> SessionRegistry::GetSessionState(void* owner,
@@ -221,13 +237,14 @@ std::optional<SCSI::CommandResult> SessionRegistry::GetInquiryResult(void* owner
 }
 
 bool SessionRegistry::SubmitCommand(void* owner, uint64_t handle,
-                                    const SCSI::CommandRequest& request) {
+                                    const SCSI::CommandRequest& request,
+                                    CommandExecutor::ResultCallback callback) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandleForOwner(owner, handle);
     if (!record || !record->executor) {
         return false;
     }
-    return record->executor->SubmitCommand(request);
+    return record->executor->SubmitCommand(request, std::move(callback));
 }
 
 std::optional<SCSI::CommandResult> SessionRegistry::GetCommandResult(void* owner, uint64_t handle) {
@@ -250,75 +267,114 @@ bool SessionRegistry::SubmitTaskManagement(void* owner, uint64_t handle,
 }
 
 bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
-    IOLockGuard lock(lock_);
-    auto it = sessions_.find(handle);
-    if (it == sessions_.end() || it->second.owner != owner) {
-        return false;
-    }
+    std::shared_ptr<LoginSession> toLogout;
+    {
+        IOLockGuard lock(lock_);
+        auto it = sessions_.find(handle);
+        if (it == sessions_.end() || it->second.owner != owner) {
+            return false;
+        }
 
-    auto& record = it->second;
-    if (record.executor) {
-        record.executor->Cleanup();
-    }
+        auto& record = it->second;
+        if (record.executor) {
+            record.executor->Cleanup();
+        }
 
-    const LoginState state = record.session ? record.session->State() : LoginState::Idle;
-    if (record.session &&
-        (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
-        SetReleaseLogoutCallbackLocked(handle, record.session);
-        if (record.session->Logout()) {
+        const LoginState state = record.session ? record.session->State() : LoginState::Idle;
+        if (record.session &&
+            (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
+            SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
+            // Retire optimistically; un-retired below if Logout() is rejected.
+            RetireSessionLocked(record);
+            toLogout = record.session;
+        } else if (record.session && state == LoginState::LoggingOut) {
+            SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
             RetireSessionLocked(record);
         }
         sessions_.erase(it);
-        return true;
     }
 
-    if (record.session && state == LoginState::LoggingOut) {
-        SetReleaseLogoutCallbackLocked(handle, record.session);
-        RetireSessionLocked(record);
-        sessions_.erase(it);
-        return true;
+    // Outside lock_: a synchronously failing logout write invokes the logout
+    // callback INLINE, and the callback re-takes lock_ (crashed the dext on HW
+    // when the device vanished during teardown).
+    if (toLogout && !toLogout->Logout()) {
+        IOLockGuard lock(lock_);
+        EraseRetiredSessionLocked(toLogout);
     }
-
-    sessions_.erase(it);
     return true;
 }
 
 void SessionRegistry::ReleaseOwner(void* owner) {
-    IOLockGuard lock(lock_);
-    for (auto it = sessions_.begin(); it != sessions_.end();) {
-        if (it->second.owner != owner) {
-            ++it;
-            continue;
-        }
-
-        auto& record = it->second;
-        const LoginState state = record.session ? record.session->State() : LoginState::Idle;
-
-        if (record.session &&
-            (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
-            SetReleaseLogoutCallbackLocked(record.handle, record.session);
-            if (record.session->Logout()) {
-                if (record.executor) {
-                    record.executor->Cleanup();
-                }
-                RetireSessionLocked(record);
-                it = sessions_.erase(it);
+    std::vector<std::shared_ptr<LoginSession>> toLogout;
+    {
+        IOLockGuard lock(lock_);
+        for (auto it = sessions_.begin(); it != sessions_.end();) {
+            if (it->second.owner != owner) {
+                ++it;
                 continue;
             }
-        } else if (record.session && state == LoginState::LoggingOut) {
-            SetReleaseLogoutCallbackLocked(record.handle, record.session);
+
+            auto& record = it->second;
+            const LoginState state = record.session ? record.session->State() : LoginState::Idle;
+
+            if (record.session &&
+                (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
+                SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
+                // Retire optimistically; un-retired below if Logout() is rejected.
+                RetireSessionLocked(record);
+                toLogout.push_back(record.session);
+            } else if (record.session && state == LoginState::LoggingOut) {
+                SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
+                RetireSessionLocked(record);
+            }
+
             if (record.executor) {
                 record.executor->Cleanup();
             }
-            RetireSessionLocked(record);
             it = sessions_.erase(it);
-            continue;
         }
+    }
 
-        if (record.executor) {
-            record.executor->Cleanup();
+    // Outside lock_ — see ReleaseSession.
+    for (auto& session : toLogout) {
+        if (!session->Logout()) {
+            IOLockGuard lock(lock_);
+            EraseRetiredSessionLocked(session);
         }
-        it = sessions_.erase(it);
+    }
+}
+
+void SessionRegistry::SetBusResetRequester(std::function<void()> requester) {
+    IOLockGuard lock(lock_);
+    busResetRequester_ = std::move(requester);
+    for (auto& [handle, record] : sessions_) {
+        if (record.executor) {
+            record.executor->SetBusResetRequester(busResetRequester_);
+        }
+    }
+}
+
+void SessionRegistry::SetLoginStateObserver(
+    std::function<void(uint64_t guid, bool loggedIn)> observer) {
+    IOLockGuard lock(lock_);
+    loginStateObserver_ = std::move(observer);
+}
+
+void SessionRegistry::EmitLoginStateLocked(uint64_t guid, bool loggedIn) {
+    // Called with lock_ held (reads loginStateObserver_ under it). The observer
+    // itself runs off lock_: on workQueue_ in production (which also defers the
+    // inline management-write failure path off the caller's stack), or inline on
+    // the host-test path (workQueue_ == nullptr, observer must not re-enter).
+    if (!loginStateObserver_) {
+        return;
+    }
+    auto observer = loginStateObserver_;
+    if (workQueue_ != nullptr) {
+        workQueue_->DispatchAsync(^{
+            observer(guid, loggedIn);
+        });
+    } else {
+        observer(guid, loggedIn);
     }
 }
 
@@ -335,23 +391,31 @@ void SessionRegistry::OnBusReset(uint16_t newGeneration) {
 }
 
 void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
-    IOLockGuard lock(lock_);
-    for (auto& [handle, record] : sessions_) {
-        if (!record.session || record.session->State() != LoginState::Suspended) {
-            continue;
-        }
+    std::vector<std::shared_ptr<LoginSession>> toReconnect;
+    {
+        IOLockGuard lock(lock_);
+        for (auto& [handle, record] : sessions_) {
+            if (!record.session || record.session->State() != LoginState::Suspended) {
+                continue;
+            }
 
-        auto unit = ResolveUnit(record.guid, record.romOffset);
-        if (!unit) {
-            ASFW_LOG(Async, "SessionRegistry: RefreshTargets: unit not found for handle=%llu",
-                     handle);
-            continue;
-        }
+            auto unit = ResolveUnit(record.guid, record.romOffset);
+            if (!unit) {
+                ASFW_LOG(Async, "SessionRegistry: RefreshTargets: unit not found for handle=%llu",
+                         handle);
+                continue;
+            }
 
-        record.session->Configure(BuildTargetInfoFromUnit(*unit));
-        ASFW_LOG(Async, "SessionRegistry: reconnecting session handle=%llu gen=%u",
-                 handle, gen.value);
-        (void)record.session->Reconnect();
+            record.session->Configure(BuildTargetInfoFromUnit(*unit));
+            ASFW_LOG(Async, "SessionRegistry: reconnecting session handle=%llu gen=%u",
+                     handle, gen.value);
+            toReconnect.push_back(record.session);
+        }
+    }
+    // Outside lock_ — a synchronously failing reconnect write completes inline
+    // (same hazard class as Login/Logout, see ReleaseSession).
+    for (auto& session : toReconnect) {
+        (void)session->Reconnect();
     }
 }
 
@@ -450,26 +514,35 @@ void SessionRegistry::EraseRetiredSessionLocked(const std::shared_ptr<LoginSessi
 }
 
 void SessionRegistry::SetReleaseLogoutCallbackLocked(
-    uint64_t handle, const std::shared_ptr<LoginSession>& session) {
+    uint64_t handle, uint64_t guid, const std::shared_ptr<LoginSession>& session) {
     if (session == nullptr) {
         return;
     }
+    // Callers must NOT hold lock_ when issuing the Logout() write: a
+    // synchronously failing write invokes this callback inline, and it re-takes
+    // lock_. The token guards against the session outliving the registry.
     std::weak_ptr<LoginSession> weakSession = session;
-    session->SetLogoutCallback([this, handle, weakSession](const LogoutCompleteParams&) {
-        IOLockGuard cbLock(lock_);
-        std::shared_ptr<LoginSession> completedSession = weakSession.lock();
-
-        auto it = sessions_.find(handle);
-        if (it != sessions_.end() &&
-            (completedSession == nullptr || it->second.session == completedSession)) {
-            if (it->second.executor) {
-                it->second.executor->Cleanup();
+    std::weak_ptr<int> alive = lifetimeToken_;
+    session->SetLogoutCallback(
+        [this, handle, guid, weakSession, alive](const LogoutCompleteParams&) {
+            if (alive.expired()) {
+                return;  // registry destroyed; session outlived it
             }
-            sessions_.erase(it);
-        }
+            IOLockGuard cbLock(lock_);
+            std::shared_ptr<LoginSession> completedSession = weakSession.lock();
 
-        EraseRetiredSessionLocked(completedSession);
-    });
+            auto it = sessions_.find(handle);
+            if (it != sessions_.end() &&
+                (completedSession == nullptr || it->second.session == completedSession)) {
+                if (it->second.executor) {
+                    it->second.executor->Cleanup();
+                }
+                sessions_.erase(it);
+            }
+
+            EraseRetiredSessionLocked(completedSession);
+            EmitLoginStateLocked(guid, false);
+        });
 }
 
 } // namespace ASFW::Protocols::SBP2

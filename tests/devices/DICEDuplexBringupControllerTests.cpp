@@ -8,6 +8,7 @@
 #include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
+#include "Audio/Protocols/Backends/DuplexIRMReservations.hpp"
 #include "Protocols/Ports/ProtocolRegisterIO.hpp"
 
 #include <algorithm>
@@ -987,8 +988,29 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOCompareSwap64UsesLockAn
 TEST(DICEDuplexBringupControllerTests, PrepareSequenceMatchesReferenceWindow) {
     DuplexRig rig;
     NotificationMailbox::Reset();
-    rig.bus.SetScript(ReferencePhase0ParityFixture::kPrepareExpectedRequests,
-                      ReferencePhase0ParityFixture::kPrepareResponseSteps);
+
+    // The reference trace always rewrites CLOCK_SELECT during prepare. ASFW
+    // intentionally deviates in two HW-validated ways (see
+    // DICEDuplexBringupController):
+    //  1. The CLOCK_SELECT write is skipped when the pre-claim global read
+    //     already reports the target clock (0x020C here) — rewriting it
+    //     re-triggers a PLL relock mid-bring-up and fights an idle rate change.
+    //  2. DoAwaitStreamingClockLock adds one extra global-state read between
+    //     clock-confirm and stream discovery so streams are never enabled on a
+    //     still-relocking clock.
+    // Net: the Write op is replaced by a second 380-byte global read, and that
+    // read consumes one extra scripted response reporting locked-at-target.
+    const auto& refRequests = ReferencePhase0ParityFixture::kPrepareExpectedRequests;
+    const auto& refResponses = ReferencePhase0ParityFixture::kPrepareResponseSteps;
+    std::vector<ExpectedRequest> requests(refRequests.begin(), refRequests.end());
+    ASSERT_GT(requests.size(), 7U);
+    ASSERT_EQ(requests[6].kind, OpKind::Write); // CLOCK_SELECT in the reference
+    requests[6] = requests[7];                  // becomes the await-lock global read
+    std::vector<ResponseStep> responses(refResponses.begin(), refResponses.end());
+    ASSERT_GT(responses.size(), 6U);
+    responses.insert(responses.begin() + 7, responses[6]); // second locked global read
+
+    rig.bus.SetScript(requests, responses);
 
     std::optional<IOReturn> startStatus;
     const AudioDuplexChannels channels{
@@ -1004,7 +1026,7 @@ TEST(DICEDuplexBringupControllerTests, PrepareSequenceMatchesReferenceWindow) {
     EXPECT_EQ(rig.bus.Owner(), 0xFFC0000100000000ULL);
     EXPECT_EQ(rig.bus.BandwidthAvailable(), 4019U);
     EXPECT_EQ(rig.bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
-    ExpectRequests(rig.bus.Operations(), ReferencePhase0ParityFixture::kPrepareExpectedRequests);
+    ExpectRequests(rig.bus.Operations(), requests);
     EXPECT_TRUE(rig.bus.ScriptConsumed());
 
     for (const auto& op : rig.bus.Operations()) {
@@ -1147,7 +1169,6 @@ TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBri
     ASSERT_TRUE(prepareResult.has_value());
     EXPECT_EQ(prepareResult->generation.value, 1U);
     EXPECT_EQ(prepareResult->appliedClock.sampleRateHz, 48000U);
-    EXPECT_EQ(prepareResult->appliedClock.clockSelect, kClockSelect48kInternal);
     EXPECT_EQ(prepareResult->channels.deviceToHostIsoChannel, channels.deviceToHostIsoChannel);
     EXPECT_EQ(prepareResult->channels.hostToDeviceIsoChannel, channels.hostToDeviceIsoChannel);
     EXPECT_EQ(prepareResult->runtimeCaps.sampleRateHz, 48000U);
@@ -1515,4 +1536,127 @@ TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesReturnsGenerationMism
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::GenerationMismatch);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsAllocatesAndReleasesBothDirections) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    ASSERT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnSuccess);
+    ASSERT_EQ(reservations.Reserve(irm, 1, 576U), kIOReturnSuccess);
+    EXPECT_EQ(reservations.Count(), 2U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4019U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
+
+    reservations.ReleaseAll();
+    EXPECT_EQ(reservations.Count(), 0U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsSelectsFirstAllowedChannelThatIRMReportsFree) {
+    RecordingFireWireBus bus;
+    // IRM channel bits are big-endian within each CSR quadlet: bit 31 is
+    // channel 0 and bit 30 is channel 1. Make channel 0 busy and channel 1 free.
+    bus.SetIRMResourceState(4915U, 0x7FFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    const auto result = reservations.ReserveAny(
+        irm, (uint64_t{1} << 0U) | (uint64_t{1} << 1U), 596U);
+
+    ASSERT_EQ(result.status, kIOReturnSuccess);
+    EXPECT_EQ(result.channel, 1U);
+    EXPECT_EQ(reservations.Count(), 1U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4319U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsTracksAndReleasesEveryMultistreamAllocation) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    for (uint8_t channel = 0; channel < 4; ++channel) {
+        ASSERT_EQ(reservations.Reserve(irm, channel, 100U), kIOReturnSuccess);
+    }
+    EXPECT_EQ(reservations.Count(), 4U);
+    EXPECT_EQ(reservations.Reserve(irm, 4, 100U), kIOReturnNoResources);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4515U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x0FFFFFFFU);
+
+    reservations.ReleaseAll();
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsRollsBackPriorSuccessAfterLaterFailure) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(500U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservationPair reservations;
+
+    ASSERT_EQ(reservations.ReservePlayback(irm, 0, 320U), kIOReturnSuccess);
+    EXPECT_EQ(reservations.ReserveCapture(irm, 1, 320U), kIOReturnNoResources);
+    EXPECT_EQ(reservations.PlaybackCount(), 0U);
+    EXPECT_EQ(reservations.CaptureCount(), 0U);
+
+    reservations.ReleaseAll();
+    EXPECT_EQ(bus.BandwidthAvailable(), 500U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsPropagatesGenerationMismatchWithoutTrackingEntry) {
+    RecordingFireWireBus bus;
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    bus.SetGeneration(Generation{2});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    EXPECT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnOffline);
+    EXPECT_EQ(reservations.Count(), 0U);
+}
+
+// AudioDuplexChannels invariant: stream[0] resolves to the legacy scalar field so
+// single-stream call sites that only set the scalar stay byte-for-byte unchanged;
+// the per-stream arrays carry the *additional* streams (Venice F32 = 2×16).
+TEST(DICEDuplexBringupControllerTests, DuplexChannelsStreamZeroIsLegacyScalar) {
+    AudioDuplexChannels ch{};
+    ch.deviceToHostIsoChannel = 7;  // capture stream[0] (host IR)
+    ch.hostToDeviceIsoChannel = 5;  // playback stream[0] (host IT)
+    // Arrays still at defaults; stream[0] must ignore them.
+    EXPECT_EQ(ch.CaptureChannel(0), 7);
+    EXPECT_EQ(ch.PlaybackChannel(0), 5);
+}
+
+TEST(DICEDuplexBringupControllerTests, DuplexChannelsAdditionalStreamsUseArrays) {
+    AudioDuplexChannels ch{};
+    ch.deviceToHostIsoChannel = 1;
+    ch.hostToDeviceIsoChannel = 0;
+    ch.captureStreamCount = 2;
+    ch.playbackStreamCount = 2;
+    ch.captureIsoChannels[1] = 2;   // capture stream[1]
+    ch.playbackIsoChannels[1] = 3;  // playback stream[1]
+
+    EXPECT_EQ(ch.CaptureChannel(0), 1);
+    EXPECT_EQ(ch.CaptureChannel(1), 2);
+    EXPECT_EQ(ch.PlaybackChannel(0), 0);
+    EXPECT_EQ(ch.PlaybackChannel(1), 3);
+    // All four wire channels distinct — no bus collision across the duplex set.
+    EXPECT_NE(ch.CaptureChannel(0), ch.CaptureChannel(1));
+    EXPECT_NE(ch.PlaybackChannel(0), ch.PlaybackChannel(1));
+    EXPECT_NE(ch.CaptureChannel(0), ch.PlaybackChannel(0));
+    EXPECT_NE(ch.CaptureChannel(1), ch.PlaybackChannel(1));
 }

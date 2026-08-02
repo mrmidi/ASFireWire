@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 ASFireWire Project
+//
+// IsochDuplexHostTransport.hpp - Host-side isoch orchestration seam
+
+#pragma once
+
+#include "../../../Common/WireFormat.hpp"
+#include "../../../Hardware/HardwareInterface.hpp"
+#include "../../../Isoch/IsochService.hpp"
+#include "../../Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
+#include "DuplexIRMReservations.hpp"
+
+#include <DriverKit/IOBufferMemoryDescriptor.h>
+#include <DriverKit/IOReturn.h>
+#include <DriverKit/OSSharedPtr.h>
+#include <memory>
+
+
+namespace ASFW::IRM {
+class IRMClient;
+}
+
+class ASFWAudioNub;
+
+namespace ASFW::Audio {
+
+class IIsochDuplexHostTransport {
+  public:
+    virtual ~IIsochDuplexHostTransport() = default;
+
+    [[nodiscard]] virtual kern_return_t BeginSplitDuplex(uint64_t guid) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
+                             uint64_t allowedChannels, uint32_t bandwidthUnits,
+                             uint8_t& outChannel) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    ReserveCaptureResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient,
+                            uint64_t allowedChannels, uint32_t bandwidthUnits,
+                            uint8_t& outChannel) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
+                   ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                   Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                   uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t PrepareTransmit(uint8_t channel,
+                                                        Driver::HardwareInterface& hardware,
+                                                        uint8_t sourceId) noexcept = 0;
+    // Secondary streams (streamIndex >= 1) for multi-stream DICE devices; the
+    // master stream uses PrepareReceive/PrepareTransmit above.
+    [[nodiscard]] virtual kern_return_t
+    PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
+                         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                         uint32_t channelOffset, uint32_t streamChannels,
+                         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                         uint32_t am824Slots = 0) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+                                                              Driver::HardwareInterface& hardware,
+                                                              uint8_t sourceId) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t StartPreparedReceive() noexcept = 0;
+    [[nodiscard]] virtual kern_return_t StartPreparedTransmit() noexcept = 0;
+    [[nodiscard]] virtual kern_return_t StopPreparedReceive() noexcept {
+        return kIOReturnUnsupported;
+    }
+    [[nodiscard]] virtual kern_return_t StopPreparedTransmit() noexcept {
+        return kIOReturnUnsupported;
+    }
+    [[nodiscard]] virtual kern_return_t StopAll() noexcept = 0;
+
+    // AV/C stream-health signal: is the master RX replay cadence established?
+    // Default false for mocks that don't model the RX layer.
+    [[nodiscard]] virtual bool IsReceiveReplayEstablished() const noexcept { return false; }
+};
+
+class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
+  public:
+    explicit IsochDuplexHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
+
+    void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
+
+    [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
+    [[nodiscard]] kern_return_t ReservePlaybackResources(uint64_t guid,
+                                                         ::ASFW::IRM::IRMClient& irmClient,
+                                                         uint64_t allowedChannels,
+                                                         uint32_t bandwidthUnits,
+                                                         uint8_t& outChannel) noexcept override;
+    [[nodiscard]] kern_return_t ReserveCaptureResources(uint64_t guid,
+                                                        ::ASFW::IRM::IRMClient& irmClient,
+                                                        uint64_t allowedChannels,
+                                                        uint32_t bandwidthUnits,
+                                                        uint8_t& outChannel) noexcept override;
+    [[nodiscard]] kern_return_t
+    PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
+                   ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                   Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                   uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept override;
+    [[nodiscard]] kern_return_t PrepareTransmit(uint8_t channel,
+                                                Driver::HardwareInterface& hardware,
+                                                uint8_t sourceId) noexcept override;
+    [[nodiscard]] kern_return_t
+    PrepareReceiveStream(uint32_t streamIndex, uint8_t channel, Driver::HardwareInterface& hardware,
+                         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                         uint32_t channelOffset, uint32_t streamChannels,
+                         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                         uint32_t am824Slots = 0) noexcept override;
+    [[nodiscard]] kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+                                                      Driver::HardwareInterface& hardware,
+                                                      uint8_t sourceId) noexcept override;
+    [[nodiscard]] kern_return_t StartPreparedReceive() noexcept override;
+    [[nodiscard]] kern_return_t StartPreparedTransmit() noexcept override;
+    [[nodiscard]] kern_return_t StopPreparedReceive() noexcept override;
+    [[nodiscard]] kern_return_t StopPreparedTransmit() noexcept override;
+    [[nodiscard]] kern_return_t StopAll() noexcept override;
+    [[nodiscard]] bool IsReceiveReplayEstablished() const noexcept override;
+
+  private:
+    [[nodiscard]] kern_return_t AttachReceiveConsumer(
+        uint32_t streamIndex,
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
+        uint32_t channelOffset, uint32_t streamChannels, bool isSecondary) noexcept;
+    void DetachReceiveConsumers() noexcept;
+
+    Driver::IsochService& isoch_;
+    std::unique_ptr<ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer>
+        receiveConsumers_[Driver::IsochService::kMaxStreamsPerDirection]{};
+    Backends::DuplexIRMReservationPair reservations_{};
+};
+
+} // namespace ASFW::Audio

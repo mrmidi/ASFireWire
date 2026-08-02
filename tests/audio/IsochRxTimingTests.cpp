@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
+#include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Audio/Engine/Direct/DirectInputWriter.hpp"
+#include "Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
 #include "Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
 #include "Isoch/Receive/IsochRxTiming.hpp"
 
@@ -26,12 +28,22 @@ void WriteBE32(uint8_t* dest, uint32_t value) {
     dest[3] = static_cast<uint8_t>(value);
 }
 
-void WriteLE32(uint8_t* dest, uint32_t value) {
-    dest[0] = static_cast<uint8_t>(value);
-    dest[1] = static_cast<uint8_t>(value >> 8);
-    dest[2] = static_cast<uint8_t>(value >> 16);
-    dest[3] = static_cast<uint8_t>(value >> 24);
-}
+class FixedDirectAudioBindingSource final
+    : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
+  public:
+    explicit FixedDirectAudioBindingSource(
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot) noexcept
+        : snapshot_(snapshot) {}
+
+    bool CopyDirectAudioBinding(
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
+        out = snapshot_;
+        return true;
+    }
+
+  private:
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot_{};
+};
 
 template <size_t PacketSize>
 void FillTwoChannelAmdtpPacket(std::array<uint8_t, PacketSize>& packet,
@@ -47,10 +59,12 @@ void FillTwoChannelAmdtpPacket(std::array<uint8_t, PacketSize>& packet,
 } // namespace
 
 TEST(IsochRxTimingTests, DecodesOhciTimestampFromReceivePrefix) {
-    std::array<uint8_t, 16> packet{};
-    WriteLE32(packet.data(), 0x0A123000u); // OHCI cycle timer prefix.
-    WriteBE32(packet.data() + 8, 0x021100C8u); // CIP Q0.
-    WriteBE32(packet.data() + 12, 0x900240B0u); // CIP Q1.
+    std::array<uint8_t, 16> packet{
+        0x23, 0xA1, 0x00, 0x00, // LE OHCI timestamp quadlet.
+        0x00, 0x00, 0x00, 0x00, // Isochronous packet header.
+        0x02, 0x11, 0x00, 0xC8, // CIP Q0.
+        0x90, 0x02, 0x40, 0xB0, // CIP Q1.
+    };
 
     uint16_t timestamp = 0;
     ASSERT_TRUE(ASFW::Isoch::Rx::DecodeReceiveTimestamp(
@@ -119,9 +133,16 @@ TEST(IsochRxTimingTests, PacketProcessorReturnsReceiveTimestamp) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 17;
     std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
-    WriteLE32(packet.data(), 0x0A123000u);
-    WriteBE32(packet.data() + 8, 0x021100C8u);
-    WriteBE32(packet.data() + 12, 0x900240B0u);
+    packet[0] = 0x23;
+    packet[1] = 0xA1;
+    packet[8] = 0x02;
+    packet[9] = 0x11;
+    packet[10] = 0x00;
+    packet[11] = 0xC8;
+    packet[12] = 0x90;
+    packet[13] = 0x02;
+    packet[14] = 0x40;
+    packet[15] = 0xB0;
 
     ASFW::AudioEngine::Direct::DirectInputWriter writer;
     ASFW::AudioEngine::Direct::Rx::RxAudioPacketProcessor processor(
@@ -180,6 +201,51 @@ TEST(IsochRxTimingTests, PacketProcessorWritesAM824CaptureAsFloat32) {
     EXPECT_FLOAT_EQ(input[1], 1.0f);
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire),
               1u);
+}
+
+TEST(IsochRxTimingTests, DirectReceiveConsumerOwnsDecodeAcrossOpaqueIsochSeam) {
+    constexpr size_t kFrames = 1;
+    constexpr size_t kDbs = 2;
+    alignas(4) std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
+    packet[0] = 0x23;
+    packet[1] = 0xA1;
+    FillTwoChannelAmdtpPacket(packet, 0x40000000u, 0x407FFFFFu);
+
+    std::array<float, 8> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    FixedDirectAudioBindingSource source({
+        .generation = 1,
+        .inputBase = input.data(),
+        .inputBytes = sizeof(input),
+        .inputFrames = 4,
+        .inputChannels = 2,
+        .control = &control,
+        .sampleRateHz = 48000,
+        .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source, {.am824Slots = kDbs, .streamChannels = kDbs});
+    const ASFW::Isoch::IsochReceiveBatch batch{
+        .drainCycleTimer = EncodeCycleTimer(13, 300, 0),
+        .drainHostTicks = 1'000'000,
+    };
+    const ASFW::Isoch::IsochReceivePacket isochPacket{
+        .descriptorIndex = 7,
+        .payload = packet,
+    };
+
+    consumer.OnReceiveActivated();
+    consumer.BeginReceiveBatch(batch);
+    consumer.ConsumePacket(batch, isochPacket);
+
+    EXPECT_FLOAT_EQ(input[0], 0.0f);
+    EXPECT_FLOAT_EQ(input[1], 1.0f);
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
+    EXPECT_EQ(control.rxReplayEpochResets.load(std::memory_order_acquire), 1u);
+
+    consumer.OnReceiveQuiesced();
+    consumer.ConsumePacket(batch, isochPacket);
+    EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
 }
 
 TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {

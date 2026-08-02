@@ -3,9 +3,9 @@
 // LoginSession — SBP-2 login/reconnect/logout state machine (management plane).
 //
 // Decomposed from PR #19's SBP2LoginSession (1847 lines). The post-login command
-// plane (fetch-agent ORB submission, doorbell, status→ORB matching, agent reset)
-// lives in the composed FetchAgent (§1b of SBP2_SESSION_PORT.md); this class owns
-// only the management plane:
+// plane (fetch-agent ORB submission, status→ORB matching, agent reset) lives in
+// the composed FetchAgent (§1b of SBP2_SESSION_PORT.md); this class owns only the
+// management plane:
 //
 //   1. Configure() with ROM-derived target parameters.
 //   2. Login() — write the Login ORB address to the device's management agent.
@@ -171,11 +171,11 @@ public:
     /// logged in or the FetchAgent rejects the ORB.
     [[nodiscard]] bool SubmitORB(SBP2CommandORB* orb) noexcept;
 
-    /// Reset the fetch agent (clears the ORB chain). Completion via callback.
+    /// Reset the fetch agent. Completion via callback.
     void ResetFetchAgent(std::function<void(int)> callback) noexcept;
 
     /// Drop all outstanding command-ORB tracking and cancel any in-flight
-    /// fetch-agent / doorbell write. Used by the command plane (CommandExecutor)
+    /// fetch-agent write. Used by the command plane (CommandExecutor)
     /// when a command completes, fails, or is aborted — mirrors #19's
     /// ClearORBTracking, which CleanupCommandResources invoked on the session.
     void ClearCommandTracking() noexcept { fetchAgent_.Clear(true); }

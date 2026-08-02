@@ -51,12 +51,20 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
     EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 104U);
     EXPECT_EQ(Geometry::kRxDescriptorPackets, 504U);
-    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 384U);
+    // TX budgets are sized for the worst-case (44.1k) average cadence of
+    // 441 frames / 80 packets, exposure lead rounded to a whole interrupt
+    // Apple-comparable 400-cycle content horizon: ceil(2400 / 5.5125) =
+    // 436 -> 438 packets, plus a full 512-frame write window.
+    EXPECT_EQ(Geometry::kTxDataHorizonPackets, 400U);
+    EXPECT_EQ(Geometry::TxDataHorizonFrames(48000), 2400U);
+    EXPECT_EQ(Geometry::TxDataHorizonFrames(44100), 2205U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 912U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 144U);
-    EXPECT_EQ(Geometry::kTxFrameExposureWindowPackets, 192U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 336U);
+    EXPECT_EQ(Geometry::kTxExposureLeadPackets, 438U);
+    EXPECT_EQ(Geometry::kTxFrameExposureWindowPackets, 534U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 678U);
 
     // DMA completion cadence and the ZTS grid are intentionally independent.
     EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,

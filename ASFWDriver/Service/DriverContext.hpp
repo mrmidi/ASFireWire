@@ -25,14 +25,20 @@ namespace ASFW::Audio {
 class AudioCoordinator;
 }
 
+namespace ASFW::Protocols::SBP2 {
+class SBP2TargetBridge;
+}
+
 struct ServiceContext {
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // immutable identity/static config
     // Initial (wiring-time) role policy. The runtime-mutable copy is owned by
     // ControllerCore; this is the seed passed at construction and read by
     // wiring that runs before ControllerCore exists (e.g. the election driver).
+    // Keep normal hardware passive; FullBusManager is an explicit validation
+    // profile because it can emit PHY configuration and reset the whole bus.
     ASFW::Driver::RolePolicy rolePolicy{
-        ASFW::Driver::RolePolicy::MakeHardwareValidationDefault()};
+        ASFW::Driver::RolePolicy::MakeLiveDefault()};
     std::shared_ptr<ASFW::Driver::ControllerCore> controller;
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<OSAction> interruptAction;
@@ -47,9 +53,19 @@ struct ServiceContext {
     ASFW::Protocols::DV::DVCaptureService dvCapture;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
+    std::shared_ptr<ASFW::Protocols::SBP2::SBP2TargetBridge> sbp2Bridge;
 
     void DisarmProviderNotifications();
-    void Reset();
+
+    // Full tears everything down (driver free/Stop). ForSuspend (sleep and the
+    // wake-verify self-heal) preserves the interrupt machinery — dispatch
+    // source, work queue, interrupt action — because destroying and re-creating
+    // the IOInterruptDispatchSource across a rebuild re-registers the same
+    // interrupt vector while the old source's kernel-side unregister is still
+    // in flight; the resulting double-unregister panics the kernel on a shared
+    // interrupt controller (observed 2026-07-10/11 on the FW643).
+    enum class ResetMode { Full, ForSuspend };
+    void Reset(ResetMode mode = ResetMode::Full);
 };
 
 namespace ASFW::Driver {

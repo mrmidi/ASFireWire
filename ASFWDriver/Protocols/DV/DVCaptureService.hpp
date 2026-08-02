@@ -86,6 +86,8 @@ private:
     DVCaptureSink sink_{};
     uint64_t ownerToken_{0};
     uint64_t deviceGuid_{0};
+    uint8_t deviceNodeId_{0xFF};
+    uint32_t deviceGeneration_{0};
     uint8_t channel_{0xFF};
     uint8_t outputPlug_{0xFF};
     uint32_t bandwidthUnits_{0};

@@ -103,6 +103,9 @@ public:
         std::uint32_t length,
         std::array<TxPayloadDmaFragment, 2>& fragments) const noexcept {
         fragments = {};
+        if (length == 0) {
+            return true;
+        }
         if (!IsValid() || length < 2 || slabOffset >= slabLength_ ||
             std::uint64_t{length} > (slabLength_ - slabOffset)) {
             return false;

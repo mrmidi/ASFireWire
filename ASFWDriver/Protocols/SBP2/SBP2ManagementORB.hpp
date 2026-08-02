@@ -8,14 +8,13 @@
 
 #include "AddressSpaceManager.hpp"
 #include "SBP2WireFormats.hpp"
+#include "Session/ISessionScheduler.hpp"
 #include "../../Async/AsyncTypes.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
 #ifdef ASFW_HOST_TEST
 #include "../../Testing/HostDriverKitStubs.hpp"
-#else
-#include <DriverKit/IODispatchQueue.h>
 #endif
 
 #include <array>
@@ -68,7 +67,7 @@ public:
         nodeID_ = nodeID;
     }
 
-    void SetWorkQueue(IODispatchQueue* queue) noexcept { workQueue_ = queue; }
+    void SetScheduler(ISessionScheduler* scheduler) noexcept { scheduler_ = scheduler; }
 
     // Lifecycle
     [[nodiscard]] bool Execute() noexcept;
@@ -118,15 +117,14 @@ private:
 
     // State
     std::atomic<bool> inProgress_{false};
-    std::atomic<bool> timerActive_{false};
 
     // Node targeting
     uint16_t generation_{0};
     uint16_t nodeID_{0xFFFF};
 
     // Timer infrastructure
-    IODispatchQueue* workQueue_{nullptr};
-    std::atomic<uint64_t> timerGeneration_{0};
+    ISessionScheduler* scheduler_{nullptr};
+    SchedulerToken timeoutToken_{kInvalidSchedulerToken};
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 

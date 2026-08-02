@@ -186,6 +186,32 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
 
+                // Keep packet preparation driven by the CoreAudio write
+                // frontier as well as the OHCI refill path. The target is a
+                // 400-cycle content horizon (about 50 ms at 48 kHz), not a
+                // request for transport to manipulate audio cursors. The
+                // coalescing latch ensures this RT callback produces at most
+                // one outstanding action.
+                const uint64_t writeEndFrame = sampleTime + ioBufferFrameSize;
+                const uint64_t targetFrameEnd =
+                    writeEndFrame +
+                    ASFW::IsochTransport::AudioTimingGeometry::
+                        TxDataHorizonFrames(
+                            driverIvars->runtime.txStreamEngine.StreamConfig()
+                                .sampleRate);
+                const uint64_t requestGeneration =
+                    control->txPreparationRequests.PublishRequest(
+                        hostTime, targetFrameEnd);
+                if (driverIvars->device.audioNub &&
+                    control->txPreparationRequests.TryScheduleWake()) {
+                    const kern_return_t requestKr =
+                        driverIvars->device.audioNub->RequestTxPreparation(
+                            requestGeneration);
+                    if (requestKr != kIOReturnSuccess) {
+                        control->txPreparationRequests.FinishWake();
+                    }
+                }
+
                 const uint32_t channels = driverIvars->runtime.directAudioGraph.memory.outputChannels;
                 const auto& memory =
                     driverIvars->runtime.directAudioGraph.memory;
@@ -197,11 +223,9 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     hostBuffer.frameCapacity = memory.outputFrameCapacity;
                     hostBuffer.channels = channels;
 
-                    const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.controlBlock
-                        ? driverIvars->runtime.txSlotProvider.controlBlock->completionCursor.load(std::memory_order_acquire)
+                    const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.queueControl
+                        ? driverIvars->runtime.txSlotProvider.queueControl->completionCursor.load(std::memory_order_acquire)
                         : 0;
-                    const uint64_t writeEndFrame =
-                        sampleTime + ioBufferFrameSize;
                     const uint64_t exposedFrameEnd =
                         driverIvars->runtime.txStreamEngine.Timeline()
                             .ExposedFrameEnd();
@@ -209,6 +233,25 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(
                         hostBuffer,
                         completionCursor);
+
+                    const auto packetizerSnapshot =
+                        driverIvars->runtime.txStreamEngine
+                            .PacketizerTelemetrySnapshot();
+                    const auto& txCounters =
+                        driverIvars->runtime.txStreamEngine.Counters();
+
+                    // Fan out the same host buffer to the secondary stream; its
+                    // payload writer reads channels [16, 32) via sourceChannelOffset.
+                    if (driverIvars->runtime.txSecondaryActive) {
+                        const uint64_t secondaryCompletion =
+                            driverIvars->runtime.txSlotProviderSecondary.queueControl
+                                ? driverIvars->runtime.txSlotProviderSecondary.queueControl
+                                      ->completionCursor.load(std::memory_order_acquire)
+                                : 0;
+                        driverIvars->runtime.txStreamEngineSecondary.WriteHostOutputFloat32(
+                            hostBuffer,
+                            secondaryCompletion);
+                    }
 
                     const auto& cw = driverIvars->runtime.txStreamEngine.PayloadWriterCounters();
                     ASFW::Audio::Runtime::PayloadWriterTelemetryRecord rec{};
@@ -233,6 +276,39 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         cw.underExposureCalls.load(std::memory_order_relaxed);
                     rec.underExposureFrames =
                         cw.underExposureFrames.load(std::memory_order_relaxed);
+                    rec.packetizerNextAudioFrame =
+                        packetizerSnapshot.nextAudioFrame;
+                    rec.packetizerLastDataFirstAudioFrame =
+                        packetizerSnapshot.lastDataFirstAudioFrame;
+                    rec.packetizerLastDataEndAudioFrame =
+                        packetizerSnapshot.lastDataEndAudioFrame;
+                    rec.packetizerLastDataPacketIndex =
+                        packetizerSnapshot.lastDataPacketIndex;
+                    rec.packetizerCursorEpoch =
+                        packetizerSnapshot.cursorEpoch;
+                    rec.packetizerFrameCursorAligned =
+                        packetizerSnapshot.frameCursorAligned;
+                    rec.packetizerHasLastDataPacket =
+                        packetizerSnapshot.hasLastDataPacket;
+                    rec.txPreparationTargetFrameEnd =
+                        control->txPreparationRequests.requestedTargetFrameEnd.load(
+                            std::memory_order_acquire);
+                    rec.txPreparationRequestedGeneration =
+                        control->txPreparationRequests.RequestedGeneration();
+                    rec.txPreparationHandledGeneration =
+                        control->txPreparationRequests.handledGeneration.load(
+                            std::memory_order_acquire);
+                    rec.txPreparationWakeScheduled =
+                        control->txPreparationRequests.wakeScheduled.load(
+                            std::memory_order_acquire);
+                    rec.packetsPrepared =
+                        txCounters.packetsPrepared.load(std::memory_order_relaxed);
+                    rec.dataPacketsPrepared =
+                        txCounters.dataPacketsPrepared.load(std::memory_order_relaxed);
+                    rec.noDataPacketsPrepared =
+                        txCounters.noDataPacketsPrepared.load(std::memory_order_relaxed);
+                    rec.slotAcquireFailures =
+                        txCounters.slotAcquireFailures.load(std::memory_order_relaxed);
                     const uint32_t bits = cw.maxAbsSampleBits.load(std::memory_order_relaxed);
                     std::memcpy(&rec.maxAbsSample, &bits, sizeof(bits));
 

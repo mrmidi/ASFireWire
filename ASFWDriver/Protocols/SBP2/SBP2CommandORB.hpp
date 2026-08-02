@@ -19,6 +19,7 @@
 #include <DriverKit/IODispatchQueue.h>
 #endif
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <functional>
@@ -32,7 +33,6 @@ public:
     enum Flags : uint32_t {
         kNotify         = (1 << 0),
         kDataFromTarget = (1 << 1),
-        kImmediate      = (1 << 2),
         kNormalORB      = (1 << 5),
         kReservedORB    = (1 << 6),
         kVendorORB      = (1 << 7),
@@ -67,18 +67,11 @@ public:
     [[nodiscard]] kern_return_t PrepareForExecution(uint16_t localNodeID, FW::FwSpeed speed,
                                                     uint16_t maxPayloadLog) noexcept;
 
-    // Internal: ORB address for fetch agent / chaining.
+    // Internal: ORB address for the fetch agent.
     [[nodiscard]] Async::FWAddress GetORBAddress() const noexcept;
-
-    // Internal: set the next ORB pointer (big-endian values). Re-flushes the ORB.
-    [[nodiscard]] kern_return_t SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
 
     // Set rq_fmt=3 (NOP dummy) so device skips this ORB if already fetched.
     [[nodiscard]] kern_return_t SetToDummy() noexcept;
-
-    // Internal: timer management.
-    void StartTimer(IODispatchQueue* queue) noexcept;
-    void CancelTimer() noexcept;
 
     // State tracking.
     // True once the ORB's address-space backing was allocated successfully.
@@ -93,6 +86,19 @@ public:
 
     [[nodiscard]] uint32_t GetFlags() const noexcept { return flags_; }
     [[nodiscard]] CompletionCallback& GetCompletionCallback() noexcept { return completionCallback_; }
+
+    // Command-set-dependent bytes from the solicited status block (bytes 8+,
+    // SBP-2 §5.3 / Annex B) — stashed by FetchAgent::OnStatusBlock before the
+    // completion callback fires so CommandExecutor can surface SCSI status +
+    // autosense. Zero length when the target sent only the 8-byte header.
+    void SetCompletionStatusData(std::span<const uint8_t> data) noexcept {
+        statusDataLength_ = static_cast<uint8_t>(
+            data.size() > statusData_.size() ? statusData_.size() : data.size());
+        std::memcpy(statusData_.data(), data.data(), statusDataLength_);
+    }
+    [[nodiscard]] std::span<const uint8_t> CompletionStatusData() const noexcept {
+        return {statusData_.data(), statusDataLength_};
+    }
 
 private:
     bool AllocateResources() noexcept;
@@ -118,13 +124,11 @@ private:
 
     // State.
     bool isAppended_{false};
-    std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
 
-    // Timer.
-    IODispatchQueue* timerQueue_{nullptr};
-    std::atomic<uint64_t> timerGeneration_{0};
-    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
+    // Solicited status block command-set-dependent bytes (see accessors above).
+    std::array<uint8_t, 24> statusData_{};
+    uint8_t statusDataLength_{0};
 };
 
 } // namespace ASFW::Protocols::SBP2

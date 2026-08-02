@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // SpeedMapService.hpp — Local software-owned SPEED_MAP CSR register (FW-20/M9).

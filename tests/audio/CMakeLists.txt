@@ -18,6 +18,7 @@ add_executable(IsochReceiveContextTests
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
@@ -105,6 +106,10 @@ add_audio_test(IsochTxDmaRingTests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
+add_audio_test(TransmitBoundaryTests
+    TransmitBoundaryTests.cpp
+)
+
 add_audio_test(IsochServiceTxPreparationTests
     IsochServiceTxPreparationTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/IsochService.cpp"
@@ -141,6 +146,10 @@ add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
 )
 
+add_audio_test(TimingCursorPolicyTests
+    TimingCursorPolicyTests.cpp
+)
+
 add_audio_test(RxDrivenTimingTests
     RxDrivenTimingTests.cpp
 )
@@ -166,9 +175,14 @@ add_audio_test(AudioProfileRegistryTests
 add_audio_test(DiceProfileTests
     DiceProfileTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/BeBoBProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.cpp"
 )
 
 # IT Descriptor Layout Tests

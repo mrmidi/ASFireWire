@@ -287,6 +287,43 @@ TEST(AmdtpDirectTxTests, AlignFrameCursorIsAcceptedOnlyOncePerReset) {
     EXPECT_TRUE(packetizer.AlignFrameCursorOnce(3000U));
 }
 
+TEST(AmdtpDirectTxTests, PacketizerTelemetryTracksCursorAlignmentAndLastDataRange) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), AmdtpTxPolicy{}));
+    EXPECT_TRUE(packetizer.AlignFrameCursorOnce(960U));
+
+    std::array<std::array<uint8_t, 128>, 2> bytes{};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.nextDataSyt = 0x1234;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes[0].data(), bytes[0].size()}, timing, packet));
+    ASSERT_FALSE(packet.isData);
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {1, bytes[1].data(), bytes[1].size()}, timing, packet));
+    ASSERT_TRUE(packet.isData);
+
+    const auto snapshot = packetizer.TelemetrySnapshot();
+    EXPECT_TRUE(snapshot.frameCursorAligned);
+    EXPECT_TRUE(snapshot.hasLastDataPacket);
+    EXPECT_EQ(snapshot.nextAudioFrame, 968U);
+    EXPECT_EQ(snapshot.lastDataFirstAudioFrame, 960U);
+    EXPECT_EQ(snapshot.lastDataEndAudioFrame, 968U);
+    EXPECT_EQ(snapshot.lastDataPacketIndex, 1U);
+
+    packetizer.ReArmFrameCursorAlignment();
+    const auto rearmed = packetizer.TelemetrySnapshot();
+    EXPECT_FALSE(rearmed.frameCursorAligned);
+    EXPECT_GT(rearmed.cursorEpoch, snapshot.cursorEpoch);
+}
+
 TEST(AmdtpDirectTxTests, TxEngineReportsPreparationFailureStage) {
     DiceTxStreamEngine engine{};
     AmdtpTimingState timing{};

@@ -11,7 +11,7 @@
 #include <cstdint>
 
 #include "../../Hardware/OHCIDescriptors.hpp"
-#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../Core/IsochDmaGeometry.hpp"
 
 namespace ASFW::Isoch::Tx {
 
@@ -35,8 +35,7 @@ struct Layout final {
     static constexpr uint32_t kFirstPayloadBlock = 2;
     static constexpr uint32_t kCompletionBlock = 3;
     static constexpr uint32_t kNumPackets =
-        ASFW::IsochTransport::AudioTimingGeometry::
-            kTxHardwareRingPackets;  // 6 ms @ 8000 packets/sec
+        IsochDmaGeometry::kTransmitDescriptorPackets;
     static constexpr uint32_t kRingBlocks = kNumPackets * kBlocksPerPacket;
 
     static constexpr uint32_t kDescriptorStride = 16;

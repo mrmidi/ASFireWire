@@ -79,6 +79,60 @@ struct MCPMockHarnessTests {
         #expect(data["protocols"] != nil)
     }
 
+    @Test func controlPlaneHealthReportsReadyAndAllowsTargetedReads() async throws {
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: MockASFWDriverControl())
+
+        let envelope = await core.readResource(uri: "asfw://control-plane/health")
+
+        #expect(envelope.schema == "asfw.control_plane.health.v1")
+        #expect(envelope.generation == 17)
+        guard case .object(let data) = envelope.data else {
+            Issue.record("Control-plane health data should be an object.")
+            return
+        }
+        #expect(data["status"] == .string("ready"))
+        #expect(data["allowReadOnlyQueries"] == .bool(true))
+        #expect(data["allowTargetedReads"] == .bool(true))
+        #expect(data["reasons"] == .array([]))
+    }
+
+    @Test func controlPlaneHealthRejectsTargetedReadsWhenTopologyIsDegraded() async throws {
+        let core = ASFWMCPCore(
+            configuration: .readOnlyDeveloper,
+            driver: MockASFWDriverControl(topologyValid: false, droppedEventCount: 1)
+        )
+
+        let envelope = await core.readResource(uri: "asfw://control-plane/health")
+
+        guard case .object(let data) = envelope.data,
+              case .array(let reasons)? = data["reasons"] else {
+            Issue.record("Control-plane health should include reasons.")
+            return
+        }
+        #expect(data["status"] == .string("degraded"))
+        #expect(data["allowReadOnlyQueries"] == .bool(true))
+        #expect(data["allowTargetedReads"] == .bool(false))
+        #expect(reasons.contains(.string("topologyInvalid")))
+        #expect(reasons.contains(.string("asyncEventsDropped")))
+    }
+
+    @Test func controlPlaneHealthReportsUnavailableWithoutDriverConnection() async throws {
+        let core = ASFWMCPCore(
+            configuration: .readOnlyDeveloper,
+            driver: MockASFWDriverControl(driverConnected: false)
+        )
+
+        let envelope = await core.readResource(uri: "asfw://control-plane/health")
+
+        guard case .object(let data) = envelope.data else {
+            Issue.record("Control-plane health data should be an object.")
+            return
+        }
+        #expect(data["status"] == .string("unavailable"))
+        #expect(data["allowReadOnlyQueries"] == .bool(false))
+        #expect(data["allowTargetedReads"] == .bool(false))
+    }
+
     @Test func nodesResourceIsBackedByMockDriverWithoutHardware() async throws {
         let driver = MockASFWDriverControl()
         let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)

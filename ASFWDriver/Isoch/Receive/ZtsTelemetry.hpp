@@ -49,6 +49,62 @@ struct ZtsTelemetryRecord final {
     uint8_t  kind{0};                 // ZtsEventKind
 };
 
+// Off-hot-path log gate. ZTS anchors must still be captured and drained at
+// full cadence, but printing every 1536-frame anchor creates ~62 log lines/s at
+// 48 kHz (one UPD plus one CLKDELTA). Always emit the seed, then one snapshot
+// per four seconds of device frames. Rate changes and frame-grid resets re-arm
+// the gate and emit immediately so lifecycle transitions remain visible.
+class ZtsTelemetryLogGate final {
+public:
+    static constexpr uint32_t kIntervalSeconds = 4;
+
+    void Reset() noexcept {
+        initialized_ = false;
+        sampleRateHz_ = 0;
+        lastSampleFrame_ = 0;
+        nextLogSampleFrame_ = 0;
+    }
+
+    [[nodiscard]] bool ShouldEmit(const ZtsTelemetryRecord& rec,
+                                  uint32_t sampleRateHz) noexcept {
+        const bool isSeed =
+            rec.kind == static_cast<uint8_t>(ZtsEventKind::kSeed);
+        const bool gridReset = initialized_ && rec.sampleFrame < lastSampleFrame_;
+        const bool rateChanged = initialized_ && sampleRateHz != sampleRateHz_;
+
+        if (!initialized_ || isSeed || gridReset || rateChanged) {
+            Arm(rec.sampleFrame, sampleRateHz);
+            return true;
+        }
+
+        lastSampleFrame_ = rec.sampleFrame;
+        if (sampleRateHz == 0 || rec.sampleFrame < nextLogSampleFrame_) {
+            return false;
+        }
+
+        const uint64_t intervalFrames =
+            static_cast<uint64_t>(sampleRateHz) * kIntervalSeconds;
+        const uint64_t intervalsElapsed =
+            ((rec.sampleFrame - nextLogSampleFrame_) / intervalFrames) + 1;
+        nextLogSampleFrame_ += intervalsElapsed * intervalFrames;
+        return true;
+    }
+
+private:
+    void Arm(uint64_t sampleFrame, uint32_t sampleRateHz) noexcept {
+        initialized_ = true;
+        sampleRateHz_ = sampleRateHz;
+        lastSampleFrame_ = sampleFrame;
+        nextLogSampleFrame_ = sampleFrame +
+            static_cast<uint64_t>(sampleRateHz) * kIntervalSeconds;
+    }
+
+    bool initialized_{false};
+    uint32_t sampleRateHz_{0};
+    uint64_t lastSampleFrame_{0};
+    uint64_t nextLogSampleFrame_{0};
+};
+
 // Single-producer / single-consumer overwriting ring.
 //
 // In this dext the producer (IsochReceiveContext::Poll, reached from the

@@ -11,9 +11,9 @@
 #include "IsochTxDmaRing.hpp"
 #include "IsochTxLayout.hpp"
 
+#include "../Core/IsochTxQueue.hpp"
 #include "../Memory/IIsochDMAMemory.hpp"
 #include "../../Hardware/RegisterMap.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
 
 #include "../../Logging/Logging.hpp"
 #include <array>
@@ -46,7 +46,7 @@ enum class ITState {
  * @brief Orchestrator for an Isochronous Transmit (IT) context.
  * 
  * This class owns the OHCI DMA ring (IsochTxDmaRing) and manages the lifecycle 
- * of the transport. It does not interpret the payload bytes (AMDTP/CIP/Audio).
+ * of the transport. It treats packet headers and payload bytes as opaque.
  */
 class IsochTransmitContext final {
 public:
@@ -65,6 +65,11 @@ public:
 
     kern_return_t Configure(uint8_t channel, uint8_t sid) noexcept;
 
+    // Select which OHCI IT hardware context backs this stream. Defaults to 0
+    // (master); secondary streams must use their own context (== streamIndex) or
+    // they collide with the master on context 0's registers. Set before Start().
+    void SetContextIndex(uint8_t index) noexcept { contextIndex_ = index; }
+
     /**
      * @brief Map the shared memory regions allocated by the host into the Dext address space.
      * Prepares the payload slab for DMA and resolves its physical IOVA for descriptor priming.
@@ -72,17 +77,17 @@ public:
      * @param metadataRing Shared memory descriptor containing packet metadata.
      * @param controlBlock Shared memory descriptor containing stream control states.
      * @param interruptInterval Interrupt interval in packets.
-     * @param ztsPeriodFrames Verification parameter for HAL ring wrap (passed through to control block).
      */
     kern_return_t SetSharedMemoryDescriptors(
         IOMemoryDescriptor* payloadSlab,
         IOMemoryDescriptor* metadataRing,
         IOMemoryDescriptor* controlBlock,
-        uint32_t interruptInterval,
-        uint32_t ztsPeriodFrames) noexcept;
+        uint32_t interruptInterval) noexcept;
 
     kern_return_t Start() noexcept;
-    void Stop() noexcept;
+    // Clearing RUN only prevents new descriptor fetches.  The caller must not
+    // release any DMA-visible memory until this returns success (ACTIVE clear).
+    [[nodiscard]] kern_return_t Stop() noexcept;
     
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
@@ -136,8 +141,8 @@ private:
     OSSharedPtr<IOMemoryMap> controlMap_{nullptr};
 
     uint8_t* payloadBase_{nullptr};
-    ASFW::IsochTransport::TxPacketMeta* metadataRing_{nullptr};
-    ASFW::IsochTransport::TxStreamControl* controlBlock_{nullptr};
+    IsochTxPacketMeta* metadataRing_{nullptr};
+    IsochTxQueueControl* controlBlock_{nullptr};
 
     Tx::TxPayloadDmaMap payloadDmaMap_{};
     OSSharedPtr<IODMACommand> payloadDmaCmd_{nullptr};

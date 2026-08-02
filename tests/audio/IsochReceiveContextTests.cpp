@@ -2,9 +2,11 @@
 #include <gmock/gmock.h>
 
 #include "Isoch/IsochReceiveContext.hpp"
+#include "Isoch/Receive/ZtsTelemetry.hpp"
 #include "Isoch/Memory/IsochDMAMemoryManager.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/OHCIConstants.hpp"
+#include "Audio/DriverKit/Runtime/PayloadWriterTelemetry.hpp"
 
 // Use a mock or stub for HardwareInterface
 namespace ASFW::Driver {
@@ -17,6 +19,111 @@ using namespace ASFW::Shared;
 using namespace ASFW::Async;
 using namespace ASFW::Isoch::Memory;
 using namespace testing;
+
+class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
+  public:
+    void OnReceiveActivated() noexcept override { ++activationCount; }
+    void OnReceiveQuiesced() noexcept override { ++quiesceCount; }
+
+    void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept override {
+        ++batchCount;
+        lastBatch = batch;
+    }
+
+    void ConsumePacket(const IsochReceiveBatch& batch,
+                       const IsochReceivePacket& packet) noexcept override {
+        ++packetCount;
+        lastBatch = batch;
+        lastPacketBytes = packet.payload.size();
+    }
+
+    uint32_t batchCount{0};
+    uint32_t packetCount{0};
+    uint32_t lastPacketBytes{0};
+    uint32_t activationCount{0};
+    uint32_t quiesceCount{0};
+    IsochReceiveBatch lastBatch{};
+};
+
+TEST(PayloadWriterTelemetryTests,
+     HistoricalStartupCountersDoNotMakeTheHealthySteadyStateNoisy) {
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryAnomalyAggregator;
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryRecord;
+
+    PayloadWriterTelemetryAnomalyAggregator aggregator;
+    PayloadWriterTelemetryRecord record{};
+    record.visited = 1'000;
+    record.written = 900;
+    record.withoutPacket = 100;
+
+    aggregator.BeginDrain();
+    aggregator.Observe(record);
+    EXPECT_FALSE(aggregator.Summary().HasAnomaly());
+
+    aggregator.BeginDrain();
+    record.visited += 512;
+    record.written += 512;
+    aggregator.Observe(record);
+    EXPECT_FALSE(aggregator.Summary().HasAnomaly());
+
+    aggregator.BeginDrain();
+    ++record.visited;
+    ++record.withoutPacket;
+    aggregator.Observe(record);
+    EXPECT_TRUE(aggregator.Summary().HasAnomaly());
+    EXPECT_EQ(aggregator.Summary().withoutPacketDelta, 1u);
+    EXPECT_EQ(aggregator.Summary().visitedDelta, 1u);
+    EXPECT_EQ(aggregator.Summary().writtenDelta, 0u);
+}
+
+TEST(PayloadWriterTelemetryTests, DrainVisitsAllRetainedRecordsOffTheCallbackPath) {
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryRecord;
+    using ASFW::Audio::Runtime::PayloadWriterTelemetryRing;
+
+    PayloadWriterTelemetryRing ring;
+    for (uint64_t sampleTime = 1; sampleTime <= 3; ++sampleTime) {
+        PayloadWriterTelemetryRecord record{};
+        record.sampleTime = sampleTime;
+        ring.Record(record);
+    }
+
+    uint64_t visited = 0;
+    EXPECT_EQ(ring.Drain([&visited](const PayloadWriterTelemetryRecord&) {
+                  ++visited;
+              }),
+              0u);
+    EXPECT_EQ(visited, 3u);
+    EXPECT_EQ(ring.PendingCount(), 0u);
+}
+
+TEST(ZtsTelemetryLogGateTests,
+     EmitsSeedThenEveryFourSecondsAndRearmsOnGridReset) {
+    constexpr uint32_t kRate = 48000;
+    constexpr uint64_t kStartFrame = 1536;
+    ASFW::Isoch::Rx::ZtsTelemetryLogGate gate;
+    ASFW::Isoch::Rx::ZtsTelemetryRecord record{};
+
+    record.kind = static_cast<uint8_t>(ASFW::Isoch::Rx::ZtsEventKind::kSeed);
+    record.sampleFrame = kStartFrame;
+    EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+
+    record.kind = static_cast<uint8_t>(ASFW::Isoch::Rx::ZtsEventKind::kUpdate);
+    record.sampleFrame =
+        kStartFrame + kRate *
+            ASFW::Isoch::Rx::ZtsTelemetryLogGate::kIntervalSeconds - 1;
+    EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+
+    record.sampleFrame =
+        kStartFrame + kRate *
+            ASFW::Isoch::Rx::ZtsTelemetryLogGate::kIntervalSeconds;
+    EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+
+    ++record.sampleFrame;
+    EXPECT_FALSE(gate.ShouldEmit(record, kRate));
+
+    record.sampleFrame = 0;
+    EXPECT_TRUE(gate.ShouldEmit(record, kRate));
+}
 
 class IsochReceiveContextTest : public Test {
 protected:
@@ -41,9 +148,7 @@ protected:
 
     void TearDown() override {
         if (context_) {
-            context_->Stop();
-            // context_->release(); // OSSharedPtr manages refcount? No, it's a smart pointer wrapper.
-            // If Create returns OSSharedPtr, we should just let it destruct or reset.
+            (void)context_->Stop();
             context_.reset();
         }
         if (hardware_) {
@@ -54,7 +159,7 @@ protected:
 
     ::ASFW::Driver::HardwareInterface* hardware_{nullptr};
     std::shared_ptr<IIsochDMAMemory> dmaMemory_;
-    OSSharedPtr<IsochReceiveContext> context_;
+    std::unique_ptr<IsochReceiveContext> context_;
 };
 
 TEST_F(IsochReceiveContextTest, Initialization) {
@@ -91,6 +196,33 @@ TEST_F(IsochReceiveContextTest, StartProgramsRegisters) {
     // Ideally we'd use a MockHardwareInterface to verify ::Write calls.
 }
 
+TEST_F(IsochReceiveContextTest, StopFlushesRunClearAndOnlyThenMarksStopped) {
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(context_->GetState(), IRPolicy::State::Stopped);
+
+    const auto operations = hardware_->CopyTestOperations();
+    EXPECT_THAT(operations, Contains(::ASFW::Driver::HardwareInterface::TestOperation::WriteAndFlush));
+}
+
+TEST_F(IsochReceiveContextTest, StopRetainsBindingStateWhenActiveNeverClears) {
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, ::ASFW::Driver::ContextControl::kActive);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnTimeout);
+    EXPECT_EQ(context_->GetState(), IRPolicy::State::Running);
+}
+
 TEST_F(IsochReceiveContextTest, PollProcessesPackets) {
     context_->Configure(0, 0);
     context_->Start();
@@ -105,4 +237,22 @@ TEST_F(IsochReceiveContextTest, PollProcessesPackets) {
     // TODO: Advanced test - Write to FakeMemory to simulate packet arrival
     // This requires knowing the addresses allocated.
     // IsochReceiveContext doesn't expose rings directly.
+}
+
+TEST_F(IsochReceiveContextTest, PollPublishesTheBatchToAContentConsumer) {
+    RecordingReceiveConsumer consumer;
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    context_->SetReceiveConsumer(&consumer);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+
+    EXPECT_EQ(context_->Poll(), 0);
+    EXPECT_EQ(consumer.batchCount, 1u);
+    EXPECT_EQ(consumer.packetCount, 0u);
+    EXPECT_EQ(consumer.activationCount, 1u);
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(consumer.quiesceCount, 1u);
 }

@@ -33,6 +33,10 @@ public:
     // Method 4: Clear bus reset packet history
     kern_return_t ClearHistory(IOUserClientMethodArguments* args);
 
+    /// Request one local software bus reset after verifying the caller's
+    /// generation snapshot. Intended for explicitly gated developer tooling.
+    kern_return_t RequestUserReset(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_;
 };

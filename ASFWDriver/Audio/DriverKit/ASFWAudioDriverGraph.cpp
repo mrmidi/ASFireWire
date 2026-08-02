@@ -13,7 +13,7 @@
 #include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -22,6 +22,7 @@
 #include <AudioDriverKit/IOUserAudioUtils.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <type_traits>
 #include <utility>
@@ -85,6 +86,8 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     return kIOReturnSuccess;
 }
 
+} // namespace
+
 void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
                        double sampleRate,
                        uint32_t channels) noexcept {
@@ -98,8 +101,6 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
     fmt.mChannelsPerFrame = channels;
     fmt.mBitsPerChannel = 32;
 }
-
-} // namespace
 
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept {
     ASFW::Isoch::Audio::ParsedAudioDriverConfig defaultConfig{};
@@ -142,6 +143,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ASFW_LOG(Audio, "ASFWAudioDriver: Using default device configuration (no nub properties)");
     }
 
+    // Set once a resolved profile supplies its advertised sample-rate set, so the
+    // bring-up single-format policy below is skipped for profiled devices.
+    bool profileProvidedSampleRates = false;
+
     // Resolve audio profile registry on startup
     if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
             parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid)) {
@@ -150,33 +155,47 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
         const uint32_t rxChannels = profile->RxChannelCount();
         const uint32_t txChannels = profile->TxChannelCount();
-        if (rxChannels > 0) {
-            parsedConfig.inputChannelCount = rxChannels;
-        }
-        if (txChannels > 0) {
-            parsedConfig.outputChannelCount = txChannels;
-        }
-        parsedConfig.channelCount = std::max(parsedConfig.inputChannelCount, parsedConfig.outputChannelCount);
+        ASFW::Isoch::Audio::ApplyProfileChannelCountFallback(parsedConfig,
+                                                            rxChannels,
+                                                            txChannels);
 
-        // Regenerate channel names for the updated channel counts
-        for (uint32_t index = 0; index < parsedConfig.inputChannelCount && index < ASFW::Isoch::Audio::kMaxNamedChannels; ++index) {
-            snprintf(parsedConfig.inputChannelNames[index],
-                     sizeof(parsedConfig.inputChannelNames[index]),
-                     "%s %u",
-                     parsedConfig.inputPlugName,
-                     index + 1);
+        // Sample rates come from the profile (same authoritative source as the
+        // channel counts above), so CoreAudio advertises the full set even if the
+        // nub property dict did not carry kSampleRates. The HAL builds one stream
+        // format per rate (see SetAvailableSampleRates below).
+        const auto profileRates = profile->SupportedSampleRates();
+        if (!profileRates.empty()) {
+            parsedConfig.sampleRateCount = 0;
+            bool currentRateInSet = false;
+            for (uint32_t hz : profileRates) {
+                if (parsedConfig.sampleRateCount >= ASFW::Isoch::Audio::kMaxSampleRates) {
+                    break;
+                }
+                parsedConfig.sampleRates[parsedConfig.sampleRateCount++] =
+                    static_cast<double>(hz);
+                if (static_cast<double>(hz) == parsedConfig.currentSampleRate) {
+                    currentRateInSet = true;
+                }
+            }
+            if (!currentRateInSet) {
+                parsedConfig.currentSampleRate = parsedConfig.sampleRates[0];
+            }
+            profileProvidedSampleRates = true;
         }
-        for (uint32_t index = 0; index < parsedConfig.outputChannelCount && index < ASFW::Isoch::Audio::kMaxNamedChannels; ++index) {
-            snprintf(parsedConfig.outputChannelNames[index],
-                     sizeof(parsedConfig.outputChannelNames[index]),
-                     "%s %u",
-                     parsedConfig.outputPlugName,
-                     index + 1);
-        }
+
+        // Regenerate channel names for the updated channel counts. Prefers the
+        // device's per-channel labels (published by the core side) and falls
+        // back to synthesized "<plug> N" for any slot without a real label.
+        ASFW::Isoch::Audio::BuildChannelNamesFromPlugs(parsedConfig);
     }
 
     ASFW::Isoch::Audio::BuildFallbackBoolControls(parsedConfig);
-    ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
+    // Profiled devices advertise their own validated rate set (DICE: 44.1/48 kHz);
+    // only fall back to the single-format bring-up policy for unprofiled devices
+    // whose multi-rate path is not yet validated end-to-end.
+    if (!profileProvidedSampleRates) {
+        ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
+    }
     ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxPcmChannels);
     CopyParsedConfigToDeviceState(parsedConfig, ivars.device);
 
@@ -228,14 +247,23 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              ? "blocking" : "non-blocking");
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Forcing single advertised format: input=Float32 output=Float32");
+             "ASFWAudioDriver: Advertising %u Float32 format(s) (input/output) across rates",
+             ivars.device.sampleRateCount);
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Effective runtime channels: input=%u output=%u aggregate=%u",
              ivars.device.inputChannelCount,
              ivars.device.outputChannelCount,
              ivars.device.channelCount);
 
-    auto deviceUID = OSSharedPtr(OSString::withCString("ASFWAudioDevice"), OSNoRetain);
+    // The device UID must be unique per physical device: macOS persists
+    // per-device audio state (Audio MIDI Setup speaker configuration incl. the
+    // preferred stereo pair, volumes) keyed by this UID. A shared constant UID
+    // let one device's stereo-pair setting silently remap the output channels
+    // of every ASFW device (BUGLIST.md Bug 1: "right channel only").
+    char deviceUidString[32] = {};
+    std::snprintf(deviceUidString, sizeof(deviceUidString), "ASFW-%016llX",
+                  static_cast<unsigned long long>(ivars.device.guid));
+    auto deviceUID = OSSharedPtr(OSString::withCString(deviceUidString), OSNoRetain);
     auto modelUID = OSSharedPtr(OSString::withCString(ivars.device.deviceName), OSNoRetain);
     auto manufacturerUID = OSSharedPtr(OSString::withCString("ASFireWire"), OSNoRetain);
     if (!deviceUID || !modelUID || !manufacturerUID) {
@@ -274,6 +302,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
     ivars.audioDevice->SetDriverIvars(&ivars);
 
+    // Do not let the host save/restore a stale stream format from a prior
+    // session: the device must come up at the rate this graph selects below,
+    // and we drive rate changes explicitly through HandleChangeSampleRate.
+    // (Default behavior is restore-enabled; see IOUserAudioDevice header.)
+    ivars.audioDevice->SetWantsStreamFormatsRestored(false);
+
     const uint32_t current_period = ivars.audioDevice->GetZeroTimestampPeriod();
     ASFW_LOG(Audio, "ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: %u frames", current_period);
     ASFW_LOG(Audio,
@@ -308,16 +342,23 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     IOUserAudioStreamBasicDescription inputFormats[8] = {};
     IOUserAudioStreamBasicDescription outputFormats[8] = {};
     const uint32_t formatCount = ivars.device.sampleRateCount > 8 ? 8 : ivars.device.sampleRateCount;
+    uint32_t currentFormatIndex = 0;
     for (uint32_t i = 0; i < formatCount; i++) {
         FillFloat32Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
         FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], ivars.device.outputChannelCount);
+        if (ivars.device.sampleRates[i] == ivars.device.currentSampleRate) {
+            currentFormatIndex = i;
+        }
     }
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Created %u stream formats input=float32/%u ch output=float32/%u ch",
+             "ASFWAudioDriver: Created %u stream formats input=float32/%u ch output=float32/%u ch; "
+             "current format index=%u (%.0f Hz)",
              formatCount,
              ivars.device.inputChannelCount,
-             ivars.device.outputChannelCount);
+             ivars.device.outputChannelCount,
+             currentFormatIndex,
+             ivars.device.sampleRates[currentFormatIndex]);
 
     IOMemoryDescriptor* rawOutputMemory = nullptr;
     IOMemoryDescriptor* rawInputMemory = nullptr;
@@ -459,7 +500,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (!requireAdkSuccess(
             "inputStream.SetCurrentStreamFormat",
             ivars.inputStream->SetCurrentStreamFormat(
-                &inputFormats[0]))) {
+                &inputFormats[currentFormatIndex]))) {
         return error;
     }
 
@@ -494,7 +535,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (!requireAdkSuccess(
             "outputStream.SetCurrentStreamFormat",
             ivars.outputStream->SetCurrentStreamFormat(
-                &outputFormats[0]))) {
+                &outputFormats[currentFormatIndex]))) {
         return error;
     }
 
@@ -544,7 +585,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
     ASFW_LOG(Audio, "ASFWAudioDriver: IO operation handler installed");
 
-    for (uint32_t ch = 1; ch <= ivars.device.outputChannelCount && ch <= 8; ch++) {
+    for (uint32_t ch = 1; ch <= ivars.device.outputChannelCount && ch <= ASFW::Isoch::Audio::kMaxNamedChannels; ch++) {
         auto outChName = OSSharedPtr(OSString::withCString(ivars.device.outputChannelNames[ch - 1]), OSNoRetain);
         if (outChName) {
             const kern_return_t status =
@@ -561,7 +602,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             }
         }
     }
-    for (uint32_t ch = 1; ch <= ivars.device.inputChannelCount && ch <= 8; ch++) {
+    for (uint32_t ch = 1; ch <= ivars.device.inputChannelCount && ch <= ASFW::Isoch::Audio::kMaxNamedChannels; ch++) {
         auto inChName = OSSharedPtr(OSString::withCString(ivars.device.inputChannelNames[ch - 1]), OSNoRetain);
         if (inChName) {
             const kern_return_t status =
@@ -628,8 +669,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             ivars.audioDevice->SetClockDomain(1))) {
         return error;
     }
-    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const double currentSampleRate = ivars.device.currentSampleRate;
+    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
+        static_cast<uint32_t>(currentSampleRate));
     const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
         ivars.device.vendorId, ivars.device.modelId, ivars.device.guid);
 

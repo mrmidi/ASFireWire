@@ -236,10 +236,14 @@ TEST_F(MusicSubunitTests, SetAudioVolume_SendsCorrectCDB) {
             EXPECT_EQ(cdb.subunit, 0x08); 
             EXPECT_EQ(cdb.opcode, 0xB8); // FUNCTION BLOCK
             
-            // [0]=0x81 (Feature), [1]=PlugID, [2]=0x10 (Current), [3]=Len, [4]=Selector, [5+]=Data
+            // [0]=0x81 (Feature), [1]=PlugID, [2]=0x10 (Current), [3]=Len, [4]=Channel, [5]=Selector
             EXPECT_EQ(cdb.operands[0], 0x81);
             EXPECT_EQ(cdb.operands[1], plugId);
-            EXPECT_EQ(cdb.operands[4], 0x02); // Volume
+            EXPECT_EQ(cdb.operands[4], 0x00); // Channel
+            EXPECT_EQ(cdb.operands[5], 0x02); // Volume Selector
+            EXPECT_EQ(cdb.operands[6], 0x02); // Data length
+            EXPECT_EQ(cdb.operands[7], 0x7F);
+            EXPECT_EQ(cdb.operands[8], 0xFF);
             
             completion(AVCResult::kAccepted, cdb);
         }));

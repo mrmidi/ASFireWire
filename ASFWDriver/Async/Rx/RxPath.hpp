@@ -10,7 +10,6 @@
 #include "ARPacketParser.hpp"
 #include "../../Hardware/OHCIEventCodes.hpp"
 #include "../../Bus/GenerationTracker.hpp"
-#include <memory>
 
 namespace ASFW::Async::Rx {
 
@@ -27,8 +26,7 @@ public:
            PacketRouter& packetRouter);
 
     // This single method will be called by the engine on an RX interrupt.
-    void ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress,
-                             bool isRunning,
+    void ProcessARInterrupts(bool isRunning,
                              Debug::BusResetPacketCapture* busResetCapture);
 
 private:
@@ -60,8 +58,8 @@ private:
     ASFW::Async::Bus::GenerationTracker& generationTracker_;
     PacketRouter& packetRouter_;
 
-    // RxPath owns the parser.
-    std::unique_ptr<ARPacketParser> packetParser_;
+    // Lifetime count of dequeued AR request buffers, drives the [ARReq] heartbeat.
+    uint64_t requestBuffersSeen_ = 0;
 
     // Handle synthetic / general PHY packets coming via PacketRouter
     void HandlePhyRequestPacket(const ARPacketView& view);

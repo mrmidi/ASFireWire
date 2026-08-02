@@ -47,6 +47,12 @@ public:
         TYPE(ASFWAudioNub::ZtsAnchorReady)
         QUEUENAME(Zts);
 
+    // Device-initiated clock change (front panel / external sync): re-sync
+    // the HAL to the device's new rate via a forced configuration change.
+    virtual void DeviceClockChanged(OSAction* action,
+                                    uint32_t nominalRateHz)
+        TYPE(ASFWAudioNub::DeviceClockChanged);
+
     // Protocol-backed boolean control bridge (used by custom control subclass).
     kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,
                                               uint32_t element,

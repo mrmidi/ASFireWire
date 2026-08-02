@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
 // AlesisAudioProfiles.hpp - Alesis FireWire audio device knowledge (DICE/TCAT).

@@ -69,6 +69,10 @@ public:
 
     void TerminateDevice(Guid64 guid) override;
 
+    // Suspend the current generation as soon as the reset edge is observed.
+    // Devices resume only when discovery has rebound a GUID to a new node.
+    void SuspendAllForBusReset();
+
 private:
     void NotifyDeviceAdded(std::shared_ptr<FWDevice> device);
     void NotifyDeviceResumed(std::shared_ptr<FWDevice> device);

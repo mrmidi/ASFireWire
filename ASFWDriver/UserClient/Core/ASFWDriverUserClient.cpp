@@ -70,6 +70,9 @@ enum {
     kMethodGetSBP2CommandResult = 58,
     kMethodSubmitSBP2TaskManagement = 59,
     kMethodReleaseSBP2Session = 60,
+    kMethodRequestUserBusReset = 61,
+    kMethodStartAudioStreaming = 62,
+    kMethodStopAudioStreaming = 63,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -118,6 +121,8 @@ MethodDispatchResult DispatchBusResetMethods(ASFW::UserClient::UserClientRuntime
         return runtimeState.BusReset().GetBusResetHistory(arguments);
     case kMethodClearHistory:
         return runtimeState.BusReset().ClearHistory(arguments);
+    case kMethodRequestUserBusReset:
+        return runtimeState.BusReset().RequestUserReset(arguments);
     default:
         return std::nullopt;
     }
@@ -325,6 +330,16 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
     }
 
     switch (selector) {
+    case kMethodStartAudioStreaming:
+    case kMethodStopAudioStreaming: {
+        const auto guid = GetFirstScalarInput(arguments);
+        if (!guid.has_value() || *guid == 0) {
+            return MethodDispatchResult{kIOReturnBadArgument};
+        }
+        return MethodDispatchResult{selector == kMethodStartAudioStreaming
+                                        ? driver.StartAudioStreaming(*guid)
+                                        : driver.StopAudioStreaming(*guid)};
+    }
     case kMethodGetAudioAutoStart:
         return HandleGetAudioAutoStart(driver, arguments);
     case kMethodGetLogConfig:
@@ -382,6 +397,8 @@ constexpr uint64_t kMethodDiagGetInboundCSRStats  = 1007;
 constexpr uint64_t kMethodDiagClearAsyncTrace     = 1008;
 constexpr uint64_t kMethodDiagGetBusManager       = 1009;
 constexpr uint64_t kMethodDiagGetPostResetTiming  = 1010;
+constexpr uint64_t kMethodDiagGetLogRecords       = 1011;
+constexpr uint64_t kMethodDiagGetLogStats         = 1012;
 
 MethodDispatchResult DispatchDiagnosticsMethods(
     ASFW::UserClient::UserClientRuntimeState& runtimeState,
@@ -409,6 +426,10 @@ MethodDispatchResult DispatchDiagnosticsMethods(
         return runtimeState.Diagnostics().GetBusManager(arguments);
     case kMethodDiagGetPostResetTiming:
         return runtimeState.Diagnostics().GetPostResetTiming(arguments);
+    case kMethodDiagGetLogRecords:
+        return runtimeState.Diagnostics().GetLogRecords(arguments);
+    case kMethodDiagGetLogStats:
+        return runtimeState.Diagnostics().GetLogStats(arguments);
     default:
         return std::nullopt;
     }

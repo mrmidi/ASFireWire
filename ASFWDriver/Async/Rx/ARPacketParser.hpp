@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <array>
@@ -40,10 +41,26 @@ public:
         uint32_t timeStamp;          // From trailer quadlet
     };
 
-    // Parse next packet from buffer at given offset (Phase 2.2: std::span)
-    // Returns packet info if valid packet found, nullopt if buffer exhausted/malformed
-    static std::optional<PacketInfo> ParseNext(std::span<const uint8_t> buffer,
-                                               size_t offset);
+    // Why parsing can stop. The AR stream walker treats these differently:
+    // NeedMoreBytes = fragment at end of filled bytes (stitch across the buffer
+    // boundary or wait for hardware to append more); the others = corrupt head
+    // that will never parse no matter how many bytes arrive.
+    enum class ParseFailure : uint8_t {
+        NeedMoreBytes,
+        UnknownTCode,
+        ZeroGarbage,
+        OversizedPayload,
+    };
+
+    // Parse next packet from buffer at given offset.
+    // The 4-byte OHCI trailer is mandatory: hardware writes header+payload+trailer
+    // as one unit before updating resCount (OHCI §8.4.2), so a packet whose trailer
+    // is not within the filled bytes is by definition a buffer-boundary fragment.
+    // Cross-validated with Linux ohci.c handle_ar_packet() (accepted tCodes
+    // 0x0/0x1/0x2/0x4/0x5/0x6/0x7/0x9/0xB/0xE, unconditional status quadlet,
+    // MAX_ASYNC_PAYLOAD bound; everything else aborts).
+    static std::expected<PacketInfo, ParseFailure> ParseNext(std::span<const uint8_t> buffer,
+                                                             size_t offset);
 
     // Get IEEE 1394 async header length from tCode
     // Per IEEE 1394-1995 Table 6-2 and OHCI §8.4.2
@@ -67,9 +84,7 @@ private:
     static constexpr uint8_t kTCodeReadBlock = 0x5;
     static constexpr uint8_t kTCodeReadQuadletResponse = 0x6;
     static constexpr uint8_t kTCodeReadBlockResponse = 0x7;
-    static constexpr uint8_t kTCodeCycleStart = 0x8;
     static constexpr uint8_t kTCodeLockRequest = 0x9;
-    static constexpr uint8_t kTCodeIsochronousBlock = 0xA;
     static constexpr uint8_t kTCodeLockResponse = 0xB;
     static constexpr uint8_t kTCodePhyPacket = 0xE;
 };

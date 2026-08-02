@@ -125,11 +125,11 @@ bool IsMusicSubunitType(ASFW::Protocols::AVC::AVCSubunitType type) noexcept {
 std::optional<SubunitLookupRequest>
 ParseSubunitLookupRequest(IOUserClientMethodArguments* args, const char* operation) {
     if (!args) {
-        ASFW_LOG(UserClient, "%s: null arguments", operation);
+        ASFW_LOG(UserClient, "%{public}s: null arguments", operation);
         return std::nullopt;
     }
     if (args->scalarInputCount < 4) {
-        ASFW_LOG(UserClient, "%s: missing inputs", operation);
+        ASFW_LOG(UserClient, "%{public}s: missing inputs", operation);
         return std::nullopt;
     }
 

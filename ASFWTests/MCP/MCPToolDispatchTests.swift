@@ -104,6 +104,173 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
 
+    @Test func developerFcpCommandReturnsRouteBoundReceipt() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("control")
+        args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x19)])
+
+        let result = await transport.callTool("asfw_fcp_send_command_dev", arguments: .object(args))
+
+        let data = try object(result)
+        #expect(result.ok)
+        #expect(data["kind"] == .string("fcpCommand"))
+        #expect(data["status"] == .string("ok"))
+        #expect(data["targetGuid"] == .string("0x0011223344556677"))
+        #expect(data["expectedNodeId"] == .int(0))
+        #expect(data["expectedGeneration"] == .int(17))
+        #expect(data["observedNodeId"] == .int(0))
+        #expect(await driver.unexpectedWriteAttemptCount() == 1)
+    }
+
+    @Test func guardedDuetFormatTransitionPreflightsAppliesAndVerifies() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["sampleRateHz"] = .int(44100)
+        args["acknowledgeInterruption"] = .bool(true)
+
+        let result = await transport.callTool("asfw_apogee_duet_apply_format_dev", arguments: .object(args))
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["kind"] == .string("apogeeDuetFormatTransition"))
+        #expect(data["status"] == .string("verified"))
+        #expect(data["inputFdf"] == .int(1))
+        #expect(data["outputFdf"] == .int(1))
+        #expect(await driver.unexpectedWriteAttemptCount() == 6)
+    }
+
+    @Test func guardedDuetFormatTransitionDoesNotReachDriverWhenPolicyIsClosed() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["sampleRateHz"] = .int(44100)
+        args["acknowledgeInterruption"] = .bool(true)
+
+        let result = await transport.callTool("asfw_apogee_duet_apply_format_dev", arguments: .object(args))
+        let data = try object(result)
+
+        #expect(result.ok == false)
+        #expect(data["status"] == .string("denied"))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func readOnlyFcpStatusCommandRoutesThroughDriver() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("status")
+        // UNIT_INFO status, padded to one quadlet as ASFW's AVCUnit emits it.
+        args["payload"] = .array([.int(0x01), .int(0xFF), .int(0x30), .int(0x00)])
+
+        let result = await transport.callTool("asfw_fcp_send_command", arguments: .object(args))
+
+        let data = try object(result)
+        #expect(result.ok)
+        #expect(data["status"] == .string("ok"))
+        #expect(data["expectedNodeId"] == .int(0))
+        #expect(data["expectedGeneration"] == .int(17))
+        #expect(data["observedNodeId"] == .int(0))
+        #expect(await driver.unexpectedWriteAttemptCount() == 1)
+    }
+
+    @Test func avcInventoryExposesDecodedDriverStateWithoutFcpTraffic() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+
+        let result = await transport.callTool("asfw_avc_list_units")
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["kind"] == .string("avcUnitInventory"))
+        #expect(data["units"] == .array([.object([
+            "guid": .string("0x0011223344556677"),
+            "nodeId": .int(0),
+            "vendorId": .string("0x0003DB"),
+            "modelId": .string("0x01DDDD"),
+            "plugs": .object([
+                "isoInput": .int(1), "isoOutput": .int(1),
+                "externalInput": .int(1), "externalOutput": .int(1),
+            ]),
+            "subunits": .array([.object([
+                "type": .int(12), "id": .int(0),
+                "sourcePlugCount": .int(1), "destinationPlugCount": .int(1),
+            ])]),
+        ])]))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func avcCapabilitiesRequireDiscoveredGuidAndSubunit() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        let args: ASFWMCPValue = .object([
+            "targetGuid": .uint64(0x0011223344556677),
+            "subunitType": .int(0x0C),
+            "subunitId": .int(0),
+        ])
+
+        let result = await transport.callTool("asfw_avc_get_subunit_capabilities", arguments: args)
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["kind"] == .string("avcSubunitCapabilities"))
+        #expect(data["targetGuid"] == .string("0x0011223344556677"))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func avcCapabilitiesRefuseUnavailableDiscoveryTargetWithoutFcpTraffic() async {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        let args: ASFWMCPValue = .object([
+            "targetGuid": .uint64(0xDEAD_BEEF_0000_0001),
+            "subunitType": .int(0x0C),
+            "subunitId": .int(0),
+        ])
+
+        let result = await transport.callTool("asfw_avc_get_subunit_capabilities", arguments: args)
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .capabilityUnavailable)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func readOnlyFcpRejectsControlFrameClaimedAsStatus() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("status")
+        args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x30), .int(0x00)])
+
+        let result = await transport.callTool("asfw_fcp_send_command", arguments: .object(args))
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .malformedRequest)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func developerFcpCommandRefusesStaleGenerationBeforeDriverAccess() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
+        var args = addressArgs(nodeId: 0, generation: 16, addressLow: 0xF0000B00)
+        args["targetGuid"] = .uint64(0x0011223344556677)
+        args["intent"] = .string("control")
+        args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x19)])
+
+        let result = await transport.callTool("asfw_fcp_send_command_dev", arguments: .object(args))
+
+        let data = try object(result)
+        #expect(result.ok == false)
+        #expect(data["status"] == .string("denied"))
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func mockModeDryRunDoesNotReachDriverWritePath() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .mock, driver: driver))

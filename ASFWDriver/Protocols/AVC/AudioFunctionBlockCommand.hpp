@@ -23,8 +23,14 @@ public:
         kStatus
     };
 
+    enum class BlockType : uint8_t {
+        kSelector = 0x80,
+        kFeature = 0x81
+    };
+
     enum class ControlSelector : uint8_t {
         kMute = 0x01,
+        kSelectorControl = 0x01,
         kVolume = 0x02,
         kLRBalance = 0x03,
         kDelay = 0x0A,
@@ -32,7 +38,7 @@ public:
         kCurrentStatus = 0x10
     };
     
-    /// Constructor
+    /// Constructor (default to Feature block)
     /// @param submitter Command submitter
     /// @param subunitAddr Subunit address (usually Audio 0x01 or Music 0x0C)
     /// @param type Command type (Control, Status)
@@ -42,6 +48,22 @@ public:
     AudioFunctionBlockCommand(IAVCCommandSubmitter& submitter,
                               uint8_t subunitAddr,
                               CommandType type,
+                              uint8_t functionBlockId,
+                              ControlSelector selector,
+                              std::vector<uint8_t> data = {});
+
+    /// Constructor with explicit BlockType
+    /// @param submitter Command submitter
+    /// @param subunitAddr Subunit address
+    /// @param type Command type (Control, Status)
+    /// @param blockType Selector or Feature block
+    /// @param functionBlockId The ID of the function block
+    /// @param selector The control selector
+    /// @param data Additional control data
+    AudioFunctionBlockCommand(IAVCCommandSubmitter& submitter,
+                              uint8_t subunitAddr,
+                              CommandType type,
+                              BlockType blockType,
                               uint8_t functionBlockId,
                               ControlSelector selector,
                               std::vector<uint8_t> data = {});
@@ -56,6 +78,7 @@ private:
 
     static AVCCdb BuildCdb(uint8_t subunitAddr,
                            CommandType type,
+                           BlockType blockType,
                            uint8_t functionBlockId,
                            ControlSelector selector,
                            const std::vector<uint8_t>& data);

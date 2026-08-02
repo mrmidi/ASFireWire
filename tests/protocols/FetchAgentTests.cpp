@@ -45,7 +45,6 @@ struct Rig {
             .generation = 1,
             .nodeID = 0x02,
             .fetchAgentAddress = MakeAddr(0xFFFF, 0x0000'0050u, 0x02),
-            .doorbellAddress = MakeAddr(0xFFFF, 0x0000'0054u, 0x02),
             .agentResetAddress = MakeAddr(0xFFFF, 0x0000'0058u, 0x02),
             .maxPayloadSize = 2048,
         };
@@ -75,7 +74,7 @@ TEST(FetchAgentTests, ImmediateSubmitWritesToFetchAgentAndArmsTimeoutOnSuccess) 
     agent.Bind(rig.Binding());
 
     SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
-    orb.SetFlags(SBP2CommandORB::kImmediate | SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
     orb.SetTimeout(500);
     int completions = 0;
     int lastSbp = -1;
@@ -105,7 +104,7 @@ TEST(FetchAgentTests, OrbTimeoutFailsCommandWhenNoStatusArrives) {
     agent.Bind(rig.Binding());
 
     SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x2), 16);
-    orb.SetFlags(SBP2CommandORB::kImmediate);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
     orb.SetTimeout(500);
     int completions = 0;
     int lastTransport = 0;
@@ -125,6 +124,36 @@ TEST(FetchAgentTests, OrbTimeoutFailsCommandWhenNoStatusArrives) {
     EXPECT_EQ(-1, lastTransport);
 }
 
+// Status can be processed before the fetch-agent write's own completion when the
+// target ack_pends the write. The ORB is completed (and freed by its owner) on the
+// status path, so the late write completion must not touch it: no re-fire, no
+// retry armed against the already-delivered command. Guards the activeFetchAgentORB_
+// dangling-pointer regression that dropping the link anchor would otherwise expose.
+TEST(FetchAgentTests, StatusBeforeWriteCompletionSuppressesLateWriteHandling) {
+    Rig rig;
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x4), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(500);
+    int completions = 0;
+    orb.SetCompletionCallback([&](int, uint8_t) { ++completions; });
+
+    ASSERT_TRUE(agent.Submit(&orb));
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());      // fetch-agent write still in flight
+
+    // Status arrives and completes the ORB before the write completion is serviced.
+    ASSERT_TRUE(agent.OnStatusBlock(StatusFor(orb.GetORBAddress(), 0x00), Wire::StatusBlock::kMaxSize));
+    EXPECT_EQ(1, completions);
+    EXPECT_EQ(0u, rig.scheduler.PendingCount());     // no timeout armed post-completion
+
+    // Late write completion (even a failure) must be inert for the retired ORB.
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(AsyncStatus::kHardwareError));
+    EXPECT_EQ(1, completions);                        // not re-fired
+    EXPECT_EQ(0u, rig.scheduler.PendingCount());      // no retry scheduled
+}
+
 TEST(FetchAgentTests, WriteRetryExhaustionFailsOrbAndResetsAgent) {
     Rig rig;
     FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
@@ -132,7 +161,7 @@ TEST(FetchAgentTests, WriteRetryExhaustionFailsOrbAndResetsAgent) {
     agent.SetWriteRetriesForTesting(0);              // no retries → first failure is terminal
 
     SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x3), 16);
-    orb.SetFlags(SBP2CommandORB::kImmediate);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
     orb.SetTimeout(500);
     int completions = 0;
     int lastTransport = 0;

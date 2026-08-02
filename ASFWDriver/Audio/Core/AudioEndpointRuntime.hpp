@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
 #pragma once
 
 #include "../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../Model/ASFWAudioDevice.hpp"
-#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -51,6 +51,39 @@ public:
             IOLockUnlock(lock_);
         }
         configValid_.store(true, std::memory_order_release);
+    }
+
+    // Update only the current sample rate. The DICE clock can change (Audio MIDI
+    // Setup / Logic) without a full config rebuild; the next StartIO seeds the
+    // direct-binding/ZTS clock from the live rate, so this must reflect it or
+    // CoreAudio sees the device clock advancing at the wrong rate and churns
+    // StartIO/StopIO.
+    //
+    // The binding the IR actually reads reports directSampleRateHz_, not
+    // config_.currentSampleRate. That field (and directGeneration_) is latched
+    // only when the direct-audio memory is allocated in
+    // EnsureDirectAudioMemoryLocked, which does not re-run on an idle rate change
+    // because the ring buffers are rate-independent (fixed kAudioRingBufferFrames)
+    // and are allocated once at bring-up then reused. So updating config_ alone
+    // leaves the binding (and the ZTS the HAL judges) stuck at the publish-time
+    // 48 kHz. Refresh directSampleRateHz_ and bump the generation here so
+    // CopyDirectAudioBinding reports the new rate and the IR re-arms the RX/ZTS
+    // clock at it.
+    void SetCurrentSampleRate(uint32_t sampleRateHz) noexcept {
+        if (sampleRateHz == 0) {
+            return;
+        }
+        if (lock_) {
+            IOLockLock(lock_);
+        }
+        config_.currentSampleRate = sampleRateHz;
+        if (directSampleRateHz_ != 0 && directSampleRateHz_ != sampleRateHz) {
+            directSampleRateHz_ = sampleRateHz;
+            ++directGeneration_;
+        }
+        if (lock_) {
+            IOLockUnlock(lock_);
+        }
     }
 
     [[nodiscard]] bool CopyConfig(Model::ASFWAudioDevice& outConfig) const noexcept {
@@ -397,8 +430,8 @@ private:
         const uint32_t inputChannels = ClampAudioChannels(
             config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
-        const uint32_t outputFrames = IsochTransport::kAudioRingBufferFrames;
-        const uint32_t inputFrames = IsochTransport::kAudioRingBufferFrames;
+        const uint32_t outputFrames = Isoch::Config::kAudioRingBufferFrames;
+        const uint32_t inputFrames = Isoch::Config::kAudioRingBufferFrames;
 
         if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0) {
             ASFW_LOG(DirectAudio,

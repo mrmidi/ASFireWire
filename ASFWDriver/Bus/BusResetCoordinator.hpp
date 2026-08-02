@@ -195,8 +195,9 @@ class BusResetCoordinator {
      */
     void EscalateDiscoveryDelay();
 
-    /// Request a user-initiated bus reset (short or long).
-    void RequestUserReset(bool shortReset);
+    /// Request a manually initiated bus reset (short or long). `reason` is a
+    /// static string surfaced in the reset-cycle logs.
+    void RequestUserReset(bool shortReset, const char* reason = "UserClient-initiated");
 
     /// Request a RoleCoordinator-initiated PHY config + bus reset.
     void RequestRolePolicyReset(uint8_t targetRoot, bool longReset,

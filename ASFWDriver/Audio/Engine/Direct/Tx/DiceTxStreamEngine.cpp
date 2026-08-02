@@ -3,34 +3,38 @@
 namespace ASFW::Protocols::Audio::DICE {
 
 AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
-    const ASFW::Isoch::Audio::DICE::DiceStreamConfig& diceConfig) noexcept {
+    const ASFW::Isoch::Audio::AudioStreamConfig& streamConfig) noexcept {
     AMDTP::AmdtpStreamConfig config{};
-    config.sampleRate = diceConfig.sampleRate;
-    config.streamMode = (diceConfig.streamMode == ASFW::Encoding::StreamMode::kBlocking) 
+    config.sampleRate = streamConfig.sampleRate;
+    config.streamMode = (streamConfig.streamMode == ASFW::Encoding::StreamMode::kBlocking)
                         ? AMDTP::StreamMode::Blocking 
                         : AMDTP::StreamMode::NonBlocking;
-    config.sid = diceConfig.sid;
-    config.dbs = diceConfig.dbs;
-    config.pcmChannels = diceConfig.pcmChannels;
-    config.midiSlots = diceConfig.midiSlots;
-    config.fmt = diceConfig.fmt;
-    config.fdf = diceConfig.fdf;
-    config.framesPerDataPacket = diceConfig.framesPerDataPacket;
-    // maxPacketBytes keeps the AmdtpStreamConfig default (512), matching the
-    // lab slot capacity and the ASFW IT ring payload budget.
+    config.sid = streamConfig.sid;
+    config.dbs = streamConfig.dbs;
+    config.pcmChannels = streamConfig.pcmChannels;
+    config.midiSlots = streamConfig.midiSlots;
+    config.fmt = streamConfig.fmt;
+    config.fdf = streamConfig.fdf;
+    config.framesPerDataPacket = streamConfig.framesPerDataPacket;
+    config.sourceChannelOffset = streamConfig.sourceChannelOffset;
+    // Compute the true max packet size: CIP headers (8 bytes) + frames × DBS × 4 bytes/slot.
+    // Do not use the AmdtpStreamConfig default (512) — it is too small for high-channel
+    // devices (e.g. a 24-channel device with DBS=24 needs 776 bytes at 8 fpd).
+    config.maxPacketBytes = 8u +
+        static_cast<uint32_t>(streamConfig.framesPerDataPacket) * streamConfig.dbs * 4u;
     return config;
 }
 
-bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile,
-                                   const ASFW::Isoch::Audio::DICE::DiceStreamConfig& txConfig) noexcept {
-    if (txConfig.direction != ASFW::Isoch::Audio::DICE::DiceStreamDirection::HostToDevice) {
+bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
+                                   const ASFW::Isoch::Audio::AudioStreamConfig& txConfig) noexcept {
+    if (txConfig.direction != ASFW::Isoch::Audio::AudioStreamDirection::HostToDevice) {
         return false;
     }
 
-    const ASFW::Isoch::Audio::DICE::DiceDeviceQuirks quirks = profile.Quirks();
+    const ASFW::Isoch::Audio::AudioStreamTxPolicy txPolicy = profile.TxStreamPolicy();
     const AMDTP::AmdtpStreamConfig amdtpConfig =
         DiceStreamConfigMapper::ToAmdtpConfig(txConfig);
-    const AMDTP::AmdtpTxPolicy policy = BuildTxPolicy(quirks);
+    const AMDTP::AmdtpTxPolicy policy = BuildTxPolicy(txPolicy);
 
     const uint32_t slotCount =
         static_cast<uint32_t>(sizeof(timelineSlots_) / sizeof(timelineSlots_[0]));
@@ -46,8 +50,8 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::DICE::IDiceDevicePr
     payloadWriter_.BindTimeline(&timeline_);
 
     profile_ = &profile;
-    diceConfig_ = txConfig;
-    quirks_ = quirks;
+    streamConfig_ = txConfig;
+    txPolicy_ = txPolicy;
     return true;
 }
 
@@ -64,6 +68,10 @@ void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc,
 
 bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
     return packetizer_.AlignFrameCursorOnce(frameIndex);
+}
+
+void DiceTxStreamEngine::ReArmFrameCursorAlignment() noexcept {
+    packetizer_.ReArmFrameCursorAlignment();
 }
 
 TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
@@ -114,6 +122,15 @@ const AMDTP::AmdtpPacketTimeline& DiceTxStreamEngine::Timeline() const noexcept 
     return timeline_;
 }
 
+const AMDTP::AmdtpStreamConfig& DiceTxStreamEngine::StreamConfig() const noexcept {
+    return packetizer_.StreamConfig();
+}
+
+AMDTP::AmdtpTxPacketizerTelemetrySnapshot
+DiceTxStreamEngine::PacketizerTelemetrySnapshot() const noexcept {
+    return packetizer_.TelemetrySnapshot();
+}
+
 const DiceTxEngineCounters& DiceTxStreamEngine::Counters() const noexcept {
     return counters_;
 }
@@ -124,18 +141,18 @@ DiceTxStreamEngine::PayloadWriterCounters() const noexcept {
 }
 
 AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
-    const ASFW::Isoch::Audio::DICE::DiceDeviceQuirks& quirks) const noexcept {
+    const ASFW::Isoch::Audio::AudioStreamTxPolicy& streamPolicy) const noexcept {
     AMDTP::AmdtpTxPolicy policy{};
-    policy.hostToDevicePcmEncoding = (quirks.tx.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kRawPcm24In32)
+    policy.hostToDevicePcmEncoding = (streamPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kRawPcm24In32)
                                      ? AMDTP::PcmSlotEncoding::RawSigned24In32BE
                                      : AMDTP::PcmSlotEncoding::Am824MBLA;
-    policy.dbsPolicy = (quirks.tx.dbsPolicy == ASFW::Isoch::Audio::DICE::DbsPolicy::VariablePerPacket)
+    policy.dbsPolicy = streamPolicy.variableDbs
                        ? AMDTP::DbsPolicy::VariablePerPacket
                        : AMDTP::DbsPolicy::Constant;
-    policy.defaultNonAudioSlotWord = quirks.tx.defaultNonAudioSlotWord;
-    policy.initializeNonAudioSlots = quirks.tx.initializeNonAudioSlots;
-    policy.preserveFdfInNoDataPackets =
-        quirks.tx.preserveFdfInNoDataPackets;
+    policy.defaultNonAudioSlotWord = streamPolicy.defaultNonAudioSlotWord;
+    policy.initializeNonAudioSlots = streamPolicy.initializeNonAudioSlots;
+    policy.preserveFdfInNoDataPackets = streamPolicy.preserveFdfInNoDataPackets;
+    policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
     policy.clearPayloadBeforeExposure = true;
     return policy;
 }

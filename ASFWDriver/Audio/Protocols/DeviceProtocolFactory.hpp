@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // DeviceProtocolFactory.hpp - Factory for creating device-specific protocol handlers
@@ -15,9 +15,17 @@
 #include <memory>
 #include <optional>
 
+namespace ASFW::CMP {
+class CMPClient;
+}
+
 namespace ASFW::IRM {
 class IRMClient;
 }
+
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+} // namespace ASFW::Scheduling
 
 namespace ASFW::Audio {
 
@@ -52,8 +60,16 @@ public:
     static constexpr uint32_t kSPro40Tcd3070ModelId = DeviceProfiles::Audio::kSPro40Tcd3070ModelId;
     static constexpr uint32_t kApogeeVendorId = DeviceProfiles::Audio::kApogeeVendorId;
     static constexpr uint32_t kApogeeDuetModelId = DeviceProfiles::Audio::kApogeeDuetModelId;
+    static constexpr uint32_t kTerraTecVendorId = DeviceProfiles::Audio::kTerraTecVendorId;
+    static constexpr uint32_t kPhase88RackFwModelId =
+        DeviceProfiles::Audio::kPhase88RackFwModelId;
     static constexpr uint32_t kAlesisVendorId = DeviceProfiles::Audio::kAlesisVendorId;
     static constexpr uint32_t kAlesisMultiMixModelId = DeviceProfiles::Audio::kAlesisMultiMixModelId;
+    static constexpr uint32_t kMidasVendorId = DeviceProfiles::Audio::kMidasVendorId;
+    static constexpr uint32_t kMidasVeniceModelId = DeviceProfiles::Audio::kMidasVeniceModelId;
+    static constexpr uint32_t kPreSonusVendorId = DeviceProfiles::Audio::kPreSonusVendorId;
+    static constexpr uint32_t kStudioLive1602ModelId =
+        DeviceProfiles::Audio::kStudioLive1602ModelId;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 =
         DeviceProfiles::Audio::kFocusriteGuidModelSPro40Tcd3070;
     static constexpr const char* kFocusriteVendorName = DeviceProfiles::Audio::kFocusriteVendorName;
@@ -70,6 +86,12 @@ public:
     static constexpr const char* kAlesisVendorName = DeviceProfiles::Audio::kAlesisVendorName;
     static constexpr const char* kAlesisMultiMixModelName =
         DeviceProfiles::Audio::kAlesisMultiMixModelName;
+    static constexpr const char* kMidasVendorName = DeviceProfiles::Audio::kMidasVendorName;
+    static constexpr const char* kMidasVeniceModelName =
+        DeviceProfiles::Audio::kMidasVeniceModelName;
+    static constexpr const char* kPreSonusVendorName = DeviceProfiles::Audio::kPreSonusVendorName;
+    static constexpr const char* kStudioLive1602ModelName =
+        DeviceProfiles::Audio::kStudioLive1602ModelName;
 
     struct KnownIdentity {
         uint32_t vendorId{0};
@@ -137,7 +159,10 @@ public:
         Protocols::Ports::FireWireBusOps& busOps,
         Protocols::Ports::FireWireBusInfo& busInfo,
         uint16_t nodeId,
-        ::ASFW::IRM::IRMClient* irmClient = nullptr
+        uint64_t deviceGuid,
+        ::ASFW::IRM::IRMClient* irmClient = nullptr,
+        ::ASFW::CMP::CMPClient* cmpClient = nullptr,
+        Scheduling::ITimerScheduler* timerScheduler = nullptr
     );
 
 private:

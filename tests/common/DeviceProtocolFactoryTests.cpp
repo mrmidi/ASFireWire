@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
 
@@ -59,6 +59,16 @@ TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
                   DeviceProtocolFactory::kAlesisVendorId,
                   DeviceProtocolFactory::kAlesisMultiMixModelId),
               DeviceIntegrationMode::kHardcodedNub);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kMidasVendorId,
+                  DeviceProtocolFactory::kMidasVeniceModelId),
+              DeviceIntegrationMode::kHardcodedNub);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kPreSonusVendorId,
+                  DeviceProtocolFactory::kStudioLive1602ModelId),
+              DeviceIntegrationMode::kHardcodedNub);
 }
 
 TEST(DeviceProtocolFactoryTests, RejectsUnknownDevices) {
@@ -103,6 +113,14 @@ TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
         DeviceProtocolFactory::kAlesisVendorId,
         DeviceProtocolFactory::kAlesisMultiMixModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kMidasVendorId,
+        DeviceProtocolFactory::kMidasVeniceModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kPreSonusVendorId,
+        DeviceProtocolFactory::kStudioLive1602ModelId));
 }
 
 TEST(DeviceProtocolFactoryTests, InfersFocusriteIdentityFromGuid) {
@@ -155,6 +173,24 @@ TEST(DeviceProtocolFactoryTests, RecognizesAlesisMultiMixDiceProfile) {
     EXPECT_EQ(multiMix->integrationMode, DeviceIntegrationMode::kHardcodedNub);
     EXPECT_STREQ(multiMix->vendorName, DeviceProtocolFactory::kAlesisVendorName);
     EXPECT_STREQ(multiMix->modelName, DeviceProtocolFactory::kAlesisMultiMixModelName);
+}
+
+TEST(DeviceProtocolFactoryTests, RecognizesMidasVeniceDiceProfile) {
+    const auto venice = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kMidasVendorId, DeviceProtocolFactory::kMidasVeniceModelId);
+    ASSERT_TRUE(venice.has_value());
+    EXPECT_EQ(venice->integrationMode, DeviceIntegrationMode::kHardcodedNub);
+    EXPECT_STREQ(venice->vendorName, DeviceProtocolFactory::kMidasVendorName);
+    EXPECT_STREQ(venice->modelName, DeviceProtocolFactory::kMidasVeniceModelName);
+}
+
+TEST(DeviceProtocolFactoryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
+    const auto studioLive = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kPreSonusVendorId, DeviceProtocolFactory::kStudioLive1602ModelId);
+    ASSERT_TRUE(studioLive.has_value());
+    EXPECT_EQ(studioLive->integrationMode, DeviceIntegrationMode::kHardcodedNub);
+    EXPECT_STREQ(studioLive->vendorName, DeviceProtocolFactory::kPreSonusVendorName);
+    EXPECT_STREQ(studioLive->modelName, DeviceProtocolFactory::kStudioLive1602ModelName);
 }
 
 } // namespace

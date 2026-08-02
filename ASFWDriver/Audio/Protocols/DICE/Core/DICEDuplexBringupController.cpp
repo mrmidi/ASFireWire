@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // DICEDuplexBringupController.cpp - Raw-reference duplex startup for generic DICE devices
@@ -65,6 +65,36 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
         tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
     caps.hostToDeviceIsoChannel =
         rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
+
+    // Per-stream wire geometry. Stream count comes from the DICE stream-format
+    // header (TX_NUMBER/RX_NUMBER), which includes streams the device reports
+    // with iso=-1 (disabled) that the host must still arm for a multi-stream
+    // device such as the Venice F32 (2×16 channels). The discovered isoChannel
+    // is carried through but the host reassigns it during channel resolution.
+    auto fillPerStream = [](const StreamConfig& sc,
+                            uint32_t& outCount,
+                            AudioStreamWireInfo* outStreams) noexcept {
+        const uint32_t count =
+            (sc.numStreams < kMaxAudioStreamsPerDirection)
+                ? sc.numStreams
+                : kMaxAudioStreamsPerDirection;
+        outCount = count;
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto& entry = sc.streams[i];
+            outStreams[i].isoChannel =
+                (entry.isoChannel >= 0 && entry.isoChannel <= 0x3F)
+                    ? static_cast<uint8_t>(entry.isoChannel)
+                    : AudioStreamWireInfo::kInvalidIsoChannel;
+            outStreams[i].pcmChannels =
+                static_cast<uint16_t>(entry.pcmChannels);
+            outStreams[i].am824Slots =
+                static_cast<uint16_t>(entry.Am824Slots());
+            outStreams[i].midiPorts =
+                static_cast<uint16_t>(entry.midiPorts);
+        }
+    };
+    fillPerStream(tx, caps.deviceToHostStreamCount, caps.deviceToHostStreams);
+    fillPerStream(rx, caps.hostToDeviceStreamCount, caps.hostToDeviceStreams);
 }
 
 } // namespace
@@ -127,9 +157,9 @@ void DICEDuplexBringupController::ConfirmDuplexStart(ConfirmCallback callback) {
         });
 }
 
-void DICEDuplexBringupController::ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
-                                                   ClockApplyCallback callback) {
-    if (!IsSupportedClockConfig(desiredClock)) {
+void DICEDuplexBringupController::ApplyClockConfig(
+    const DiceClockConfiguration& desiredClock, ClockApplyCallback callback) {
+    if (!IsSupportedDiceClockConfiguration(desiredClock)) {
         callback(kIOReturnUnsupported, {});
         return;
     }
@@ -147,10 +177,11 @@ void DICEDuplexBringupController::ApplyClockConfig(const DiceDesiredClockConfig&
     flowMode_ = FlowMode::kClockApply;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
+    diceClock_ = desiredClock;
     restartSession_ = DiceRestartSession{
         .generation = busInfo_.GetGeneration(),
         .reason = DiceRestartReason::kManualReconfigure,
-        .desiredClock = desiredClock,
+        .desiredClock = AudioClockConfig{.sampleRateHz = desiredClock.sampleRateHz},
         .phase = DiceRestartPhase::kPreparingDevice,
     };
     runtimeCaps_ = {};
@@ -267,13 +298,16 @@ void DICEDuplexBringupController::PrepareDuplex48k(
     flowMode_ = FlowMode::kPrepareDuplex;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
+    diceClock_ = DiceClockConfiguration{
+        .sampleRateHz = 48000U,
+        .clockSelect = kDiceClockSelect48kInternal,
+    };
     restartSession_ = DiceRestartSession{
         .generation = busInfo_.GetGeneration(),
         .channels = channels,
         .reason = DiceRestartReason::kInitialStart,
-        .desiredClock = DiceDesiredClockConfig{
+        .desiredClock = AudioClockConfig{
             .sampleRateHz = 48000U,
-            .clockSelect = kDiceClockSelect48kInternal,
         },
         .phase = DiceRestartPhase::kPreparingDevice,
     };
@@ -294,7 +328,7 @@ void DICEDuplexBringupController::PrepareDuplex48k(
 
 void DICEDuplexBringupController::PrepareDuplex(
     const AudioDuplexChannels& channels,
-    const DiceDesiredClockConfig& desiredClock,
+    const DiceClockConfiguration& desiredClock,
     PrepareCallback callback) {
     if (channels.deviceToHostIsoChannel > 63 || channels.hostToDeviceIsoChannel > 63) {
         callback(kIOReturnBadArgument, {});
@@ -304,7 +338,7 @@ void DICEDuplexBringupController::PrepareDuplex(
         callback(kIOReturnNotReady, {});
         return;
     }
-    if (!IsSupportedClockConfig(desiredClock)) {
+    if (!IsSupportedDiceClockConfiguration(desiredClock)) {
         callback(kIOReturnUnsupported, {});
         return;
     }
@@ -320,11 +354,12 @@ void DICEDuplexBringupController::PrepareDuplex(
     refreshRuntimeCapsOnPrepare_ = true;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
+    diceClock_ = desiredClock;
     restartSession_ = DiceRestartSession{
         .generation = busInfo_.GetGeneration(),
         .channels = channels,
         .reason = DiceRestartReason::kInitialStart,
-        .desiredClock = desiredClock,
+        .desiredClock = AudioClockConfig{.sampleRateHz = desiredClock.sampleRateHz},
         .phase = DiceRestartPhase::kPreparingDevice,
     };
     runtimeCaps_ = {};
@@ -405,11 +440,13 @@ void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
                                     return;
                                 }
 
+                                preClaimClockSelect_ = state.clockSelect;
                                 ASFW_LOG(DICE,
-                                         "PrepareDuplex48k: global pre-claim owner=0x%016llx enable=%u notify=0x%08x",
+                                         "PrepareDuplex48k: global pre-claim owner=0x%016llx enable=%u notify=0x%08x clockSelect=0x%08x",
                                          state.owner,
                                          state.enabled ? 1U : 0U,
-                                         state.notification);
+                                         state.notification,
+                                         state.clockSelect);
                                 DoReadOwnerBeforeClaim(channels, std::move(cb));
                             });
 }
@@ -501,9 +538,22 @@ void DICEDuplexBringupController::DoWriteClockSelect(
         return;
     }
 
+    // Skip a redundant CLOCK_SELECT write when the device is already at the target
+    // clock (e.g. an idle ApplyClockConfig already applied this rate). Rewriting it
+    // re-triggers the PLL relock during the bring-up, right as streams are being
+    // enabled, which wedges the device-side streams. The downstream stable-lock gate
+    // (DoAwaitStreamingClockLock) still waits for the lock to settle before enabling.
+    if (preClaimClockSelect_ == diceClock_.clockSelect) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: device already at target clockSelect=0x%08x; skipping redundant write",
+                 diceClock_.clockSelect);
+        DoActiveClockCheck(channels, NotificationMailbox::Consume(), std::move(cb));
+        return;
+    }
+
     NotificationMailbox::Reset();
     (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kClockSelect),
-                    restartSession_.desiredClock.clockSelect,
+                    diceClock_.clockSelect,
                     [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus) mutable {
                          const IOReturn status = MapTransportStatus(transportStatus);
                          if (status != kIOReturnSuccess) {
@@ -567,7 +617,7 @@ void DICEDuplexBringupController::DoActiveClockCheck(
                                         DoCompleteClockApply(std::move(cb));
                                         return;
                                     }
-                                    DoDiscoverStreams(channels, 0, std::move(cb));
+                                    DoAwaitStreamingClockLock(channels, 0, std::move(cb));
                                     return;
                                 }
 
@@ -671,7 +721,7 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
                                 const bool sampleRateAtTarget =
                                     state.sampleRate == restartSession_.desiredClock.sampleRateHz;
 
-                                if (state.clockSelect != restartSession_.desiredClock.clockSelect) {
+                                if (state.clockSelect != diceClock_.clockSelect) {
                                     ASFW_LOG(DICE,
                                              "PrepareDuplex48k: clock confirm failed, clockSelect=0x%08x notify=0x%08x status=0x%08x sampleRate=%u",
                                              state.clockSelect,
@@ -704,8 +754,63 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
                                     return;
                                 }
 
-                                DoDiscoverStreams(channels, 0, std::move(cb));
+                                DoAwaitStreamingClockLock(channels, 0, std::move(cb));
                             });
+}
+
+void DICEDuplexBringupController::DoAwaitStreamingClockLock(
+    AudioDuplexChannels channels,
+    uint32_t attempt,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    // The clock "confirm" above can fire on the device's CLOCK_ACCEPTED ack alone,
+    // which only means the device received the CLOCK_SELECT write -- NOT that its PLL
+    // has re-locked at the new rate. Enabling the isoch streams while the PLL is still
+    // relocking (status reports the old rate / locked=0) wedges the device until a hard
+    // reset: a rate change then kills audio permanently, even after switching back to
+    // 48 kHz (HW-observed). So before programming/enabling streams, poll the global
+    // status until it reports a stable lock at the target rate. A same-rate restart is
+    // already locked, so this returns on the first read.
+    diceReader_.ReadGlobalStateFull(
+        sections_,
+        [this, channels, attempt, cb = std::move(cb)](IOReturn status, GlobalState state) mutable {
+            if (status != kIOReturnSuccess) {
+                DoRollback(status, std::move(cb));
+                return;
+            }
+
+            const bool lockedAtTarget =
+                IsSourceLocked(state.status) &&
+                NominalRateHz(state.status) == restartSession_.desiredClock.sampleRateHz &&
+                state.sampleRate == restartSession_.desiredClock.sampleRateHz;
+
+            if (lockedAtTarget) {
+                if (attempt > 0) {
+                    ASFW_LOG(DICE,
+                             "PrepareDuplex48k: streaming clock stable-locked at %u Hz after %u ms; enabling streams",
+                             state.sampleRate, attempt * kPollIntervalMs);
+                }
+                DoDiscoverStreams(channels, 0, std::move(cb));
+                return;
+            }
+
+            if (attempt * kPollIntervalMs >= kAsyncTimeoutMs) {
+                ASFW_LOG(DICE,
+                         "PrepareDuplex48k: clock not stable-locked within %u ms (status=0x%08x rate=%u target=%u); aborting bring-up",
+                         kAsyncTimeoutMs, state.status, state.sampleRate,
+                         restartSession_.desiredClock.sampleRateHz);
+                DoRollback(kIOReturnTimeout, std::move(cb));
+                return;
+            }
+
+            ScheduleRetry(kPollIntervalMs, [this, channels, attempt, cb = std::move(cb)]() mutable {
+                DoAwaitStreamingClockLock(channels, attempt + 1, std::move(cb));
+            });
+        });
 }
 
 void DICEDuplexBringupController::DoDiscoverStreams(
@@ -885,6 +990,8 @@ void DICEDuplexBringupController::DoDiscoverStreams(
 
 void DICEDuplexBringupController::DoProgramRx(
     AudioDuplexChannels channels,
+    uint32_t streamIndex,
+    uint32_t entrySizeBytes,
     VoidCallback cb) {
     if (!EnsureGenerationCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
@@ -892,51 +999,70 @@ void DICEDuplexBringupController::DoProgramRx(
     }
 
     restartSession_.phase = DiceRestartPhase::kProgrammingDeviceRx;
-    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
-                    [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t rxSize) mutable {
-                        const IOReturn status = MapTransportStatus(transportStatus);
-                        ASFW_LOG(DICE,
-                                 "DoProgramRx: RX_SIZE transport status=%u value=0x%08x",
-                                 static_cast<unsigned>(transportStatus),
-                                 rxSize);
-                        if (status != kIOReturnSuccess) {
-                            DoRollback(status, std::move(cb));
-                            return;
-                        }
 
-                        ASFW_LOG(DICE,
-                                 "DoProgramRx: RX_SIZE complete, entering RX program lambda value=0x%08x",
-                                 rxSize);
-                        ASFW_LOG(DICE,
-                                 "DoProgramRx: writing RX isoch channel %u",
-                                 channels.hostToDeviceIsoChannel);
-                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
-                                        channels.hostToDeviceIsoChannel,
-                                        [this, channels, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
-                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
-                                             if (isoStatus != kIOReturnSuccess) {
-                                                 DoRollback(isoStatus, std::move(cb));
-                                                 return;
-                                             }
+    // At stream 0, read RX_SIZE first to learn the per-stream register stride,
+    // then re-enter this function with the resolved entry size for every stream.
+    if (streamIndex == 0 && entrySizeBytes == 0) {
+        (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
+                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t rxSize) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            ASFW_LOG(DICE,
+                                     "DoProgramRx: RX_SIZE transport status=%u value=0x%08x streams=%u",
+                                     static_cast<unsigned>(transportStatus),
+                                     rxSize,
+                                     channels.playbackStreamCount);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            const uint32_t stride = rxSize * 4u;
+                            DoProgramRx(channels, 0, stride, std::move(cb));
+                        });
+        return;
+    }
 
-                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
-                                                             kRxSeqStartDefault,
-                                                             [this, channels, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
-                                                                  const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
-                                                                  if (seqStatus != kIOReturnSuccess) {
-                                                                      DoRollback(seqStatus, std::move(cb));
-                                                                      return;
-                                                                  }
-                                                                  restartSession_.deviceRxProgrammed = true;
-                                                                  restartSession_.phase = DiceRestartPhase::kDeviceRxProgrammed;
-                                                                  cb(kIOReturnSuccess);
-                                                              });
-                                         });
-                    });
+    if (streamIndex >= channels.playbackStreamCount) {
+        // All RX streams programmed.
+        restartSession_.deviceRxProgrammed = true;
+        restartSession_.phase = DiceRestartPhase::kDeviceRxProgrammed;
+        cb(kIOReturnSuccess);
+        return;
+    }
+
+    const uint8_t isoChannel = channels.PlaybackChannel(streamIndex);
+    const uint32_t streamBase =
+        sections_.rxStreamFormat.offset + streamIndex * entrySizeBytes;
+    ASFW_LOG(DICE,
+             "DoProgramRx: stream %u writing RX isoch channel %u (stride=%u)",
+             streamIndex, isoChannel, entrySizeBytes);
+
+    (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + RxOffset::kIsochronous),
+                    isoChannel,
+                    [this, channels, streamIndex, entrySizeBytes, streamBase, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                         const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                         if (isoStatus != kIOReturnSuccess) {
+                             DoRollback(isoStatus, std::move(cb));
+                             return;
+                         }
+
+                         (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + RxOffset::kSeqStart),
+                                         kRxSeqStartDefault,
+                                         [this, channels, streamIndex, entrySizeBytes, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
+                                              const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
+                                              if (seqStatus != kIOReturnSuccess) {
+                                                  DoRollback(seqStatus, std::move(cb));
+                                                  return;
+                                              }
+                                              // Next RX stream.
+                                              DoProgramRx(channels, streamIndex + 1, entrySizeBytes, std::move(cb));
+                                          });
+                     });
 }
 
 void DICEDuplexBringupController::DoProgramTx(
     AudioDuplexChannels channels,
+    uint32_t streamIndex,
+    uint32_t entrySizeBytes,
     VoidCallback cb) {
     if (!EnsureGenerationCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
@@ -944,46 +1070,79 @@ void DICEDuplexBringupController::DoProgramTx(
     }
 
     restartSession_.phase = DiceRestartPhase::kProgrammingDeviceTx;
-    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
-                   [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
-                        const IOReturn status = MapTransportStatus(transportStatus);
-                        if (status != kIOReturnSuccess) {
-                            DoRollback(status, std::move(cb));
-                            return;
-                        }
 
-                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
-                                        channels.deviceToHostIsoChannel,
-                                        [this, channels, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
-                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
-                                             if (isoStatus != kIOReturnSuccess) {
-                                                 DoRollback(isoStatus, std::move(cb));
-                                                 return;
-                                             }
+    // At stream 0, read TX_SIZE first to learn the per-stream register stride.
+    if (streamIndex == 0 && entrySizeBytes == 0) {
+        (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
+                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t txSize) mutable {
+                            const IOReturn status = MapTransportStatus(transportStatus);
+                            if (status != kIOReturnSuccess) {
+                                DoRollback(status, std::move(cb));
+                                return;
+                            }
+                            const uint32_t stride = txSize * 4u;
+                            DoProgramTx(channels, 0, stride, std::move(cb));
+                        });
+        return;
+    }
 
-                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
-                                                             kTxSpeedS400,
-                                                             [this, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
-                                                                  const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
-                                                                  if (speedStatus != kIOReturnSuccess) {
-                                                                      DoRollback(speedStatus, std::move(cb));
-                                                                      return;
-                                                                  }
-                                                                  (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
-                                                                                  1,
-                                                                                  [this, cb = std::move(cb)](Async::AsyncStatus enableTransportStatus) mutable {
-                                                                                       const IOReturn enableStatus = MapTransportStatus(enableTransportStatus);
-                                                                                       if (enableStatus != kIOReturnSuccess) {
-                                                                                           DoRollback(enableStatus, std::move(cb));
-                                                                                           return;
-                                                                                       }
-                                                                                       restartSession_.deviceTxArmed = true;
-                                                                                       restartSession_.phase = DiceRestartPhase::kDeviceTxArmed;
-                                                                                       cb(kIOReturnSuccess);
-                                                                                   });
-                                                              });
-                                         });
-                    });
+    if (streamIndex >= channels.captureStreamCount) {
+        // All TX streams programmed; assert the single GLOBAL_ENABLE last.
+        DoEnableGlobal(channels, std::move(cb));
+        return;
+    }
+
+    const uint8_t isoChannel = channels.CaptureChannel(streamIndex);
+    const uint32_t streamBase =
+        sections_.txStreamFormat.offset + streamIndex * entrySizeBytes;
+    ASFW_LOG(DICE,
+             "DoProgramTx: stream %u writing TX isoch channel %u (stride=%u)",
+             streamIndex, isoChannel, entrySizeBytes);
+
+    (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kIsochronous),
+                    isoChannel,
+                    [this, channels, streamIndex, entrySizeBytes, streamBase, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                         const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                         if (isoStatus != kIOReturnSuccess) {
+                             DoRollback(isoStatus, std::move(cb));
+                             return;
+                         }
+
+                         (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kSpeed),
+                                         kTxSpeedS400,
+                                         [this, channels, streamIndex, entrySizeBytes, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
+                                              const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
+                                              if (speedStatus != kIOReturnSuccess) {
+                                                  DoRollback(speedStatus, std::move(cb));
+                                                  return;
+                                              }
+                                              // Next TX stream.
+                                              DoProgramTx(channels, streamIndex + 1, entrySizeBytes, std::move(cb));
+                                          });
+                     });
+}
+
+void DICEDuplexBringupController::DoEnableGlobal(
+    AudioDuplexChannels channels,
+    VoidCallback cb) {
+    (void)channels;
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
+                    1,
+                    [this, cb = std::move(cb)](Async::AsyncStatus enableTransportStatus) mutable {
+                         const IOReturn enableStatus = MapTransportStatus(enableTransportStatus);
+                         if (enableStatus != kIOReturnSuccess) {
+                             DoRollback(enableStatus, std::move(cb));
+                             return;
+                         }
+                         restartSession_.deviceTxArmed = true;
+                         restartSession_.phase = DiceRestartPhase::kDeviceTxArmed;
+                         cb(kIOReturnSuccess);
+                     });
 }
 
 void DICEDuplexBringupController::DoFinishPrepare(VoidCallback cb) {
@@ -1075,9 +1234,8 @@ void DICEDuplexBringupController::RefreshRuntimeCaps(VoidCallback cb) {
                             state->rx = rx;
                             CacheRuntimeCaps(runtimeCaps_, state->global, state->tx, state->rx);
                             restartSession_.runtimeCaps = runtimeCaps_;
-                            restartSession_.appliedClock = DiceDesiredClockConfig{
+                            restartSession_.appliedClock = AudioClockConfig{
                                 .sampleRateHz = state->global.sampleRate,
-                                .clockSelect = state->global.clockSelect,
                             };
                             cb(kIOReturnSuccess);
                         });
@@ -1223,11 +1381,8 @@ void DICEDuplexBringupController::ProgramRxForDuplex48k(VoidCallback callback) {
         return;
     }
 
-    const AudioDuplexChannels channels{
-        .deviceToHostIsoChannel = restartSession_.channels.deviceToHostIsoChannel,
-        .hostToDeviceIsoChannel = restartSession_.channels.hostToDeviceIsoChannel,
-    };
-    DoProgramRx(channels, std::move(callback));
+    // Pass the full per-stream channel set so every advertised stream is armed.
+    DoProgramRx(restartSession_.channels, 0, 0, std::move(callback));
 }
 
 void DICEDuplexBringupController::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
@@ -1241,11 +1396,9 @@ void DICEDuplexBringupController::ProgramTxAndEnableDuplex48k(VoidCallback callb
         return;
     }
 
-    const AudioDuplexChannels channels{
-        .deviceToHostIsoChannel = restartSession_.channels.deviceToHostIsoChannel,
-        .hostToDeviceIsoChannel = restartSession_.channels.hostToDeviceIsoChannel,
-    };
-    DoProgramTx(channels, std::move(callback));
+    // Pass the full per-stream channel set; GLOBAL_ENABLE is asserted once after
+    // every TX (and previously every RX) stream's ISOC register is written.
+    DoProgramTx(restartSession_.channels, 0, 0, std::move(callback));
 }
 
 void DICEDuplexBringupController::ConfirmDuplex48kStart(VoidCallback callback) {
@@ -1383,33 +1536,65 @@ void DICEDuplexBringupController::DoStopDisableTx(
         return;
     }
 
+    // Clear EVERY TX stream's ISOC register, not just stream[0]'s (FFADO
+    // stopStreamByIndex writes 0xFFFFFFFF per stream). Read TX_SIZE for the
+    // per-stream register stride, then walk the streams; if the stride read
+    // fails, fall back to the legacy single-stream clear.
     (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
-                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
+                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t txSize) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
                         if (AbortStopIfTeardown("DisableTxReadComplete", cb)) {
                             return;
                         }
-                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
-                                        kDisabledIsoChannel,
-                                        [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
-                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
-                                             RecordFirstError(stopSequenceError_, isoStatus);
-                                             if (AbortStopIfTeardown("DisableTxIsoComplete", cb)) {
-                                                 return;
-                                             }
-                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
-                                                             kTxSpeedS400,
-                                                             [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
-                                                                  const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
-                                                                  RecordFirstError(stopSequenceError_, speedStatus);
-                                                                  if (AbortStopIfTeardown("DisableTxSpeedComplete", cb)) {
-                                                                      return;
-                                                                  }
-                                                                  DoStopReleaseTx(releaseOwner, std::move(cb));
-                                                              });
-                                         });
+                        const uint32_t stride =
+                            (readStatus == kIOReturnSuccess) ? txSize * 4u : 0u;
+                        DoStopDisableTxStream(0, stride, releaseOwner, std::move(cb));
                     });
+}
+
+void DICEDuplexBringupController::DoStopDisableTxStream(
+    uint32_t streamIndex,
+    uint32_t entrySizeBytes,
+    bool releaseOwner,
+    VoidCallback cb) {
+    uint32_t streamCount = restartSession_.channels.captureStreamCount;
+    if (streamCount == 0) {
+        streamCount = 1;
+    } else if (streamCount > kMaxAudioStreamsPerDirection) {
+        streamCount = kMaxAudioStreamsPerDirection;
+    }
+    // Without a usable stride only stream[0]'s registers are addressable.
+    if (entrySizeBytes == 0) {
+        streamCount = 1;
+    }
+
+    if (streamIndex >= streamCount) {
+        DoStopReleaseTx(releaseOwner, std::move(cb));
+        return;
+    }
+
+    const uint32_t streamBase =
+        sections_.txStreamFormat.offset + streamIndex * entrySizeBytes;
+    (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kIsochronous),
+                    kDisabledIsoChannel,
+                    [this, streamIndex, entrySizeBytes, streamBase, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                         const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                         RecordFirstError(stopSequenceError_, isoStatus);
+                         if (AbortStopIfTeardown("DisableTxIsoComplete", cb)) {
+                             return;
+                         }
+                         (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + TxOffset::kSpeed),
+                                         kTxSpeedS400,
+                                         [this, streamIndex, entrySizeBytes, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
+                                              const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
+                                              RecordFirstError(stopSequenceError_, speedStatus);
+                                              if (AbortStopIfTeardown("DisableTxSpeedComplete", cb)) {
+                                                  return;
+                                              }
+                                              DoStopDisableTxStream(streamIndex + 1, entrySizeBytes, releaseOwner, std::move(cb));
+                                          });
+                     });
 }
 
 void DICEDuplexBringupController::DoStopReleaseTx(
@@ -1433,33 +1618,63 @@ void DICEDuplexBringupController::DoStopDisableRx(
         return;
     }
 
+    // Clear EVERY RX stream's ISOC register, not just stream[0]'s (see
+    // DoStopDisableTx). Stride from RX_SIZE; legacy single-stream clear if the
+    // read fails.
     (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
-                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
+                   [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t rxSize) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
                         if (AbortStopIfTeardown("DisableRxReadComplete", cb)) {
                             return;
                         }
-                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
-                                        kDisabledIsoChannel,
-                                        [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
-                                             const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
-                                             RecordFirstError(stopSequenceError_, isoStatus);
-                                             if (AbortStopIfTeardown("DisableRxIsoComplete", cb)) {
-                                                 return;
-                                             }
-                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
-                                                             kRxSeqStartDefault,
-                                                             [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
-                                                                  const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
-                                                                  RecordFirstError(stopSequenceError_, seqStatus);
-                                                                  if (AbortStopIfTeardown("DisableRxSeqComplete", cb)) {
-                                                                      return;
-                                                                  }
-                                                                  DoStopReleaseRx(releaseOwner, std::move(cb));
-                                                              });
-                                         });
+                        const uint32_t stride =
+                            (readStatus == kIOReturnSuccess) ? rxSize * 4u : 0u;
+                        DoStopDisableRxStream(0, stride, releaseOwner, std::move(cb));
                     });
+}
+
+void DICEDuplexBringupController::DoStopDisableRxStream(
+    uint32_t streamIndex,
+    uint32_t entrySizeBytes,
+    bool releaseOwner,
+    VoidCallback cb) {
+    uint32_t streamCount = restartSession_.channels.playbackStreamCount;
+    if (streamCount == 0) {
+        streamCount = 1;
+    } else if (streamCount > kMaxAudioStreamsPerDirection) {
+        streamCount = kMaxAudioStreamsPerDirection;
+    }
+    if (entrySizeBytes == 0) {
+        streamCount = 1;
+    }
+
+    if (streamIndex >= streamCount) {
+        DoStopReleaseRx(releaseOwner, std::move(cb));
+        return;
+    }
+
+    const uint32_t streamBase =
+        sections_.rxStreamFormat.offset + streamIndex * entrySizeBytes;
+    (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + RxOffset::kIsochronous),
+                    kDisabledIsoChannel,
+                    [this, streamIndex, entrySizeBytes, streamBase, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
+                         const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
+                         RecordFirstError(stopSequenceError_, isoStatus);
+                         if (AbortStopIfTeardown("DisableRxIsoComplete", cb)) {
+                             return;
+                         }
+                         (void)io_.WriteQuadBE(MakeDICEAddress(streamBase + RxOffset::kSeqStart),
+                                         kRxSeqStartDefault,
+                                         [this, streamIndex, entrySizeBytes, releaseOwner, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
+                                              const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
+                                              RecordFirstError(stopSequenceError_, seqStatus);
+                                              if (AbortStopIfTeardown("DisableRxSeqComplete", cb)) {
+                                                  return;
+                                              }
+                                              DoStopDisableRxStream(streamIndex + 1, entrySizeBytes, releaseOwner, std::move(cb));
+                                          });
+                     });
 }
 
 void DICEDuplexBringupController::DoStopReleaseRx(

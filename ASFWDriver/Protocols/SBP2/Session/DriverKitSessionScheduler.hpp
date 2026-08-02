@@ -47,7 +47,13 @@ private:
         std::function<void()> fn;
     };
 
-    void ArmNextLocked() noexcept;
+    // Earliest pending deadline in mach-absolute ticks (0 = none). Caller holds lock_.
+    [[nodiscard]] uint64_t EarliestDeadlineLocked() const noexcept;
+    // Arms the hardware timer. MUST be called WITHOUT lock_ held: WakeAtTime is
+    // RPC-dispatched to the timer's queue (ASFWDriver-Default), whose handlers
+    // re-enter the scheduler and take lock_. Holding lock_ across it is an AB-BA
+    // deadlock (kernel registry busy-timeout panic, 2026-06-22).
+    void ArmTimerUnlocked(IOTimerDispatchSource* timer, uint64_t deadlineTicks) noexcept;
     [[nodiscard]] uint64_t DeadlineTicksFromNow(uint64_t delayNs) const noexcept;
 
     IOLock* lock_{nullptr};

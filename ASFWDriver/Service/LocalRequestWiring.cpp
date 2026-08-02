@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // LocalRequestWiring.cpp — see LocalRequestWiring.hpp. The single home for the
@@ -125,6 +125,7 @@ private:
         const ASFW::Protocols::Ports::BlockWriteRequestView request{
             .sourceID = ctx.sourceID,
             .destOffset = ctx.destOffset,
+            .generation = ctx.generation,
             .payload = payload,
         };
         const auto disposition = fcp_->RouteBlockWrite(request);

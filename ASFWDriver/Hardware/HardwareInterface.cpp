@@ -45,20 +45,34 @@ constexpr uint16_t kRequiredCommandBits = 0;
 #endif
 } // namespace
 
-HardwareInterface::HardwareInterface() { phyLock_ = IOLockAlloc(); }
+HardwareInterface::HardwareInterface() {
+    accessLock_ = IOLockAlloc();
+    phyLock_ = IOLockAlloc();
+}
 
 HardwareInterface::~HardwareInterface() {
+    Detach();
     if (phyLock_) {
         IOLockFree(phyLock_);
         phyLock_ = nullptr;
     }
-    Detach();
+    if (accessLock_) {
+        IOLockFree(accessLock_);
+        accessLock_ = nullptr;
+    }
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
+    if (!accessLock_) {
+        return kIOReturnNoMemory;
+    }
+    IOLockGuard accessGuard(accessLock_);
     if (device_) {
-        return kIOReturnSuccess;
+        // A revoked interface must be detached before it can be used again.
+        // Re-enabling it here would let a suspend/termination path resurrect
+        // BAR access against a provider that has already withdrawn decoding.
+        return ioEnabled_ ? kIOReturnSuccess : kIOReturnNotReady;
     }
 
     auto pci = OSSharedPtr(OSDynamicCast(IOPCIDevice, provider), OSRetain);
@@ -129,10 +143,20 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     barIndex_ = memoryIndex;
     barSize_ = barSize;
     barType_ = barType;
+    ioEnabled_ = true;
     return kIOReturnSuccess;
 }
 
+void HardwareInterface::Revoke() noexcept {
+    IOLockGuard accessGuard(accessLock_);
+    ioEnabled_ = false;
+}
+
 void HardwareInterface::Detach() {
+    // Make every later BAR operation a no-op before closing the PCI client.
+    // Revoke() also waits for any in-progress access to finish.
+    Revoke();
+    IOLockGuard accessGuard(accessLock_);
     if (device_) {
         if (owner_) {
             device_->Close(owner_);
@@ -144,13 +168,21 @@ void HardwareInterface::Detach() {
     barType_ = 0;
 }
 
+bool HardwareInterface::Attached() const noexcept { return IsAvailable(); }
+
+bool HardwareInterface::IsAvailable() const noexcept {
+    IOLockGuard accessGuard(accessLock_);
+    return ioEnabled_ && static_cast<bool>(device_);
+}
+
 void HardwareInterface::BindAsyncControllerPort(
     ASFW::Async::IAsyncControllerPort* controllerPort) noexcept {
     asyncControllerPort_ = controllerPort;
 }
 
 uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
-    if (!device_) {
+    IOLockGuard accessGuard(accessLock_);
+    if (!ioEnabled_ || !device_) {
         return 0;
     }
     uint32_t value = 0;
@@ -159,7 +191,8 @@ uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
 }
 
 void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
-    if (!device_) {
+    IOLockGuard accessGuard(accessLock_);
+    if (!ioEnabled_ || !device_) {
         return;
     }
     device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(reg), value);
@@ -171,12 +204,8 @@ void HardwareInterface::WriteAndFlush(Register32 reg, uint32_t value) {
 }
 
 void HardwareInterface::SetInterruptMask(uint32_t mask, bool enable) {
-    if (!device_) {
-        return;
-    }
     Register32 target = enable ? Register32::kIntMaskSet : Register32::kIntMaskClear;
-    device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(target), mask);
-    FlushPostedWrites();
+    WriteAndFlush(target, mask);
 }
 
 void HardwareInterface::SetLinkControlBits(uint32_t bits) {
@@ -211,24 +240,17 @@ void HardwareInterface::ClearIsoRecvEvents(uint32_t mask) {
 InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp) const noexcept {
     InterruptSnapshot snapshot{};
     snapshot.timestamp = timestamp;
-    if (!device_) {
-        return snapshot;
-    }
-
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIntEvent),
-                          &snapshot.intEvent);
+    snapshot.intEvent = Read(Register32::kIntEvent);
     snapshot.intMask = 0;
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoXmitEvent),
-                          &snapshot.isoXmitEvent);
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoRecvEvent),
-                          &snapshot.isoRecvEvent);
+    snapshot.isoXmitEvent = Read(Register32::kIsoXmitEvent);
+    snapshot.isoRecvEvent = Read(Register32::kIsoRecvEvent);
     return snapshot;
 }
 
 bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
                                       std::optional<uint8_t> forceRootPhyId,
                                       std::string_view caller) {
-    if (!device_) {
+    if (!IsAvailable()) {
         return false;
     }
     if (!asyncControllerPort_) {
@@ -293,7 +315,7 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
 }
 
 bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
-    if (!device_) {
+    if (!IsAvailable()) {
         return false;
     }
     if (!asyncControllerPort_) {
@@ -336,7 +358,7 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
 }
 
 bool HardwareInterface::SendLinkOnPacket(uint8_t targetNodeId) {
-    if (!device_) {
+    if (!IsAvailable()) {
         return false;
     }
     if (!asyncControllerPort_) {
@@ -550,40 +572,29 @@ bool HardwareInterface::UpdatePhyRegister(uint8_t address, uint8_t clearBits, ui
 }
 
 bool HardwareInterface::ReadIntEvent(uint32_t& value) {
-    if (!device_) {
+    if (!IsAvailable()) {
         return false;
     }
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIntEvent), &value);
-    return true;
+    value = Read(Register32::kIntEvent);
+    return IsAvailable();
 }
 
 void HardwareInterface::AckIntEvent(uint32_t bits) {
-    if (!device_) {
-        return;
-    }
-    device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(Register32::kIntEventClear), bits);
-    FlushPostedWrites();
+    WriteAndFlush(Register32::kIntEventClear, bits);
 }
 
 void HardwareInterface::IntMaskSet(uint32_t bits) {
-    if (!device_) {
-        return;
-    }
-    device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(Register32::kIntMaskSet), bits);
-    FlushPostedWrites();
+    WriteAndFlush(Register32::kIntMaskSet, bits);
 }
 
 void HardwareInterface::IntMaskClear(uint32_t bits) {
-    if (!device_) {
-        return;
-    }
-    device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(Register32::kIntMaskClear), bits);
-    FlushPostedWrites();
+    WriteAndFlush(Register32::kIntMaskClear, bits);
 }
 
 std::optional<HardwareInterface::DMABuffer>
 HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment) {
-    if (!device_) {
+    IOLockGuard accessGuard(accessLock_);
+    if (!ioEnabled_ || !device_) {
         ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
@@ -685,7 +696,8 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
 }
 
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
-    if (!device_) {
+    IOLockGuard accessGuard(accessLock_);
+    if (!ioEnabled_ || !device_) {
         return nullptr;
     }
 
@@ -768,12 +780,14 @@ static bool WaitForRegister(ReadFn&& read32, uint32_t mask, bool expectSet, uint
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                                uint32_t pollIntervalUsec) const {
-    if (!device_) {
+    if (!IsAvailable()) {
         return false;
     }
 
     return WaitForRegister(
-        [this] { return Read(Register32::kHCControl); }, mask, expectSet, timeoutUsec,
+        [this] {
+            return IsAvailable() ? Read(Register32::kHCControl) : 0xFFFFFFFFu;
+        }, mask, expectSet, timeoutUsec,
         pollIntervalUsec, "HCControl",
         [](const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool ejected) {
             if (ejected) {
@@ -791,12 +805,14 @@ bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUs
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool HardwareInterface::WaitLink(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                                  uint32_t pollIntervalUsec) const {
-    if (!device_) {
+    if (!IsAvailable()) {
         return false;
     }
 
     return WaitForRegister(
-        [this] { return Read(Register32::kLinkControl); }, mask, expectSet, timeoutUsec,
+        [this] {
+            return IsAvailable() ? Read(Register32::kLinkControl) : 0xFFFFFFFFu;
+        }, mask, expectSet, timeoutUsec,
         pollIntervalUsec, "LinkControl",
         [](const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool ejected) {
             ASFW_LOG(Hardware, "%{public}s: 0x%08x tries=%llu t=%lluus ejected=%d", name, value,
@@ -805,12 +821,12 @@ bool HardwareInterface::WaitLink(uint32_t mask, bool expectSet, uint32_t timeout
 }
 
 bool HardwareInterface::WaitNodeIdValid(uint32_t timeoutMs) const {
-    if (!device_) {
+    if (!IsAvailable()) {
         return false;
     }
 
     return WaitForRegister(
-        [this] { return Read(Register32::kNodeID); },
+        [this] { return IsAvailable() ? Read(Register32::kNodeID) : 0xFFFFFFFFu; },
         /*mask=*/0x80000000u, /*expectSet=*/true,
         /*timeoutUsec=*/timeoutMs * 1000, /*pollIntervalUsec=*/1000, "NodeID",
         [](const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool ejected) {
@@ -824,12 +840,7 @@ bool HardwareInterface::WaitNodeIdValid(uint32_t timeoutMs) const {
 }
 
 void HardwareInterface::FlushPostedWrites() const {
-    if (!device_) {
-        return;
-    }
-    uint32_t value = 0;
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kHCControl), &value);
-    (void)value;
+    (void)Read(Register32::kHCControl);
     FullBarrier();
 }
 
@@ -843,7 +854,7 @@ std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const 
 }
 
 LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
-    if (!device_) {
+    if (!IsAvailable()) {
         return {LocalCSRLockResult::Status::HardwareUnavailable};
     }
     const auto currentValResult = ReadLocalIRMResource(selectCode);
@@ -893,7 +904,7 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
 }
 
 LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
-    if (!device_) {
+    if (!IsAvailable()) {
         return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
     }
     Write(Register32::kCSRControl, selectCode & 0x3u);
@@ -916,7 +927,7 @@ LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) 
 }
 
 LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept {
-    if (!device_) {
+    if (!IsAvailable()) {
         return {LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
     }
     // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
@@ -944,7 +955,7 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
 }
 
 kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
-    if (!device_) {
+    if (!IsAvailable()) {
         return kIOReturnNotAttached;
     }
 
@@ -978,6 +989,9 @@ bool HardwareInterface::IsLocalCycleMasterEnabled() const noexcept {
 }
 
 bool HardwareInterface::SetLocalCycleMasterEnabled(bool enable) noexcept {
+    if (!IsAvailable()) {
+        return false;
+    }
     if (enable) {
         WriteAndFlush(Register32::kLinkControlSet, LinkControlBits::kCycleMaster);
     } else {

@@ -219,7 +219,7 @@ void MusicSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> co
 
     // CRITICAL: Capture shared_ptr to AVCUnit to keep FCPTransport alive during async operations.
     // The DescriptorAccessor stores FCPTransport& as a reference, so the AVCUnit (which owns
-    // the FCPTransport via OSSharedPtr) must stay alive until all callbacks complete.
+    // the FCPTransport via shared_ptr) must stay alive until all callbacks complete.
     // Without this, the FCPTransport reference becomes dangling after OPEN completes but
     // before READ is issued, causing a null pointer crash in FCPTransport::SubmitCommand.
     auto unitPtr = unit.shared_from_this();
@@ -1258,7 +1258,12 @@ void MusicSubunit::SetSampleRate(ASFW::Protocols::AVC::IAVCCommandSubmitter& sub
     format.formatHierarchy = FormatHierarchy::kAM824; // AM824
     format.subtype = AM824Subtype::kCompound; // Compound
     format.sampleRate = rateCode;
-    format.channelFormats.resize(0); // Don't care about channels for rate set? Or maybe we do?
+    
+    // Add a single channel to satisfy BuildCdb validation
+    ChannelFormatInfo channel;
+    channel.channelCount = 1;
+    channel.formatCode = StreamFormatCode::kMBLA;
+    format.channelFormats.push_back(channel);
 
     // Iterate all plugs and set format?
     // Or just the first one?
@@ -1316,8 +1321,10 @@ void MusicSubunit::SetAudioVolume(ASFW::Protocols::AVC::IAVCCommandSubmitter& su
     // Target Audio Subunit 0 (0x01 << 3 | 0 = 0x08)
     uint8_t subunitAddr = (static_cast<uint8_t>(AVCSubunitType::kAudio) << 3) | 0;
     
-    // Volume data: 2 bytes, big endian
+    // Volume data: channel (0x00 Master), data length (0x02), and 2-byte volume
     std::vector<uint8_t> data;
+    data.push_back(0x00);
+    data.push_back(0x02);
     data.push_back(static_cast<uint8_t>((volume >> 8) & 0xFF));
     data.push_back(static_cast<uint8_t>(volume & 0xFF));
     

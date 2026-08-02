@@ -41,6 +41,14 @@ inline constexpr AudioHalBufferProfile kAudioHalBufferProfileDiceWorking1536{
     1536,
 };
 
+// Largest blocking-mode frames-per-data-packet across the IEC 61883-6 rate
+// ladder: the SYT interval is 8 @1x, 16 @2x, 32 @4x. ZTS anchors are only
+// published when a boundary lands on a packet-first frame, so the period must
+// be a multiple of every tier's frames-per-packet (all divide 32). A period
+// that is not silently thins anchors ~4x at 4x rates
+// (tools/amdtp_blocking_cadence_sim.py, 1544-period counterexample).
+inline constexpr uint32_t kMaxBlockingFramesPerDataPacket = 32;
+
 [[nodiscard]] constexpr bool IsValidAudioHalBufferProfile(
     const AudioHalBufferProfile& profile) noexcept {
     return profile.name != nullptr &&
@@ -48,7 +56,10 @@ inline constexpr AudioHalBufferProfile kAudioHalBufferProfileDiceWorking1536{
            profile.clientIoBudgetFrames != 0 &&
            profile.zeroTimestampPeriodFrames != 0 &&
            profile.frameRingFrames % profile.clientIoBudgetFrames == 0 &&
-           profile.frameRingFrames % profile.zeroTimestampPeriodFrames == 0;
+           profile.frameRingFrames % profile.zeroTimestampPeriodFrames == 0 &&
+           profile.zeroTimestampPeriodFrames %
+                   kMaxBlockingFramesPerDataPacket ==
+               0;
 }
 
 static_assert(IsValidAudioHalBufferProfile(kAudioHalBufferProfileAligned512));

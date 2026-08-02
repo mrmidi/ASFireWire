@@ -13,6 +13,8 @@
 #include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
+#include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -120,6 +122,7 @@ struct PlugChannelSummary {
 /// 1394 Trade Association spec ID (24-bit)
 constexpr uint32_t kAVCSpecID = 0x00A02D;
 constexpr uint32_t kDuetPrefetchTimeoutMs = 1200;
+constexpr uint32_t kDuetFixedSampleRateHz = 48000;
 constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
 constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
 constexpr uint32_t kScopeInput = static_cast<uint32_t>('inpt');
@@ -175,11 +178,13 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
                            Discovery::IDeviceManager& deviceManager,
                            Protocols::Ports::FireWireBusOps& busOps,
                            Protocols::Ports::FireWireBusInfo& busInfo,
+                           Scheduling::ITimerScheduler& timerScheduler,
                            ASFW::Audio::IAVCAudioConfigListener* audioConfigListener)
     : driver_(driver)
     , deviceManager_(deviceManager)
     , busOps_(busOps)
     , busInfo_(busInfo)
+    , timerScheduler_(timerScheduler)
     , audioConfigListener_(audioConfigListener) {
 
     // Allocate lock
@@ -204,9 +209,10 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
 }
 
 AVCDiscovery::~AVCDiscovery() {
-    // Unregister discovery observers
-    deviceManager_.UnregisterDeviceObserver(this);
-    deviceManager_.UnregisterUnitObserver(this);
+    Shutdown();
+
+    // Shutdown() unregisters observers before stopping outstanding FCP work.
+    // Do not free the lock until that lifecycle boundary has been established.
 
     // Clean up lock
     if (lock_) {
@@ -217,11 +223,46 @@ AVCDiscovery::~AVCDiscovery() {
     os_log_info(log_, "AVCDiscovery: Destroyed");
 }
 
+void AVCDiscovery::Shutdown() {
+    bool expected = false;
+    if (!shuttingDown_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    // Remove external producers first. Device callbacks may otherwise enqueue
+    // a fresh AV/C command after FCP has been shut down.
+    deviceManager_.UnregisterDeviceObserver(this);
+    deviceManager_.UnregisterUnitObserver(this);
+
+    std::vector<std::shared_ptr<AVCUnit>> units;
+    if (lock_) {
+        IOLockLock(lock_);
+        units.reserve(units_.size());
+        for (const auto& [guid, unit] : units_) {
+            (void)guid;
+            if (unit) {
+                units.push_back(unit);
+            }
+        }
+        fcpTransportsByNodeID_.clear();
+        rescanAttempts_.clear();
+        duetPrefetchByGuid_.clear();
+        IOLockUnlock(lock_);
+    }
+
+    for (const auto& unit : units) {
+        unit->Shutdown();
+    }
+}
+
 //==============================================================================
 // IUnitObserver Interface
 //==============================================================================
 
 void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     if (!IsAVCUnit(unit)) {
         return;
     }
@@ -240,24 +281,70 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     }
 
     // Create AVCUnit
-    auto avcUnit = std::make_shared<AVCUnit>(device, unit, busOps_, busInfo_);
+    auto avcUnit = std::make_shared<AVCUnit>(device, unit, busOps_, busInfo_, timerScheduler_);
+
+    // Publish the unit to the shutdown owner before initializing it. A
+    // termination callback can race discovery after our first atomic check;
+    // if it wins, Shutdown() will see and stop this FCP producer.
+    IOLockLock(lock_);
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        IOLockUnlock(lock_);
+        avcUnit->Shutdown();
+        return;
+    }
+    units_[guid] = avcUnit;
+    IOLockUnlock(lock_);
+
+    // The PHASE 88 is a BeBoB unit matched by stable Config ROM identity.
+    // Linux BeBoB starts directly with unit PLUG_INFO and BridgeCo commands;
+    // it does not require generic UNIT_INFO or SUBUNIT_INFO first. Keep that
+    // wire ordering instead of letting generic AV/C discovery consume or race
+    // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
+    // firewire/bebob/bebob_stream.c:908-940.
+    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(device->GetVendorID(), device->GetModelID())) {
+        ASFW_LOG(AVC,
+                 "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
+                 guid);
+        // BeBoB intentionally bypasses generic AV/C discovery, so it must
+        // publish its profile-owned configuration here. Otherwise it never
+        // reaches AudioCoordinator/AudioNubPublisher and every start attempt
+        // is correctly rejected as not-ready before FCP/CMP.
+        // cross-validated: linux-sound-firewire-stack/firewire/bebob/bebob.c:184-260,
+        // bebob_stream.c:908-940.
+        const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
+        const uint32_t vendorId = device->GetVendorID();
+        const uint32_t modelId = device->GetModelID();
+        const std::string deviceName{device->GetModelName()};
+        ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
+            *avcUnit, guid,
+            [weakSelf, guid, vendorId, modelId, deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
+                const auto self = weakSelf.lock();
+                if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
+                    return;
+                }
+                self->PublishBeBoBAudioConfig(guid, vendorId, modelId, deviceName, inventory);
+            });
+        RebuildNodeIDMap();
+        return;
+    }
+
+    const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
 
     // Initialize (probe subunits, plugs)
-    avcUnit->Initialize([this, avcUnit, guid](bool success) {
+    avcUnit->Initialize([weakSelf, avcUnit, guid](bool success) {
+        const auto self = weakSelf.lock();
+        if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+        }
         if (!success) {
-            os_log_error(log_,
+            os_log_error(self->log_,
                          "AVCDiscovery: AVCUnit initialization failed: GUID=%llx",
                          guid);
             return;
         }
 
-        HandleInitializedUnit(guid, avcUnit);
+        self->HandleInitializedUnit(guid, avcUnit);
     });
-
-    // Store AVCUnit
-    IOLockLock(lock_);
-    units_[guid] = std::move(avcUnit);
-    IOLockUnlock(lock_);
 
     // Rebuild node ID map (unit now has transport)
     RebuildNodeIDMap();
@@ -307,9 +394,18 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
 
     PopulateMusicSubunitCapabilities(guid, *device, *musicSubunit);
     UpdateCurrentSampleRate(*musicSubunit);
-    ApplyTargetSampleRateIfSupported(avcUnit, *musicSubunit);
 
     auto audioDeviceConfig = BuildAudioDeviceConfig(guid, *device, *musicSubunit);
+    if (audioDeviceConfig.channelCount == 0 || audioDeviceConfig.sampleRates.empty() ||
+        audioDeviceConfig.currentSampleRate == 0) {
+        ASFW_LOG_WARNING(Audio,
+                         "AVCDiscovery: Deferring audio nub for GUID=%llx; decoded format lacks %{public}s%{public}s%{public}s",
+                         guid,
+                         audioDeviceConfig.channelCount == 0 ? "channel count" : "",
+                         audioDeviceConfig.channelCount == 0 && audioDeviceConfig.sampleRates.empty() ? " and " : "",
+                         audioDeviceConfig.sampleRates.empty() ? "sample rate" : "");
+        return;
+    }
     if (IsApogeeDuet(*device)) {
         ConfigureDuetPhantomOverrides(audioDeviceConfig, std::nullopt);
         ASFW_LOG(Audio,
@@ -320,6 +416,53 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
     }
 
     PublishReadyAudioConfig(guid, audioDeviceConfig);
+}
+
+void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
+                                             uint32_t vendorId,
+                                             uint32_t modelId,
+                                             const std::string& deviceName,
+                                             const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
+    // Register a per-GUID BeBoB profile from discovery data. For Phase88 this
+    // is superseded by the static Phase88Profile in the registry; for generic
+    // BeBoB devices it provides discovery-derived geometry.
+    ASFW::Isoch::Audio::AudioProfileRegistry::RegisterBeBoBProfile(guid, &inventory);
+
+    constexpr uint8_t kPcmChannels = 10;
+    constexpr uint8_t kMidiSlots = 1;
+    constexpr uint32_t kSampleRateHz = 48000;
+
+    // The live inventory must confirm the profile's duplex AM824 geometry.
+    // It is intentionally independent of the BridgeCo formation rate code:
+    // that list describes capabilities, while Phase88Protocol explicitly
+    // programs FDF/SFC 48 kHz immediately before CMP connection.
+    // cross-validated: linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:96-115.
+    if (!inventory.SupportsDuplexFormation(kPcmChannels, kMidiSlots)) {
+        ASFW_LOG_ERROR(Audio,
+                       "[BeBoB] refusing BeBoB nub: inventory lacks duplex %u PCM + %u MIDI-slot formation GUID=0x%016llx",
+                       static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots), guid);
+        return;
+    }
+
+    ::ASFW::Audio::Model::ASFWAudioDevice config{};
+    config.guid = guid;
+    config.vendorId = vendorId;
+    config.modelId = modelId;
+    config.deviceName = deviceName.empty() ? "PHASE 88 Rack FW" : deviceName;
+    config.channelCount = kPcmChannels;
+    config.inputChannelCount = kPcmChannels;
+    config.outputChannelCount = kPcmChannels;
+    config.sampleRates = {kSampleRateHz};
+    config.currentSampleRate = kSampleRateHz;
+    config.inputPlugName = "PHASE 88 Inputs";
+    config.outputPlugName = "PHASE 88 Outputs";
+    config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
+
+    ASFW_LOG(Audio,
+             "[BeBoB] publishing BeBoB audio nub GUID=0x%016llx pcm=%u midiSlots=%u dbs=%u rate=%u mode=%{public}s",
+             guid, static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots),
+             static_cast<unsigned>(kPcmChannels + kMidiSlots), kSampleRateHz, "blocking");
+    PublishReadyAudioConfig(guid, config);
 }
 
 Music::MusicSubunit* AVCDiscovery::FindAudioMusicSubunit(const AVCUnit& avcUnit) const {
@@ -364,9 +507,6 @@ void AVCDiscovery::PopulateMusicSubunitCapabilities(uint64_t guid,
     }
 
     mutableCaps.supportedSampleRates.assign(rateSet.begin(), rateSet.end());
-    if (mutableCaps.supportedSampleRates.empty()) {
-        mutableCaps.supportedSampleRates = {44100.0, 48000.0};
-    }
 
     for (const auto& plug : musicSubunit.GetPlugs()) {
         if (plug.IsInput() && !plug.name.empty() && mutableCaps.outputPlugName == "Output") {
@@ -401,54 +541,10 @@ void AVCDiscovery::UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) co
         mutableCaps.currentSampleRate = mutableCaps.supportedSampleRates[0];
         ASFW_LOG(Audio, "AVCDiscovery: Using first supported rate as current: %.0f Hz",
                  mutableCaps.currentSampleRate);
-    }
-}
-
-void AVCDiscovery::ApplyTargetSampleRateIfSupported(const std::shared_ptr<AVCUnit>& avcUnit,
-                                                    Music::MusicSubunit& musicSubunit) const {
-    constexpr double kTargetSampleRate = 48000.0;
-    auto& mutableCaps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit.GetCapabilities());
-    const bool supports48k = std::find(mutableCaps.supportedSampleRates.begin(),
-                                       mutableCaps.supportedSampleRates.end(),
-                                       kTargetSampleRate) != mutableCaps.supportedSampleRates.end();
-
-    if (!supports48k) {
-        ASFW_LOG(Audio, "AVCDiscovery: Device does not support 48kHz, using %.0f Hz",
-                 mutableCaps.currentSampleRate);
         return;
     }
-
-    if (mutableCaps.currentSampleRate == kTargetSampleRate) {
-        ASFW_LOG(Audio, "AVCDiscovery: Device already at 48kHz");
-        return;
-    }
-
-    ASFW_LOG(Audio, "AVCDiscovery: Switching sample rate from %.0f Hz to %.0f Hz (fire-and-forget)",
-             mutableCaps.currentSampleRate, kTargetSampleRate);
-
-    AVCCdb cdb;
-    cdb.ctype = static_cast<uint8_t>(AVCCommandType::kControl);
-    cdb.subunit = 0xFF;
-    cdb.opcode = 0x19;
-    cdb.operands[0] = 0x00;
-    cdb.operands[1] = 0x90;
-    cdb.operands[2] = 0x02;
-    cdb.operands[3] = 0xFF;
-    cdb.operands[4] = 0xFF;
-    cdb.operandLength = 5;
-
-    auto setRateCmd = std::make_shared<AVCCommand>(avcUnit->GetFCPTransport(), cdb);
-    setRateCmd->Submit([setRateCmd](AVCResult result, const AVCCdb&) {
-        if (IsSuccess(result)) {
-            ASFW_LOG(Audio, "✅ AVCDiscovery: Sample rate change command accepted");
-        } else {
-            ASFW_LOG_WARNING(Audio, "AVCDiscovery: Sample rate change command response: %d",
-                             static_cast<int>(result));
-        }
-    });
-
-    mutableCaps.currentSampleRate = kTargetSampleRate;
-    ASFW_LOG(Audio, "AVCDiscovery: Assuming 48kHz - nub will use this rate");
+    mutableCaps.currentSampleRate = 0.0;
+    ASFW_LOG_WARNING(Audio, "AVCDiscovery: Current sample rate unavailable from decoded format");
 }
 
 ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
@@ -526,7 +622,7 @@ ASFW::Audio::Model::ASFWAudioDevice AVCDiscovery::BuildAudioDeviceConfig(
     return config;
 }
 
-void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const Audio::Model::ASFWAudioDevice& config) {
+void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
     if (!audioConfigListener_) {
         ASFW_LOG_ERROR(Audio,
                        "AVCDiscovery: no audio config listener; dropping config for GUID=%llx",
@@ -540,31 +636,25 @@ void AVCDiscovery::PublishReadyAudioConfig(uint64_t guid, const Audio::Model::AS
 void AVCDiscovery::PrefetchDuetStateAndCreateNub(
     uint64_t guid,
     const std::shared_ptr<AVCUnit>& avcUnit,
-    const Audio::Model::ASFWAudioDevice& config) {
+    const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
     if (!avcUnit) {
-        if (!audioConfigListener_) {
-            ASFW_LOG_ERROR(Audio,
-                           "AVCDiscovery: no audio config listener; dropping Duet fallback config for GUID=%llx",
-                           guid);
-            return;
-        }
-        audioConfigListener_->OnAVCAudioConfigurationReady(guid, config);
+        ASFW_LOG_ERROR(Audio,
+                       "AVCDiscovery: Deferring Duet audio nub GUID=%llx; no AV/C unit for fixed %u Hz prepublish",
+                       guid,
+                       kDuetFixedSampleRateHz);
         return;
     }
 
     auto device = avcUnit->GetDevice();
     if (!device) {
-        if (!audioConfigListener_) {
-            ASFW_LOG_ERROR(Audio,
-                           "AVCDiscovery: no audio config listener; dropping Duet fallback config for GUID=%llx",
-                           guid);
-            return;
-        }
-        audioConfigListener_->OnAVCAudioConfigurationReady(guid, config);
+        ASFW_LOG_ERROR(Audio,
+                       "AVCDiscovery: Deferring Duet audio nub GUID=%llx; no device for fixed %u Hz prepublish",
+                       guid,
+                       kDuetFixedSampleRateHz);
         return;
     }
 
-    auto protocol = std::make_shared<Audio::Oxford::Apogee::ApogeeDuetProtocol>(
+    auto protocol = std::make_shared<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>(
         busOps_,
         busInfo_,
         device->GetNodeID(),
@@ -585,7 +675,7 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
         }
 
         ASFW_LOG(Audio,
-                 "AVCDiscovery: Duet prefetch complete GUID=%llx reason=%{public}s input=%d mixer=%d output=%d display=%d fw=%d hw=%d timedOut=%d",
+                 "AVCDiscovery: Duet prepublish complete GUID=%llx reason=%{public}s input=%d mixer=%d output=%d display=%d fw=%d hw=%d clockVerified=%d clockStatus=0x%x timedOut=%d",
                  guid,
                  reason ? reason : "unknown",
                  state->inputParams.has_value(),
@@ -594,10 +684,28 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
                  state->displayParams.has_value(),
                  state->firmwareId.has_value(),
                  state->hardwareId.has_value(),
+                 state->clockVerified,
+                 state->clockStatus,
                  state->timedOut);
+
+        // A nub is immutable enough that CoreAudio may select its advertised
+        // rate before StartIO.  Publishing a Duet before both AV/C plug
+        // formations have been verified at 48 kHz creates a deterministic
+        // host/device clock split.  Defer rather than expose a broken device.
+        if (!state->clockVerified) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCDiscovery: Deferring Duet audio nub GUID=%llx; fixed %u Hz prepublish failed status=0x%x reason=%{public}s",
+                           guid,
+                           kDuetFixedSampleRateHz,
+                           state->clockStatus,
+                           reason ? reason : "unknown");
+            return;
+        }
 
         auto finalConfig = config;
         ConfigureDuetPhantomOverrides(finalConfig, state->inputParams);
+        finalConfig.sampleRates = {kDuetFixedSampleRateHz};
+        finalConfig.currentSampleRate = kDuetFixedSampleRateHz;
 
         if (!audioConfigListener_) {
             ASFW_LOG_ERROR(Audio,
@@ -634,7 +742,7 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
 
     protocol->GetInputParams([this, guid, protocol, state, completed, finish](
                                  IOReturn status,
-                                 Audio::Oxford::Apogee::InputParams params) {
+                                 ::ASFW::Audio::Oxford::Apogee::InputParams params) {
         if (completed->load()) {
             return;
         }
@@ -651,13 +759,13 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
 
 void AVCDiscovery::ContinueDuetPrefetchMixer(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
     protocol->GetMixerParams([this, guid, protocol, state, completed, finish](
                                  IOReturn mixerStatus,
-                                 Audio::Oxford::Apogee::MixerParams mixerParams) {
+                                 ::ASFW::Audio::Oxford::Apogee::MixerParams mixerParams) {
         if (completed->load()) {
             return;
         }
@@ -674,13 +782,13 @@ void AVCDiscovery::ContinueDuetPrefetchMixer(
 
 void AVCDiscovery::ContinueDuetPrefetchOutput(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
     protocol->GetOutputParams([this, guid, protocol, state, completed, finish](
                                   IOReturn outputStatus,
-                                  Audio::Oxford::Apogee::OutputParams outputParams) {
+                                  ::ASFW::Audio::Oxford::Apogee::OutputParams outputParams) {
         if (completed->load()) {
             return;
         }
@@ -697,13 +805,13 @@ void AVCDiscovery::ContinueDuetPrefetchOutput(
 
 void AVCDiscovery::ContinueDuetPrefetchDisplay(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
     protocol->GetDisplayParams([this, guid, protocol, state, completed, finish](
                                    IOReturn displayStatus,
-                                   Audio::Oxford::Apogee::DisplayParams displayParams) {
+                                   ::ASFW::Audio::Oxford::Apogee::DisplayParams displayParams) {
         if (completed->load()) {
             return;
         }
@@ -720,7 +828,7 @@ void AVCDiscovery::ContinueDuetPrefetchDisplay(
 
 void AVCDiscovery::ContinueDuetPrefetchFirmware(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
@@ -743,11 +851,11 @@ void AVCDiscovery::ContinueDuetPrefetchFirmware(
 
 void AVCDiscovery::ContinueDuetPrefetchHardware(
     uint64_t guid,
-    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
     const std::shared_ptr<DuetPrefetchState>& state,
     const std::shared_ptr<std::atomic<bool>>& completed,
     const std::shared_ptr<std::function<void(const char*)>>& finish) {
-    protocol->GetHardwareId([guid, state, completed, finish](
+    protocol->GetHardwareId([guid, protocol, state, completed, finish](
                                 IOReturn hwStatus,
                                 uint32_t hardwareId) {
         if (completed->load()) {
@@ -760,11 +868,30 @@ void AVCDiscovery::ContinueDuetPrefetchHardware(
                              "AVCDiscovery: Duet hardware-id prefetch failed GUID=%llx status=0x%x",
                              guid, hwStatus);
         }
-        (*finish)("complete");
+        // Linux OXFW configures the input formation before output and verifies
+        // the selected format before stream construction.  ApplyClockConfig
+        // implements that same control-plane sequence and readback; it owns no
+        // CMP/IRM resources, so this remains strictly pre-stream.
+        protocol->ApplyClockConfig(
+            ::ASFW::Audio::AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz},
+            [guid, protocol, state, completed, finish](IOReturn clockStatus,
+                                                        const ::ASFW::Audio::ClockApplyResult& result) {
+                if (completed->load()) {
+                    return;
+                }
+                state->clockStatus = clockStatus;
+                state->clockVerified =
+                    clockStatus == kIOReturnSuccess &&
+                    result.appliedClock.sampleRateHz == kDuetFixedSampleRateHz;
+                (*finish)(state->clockVerified ? "complete" : "clock-failed");
+            });
     });
 }
 
 void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     if (!avcUnit) {
         return;
     }
@@ -787,21 +914,34 @@ void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>&
     IOLockUnlock(lock_);
 
     auto unit = avcUnit;
-    auto rescanWork = [this, guid, attempt, unit]() {
+    const std::weak_ptr<AVCDiscovery> weakSelf = weak_from_this();
+    auto rescanWork = [weakSelf, guid, attempt, unit]() {
+        const auto self = weakSelf.lock();
+        if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+        }
         if (kRescanDelayMs > 0) {
             IOSleep(kRescanDelayMs);
         }
 
+        if (self->shuttingDown_.load(std::memory_order_acquire)) {
+            return;
+        }
+
         ASFW_LOG(Audio, "AVCDiscovery: Auto re-scan attempt %u for GUID=%llx", attempt, guid);
-        unit->ReScan([this, guid, unit](bool success) {
+        unit->ReScan([weakSelf, guid, unit](bool success) {
+            const auto self = weakSelf.lock();
+            if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
+                return;
+            }
             if (!success) {
-                os_log_error(log_,
+                os_log_error(self->log_,
                              "AVCDiscovery: AVCUnit re-scan failed: GUID=%llx",
                              guid);
                 return;
             }
 
-            HandleInitializedUnit(guid, unit);
+            self->HandleInitializedUnit(guid, unit);
         });
     };
 
@@ -813,6 +953,9 @@ void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>&
 }
 
 void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     uint64_t guid = GetUnitGUID(unit);
 
     IOLockLock(lock_);
@@ -831,11 +974,16 @@ void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {
 }
 
 void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     uint64_t guid = GetUnitGUID(unit);
 
+    std::shared_ptr<AVCUnit> avcUnit;
     IOLockLock(lock_);
     auto it = units_.find(guid);
     if (it != units_.end()) {
+        avcUnit = it->second;
         os_log_info(log_,
                     "AVCDiscovery: AV/C unit resumed: GUID=%llx",
                     guid);
@@ -843,17 +991,29 @@ void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
     }
     IOLockUnlock(lock_);
 
+    if (avcUnit) {
+        const auto device = avcUnit->GetDevice();
+        if (device && device->IsReady()) {
+            avcUnit->OnRouteRevalidated(static_cast<uint32_t>(device->GetGeneration().value));
+        }
+    }
+
     // Rebuild node ID map (resumed units back in routing)
     RebuildNodeIDMap();
 }
 
 void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     uint64_t guid = GetUnitGUID(unit);
 
+    std::shared_ptr<AVCUnit> avcUnit;
     IOLockLock(lock_);
 
     auto it = units_.find(guid);
     if (it != units_.end()) {
+        avcUnit = it->second;
         os_log_info(log_,
                     "AVCDiscovery: AV/C unit terminated: GUID=%llx",
                     guid);
@@ -863,29 +1023,57 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
     duetPrefetchByGuid_.erase(guid);
     IOLockUnlock(lock_);
 
+    // A response-router lease may keep the transport alive after its unit has
+    // left discovery. Stop it explicitly so no pending callback survives the
+    // unit-removal lifecycle boundary.
+    if (avcUnit) {
+        avcUnit->Shutdown();
+    }
+
     // Rebuild node ID map (terminated unit removed)
     RebuildNodeIDMap();
 }
 
 void AVCDiscovery::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     (void)device;
 }
 
 void AVCDiscovery::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     (void)device;
 }
 
 void AVCDiscovery::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     (void)device;
 }
 
 void AVCDiscovery::OnDeviceRemoved(Discovery::Guid64 guid) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
+    std::shared_ptr<AVCUnit> avcUnit;
     IOLockLock(lock_);
 
-    units_.erase(guid);
+    const auto it = units_.find(guid);
+    if (it != units_.end()) {
+        avcUnit = it->second;
+        units_.erase(it);
+    }
     rescanAttempts_.erase(guid);
     duetPrefetchByGuid_.erase(guid);
     IOLockUnlock(lock_);
+
+    if (avcUnit) {
+        avcUnit->Shutdown();
+    }
 
     RebuildNodeIDMap();
 }
@@ -930,6 +1118,9 @@ std::vector<AVCUnit*> AVCDiscovery::GetAllAVCUnits() {
 }
 
 void AVCDiscovery::ReScanAllUnits() {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     IOLockLock(lock_);
     
     os_log_info(log_, "AVCDiscovery: Re-scanning all %zu units", units_.size());
@@ -948,15 +1139,25 @@ void AVCDiscovery::ReScanAllUnits() {
 }
 
 FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {
+    // Legacy borrowing API. New asynchronous callers must use Acquire...()
+    // and retain the returned shared owner across their complete operation.
+    const auto transport = AcquireFCPTransportForNodeID(nodeID);
+    return transport.get();
+}
+
+std::shared_ptr<FCPTransport> AVCDiscovery::AcquireFCPTransportForNodeID(uint16_t nodeID) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return nullptr;
+    }
     IOLockLock(lock_);
 
     // Normalize to node number (low 6 bits) to match map keys
     const uint16_t nodeNumber = static_cast<uint16_t>(nodeID & 0x3Fu);
 
     auto it = fcpTransportsByNodeID_.find(nodeNumber);
-    FCPTransport* result = (it != fcpTransportsByNodeID_.end())
-                               ? it->second
-                               : nullptr;
+    std::shared_ptr<FCPTransport> result = (it != fcpTransportsByNodeID_.end())
+                                                ? it->second
+                                                : nullptr;
 
     IOLockUnlock(lock_);
 
@@ -968,6 +1169,9 @@ FCPTransport* AVCDiscovery::GetFCPTransportForNodeID(uint16_t nodeID) {
 //==============================================================================
 
 void AVCDiscovery::OnBusReset(uint32_t newGeneration) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     os_log_info(log_,
                 "AVCDiscovery: Bus reset (generation %u)",
                 newGeneration);
@@ -1001,8 +1205,8 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 }
 
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
-    return device.GetVendorID() == Audio::DeviceProtocolFactory::kApogeeVendorId &&
-           device.GetModelID() == Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId &&
+           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {
@@ -1019,6 +1223,9 @@ uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) cons
 }
 
 void AVCDiscovery::RebuildNodeIDMap() {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
     IOLockLock(lock_);
 
     // Clear old mappings
@@ -1040,7 +1247,11 @@ void AVCDiscovery::RebuildNodeIDMap() {
         const uint16_t fullNodeID = device->GetNodeID();
         const uint16_t nodeNumber = static_cast<uint16_t>(fullNodeID & 0x3Fu);
         
-        fcpTransportsByNodeID_[nodeNumber] = &avcUnit->GetFCPTransport();
+        auto transport = avcUnit->GetFCPTransportShared();
+        if (!transport) {
+            continue;
+        }
+        fcpTransportsByNodeID_[nodeNumber] = std::move(transport);
 
         os_log_debug(log_,
                      "AVCDiscovery: Mapped fullNodeID=0x%04x (node=%u) → FCPTransport (GUID=%llx)",

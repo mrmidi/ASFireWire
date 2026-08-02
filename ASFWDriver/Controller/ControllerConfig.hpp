@@ -46,10 +46,9 @@ enum class PowerPolicyLevel : uint8_t {
 };
 
 // FW-22: roleMode selects which capabilities the local Config ROM advertises.
-//   The value-initialized policy remains ClientOnly for unit tests and explicit
-//   passive construction. The live driver seeds ServiceContext with the hardware
-//   validation profile below so ASFW advertises BM/IRM capability and can be
-//   observed against Linux/Apple-like behavior on a real bus.
+// The normal live profile is deliberately passive.  Becoming a contender/BM is
+// wire-visible and can reset a bus, so it is a hardware-validation opt-in rather
+// than the default for an attached audio device.
 struct RolePolicy {
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::ClientOnly};
     ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
@@ -60,6 +59,12 @@ struct RolePolicy {
     // activity ladder is also at ForceRootAllowed or higher and local == IRM.
     bool linuxStyleCmcForceRoot{false};
 
+    [[nodiscard]] static constexpr RolePolicy MakeLiveDefault() noexcept {
+        return RolePolicy{};
+    }
+
+    /// Explicit test-only profile for controlled BM/IRM validation. Do not use as
+    /// the service default on a user bus.
     [[nodiscard]] static constexpr RolePolicy MakeHardwareValidationDefault() noexcept {
         RolePolicy policy{};
         // cross-validated with Linux: core-card.c:425-428 Apple: IOFireWireController.cpp:3258-3367

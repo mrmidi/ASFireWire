@@ -88,6 +88,29 @@ TEST(ConfigROMStoreConcurrencyTests, SameGenerationInsertRefreshesGuidCache) {
     EXPECT_EQ(byGuid->rawQuadlets.size(), 6u);
 }
 
+TEST(ConfigROMStoreConcurrencyTests, SameGenerationShorterInsertDoesNotRegressNodeCache) {
+    ASFW::Discovery::ConfigROMStore store;
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x0003DB0A0000D112ULL;
+    const ASFW::Discovery::Generation kGeneration{4};
+    constexpr uint8_t kNodeId = 2;
+
+    auto rich = MakeROM(kGeneration, kNodeId, kGuid);
+    rich.rawQuadlets.resize(31, 0);
+    store.Insert(rich);
+
+    auto partialRetry = rich;
+    partialRetry.rawQuadlets.resize(19);
+    store.Insert(partialRetry);
+
+    const auto* byNode = store.FindByNode(kGeneration, kNodeId);
+    ASSERT_NE(byNode, nullptr);
+    EXPECT_EQ(byNode->rawQuadlets.size(), 31u);
+
+    const auto* byGuid = store.FindByGuid(kGuid);
+    ASSERT_NE(byGuid, nullptr);
+    EXPECT_EQ(byGuid->rawQuadlets.size(), 31u);
+}
+
 TEST(ConfigROMStoreConcurrencyTests, LatestLookupPrefersPreviousProfileOverNewerPartialROM) {
     ASFW::Discovery::ConfigROMStore store;
     constexpr ASFW::Discovery::Guid64 kGuid = 0x0090b54001ffffffULL;

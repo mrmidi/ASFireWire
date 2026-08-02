@@ -1,11 +1,17 @@
 // BlockingCadenceTests.cpp
 // ASFW - Phase 1.5 Encoding Tests
 //
-// Tests for 48 kHz blocking cadence pattern.
+// Tests for blocking cadence patterns and the detached rational engine.
 //
 
 #include <gtest/gtest.h>
+
 #include "Audio/Wire/AMDTP/AmdtpCadence.hpp"
+#include "generated/AmdtpBlockingCadence441Golden.hpp"
+
+#include <cstdint>
+#include <string>
+#include <vector>
 
 using namespace ASFW::Protocols::Audio::AMDTP;
 
@@ -135,6 +141,104 @@ TEST(BlockingCadenceTests, ResetClearsState) {
 // Reference: 000-48kORIG.txt cycles 977-984
 //==============================================================================
 
+//==============================================================================
+// Rate-parametric cadence (44.1 kHz). Cross-validated with FFADO
+// iec61883_cip_fill_header (libffado-2.4.9 src/libstreaming/util/cip.c): the
+// blocking cadence is a rational accumulator of rate/8000 frames per cycle.
+//==============================================================================
+
+TEST(BlockingCadenceTests, ConfigureFortyEightKMatchesDefaultPattern) {
+    BlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(48000, 8));
+
+    bool expected[] = {false, true, true, true, false, true, true, true};
+    for (int i = 0; i < 8; i++) {
+        SCOPED_TRACE("Cycle " + std::to_string(i));
+        EXPECT_EQ(cadence.CurrentCycleIsData(), expected[i]);
+        cadence.AdvanceCycle();
+    }
+}
+
+TEST(BlockingCadenceTests, FortyFourKFirstCycleIsNoData) {
+    BlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(44100, 8));
+    // 44100/8000 = 5.5125 frames pending after cycle 0 -> < syt_interval(8).
+    EXPECT_FALSE(cadence.CurrentCycleIsData());
+    EXPECT_EQ(cadence.CurrentCycleDataFrames(), 0);
+}
+
+TEST(BlockingCadenceTests, FortyFourKDataPacketsCarryEightFrames) {
+    BlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(44100, 8));
+    for (int i = 0; i < 64; ++i) {
+        if (cadence.CurrentCycleIsData()) {
+            EXPECT_EQ(cadence.CurrentCycleDataFrames(), 8);
+        } else {
+            EXPECT_EQ(cadence.CurrentCycleDataFrames(), 0);
+        }
+        cadence.AdvanceCycle();
+    }
+}
+
+TEST(BlockingCadenceTests, FortyFourKExactOverTwoSeconds) {
+    BlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(44100, 8));
+    uint64_t totalSamples = 0;
+    // 44100 * 16000 / 64000 = 11025 data cycles exactly -> 88200 frames, with
+    // the fractional accumulator returning to zero residual every 2 seconds.
+    for (int i = 0; i < 16000; ++i) {
+        totalSamples += cadence.CurrentCycleDataFrames();
+        cadence.AdvanceCycle();
+    }
+    EXPECT_EQ(totalSamples, 88200u);
+}
+
+TEST(BlockingCadenceTests, FortyFourKNoDriftAcrossTenSeconds) {
+    BlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(44100, 8));
+    uint64_t totalSamples = 0;
+    for (int i = 0; i < 80000; ++i) { // 10 s
+        totalSamples += cadence.CurrentCycleDataFrames();
+        cadence.AdvanceCycle();
+    }
+    EXPECT_EQ(totalSamples, 441000u);
+}
+
+// The adapter is a seeded RationalBlockingCadence; it must reproduce the
+// FFADO accumulate-then-test rule (cip.c: data iff pending + rate/8000 frames
+// >= syt_interval) exactly, cycle for cycle, at every supported rate. The
+// reference accumulator lives only in this test; production runs the deadline
+// engine with the accumulator-equivalent seed.
+TEST(BlockingCadenceTests, AdapterMatchesAccumulatorSemanticsAtEveryRate) {
+    struct RateCase {
+        uint32_t rate;
+        uint8_t interval;
+    };
+    constexpr RateCase kCases[] = {{32000, 8},  {44100, 8},   {48000, 8},
+                                   {88200, 16}, {96000, 16},  {176400, 32},
+                                   {192000, 32}};
+    for (const auto& c : kCases) {
+        SCOPED_TRACE("rate " + std::to_string(c.rate));
+        BlockingCadence cadence;
+        ASSERT_TRUE(cadence.Configure(c.rate, c.interval));
+        const uint32_t threshold = uint32_t(c.interval) * 8000u;
+        uint64_t ready = 0; // pending frames scaled by 8000
+        for (uint32_t cycle = 0; cycle < 16000; ++cycle) { // 2 s of bus time
+            const bool refData = (ready + c.rate) >= threshold;
+            ASSERT_EQ(cadence.CurrentCycleIsData(), refData)
+                << "cycle " << cycle;
+            ASSERT_EQ(cadence.CurrentCycleDataFrames(),
+                      refData ? c.interval : 0)
+                << "cycle " << cycle;
+            ready += c.rate;
+            if (refData) {
+                ready -= threshold;
+            }
+            cadence.AdvanceCycle();
+        }
+    }
+}
+
 TEST(BlockingCadenceTests, MatchesFireBugPattern) {
     Blocking48kCadence cadence;
     
@@ -159,4 +263,122 @@ TEST(BlockingCadenceTests, MatchesFireBugPattern) {
     EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
     EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
     EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
+}
+
+//==============================================================================
+// Rational blocking cadence -- generated 44.1 kHz golden data
+//==============================================================================
+
+TEST(RationalBlockingCadenceTests, MatchesGenerated441CadenceAndOffsets) {
+    using namespace ASFW::Test::Golden;
+
+    RationalBlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(k441SampleRateHz, k441SytInterval));
+
+    uint32_t dataPackets = 0;
+    uint32_t dataBlocks = 0;
+    std::size_t offsetIndex = 0;
+    for (std::size_t cycle = 0; cycle < k441CadencePeriodCycles; ++cycle) {
+        SCOPED_TRACE("Cycle " + std::to_string(cycle));
+        const RationalBlockingDecision decision = cadence.CurrentDecision();
+        const bool expectedData = Is441DataCycle(cycle);
+
+        EXPECT_EQ(decision.isData, expectedData);
+        if (expectedData) {
+            EXPECT_EQ(decision.dataBlocks, k441SytInterval);
+            if (offsetIndex < k441SytOffsets.size()) {
+                EXPECT_EQ(decision.sytOffsetTicks, k441SytOffsets[offsetIndex]);
+            }
+            ++dataPackets;
+            dataBlocks += decision.dataBlocks;
+            ++offsetIndex;
+        } else {
+            EXPECT_EQ(decision.dataBlocks, 0);
+            EXPECT_EQ(decision.sytOffsetTicks, kNoSytOffset);
+        }
+        cadence.AdvanceCycle();
+    }
+
+    EXPECT_EQ(dataPackets, k441DataPacketsPerPeriod);
+    EXPECT_EQ(dataBlocks, 3528u);
+    EXPECT_EQ(offsetIndex, k441DataPacketsPerPeriod);
+    EXPECT_EQ(cadence.TotalCycles(), k441CadencePeriodCycles);
+}
+
+TEST(RationalBlockingCadenceTests, MatchesGenerated441SytDeltaSequence) {
+    using namespace ASFW::Test::Golden;
+
+    RationalBlockingCadence cadence;
+    ASSERT_TRUE(cadence.Configure(k441SampleRateHz, k441SytInterval));
+
+    std::vector<uint64_t> absoluteDeadlineTicks;
+    for (std::size_t cycle = 0; cycle < k441CadencePeriodCycles; ++cycle) {
+        const RationalBlockingDecision decision = cadence.CurrentDecision();
+        if (decision.isData) {
+            absoluteDeadlineTicks.push_back(
+                cadence.TotalCycles() * 3072ULL + decision.sytOffsetTicks);
+        }
+        cadence.AdvanceCycle();
+    }
+
+    ASSERT_GE(absoluteDeadlineTicks.size(), k441SytDeltaPeriodEvents + 1);
+    for (std::size_t index = 0; index < k441SytDeltaPeriodEvents; ++index) {
+        SCOPED_TRACE("SYT delta " + std::to_string(index));
+        EXPECT_EQ(absoluteDeadlineTicks[index + 1] - absoluteDeadlineTicks[index],
+                  k441SytDeltaTicks[index]);
+    }
+}
+
+TEST(RationalBlockingCadenceTests, Preserves441FamilyDeadlineSequence) {
+    RationalBlockingCadence at441;
+    RationalBlockingCadence at882;
+    RationalBlockingCadence at1764;
+    ASSERT_TRUE(at441.Configure(44'100, 8));
+    ASSERT_TRUE(at882.Configure(88'200, 16));
+    ASSERT_TRUE(at1764.Configure(176'400, 32));
+
+    for (std::size_t cycle = 0;
+         cycle < ASFW::Test::Golden::k441CadencePeriodCycles;
+         ++cycle) {
+        SCOPED_TRACE("Cycle " + std::to_string(cycle));
+        const RationalBlockingDecision base = at441.CurrentDecision();
+        const RationalBlockingDecision x2 = at882.CurrentDecision();
+        const RationalBlockingDecision x4 = at1764.CurrentDecision();
+
+        EXPECT_EQ(x2.isData, base.isData);
+        EXPECT_EQ(x4.isData, base.isData);
+        EXPECT_EQ(x2.sytOffsetTicks, base.sytOffsetTicks);
+        EXPECT_EQ(x4.sytOffsetTicks, base.sytOffsetTicks);
+        EXPECT_EQ(x2.dataBlocks, base.isData ? 16 : 0);
+        EXPECT_EQ(x4.dataBlocks, base.isData ? 32 : 0);
+
+        at441.AdvanceCycle();
+        at882.AdvanceCycle();
+        at1764.AdvanceCycle();
+    }
+}
+
+TEST(RationalBlockingCadenceTests, DeadlineAtCycleEndBelongsToNextCycle) {
+    RationalBlockingCadence cadence;
+    constexpr uint64_t deadlineAtCycleEnd = 3072ULL * 44'100;
+    ASSERT_TRUE(cadence.Configure(44'100, 8, deadlineAtCycleEnd));
+
+    EXPECT_FALSE(cadence.CurrentDecision().isData);
+    cadence.AdvanceCycle();
+    const RationalBlockingDecision next = cadence.CurrentDecision();
+    EXPECT_TRUE(next.isData);
+    EXPECT_EQ(next.sytOffsetTicks, 0);
+
+    cadence.Reset();
+    EXPECT_FALSE(cadence.CurrentDecision().isData);
+}
+
+TEST(RationalBlockingCadenceTests, RejectsInvalidOrMultiEventConfiguration) {
+    RationalBlockingCadence cadence;
+
+    EXPECT_FALSE(cadence.Configure(0, 8));
+    EXPECT_FALSE(cadence.Configure(44'100, 0));
+    EXPECT_FALSE(cadence.Configure(48'000, 4));
+    EXPECT_FALSE(cadence.IsConfigured());
+    EXPECT_FALSE(cadence.CurrentDecision().isData);
 }

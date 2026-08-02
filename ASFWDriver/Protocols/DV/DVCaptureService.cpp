@@ -161,10 +161,11 @@ kern_return_t DVCaptureService::Start(
     }
     const auto node = Discovery::TryOperationalNodeId(record->nodeId);
     if (!node) return kIOReturnNotReady;
-
-    cmp.SetDeviceNode(*node,
-                      static_cast<IRM::Generation>(record->gen),
-                      record->link.localToNode);
+    const CMP::CMPDevice cmpDevice{
+        .guid = deviceGuid,
+        .nodeId = FW::NodeId{*node},
+        .generation = record->gen,
+    };
 
     ConnectionMode mode = ConnectionMode::BroadcastFallback;
     uint8_t channel = 63;
@@ -174,8 +175,8 @@ kern_return_t DVCaptureService::Start(
     bool shouldConnectPCR = false;
 
     const auto ompr = AwaitPCRRead(
-        [&cmp](CMP::PCRReadCallback callback) {
-            cmp.ReadOMPR(std::move(callback));
+        [&cmp, cmpDevice](CMP::PCRReadCallback callback) {
+            cmp.ReadOMPR(cmpDevice, std::move(callback));
         });
     if (ompr) {
         channel = CMP::MPRBits::GetBroadcastChannel(*ompr);
@@ -184,8 +185,8 @@ kern_return_t DVCaptureService::Start(
         const uint8_t plugCount = CMP::MPRBits::GetPlugCount(*ompr);
         for (uint8_t plug = 0; plug < plugCount; ++plug) {
             const auto pcr = AwaitPCRRead(
-                [&cmp, plug](CMP::PCRReadCallback callback) {
-                    cmp.ReadOPCR(plug, std::move(callback));
+                [&cmp, cmpDevice, plug](CMP::PCRReadCallback callback) {
+                    cmp.ReadOPCR(cmpDevice, plug, std::move(callback));
                 });
             if (!pcr || !CMP::PCRBits::IsOnline(*pcr)) continue;
             if (!firstOnline) firstOnline = PlugSelection{plug, *pcr};
@@ -204,7 +205,10 @@ kern_return_t DVCaptureService::Start(
             } else if (CMP::PCRBits::GetP2P(selected->pcr) > 0) {
                 mode = ConnectionMode::Overlay;
                 channel = CMP::PCRBits::GetChannel(selected->pcr);
-                shouldConnectPCR = true;
+                // Observe an existing stream without modifying its connection
+                // count. We do not own that lease and therefore must never
+                // issue a matching BREAK on disconnect.
+                shouldConnectPCR = false;
             } else if (const auto snapshot = AwaitResourceSnapshot(irm)) {
                 if (const auto availableChannel = FirstAvailableChannel(*snapshot)) {
                     const uint8_t effectiveSpeed = static_cast<uint8_t>(
@@ -245,6 +249,8 @@ kern_return_t DVCaptureService::Start(
     irm_ = &irm;
     cmp_ = &cmp;
     deviceGuid_ = deviceGuid;
+    deviceNodeId_ = *node;
+    deviceGeneration_ = record->gen.value;
     channel_ = channel;
     outputPlug_ = outputPlug;
     bandwidthUnits_ = bandwidthUnits;
@@ -285,11 +291,7 @@ kern_return_t DVCaptureService::Start(
         return kIOReturnInternalError;
     }
 
-    kr = isoch.StartPacketReceive(
-        channel, hardware,
-        [this](const ASFW::Isoch::IsochRxPacketView& packet) {
-            sink_.OnPacket(packet);
-        });
+    kr = isoch.StartPacketReceive(channel, hardware, &sink_);
     if (kr != kIOReturnSuccess) {
         sink_.MarkTerminal(CaptureState::Failed);
         (void)TeardownConnection(false);
@@ -299,16 +301,19 @@ kern_return_t DVCaptureService::Start(
 
     if (shouldConnectPCR) {
         const auto status = AwaitAllocation(
-            [&cmp, outputPlug, channel, mode](CMP::CMPCallback callback) {
-                if (mode == ConnectionMode::PointToPoint) {
-                    cmp.ConnectOPCR(outputPlug, channel, std::move(callback));
-                } else {
-                    cmp.ConnectOPCR(outputPlug, std::move(callback));
-                }
+            [&cmp, cmpDevice, outputPlug, channel](CMP::CMPCallback callback) {
+                cmp.ConnectOPCR(cmpDevice, outputPlug, channel,
+                                std::move(callback));
             });
         if (status != IRM::AllocationStatus::Success) {
-            (void)isoch.StopReceive();
+            const kern_return_t stopStatus =
+                isoch.StopPacketReceive(&sink_);
             sink_.MarkTerminal(CaptureState::Failed);
+            if (stopStatus != kIOReturnSuccess) {
+                ownerToken_ = ownerToken;
+                active_ = true;
+                return stopStatus;
+            }
             const kern_return_t result = ToIOReturn(status);
             (void)TeardownConnection(false);
             ResetState();
@@ -336,7 +341,10 @@ kern_return_t DVCaptureService::Stop(uint64_t ownerToken,
         return kIOReturnNotPrivileged;
     }
 
-    (void)isoch.StopReceive();
+    const kern_return_t stopStatus = isoch.StopPacketReceive(&sink_);
+    if (stopStatus != kIOReturnSuccess) {
+        return stopStatus;
+    }
     sink_.MarkTerminal(CaptureState::Stopped);
     const kern_return_t kr = TeardownConnection(false);
     ASFW_LOG(Isoch, "[DV] capture stopped owner=0x%llx kr=0x%x",
@@ -349,7 +357,14 @@ void DVCaptureService::StopAll(Driver::IsochService& isoch) noexcept {
     if (!lock_) return;
     LockGuard guard(lock_);
     if (active_) {
-        (void)isoch.StopReceive();
+        const kern_return_t stopStatus = isoch.StopPacketReceive(&sink_);
+        if (stopStatus != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(
+                Isoch,
+                "[DV] capture stop-all could not quiesce IR kr=0x%x; retaining session",
+                stopStatus);
+            return;
+        }
         sink_.MarkTerminal(CaptureState::Stopped);
         (void)TeardownConnection(false);
     }
@@ -365,7 +380,14 @@ void DVCaptureService::HandleBusReset(
     // A reset invalidates both the generation-pinned PCR transaction and all
     // IRM reservations. Do not write stale PCR/IRM state during the reset.
     sink_.MarkTerminal(CaptureState::BusReset);
-    (void)isoch.StopReceive();
+    const kern_return_t stopStatus = isoch.StopPacketReceive(&sink_);
+    if (stopStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(
+            Isoch,
+            "[DV] bus-reset stop could not quiesce IR kr=0x%x; retaining session",
+            stopStatus);
+        return;
+    }
     (void)TeardownConnection(true);
     ASFW_LOG_WARNING(Isoch,
                      "[DV] capture terminated by bus reset GUID=0x%llx",
@@ -378,10 +400,21 @@ kern_return_t DVCaptureService::TeardownConnection(
     kern_return_t result = kIOReturnSuccess;
     bool mayReleaseResources = !pcrConnected_;
 
+    const CMP::CMPDevice cmpDevice{
+        .guid = deviceGuid_,
+        .nodeId = FW::NodeId{deviceNodeId_},
+        .generation = FW::Generation{deviceGeneration_},
+    };
+
+    if (generationInvalid && cmp_ && deviceGuid_ != 0) {
+        cmp_->InvalidateDevice(deviceGuid_);
+    }
+
     if (!generationInvalid && pcrConnected_ && cmp_ && outputPlug_ <= 30) {
         const auto status = AwaitAllocation(
-            [this](CMP::CMPCallback callback) {
-                cmp_->DisconnectOPCR(outputPlug_, std::move(callback));
+            [this, cmpDevice](CMP::CMPCallback callback) {
+                cmp_->DisconnectOPCR(cmpDevice, outputPlug_,
+                                     std::move(callback));
             });
         mayReleaseResources = status == IRM::AllocationStatus::Success;
         if (!mayReleaseResources) result = ToIOReturn(status);
@@ -437,6 +470,8 @@ void DVCaptureService::ResetState() noexcept {
     ring_.Reset();
     ownerToken_ = 0;
     deviceGuid_ = 0;
+    deviceNodeId_ = 0xFF;
+    deviceGeneration_ = 0;
     channel_ = 0xFF;
     outputPlug_ = 0xFF;
     bandwidthUnits_ = 0;

@@ -22,13 +22,20 @@ struct ExpandedReceiveTimestamp final {
         return false;
     }
 
-    uint32_t cycleTimerLE = 0;
-    std::memcpy(&cycleTimerLE, packet, sizeof(cycleTimerLE));
-    const uint32_t cycleTimer = OSSwapLittleToHostInt32(cycleTimerLE);
-    
-    // Apple Silicon OHCI prepends a 32-bit cycleTimer: [sec:7][cycle:13][offset:12]
-    // ExpandReceiveTimestamp expects a 16-bit [sec:3][cycle:13] format.
-    outTimestamp = static_cast<uint16_t>((cycleTimer >> 12) & 0xFFFFu);
+    uint32_t timestampQuadletLE = 0;
+    std::memcpy(&timestampQuadletLE, packet, sizeof(timestampQuadletLE));
+    const uint32_t timestampQuadlet =
+        OSSwapLittleToHostInt32(timestampQuadletLE);
+    // OHCI IR header mode stores the 16-bit [sec:3][cycle:13] timestamp in
+    // the low half of the first little-endian quadlet. Cross-validated with
+    // Linux firewire/ohci.c:2765 and Apple's packetReceiveTime().
+    const uint16_t timestamp =
+        static_cast<uint16_t>(timestampQuadlet & 0xFFFFu);
+    if ((timestamp & 0x1FFFu) >= ASFW::Timing::kCyclesPerSecond) {
+        return false;
+    }
+
+    outTimestamp = timestamp;
     return true;
 }
 

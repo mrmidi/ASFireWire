@@ -16,6 +16,10 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
+#include "../Protocols/AVCStartReadiness.hpp"
+#include "../Protocols/DeviceProtocolFactory.hpp"
+#include "../Protocols/DICE/Core/DICETypes.hpp"
+#include "../Protocols/DICE/Core/DICERestartSession.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"
@@ -250,6 +254,10 @@ void ASFWAudioNub::free()
             ivars->ztsAnchorAction->release();
             ivars->ztsAnchorAction = nullptr;
         }
+        if (ivars->deviceClockChangedAction) {
+            ivars->deviceClockChangedAction->release();
+            ivars->deviceClockChangedAction = nullptr;
+        }
         IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
     }
     super::free();
@@ -301,6 +309,10 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
         if (ivars->ztsAnchorAction) {
             ivars->ztsAnchorAction->release();
             ivars->ztsAnchorAction = nullptr;
+        }
+        if (ivars->deviceClockChangedAction) {
+            ivars->deviceClockChangedAction->release();
+            ivars->deviceClockChangedAction = nullptr;
         }
         ivars->parentDriver = nullptr;
     }
@@ -368,6 +380,15 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
     return kIOReturnSuccess;
 }
 
+kern_return_t IMPL(ASFWAudioNub, RequestTxPreparation)
+{
+    if (!ivars || !ivars->txPreparationAction) {
+        return kIOReturnNotReady;
+    }
+    TxPreparationReady(ivars->txPreparationAction, generation);
+    return kIOReturnSuccess;
+}
+
 void IMPL(ASFWAudioNub, TxPreparationReady)
 {
     (void)action;
@@ -418,6 +439,45 @@ void IMPL(ASFWAudioNub, ZtsAnchorReady)
     (void)generation;
 }
 
+kern_return_t IMPL(ASFWAudioNub, RegisterDeviceClockChangedAction)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    if (action) {
+        action->retain();
+    }
+    OSAction* oldAction = ivars->deviceClockChangedAction;
+    ivars->deviceClockChangedAction = action;
+    if (oldAction) {
+        oldAction->release();
+    }
+    return kIOReturnSuccess;
+}
+
+void IMPL(ASFWAudioNub, DeviceClockChanged)
+{
+    (void)action;
+    (void)nominalRateHz;
+}
+
+void ASFWAudioNub::NotifyDeviceClockChanged(uint32_t nominalRateHz)
+{
+    if (!ivars || !ivars->deviceClockChangedAction) {
+        return;
+    }
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: NotifyDeviceClockChanged %u Hz guid=0x%016llx",
+             nominalRateHz, ivars->guid);
+    DeviceClockChanged(ivars->deviceClockChangedAction, nominalRateHz);
+}
+
+uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
+{
+    return ivars ? ivars->currentSampleRateHz : 0;
+}
+
 ASFWDriver* ASFWAudioNub::GetParentDriver() const
 {
     return ivars ? OSDynamicCast(ASFWDriver, ivars->parentDriver) : nullptr;
@@ -451,6 +511,35 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
                  "ASFWAudioNub: StartAudioStreaming skipped (auto-start disabled) GUID=0x%016llx",
                  ivars->guid);
         return kIOReturnSuccess;
+    }
+
+    // A bus reset invalidates the registry node mapping before its delayed ROM
+    // scan republishes the current route. Hold AV/C starts in that interval:
+    // Linux resets FCP before its OXFW stream restart (oxfw.c:279-287), and
+    // Apple likewise waits for its resumed state before reconnecting. DICE's
+    // hardcoded-nub path does not use FCP and remains independent.
+    ProtocolRuntimeBinding binding{};
+    const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
+    if (bindingStatus == kIOReturnSuccess && binding.device != nullptr) {
+        const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
+            binding.device->vendorId, binding.device->modelId);
+        if (integration != ASFW::Audio::DeviceIntegrationMode::kHardcodedNub) {
+            auto* transport = binding.avcDiscovery
+                ? binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId)
+                : nullptr;
+            if (!ASFW::Audio::HasReadyAVCStartRoute(binding.device->nodeId, transport != nullptr)) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioNub: deferring AV/C stream start until route is rebound GUID=0x%016llx node=%u",
+                         ivars->guid,
+                         binding.device->nodeId);
+                return kIOReturnNotReady;
+            }
+            binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+            ASFW_LOG(Audio,
+                     "ASFWAudioNub: refreshed AV/C protocol route GUID=0x%016llx node=%u",
+                     ivars->guid,
+                     binding.device->nodeId);
+        }
     }
 
     auto* coordinator = GetAudioCoordinator(ivars);
@@ -543,7 +632,7 @@ kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
 
     // Delegate allocation to the core IsochService
     return ctx->isoch.AllocateTxIsochResources(
-        numSlots, maxPacketBytes, interruptInterval,
+        streamIndex, numSlots, maxPacketBytes, interruptInterval,
         outPayloadSlab, outMetadataRing, outControlBlock);
 }
 
@@ -560,6 +649,45 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
     }
 
     return ctx->isoch.FreeTxIsochResources();
+}
+
+// Cross-process RPC (AudioDriver -> ASFWDriver process): runs in the nub's own
+// process, so ivars and the parent -> ServiceContext -> AudioCoordinator chain
+// are valid here (a LOCALONLY variant would dereference the audio side's proxy
+// ivars, which are null).
+kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
+{
+    if (!ivars) {
+        ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange not ready (ivars=null)");
+        return kIOReturnNotReady;
+    }
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: RequestSampleRateChange not ready (no coordinator) guid=0x%016llx",
+                 ivars->guid);
+        return kIOReturnNotReady;
+    }
+
+    // The seam is protocol-neutral: carry only the rate. The DICE adapter
+    // (MakeDiceClockConfiguration) owns the CLOCK_SELECT register encoding.
+    const ASFW::Audio::AudioClockConfig desired{
+        .sampleRateHz = sampleRateHz,
+    };
+    if (!ASFW::Audio::IsSupportedAudioClockConfig(desired)) {
+        ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange unsupported rate %u Hz", sampleRateHz);
+        return kIOReturnUnsupported;
+    }
+
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: RequestSampleRateChange %u Hz guid=0x%016llx",
+             sampleRateHz, ivars->guid);
+    const kern_return_t kr = coordinator->RequestClockConfig(
+        ivars->guid, desired, ASFW::Audio::DuplexRestartReason::kSampleRateChange);
+    if (kr == kIOReturnSuccess) {
+        ivars->currentSampleRateHz = sampleRateHz;
+    }
+    return kr;
 }
 
 void ASFWAudioNub::SetChannelCount(uint32_t channels)

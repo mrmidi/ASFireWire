@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // HardwareInterfaceOrderTests.cpp — Regression tests for CSRControl write order and cycle master.
@@ -152,6 +152,17 @@ TEST_F(HardwareInterfaceOrderTests, SetLocalCycleMasterEnabled_InOrder) {
         });
 
     EXPECT_TRUE(hardware_.SetLocalCycleMasterEnabled(false));
+}
+
+TEST_F(HardwareInterfaceOrderTests, RevokeBlocksAllFurtherBarAccess) {
+    hardware_.Revoke();
+
+    EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+    EXPECT_FALSE(hardware_.IsAvailable());
+    EXPECT_EQ(hardware_.Read(Register32::kNodeID), 0U);
+    hardware_.Write(Register32::kNodeID, 0xDEADBEEFu);
+    hardware_.SetInterruptMask(0xFFFFFFFFu, false);
 }
 
 TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffFalseClearsRhbWithoutIssuingBusReset) {

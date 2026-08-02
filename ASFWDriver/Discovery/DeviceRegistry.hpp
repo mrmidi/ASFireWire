@@ -29,6 +29,10 @@ public:
     // Mark device as lost (not present in current generation)
     void MarkLost(Generation gen, uint8_t nodeId);
 
+    // A bus reset invalidates every generation/node mapping immediately. Device
+    // identity remains cached by GUID and is rebound only after a new ROM scan.
+    void InvalidateLiveMappingsForBusReset();
+
     // Lookup by GUID (stable across resets)
     DeviceRecord* FindByGuid(Guid64 guid);
     const DeviceRecord* FindByGuid(Guid64 guid) const;

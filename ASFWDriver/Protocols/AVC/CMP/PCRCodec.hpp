@@ -9,6 +9,7 @@ namespace ASFW::CMP::PCRBits {
 // definition used by both CMPClient and the higher-level PCRSpace.
 constexpr uint32_t kOnlineMask = 0x80000000u;
 constexpr uint32_t kBroadcastMask = 0x40000000u;
+constexpr uint32_t kBcastMask = kBroadcastMask;
 constexpr uint32_t kP2PMask = 0x3F000000u;
 constexpr uint8_t kP2PShift = 24;
 constexpr uint32_t kReservedMask = 0x00C00000u;
@@ -18,6 +19,8 @@ constexpr uint32_t kDataRateMask = 0x0000C000u;
 constexpr uint8_t kDataRateShift = 14;
 constexpr uint32_t kOverheadMask = 0x00003C00u;
 constexpr uint8_t kOverheadShift = 10;
+constexpr uint32_t kOverheadIdMask = kOverheadMask;
+constexpr uint8_t kOverheadIdShift = kOverheadShift;
 constexpr uint32_t kPayloadMask = 0x000003FFu;
 
 [[nodiscard]] constexpr bool IsOnline(uint32_t pcr) noexcept {
@@ -30,6 +33,10 @@ constexpr uint32_t kPayloadMask = 0x000003FFu;
 
 [[nodiscard]] constexpr uint8_t GetP2P(uint32_t pcr) noexcept {
     return static_cast<uint8_t>((pcr & kP2PMask) >> kP2PShift);
+}
+
+[[nodiscard]] constexpr bool IsInUse(uint32_t pcr) noexcept {
+    return IsBroadcast(pcr) || GetP2P(pcr) != 0;
 }
 
 [[nodiscard]] constexpr uint8_t GetChannel(uint32_t pcr) noexcept {
@@ -58,6 +65,19 @@ constexpr uint32_t kPayloadMask = 0x000003FFu;
                                             uint8_t channel) noexcept {
     return (pcr & ~kChannelMask) |
            ((static_cast<uint32_t>(channel) & 0x3Fu) << kChannelShift);
+}
+
+template <typename Speed>
+[[nodiscard]] constexpr uint32_t SetDataRate(uint32_t pcr,
+                                             Speed speed) noexcept {
+    return (pcr & ~kDataRateMask) |
+           ((static_cast<uint32_t>(speed) & 0x03u) << kDataRateShift);
+}
+
+[[nodiscard]] constexpr uint32_t SetOverheadId(
+    uint32_t pcr, uint8_t overheadId) noexcept {
+    return (pcr & ~kOverheadMask) |
+           ((static_cast<uint32_t>(overheadId) & 0x0Fu) << kOverheadShift);
 }
 
 } // namespace ASFW::CMP::PCRBits

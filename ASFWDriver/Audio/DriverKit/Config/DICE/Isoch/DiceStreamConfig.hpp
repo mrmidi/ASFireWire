@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
 // DiceStreamConfig.hpp
@@ -6,30 +6,13 @@
 
 #pragma once
 
-#include "../../../../Wire/AMDTP/AmdtpTypes.hpp"
-#include <cstdint>
+#include "../../AudioStreamProfile.hpp"
 
 namespace ASFW::Isoch::Audio::DICE {
 
-enum class DiceStreamDirection : uint8_t {
-    HostToDevice = 0,
-    DeviceToHost = 1,
-};
-
-struct DiceStreamConfig final {
-    DiceStreamDirection direction{DiceStreamDirection::HostToDevice};
-
-    uint32_t sampleRate{48000};
-    Encoding::StreamMode streamMode{Encoding::StreamMode::kBlocking};
-
-    uint8_t sid{0};
-    uint8_t pcmChannels{2};
-    uint8_t dbs{2};
-    uint8_t midiSlots{0};
-
-    uint8_t framesPerDataPacket{8};
-    uint8_t fdf{0x02};
-    uint8_t fmt{0x10};
-};
+// Compatibility aliases for DICE-specific profiles. The packet geometry
+// contract itself is protocol-neutral; AV/C/BeBoB uses the same ADK seam.
+using DiceStreamDirection = AudioStreamDirection;
+using DiceStreamConfig = AudioStreamConfig;
 
 } // namespace ASFW::Isoch::Audio::DICE

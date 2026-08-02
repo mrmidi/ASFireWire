@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // IDeviceProtocol.hpp - Interface for device-specific protocol handlers
@@ -10,6 +10,8 @@
 #include <DriverKit/IOReturn.h>
 #include <cstdint>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace ASFW::Protocols::AVC {
     class FCPTransport;
@@ -19,8 +21,8 @@ namespace ASFW::IRM {
     class IRMClient;
 }
 
-namespace ASFW::Audio::DICE {
-    class IDICEDuplexProtocol;
+namespace ASFW::Audio {
+class IDuplexDeviceControl;
 }
 
 namespace ASFW::Audio {
@@ -55,6 +57,19 @@ public:
     /// Returns true when the protocol has authoritative stream caps (e.g. DICE TX/RX stream formats).
     virtual bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
         (void)outCaps;
+        return false;
+    }
+
+    /// Query per-channel device labels discovered from the protocol's stream
+    /// format (e.g. DICE TX/RX name sections). `inNames` is host input/capture,
+    /// `outNames` is host output/playback, both in channel order; an empty entry
+    /// means "no label for that channel". Returns true only when authoritative
+    /// labels are available (caps loaded); callers fall back to synthesized
+    /// names otherwise.
+    virtual bool GetChannelLabels(std::vector<std::string>& inNames,
+                                  std::vector<std::string>& outNames) const {
+        (void)inNames;
+        (void)outNames;
         return false;
     }
 
@@ -94,12 +109,12 @@ public:
         return nullptr;
     }
 
-    /// Optional typed DICE duplex control interface used by the restart coordinator.
-    virtual DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() noexcept {
+    /// Optional protocol-neutral duplex control interface used by the audio lifecycle.
+    virtual IDuplexDeviceControl* AsDuplexDeviceControl() noexcept {
         return nullptr;
     }
 
-    virtual const DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept {
+    virtual const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept {
         return nullptr;
     }
 

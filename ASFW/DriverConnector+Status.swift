@@ -32,6 +32,34 @@ extension ASFWDriverConnector {
         return (output[0], UInt8(output[1]), output[2])
     }
 
+    /// Ask the driver to issue one local software bus reset. The driver checks
+    /// `expectedGeneration` again immediately before queuing the reset.
+    func requestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32? {
+        guard isConnected else {
+            log("requestUserBusReset: Not connected", level: .warning)
+            return nil
+        }
+
+        var input: [UInt64] = [UInt64(expectedGeneration), shortReset ? 1 : 0]
+        var output: [UInt64] = [0]
+        var outputCount: UInt32 = 1
+        let kr = IOConnectCallScalarMethod(
+            connection,
+            Method.requestUserBusReset.rawValue,
+            &input,
+            UInt32(input.count),
+            &output,
+            &outputCount
+        )
+        guard kr == KERN_SUCCESS, outputCount == 1 else {
+            let message = "requestUserBusReset failed: \(interpretIOReturn(kr))"
+            log(message, level: .error)
+            lastError = message
+            return nil
+        }
+        return UInt32(truncatingIfNeeded: output[0])
+    }
+
     func getControllerStatus() -> ControllerStatus? {
         guard isConnected else { return nil }
 

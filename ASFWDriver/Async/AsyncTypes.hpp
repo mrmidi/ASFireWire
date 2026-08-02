@@ -150,6 +150,8 @@ enum class AsyncStatus : uint8_t {
 /**
  * FWAddress - Standard FireWire 48-bit address structure
  * Ported from IOFireWireFamily/IOFireWireFamilyCommon.h for API compatibility.
+ * Source: Apple IOFireWireFamily (APSL-2.0) — API layout only, no
+ * implementation code reproduced. See NOTICE.
  *
  * Format: nodeID[15:0] + addressHi[15:0] + addressLo[31:0] = 64 bits total
  *   - nodeID: bus[15:10] | node[5:0]

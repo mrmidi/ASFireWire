@@ -3,28 +3,57 @@ import Foundation
 protocol ASFWDriverControlling {
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
     func listNodes() async -> [ASFWMCPNodeSummary]
+    func listAVCUnits() async -> [ASFWMCPAVCUnitSummary]
+    func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities?
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent]
     func executeReadQuadlet(_ request: ASFWMCPReadQuadletRequest) async -> ASFWMCPTransactionResult
     func executeReadBlock(_ request: ASFWMCPReadBlockRequest) async -> ASFWMCPTransactionResult
     func executeWriteQuadlet(_ request: ASFWMCPWriteQuadletRequest) async -> ASFWMCPTransactionResult
     func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
+    func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
+    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt
+    func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
+    func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
+    func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
+    func logRingStats() async -> ASFWLogRingStats?
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
-    nonisolated let nodes: [ASFWMCPNodeSummary]
-    nonisolated let transactions: [ASFWMCPTransactionEvent]
-    nonisolated let generation: UInt32
-    nonisolated(unsafe) private var attemptedWriteCount: Int = 0
+    private let nodes: [ASFWMCPNodeSummary]
+    private let transactions: [ASFWMCPTransactionEvent]
+    private var generation: UInt32
+    private let driverConnected: Bool
+    private let controllerState: String
+    private let linkActive: Bool
+    private let topologyValid: Bool
+    private let droppedEventCount: UInt32
+    private let timeoutCount: UInt32
+    private var attemptedWriteCount: Int = 0
+    private var duetInputFdf: UInt8 = 0x02
+    private var duetOutputFdf: UInt8 = 0x02
+    private var phase88Streaming = false
 
     init(
         generation: UInt32 = 17,
         nodes: [ASFWMCPNodeSummary] = MockASFWDriverControl.defaultNodes,
-        transactions: [ASFWMCPTransactionEvent] = MockASFWDriverControl.defaultTransactions
+        transactions: [ASFWMCPTransactionEvent] = MockASFWDriverControl.defaultTransactions,
+        driverConnected: Bool = true,
+        controllerState: String = "Running",
+        linkActive: Bool = true,
+        topologyValid: Bool = true,
+        droppedEventCount: UInt32 = 0,
+        timeoutCount: UInt32 = 0
     ) {
         self.generation = generation
         self.nodes = nodes
         self.transactions = transactions
+        self.driverConnected = driverConnected
+        self.controllerState = controllerState
+        self.linkActive = linkActive
+        self.topologyValid = topologyValid
+        self.droppedEventCount = droppedEventCount
+        self.timeoutCount = timeoutCount
     }
 
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot {
@@ -33,10 +62,10 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             capturedAt: nil,
             monotonicNs: 123_456_789_000,
             generation: generation,
-            driverConnected: true,
+            driverConnected: driverConnected,
             controller: ASFWMCPControllerTelemetry(
-                state: "Running",
-                linkActive: true,
+                state: controllerState,
+                linkActive: linkActive,
                 localNodeId: 0,
                 rootNodeId: 2,
                 irmNodeId: 2,
@@ -48,12 +77,12 @@ actor MockASFWDriverControl: ASFWDriverControlling {
                 nodeCount: UInt32(nodes.count),
                 busResetCount: 12,
                 gapCount: 63,
-                topologyValid: true
+                topologyValid: topologyValid
             ),
             async: ASFWMCPAsyncTelemetry(
                 recentEventCount: UInt32(transactions.count),
-                droppedEventCount: 0,
-                timeouts: 0,
+                droppedEventCount: droppedEventCount,
+                timeouts: timeoutCount,
                 lastCompletionNs: transactions.last?.timestampNs
             ),
             protocols: ASFWMCPProtocolTelemetry(
@@ -72,6 +101,56 @@ actor MockASFWDriverControl: ASFWDriverControlling {
 
     func listNodes() async -> [ASFWMCPNodeSummary] {
         nodes
+    }
+
+    func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {
+        nodes.compactMap { node in
+            guard node.protocolHints.contains("avc"),
+                  let guidText = node.guid,
+                  let guid = UInt64(guidText.dropFirst(2), radix: 16),
+                  let vendorText = node.vendorId,
+                  let vendorId = UInt32(vendorText.dropFirst(2), radix: 16),
+                  let modelText = node.modelId,
+                  let modelId = UInt32(modelText.dropFirst(2), radix: 16) else {
+                return nil
+            }
+            return ASFWMCPAVCUnitSummary(
+                guid: guid, nodeId: node.nodeId, vendorId: vendorId, modelId: modelId,
+                isoInputPlugCount: 1, isoOutputPlugCount: 1,
+                externalInputPlugCount: 1, externalOutputPlugCount: 1,
+                subunits: [.init(type: 0x0C, id: 0, sourcePlugCount: 1, destinationPlugCount: 1)]
+            )
+        }
+    }
+
+    func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities? {
+        guard (await listAVCUnits()).contains(where: { $0.guid == guid &&
+            $0.subunits.contains(where: { $0.type == type && $0.id == id })
+        }) else {
+            return nil
+        }
+        return ASFWMCPAVCSubunitCapabilities(
+            hasAudio: type == 0x0C || type == 0x01,
+            hasMIDI: type == 0x0C,
+            hasSMPTE: false,
+            currentRateCode: 0x04,
+            supportedRatesMask: (UInt32(1) << 3) | (UInt32(1) << 4),
+            plugs: [.init(
+                id: 0, isInput: true, type: 0x00, name: "Mock Audio",
+                signalBlocks: [.init(formatCode: 0x06, channelCount: 2)],
+                supportedFormats: [
+                    .init(sampleRateCode: 0x03, formatCode: 0x06, channelCount: 2),
+                    .init(sampleRateCode: 0x04, formatCode: 0x06, channelCount: 2),
+                ]
+            ), .init(
+                id: 0, isInput: false, type: 0x00, name: "Mock Audio",
+                signalBlocks: [.init(formatCode: 0x06, channelCount: 2)],
+                supportedFormats: [
+                    .init(sampleRateCode: 0x03, formatCode: 0x06, channelCount: 2),
+                    .init(sampleRateCode: 0x04, formatCode: 0x06, channelCount: 2),
+                ]
+            )]
+        )
     }
 
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent] {
@@ -155,22 +234,278 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     }
 
-    nonisolated func recordUnexpectedWriteAttempt() {
+    func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {
+        let matchingNode = nodes.first {
+            $0.nodeId == request.address.nodeId &&
+            $0.guid == String(format: "0x%016llX", request.targetGUID) &&
+            $0.protocolHints.contains("avc")
+        }
+        guard matchingNode != nil else {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: nil,
+                observedGeneration: generation,
+                response: nil,
+                status: .unavailable,
+                correlationId: "mock-fcp-route-missing",
+                durationUsec: nil,
+                policy: nil
+            )
+        }
+        guard request.address.generation == generation else {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: nil,
+                status: .staleGeneration,
+                correlationId: "mock-fcp-stale-generation",
+                durationUsec: nil,
+                policy: nil
+            )
+        }
+        attemptedWriteCount += 1
+        let payload = request.payload
+        if request.intent == .status,
+           payload == [0x01, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00] {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0xFF, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-unit-plug-info",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
+        if request.intent == .status,
+           payload == [0x01, 0x60, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00] {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0x60, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-msu-plug-info",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
+        if request.intent == .status,
+           payload == [0x01, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00] {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x03],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-msu-sync-type",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
+        if request.intent == .status,
+           payload == [0x01, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF,
+                       0xFF, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] {
+            return ASFWMCPFcpCommandReceipt(
+                targetGUID: request.targetGUID,
+                expectedNodeId: request.address.nodeId,
+                expectedGeneration: request.address.generation,
+                observedNodeId: request.address.nodeId,
+                observedGeneration: generation,
+                response: [0x0C, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0x05,
+                           0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+                status: .ok,
+                correlationId: "mock-fcp-bebob-msu-sync-source",
+                durationUsec: 200,
+                policy: nil
+            )
+        }
+        if payload.count >= 6, payload[1] == 0xFF, payload[2] == 0x18 || payload[2] == 0x19 {
+            let isInput = payload[2] == 0x19
+            if request.intent == .status {
+                return ASFWMCPFcpCommandReceipt(
+                    targetGUID: request.targetGUID,
+                    expectedNodeId: request.address.nodeId,
+                    expectedGeneration: request.address.generation,
+                    observedNodeId: request.address.nodeId,
+                    observedGeneration: generation,
+                    response: [0x0C, 0xFF, payload[2], 0x00, 0x90, isInput ? duetInputFdf : duetOutputFdf, 0xFF, 0xFF],
+                    status: .ok,
+                    correlationId: "mock-fcp-unit-plug-status",
+                    durationUsec: 200,
+                    policy: nil
+                )
+            }
+            if request.intent == .control {
+                if isInput { duetInputFdf = payload[5] } else { duetOutputFdf = payload[5] }
+            }
+        }
+        return ASFWMCPFcpCommandReceipt(
+            targetGUID: request.targetGUID,
+            expectedNodeId: request.address.nodeId,
+            expectedGeneration: request.address.generation,
+            observedNodeId: request.address.nodeId,
+            observedGeneration: generation,
+            response: [0x0C, request.payload.dropFirst().first ?? 0xFF, request.payload.dropFirst(2).first ?? 0xFF],
+            status: .ok,
+            correlationId: "mock-fcp-command",
+            durationUsec: 200,
+            policy: nil
+        )
+    }
+
+    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {
+        attemptedWriteCount += 1
+        let matched = nodes.contains { $0.guid == String(format: "0x%016llX", targetGuid) &&
+            $0.protocolHints.contains("bebob") && $0.protocolHints.contains("cmp") }
+        guard matched else {
+            return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: -536_870_201)
+        }
+        phase88Streaming = start
+        return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: 0)
+    }
+
+    func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
+        let correlationId = "mock-bus-reset"
+        guard request.generation == generation else {
+            return ASFWMCPBusResetReceipt(
+                requestedGeneration: request.generation,
+                acceptedGeneration: nil,
+                observedGeneration: generation,
+                shortReset: request.shortReset,
+                status: .staleGeneration,
+                correlationId: correlationId,
+                durationUsec: nil,
+                policy: nil
+            )
+        }
+
+        attemptedWriteCount += 1
+        let acceptedGeneration = generation
+        generation &+= 1
+        return ASFWMCPBusResetReceipt(
+            requestedGeneration: request.generation,
+            acceptedGeneration: acceptedGeneration,
+            observedGeneration: generation,
+            shortReset: request.shortReset,
+            status: .ok,
+            correlationId: correlationId,
+            durationUsec: 500,
+            policy: nil
+        )
+    }
+
+    func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot {
+        let correlationId = "mock-irm-snapshot"
+        guard request.generation == generation else {
+            return ASFWMCPIrmResourceSnapshot(
+                requestedGeneration: request.generation,
+                observedGeneration: generation,
+                irmNodeId: 2,
+                bandwidthAvailable: nil,
+                channelsAvailable31_0: nil,
+                channelsAvailable63_32: nil,
+                status: .staleGeneration,
+                correlationId: correlationId,
+                durationUsec: nil
+            )
+        }
+        return ASFWMCPIrmResourceSnapshot(
+            requestedGeneration: request.generation,
+            observedGeneration: generation,
+            irmNodeId: 2,
+            bandwidthAvailable: 0x0000_1333,
+            channelsAvailable31_0: 0xFFFF_FFFE,
+            channelsAvailable63_32: 0xFFFF_FFFF,
+            status: .ok,
+            correlationId: correlationId,
+            durationUsec: 300
+        )
+    }
+
+    func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse? {
+        let allRecords = [
+            ASFWLogRingRecord(
+                sequence: 40, timestampNs: 1_000, category: 13, level: 2,
+                message: "[CMP] iPCR connected channel=5"
+            ),
+            ASFWLogRingRecord(
+                sequence: 41, timestampNs: 1_100, category: 5, level: 0,
+                message: "[Async] AT Request context stopped"
+            ),
+            ASFWLogRingRecord(
+                sequence: 42, timestampNs: 1_200, category: 16, level: 3,
+                message: "[Audio] stream start complete"
+            ),
+        ]
+        let filtered = allRecords.filter { record in
+            record.sequence > query.afterSequence &&
+            (query.categoryMask & (UInt32(1) << UInt32(record.category))) != 0 &&
+            record.level <= query.maxLevel &&
+            (query.contains.isEmpty || record.message.contains(query.contains))
+        }
+        let records = Array(filtered.prefix(query.maxRecords))
+        return ASFWLogRingQueryResponse(
+            records: records,
+            nextSequence: records.last?.sequence ?? min(query.afterSequence + 8, 42),
+            latestSequence: 42,
+            oldestSequence: 1,
+            scannedCount: UInt32(min(8, allRecords.count))
+        )
+    }
+
+    func logRingStats() async -> ASFWLogRingStats? {
+        ASFWLogRingStats(
+            totalEmitted: 42,
+            droppedRecords: 0,
+            latestSequence: 42,
+            oldestSequence: 1,
+            capacityRecords: 40_000,
+            perCategory: ["CMP": 18, "Async": 9, "Audio": 15]
+        )
+    }
+
+    func recordUnexpectedWriteAttempt() {
         attemptedWriteCount += 1
     }
 
-    nonisolated func unexpectedWriteAttemptCount() -> Int {
+    func unexpectedWriteAttemptCount() -> Int {
         attemptedWriteCount
     }
 
-    nonisolated private func mockQuadletValue(for address: ASFWMCPAddress) -> UInt32 {
+    private func mockQuadletValue(for address: ASFWMCPAddress) -> UInt32 {
         if address.offset48 == 0xFFFF_F000_0400 {
             return 0x3133_3934
+        }
+        switch address.addressLow {
+        case 0xf000_0900, 0xf000_0980:
+            // S400 MPR with two available PCRs.
+            return 0x8000_0002
+        case 0xf000_0904:
+            // Online oPCR[0], one P2P consumer, channel 5, S400, overhead 3.
+            return 0x8105_8c00
+        case 0xf000_0984:
+            // Online iPCR[0], one P2P consumer, channel 6.
+            return 0x8106_0000
+        default:
+            break
         }
         return address.addressLow
     }
 
-    nonisolated private func quadletBytes(_ value: UInt32) -> [UInt8] {
+    private func quadletBytes(_ value: UInt32) -> [UInt8] {
         [
             UInt8((value >> 24) & 0xFF),
             UInt8((value >> 16) & 0xFF),
@@ -179,7 +514,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         ]
     }
 
-    nonisolated static let defaultNodes: [ASFWMCPNodeSummary] = [
+    static let defaultNodes: [ASFWMCPNodeSummary] = [
         ASFWMCPNodeSummary(
             nodeId: 0,
             address16: "0xFFC0",
@@ -204,7 +539,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     ]
 
-    nonisolated static let sbp2Node = ASFWMCPNodeSummary(
+    static let sbp2Node = ASFWMCPNodeSummary(
         nodeId: 2,
         address16: "0xFFC2",
         guid: "0x0022334455667788",
@@ -216,7 +551,19 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         protocolHints: ["sbp2"]
     )
 
-    nonisolated static let defaultTransactions: [ASFWMCPTransactionEvent] = [
+    static let bebobNode = ASFWMCPNodeSummary(
+        nodeId: 3,
+        address16: "0xFFC3",
+        guid: "0x000AAC0300B1D1F7",
+        vendorId: "0x000AAC",
+        modelId: "0x000003",
+        vendorName: "TerraTec Electronic GmbH",
+        modelName: "PHASE 88 Rack FW",
+        configRomCached: true,
+        protocolHints: ["avc", "bebob", "cmp"]
+    )
+
+    static let defaultTransactions: [ASFWMCPTransactionEvent] = [
         ASFWMCPTransactionEvent(
             timestampNs: 123_456_780_000,
             generation: 17,

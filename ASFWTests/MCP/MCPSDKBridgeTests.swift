@@ -29,8 +29,12 @@ struct MCPSDKBridgeTests {
 
     @Test func resourceMetadataMapsToJSONResources() async throws {
         let resources = await bridge().listResources()
+        let health = try #require(resources.first { $0.uri == "asfw://control-plane/health" })
         let snapshot = try #require(resources.first { $0.uri == "asfw://telemetry/snapshot" })
 
+        #expect(health.name == "asfw://control-plane/health")
+        #expect(health.mimeType == "application/json")
+        #expect(health.description == "Versioned agent readiness and capability summary.")
         #expect(snapshot.name == "asfw://telemetry/snapshot")
         #expect(snapshot.mimeType == "application/json")
         #expect(snapshot.description == "Compact cross-system telemetry overview.")

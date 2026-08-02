@@ -1,7 +1,6 @@
 #pragma once
 
-#include "../../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
-#include "../../../DriverKit/Config/DICE/Isoch/DiceStreamConfig.hpp"
+#include "../../../DriverKit/Config/AudioStreamProfile.hpp"
 #include "../../../Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "../../../Wire/AMDTP/AmdtpTxPacketizer.hpp"
 #include "../../../Ports/IAmdtpTxSlotProvider.hpp"
@@ -30,15 +29,15 @@ enum class TxSlotPrepareResult : uint8_t {
 class DiceStreamConfigMapper final {
 public:
     [[nodiscard]] static AMDTP::AmdtpStreamConfig ToAmdtpConfig(
-        const ASFW::Isoch::Audio::DICE::DiceStreamConfig& diceConfig) noexcept;
+        const ASFW::Isoch::Audio::AudioStreamConfig& streamConfig) noexcept;
 };
 
 class DiceTxStreamEngine final {
 public:
     DiceTxStreamEngine() noexcept = default;
 
-    bool Configure(const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile& profile,
-                   const ASFW::Isoch::Audio::DICE::DiceStreamConfig& txConfig) noexcept;
+    bool Configure(const ASFW::Isoch::Audio::IAudioStreamProfile& profile,
+                   const ASFW::Isoch::Audio::AudioStreamConfig& txConfig) noexcept;
 
     void BindSlotProvider(AMDTP::IAmdtpTxSlotProvider* slotProvider) noexcept;
 
@@ -46,6 +45,11 @@ public:
                        uint64_t initialAudioFrame) noexcept;
 
     [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
+
+    // Re-arm the one-shot frame-cursor alignment after an RX replay stall so the
+    // next DATA packet re-projects the cursor to the live frame (see
+    // AmdtpTxPacketizer::ReArmFrameCursorAlignment).
+    void ReArmFrameCursorAlignment() noexcept;
 
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
         uint32_t packetIndex,
@@ -58,18 +62,24 @@ public:
     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
 
+    [[nodiscard]] const AMDTP::AmdtpStreamConfig& StreamConfig() const noexcept;
+
+    [[nodiscard]] AMDTP::AmdtpTxPacketizerTelemetrySnapshot
+    PacketizerTelemetrySnapshot() const noexcept;
+
     [[nodiscard]] const DiceTxEngineCounters& Counters() const noexcept;
 
     [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters&
     PayloadWriterCounters() const noexcept;
 
 private:
-    AMDTP::AmdtpTxPolicy BuildTxPolicy(const ASFW::Isoch::Audio::DICE::DiceDeviceQuirks& quirks) const noexcept;
+    AMDTP::AmdtpTxPolicy BuildTxPolicy(
+        const ASFW::Isoch::Audio::AudioStreamTxPolicy& policy) const noexcept;
 
-    const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile* profile_{nullptr};
+    const ASFW::Isoch::Audio::IAudioStreamProfile* profile_{nullptr};
 
-    ASFW::Isoch::Audio::DICE::DiceStreamConfig diceConfig_{};
-    ASFW::Isoch::Audio::DICE::DiceDeviceQuirks quirks_{};
+    ASFW::Isoch::Audio::AudioStreamConfig streamConfig_{};
+    ASFW::Isoch::Audio::AudioStreamTxPolicy txPolicy_{};
 
     AMDTP::AmdtpTxPacketizer packetizer_{};
     AMDTP::AmdtpPayloadWriter payloadWriter_{};

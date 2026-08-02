@@ -25,6 +25,28 @@ struct PayloadWriterTelemetryRecord final {
     uint64_t underExposureFrames{0};
     float    maxAbsSample{0.0f};
 
+    // Snapshot of the TX packetizer state. This is published through atomic
+    // mirrors by the TX preparation side; it is diagnostic only.
+    uint64_t packetizerNextAudioFrame{0};
+    uint64_t packetizerLastDataFirstAudioFrame{0};
+    uint64_t packetizerLastDataEndAudioFrame{0};
+    uint64_t packetizerLastDataPacketIndex{0};
+    uint64_t packetizerCursorEpoch{0};
+    uint64_t packetsPrepared{0};
+    uint64_t dataPacketsPrepared{0};
+    uint64_t noDataPacketsPrepared{0};
+    uint64_t slotAcquireFailures{0};
+    bool packetizerFrameCursorAligned{false};
+    bool packetizerHasLastDataPacket{false};
+
+    // Audio-frontier preparation state. This identifies whether a deficit
+    // occurred before the 400-cycle target was requested, while it was queued,
+    // or after a supposedly drained request.
+    uint64_t txPreparationTargetFrameEnd{0};
+    uint64_t txPreparationRequestedGeneration{0};
+    uint64_t txPreparationHandledGeneration{0};
+    bool txPreparationWakeScheduled{false};
+
     // Additional cursors and addresses for diagnosing buffer mapping / pointer alignment
     uint64_t playbackRingReadFrame{0};
     uint64_t playbackRingWriteFrame{0};
@@ -36,6 +58,88 @@ struct PayloadWriterTelemetryRecord final {
     // CIP and payload bytes from the last packet retired (read) by hardware
     uint64_t lastReadPacketIndex{0};
     uint8_t  lastReadPacketBytes[16]{0};
+};
+
+// Drain-side state only. The audio callback only copies records into
+// PayloadWriterTelemetryRing; it must never inspect, aggregate, or log them.
+struct PayloadWriterTelemetryAnomalySummary final {
+    uint64_t maxExposureDeficitFrames{0};
+    uint64_t visitedDelta{0};
+    uint64_t writtenDelta{0};
+    uint64_t withoutPacketDelta{0};
+    uint64_t outsidePacketDelta{0};
+    uint64_t racedReuseDelta{0};
+    uint64_t wroteIntoTransmittedDelta{0};
+    uint64_t underExposureCallsDelta{0};
+    uint64_t underExposureFramesDelta{0};
+
+    [[nodiscard]] bool HasAnomaly() const noexcept {
+        return maxExposureDeficitFrames != 0 || withoutPacketDelta != 0 ||
+               outsidePacketDelta != 0 || racedReuseDelta != 0 ||
+               wroteIntoTransmittedDelta != 0 || underExposureCallsDelta != 0 ||
+               underExposureFramesDelta != 0 || visitedDelta != writtenDelta;
+    }
+};
+
+// Collapses monotonic callback counters into one watchdog-drain summary. This
+// deliberately compares deltas, not absolute counters: a historical startup
+// miss must not keep the steady state noisy forever.
+class PayloadWriterTelemetryAnomalyAggregator final {
+public:
+    void BeginDrain() noexcept { summary_ = {}; }
+
+    void Reset() noexcept {
+        hasPrevious_ = false;
+        summary_ = {};
+    }
+
+    void Observe(const PayloadWriterTelemetryRecord& current) noexcept {
+        if (!hasPrevious_ || CountersMovedBackward(current)) {
+            previous_ = current;
+            hasPrevious_ = true;
+            if (current.exposureDeficitFrames > summary_.maxExposureDeficitFrames) {
+                summary_.maxExposureDeficitFrames = current.exposureDeficitFrames;
+            }
+            return;
+        }
+
+        summary_.maxExposureDeficitFrames =
+            current.exposureDeficitFrames > summary_.maxExposureDeficitFrames
+                ? current.exposureDeficitFrames
+                : summary_.maxExposureDeficitFrames;
+        summary_.visitedDelta += current.visited - previous_.visited;
+        summary_.writtenDelta += current.written - previous_.written;
+        summary_.withoutPacketDelta += current.withoutPacket - previous_.withoutPacket;
+        summary_.outsidePacketDelta += current.outsidePacket - previous_.outsidePacket;
+        summary_.racedReuseDelta += current.racedReuse - previous_.racedReuse;
+        summary_.wroteIntoTransmittedDelta +=
+            current.wroteIntoTransmitted - previous_.wroteIntoTransmitted;
+        summary_.underExposureCallsDelta +=
+            current.underExposureCalls - previous_.underExposureCalls;
+        summary_.underExposureFramesDelta +=
+            current.underExposureFrames - previous_.underExposureFrames;
+        previous_ = current;
+    }
+
+    [[nodiscard]] const PayloadWriterTelemetryAnomalySummary& Summary() const noexcept {
+        return summary_;
+    }
+
+private:
+    [[nodiscard]] bool CountersMovedBackward(
+        const PayloadWriterTelemetryRecord& current) const noexcept {
+        return current.visited < previous_.visited || current.written < previous_.written ||
+               current.withoutPacket < previous_.withoutPacket ||
+               current.outsidePacket < previous_.outsidePacket ||
+               current.racedReuse < previous_.racedReuse ||
+               current.wroteIntoTransmitted < previous_.wroteIntoTransmitted ||
+               current.underExposureCalls < previous_.underExposureCalls ||
+               current.underExposureFrames < previous_.underExposureFrames;
+    }
+
+    PayloadWriterTelemetryRecord previous_{};
+    PayloadWriterTelemetryAnomalySummary summary_{};
+    bool hasPrevious_{false};
 };
 
 class PayloadWriterTelemetryRing final {
@@ -59,8 +163,8 @@ public:
         return writeSeq >= readSeq_ ? writeSeq - readSeq_ : 0;
     }
 
-    template <typename EmitFn>
-    uint64_t Drain(uint32_t maxEmit, EmitFn&& emit) noexcept {
+    template <typename VisitFn>
+    uint64_t Drain(VisitFn&& visit) noexcept {
         const uint64_t writeSeq = writeSeq_.load(std::memory_order_acquire);
         uint64_t dropped = 0;
         if (writeSeq - readSeq_ > kCapacity) {
@@ -68,19 +172,8 @@ public:
             readSeq_ = writeSeq - kCapacity;
         }
 
-        const uint64_t available = writeSeq - readSeq_;
-        if (available != 0 && maxEmit != 0) {
-            const uint64_t stride = available > maxEmit ? (available / maxEmit) : 1;
-            uint32_t emitted = 0;
-            for (uint64_t seq = readSeq_; seq < writeSeq; ++seq) {
-                const PayloadWriterTelemetryRecord& rec = entries_[seq & (kCapacity - 1)];
-                const bool onStride =
-                    emitted < maxEmit && ((seq - readSeq_) % stride) == 0;
-                if (onStride) {
-                    emit(rec);
-                    ++emitted;
-                }
-            }
+        for (uint64_t seq = readSeq_; seq < writeSeq; ++seq) {
+            visit(entries_[seq & (kCapacity - 1)]);
         }
 
         readSeq_ = writeSeq;

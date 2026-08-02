@@ -15,14 +15,32 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       LLVM_PROFILE_FILE: ${{ github.workspace }}/build/tests/%p-%m.profraw
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # Shallow clones should be disabled for a better relevancy of analysis
-          submodules: recursive
 
       - name: Install Dependencies
         run: |
           gem install xcpretty
+
+      # ASFW.xcodeproj is generated from project.yml (XcodeGen) and committed.
+      # Fail if they drifted apart — someone edited project.yml or added source
+      # files without regenerating, or hand-edited the pbxproj. If this fails
+      # after an xcodegen version bump changed the output format, regenerate
+      # locally with the new version and commit.
+      - name: Verify ASFW.xcodeproj matches project.yml (XcodeGen)
+        run: |
+          brew install xcodegen
+          xcodegen --version
+          xcodegen generate --quiet
+          # Diff only the pbxproj: scheme files are cosmetically rewritten by
+          # any open Xcode (version attr, BuildableName flavor, empty blocks),
+          # so they flip-flop between xcodegen and Xcode styles; their semantic
+          # content comes from project.yml either way.
+          if ! git diff --exit-code --stat -- ASFW.xcodeproj/project.pbxproj project.yml; then
+            echo "::error::ASFW.xcodeproj is out of sync with project.yml. Run 'xcodegen generate' locally and commit the regenerated project (see README → Building)."
+            exit 1
+          fi
 
       - name: Install the Apple certificate and provisioning profile
         env:
@@ -145,3 +163,50 @@ jobs:
       # - name: Build Driver
       #   run: |
       #     ./build.sh
+
+  # The SCSI HBA is opt-in (ASFW_ENABLE_SCSI, ./build.sh --scsi) and OFF in the
+  # default build above, so the Info.plist personality preprocessing and the
+  # SCSI entitlement selection are never exercised by the main job. Build the
+  # variant here so the gated configuration cannot rot while the flag stays
+  # default-off — a malformed personality only surfaces on an opt-in user's
+  # machine otherwise, and the failure mode there is a boot panic (#54).
+  build-scsi:
+    name: Build (SCSI HBA enabled)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Driver (ASFW_ENABLE_SCSI=YES)
+        run: |
+          set -o pipefail
+          xcodebuild -project ASFW.xcodeproj \
+            -scheme ASFW \
+            -configuration Debug \
+            -arch arm64 \
+            -derivedDataPath build/DerivedData \
+            build \
+            ASFW_ENABLE_SCSI=YES \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
+            > xcodebuild-scsi.log 2>&1 || {
+              echo "::error::SCSI-enabled build failed! Showing last 100 lines of log:"
+              tail -n 100 xcodebuild-scsi.log
+              exit 1
+            }
+
+      # The personality is injected by Info.plist preprocessing; assert it
+      # actually landed in the built dext so a silent preprocessor regression
+      # cannot pass CI.
+      - name: Verify SCSI personality in built dext
+        run: |
+          PLIST=$(find build/DerivedData/Build/Products -path "*net.mrmidi.ASFW.ASFWDriver.dext/Info.plist" | head -1)
+          if [[ -z "$PLIST" ]]; then
+            echo "::error::Built dext Info.plist not found"
+            exit 1
+          fi
+          plutil -lint "$PLIST"
+          if ! /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:ASFWSCSIControllerService:IOClass" "$PLIST" >/dev/null 2>&1; then
+            echo "::error::ASFWSCSIControllerService personality missing from built dext Info.plist despite ASFW_ENABLE_SCSI=YES"
+            exit 1
+          fi
+          echo "SCSI personality present:"
+          /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:ASFWSCSIControllerService" "$PLIST" | head -20

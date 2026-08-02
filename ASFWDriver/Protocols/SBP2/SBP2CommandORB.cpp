@@ -3,7 +3,6 @@
 
 #include "SBP2CommandORB.hpp"
 #include <DriverKit/IOLib.h>
-#include "SBP2DelayedDispatch.hpp"
 #include "../../Common/FWCommon.hpp"
 
 #include <algorithm>
@@ -24,8 +23,6 @@ SBP2CommandORB::SBP2CommandORB(AddressSpaceManager& addrMgr, void* owner,
 }
 
 SBP2CommandORB::~SBP2CommandORB() {
-    CancelTimer();
-    lifetimeToken_.reset();
     DeallocateResources();
 }
 
@@ -180,7 +177,7 @@ kern_return_t SBP2CommandORB::WriteORBToAddressSpace() noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// ORB address / chaining
+// ORB address
 // ---------------------------------------------------------------------------
 
 Async::FWAddress SBP2CommandORB::GetORBAddress() const noexcept {
@@ -189,16 +186,6 @@ Async::FWAddress SBP2CommandORB::GetORBAddress() const noexcept {
     parts.addressLo = orbMeta_.addressLo;
     parts.nodeID = 0; // filled in by login session with localNodeID
     return Async::FWAddress(parts);
-}
-
-kern_return_t SBP2CommandORB::SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept {
-    if (!IsValid()) {
-        return kIOReturnNotReady;
-    }
-    auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
-    orb->nextORBAddressHi = hi;
-    orb->nextORBAddressLo = lo;
-    return WriteORBToAddressSpace();
 }
 
 kern_return_t SBP2CommandORB::SetToDummy() noexcept {
@@ -211,48 +198,6 @@ kern_return_t SBP2CommandORB::SetToDummy() noexcept {
     hostOptions = (hostOptions & ~0x3000u) | 0x6000u;
     orb->options = OSSwapHostToBigInt16(hostOptions);
     return WriteORBToAddressSpace();
-}
-
-// ---------------------------------------------------------------------------
-// Timer management
-// ---------------------------------------------------------------------------
-
-void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
-    CancelTimer();
-
-    if (queue == nullptr || timeoutDuration_ == 0) {
-        return;
-    }
-
-    timerQueue_ = queue;
-    inProgress_.store(true, std::memory_order_relaxed);
-    const uint32_t timeout = timeoutDuration_;
-    const uint64_t expectedGeneration =
-        timerGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
-    const std::weak_ptr<int> weakLifetime = lifetimeToken_;
-    const uint64_t delayNs = static_cast<uint64_t>(timeout) * 1'000'000ULL;
-
-    DispatchAfterCompat(queue, delayNs, [this, weakLifetime, expectedGeneration, timeout]() {
-        if (weakLifetime.expired()) {
-            return;
-        }
-        if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-            !inProgress_.load(std::memory_order_relaxed) ||
-            !completionCallback_) {
-            return;
-        }
-
-        ASFW_LOG(Async, "SBP2CommandORB: ORB timeout after %u ms", timeout);
-        inProgress_.store(false, std::memory_order_relaxed);
-        timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        completionCallback_(-1, Wire::SBPStatus::kUnspecifiedError);
-    });
-}
-
-void SBP2CommandORB::CancelTimer() noexcept {
-    inProgress_.store(false, std::memory_order_relaxed);
-    timerQueue_ = nullptr;
-    timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 } // namespace ASFW::Protocols::SBP2

@@ -1,0 +1,20 @@
+ASFireWire
+Copyright 2024-2026 ASFireWire Project Contributors
+
+This product includes software developed as part of the ASFireWire
+project (https://github.com/mrmidi/ASFireWire).
+
+---
+
+The FWAddress structure in ASFWDriver/Async/AsyncTypes.hpp reproduces the
+public API layout of the FWAddress structure from Apple's IOFireWireFamily
+(IOFireWireFamilyCommon.h), published under the Apple Public Source
+License 2.0 (https://opensource.org/license/apsl-2-0), for API
+compatibility. No implementation code from IOFireWireFamily is included.
+
+Wire and bus behavior in this project has been validated against the
+following works, used strictly as behavioral references (no code copied):
+  - Linux kernel drivers/firewire and sound/firewire (GPL-2.0)
+  - Apple IOFireWireFamily, IOFireWireAVC, IOFireWireSBP2 (APSL-2.0)
+  - libffado (GPL-2.0/GPL-3.0)
+  - snd-firewire-ctl-services (GPL-3.0)

@@ -107,6 +107,13 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
     // clear RUN before programming CommandPtr so the next RUN=1 transition is visible.
     if (ctx().IsRunning()) {
         clearRunAndPoll_();
+        if (ctx().IsActive()) {
+            // Programming CommandPtr on an ACTIVE context is illegal (OHCI
+            // §3.1.1) — the in-flight packet and/or this chain can be lost.
+            // Anomaly log for the LS-9000 wedge investigation.
+            ASFW_LOG(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM while ACTIVE after clearRun poll gave up",
+                     RoleTag::kContextName, txid, generation_);
+        }
     }
 
     const uint32_t cmdPtr = ring().CommandPtrWordFromIOVA(chain.firstIOVA32, z);
@@ -181,7 +188,9 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2_(const Descriptor
     ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u WAKE_GUARD ctrl=0x%08x run=%d dead=%d", RoleTag::kContextName, txid, generation_, ctrl, run ? 1 : 0, dead ? 1 : 0);
 
     if (!run || dead) {
-        ASFW_LOG_V2(Async, "ctx=%{public}s txid=%u gen=%u P2_FALLBACK cause=%{public}s", RoleTag::kContextName, txid, generation_, !run ? "RUN0" : "DEAD");
+        // Anomaly at default level: a hot-append hitting a stopped/dead context
+        // is the suspected AT-resp loss window (LS-9000 wedge investigation).
+        ASFW_LOG(Async, "ctx=%{public}s txid=%u gen=%u P2_FALLBACK cause=%{public}s ctrl=0x%08x", RoleTag::kContextName, txid, generation_, !run ? "RUN0" : "DEAD", ctrl);
         UnlinkTail_();
         trace_.push({NowNs(), txid, generation_, ATEvent::P2_FALLBACK, ctrl, 0});
         return kIOReturnNotReady;

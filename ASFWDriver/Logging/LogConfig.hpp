@@ -106,6 +106,10 @@ public:
      */
     uint8_t GetAVCVerbosity() const;
     uint8_t GetDICEVerbosity() const;
+    /// Shared duplex lifecycle code now logs through the protocol-neutral
+    /// Audio category. Retain the established DICE verbosity knob until the
+    /// user-client configuration ABI grows a dedicated audio setting.
+    uint8_t GetAudioVerbosity() const { return GetDICEVerbosity(); }
     uint8_t GetIsochVerbosity() const;
     uint8_t GetDirectAudioVerbosity() const;
 
@@ -113,6 +117,15 @@ public:
      * @brief Check if hex dumps are enabled
      */
     bool IsHexDumpsEnabled() const;
+
+    /**
+     * @brief Check if ASFW_LOG additionally mirrors to os_log.
+     *
+     * The LogRing is always fed; the os_log mirror is the expensive path and
+     * can be silenced at runtime once ring-based (MCP) debugging suffices.
+     * Info.plist seed: ASFWMirrorToOsLog (default true).
+     */
+    bool IsOsLogMirrorEnabled() const;
 
     /**
      * @brief Check if aggregate statistics logging is enabled
@@ -186,6 +199,7 @@ public:
     void SetIsochVerbosity(uint8_t level);
     void SetDirectAudioVerbosity(uint8_t level);
     void SetHexDumps(bool enable);
+    void SetOsLogMirrorEnabled(bool enable);
 
     /**
      * @brief Enable or disable CoreAudio-driven auto-start at runtime
@@ -236,6 +250,7 @@ private:
     std::atomic<uint8_t> isochVerbosity_;
     std::atomic<uint8_t> directAudioVerbosity_;
     std::atomic<bool> enableHexDumps_;
+    std::atomic<bool> osLogMirrorEnabled_{true};
     std::atomic<bool> audioAutoStartEnabled_;
     std::atomic<bool> logStatistics_;
     std::atomic<bool> initialized_;

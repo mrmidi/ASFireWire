@@ -1,31 +1,16 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
 #include "AVCAudioBackend.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
-#include "../../../Common/DriverKitOwnership.hpp"
 #include "../../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
-#include <DriverKit/IOBufferMemoryDescriptor.h>
-#include <DriverKit/OSSharedPtr.h>
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
 namespace ASFW::Audio {
-
-namespace {
-
-constexpr uint8_t kDefaultIrChannel = 0;
-constexpr uint8_t kDefaultItChannel = 1;
-
-inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
-    // OHCI NodeID register: low 6 bits are node number.
-    return static_cast<uint8_t>(hw.ReadNodeID() & 0x3Fu);
-}
-
-} // namespace
 
 AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                                  Discovery::DeviceRegistry& registry,
@@ -35,15 +20,41 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
-    , isoch_(isoch)
-    , hardware_(hardware) {
+    , hardware_(hardware)
+    , hostTransport_(isoch)
+    , duplexCoordinator_(
+          registry,
+          runtime,
+          hostTransport_,
+          hardware,
+          &stopping_,
+          [this](uint64_t guid) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
+              auto endpoint = runtime_.FindEndpointRuntime(guid);
+              return endpoint ? endpoint.get() : nullptr;
+          }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AVCAudioBackend: Failed to allocate lock");
     }
+
+    IODispatchQueue* queue = nullptr;
+    const kern_return_t queueStatus = IODispatchQueue::Create("com.asfw.audio.avc", 0, 0, &queue);
+    if (queueStatus == kIOReturnSuccess && queue) {
+        workQueue_ = OSSharedPtr(queue, OSNoRetain);
+    } else {
+        ASFW_LOG_ERROR(Audio,
+                       "AVCAudioBackend: Failed to create recovery queue (0x%x)",
+                       queueStatus);
+    }
+
+    // Subscribe to RX timing loss. Unlike DICE (which health-gates on a register
+    // probe), AV/C has no health register — HandleTimingLoss reads the RX replay
+    // cadence itself after a debounce. See AVC_STREAM_HEALTH_AND_RECOVERY.md §6.
+    hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleTimingLoss(guid); });
 }
 
 AVCAudioBackend::~AVCAudioBackend() noexcept {
+    hostTransport_.SetTimingLossCallback({});
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -73,17 +84,29 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
     }
 
     if (shouldStop) {
-        (void)StopStreaming(guid);
+        const IOReturn stopStatus = StopStreaming(guid);
+        if (stopStatus != kIOReturnSuccess) {
+            // StopStreaming only succeeds after every OHCI context reports
+            // ACTIVE clear.  Removing the nub sooner can revoke the backing
+            // mapping while DMA still owns it, which is fatal on Apple silicon.
+            ASFW_LOG_ERROR(Audio,
+                           "AVCAudioBackend: retaining nub after unsafe device-removal stop GUID=0x%016llx kr=0x%08x",
+                           guid, stopStatus);
+            return;
+        }
     } else {
         ASFW_LOG(Audio,
                  "AVCAudioBackend: OnDeviceRemoved skipping stop for inactive GUID=0x%016llx",
                  guid);
     }
     publisher_.TerminateNub(guid, "AVC-Removed");
+    duplexCoordinator_.ClearSession(guid);
 
     if (lock_) {
         IOLockLock(lock_);
         configByGuid_.erase(guid);
+        recoveringGuids_.erase(guid);
+        timingLossAttempts_.erase(guid);
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }
@@ -91,21 +114,214 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
     }
 }
 
-bool AVCAudioBackend::WaitForCMP(std::atomic<bool>& done,
-                                 std::atomic<ASFW::CMP::CMPStatus>& status,
-                                 uint32_t timeoutMs) noexcept {
-    constexpr uint32_t kPollMs = 5;
-    for (uint32_t waited = 0; waited < timeoutMs; waited += kPollMs) {
-        if (done.load(std::memory_order_acquire)) {
-            return status.load(std::memory_order_acquire) == ASFW::CMP::CMPStatus::Success;
-        }
-        IOSleep(kPollMs);
+void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
+    if (guid == 0 || stopping_.load(std::memory_order_acquire)) {
+        return;
     }
-    return false;
+
+    bool queueRecovery = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        queueRecovery = (activeGuid_ == guid) && recoveringGuids_.insert(guid).second;
+        IOLockUnlock(lock_);
+    }
+    if (!queueRecovery) {
+        return;
+    }
+
+    // DeviceManager emits resume only after it refreshed the stable GUID's
+    // node/generation mapping. The coordinator stops stale host state, makes
+    // fresh IRM reservations, and lets the AV/C adapter establish fresh PCRs.
+    // This is the same reset-then-reconnect ordering as Linux cmp.c:294-334.
+    ASFW_LOG(Audio,
+             "AVCAudioBackend: device resumed; recovering active CMP stream GUID=0x%016llx",
+             guid);
+    auto recover = ^{
+        if (!stopping_.load(std::memory_order_acquire)) {
+            const IOReturn status = duplexCoordinator_.RecoverStreaming(
+                guid, DuplexRestartReason::kBusResetRebind);
+            if (status != kIOReturnSuccess) {
+                ASFW_LOG_ERROR(Audio,
+                               "AVCAudioBackend: post-reset recovery failed GUID=0x%016llx kr=0x%x",
+                               guid,
+                               status);
+            }
+        }
+        if (lock_) {
+            IOLockLock(lock_);
+            recoveringGuids_.erase(guid);
+            IOLockUnlock(lock_);
+        }
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(recover);
+        return;
+    }
+
+    // Queue creation failure must not block DeviceManager's resume observer.
+    // A later explicit stream start will make a fresh connection instead.
+    ASFW_LOG_ERROR(Audio,
+                   "AVCAudioBackend: recovery queue unavailable; leaving stream stopped GUID=0x%016llx",
+                   guid);
+    if (lock_) {
+        IOLockLock(lock_);
+        recoveringGuids_.erase(guid);
+        IOLockUnlock(lock_);
+    }
+}
+
+void AVCAudioBackend::FinishRecovery(uint64_t guid) noexcept {
+    if (lock_) {
+        IOLockLock(lock_);
+        recoveringGuids_.erase(guid);
+        IOLockUnlock(lock_);
+    }
+}
+
+void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
+    if (guid == 0 || stopping_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // Only the active CMP stream is recoverable. IsochService reports the duplex
+    // GUID it claimed; a mismatch means the loss belongs to no stream we own.
+    // recoveringGuids_ dedups against a bus-reset recovery already in flight
+    // (OnDeviceResumed) and against a second timing-loss for the same GUID.
+    bool armed = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        if (activeGuid_ == guid) {
+            armed = recoveringGuids_.insert(guid).second;
+        }
+        IOLockUnlock(lock_);
+    }
+    if (!armed) {
+        return;
+    }
+
+    // A duplex operation already running (start/stop/recovery) is itself the
+    // transition that tripped the replay-discontinuity detector; let it settle.
+    if (duplexCoordinator_.IsOperationInFlight(guid)) {
+        ASFW_LOG(Audio,
+                 "AVCAudioBackend: timing-loss dropped (duplex op in flight) GUID=0x%016llx",
+                 guid);
+        FinishRecovery(guid);
+        return;
+    }
+
+    auto recover = ^{
+        // FW-61: a block enqueued just before BeginTeardown's drain bails here
+        // before any PCR/MMIO work, so it cannot run after hardware detaches.
+        // Debounce off the RX queue: give the [TxAlign] self-heal its transient
+        // window. Poll stopping_ so teardown aborts within one tick.
+        for (uint32_t waited = 0; waited < kTimingLossSettleMs;
+             waited += kTimingLossPollMs) {
+            if (stopping_.load(std::memory_order_acquire)) {
+                FinishRecovery(guid);
+                return;
+            }
+            IOSleep(kTimingLossPollMs);
+        }
+        if (stopping_.load(std::memory_order_acquire)) {
+            FinishRecovery(guid);
+            return;
+        }
+
+        // AV/C health verdict = RX cadence (no register probe, doc §5/§6). If
+        // replay re-established during the settle window the gap was host-side
+        // (StartIO/StopIO churn, a brief RX gap) and already self-healed;
+        // suppress and reset the escalation budget.
+        if (hostTransport_.IsReceiveReplayEstablished()) {
+            if (lock_) {
+                IOLockLock(lock_);
+                timingLossAttempts_.erase(guid);
+                IOLockUnlock(lock_);
+            }
+            ASFW_LOG(Audio,
+                     "AVCAudioBackend: timing-loss self-healed (RX replay re-established) "
+                     "GUID=0x%016llx",
+                     guid);
+            FinishRecovery(guid);
+            return;
+        }
+
+        // Still stalled: a genuine device outage. Bound the escalations so a
+        // device that only partially returns cannot restart-loop forever.
+        uint8_t attempt = 0;
+        if (lock_) {
+            IOLockLock(lock_);
+            attempt = ++timingLossAttempts_[guid];
+            IOLockUnlock(lock_);
+        }
+        if (attempt > kTimingLossMaxAttempts) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCAudioBackend: timing-loss escalation budget exhausted "
+                           "(attempt=%u); leaving stream stopped GUID=0x%016llx",
+                           attempt, guid);
+            FinishRecovery(guid);
+            return;
+        }
+
+        // Escalate: coordinator restart re-establishes CMP/PCR (the wire-observable
+        // recovery — bebob break_both_connections + cmp_connection_establish; doc §2/§7).
+        ASFW_LOG_WARNING(Audio,
+                         "AVCAudioBackend: RX replay stalled past settle; restarting duplex "
+                         "attempt=%u GUID=0x%016llx",
+                         attempt, guid);
+        const IOReturn status = duplexCoordinator_.RecoverStreaming(
+            guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
+        if (status == kIOReturnSuccess) {
+            if (lock_) {
+                IOLockLock(lock_);
+                timingLossAttempts_.erase(guid); // fresh session; reset budget
+                IOLockUnlock(lock_);
+            }
+            ASFW_LOG(Audio,
+                     "AVCAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
+                     guid);
+        } else {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",
+                           guid, status);
+        }
+        FinishRecovery(guid);
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(recover);
+        return;
+    }
+    recover();
+}
+
+void AVCAudioBackend::BeginTeardown() noexcept {
+    if (stopping_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
+    // Stop new timing-loss escalations from being queued during teardown; any
+    // block already queued bails on the stopping_ latch below.
+    hostTransport_.SetTimingLossCallback({});
+    // Drain queued recovery before hardware detaches. Each queued block checks
+    // stopping_ before it can re-establish PCRs in the teardown window.
+    if (workQueue_) {
+#ifdef ASFW_HOST_TEST
+        workQueue_->DispatchSync([] {});
+#else
+        workQueue_->DispatchSync(^{ });
+#endif
+    }
+    (void)hostTransport_.StopAll();
+    ASFW_LOG(Audio,
+             "AVCAudioBackend: BeginTeardown stopping=true already=%u",
+             wasStopping ? 1U : 0U);
 }
 
 IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
+    if (stopping_.load(std::memory_order_acquire)) return kIOReturnAborted;
 
     if (lock_) {
         IOLockLock(lock_);
@@ -118,6 +334,9 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
                              active);
             return kIOReturnBusy;
         }
+        // Claim the backend before leaving the lock. The coordinator performs
+        // blocking setup, so delaying this assignment until it returns would
+        // allow a second GUID to begin concurrently.
         activeGuid_ = guid;
         IOLockUnlock(lock_);
     }
@@ -138,11 +357,6 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return status;
     };
 
-    if (!cmpClient_) {
-        ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (CMPClient missing)");
-        return failStart(kIOReturnNotReady, "CMPClient");
-    }
-
     Model::ASFWAudioDevice config{};
     bool hasConfig = false;
     if (lock_) {
@@ -159,15 +373,10 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return failStart(kIOReturnNotReady, "config");
     }
 
-    const auto* record = registry_.FindByGuid(guid);
-    if (!record) {
+    if (!registry_.FindByGuid(guid)) {
         ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (no device record) GUID=0x%016llx", guid);
         return failStart(kIOReturnNotReady, "device record");
     }
-
-    // CMP targets PCR space on the remote device (AV/C family policy).
-    cmpClient_->SetDeviceNode(static_cast<uint8_t>(record->nodeId),
-                              static_cast<ASFW::IRM::Generation>(record->gen));
 
     auto* nub = publisher_.GetNub(guid);
     if (!nub) {
@@ -176,81 +385,17 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         if (!nub) return failStart(kIOReturnNotReady, "nub");
     }
 
-    auto endpoint = runtime_.FindEndpointRuntime(guid);
-    auto* bindingSource = endpoint.get();
-    if (!bindingSource) {
+    const auto endpoint = runtime_.FindEndpointRuntime(guid);
+    if (!endpoint) {
         return failStart(kIOReturnNotReady, "direct binding source");
     }
     if (!endpoint->HasCompleteDirectAudioMemory()) {
         return failStart(kIOReturnNotReady, "direct memory");
     }
 
-    // Start IR first so capture packets don't get dropped.
-    {
-        const kern_return_t krRx = isoch_.StartReceive(kDefaultIrChannel,
-                                                       hardware_,
-                                                       bindingSource);
-        if (krRx != kIOReturnSuccess) {
-            ASFW_LOG_ERROR(Audio, "AVCAudioBackend: StartReceive failed GUID=0x%016llx kr=0x%x", guid, krRx);
-            return failStart(krRx, "StartReceive");
-        }
-    }
-
-    // CMP connect oPCR[0] (device->host).
-    {
-        std::atomic<bool> done{false};
-        std::atomic<ASFW::CMP::CMPStatus> status{ASFW::CMP::CMPStatus::Failed};
-        cmpClient_->ConnectOPCR(0, [&done, &status](ASFW::CMP::CMPStatus s) {
-            status.store(s, std::memory_order_release);
-            done.store(true, std::memory_order_release);
-        });
-
-        if (!WaitForCMP(done, status, 250)) {
-            const auto s = status.load(std::memory_order_acquire);
-            ASFW_LOG_ERROR(Audio,
-                           "AVCAudioBackend: CMP ConnectOPCR failed GUID=0x%016llx status=%{public}s(%d)",
-                           guid,
-                           ASFW::IRM::ToString(s),
-                           static_cast<int>(s));
-            (void)isoch_.StopReceive();
-            return failStart(kIOReturnError, "ConnectOPCR");
-        }
-    }
-
-    // Start IT transport (host->device) and then connect iPCR[0].
-    {
-        const uint8_t sid = ReadLocalSid(hardware_);
-
-        const kern_return_t krTx = isoch_.StartTransmit(kDefaultItChannel,
-                                                        hardware_,
-                                                        sid);
-        if (krTx != kIOReturnSuccess) {
-            ASFW_LOG_ERROR(Audio, "AVCAudioBackend: StartTransmit failed GUID=0x%016llx kr=0x%x", guid, krTx);
-            (void)isoch_.StopReceive();
-            // Best-effort: disconnect oPCR.
-            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) { /* best-effort, result ignored */ });
-            return failStart(krTx, "StartTransmit");
-        }
-
-        std::atomic<bool> done{false};
-        std::atomic<ASFW::CMP::CMPStatus> status{ASFW::CMP::CMPStatus::Failed};
-        cmpClient_->ConnectIPCR(0, kDefaultItChannel, [&done, &status](ASFW::CMP::CMPStatus s) {
-            status.store(s, std::memory_order_release);
-            done.store(true, std::memory_order_release);
-        });
-
-        if (!WaitForCMP(done, status, 250)) {
-            const auto s = status.load(std::memory_order_acquire);
-            ASFW_LOG_ERROR(Audio,
-                           "AVCAudioBackend: CMP ConnectIPCR failed GUID=0x%016llx status=%{public}s(%d)",
-                           guid,
-                           ASFW::IRM::ToString(s),
-                           static_cast<int>(s));
-            (void)isoch_.StopTransmit();
-            (void)isoch_.StopReceive();
-            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) { /* best-effort, result ignored */ });
-            return failStart(kIOReturnError, "ConnectIPCR");
-        }
+    const IOReturn startStatus = duplexCoordinator_.StartStreaming(guid);
+    if (startStatus != kIOReturnSuccess) {
+        return failStart(startStatus, "AudioDuplexCoordinator");
     }
 
     ASFW_LOG(Audio,
@@ -265,6 +410,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
 IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
+    if (stopping_.load(std::memory_order_acquire)) return kIOReturnAborted;
 
     if (lock_) {
         IOLockLock(lock_);
@@ -287,57 +433,15 @@ IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    // Stop transport regardless of CMP availability (best-effort).
-    if (!cmpClient_) {
-        (void)isoch_.StopTransmit();
-        (void)isoch_.StopReceive();
-        if (lock_) {
-            IOLockLock(lock_);
-            if (activeGuid_ == guid) {
-                activeGuid_ = 0;
-            }
-            IOLockUnlock(lock_);
-        }
-        return kIOReturnSuccess;
-    }
-
-    const auto* record = registry_.FindByGuid(guid);
-    if (record) {
-        cmpClient_->SetDeviceNode(static_cast<uint8_t>(record->nodeId),
-                                  static_cast<ASFW::IRM::Generation>(record->gen));
-    }
-
-    // Disconnect iPCR first (host->device), then stop IT.
-    {
-        std::atomic<bool> done{false};
-        std::atomic<ASFW::CMP::CMPStatus> status{ASFW::CMP::CMPStatus::Failed};
-        cmpClient_->DisconnectIPCR(0, [&done, &status](ASFW::CMP::CMPStatus s) {
-            status.store(s, std::memory_order_release);
-            done.store(true, std::memory_order_release);
-        });
-        (void)WaitForCMP(done, status, 250);
-    }
-
-    (void)isoch_.StopTransmit();
-
-    // Disconnect oPCR, then stop IR.
-    {
-        std::atomic<bool> done{false};
-        std::atomic<ASFW::CMP::CMPStatus> status{ASFW::CMP::CMPStatus::Failed};
-        cmpClient_->DisconnectOPCR(0, [&done, &status](ASFW::CMP::CMPStatus s) {
-            status.store(s, std::memory_order_release);
-            done.store(true, std::memory_order_release);
-        });
-        (void)WaitForCMP(done, status, 250);
-    }
-
-    (void)isoch_.StopReceive();
+    const IOReturn stopStatus = duplexCoordinator_.StopStreaming(guid);
+    if (stopStatus != kIOReturnSuccess) return stopStatus;
 
     if (lock_) {
         IOLockLock(lock_);
         if (activeGuid_ == guid) {
             activeGuid_ = 0;
         }
+        timingLossAttempts_.erase(guid);
         IOLockUnlock(lock_);
     }
 

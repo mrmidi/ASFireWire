@@ -24,6 +24,7 @@ struct HardwareTestState {
     bool phyConfigIssued{false};
     bool sendPhyConfigSucceeds{true};
     bool lastPhyConfigSucceeded{true};
+    bool available{true};
     bool globalResumeSent{false};
     bool contenderEnabled{false};
     std::optional<uint8_t> lastGapCount;
@@ -55,9 +56,22 @@ HardwareInterface::~HardwareInterface() {
     gHardwareStates.erase(this);
 }
 
-kern_return_t HardwareInterface::Attach(IOService*, IOService*) { return kIOReturnSuccess; }
+kern_return_t HardwareInterface::Attach(IOService*, IOService*) {
+    WithState(this, [](HardwareTestState& state) { state.available = true; });
+    return kIOReturnSuccess;
+}
 
-void HardwareInterface::Detach() {}
+void HardwareInterface::Revoke() noexcept {
+    WithState(this, [](HardwareTestState& state) { state.available = false; });
+}
+
+void HardwareInterface::Detach() { Revoke(); }
+
+bool HardwareInterface::Attached() const noexcept { return IsAvailable(); }
+
+bool HardwareInterface::IsAvailable() const noexcept {
+    return WithState(this, [](HardwareTestState& state) { return state.available; });
+}
 
 void HardwareInterface::BindAsyncControllerPort(ASFW::Async::IAsyncControllerPort* controllerPort) noexcept {
     asyncControllerPort_ = controllerPort;
@@ -65,6 +79,9 @@ void HardwareInterface::BindAsyncControllerPort(ASFW::Async::IAsyncControllerPor
 
 uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
     return WithState(this, [reg](HardwareTestState& state) -> uint32_t {
+        if (!state.available) {
+            return 0;
+        }
         const auto it = state.registers.find(KeyFor(reg));
         return (it != state.registers.end()) ? it->second : 0U;
     });
@@ -72,6 +89,9 @@ uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
 
 void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
     WithState(this, [reg, value](HardwareTestState& state) {
+        if (!state.available) {
+            return;
+        }
         state.registers[KeyFor(reg)] = value;
         state.operations.push_back(TestOperation::Write);
 
@@ -91,6 +111,9 @@ void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
 
 void HardwareInterface::WriteAndFlush(Register32 reg, uint32_t value) {
     WithState(this, [reg, value](HardwareTestState& state) {
+        if (!state.available) {
+            return;
+        }
         state.registers[KeyFor(reg)] = value;
         state.operations.push_back(TestOperation::WriteAndFlush);
 

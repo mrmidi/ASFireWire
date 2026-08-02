@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
 // DiceAudioBackend.hpp
@@ -7,8 +7,8 @@
 #pragma once
 
 #include "IAudioBackend.hpp"
-#include "DiceDuplexRestartCoordinator.hpp"
-#include "DiceHostTransport.hpp"
+#include "AudioDuplexCoordinator.hpp"
+#include "IsochDuplexHostTransport.hpp"
 
 #include "../../../Audio/Core/AudioNubPublisher.hpp"
 
@@ -48,8 +48,8 @@ public:
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn RequestClockConfig(uint64_t guid,
-                                              const DICE::DiceDesiredClockConfig& desiredClock,
-                                              DICE::DiceRestartReason reason) noexcept;
+                                              const AudioClockConfig& desiredClock,
+                                              DuplexRestartReason reason) noexcept;
 
     // FW-61: quiesce the dice queue before the core detaches hardware. Sets the stop flag,
     // cancels in-flight recovery (coordinator), then drains the work queue (synchronous
@@ -61,6 +61,11 @@ private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
     void HandleDeviceNotification(uint32_t bits) noexcept;
     void ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept;
+    // Blocking device-health read (dice queue only). Returns true ONLY when the device
+    // confirms a locked, healthy clock reference (sourceLocked && clockReferenceHealthy).
+    // Any read failure/timeout returns false so a possibly-needed recovery is never
+    // suppressed on missing evidence.
+    [[nodiscard]] bool DeviceReportsHealthyClock(uint64_t guid) noexcept;
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
     static void NotificationObserverThunk(void* context, uint32_t bits) noexcept;
@@ -70,9 +75,9 @@ private:
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
-    DiceIsochHostTransport hostTransport_;
+    IsochDuplexHostTransport hostTransport_;
     std::atomic<bool> stopping_{false}; // FW-61 teardown latch
-    DiceDuplexRestartCoordinator restartCoordinator_;
+    AudioDuplexCoordinator restartCoordinator_;
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};

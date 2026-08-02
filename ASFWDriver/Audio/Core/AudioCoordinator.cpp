@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
 #include "AudioCoordinator.hpp"
@@ -40,18 +40,24 @@ AudioCoordinator::~AudioCoordinator() noexcept {
 }
 
 void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
-    avc_.SetCMPClient(client);
+    runtime_.SetCMPClient(client);
 }
 
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
-    dice_.OnDeviceRecordUpdated(device->GetGUID());
+    const uint64_t guid = device->GetGUID();
+    if (BackendForGuid(guid) == &dice_) {
+        dice_.OnDeviceRecordUpdated(guid);
+    }
 }
 
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
     const uint64_t guid = device->GetGUID();
-    dice_.OnDeviceRecordUpdated(guid);
+    auto* backend = BackendForGuid(guid);
+    if (backend == &dice_) {
+        dice_.OnDeviceRecordUpdated(guid);
+    }
 
     bool recoverActiveStream = false;
     if (lock_) {
@@ -64,10 +70,14 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
         return;
     }
 
-    ASFW_LOG(Audio,
-             "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
-             guid);
-    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
+    if (backend == &dice_) {
+        ASFW_LOG(Audio,
+                 "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
+                 guid);
+        dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
+    } else if (backend == &avc_) {
+        avc_.OnDeviceResumed(guid);
+    }
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
@@ -280,10 +290,10 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
     return kIOReturnSuccess;
 }
 
-IOReturn AudioCoordinator::RequestDiceClockConfig(
+IOReturn AudioCoordinator::RequestClockConfig(
     uint64_t guid,
-    const DICE::DiceDesiredClockConfig& desiredClock,
-    DICE::DiceRestartReason reason) noexcept {
+    const AudioClockConfig& desiredClock,
+    DuplexRestartReason reason) noexcept {
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -294,7 +304,7 @@ IOReturn AudioCoordinator::RequestDiceClockConfig(
             const uint64_t active = activeGuid_;
             IOLockUnlock(lock_);
             ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: RequestDiceClockConfig busy requested=0x%016llx active=0x%016llx",
+                             "AudioCoordinator: RequestClockConfig busy requested=0x%016llx active=0x%016llx",
                              guid,
                              active);
             return kIOReturnBusy;
@@ -304,6 +314,9 @@ IOReturn AudioCoordinator::RequestDiceClockConfig(
 
     const auto* record = registry_.FindByGuid(guid);
     if (!record) {
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: RequestDiceClockConfig no registry record for GUID=0x%016llx (device not registered yet?)",
+                         guid);
         return kIOReturnNotReady;
     }
 
@@ -315,17 +328,24 @@ IOReturn AudioCoordinator::RequestDiceClockConfig(
     const IOReturn kr = dice_.RequestClockConfig(guid, desiredClock, reason);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: RequestDiceClockConfig failed GUID=0x%016llx kr=0x%x",
+                       "AudioCoordinator: RequestClockConfig failed GUID=0x%016llx kr=0x%x",
                        guid,
                        kr);
         return kr;
     }
 
+    // Keep the endpoint's clock in step with the new device rate so the next
+    // StartIO seeds the direct-binding/ZTS clock at the live rate. Without this
+    // the binding stays at the publish-time rate (48 kHz) while the device runs
+    // 44.1 kHz, and CoreAudio churns StartIO/StopIO on the clock mismatch.
+    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+        endpoint->SetCurrentSampleRate(desiredClock.sampleRateHz);
+    }
+
     ASFW_LOG(Audio,
-             "AudioCoordinator: RequestDiceClockConfig ok GUID=0x%016llx rate=%uHz clock=0x%08x reason=%u",
+             "AudioCoordinator: RequestClockConfig ok GUID=0x%016llx rate=%uHz reason=%u",
              guid,
              desiredClock.sampleRateHz,
-             desiredClock.clockSelect,
              static_cast<unsigned>(reason));
     return kIOReturnSuccess;
 }
@@ -333,6 +353,7 @@ IOReturn AudioCoordinator::RequestDiceClockConfig(
 void AudioCoordinator::BeginTeardown() noexcept {
     ASFW_LOG(Audio, "AudioCoordinator: BeginTeardown");
     dice_.BeginTeardown();
+    avc_.BeginTeardown();
 
     if (lock_) {
         IOLockLock(lock_);

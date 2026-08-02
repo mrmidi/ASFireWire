@@ -136,7 +136,8 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                                                                             std::size_t headerSize, // NOLINT(bugprone-easily-swappable-parameters)
                                                                             uint64_t payloadDeviceAddress,
                                                                             std::size_t payloadSize,
-                                                                            bool needsFlush) {
+                                                                            bool needsFlush,
+                                                                            uint16_t atTimeStamp) {
     DescriptorChain chain{};
     chain.needsFlush = needsFlush;  // Set Apple offset +40 pattern flag
 
@@ -249,6 +250,9 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
 
         // Publish non-control fields first, then release fence before setting control
         immDesc->common.branchWord = 0;           // EOL indicated by branchWord=0
+        // Split-timeout deadline for AT-response packets (Linux ohci.c:1209);
+        // hardware overwrites statusWord on completion.
+        immDesc->common.timeStamp = atTimeStamp;
         std::atomic_thread_fence(std::memory_order_release);
 
         // Configure descriptor control word (ping=false for standard async requests)
@@ -491,6 +495,9 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
     // OUTPUT_MORE relies on physical contiguity; branchWord is ignored per OHCI §7.1.
     // Keep b=00 and a zero branchWord to match spec.
     headerImmDesc->common.branchWord = 0;
+    // Split-timeout deadline for AT-response packets goes in the FIRST
+    // descriptor of the chain (Linux ohci.c:1209).
+    headerImmDesc->common.timeStamp = atTimeStamp;
 
     std::atomic_thread_fence(std::memory_order_release);
 

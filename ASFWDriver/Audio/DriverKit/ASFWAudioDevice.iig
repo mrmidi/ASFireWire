@@ -31,6 +31,20 @@ public:
     virtual kern_return_t StartIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
     virtual kern_return_t StopIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
 
+    // CoreAudio sample-rate selection: program the device's DICE clock to the
+    // new rate (via the transport-side coordinator) before accepting it.
+    virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override LOCALONLY;
+
+    // Device-initiated clock change (forced format change, AppleUSBAudio
+    // pattern): stage the device-reported rate and ask the host for a
+    // configuration-change window; the host stops IO, calls
+    // PerformDeviceConfigurationChange, and restarts IO.
+    kern_return_t RequestExternalRateResync(uint32_t nominalRateHz) LOCALONLY;
+    virtual kern_return_t PerformDeviceConfigurationChange(uint64_t change_action,
+                                                           OSObject* in_change_info) override LOCALONLY;
+    virtual kern_return_t AbortDeviceConfigurationChange(uint64_t change_action,
+                                                         OSObject* in_change_info) override LOCALONLY;
+
     void SetDriverIvars(ASFWAudioDriver_IVars* ivars) LOCALONLY;
 };
 

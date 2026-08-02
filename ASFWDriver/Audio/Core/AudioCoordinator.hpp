@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioCoordinator.hpp
@@ -56,10 +56,10 @@ public:
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;
-    [[nodiscard]] IOReturn RequestDiceClockConfig(
+    [[nodiscard]] IOReturn RequestClockConfig(
         uint64_t guid,
-        const DICE::DiceDesiredClockConfig& desiredClock,
-        DICE::DiceRestartReason reason) noexcept;
+        const AudioClockConfig& desiredClock,
+        DuplexRestartReason reason) noexcept;
     void BeginTeardown() noexcept;
 
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept { return publisher_.GetNub(guid); }

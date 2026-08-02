@@ -47,6 +47,19 @@ namespace {
 constexpr uint32_t kSampleRate = 48000; // the ZTS period math below is 48 kHz-only
 constexpr uint32_t kMaxOutputChannels = 32; // bound for the layout array
 constexpr uint32_t kBytesPerSample = sizeof(float);
+
+// C4 rig: declared per-direction latency/safety-offset under test. Set to
+// Phase88's current shipped values as the baseline run; edit + rebuild +
+// reload to sweep candidates (e.g. kLabOutputSafetyOffsetFrames = 48) and
+// diff the StopIO dump against this baseline. These are the exact ADK
+// properties ASFWAudioDriverGraph.cpp sets on the real device
+// (SetOutputSafetyOffset/SetInputSafetyOffset/SetOutputLatency/
+// SetInputLatency) -- unlike the Python simulator, these values are read
+// back by the REAL AudioDriverKit HAL scheduler, not a guessed model of it.
+constexpr uint32_t kLabOutputSafetyOffsetFrames = 64;
+constexpr uint32_t kLabInputSafetyOffsetFrames = 128;
+constexpr uint32_t kLabOutputLatencyFrames = 128;
+constexpr uint32_t kLabInputLatencyFrames = 128;
 constexpr uint64_t kZtsPeriodNsNumer = 32000000ull; // 512/48000 s = 32e6/3 ns
 constexpr uint64_t kZtsPeriodNsDenom = 3ull;
 constexpr uint32_t kMaxPreparePerCall = 512; // runaway guard for the pump
@@ -74,6 +87,8 @@ struct VirtualAudioDevice_IVars
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<IOUserAudioStream> outputStream;
     OSSharedPtr<IOMemoryMap> outputMemoryMap;
+    OSSharedPtr<IOUserAudioStream> inputStream;
+    OSSharedPtr<IOMemoryMap> inputMemoryMap;
     OSSharedPtr<IOTimerDispatchSource> ztsTimer;
     OSSharedPtr<OSAction> ztsTimerAction;
 
@@ -90,6 +105,16 @@ struct VirtualAudioDevice_IVars
     uint32_t outputChannels{0};
     uint32_t ringFrames{0};
 
+    // C4 duplex rig: the input ring's "hardware" fill cursor is advanced by
+    // the same ZTS timer that stands in for the OHCI IT ring interrupt (see
+    // ZtsTimerOccurred_Impl) -- independent of when the HAL calls BeginRead,
+    // matching how real capture hardware fills continuously in the
+    // background. inputRingBase is cached before SetIOOperationHandler for
+    // the same RT-discipline reason as ringBase.
+    float* inputRingBase{nullptr};
+    uint32_t inputBytesPerFrame{0};
+    uint32_t inputChannels{0};
+
     LabTimebase timebase{};
 
     // Clock chain state (work-queue confined).
@@ -100,6 +125,12 @@ struct VirtualAudioDevice_IVars
     uint32_t nextPacketIndex{0};
     uint64_t exposedFrames{0};
     uint64_t prepareFailures{0};
+
+    // C4 rig: simulated hardware capture cursor, advanced on the work queue
+    // by ZtsTimerOccurred_Impl. "Frames captured up through this point are
+    // safe to read." Cross-queue read from the RT BeginRead handler, so
+    // atomic (relaxed -- advisory instrumentation, not a correctness gate).
+    std::atomic<uint64_t> capturedFrames{0};
 
     // Lifecycle gate + O/C instrumentation (IO callback is a real-time
     // thread: relaxed atomics only, no logging, no allocation).
@@ -120,6 +151,23 @@ struct VirtualAudioDevice_IVars
     std::atomic<uint64_t> otherIoOperations{0};
     std::atomic<uint64_t> ioAfterStop{0};      // O2: WriteEnd after StopIO
     std::atomic<uint64_t> timerAfterStop{0};   // O2: timer fire after StopIO
+
+    // C4 rig: BeginRead-side mirror of the WriteEnd instrumentation above,
+    // plus the capture-readiness measurement that actually answers the
+    // question (does the real HAL ever call BeginRead for a span the
+    // simulated hardware capture cursor hasn't reached yet?).
+    std::atomic<uint64_t> beginReadCount{0};
+    std::atomic<uint64_t> framesRequested{0};
+    std::atomic<uint32_t> minReadIoFrames{0xFFFFFFFFu};
+    std::atomic<uint32_t> maxReadIoFrames{0};
+    std::atomic<uint64_t> readSampleTimeBreaks{0};
+    std::atomic<uint64_t> expectedNextReadSampleTime{0};
+    std::atomic<bool> expectedReadSampleTimeValid{false};
+    std::atomic<uint64_t> firstBeginReadSampleTime{0};
+    std::atomic<uint64_t> firstBeginReadHostTime{0};
+    std::atomic<uint64_t> captureStarvations{0};  // in_sample_time+size > capturedFrames
+    std::atomic<int64_t> minCaptureMarginFrames{INT64_MAX}; // capturedFrames - (sample_time+size)
+    std::atomic<uint64_t> readAfterStop{0};       // O2: BeginRead after StopIO
 };
 
 bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
@@ -252,13 +300,39 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         LAB_LOG("init - SetCanBeDefaultSystemOutputDevice set to true");
     }
 
-    // Set output safety offset
-    LAB_LOG("init - setting output safety offset to 0");
-    kr = SetOutputSafetyOffset(0);
+    // C4 rig: declared per-direction latency/safety-offset, matching the
+    // real ADK properties ASFWAudioDriverGraph.cpp sets on Phase88 (see
+    // kLabOutputSafetyOffsetFrames et al. above).
+    LAB_LOG("init - setting output safety offset to %{public}u", kLabOutputSafetyOffsetFrames);
+    kr = SetOutputSafetyOffset(kLabOutputSafetyOffsetFrames);
     if (kr != kIOReturnSuccess) {
         LAB_LOG("init - SetOutputSafetyOffset failed (kr = 0x%{public}08x)", kr);
     } else {
-        LAB_LOG("init - SetOutputSafetyOffset set to 0");
+        LAB_LOG("init - SetOutputSafetyOffset set to %{public}u", kLabOutputSafetyOffsetFrames);
+    }
+
+    LAB_LOG("init - setting input safety offset to %{public}u", kLabInputSafetyOffsetFrames);
+    kr = SetInputSafetyOffset(kLabInputSafetyOffsetFrames);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetInputSafetyOffset failed (kr = 0x%{public}08x)", kr);
+    } else {
+        LAB_LOG("init - SetInputSafetyOffset set to %{public}u", kLabInputSafetyOffsetFrames);
+    }
+
+    LAB_LOG("init - setting output latency to %{public}u", kLabOutputLatencyFrames);
+    kr = SetOutputLatency(kLabOutputLatencyFrames);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetOutputLatency failed (kr = 0x%{public}08x)", kr);
+    } else {
+        LAB_LOG("init - SetOutputLatency set to %{public}u", kLabOutputLatencyFrames);
+    }
+
+    LAB_LOG("init - setting input latency to %{public}u", kLabInputLatencyFrames);
+    kr = SetInputLatency(kLabInputLatencyFrames);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetInputLatency failed (kr = 0x%{public}08x)", kr);
+    } else {
+        LAB_LOG("init - SetInputLatency set to %{public}u", kLabInputLatencyFrames);
     }
 
     // Float32 output stream shaped by the profile caps.
@@ -343,6 +417,49 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         return false;
     }
     LAB_LOG("init - stream added successfully to device");
+
+    // C4 rig: mirror the output stream for input, same format/ring sizing.
+    // Content doesn't matter for the C4 question (BeginRead/WriteEnd
+    // scheduling relationship) so the ring is left zeroed; only the
+    // simulated hardware fill cursor (capturedFrames, advanced in
+    // ZtsTimerOccurred_Impl) is load-bearing.
+    ivars->inputBytesPerFrame = format.mBytesPerFrame;
+    ivars->inputChannels = format.mChannelsPerFrame;
+
+    LAB_LOG("init - creating input ring buffer (%{public}u bytes, ringFrames = %{public}u)",
+            ivars->ringFrames * format.mBytesPerFrame, ivars->ringFrames);
+    OSSharedPtr<IOBufferMemoryDescriptor> inputBuffer;
+    uint32_t inputBufferSize = ivars->ringFrames * format.mBytesPerFrame;
+    kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, inputBufferSize, 0, inputBuffer.attach());
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - Failed to create input IOBufferMemoryDescriptor (kr = 0x%{public}08x)", kr);
+        return false;
+    }
+
+    kr = inputBuffer->CreateMapping(0, 0, 0, 0, 0, ivars->inputMemoryMap.attach());
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - input CreateMapping failed (kr = 0x%{public}08x)", kr);
+        return false;
+    }
+    ivars->inputRingBase = reinterpret_cast<float*>(
+        ivars->inputMemoryMap->GetAddress() + ivars->inputMemoryMap->GetOffset());
+    LAB_LOG("init - input ring mapped: address = 0x%{public}llx, length = %{public}llu bytes",
+            ivars->inputMemoryMap->GetAddress(), ivars->inputMemoryMap->GetLength());
+
+    ivars->inputStream = IOUserAudioStream::Create(in_driver, IOUserAudioStreamDirection::Input, inputBuffer.get());
+    if (!ivars->inputStream) {
+        LAB_LOG("init - Failed to create input IOUserAudioStream");
+        return false;
+    }
+    ivars->inputStream->SetAvailableStreamFormats(&format, 1);
+    ivars->inputStream->SetCurrentStreamFormat(&format);
+
+    kr = AddStream(ivars->inputStream.get());
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - input AddStream failed (kr = 0x%{public}08x)", kr);
+        return false;
+    }
+    LAB_LOG("init - input stream added successfully to device");
 
     LAB_LOG("init - configuring controller output stream");
     ivars->controller->ConfigureOutputStream(caps.sampleRate, ivars->outputChannels,
@@ -440,6 +557,65 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                     in_sample_time + in_io_buffer_frame_size, std::memory_order_relaxed);
                 ivarsPtr->payloadCommittedValid.store(true, std::memory_order_relaxed);
             }
+        } else if (in_io_operation == IOUserAudioIOOperationBeginRead) {
+            if (!ivarsPtr->ioRunning.load(std::memory_order_relaxed)) {
+                ivarsPtr->readAfterStop.fetch_add(1, std::memory_order_relaxed);
+                return kIOReturnSuccess;
+            }
+
+            // C4 shape instrumentation (RT-safe: counters only), mirroring
+            // the WriteEnd block above.
+            const uint64_t readCount =
+                ivarsPtr->beginReadCount.fetch_add(1, std::memory_order_relaxed);
+            if (readCount == 0) {
+                ivarsPtr->firstBeginReadSampleTime.store(in_sample_time,
+                                                         std::memory_order_relaxed);
+                ivarsPtr->firstBeginReadHostTime.store(in_host_time,
+                                                       std::memory_order_relaxed);
+            }
+            ivarsPtr->framesRequested.fetch_add(in_io_buffer_frame_size,
+                                                std::memory_order_relaxed);
+            if (in_io_buffer_frame_size <
+                ivarsPtr->minReadIoFrames.load(std::memory_order_relaxed)) {
+                ivarsPtr->minReadIoFrames.store(in_io_buffer_frame_size,
+                                                std::memory_order_relaxed);
+            }
+            if (in_io_buffer_frame_size >
+                ivarsPtr->maxReadIoFrames.load(std::memory_order_relaxed)) {
+                ivarsPtr->maxReadIoFrames.store(in_io_buffer_frame_size,
+                                                std::memory_order_relaxed);
+            }
+            if (ivarsPtr->expectedReadSampleTimeValid.load(std::memory_order_relaxed) &&
+                ivarsPtr->expectedNextReadSampleTime.load(std::memory_order_relaxed) !=
+                    in_sample_time) {
+                ivarsPtr->readSampleTimeBreaks.fetch_add(1, std::memory_order_relaxed);
+            }
+            ivarsPtr->expectedNextReadSampleTime.store(
+                in_sample_time + in_io_buffer_frame_size, std::memory_order_relaxed);
+            ivarsPtr->expectedReadSampleTimeValid.store(true, std::memory_order_relaxed);
+
+            // THE C4 MEASUREMENT: is the span the real HAL just asked for
+            // already covered by the simulated hardware capture cursor
+            // (advanced independently, on the work queue, by
+            // ZtsTimerOccurred_Impl)? A negative margin here is a real,
+            // HAL-scheduled capture-starvation event -- not a guess about
+            // one.
+            const int64_t captured = static_cast<int64_t>(
+                ivarsPtr->capturedFrames.load(std::memory_order_relaxed));
+            const int64_t requiredEnd =
+                static_cast<int64_t>(in_sample_time) +
+                static_cast<int64_t>(in_io_buffer_frame_size);
+            const int64_t margin = captured - requiredEnd;
+            if (margin < 0) {
+                ivarsPtr->captureStarvations.fetch_add(1, std::memory_order_relaxed);
+            }
+            int64_t previousMinMargin =
+                ivarsPtr->minCaptureMarginFrames.load(std::memory_order_relaxed);
+            while (margin < previousMinMargin &&
+                   !ivarsPtr->minCaptureMarginFrames.compare_exchange_weak(
+                       previousMinMargin, margin, std::memory_order_relaxed,
+                       std::memory_order_relaxed)) {
+            }
         } else {
             ivarsPtr->otherIoOperations.fetch_add(1, std::memory_order_relaxed);
         }
@@ -481,6 +657,8 @@ void VirtualAudioDevice::free()
         ivars->workQueue.reset();
         ivars->outputStream.reset();
         ivars->outputMemoryMap.reset();
+        ivars->inputStream.reset();
+        ivars->inputMemoryMap.reset();
         ivars->ztsTimer.reset();
         ivars->ztsTimerAction.reset();
     }
@@ -527,6 +705,12 @@ void VirtualAudioDevice::ZtsTimerOccurred_Impl(OSAction* action, uint64_t time)
     const uint64_t sampleTime = ivars->periodIndex * GetZeroTimestampPeriod();
     UpdateCurrentZeroTimestamp(sampleTime, time);
     ivars->anchorsPublished.fetch_add(1, std::memory_order_relaxed);
+
+    // C4 rig: this fire IS the simulated hardware capture interrupt --
+    // "frames up through sampleTime have now been captured," independent of
+    // whether/when the HAL has called BeginRead for them. Real capture
+    // hardware behaves the same way (continuous background fill).
+    ivars->capturedFrames.store(sampleTime, std::memory_order_relaxed);
     if (ivars->writeEndCount.load(std::memory_order_relaxed) == 0) {
         ivars->anchorsBeforeFirstWriteEnd.fetch_add(1, std::memory_order_relaxed);
     }
@@ -559,6 +743,11 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
             kr = kIOReturnInternalError;
             return;
         }
+        if (ivars->inputRingBase == nullptr) {
+            LAB_LOG("StartIO - input ring is not mapped");
+            kr = kIOReturnInternalError;
+            return;
+        }
 
         if (ivars->controller) {
             LAB_LOG("StartIO - resetting controller transport lab");
@@ -585,6 +774,18 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->payloadCommittedEndFrame.store(0, std::memory_order_relaxed);
         ivars->payloadCommittedValid.store(false, std::memory_order_relaxed);
         ivars->otherIoOperations.store(0, std::memory_order_relaxed);
+        ivars->capturedFrames.store(0, std::memory_order_relaxed);
+        ivars->beginReadCount.store(0, std::memory_order_relaxed);
+        ivars->framesRequested.store(0, std::memory_order_relaxed);
+        ivars->minReadIoFrames.store(0xFFFFFFFFu, std::memory_order_relaxed);
+        ivars->maxReadIoFrames.store(0, std::memory_order_relaxed);
+        ivars->readSampleTimeBreaks.store(0, std::memory_order_relaxed);
+        ivars->expectedReadSampleTimeValid.store(false, std::memory_order_relaxed);
+        ivars->firstBeginReadSampleTime.store(0, std::memory_order_relaxed);
+        ivars->firstBeginReadHostTime.store(0, std::memory_order_relaxed);
+        ivars->captureStarvations.store(0, std::memory_order_relaxed);
+        ivars->minCaptureMarginFrames.store(INT64_MAX, std::memory_order_relaxed);
+        ivars->readAfterStop.store(0, std::memory_order_relaxed);
 
         // Seed the clock chain: anchor (0, now), pre-expose two periods, and
         // arm the first wrap. C1 counts how many anchors precede the first
@@ -682,6 +883,43 @@ kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
                     ? (int64_t)(firstHost - ivars->startHostTime)
                     : (int64_t)0,
                 ivars->otherIoOperations.load(std::memory_order_relaxed));
+
+        // C4 answer. min_margin is capturedFrames - (sample_time + size) at
+        // its worst observed point: negative means the real HAL called
+        // BeginRead for a span the simulated hardware cursor hadn't reached
+        // yet (a genuine capture-starvation event under real AudioDriverKit
+        // scheduling). read_vs_write_host_delta is the actual measured
+        // offset between the first BeginRead and first WriteEnd host times —
+        // this is the number that settles whether the real HAL schedules
+        // the two operations coupled or independently (compare against
+        // in_out_safety_delta_frames, the naive prediction from the
+        // declared SafetyOffset values alone).
+        const uint64_t firstReadHost =
+            ivars->firstBeginReadHostTime.load(std::memory_order_relaxed);
+        const int64_t readVsWriteHostDeltaTicks =
+            (firstReadHost != 0 && firstHost != 0)
+                ? (int64_t)(firstReadHost) - (int64_t)(firstHost)
+                : 0;
+        LAB_LOG("dump beginread: count=%{public}llu frames_req=%{public}llu min=%{public}u max=%{public}u "
+                "sample_breaks=%{public}llu first_sample=%{public}llu first_host_delta=%{public}lld "
+                "read_after_stop=%{public}llu starvations=%{public}llu min_margin_frames=%{public}lld "
+                "read_vs_write_host_delta_ticks=%{public}lld "
+                "declared_out_safety=%{public}u declared_in_safety=%{public}u",
+                ivars->beginReadCount.load(std::memory_order_relaxed),
+                ivars->framesRequested.load(std::memory_order_relaxed),
+                ivars->minReadIoFrames.load(std::memory_order_relaxed),
+                ivars->maxReadIoFrames.load(std::memory_order_relaxed),
+                ivars->readSampleTimeBreaks.load(std::memory_order_relaxed),
+                ivars->firstBeginReadSampleTime.load(std::memory_order_relaxed),
+                (firstReadHost != 0)
+                    ? (int64_t)(firstReadHost - ivars->startHostTime)
+                    : (int64_t)0,
+                ivars->readAfterStop.load(std::memory_order_relaxed),
+                ivars->captureStarvations.load(std::memory_order_relaxed),
+                (long long)ivars->minCaptureMarginFrames.load(std::memory_order_relaxed),
+                readVsWriteHostDeltaTicks,
+                kLabOutputSafetyOffsetFrames,
+                kLabInputSafetyOffsetFrames);
 
         LAB_LOG("dump verifier: violations=%{public}llu p1_win=%{public}llu p1_run=%{public}llu "
                 "p1_idx=%{public}llu p2_dbc=%{public}llu p3_bytes=%{public}llu p3_q0=%{public}llu p3_q1=%{public}llu "

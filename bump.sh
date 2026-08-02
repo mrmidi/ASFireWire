@@ -120,14 +120,27 @@ bump_build_number() {
     err "xcrun is required to increment CURRENT_PROJECT_VERSION"
   fi
 
+  local project_spec="${PROJECT_ROOT}/project.yml"
   local current
-  current=$(xcrun agvtool what-version -terse 2>/dev/null | head -n 1 | tr -d '[:space:]')
+  if [[ -f "$project_spec" ]]; then
+    current=$(awk '/CURRENT_PROJECT_VERSION:/ { print $2; exit }' "$project_spec" | tr -d '[:space:]')
+  else
+    current=$(xcrun agvtool what-version -terse 2>/dev/null | head -n 1 | tr -d '[:space:]')
+  fi
   if [[ ! "$current" =~ ^[0-9]+$ ]]; then
     err "CURRENT_PROJECT_VERSION must be an integer (found: ${current:-<empty>})"
   fi
 
   local next=$((current + 1))
   xcrun agvtool new-version -all "$next" >/dev/null
+  if [[ -f "$project_spec" ]]; then
+    # project.yml is authoritative whenever XcodeGen is installed. Persist the
+    # bump there too, otherwise the next regeneration would restore the old
+    # build number and macOS could keep selecting an older installed dext.
+    /usr/bin/perl -0pi -e \
+      's/^([ \t]*CURRENT_PROJECT_VERSION:[ \t]*)[0-9]+[ \t]*$/${1}'"$next"'/mg' \
+      "$project_spec"
+  fi
   ok "Bumped CFBundleVersion: $current → $next"
 }
 

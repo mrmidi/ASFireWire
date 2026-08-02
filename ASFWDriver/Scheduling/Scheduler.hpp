@@ -19,6 +19,9 @@ public:
     void Bind(OSSharedPtr<IODispatchQueue> queue);
 
     void DispatchAsync(const std::function<void()>& work);
+    // WARNING: implemented as IOSleep *on the bound queue* (IODispatchQueue has
+    // no native delayed dispatch) — the queue is blocked for the whole delay.
+    // Only use for short delays; long waits need an IOTimerDispatchSource.
     void DispatchAsyncAfter(uint64_t delayNs, const std::function<void()>& work);
     void DispatchSync(const std::function<void()>& work);
 

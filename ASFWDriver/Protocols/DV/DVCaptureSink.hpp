@@ -64,11 +64,12 @@ static_assert(offsetof(DVRingHeader, writeIndex) == 64,
 static_assert(offsetof(DVRingHeader, readIndex) == 128,
               "readIndex offset is ABI");
 
-class DVCaptureSink final {
+class DVCaptureSink final : public ASFW::Isoch::IIsochReceiveConsumer {
 public:
     static constexpr uint32_t kMagic = 0x41534456; // 'ASDV'
     static constexpr uint16_t kVersion = 3;
     static constexpr uint32_t kRecordBytes = 480;  // six 80-byte DIF blocks
+    static constexpr size_t kTransportPrefixBytes = 8;
     static constexpr size_t kCipHeaderBytes = 8;
     static constexpr size_t kSphBytes = 4;
 
@@ -128,7 +129,12 @@ public:
                           std::memory_order_release);
     }
 
-    void OnPacket(const ASFW::Isoch::IsochRxPacketView& packet) noexcept {
+    void BeginReceiveBatch(
+        const ASFW::Isoch::IsochReceiveBatch&) noexcept override {}
+
+    void ConsumePacket(
+        const ASFW::Isoch::IsochReceiveBatch&,
+        const ASFW::Isoch::IsochReceivePacket& packet) noexcept override {
         if (!hdr_) {
             return;
         }
@@ -140,16 +146,20 @@ public:
         const auto successCode = static_cast<uint32_t>(
             ASFW::Async::OHCIEventCode::kAckComplete);
         if ((packet.transferStatus & 0x1Fu) != successCode ||
-            !packet.hasTransportPrefix ||
-            packet.payload.size() < kCipHeaderBytes) {
+            packet.payload.size() < kTransportPrefixBytes + kCipHeaderBytes) {
             Reject(packet);
             return;
         }
 
+        // With OHCI isoch-header mode enabled, the DMA buffer starts with the
+        // receive timestamp and 1394 isoch header. Content begins after those
+        // two quadlets; transport deliberately leaves them opaque.
+        const auto content = packet.payload.subspan(kTransportPrefixBytes);
+
         uint32_t q0 = 0;
         uint32_t q1 = 0;
-        std::memcpy(&q0, packet.payload.data(), sizeof(q0));
-        std::memcpy(&q1, packet.payload.data() + 4, sizeof(q1));
+        std::memcpy(&q0, content.data(), sizeof(q0));
+        std::memcpy(&q1, content.data() + 4, sizeof(q1));
 
         const auto cip = ASFW::Isoch::CIPHeader::Decode(q0, q1);
         if (!cip || cip->format != 0x00) {
@@ -157,7 +167,7 @@ public:
             return;
         }
 
-        const auto media = packet.payload.subspan(kCipHeaderBytes);
+        const auto media = content.subspan(kCipHeaderBytes);
         if (!media.empty() && cip->dataBlockSize != kRecordBytes / 4) {
             Reject(packet, q0, q1);
             return;
@@ -207,12 +217,12 @@ private:
         return true;
     }
 
-    void Reject(const ASFW::Isoch::IsochRxPacketView& packet,
+    void Reject(const ASFW::Isoch::IsochReceivePacket& packet,
                 uint32_t q0 = 0,
                 uint32_t q1 = 0) noexcept {
         hdr_->nonDvPackets.fetch_add(1, std::memory_order_relaxed);
         hdr_->lastRejectLen.store(
-            static_cast<uint32_t>(packet.dmaBytes.size()),
+            static_cast<uint32_t>(packet.payload.size()),
             std::memory_order_relaxed);
         hdr_->lastRejectQ0.store(q0, std::memory_order_relaxed);
         hdr_->lastRejectQ1.store(q1, std::memory_order_relaxed);

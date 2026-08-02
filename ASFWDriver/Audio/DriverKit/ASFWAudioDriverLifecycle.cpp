@@ -43,7 +43,9 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         if (ivars->device.audioNub) {
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
+            (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
         }
+        ivars->deviceClockChangedAction.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
@@ -126,7 +128,42 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterZtsAnchorAction");
     }
 
+    OSAction* rawDeviceClockChangedAction = nullptr;
+    error = CreateActionDeviceClockChanged(
+        0, &rawDeviceClockChangedAction);
+    if (error != kIOReturnSuccess || !rawDeviceClockChangedAction) {
+        return failStart(
+            error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+            "CreateActionDeviceClockChanged");
+    }
+    ivars->deviceClockChangedAction =
+        ASFW::Common::AdoptRetained(rawDeviceClockChangedAction);
+    error = ivars->device.audioNub->RegisterDeviceClockChangedAction(
+        ivars->deviceClockChangedAction.get());
+    if (error != kIOReturnSuccess) {
+        ivars->deviceClockChangedAction.reset();
+        return failStart(error, "RegisterDeviceClockChangedAction");
+    }
+
     return kIOReturnSuccess;
+}
+
+void IMPL(ASFWAudioDriver, DeviceClockChanged)
+{
+    (void)action;
+    if (!ivars || !ivars->audioDevice) {
+        return;
+    }
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: DeviceClockChanged notification — device now at %u Hz",
+             nominalRateHz);
+    const kern_return_t kr =
+        ivars->audioDevice->RequestExternalRateResync(nominalRateHz);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: external rate resync request failed: 0x%x",
+                 kr);
+    }
 }
 
 kern_return_t IMPL(ASFWAudioDriver, Stop)
@@ -142,9 +179,11 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
             }
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
+            (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
         }
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
+        ivars->deviceClockChangedAction.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
         ivars->device.audioNub = nullptr;
@@ -253,9 +292,25 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
         ivars.txControlBuffer = nullptr;
         ivars.runtime.txSlotProvider.payloadBase = nullptr;
         ivars.runtime.txSlotProvider.metadataRing = nullptr;
-        ivars.runtime.txSlotProvider.controlBlock = nullptr;
+        ivars.runtime.txSlotProvider.queueControl = nullptr;
+        ivars.runtime.txSlotProvider.audioControl = nullptr;
         ivars.runtime.txSlotProvider.numSlots = 0;
-        ivars.runtime.txExecutionTimeline.controlBlock = nullptr;
+        ivars.runtime.txExecutionTimeline.queueControl = nullptr;
+
+        // Secondary playback stream teardown (mirrors the master above).
+        ivars.runtime.txSecondaryActive = false;
+        ivars.txPayloadMapSecondary = nullptr;
+        ivars.txMetadataMapSecondary = nullptr;
+        ivars.txControlMapSecondary = nullptr;
+        ivars.txPayloadBufferSecondary = nullptr;
+        ivars.txMetadataBufferSecondary = nullptr;
+        ivars.txControlBufferSecondary = nullptr;
+        ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
+        ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
+        ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
+        ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
+        ivars.runtime.txSlotProviderSecondary.numSlots = 0;
+
         ivars.device.audioNub->FreeTxIsochResources();
     }
 

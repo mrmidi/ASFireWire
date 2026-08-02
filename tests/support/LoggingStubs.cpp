@@ -141,6 +141,8 @@ uint8_t LogConfig::GetMusicSubunitVerbosity() const { return 0; }
 uint8_t LogConfig::GetDICEVerbosity() const { return 0; }
 uint8_t LogConfig::GetIsochVerbosity() const { return 0; }
 bool LogConfig::IsHexDumpsEnabled() const { return false; }
+bool LogConfig::IsOsLogMirrorEnabled() const { return osLogMirrorEnabled_.load(std::memory_order_relaxed); }
+void LogConfig::SetOsLogMirrorEnabled(bool enable) { osLogMirrorEnabled_.store(enable, std::memory_order_relaxed); }
 bool LogConfig::IsStatisticsEnabled() const { return false; }
 bool LogConfig::IsAudioAutoStartEnabled() const { return false; }
 

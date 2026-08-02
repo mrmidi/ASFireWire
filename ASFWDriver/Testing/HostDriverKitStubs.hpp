@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024 ASFireWire Project
 //
 // HostDriverKitStubs.hpp — Minimal stubs for DriverKit types to allow unit testing on host.
@@ -240,6 +240,12 @@ public:
 
     kern_return_t SetHandler(OSAction*) { return kIOReturnUnsupported; }
     kern_return_t SetEnableWithCompletion(bool, void*) { return kIOReturnUnsupported; }
+    kern_return_t Cancel(void (^handler)(void)) {
+        if (handler) {
+            handler();
+        }
+        return kIOReturnSuccess;
+    }
 };
 
 class IOTimerDispatchSource : public OSObject {
@@ -289,7 +295,9 @@ public:
 class IOMemoryDescriptor : public OSObject {
 public:
     virtual kern_return_t GetAddressRange(IOAddressSegment* range) = 0;
-    virtual void GetLength(uint64_t* length) = 0;
+    // Matches the real SDK signature (kern_return_t, not void) so handler code
+    // can check the return value under host test.
+    virtual kern_return_t GetLength(uint64_t* length) = 0;
     virtual kern_return_t CreateMapping(uint64_t options,
                                         uint64_t address,
                                         uint64_t offset,
@@ -330,10 +338,12 @@ public:
         return kIOReturnSuccess;
     }
 
-    void GetLength(uint64_t* length) override {
-        if (length) {
-            *length = length_;
+    kern_return_t GetLength(uint64_t* length) override {
+        if (!length) {
+            return kIOReturnBadArgument;
         }
+        *length = length_;
+        return kIOReturnSuccess;
     }
     
     kern_return_t SetLength(uint64_t len) {
@@ -428,6 +438,18 @@ public:
     void reset() { ptr_.reset(); }
     void reset(T* ptr, OSNoRetainTag) { ptr_.reset(ptr); }
     void reset(T* ptr, OSRetainTag) { ptr_.reset(ptr); }
+
+    // Ownership transfer to the caller. Stub OSObject::release() is a no-op,
+    // so keep one strong ref alive (intentional leak) instead of letting the
+    // shared_ptr destroy an object the caller still holds.
+    T* detach() {
+        T* raw = ptr_.get();
+        if (raw) {
+            new std::shared_ptr<T>(ptr_);
+        }
+        ptr_.reset();
+        return raw;
+    }
 
 private:
     std::shared_ptr<T> ptr_;
