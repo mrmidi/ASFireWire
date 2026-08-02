@@ -509,7 +509,7 @@ kern_return_t IMPL(ASFWDriverUserClient, Start) {
     }
 
     auto* runtimeState = ASFW::UserClient::GetRuntimeState(this);
-    if (!runtimeState || !runtimeState->BindDriver(ivars->driver)) {
+    if (!runtimeState || !runtimeState->BindDriver(ivars->driver, this)) {
         ASFW_LOG(UserClient, "Start() failed to initialize runtime state");
         return kIOReturnNoMemory;
     }
@@ -752,7 +752,10 @@ kern_return_t IMPL(ASFWDriverUserClient, CopyClientMemoryForType) {
         return ivars->driver->CopySharedStatusMemory(options, memory);
     }
     if (type == 1) {
-        return ivars->driver->CopyDVCaptureMemory(options, memory);
+        const uint64_t ownerToken = static_cast<uint64_t>(
+            reinterpret_cast<uintptr_t>(this));
+        return ivars->driver->CopyDVCaptureMemory(
+            ownerToken, options, memory);
     }
     return kIOReturnUnsupported;
 }

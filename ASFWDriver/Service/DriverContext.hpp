@@ -16,6 +16,7 @@
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Hardware/InterruptDispatcher.hpp"
 #include "../Isoch/IsochService.hpp"
+#include "../Protocols/DV/DVCaptureService.hpp"
 #include "../Scheduling/WatchdogCoordinator.hpp"
 
 class ASFWDriver;
@@ -43,6 +44,7 @@ struct ServiceContext {
     ASFW::Driver::StatusPublisher statusPublisher;
     ASFW::Driver::WatchdogCoordinator watchdog;
     ASFW::Driver::IsochService isoch;
+    ASFW::Protocols::DV::DVCaptureService dvCapture;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
 

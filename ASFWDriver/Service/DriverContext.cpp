@@ -52,6 +52,7 @@ void ServiceContext::Reset() {
     if (audioCoordinator) {
         audioCoordinator->BeginTeardown();
     }
+    dvCapture.StopAll(isoch);
     isoch.StopAll();
     controller.reset();
     audioCoordinator.reset();
@@ -81,6 +82,7 @@ void ServiceContext::Reset() {
     deps.irmClient.reset();         // Clean up IRM client
     deps.asyncController.reset();
     deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    deps.busResetStartedCallback = {};
     deps.cycleInconsistentCallback = {};
     statusPublisher.Reset();
     watchdog.Reset();
@@ -93,6 +95,9 @@ namespace ASFW::Driver {
 
 void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     auto& d = ctx.deps;
+    d.busResetStartedCallback = [&ctx] {
+        ctx.dvCapture.HandleBusReset(ctx.isoch);
+    };
     if (!d.hardware) {
         d.hardware = std::make_shared<HardwareInterface>();
     }
@@ -283,6 +288,7 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->BeginTeardown();
     }
+    ctx.dvCapture.StopAll(ctx.isoch);
     ctx.isoch.StopAll();
     if (ctx.controller) {
         ctx.controller->Stop();

@@ -2,8 +2,11 @@
 
 #include "../../../Bus/IRM/IRMTypes.hpp"
 #include "../../../Async/Interfaces/IFireWireBusOps.hpp"
+#include "PCRCodec.hpp"
+#include <atomic>
 #include <functional>
 #include <cstdint>
+#include <optional>
 
 namespace ASFW::CMP {
 
@@ -30,32 +33,6 @@ namespace PCRRegisters {
 // ============================================================================
 
 /// PCR bit masks and shifts
-namespace PCRBits {
-    // Common to oPCR and iPCR
-    constexpr uint32_t kOnlineMask      = 0x80000000;  ///< Bit 31: online
-    constexpr uint32_t kBcastMask       = 0x7C000000;  ///< Bits 30-26: broadcast count
-    constexpr uint32_t kP2PMask         = 0x03000000;  ///< Bits 25-24: p2p count (2 bits)
-    constexpr uint8_t  kP2PShift        = 24;
-    constexpr uint32_t kChannelMask     = 0x003F0000;  ///< Bits 21-16: channel
-    constexpr uint8_t  kChannelShift    = 16;
-    constexpr uint32_t kDataRateMask    = 0x0000C000;  ///< Bits 15-14: data rate
-    constexpr uint8_t  kDataRateShift   = 14;
-    
-    // Extract p2p count from PCR value
-    inline uint8_t GetP2P(uint32_t pcr) { return (pcr & kP2PMask) >> kP2PShift; }
-    
-    // Set p2p count in PCR value
-    inline uint32_t SetP2P(uint32_t pcr, uint8_t p2p) {
-        return (pcr & ~kP2PMask) | ((static_cast<uint32_t>(p2p) & 0x03) << kP2PShift);
-    }
-    
-    // Extract channel from PCR value
-    inline uint8_t GetChannel(uint32_t pcr) { return (pcr & kChannelMask) >> kChannelShift; }
-    
-    // Check if online
-    inline bool IsOnline(uint32_t pcr) { return (pcr & kOnlineMask) != 0; }
-}
-
 // ============================================================================
 // CMP Status Codes
 // ============================================================================
@@ -111,19 +88,24 @@ public:
      * @param nodeId Device node ID
      * @param generation Current bus generation
      */
-    void SetDeviceNode(uint8_t nodeId, IRM::Generation generation);
+    void SetDeviceNode(uint8_t nodeId,
+                       IRM::Generation generation,
+                       FW::FwSpeed speed = FW::FwSpeed::S400);
     
     /**
      * Get current device node ID.
      * @return Device node ID (0xFF = not set)
      */
-    [[nodiscard]] uint8_t GetDeviceNodeID() const { return deviceNodeId_; }
+    [[nodiscard]] uint8_t GetDeviceNodeID() const;
     
     /**
      * Get current generation.
      * @return Bus generation
      */
-    [[nodiscard]] IRM::Generation GetGeneration() const { return generation_; }
+    [[nodiscard]] IRM::Generation GetGeneration() const;
+
+    /// Read the output master plug register.
+    void ReadOMPR(PCRReadCallback callback);
     
     // =========================================================================
     // oPCR Operations (device→host stream, device transmits)
@@ -146,6 +128,9 @@ public:
      * @param callback Completion callback
      */
     void ConnectOPCR(uint8_t plugNum, CMPCallback callback);
+    void ConnectOPCR(uint8_t plugNum,
+                     uint8_t channel,
+                     CMPCallback callback);
     
     /**
      * CMP BREAK on oPCR - disconnect from device's output plug.
@@ -189,19 +174,37 @@ public:
     void DisconnectIPCR(uint8_t plugNum, CMPCallback callback);
     
 private:
+    struct Target {
+        uint8_t nodeId{0xFF};
+        IRM::Generation generation{0};
+        FW::FwSpeed speed{FW::FwSpeed::S400};
+    };
+
     Async::IFireWireBusOps& busOps_;
-    uint8_t deviceNodeId_{0xFF};
-    IRM::Generation generation_{0};
+    std::atomic<uint64_t> packedTarget_{0};
+
+    [[nodiscard]] Target LoadTarget() const noexcept;
+    [[nodiscard]] static uint64_t PackTarget(Target target) noexcept;
     
     // Internal helpers
-    void ReadPCRQuadlet(uint32_t addressLo, PCRReadCallback callback);
-    void CompareSwapPCR(uint32_t addressLo, uint32_t expected, uint32_t desired, 
+    void ReadPCRQuadlet(Target target,
+                        uint32_t addressLo,
+                        PCRReadCallback callback);
+    void CompareSwapPCR(Target target,
+                        uint32_t addressLo,
+                        uint32_t expected,
+                        uint32_t desired,
                         CMPCallback callback);
     
     // Connect/disconnect implementation (shared logic)
-    void PerformConnect(uint32_t pcrAddress, uint8_t plugNum, 
+    void PerformConnect(Target target,
+                        uint32_t pcrAddress,
+                        uint8_t plugNum,
                         std::optional<uint8_t> setChannel, CMPCallback callback);
-    void PerformDisconnect(uint32_t pcrAddress, uint8_t plugNum, CMPCallback callback);
+    void PerformDisconnect(Target target,
+                           uint32_t pcrAddress,
+                           uint8_t plugNum,
+                           CMPCallback callback);
 };
 
 } // namespace ASFW::CMP

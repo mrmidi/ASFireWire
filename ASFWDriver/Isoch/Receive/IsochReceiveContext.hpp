@@ -91,6 +91,8 @@ public:
                             uint8_t contextIndex,
                             Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
                             uint32_t am824Slots = 0);
+    kern_return_t ConfigurePacketReceive(uint8_t channel,
+                                         uint8_t contextIndex);
     kern_return_t Start();
     void Stop();
     uint32_t Poll();
@@ -126,6 +128,8 @@ public:
     void LogTxSytTrace();
 
 private:
+    kern_return_t ConfigureTransport(uint8_t channel,
+                                     uint8_t contextIndex);
     void ResetReplayEpochForDiscontinuity() noexcept;
 
     struct Registers {
@@ -159,6 +163,7 @@ private:
 
     Encoding::AudioWireFormat wireFormat_{Encoding::AudioWireFormat::kAM824};
     uint32_t am824Slots_{0};
+    bool audioProcessingEnabled_{true};
 
     uint64_t absoluteFrameCursor_{0};
     bool cursorInitialized_{false};

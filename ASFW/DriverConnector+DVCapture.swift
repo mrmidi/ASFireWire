@@ -8,12 +8,14 @@
 //  (one DV source packet each). This file maps the ring (memory type 1) and
 //  consumes records; the view layer concatenates them into a .dv file.
 //
-//  Ring layout is ABI with ASFWDriver/Isoch/Receive/DVCaptureSink.hpp:
+//  Ring layout is ABI with ASFWDriver/Protocols/DV/DVCaptureSink.hpp:
 //    +0   magic 'ASDV' (0x41534456)
-//    +4   version (u16) = 1
+//    +4   version (u16) = 3
+//    +6   negotiated channel (u8), connection mode (u8)
 //    +8   numRecords (u32)
 //    +12  recordBytes (u32) = 480
 //    +16  dataOffsetBytes (u32) = 192
+//    +20  session state (u32, driver-owned atomic)
 //    +24  packetsSeen (u32)
 //    +28  dvSourcePackets (u32)
 //    +32  nonDvPackets (u32)
@@ -29,6 +31,9 @@ import IOKit
 // MARK: - DV Ring Stats
 
 struct DVCaptureStats {
+    var sessionState: UInt32 = 0
+    var channel: UInt8 = 0xFF
+    var connectionMode: UInt8 = 0
     var packetsSeen: UInt32 = 0
     var dvSourcePackets: UInt32 = 0
     var nonDvPackets: UInt32 = 0
@@ -37,6 +42,16 @@ struct DVCaptureStats {
     var lastRejectQ0: UInt32 = 0
     var lastRejectQ1: UInt32 = 0
     var lastXferStatus: UInt32 = 0
+    var dbcDiscontinuities: UInt32 = 0
+    var invalidDifBlocks: UInt32 = 0
+}
+
+enum DVCaptureSessionState: UInt32 {
+    case initializing = 0
+    case active = 1
+    case stopped = 2
+    case busReset = 3
+    case failed = 4
 }
 
 // MARK: - Mapped Ring
@@ -44,6 +59,8 @@ struct DVCaptureStats {
 /// Consumer-side view of the shared DV ring. Single consumer only.
 final class DVCaptureRing {
     static let magic: UInt32 = 0x41534456 // 'ASDV'
+    static let version: UInt16 = 3
+    static let headerBytes = 192
     static let recordBytes = 480
 
     private let base: UnsafeMutableRawPointer
@@ -51,6 +68,7 @@ final class DVCaptureRing {
     private let connection: io_connect_t
     private let numRecords: UInt32
     private let dataOffset: Int
+    private var mapped = true
 
     private init(base: UnsafeMutableRawPointer,
                  mappedAddress: mach_vm_address_t,
@@ -74,13 +92,16 @@ final class DVCaptureRing {
         }
 
         let magic = pointer.load(fromByteOffset: 0, as: UInt32.self)
+        let version = pointer.load(fromByteOffset: 4, as: UInt16.self)
         let numRecords = pointer.load(fromByteOffset: 8, as: UInt32.self)
         let recBytes = pointer.load(fromByteOffset: 12, as: UInt32.self)
         let dataOffset = pointer.load(fromByteOffset: 16, as: UInt32.self)
 
         guard magic == DVCaptureRing.magic,
+              version == DVCaptureRing.version,
               recBytes == UInt32(DVCaptureRing.recordBytes),
               numRecords > 0,
+              dataOffset == UInt32(DVCaptureRing.headerBytes),
               UInt64(dataOffset) + UInt64(numRecords) * UInt64(recBytes) <= UInt64(length) else {
             IOConnectUnmapMemory64(connection, 1, mach_task_self_, address)
             return nil
@@ -94,19 +115,22 @@ final class DVCaptureRing {
     }
 
     func unmap() {
+        guard mapped else { return }
+        mapped = false
         IOConnectUnmapMemory64(connection, 1, mach_task_self_, mappedAddress)
     }
+
+    deinit { unmap() }
 
     /// Drain all available records, invoking the handler with each 480-byte chunk.
     /// Returns the number of records consumed.
     ///
-    /// Note on ordering: the driver release-stores writeIndex after the memcpy.
-    /// We poll at tens of milliseconds, so observed records were published long
-    /// before we read them; explicit acquire barriers are intentionally omitted.
     @discardableResult
     func drain(_ handler: (UnsafeRawBufferPointer) -> Void) -> Int {
-        let w = base.load(fromByteOffset: 64, as: UInt32.self)
-        var r = base.load(fromByteOffset: 128, as: UInt32.self)
+        let writePointer = (base + 64).assumingMemoryBound(to: UInt32.self)
+        let readPointer = (base + 128).assumingMemoryBound(to: UInt32.self)
+        let w = ASFWAtomicLoadU32Acquire(writePointer)
+        var r = ASFWAtomicLoadU32Acquire(readPointer)
         var consumed = 0
 
         while r != w {
@@ -121,21 +145,30 @@ final class DVCaptureRing {
         }
 
         if consumed > 0 {
-            base.storeBytes(of: r, toByteOffset: 128, as: UInt32.self)
+            ASFWAtomicStoreU32Release(readPointer, r)
         }
         return consumed
     }
 
     var stats: DVCaptureStats {
-        DVCaptureStats(
-            packetsSeen: base.load(fromByteOffset: 24, as: UInt32.self),
-            dvSourcePackets: base.load(fromByteOffset: 28, as: UInt32.self),
-            nonDvPackets: base.load(fromByteOffset: 32, as: UInt32.self),
-            overruns: base.load(fromByteOffset: 36, as: UInt32.self),
-            lastRejectLen: base.load(fromByteOffset: 40, as: UInt32.self),
-            lastRejectQ0: base.load(fromByteOffset: 44, as: UInt32.self),
-            lastRejectQ1: base.load(fromByteOffset: 48, as: UInt32.self),
-            lastXferStatus: base.load(fromByteOffset: 52, as: UInt32.self)
+        func atomicLoad(_ offset: Int) -> UInt32 {
+            ASFWAtomicLoadU32Acquire(
+                (base + offset).assumingMemoryBound(to: UInt32.self))
+        }
+        return DVCaptureStats(
+            sessionState: atomicLoad(20),
+            channel: base.load(fromByteOffset: 6, as: UInt8.self),
+            connectionMode: base.load(fromByteOffset: 7, as: UInt8.self),
+            packetsSeen: atomicLoad(24),
+            dvSourcePackets: atomicLoad(28),
+            nonDvPackets: atomicLoad(32),
+            overruns: atomicLoad(36),
+            lastRejectLen: atomicLoad(40),
+            lastRejectQ0: atomicLoad(44),
+            lastRejectQ1: atomicLoad(48),
+            lastXferStatus: atomicLoad(52),
+            dbcDiscontinuities: atomicLoad(56),
+            invalidDifBlocks: atomicLoad(60)
         )
     }
 }
@@ -144,11 +177,12 @@ final class DVCaptureRing {
 
 extension ASFWDriverConnector {
 
-    /// Start DV capture on the given isoch channel (camcorders broadcast on 63).
-    func startDVCapture(channel: UInt8) -> Bool {
+    /// Start DV capture for a discovered device. The driver resolves its
+    /// generation/node and negotiates CMP/IRM resources (with broadcast fallback).
+    func startDVCapture(deviceGUID: UInt64) -> Bool {
         guard isConnected, connection != 0 else { return false }
 
-        var input: [UInt64] = [UInt64(channel)]
+        var input: [UInt64] = [deviceGUID]
         let kr = IOConnectCallScalarMethod(
             connection,
             Method.startDVCapture.rawValue,
@@ -160,7 +194,8 @@ extension ASFWDriverConnector {
             log("startDVCapture failed: \(interpretIOReturn(kr))", level: .error)
             return false
         }
-        log("Started DV capture on channel \(channel)", level: .info)
+        log("Started DV capture for GUID \(String(format: "%016llX", deviceGUID))",
+            level: .info)
         return true
     }
 

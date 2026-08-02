@@ -179,6 +179,14 @@ add_protocols_mock_test(AVCUnitPlugInfoCommandTests
     AVCUnitPlugInfoCommandTests.cpp
 )
 
+add_protocols_test(PCRCodecTests
+    PCRCodecTests.cpp
+)
+
+add_protocols_test(DVCaptureSinkTests
+    DVCaptureSinkTests.cpp
+)
+
 # SBP2 ORB Tests
 add_protocols_test(SBP2ORBTests
     SBP2ORBTests.cpp

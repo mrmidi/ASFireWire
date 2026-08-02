@@ -9,5 +9,6 @@
 #define ASFW_BRIDGING_HEADER_H
 
 #import "ASFWDiagnosticsABI.h"
+#import "DVCaptureAtomics.h"
 
 #endif /* ASFW_BRIDGING_HEADER_H */

@@ -26,26 +26,31 @@ void WriteBE32(uint8_t* dest, uint32_t value) {
     dest[3] = static_cast<uint8_t>(value);
 }
 
+void WriteLE32(uint8_t* dest, uint32_t value) {
+    dest[0] = static_cast<uint8_t>(value);
+    dest[1] = static_cast<uint8_t>(value >> 8);
+    dest[2] = static_cast<uint8_t>(value >> 16);
+    dest[3] = static_cast<uint8_t>(value >> 24);
+}
+
 template <size_t PacketSize>
 void FillTwoChannelAmdtpPacket(std::array<uint8_t, PacketSize>& packet,
                                uint32_t slot0,
                                uint32_t slot1) {
-    static_assert(PacketSize >= 4 + 8 + 8 + 4);
-    WriteBE32(packet.data() + 4, 0x02020000u);
-    WriteBE32(packet.data() + 8, 0x9002FFFFu);
-    WriteBE32(packet.data() + 12, slot0);
-    WriteBE32(packet.data() + 16, slot1);
+    static_assert(PacketSize >= 8 + 8 + 8);
+    WriteBE32(packet.data() + 8, 0x02020000u);
+    WriteBE32(packet.data() + 12, 0x9002FFFFu);
+    WriteBE32(packet.data() + 16, slot0);
+    WriteBE32(packet.data() + 20, slot1);
 }
 
 } // namespace
 
 TEST(IsochRxTimingTests, DecodesOhciTimestampFromReceivePrefix) {
-    std::array<uint8_t, 16> packet{
-        0x00, 0x00, 0x00, 0x00, // Isochronous packet header.
-        0x02, 0x11, 0x00, 0xC8, // CIP Q0.
-        0x90, 0x02, 0x40, 0xB0, // CIP Q1.
-        0x23, 0xA1, 0x00, 0x00, // LE OHCI trailer quadlet (xferStatus + timestamp).
-    };
+    std::array<uint8_t, 16> packet{};
+    WriteLE32(packet.data(), 0x0A123000u); // OHCI cycle timer prefix.
+    WriteBE32(packet.data() + 8, 0x021100C8u); // CIP Q0.
+    WriteBE32(packet.data() + 12, 0x900240B0u); // CIP Q1.
 
     uint16_t timestamp = 0;
     ASSERT_TRUE(ASFW::Isoch::Rx::DecodeReceiveTimestamp(
@@ -113,21 +118,10 @@ TEST(IsochRxTimingTests, AcceptsPacketCompletedAfterPreDrainReference) {
 TEST(IsochRxTimingTests, PacketProcessorReturnsReceiveTimestamp) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 17;
-    std::array<uint8_t, 4 + 8 + (kFrames * kDbs * 4) + 4> packet{};
-    packet[0] = 0x00;
-    packet[1] = 0x00;
-    packet[2] = 0x00;
-    packet[3] = 0x00;
-    packet[4] = 0x02;
-    packet[5] = 0x11;
-    packet[6] = 0x00;
-    packet[7] = 0xC8;
-    packet[8] = 0x90;
-    packet[9] = 0x02;
-    packet[10] = 0x40;
-    packet[11] = 0xB0;
-    packet[packet.size() - 4] = 0x23; // timestamp 0xA123
-    packet[packet.size() - 3] = 0xA1;
+    std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
+    WriteLE32(packet.data(), 0x0A123000u);
+    WriteBE32(packet.data() + 8, 0x021100C8u);
+    WriteBE32(packet.data() + 12, 0x900240B0u);
 
     ASFW::AudioEngine::Direct::DirectInputWriter writer;
     ASFW::AudioEngine::Direct::Rx::RxAudioPacketProcessor processor(
@@ -150,7 +144,7 @@ TEST(IsochRxTimingTests, PacketProcessorReturnsReceiveTimestamp) {
 TEST(IsochRxTimingTests, PacketProcessorWritesAM824CaptureAsFloat32) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;
-    alignas(4) std::array<uint8_t, 4 + 8 + (kFrames * kDbs * 4) + 4> packet{};
+    alignas(4) std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
     FillTwoChannelAmdtpPacket(packet, 0x40000000u, 0x407FFFFFu);
 
     std::array<float, 8> input{};
@@ -191,7 +185,7 @@ TEST(IsochRxTimingTests, PacketProcessorWritesAM824CaptureAsFloat32) {
 TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;
-    alignas(4) std::array<uint8_t, 4 + 8 + (kFrames * kDbs * 4) + 4> packet{};
+    alignas(4) std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
     FillTwoChannelAmdtpPacket(packet, 0x007FFFFFu, 0xFF800000u);
 
     std::array<float, 8> input{};

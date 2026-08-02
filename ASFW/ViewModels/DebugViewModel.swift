@@ -31,9 +31,9 @@ class DebugViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
                 self?.isConnected = connected
+                self?.driverViewModel?.updateDriverConnection(connected)
                 if !connected {
                     self?.sharedStatus = nil
-                    self?.driverViewModel?.driverVersion = nil
                 } else {
                     self?.fetchDriverVersion()
                 }
@@ -52,6 +52,10 @@ class DebugViewModel: ObservableObject {
     
     func setDriverViewModel(_ viewModel: DriverViewModel) {
         self.driverViewModel = viewModel
+        viewModel.updateDriverConnection(isConnected)
+        if isConnected {
+            fetchDriverVersion()
+        }
     }
     
     private func observeConnectorLogs() {

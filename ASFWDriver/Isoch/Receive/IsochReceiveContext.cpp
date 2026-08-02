@@ -63,6 +63,34 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel,
                                             uint8_t contextIndex,
                                             Encoding::AudioWireFormat wireFormat,
                                             uint32_t am824Slots) {
+    const kern_return_t kr = ConfigureTransport(channel, contextIndex);
+    if (kr != kIOReturnSuccess) {
+        return kr;
+    }
+
+    wireFormat_ = wireFormat;
+    am824Slots_ = am824Slots;
+    audioProcessingEnabled_ = true;
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochReceiveContext::ConfigurePacketReceive(
+    uint8_t channel,
+    uint8_t contextIndex) {
+    const kern_return_t kr = ConfigureTransport(channel, contextIndex);
+    if (kr != kIOReturnSuccess) {
+        return kr;
+    }
+
+    wireFormat_ = Encoding::AudioWireFormat::kAM824;
+    am824Slots_ = 0;
+    audioProcessingEnabled_ = false;
+    SetDirectAudioBindingSource(nullptr);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochReceiveContext::ConfigureTransport(uint8_t channel,
+                                                      uint8_t contextIndex) {
     if (!hardware_ || !dmaMemory_) {
         return kIOReturnNotReady;
     }
@@ -74,8 +102,6 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel,
     contextIndex_ = contextIndex;
     channel_ = channel;
     registers_ = GetRegisters(contextIndex_);
-    wireFormat_ = wireFormat;
-    am824Slots_ = am824Slots;
 
     return rxRing_.SetupRings(*dmaMemory_, kNumDescriptors, kMaxPacketSize);
 }
@@ -151,7 +177,7 @@ void IsochReceiveContext::Stop() {
     constexpr uint32_t kTimeoutMs = 100;
     for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
         uint32_t ctl = hardware_->Read(registers_.ContextControlSet);
-        if ((ctl & Driver::ContextControl::kActive) == 0) {
+        if (ctl == 0xFFFFFFFFu || (ctl & Driver::ContextControl::kActive) == 0) {
             break;
         }
         IOSleep(kPollIntervalMs);
@@ -266,7 +292,7 @@ uint32_t IsochReceiveContext::Poll() {
         [this, drainHostTicks, drainCycleTimer](
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         uint64_t callbackTimestamp = 0;
-        if (pkt.payload) {
+        if (pkt.payload && audioProcessingEnabled_) {
             const uint64_t packetFirstAudioFrame =
                 absoluteFrameCursor_;
             const uint32_t channels = directInputView_.memory.inputChannels;
@@ -579,10 +605,12 @@ uint32_t IsochReceiveContext::Poll() {
         }
 
         if (callback_) {
-            const auto span = std::span<const uint8_t>(pkt.payload, pkt.actualLength);
-            callback_(span,
-                      static_cast<uint32_t>(pkt.xferStatus),
-                      callbackTimestamp);
+            const auto bytes = std::span<const uint8_t>(pkt.payload, pkt.actualLength);
+            const auto packet = IsochRxPacketView::FromDma(
+                bytes,
+                static_cast<uint32_t>(pkt.xferStatus),
+                callbackTimestamp);
+            callback_(packet);
         }
     });
 

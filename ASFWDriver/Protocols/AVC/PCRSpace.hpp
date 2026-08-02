@@ -15,6 +15,7 @@
 #include "AVCUnit.hpp"
 #include "../Ports/FireWireBusPort.hpp"
 #include "../../Bus/IRM/IRMAllocationManager.hpp"
+#include "CMP/PCRCodec.hpp"
 
 namespace ASFW::Protocols::AVC {
 
@@ -27,33 +28,36 @@ namespace ASFW::Protocols::AVC {
 /// Per IEC 61883-1 §10.7, PCR layout (32-bit register):
 /// ```
 /// bits 31:    online (1 = channel allocated)
-/// bits 30-24: broadcast_connection_counter (7 bits)
-/// bits 23-16: point_to_point_connection_counter (8 bits)
-/// bits 15-10: channel_number (6 bits, 0-63)
-/// bits 9-8:   reserved
-/// bits 7-6:   data_rate (2 bits: 0=S100, 1=S200, 2=S400, 3=S800)
-/// bits 5-0:   overhead_id (6 bits)
+/// bit 30:     broadcast_connection
+/// bits 29-24: point_to_point_connection_counter
+/// bits 23-22: reserved
+/// bits 21-16: channel_number
+/// bits 15-14: data_rate
+/// bits 13-10: overhead_id
+/// bits 9-0:   payload
 /// ```
 struct PCRValue {
     bool online{false};              ///< Channel allocated
-    uint8_t broadcastCount{0};       ///< Broadcast connections (0-127)
-    uint8_t p2pCount{0};             ///< Point-to-point connections (0-255)
+    bool broadcastConnection{false};
+    uint8_t p2pCount{0};             ///< Point-to-point connections (0-63)
     uint8_t channel{63};             ///< Channel number (0-63, 63=none)
     SpeedCode dataRate{SpeedCode::kS400}; ///< Data rate
-    uint8_t overhead{0};             ///< Overhead ID (0-63)
+    uint8_t overhead{0};             ///< Overhead ID (0-15)
+    uint16_t payload{0};             ///< Maximum payload in quadlets (0-1023)
 
     /// Encode to 32-bit PCR value
     uint32_t Encode() const {
         uint32_t value = 0;
 
-        if (online)
-            value |= (1u << 31);
-
-        value |= (static_cast<uint32_t>(broadcastCount & 0x7F) << 24);
-        value |= (static_cast<uint32_t>(p2pCount) << 16);
-        value |= (static_cast<uint32_t>(channel & 0x3F) << 10);
-        value |= (static_cast<uint32_t>(dataRate) << 6);
-        value |= (static_cast<uint32_t>(overhead & 0x3F));
+        if (online) value |= CMP::PCRBits::kOnlineMask;
+        if (broadcastConnection) value |= CMP::PCRBits::kBroadcastMask;
+        value = CMP::PCRBits::SetP2P(value, p2pCount);
+        value = CMP::PCRBits::SetChannel(value, channel);
+        value |= (static_cast<uint32_t>(dataRate) & 0x03u)
+                 << CMP::PCRBits::kDataRateShift;
+        value |= (static_cast<uint32_t>(overhead) & 0x0Fu)
+                 << CMP::PCRBits::kOverheadShift;
+        value |= static_cast<uint32_t>(payload) & CMP::PCRBits::kPayloadMask;
 
         return value;
     }
@@ -62,12 +66,13 @@ struct PCRValue {
     static PCRValue Decode(uint32_t raw) {
         PCRValue pcr;
 
-        pcr.online = (raw & (1u << 31)) != 0;
-        pcr.broadcastCount = (raw >> 24) & 0x7F;
-        pcr.p2pCount = (raw >> 16) & 0xFF;
-        pcr.channel = (raw >> 10) & 0x3F;
-        pcr.dataRate = static_cast<SpeedCode>((raw >> 6) & 0x03);
-        pcr.overhead = raw & 0x3F;
+        pcr.online = CMP::PCRBits::IsOnline(raw);
+        pcr.broadcastConnection = CMP::PCRBits::IsBroadcast(raw);
+        pcr.p2pCount = CMP::PCRBits::GetP2P(raw);
+        pcr.channel = CMP::PCRBits::GetChannel(raw);
+        pcr.dataRate = static_cast<SpeedCode>(CMP::PCRBits::GetDataRate(raw));
+        pcr.overhead = CMP::PCRBits::GetOverhead(raw);
+        pcr.payload = CMP::PCRBits::GetPayload(raw);
 
         return pcr;
     }
@@ -75,9 +80,9 @@ struct PCRValue {
     /// Check if valid
     bool IsValid() const {
         return channel < 64 &&
-               broadcastCount < 128 &&
+               p2pCount < 64 &&
                static_cast<uint8_t>(dataRate) <= 3 &&
-               overhead < 64;
+               overhead < 16 && payload < 1024;
     }
 };
 

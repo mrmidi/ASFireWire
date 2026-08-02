@@ -88,6 +88,13 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         }
     }
     DispatchAsyncInterrupts(events);
+    if ((events & IntEventBits::kBusReset) != 0U &&
+        deps_.busResetStartedCallback) {
+        // Abort generation-pinned async work before asking higher-level stream
+        // sessions to quiesce; otherwise a synchronous start path could hold
+        // its session lock while waiting for an abort callback dispatched here.
+        deps_.busResetStartedCallback();
+    }
     LogBusResetCompletionEvents(events, snapshot.timestamp);
 
     const uint32_t faultAcks = FaultAckMask(events);

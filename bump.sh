@@ -4,6 +4,7 @@
 #
 # Combined script that handles:
 # - Version bumping (major/minor/patch) in VERSION.txt
+# - Monotonic Xcode CFBundleVersion increments for installable builds
 # - Git metadata extraction
 # - DriverVersion.hpp generation
 #
@@ -31,17 +32,19 @@ NC=$'\033[0m'
 
 usage() {
   cat <<EOF
-Usage: $0 [major|minor|patch|refresh]
+Usage: $0 [major|minor|patch|build|refresh]
 
   major     Bump major version (1.2.3 -> 2.0.0)
   minor     Bump minor version (1.2.3 -> 1.3.0)
   patch     Bump patch version (1.2.3 -> 1.2.4)
+  build     Increment CURRENT_PROJECT_VERSION for a new installable build
   refresh   Regenerate version header without bumping VERSION.txt
 
 If no argument provided, defaults to 'refresh' (just regenerate metadata).
 
 Examples:
   $0 patch    # Bump patch version and regenerate
+  $0 build    # Increment CFBundleVersion and regenerate metadata
   $0 refresh  # Just regenerate with current VERSION.txt
   $0          # Same as refresh
 EOF
@@ -110,6 +113,22 @@ bump_version() {
   echo "$new_version" > "$VERSION_FILE"
   ok "Bumped version: $base_version$suffix → $new_version"
   echo "$new_version"
+}
+
+bump_build_number() {
+  if ! command -v xcrun >/dev/null 2>&1; then
+    err "xcrun is required to increment CURRENT_PROJECT_VERSION"
+  fi
+
+  local current
+  current=$(xcrun agvtool what-version -terse 2>/dev/null | head -n 1 | tr -d '[:space:]')
+  if [[ ! "$current" =~ ^[0-9]+$ ]]; then
+    err "CURRENT_PROJECT_VERSION must be an integer (found: ${current:-<empty>})"
+  fi
+
+  local next=$((current + 1))
+  xcrun agvtool new-version -all "$next" >/dev/null
+  ok "Bumped CFBundleVersion: $current → $next"
 }
 
 # Generate version header with git metadata
@@ -216,11 +235,15 @@ main() {
       log "Bumping $action version..."
       bump_version "$action"
       ;;
+    build)
+      log "Bumping installable build number..."
+      bump_build_number
+      ;;
     refresh)
       log "Refreshing version metadata (no bump)..."
       ;;
     *)
-      err "Unknown action: $action. Use: major, minor, patch, or refresh"
+      err "Unknown action: $action. Use: major, minor, patch, build, or refresh"
       ;;
   esac
   

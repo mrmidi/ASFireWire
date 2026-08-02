@@ -358,7 +358,7 @@ void IsochTransmitContext::Stop() noexcept {
         constexpr uint32_t kTimeoutMs = 100;
         for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
             uint32_t ctl = hardware_->Read(ctrlReg);
-            if ((ctl & Driver::ContextControl::kActive) == 0) {
+            if (ctl == 0xFFFFFFFFu || (ctl & Driver::ContextControl::kActive) == 0) {
                 break;
             }
             IOSleep(kPollIntervalMs);
@@ -497,7 +497,7 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
         constexpr uint32_t kTimeoutMs = 100;
         for (uint32_t elapsed = 0; elapsed < kTimeoutMs; elapsed += kPollIntervalMs) {
             uint32_t ctl = hardware_->Read(ctrlReg);
-            if ((ctl & Driver::ContextControl::kActive) == 0) {
+            if (ctl == 0xFFFFFFFFu || (ctl & Driver::ContextControl::kActive) == 0) {
                 break;
             }
             IOSleep(kPollIntervalMs);
