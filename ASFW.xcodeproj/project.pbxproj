@@ -350,6 +350,7 @@
 		F9079357980132495EE8D5C0 /* LoggingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0ACF327198028F1B5462DA0 /* LoggingSettingsView.swift */; };
 		F9082ECD47629C0EABD9CC93 /* DiagnosticsTextFormatter+Bus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 934A97DC159F9DBB258CEAA8 /* DiagnosticsTextFormatter+Bus.swift */; };
 		F9444E5ADB5352F9529044B1 /* LocalIRMResourceController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5F05380C584322E86EBF681B /* LocalIRMResourceController.cpp */; };
+		F94BB581316C251528D1A68D /* TargetReadinessGate.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F00617EC942543212C6D4082 /* TargetReadinessGate.cpp */; };
 		F94BE42C10D6C60D5792B557 /* DriverConnector+AVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 607B3B147596F916CB2EBB11 /* DriverConnector+AVC.swift */; };
 		F9E5BE0D1C6927E740FFA316 /* FireWireBusImpl.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1DC9C3863E2E23A2E1EACC27 /* FireWireBusImpl.cpp */; };
 		FA8EB77AE75DA096CD8B147C /* SaffireMixerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF26B9D9B6DD1E2CD447CB18 /* SaffireMixerView.swift */; };
@@ -569,6 +570,7 @@
 		36EE629034C5CFE5502C4317 /* PcmSlotCodec.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PcmSlotCodec.cpp; sourceTree = "<group>"; };
 		3751E42BE91AA0E27B8EE4A3 /* ClockRequestBroker.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ClockRequestBroker.hpp; sourceTree = "<group>"; };
 		377953F96201F940BC9B48AF /* ASFW.xctestplan */ = {isa = PBXFileReference; path = ASFW.xctestplan; sourceTree = "<group>"; };
+		38175D06B7112A8942687854 /* TargetReadinessGate.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TargetReadinessGate.hpp; sourceTree = "<group>"; };
 		391B84995AB75A2D80ADA846 /* IsochDuplexHostTransport.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochDuplexHostTransport.hpp; sourceTree = "<group>"; };
 		39464294597E4CBB058A6725 /* Phase88Protocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Phase88Protocol.hpp; sourceTree = "<group>"; };
 		3966891563B1C443910EA5BA /* DiagnosticsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsStore.swift; sourceTree = "<group>"; };
@@ -1102,6 +1104,7 @@
 		EF6436B5B71DF25AA0B8FB55 /* TxPayloadHash.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxPayloadHash.hpp; sourceTree = "<group>"; };
 		EFA374405CB437F912867561 /* RomExplorerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomExplorerView.swift; sourceTree = "<group>"; };
 		EFAEB42BC860B3F6CB47A598 /* DescriptorBuilder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DescriptorBuilder.cpp; sourceTree = "<group>"; };
+		F00617EC942543212C6D4082 /* TargetReadinessGate.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TargetReadinessGate.cpp; sourceTree = "<group>"; };
 		F06C0D84ACBCF88400842D73 /* DiagnosticsHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiagnosticsHandler.hpp; sourceTree = "<group>"; };
 		F104B62969F2A27401D33355 /* Phase88Protocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Phase88Protocol.cpp; sourceTree = "<group>"; };
 		F133D63E4747AA23957E888F /* IAVCAudioConfigListener.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAVCAudioConfigListener.hpp; sourceTree = "<group>"; };
@@ -1658,6 +1661,8 @@
 				D846D7A387D0EEED5A819EC0 /* SBP2BridgeHub.hpp */,
 				EAD8530722F06400F33A2495 /* SBP2TargetBridge.cpp */,
 				94AB388B752AED59FB03D3B1 /* SBP2TargetBridge.hpp */,
+				F00617EC942543212C6D4082 /* TargetReadinessGate.cpp */,
+				38175D06B7112A8942687854 /* TargetReadinessGate.hpp */,
 			);
 			path = SCSIController;
 			sourceTree = "<group>";
@@ -3179,6 +3184,7 @@
 				A9F84140BB083A5EC645A217 /* StreamFormatParser.cpp in Sources */,
 				B6C8B50E9320B7B8C8835734 /* Submitter.cpp in Sources */,
 				40DC38C2F810F45E61A0C90B /* Syt.cpp in Sources */,
+				F94BB581316C251528D1A68D /* TargetReadinessGate.cpp in Sources */,
 				25F8C069ACF1EDA89A60E5CC /* TestHooks.cpp in Sources */,
 				27AC28259C0D51DDFCB875A4 /* TopologyHandler.cpp in Sources */,
 				EC2228AC9080547776C0B05E /* TopologyManager.cpp in Sources */,

@@ -25,6 +25,7 @@
 
 #include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../Discovery/IDeviceManager.hpp"
+#include "TargetReadinessGate.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -43,9 +44,12 @@ class SBP2TargetBridge : public std::enable_shared_from_this<SBP2TargetBridge> {
 public:
     using TaskCallback = std::function<void(const SCSI::CommandResult&)>;
 
+    // timerScheduler backs the readiness gate; may be null (no gate — login
+    // edges pass straight through to the hub).
     SBP2TargetBridge(const std::shared_ptr<SessionRegistry>& registry,
                      Discovery::IDeviceManager& deviceManager,
-                     IODispatchQueue* workQueue);
+                     IODispatchQueue* workQueue,
+                     Scheduling::ITimerScheduler* timerScheduler);
     ~SBP2TargetBridge();
 
     SBP2TargetBridge(const SBP2TargetBridge&) = delete;
@@ -93,6 +97,13 @@ private:
     std::weak_ptr<SessionRegistry> registry_;
     Discovery::IDeviceManager& deviceManager_;
     IODispatchQueue* workQueue_{nullptr};
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+
+    // Delays the HBA up-edge until the device answers TUR without a warm-up
+    // sense (HW finding 2026-07-31: SAM probe against a warming device strands
+    // a childless target). Created in Start() (needs weak_from_this); all
+    // access on the Default queue.
+    std::unique_ptr<TargetReadinessGate> readinessGate_;
 
     IOLock* lock_{nullptr};
     std::deque<PendingTask> pending_;

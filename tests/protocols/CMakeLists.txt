@@ -228,6 +228,12 @@ add_protocols_test(LoginSessionTests
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
 )
 
+# SCSI HBA login-up readiness gate (childless-target HW finding, 2026-07-31)
+add_protocols_test(TargetReadinessGateTests
+    TargetReadinessGateTests.cpp
+    "${ASFW_DRIVER_DIR}/SCSIController/TargetReadinessGate.cpp"
+)
+
 # SBP2 SessionRegistry Tests (identity/lifecycle + per-record CommandExecutor)
 add_protocols_test(SessionRegistryTests
     SessionRegistryTests.cpp

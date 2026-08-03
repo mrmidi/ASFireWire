@@ -36,10 +36,12 @@ private:
 
 SBP2TargetBridge::SBP2TargetBridge(const std::shared_ptr<SessionRegistry>& registry,
                                    Discovery::IDeviceManager& deviceManager,
-                                   IODispatchQueue* workQueue)
+                                   IODispatchQueue* workQueue,
+                                   Scheduling::ITimerScheduler* timerScheduler)
     : registry_(registry)
     , deviceManager_(deviceManager)
-    , workQueue_(workQueue) {
+    , workQueue_(workQueue)
+    , timerScheduler_(timerScheduler) {
     lock_ = IOLockAlloc();
 }
 
@@ -55,6 +57,24 @@ SBP2TargetBridge::~SBP2TargetBridge() {
 void SBP2TargetBridge::Start() {
     std::weak_ptr<SBP2TargetBridge> weak = weak_from_this();
     IODispatchQueue* queue = workQueue_;
+
+    // Readiness gate between the registry's login edges and the hub. Its probe
+    // TURs ride the normal task queue; a dead bridge drops them unfired, so the
+    // gate (a member) can never be reached after free.
+    if (timerScheduler_ != nullptr) {
+        readinessGate_ = std::make_unique<TargetReadinessGate>(
+            *timerScheduler_,
+            [weak](SCSI::CommandRequest request,
+                   std::function<void(const SCSI::CommandResult&)> callback) {
+                if (auto self = weak.lock()) {
+                    self->SubmitTask(std::move(request), std::move(callback));
+                }
+            },
+            [](uint64_t guid, bool loggedIn) {
+                SBP2BridgeHub::NotifyTargetState(guid, loggedIn);
+            });
+    }
+
     unitCallbackHandle_ = deviceManager_.RegisterUnitCallback(
         kSBP2UnitSpecId, kSBP2UnitSwVersion,
         [weak, queue](std::shared_ptr<Discovery::FWUnit> unit) {
@@ -100,6 +120,15 @@ void SBP2TargetBridge::Shutdown() {
         handle = sessionHandle_;
         sessionHandle_ = 0;
         drained.swap(pending_);
+    }
+
+    // Invalidate the readiness gate BEFORE the abort/drain callbacks below can
+    // reach it: a probe completion arriving with a stale epoch is a no-op
+    // instead of scheduling a timer into teardown. The scheduler is still
+    // alive here (ServiceContext::Reset shuts the bridge down before resetting
+    // sbp2SessionScheduler).
+    if (readinessGate_) {
+        readinessGate_->Cancel();
     }
 
     // Shutdown runs on the driver teardown path BEFORE the registry is freed
@@ -248,12 +277,21 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
 }
 
 void SBP2TargetBridge::OnLoginStateChanged(uint64_t guid, bool loggedIn) {
-    // Phase 1: the guid->targetID map (WI-3) and the actual
-    // UserCreateTargetForID/UserDestroyTargetForID (WI-4) are not wired yet.
-    // Forward the raw event to the HBA, which logs it inertly — the static
-    // phantom target still serves SCSI probes unchanged.
+    // The registry emits this on TERMINAL edges only: login-up (fresh login or
+    // reconnect re-assert) and logout/login-failure. A transient bus-reset
+    // suspension emits nothing. The HBA drives target 0 create/destroy off
+    // these edges (ASFWSCSIController::HandleLoginEdge); a multi-target
+    // guid→targetID map remains future work.
+    //
+    // A fresh up edge goes through the readiness gate, which delays the hub
+    // notification until the device answers TUR without a warm-up sense; down
+    // edges and reconnect re-asserts pass straight through it.
     ASFW_LOG(Controller, "[SBP2Bridge] login %{public}s guid=0x%016llx",
              loggedIn ? "up" : "down", guid);
+    if (readinessGate_) {
+        readinessGate_->OnEdge(guid, loggedIn);
+        return;
+    }
     SBP2BridgeHub::NotifyTargetState(guid, loggedIn);
 }
 
