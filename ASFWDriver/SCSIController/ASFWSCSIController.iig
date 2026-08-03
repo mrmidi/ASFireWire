@@ -27,11 +27,14 @@
 // device's real identity; in the suspended window (bus reset) commands answer
 // BUSY — nothing is ever held without a deadline.
 //
-// Matching: this HBA co-matches the OHCI PCI device directly (IOProviderClass
-// IOPCIDevice + IOPCIMatch, distinct IOMatchCategory), alongside the main
-// ASFWDriver. ASFWDriver also publishes an ASFWSBP2Nub, but nothing matches on
-// it yet — it is staged for a future per-unit personality, not the current
-// match path.
+// Matching: this HBA matches the ASFWSBP2Nub that ASFWDriver publishes after a
+// successful Start (IOProviderClass IOUserService + IOPropertyMatch
+// ASFWNubType=SBP2), never the PCI device. The nub only exists once the dext
+// process is alive, so the kernel-side IOUserSCSIParallelInterfaceController
+// stub can never be instantiated against a dead dext — a boot-time PCI match
+// with the dext killed at launch (e.g. AMFI) left the stub stranded holding
+// the registry busy count until watchdogd's 60 s panic (issue #54). A launch
+// failure now degrades to silent no-load, like the audio personalities.
 //
 
 #ifndef ASFWSCSIController_h
