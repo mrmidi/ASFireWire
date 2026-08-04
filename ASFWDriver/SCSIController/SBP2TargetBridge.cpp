@@ -110,6 +110,7 @@ void SBP2TargetBridge::Start() {
 
 void SBP2TargetBridge::Shutdown() {
     uint64_t handle = 0;
+    uint64_t guid = 0;
     std::deque<PendingTask> drained;
     {
         IOLockGuard g(lock_);
@@ -118,7 +119,9 @@ void SBP2TargetBridge::Shutdown() {
         }
         stopping_ = true;
         handle = sessionHandle_;
+        guid = sessionGuid_;
         sessionHandle_ = 0;
+        sessionGuid_ = 0;
         drained.swap(pending_);
     }
 
@@ -155,6 +158,19 @@ void SBP2TargetBridge::Shutdown() {
     }
     if (!drained.empty()) {
         ASFW_LOG(Controller, "[SBP2Bridge] shutdown drained %zu queued tasks", drained.size());
+    }
+
+    // Bridge teardown is a terminal down-edge for the HBA. The observer was
+    // detached above before ReleaseOwner, so the registry's own logout edge
+    // never reaches the hub — emit it here instead. Without this the kernel
+    // target survives runtime teardown (sleep quiesce), and a task queued
+    // behind the SAM LUN's device-sleep wedges target 0 until something
+    // destroys it (HW 2026-08-04: hang after wake, stuck SCSITaskUserClient).
+    // Destroying before sleep means wake's login-up edge rebuilds a fresh
+    // target with no LUN state to wedge. Redundant edges are safe: the HBA's
+    // down leg is a no-op when no target is attached.
+    if (handle != 0) {
+        SBP2BridgeHub::NotifyTargetState(guid, false);
     }
 }
 
@@ -268,6 +284,7 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
             return;
         }
         sessionHandle_ = *handle;
+        sessionGuid_ = guid;
     }
     ASFW_LOG(Controller, "[SBP2Bridge] session %llu created for guid=0x%016llx — logging in",
              *handle, guid);
