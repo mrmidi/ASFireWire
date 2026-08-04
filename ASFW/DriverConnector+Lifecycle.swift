@@ -111,6 +111,12 @@ extension ASFWDriverConnector {
         DispatchQueue.main.async { [weak self] in
             self?.isConnected = true
         }
+
+        // Idempotent (the driver publishes its SBP-2 nub at most once), and
+        // repeated here on every connect so adapter re-plug — which restarts
+        // the dext with an unprovisioned nub — heals on reconnection.
+        provisionSCSIMapperID()
+
         log("Connection established", level: .success)
     }
 

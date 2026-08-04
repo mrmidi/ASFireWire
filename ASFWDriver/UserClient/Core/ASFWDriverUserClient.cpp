@@ -73,6 +73,7 @@ enum {
     kMethodRequestUserBusReset = 61,
     kMethodStartAudioStreaming = 62,
     kMethodStopAudioStreaming = 63,
+    kMethodProvisionSBP2MapperID = 64,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -339,6 +340,14 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
         return MethodDispatchResult{selector == kMethodStartAudioStreaming
                                         ? driver.StartAudioStreaming(*guid)
                                         : driver.StopAudioStreaming(*guid)};
+    }
+    case kMethodProvisionSBP2MapperID: {
+        const auto mapperID = GetFirstScalarInput(arguments);
+        if (!mapperID.has_value() || *mapperID == 0 || *mapperID > UINT32_MAX) {
+            return MethodDispatchResult{kIOReturnBadArgument};
+        }
+        return MethodDispatchResult{
+            driver.ProvisionSBP2MapperID(static_cast<uint32_t>(*mapperID))};
     }
     case kMethodGetAudioAutoStart:
         return HandleGetAudioAutoStart(driver, arguments);

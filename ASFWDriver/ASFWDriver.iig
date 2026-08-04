@@ -111,6 +111,12 @@ public:
     kern_return_t StartAudioStreaming(uint64_t guid) LOCALONLY;
     kern_return_t StopAudioStreaming(uint64_t guid) LOCALONLY;
 
+    // App-provisioned DART mapper id for the SBP-2 nub (Apple Silicon). The
+    // SCSI kernel shim resolves its DMA mapper from iommu-parent on the HBA's
+    // provider node; the value is only readable from user space, so the app
+    // looks it up and the nub is published on receipt (see ASFWDriver.cpp).
+    kern_return_t ProvisionSBP2MapperID(uint32_t mapperID) LOCALONLY;
+
     // Isochronous Receive Control
     kern_return_t StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) LOCALONLY;
     kern_return_t StopIsochReceive() LOCALONLY;
@@ -134,6 +140,7 @@ struct ASFWDriver_IVars {
     IOService* powerProvider;   // borrowed from Start; cleared in Stop
     bool runtimeSuspended;      // true between sleep quiesce and wake rebuild
     bool serviceRegistered;     // RegisterService() must run once per instance
+    bool sbp2NubClaimed;        // SBP-2 nub publication claimed (atomically, once)
 
     // Wake-verify timer. Lives on the default queue (stable for the service
     // lifetime, unlike per-rebuild runtime state); released in Stop, which also

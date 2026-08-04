@@ -209,71 +209,85 @@ void ASFWDriver::free() {
     super::free();
 }
 
-// Give the SBP-2 nub a DMA mapper the SCSI HBA's kernel shim can resolve.
+// SBP-2 nub publication and its DMA-mapper precondition.
 //
-// The shim prepares an IODMACommand for every data-carrying task before calling
-// into the dext and requires ONE IOVM segment spanning the whole transfer. Its
-// mapper comes from IOMapper::copyMapperForDeviceWithIndex(getProvider(), 0),
-// which is a plain copyProperty("iommu-parent") on the nub (xnu
-// IOMapper.cpp:174-207). With no mapper there is no IOVA remapping, so only a
-// transfer that fits one physically contiguous page yields a single segment and
-// everything larger is failed in the kernel before UserProcessParallelTask runs
-// — HW-confirmed 2026-08-04: 519 KB reads died pre-dext until the nub carried
-// this property. An OSData value is matched against the IOMapperID each
-// IODARTMapper publishes; the HBA never dereferences the resulting address (all
-// payload moves by memcpy via UserGetDataBuffer), so the mapping only has to
-// exist. A board-specific fallback lives in ASFWSBP2NubProperties.
-static void PublishNubMapperID(IOService* provider, IOService* nub) {
-    if (provider == nullptr || nub == nullptr) {
+// The SCSI kernel shim prepares an IODMACommand for every data-carrying task
+// before calling into the dext and requires ONE IOVM segment spanning the whole
+// transfer. Its mapper comes from IOMapper::copyMapperForDeviceWithIndex(
+// getProvider(), 0), which is a plain copyProperty("iommu-parent") on the nub
+// (xnu IOMapper.cpp:174-207). With no mapper there is no IOVA remapping, so
+// only a transfer that fits one physically contiguous page yields a single
+// segment and everything larger is failed in the kernel before
+// UserProcessParallelTask runs — HW-confirmed 2026-08-04: 519 KB reads died
+// pre-dext until the nub carried this property. An OSData value is matched
+// against the IOMapperID each IODARTMapper publishes; the HBA never
+// dereferences the resulting address (all payload moves by memcpy via
+// UserGetDataBuffer), so the mapping only has to exist — but a value with NO
+// matching IOMapperID hangs the shim's mapper wait, so guessing is not safe.
+//
+// The value is board/port-specific and unreadable from the dext (the live
+// IODARTMapper object does not serialize across the DriverKit boundary; every
+// SearchProperty path fails — HW-proven). The app looks it up and hands it down
+// via ProvisionSBP2MapperID; on Apple Silicon the nub is only published once
+// the value is staged on this service as kSBP2MapperIDStagingKey, which the
+// nub's Start() copies onto itself as iommu-parent BEFORE RegisterService().
+// Intel needs none of this (VT-d supplies a system mapper), and a developer can
+// still short-circuit via an iommu-parent entry in ASFWSBP2NubProperties.
+static constexpr const char* kSBP2MapperIDStagingKey = "ASFWSBP2MapperID";
+
+static bool PlistNubPropertiesCarryMapper(IOService* driver) {
+    OSDictionary* raw = nullptr;
+    if (driver->CopyProperties(&raw) != kIOReturnSuccess || raw == nullptr) {
+        return false;
+    }
+    auto props = OSSharedPtr(raw, OSNoRetain);
+    auto* nubProps = OSDynamicCast(OSDictionary, props->getObject("ASFWSBP2NubProperties"));
+    return nubProps != nullptr && nubProps->getObject("iommu-parent") != nullptr;
+}
+
+static void PublishSBP2Nub(ASFWDriver* driver) {
+    IOService* nub = nullptr;
+    const kern_return_t kr = driver->Create(driver, "ASFWSBP2NubProperties", &nub);
+    if (kr != kIOReturnSuccess || nub == nullptr) {
+        ASFW_LOG(Controller, "[SCSIHBA] Failed to create ASFWSBP2Nub: 0x%08x", kr);
         return;
     }
+    // IOKit retains the nub as our child; its Start() adopts any staged mapper
+    // id and calls RegisterService().
+    nub->release();
+}
 
-    static constexpr struct {
-        const char* key;
-        const char* plane;
-    } kProbes[] = {
-        {"iommu-parent", "IOService"},
-        {"iommu-parent", "IODeviceTree"},
-        {"iommu-id", "IODeviceTree"},
-    };
-
-    OSData* discovered = nullptr;
-    for (const auto& probe : kProbes) {
-        OSContainer* raw = nullptr;
-        const kern_return_t kr = provider->SearchProperty(
-            probe.key, probe.plane, kIOServiceSearchPropertyParents, &raw);
-        auto value = OSSharedPtr(raw, OSNoRetain);
-        auto* data = OSDynamicCast(OSData, value.get());
-        uint32_t id = 0;
-        if (data != nullptr && data->getLength() >= sizeof(uint32_t)) {
-            const auto* bytes = static_cast<const uint8_t*>(data->getBytesNoCopy());
-            id = static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
-                 (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
-            if (discovered == nullptr) {
-                discovered = data;
-                discovered->retain();
-            }
-        }
-        ASFW_LOG(Controller,
-                 "[MapperDiag] SearchProperty(%{public}s, %{public}s) kr=0x%08x present=%u "
-                 "isData=%u len=%u id=0x%08x",
-                 probe.key, probe.plane, kr, value ? 1u : 0u, data != nullptr ? 1u : 0u,
-                 data != nullptr ? static_cast<unsigned>(data->getLength()) : 0u, id);
+kern_return_t ASFWDriver::ProvisionSBP2MapperID(uint32_t mapperID) {
+    if (!ivars || mapperID == 0) {
+        return kIOReturnBadArgument;
+    }
+    std::atomic_ref<bool> claimed(ivars->sbp2NubClaimed);
+    if (claimed.exchange(true)) {
+        ASFW_LOG(Controller, "[SCSIHBA] mapper id 0x%08x ignored — SBP-2 nub already published",
+                 mapperID);
+        return kIOReturnSuccess;
     }
 
-    if (discovered == nullptr) {
-        ASFW_LOG(Controller, "[MapperDiag] no mapper id discovered — keeping plist fallback");
-        return;
+    const uint8_t le[4] = {static_cast<uint8_t>(mapperID), static_cast<uint8_t>(mapperID >> 8),
+                           static_cast<uint8_t>(mapperID >> 16),
+                           static_cast<uint8_t>(mapperID >> 24)};
+    auto data = OSSharedPtr(OSData::withBytes(le, sizeof(le)), OSNoRetain);
+    auto dict = OSSharedPtr(OSDictionary::withCapacity(1), OSNoRetain);
+    if (!data || !dict || !dict->setObject(kSBP2MapperIDStagingKey, data.get())) {
+        claimed.store(false);
+        return kIOReturnNoMemory;
+    }
+    const kern_return_t kr = SetProperties(dict.get());
+    if (kr != kIOReturnSuccess) {
+        claimed.store(false);
+        ASFW_LOG(Controller, "[SCSIHBA] failed to stage mapper id 0x%08x: 0x%08x", mapperID, kr);
+        return kr;
     }
 
-    OSDictionary* rawProps = nullptr;
-    if (nub->CopyProperties(&rawProps) == kIOReturnSuccess && rawProps != nullptr) {
-        auto props = OSSharedPtr(rawProps, OSNoRetain);
-        props->setObject("iommu-parent", discovered);
-        const kern_return_t kr = nub->SetProperties(props.get());
-        ASFW_LOG(Controller, "[MapperDiag] applied discovered mapper id to nub: kr=0x%08x", kr);
-    }
-    discovered->release();
+    ASFW_LOG(Controller, "[SCSIHBA] mapper id 0x%08x provisioned — publishing SBP-2 nub",
+             mapperID);
+    PublishSBP2Nub(this);
+    return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(ASFWDriver, Start) {
@@ -443,14 +457,22 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         // provably alive — a dead-dext boot-time match stranded the registry busy
         // count and panicked (issue #54). A future per-unit nub will additionally
         // carry login/unit identity.
-        IOService* sbp2NubService = nullptr;
-        kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
-        if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
-            ASFW_LOG(Controller, "[SCSIHBA] Failed to create ASFWSBP2Nub: 0x%08x", nubKr);
-        } else {
-            PublishNubMapperID(provider, sbp2NubService);
-            // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
-            sbp2NubService->release();
+        bool publishNow = true;
+#if defined(__arm64__)
+        // Apple Silicon: without a DART mapper id on the nub every transfer
+        // crossing a page run fails in-kernel, and a wrong id hangs the shim —
+        // wait for the app to provision one (ProvisionSBP2MapperID) unless the
+        // plist carries a developer override. See the comment block above
+        // PublishSBP2Nub().
+        publishNow = PlistNubPropertiesCarryMapper(this);
+        if (!publishNow) {
+            ASFW_LOG(Controller,
+                     "[SCSIHBA] SBP-2 nub deferred until the app provisions a DART mapper id");
+        }
+#endif
+        if (publishNow) {
+            ivars->sbp2NubClaimed = true;
+            PublishSBP2Nub(this);
         }
 
         RegisterService();

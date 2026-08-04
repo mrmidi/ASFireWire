@@ -60,6 +60,8 @@ final class ASFWDriverConnector: ObservableObject {
         case requestUserBusReset = 61
         case startAudioStreaming = 62
         case stopAudioStreaming = 63
+        // App-provisioned DART mapper id for the driver's SBP-2 nub (Apple Silicon).
+        case provisionSCSIMapperID = 64
     }
 
     // MARK: - Re-exported Models

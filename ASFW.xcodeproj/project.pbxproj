@@ -226,7 +226,9 @@
 		9939EA3C38D005D2B1706109 /* LockCommand.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 647BC02DDA3AE383EBFED56E /* LockCommand.cpp */; };
 		9A00ED30A11DABC7DD49E7BC /* DriverConnector+Isoch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88363EE0072BC820ECBB6C1D /* DriverConnector+Isoch.swift */; };
 		9B8E94EA1F0A961CD016D197 /* DriverViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7892E16293D409FFB4F00710 /* DriverViewModel.swift */; };
+		9BD95333AF99D4D79CD5A3DF /* DriverConnector+SCSIMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DEF4DDB2D9566CAEAFFAAB7 /* DriverConnector+SCSIMapper.swift */; };
 		9BFABEBFD4EE64F02ADFBBF1 /* AsyncSubsystemInterrupts.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B3F76378A96EF757865E11C4 /* AsyncSubsystemInterrupts.cpp */; };
+		9C590D10F760AFC85C707998 /* DARTCandidateSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0CE0102B0AEA2853C383FA /* DARTCandidateSelectionTests.swift */; };
 		9C87DF69A89E62030306D1FB /* DiagnosticsTextFormatter+Topology.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76F0E726223068E61ED92CE8 /* DiagnosticsTextFormatter+Topology.swift */; };
 		9EDB35B4B0F9F503A82DB7A8 /* AddressSpaceManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 27D4308D539CCEC3A5EBCFF7 /* AddressSpaceManager.cpp */; };
 		A040141317C828BDF58DB6A6 /* IsochHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0AC0E4BEE81FF4834F182189 /* IsochHandler.cpp */; };
@@ -641,6 +643,7 @@
 		4D671C398E07E582F14F5A56 /* ControllerCoreAccess.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ControllerCoreAccess.hpp; sourceTree = "<group>"; };
 		4D994BDB948D370E6F61467F /* DuetControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuetControlView.swift; sourceTree = "<group>"; };
 		4DB5C96A84E71BA9F2E5835A /* PreSonusStudioLiveProfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PreSonusStudioLiveProfile.cpp; sourceTree = "<group>"; };
+		4DEF4DDB2D9566CAEAFFAAB7 /* DriverConnector+SCSIMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+SCSIMapper.swift"; sourceTree = "<group>"; };
 		4DFC5D271E3484233BD1B0D2 /* TopologyHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyHandler.hpp; sourceTree = "<group>"; };
 		4E065C1061BFE1DDEBFCEF3B /* ControllerStateMachine.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ControllerStateMachine.hpp; sourceTree = "<group>"; };
 		4EAC9531EBCD3BFCC5274B38 /* ATContextBase.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ATContextBase.hpp; sourceTree = "<group>"; };
@@ -1130,6 +1133,7 @@
 		F85F69E1C47968DBCD351C13 /* FocusriteSaffireProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FocusriteSaffireProfile.hpp; sourceTree = "<group>"; };
 		F8B5576036EFE84BD74E7EFA /* AddressSpaceManager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AddressSpaceManager.hpp; sourceTree = "<group>"; };
 		F9741333A3F544B641641494 /* SaffireMixerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaffireMixerViewModel.swift; sourceTree = "<group>"; };
+		FA0CE0102B0AEA2853C383FA /* DARTCandidateSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DARTCandidateSelectionTests.swift; sourceTree = "<group>"; };
 		FA21FB623DC8076A7D6A6ACE /* SessionRegistry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SessionRegistry.hpp; sourceTree = "<group>"; };
 		FB4F38B538B6F7A28F16625C /* SBP2ManagementORB.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SBP2ManagementORB.cpp; sourceTree = "<group>"; };
 		FC76D117C15153F78867F3A4 /* ASFWMCPSbp2Tools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPSbp2Tools.swift; sourceTree = "<group>"; };
@@ -1643,6 +1647,7 @@
 				AB92C50A509F45F51EFD3F03 /* AVCNestedChannelTests.swift */,
 				8AC380D7BBAE68986EC3385C /* AVCSampleRateMappingTests.swift */,
 				DF378D7A8CBF72942CB67F13 /* AVCUnitWireParsingTests.swift */,
+				FA0CE0102B0AEA2853C383FA /* DARTCandidateSelectionTests.swift */,
 				C3C3C0A53557FD4630647F63 /* DuetCodecTests.swift */,
 				51751F4E2707BF3956287D1F /* DuetViewModelLogicTests.swift */,
 				AA63228416151FD72A8A9C49 /* MCP */,
@@ -1953,6 +1958,7 @@
 				6FA63624C10EEF4E28C60EB7 /* DriverConnector+LoggingConfig.swift */,
 				9D7C91E89F804C760390C3DA /* DriverConnector+LogRing.swift */,
 				6A816C540C2BEB377CE294ED /* DriverConnector+Saffire.swift */,
+				4DEF4DDB2D9566CAEAFFAAB7 /* DriverConnector+SCSIMapper.swift */,
 				264D4CD41FF948792F95E023 /* DriverConnector+Status.swift */,
 				487FFDBA8B98968F6A7E5DCB /* DriverConnectorLogStore.swift */,
 				3E3B0B43A80EA689D344C17A /* DriverConnectorTransport.swift */,
@@ -3208,6 +3214,7 @@
 				47C7D2797F3974490450A45A /* AVCNestedChannelTests.swift in Sources */,
 				BFA67B801CE2FD081CFA4BF5 /* AVCSampleRateMappingTests.swift in Sources */,
 				B48FA948465DEDE30BA18B47 /* AVCUnitWireParsingTests.swift in Sources */,
+				9C590D10F760AFC85C707998 /* DARTCandidateSelectionTests.swift in Sources */,
 				38FE60619DFBA6ECB035BE64 /* DuetCodecTests.swift in Sources */,
 				BBC4374CAF02DA7A26022E78 /* DuetViewModelLogicTests.swift in Sources */,
 				AB26C52B22F65434EA8E93A7 /* MCPAvcFcpToolsTests.swift in Sources */,
@@ -3301,6 +3308,7 @@
 				43E9F7DBC8C68F163661ABE3 /* DriverConnector+Lifecycle.swift in Sources */,
 				0AB0C833F3F66D9BAF12FEF4 /* DriverConnector+LogRing.swift in Sources */,
 				2B63AD73E9E124C02A392F9C /* DriverConnector+LoggingConfig.swift in Sources */,
+				9BD95333AF99D4D79CD5A3DF /* DriverConnector+SCSIMapper.swift in Sources */,
 				E07796C3FF28E4FF1CA3F467 /* DriverConnector+Saffire.swift in Sources */,
 				0267190E6597A8DA11482D7C /* DriverConnector+Status.swift in Sources */,
 				88663772C9C228C3DC7F6CBD /* DriverConnectorLogStore.swift in Sources */,

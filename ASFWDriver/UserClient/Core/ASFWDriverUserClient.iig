@@ -74,6 +74,8 @@ public:
         // Developer-only complete audio lifecycle control, GUID scalar input.
         kMethodStartAudioStreaming     = 62,
         kMethodStopAudioStreaming      = 63,
+        // App-provisioned DART mapper id (uint32 scalar) for the SBP-2 nub.
+        kMethodProvisionSBP2MapperID   = 64,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,
