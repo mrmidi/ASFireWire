@@ -111,6 +111,7 @@ private:
     bool pumpScheduled_{false};
     bool stopping_{false};
     uint64_t sessionHandle_{0};
+    uint64_t sessionGuid_{0};
 
     Discovery::IUnitRegistry::CallbackHandle unitCallbackHandle_{0};
     bool unitCallbackRegistered_{false};
