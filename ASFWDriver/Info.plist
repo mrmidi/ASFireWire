@@ -79,6 +79,8 @@
 				<string>IOUserService</string>
 				<key>IOUserClass</key>
 				<string>ASFWSBP2Nub</string>
+				<key>iommu-parent</key>
+				<data>VwAAAA==</data>
 			</dict>
 			<key>ASFWTraceDMACoherency</key>
 			<false/>

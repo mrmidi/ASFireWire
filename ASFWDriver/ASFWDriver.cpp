@@ -209,6 +209,73 @@ void ASFWDriver::free() {
     super::free();
 }
 
+// Give the SBP-2 nub a DMA mapper the SCSI HBA's kernel shim can resolve.
+//
+// The shim prepares an IODMACommand for every data-carrying task before calling
+// into the dext and requires ONE IOVM segment spanning the whole transfer. Its
+// mapper comes from IOMapper::copyMapperForDeviceWithIndex(getProvider(), 0),
+// which is a plain copyProperty("iommu-parent") on the nub (xnu
+// IOMapper.cpp:174-207). With no mapper there is no IOVA remapping, so only a
+// transfer that fits one physically contiguous page yields a single segment and
+// everything larger is failed in the kernel before UserProcessParallelTask runs
+// — HW-confirmed 2026-08-04: 519 KB reads died pre-dext until the nub carried
+// this property. An OSData value is matched against the IOMapperID each
+// IODARTMapper publishes; the HBA never dereferences the resulting address (all
+// payload moves by memcpy via UserGetDataBuffer), so the mapping only has to
+// exist. A board-specific fallback lives in ASFWSBP2NubProperties.
+static void PublishNubMapperID(IOService* provider, IOService* nub) {
+    if (provider == nullptr || nub == nullptr) {
+        return;
+    }
+
+    static constexpr struct {
+        const char* key;
+        const char* plane;
+    } kProbes[] = {
+        {"iommu-parent", "IOService"},
+        {"iommu-parent", "IODeviceTree"},
+        {"iommu-id", "IODeviceTree"},
+    };
+
+    OSData* discovered = nullptr;
+    for (const auto& probe : kProbes) {
+        OSContainer* raw = nullptr;
+        const kern_return_t kr = provider->SearchProperty(
+            probe.key, probe.plane, kIOServiceSearchPropertyParents, &raw);
+        auto value = OSSharedPtr(raw, OSNoRetain);
+        auto* data = OSDynamicCast(OSData, value.get());
+        uint32_t id = 0;
+        if (data != nullptr && data->getLength() >= sizeof(uint32_t)) {
+            const auto* bytes = static_cast<const uint8_t*>(data->getBytesNoCopy());
+            id = static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+                 (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+            if (discovered == nullptr) {
+                discovered = data;
+                discovered->retain();
+            }
+        }
+        ASFW_LOG(Controller,
+                 "[MapperDiag] SearchProperty(%{public}s, %{public}s) kr=0x%08x present=%u "
+                 "isData=%u len=%u id=0x%08x",
+                 probe.key, probe.plane, kr, value ? 1u : 0u, data != nullptr ? 1u : 0u,
+                 data != nullptr ? static_cast<unsigned>(data->getLength()) : 0u, id);
+    }
+
+    if (discovered == nullptr) {
+        ASFW_LOG(Controller, "[MapperDiag] no mapper id discovered — keeping plist fallback");
+        return;
+    }
+
+    OSDictionary* rawProps = nullptr;
+    if (nub->CopyProperties(&rawProps) == kIOReturnSuccess && rawProps != nullptr) {
+        auto props = OSSharedPtr(rawProps, OSNoRetain);
+        props->setObject("iommu-parent", discovered);
+        const kern_return_t kr = nub->SetProperties(props.get());
+        ASFW_LOG(Controller, "[MapperDiag] applied discovered mapper id to nub: kr=0x%08x", kr);
+    }
+    discovered->release();
+}
+
 kern_return_t IMPL(ASFWDriver, Start) {
     auto kr = Start(provider, SUPERDISPATCH);
     if (kr != kIOReturnSuccess)
@@ -381,6 +448,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
             ASFW_LOG(Controller, "[SCSIHBA] Failed to create ASFWSBP2Nub: 0x%08x", nubKr);
         } else {
+            PublishNubMapperID(provider, sbp2NubService);
             // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
             sbp2NubService->release();
         }
