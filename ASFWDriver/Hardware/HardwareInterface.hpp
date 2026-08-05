@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <optional>
 #include <utility> // for std::pair
 
@@ -105,6 +106,25 @@ class HardwareInterface {
     [[nodiscard]] std::optional<uint8_t> ReadPhyRegister(uint8_t address);
     [[nodiscard]] bool WritePhyRegister(uint8_t address, uint8_t value);
     [[nodiscard]] bool UpdatePhyRegister(uint8_t address, uint8_t clearBits, uint8_t setBits);
+
+    /// Isochronous streaming liveness, published by the isoch layer.
+    ///
+    /// A PHY register access serialises on `phyLock_` and blocks until the OHCI
+    /// rdDone handshake or a timeout. A single timeout was measured at 115 ms,
+    /// which exceeds the ~78 ms producer-stall budget that keeps an audio
+    /// stream's exposure frontier ahead of CoreAudio -- so a *diagnostic* PHY
+    /// dump can silently kill a healthy stream (2026-07-19; see
+    /// captures/2026-07-19-duet-avc-recovery-001.md).
+    ///
+    /// This is advisory state for callers whose reads are optional. Bus
+    /// management still reads the PHY whenever it must: correctness outranks a
+    /// stream, and reset/gap/root handling is not optional.
+    void SetIsochStreamingActive(bool active) noexcept {
+        isochStreamingActive_.store(active, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool IsIsochStreamingActive() const noexcept {
+        return isochStreamingActive_.load(std::memory_order_relaxed);
+    }
 
     struct DMABuffer {
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor;
@@ -235,6 +255,9 @@ class HardwareInterface {
 
     bool quirk_agere_lsi_{false};
     bool initialIRMRegistersProgrammed_{false};
+
+    //! Advisory: is an isoch stream running? See SetIsochStreamingActive().
+    std::atomic<bool> isochStreamingActive_{false};
 
     std::optional<uint8_t> ReadPhyRegisterUnlocked(uint8_t address);
     bool WritePhyRegisterUnlocked(uint8_t address, uint8_t value);

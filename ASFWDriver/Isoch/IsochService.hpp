@@ -228,6 +228,9 @@ class IsochService {
             captureBandwidthUnits = 0;
         }
     } reserved_{};
+
+    HardwareInterface* hardware_{nullptr};
+    void UpdateStreamingActiveState() noexcept;
 };
 
 } // namespace ASFW::Driver

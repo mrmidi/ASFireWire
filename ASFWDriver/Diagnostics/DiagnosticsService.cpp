@@ -397,6 +397,10 @@ ASFWDiagStatus DiagnosticsService::CollectPHY(ASFWDiagPHY* out) const noexcept {
         return ASFWDiagStatusUnavailable;
     }
 
+    if (hw->IsIsochStreamingActive()) {
+        return ASFWDiagStatusUnavailable;
+    }
+
     const uint32_t startGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
 
     std::memset(out, 0, sizeof(ASFWDiagPHY));

@@ -82,6 +82,39 @@ enum class TxProducerFaultReason : uint32_t {
     return "unknown";
 }
 
+/// Why the CoreAudio write frontier (W) has overtaken the exposure frontier (E).
+///
+/// W > E means the payload writer found no packet for a host frame and dropped
+/// it: audible silence with transport still perfectly healthy. Three mechanisms
+/// produce it, and they are distinguishable only by how the deficit MOVES --
+/// see tools/asfw_sim/FINDINGS.md F2/F6/F9, where each was reproduced.
+enum class TxExposureReason : uint32_t {
+    kUnknown = 0,
+    /// E leads W by about the content horizon: the intended state.
+    kHealthy,
+    /// One step, then flat. A producer-wake stall past the exposure budget
+    /// (the observable signature of a dead IT interrupt path, TX-IRQ-001).
+    kStall,
+    /// Ramping, and the replay-miss count accounts for the lost frames. Every
+    /// miss ships NODATA, which never advances E, and alignment is one-shot.
+    kReplayMiss,
+    /// Ramping, and the replay-miss count CANNOT account for the lost frames:
+    /// E is advancing at a slower rate than W (TX cadence under-production).
+    kRateMismatch,
+};
+
+[[nodiscard]] inline const char* TxExposureReasonName(
+    TxExposureReason reason) noexcept {
+    switch (reason) {
+        case TxExposureReason::kUnknown: return "unknown";
+        case TxExposureReason::kHealthy: return "healthy";
+        case TxExposureReason::kStall: return "stall";
+        case TxExposureReason::kReplayMiss: return "replay-miss";
+        case TxExposureReason::kRateMismatch: return "rate-mismatch";
+    }
+    return "unknown";
+}
+
 struct TxProducerFaultRecord final {
     uint64_t generation{0};
     TxProducerFaultStage stage{TxProducerFaultStage::kNone};
@@ -314,6 +347,33 @@ struct AudioTransportControlBlock final {
     std::atomic<int64_t> txLastLeadTicks{0};
     std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
     std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
+
+    // --- TX exposure attribution (W > E) -----------------------------------
+    // W = CoreAudio write frontier, E = exposed frame end. A PCM frame survives
+    // iff it is written before its packet is exposed, so W > E is silence.
+    // Three distinct mechanisms produce it and they are separable only by
+    // *rate*, not by any single counter (tools/asfw_sim FINDINGS F2/F6/F9):
+    //
+    //   stall         W-E steps once, then holds flat
+    //   replay-miss   W-E ramps, and the miss count can PAY for the lost
+    //                 frames at ~kFramesPerDataPacket each
+    //   rate-mismatch W-E ramps, and the miss count cannot -- E is simply
+    //                 advancing slower than W
+    //
+    // These carry the previous sample so the driver can compute the ramp and
+    // attribute it, instead of leaving it to post-hoc log arithmetic.
+    std::atomic<uint64_t> txExposureSampleHostTicks{0};
+    std::atomic<uint64_t> txExposureSampleWriteFrame{0};
+    std::atomic<uint64_t> txExposureSampleExposedFrame{0};
+    std::atomic<uint64_t> txExposureSampleMisses{0};
+    //! Frames of deficit attributed to replay misses since stream start.
+    std::atomic<uint64_t> txExposureDebtReplayFrames{0};
+    //! Frames of deficit no replay miss can account for (the F9 residue).
+    std::atomic<uint64_t> txExposureDebtUnexplainedFrames{0};
+    //! Last classified TxExposureReason; 0 until the first classification.
+    std::atomic<uint32_t> txExposureReason{0};
+    //! Measured (W rate - E rate) in ppm; positive means E is falling behind.
+    std::atomic<int32_t> txExposurePpm{0};
 
     // RX control block members
     ASFW::Driver::RxSytCadence rxSytCadence{};

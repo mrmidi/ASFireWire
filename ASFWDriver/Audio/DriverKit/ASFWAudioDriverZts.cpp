@@ -747,6 +747,153 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         }
     }
 
+    // [TxExposure] W > E attribution. The deficit itself says only "silence";
+    // its RATE says which of the three mechanisms produced it, and only the
+    // driver can pair the deficit with the replay-miss count that would have to
+    // pay for it. Sampled about once a second so the ramp is measurable without
+    // touching the hot path; emitted on reason change plus a coarse heartbeat.
+    // Reproductions and the discriminator: tools/asfw_sim/FINDINGS.md F2/F6/F9.
+    if (directControl && outputWrittenEndFrame != 0) {
+        constexpr uint64_t kExposureSampleIntervalNs = 1'000'000'000ull;
+        const uint64_t nowTicks = mach_absolute_time();
+        const uint64_t lastTicks =
+            directControl->txExposureSampleHostTicks.load(
+                std::memory_order_relaxed);
+        const uint64_t elapsedNs =
+            lastTicks != 0
+                ? ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks)
+                : 0;
+
+        if (lastTicks == 0) {
+            directControl->txExposureSampleHostTicks.store(
+                nowTicks, std::memory_order_relaxed);
+            directControl->txExposureSampleWriteFrame.store(
+                outputWrittenEndFrame, std::memory_order_relaxed);
+            directControl->txExposureSampleExposedFrame.store(
+                exposedFrameEndAfter, std::memory_order_relaxed);
+            directControl->txExposureSampleMisses.store(
+                directControl->txReplayUnderflows.load(
+                    std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        } else if (elapsedNs >= kExposureSampleIntervalNs) {
+            const uint64_t prevWrite =
+                directControl->txExposureSampleWriteFrame.load(
+                    std::memory_order_relaxed);
+            const uint64_t prevExposed =
+                directControl->txExposureSampleExposedFrame.load(
+                    std::memory_order_relaxed);
+            const uint64_t prevMisses =
+                directControl->txExposureSampleMisses.load(
+                    std::memory_order_relaxed);
+            const uint64_t misses =
+                directControl->txReplayUnderflows.load(
+                    std::memory_order_relaxed);
+
+            const int64_t deficit =
+                static_cast<int64_t>(outputWrittenEndFrame) -
+                static_cast<int64_t>(exposedFrameEndAfter);
+            const int64_t prevDeficit =
+                static_cast<int64_t>(prevWrite) -
+                static_cast<int64_t>(prevExposed);
+            const int64_t deficitDelta = deficit - prevDeficit;
+            const int64_t writeDelta =
+                static_cast<int64_t>(outputWrittenEndFrame - prevWrite);
+            const uint64_t missDelta = misses - prevMisses;
+
+            // A miss ships one NODATA packet in place of a DATA packet, so it
+            // costs the timeline that packet's frames. Use the nominal blocking
+            // frames-per-packet at the live rate as the price.
+            const uint32_t framesPerPacket =
+                ivars->runtime.txStreamEngine.StreamConfig().sampleRate /
+                ASFW::Timing::kCyclesPerSecond;
+            const int64_t explainedFrames =
+                static_cast<int64_t>(missDelta) *
+                static_cast<int64_t>(framesPerPacket == 0 ? 6 : framesPerPacket);
+
+            // ppm by which E trails W over this window.
+            const int32_t ppm =
+                writeDelta > 0
+                    ? static_cast<int32_t>((deficitDelta * 1'000'000) / writeDelta)
+                    : 0;
+
+            // A step is a jump larger than one full IO window inside a single
+            // one-second sample; a ramp is a steady, smaller accumulation.
+            const int64_t stepThreshold = static_cast<int64_t>(
+                ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames);
+
+            ASFW::Audio::Runtime::TxExposureReason reason =
+                ASFW::Audio::Runtime::TxExposureReason::kHealthy;
+            if (deficit > 0 || deficitDelta > 0) {
+                if (deficitDelta > stepThreshold && missDelta == 0) {
+                    reason = ASFW::Audio::Runtime::TxExposureReason::kStall;
+                } else if (deficitDelta > 0 &&
+                           explainedFrames * 2 >= deficitDelta) {
+                    // The misses can pay for at least half the lost ground.
+                    reason =
+                        ASFW::Audio::Runtime::TxExposureReason::kReplayMiss;
+                } else if (deficitDelta > 0) {
+                    reason =
+                        ASFW::Audio::Runtime::TxExposureReason::kRateMismatch;
+                } else {
+                    reason = ASFW::Audio::Runtime::TxExposureReason::kStall;
+                }
+            }
+
+            if (deficitDelta > 0) {
+                const int64_t replayShare =
+                    explainedFrames < deficitDelta ? explainedFrames : deficitDelta;
+                directControl->txExposureDebtReplayFrames.fetch_add(
+                    static_cast<uint64_t>(replayShare), std::memory_order_relaxed);
+                directControl->txExposureDebtUnexplainedFrames.fetch_add(
+                    static_cast<uint64_t>(deficitDelta - replayShare),
+                    std::memory_order_relaxed);
+            }
+            directControl->txExposurePpm.store(ppm, std::memory_order_relaxed);
+
+            const uint32_t previousReason =
+                directControl->txExposureReason.exchange(
+                    static_cast<uint32_t>(reason), std::memory_order_relaxed);
+
+            // Anomaly-only: every reason transition, plus a ~30 s heartbeat
+            // while unhealthy. A healthy stream emits nothing here.
+            const bool changed = previousReason != static_cast<uint32_t>(reason);
+            const bool unhealthy =
+                reason != ASFW::Audio::Runtime::TxExposureReason::kHealthy;
+            if (changed || unhealthy) {
+                ASFW_LOG_RING_ONLY_RL(
+                    DirectAudio,
+                    "tx-exposure",
+                    changed ? 0u : 30000u,
+                    ::ASFW::Logging::LogLevel::Warning,
+                    "[TxExposure] reason=%{public}s d=%lld dDelta=%lld ppm=%d "
+                    "miss=%llu explain=%lld W=%llu E=%llu "
+                    "debtReplay=%llu debtOther=%llu horizon=%u",
+                    ASFW::Audio::Runtime::TxExposureReasonName(reason),
+                    deficit,
+                    deficitDelta,
+                    ppm,
+                    missDelta,
+                    explainedFrames,
+                    outputWrittenEndFrame,
+                    exposedFrameEndAfter,
+                    directControl->txExposureDebtReplayFrames.load(
+                        std::memory_order_relaxed),
+                    directControl->txExposureDebtUnexplainedFrames.load(
+                        std::memory_order_relaxed),
+                    dataHorizonFrames);
+            }
+
+            directControl->txExposureSampleHostTicks.store(
+                nowTicks, std::memory_order_relaxed);
+            directControl->txExposureSampleWriteFrame.store(
+                outputWrittenEndFrame, std::memory_order_relaxed);
+            directControl->txExposureSampleExposedFrame.store(
+                exposedFrameEndAfter, std::memory_order_relaxed);
+            directControl->txExposureSampleMisses.store(
+                misses, std::memory_order_relaxed);
+        }
+    }
+
     bool scheduleAudioFollowUp = false;
     if (directControl) {
         const uint64_t now = mach_absolute_time();
