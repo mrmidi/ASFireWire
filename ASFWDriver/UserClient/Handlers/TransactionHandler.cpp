@@ -43,8 +43,8 @@ void TransactionHandler::AsyncCompletionCallback(ASFW::Async::AsyncHandle handle
     userClient->NotifyTransactionComplete(handle.value, static_cast<uint32_t>(status));
 
     ASFW_LOG(UserClient,
-             "AsyncTransactionCompletion: handle=0x%04x status=%u rCode=0x%02x len=%u stored",
-             handle.value, static_cast<uint32_t>(status), responseCode, responseLength);
+             "AsyncTransactionCompletion: handle=0x%04x status=%{public}s rCode=0x%02x len=%u stored",
+             handle.value, ASFW::Async::ToString(status), responseCode, responseLength);
 }
 
 kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,

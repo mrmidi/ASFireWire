@@ -2,6 +2,11 @@ import Foundation
 
 protocol ASFWDriverControlling {
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
+    func fetchTopology() async -> ASFWMCPTopologySnapshot?
+    func fetchConfigROM(nodeId: UInt32, generation: UInt32) async -> ASFWMCPConfigRomSummary?
+    func fetchOhciSnapshot() async -> ASFWMCPOhciSnapshot?
+    func fetchIrmAllocations() async -> ASFWMCPIrmAllocationReport?
+    func recentFcpRecords(limit: Int) async -> [ASFWMCPFcpRecord]
     func listNodes() async -> [ASFWMCPNodeSummary]
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary]
     func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities?
@@ -97,6 +102,102 @@ actor MockASFWDriverControl: ASFWDriverControlling {
                 writeGate: configuration.canListDeveloperWriteTools ? "open" : "testGateMissing"
             )
         )
+    }
+
+    func fetchTopology() async -> ASFWMCPTopologySnapshot? {
+        guard topologyValid else { return nil }
+        // A deterministic two-port chain: node 0 (local) child-linked to node 2 (root),
+        // matching the mock's controller telemetry so fixtures stay self-consistent.
+        return ASFWMCPTopologySnapshot(
+            generation: generation,
+            nodeCount: nodes.count,
+            rootNodeId: 2,
+            irmNodeId: 2,
+            localNodeId: 0,
+            gapCount: 63,
+            busBase16: 0xFFC0,
+            nodes: nodes.enumerated().map { index, node in
+                ASFWMCPTopologyNode(
+                    nodeId: Int(node.nodeId),
+                    portCount: 1,
+                    gapCount: 63,
+                    speedMbps: 400,
+                    linkActive: true,
+                    contender: node.nodeId == 2,
+                    isRoot: node.nodeId == 2,
+                    initiatedReset: false,
+                    parentPort: node.nodeId == 2 ? nil : 0,
+                    ports: [
+                        ASFWMCPTopologyPort(
+                            port: 0,
+                            state: node.nodeId == 2 ? "child" : "parent",
+                            remoteNodeId: node.nodeId == 2 ? 0 : 2,
+                            remotePort: index == 0 ? 0 : 0
+                        )
+                    ]
+                )
+            },
+            warnings: []
+        )
+    }
+
+    func fetchConfigROM(nodeId: UInt32, generation requestedGeneration: UInt32) async -> ASFWMCPConfigRomSummary? {
+        guard let node = nodes.first(where: { $0.nodeId == nodeId }), node.configRomCached else {
+            return nil
+        }
+        return ASFWMCPConfigRomSummary(
+            nodeId: nodeId,
+            requestedGeneration: requestedGeneration,
+            resolvedGeneration: generation,
+            exactGenerationMatch: requestedGeneration == generation,
+            byteCount: 256,
+            quadletCount: 64,
+            parsed: true,
+            parseNote: nil,
+            guid: node.guid,
+            busName: "1394",
+            irmc: true,
+            cmc: true,
+            isc: true,
+            bmc: false,
+            maxRec: 10,
+            linkSpeed: 2,
+            vendorName: node.vendorName,
+            modelName: node.modelName,
+            units: [],
+            diagnostics: []
+        )
+    }
+
+    func fetchOhciSnapshot() async -> ASFWMCPOhciSnapshot? {
+        guard driverConnected else { return nil }
+        // Deterministic values: the offset is echoed into the low half so fixtures can
+        // assert that a named read resolved to the register it claimed.
+        return ASFWMCPOhciSnapshot(
+            generation: generation,
+            registers: ASFWMCPOhciRegisterMap.covered.map {
+                ASFWMCPOhciRegister(name: $0.name, offset: $0.offset, value: 0x0001_0000 | $0.offset)
+            }
+        )
+    }
+
+    func fetchIrmAllocations() async -> ASFWMCPIrmAllocationReport? {
+        guard driverConnected else { return nil }
+        // All channels free except 31 (BROADCAST_CHANNEL), so fixtures exercise the
+        // cleared-bit decode at the boundary between the two words.
+        return ASFWMCPIrmAllocationReport(
+            generation: generation,
+            irmNodeId: 2,
+            localIsIRM: false,
+            readbackValid: true,
+            bandwidthAvailable: 4915,
+            channelsAvailable31_0: 0xFFFF_FFFE,
+            channelsAvailable63_32: 0xFFFF_FFFF
+        )
+    }
+
+    func recentFcpRecords(limit: Int) async -> [ASFWMCPFcpRecord] {
+        []
     }
 
     func listNodes() async -> [ASFWMCPNodeSummary] {

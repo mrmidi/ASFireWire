@@ -276,6 +276,29 @@ Key points:
 
 Because this can issue real bus transactions, keep it disabled unless you are actively developing against it.
 
+### Advertised tools that are not implemented (TODO)
+
+The catalog advertises a few read-only tools whose dispatch arms are still stubs. They
+return `capabilityUnavailable` with an explicit reason rather than fabricating state.
+An agent must report the gap, not work around it or substitute a mutating call.
+
+| Tool | Why it is not implemented | What it needs |
+|------|---------------------------|---------------|
+| `asfw_sbp2_list_units` | No app-side plumbing. The dext has `UserClient/Handlers/SBP2Handler.cpp`, but there is no `DriverConnector+SBP2.swift` to reach it. | A connector extension exposing SBP-2 unit inventory, then a `ASFWDriverControlling` method. Related: FW-54/FW-56 session port. |
+| `asfw_sbp2_inspect_unit` | Same as above. Unit-directory decode could come from the cached Config ROM, but session/ORB state cannot. | Same. |
+| `asfw_sbp2_get_session_status` | Same as above, and login/fetch-agent state lives only in the driver. | Same. |
+| `asfw_avc_get_subunit_descriptor` | Not a routing gap. AV/C descriptor access is a wire-observable `OPEN`/`READ`/`CLOSE DESCRIPTOR` sequence, so it must be written against the AV/C descriptor mechanism and cross-checked with `references/IOFireWireAVC` before issuing FCP to a real device. | Reference-validated descriptor implementation plus hardware verification. |
+| `asfw_dice_decode_status` | Decoding is a pure function over quadlets, but every offset and mask lives in `ASFWDriver/Audio/Protocols/DICE/Core/DICETypes.hpp`, a C++ header that cannot be bridged to Swift. Mirroring it by hand would create a second source of truth. | Either generate the Swift constants from the header or add a parity test, then decode. Only testable with a DICE/TCAT device attached. |
+
+Two shipped tools are also narrower than their names suggest, by design:
+
+- `asfw_read_ohci_register` / `asfw_snapshot_ohci_registers` read the **diagnostics
+  snapshot** (`ASFWDiagOHCI`), which covers a fixed set of named registers. They are not
+  arbitrary MMIO offset reads; an uncovered offset is refused rather than guessed.
+- `asfw_irm_list_allocations` reports **bus-wide occupancy** from the IRM resource CSRs.
+  Those registers cannot say which node holds a channel, so the result carries
+  `ownershipAttributed: false`.
+
 ## Codex MCP skill
 
 The repository carries a compact Codex client skill at [`skills/asfw-mcp-control-plane/SKILL.md`](skills/asfw-mcp-control-plane/SKILL.md). It keeps the MCP session and compact response handling out of normal agent prompts, so agents can inspect real driver state without rediscovering the HTTP/SSE protocol or pasting the full tool catalog.

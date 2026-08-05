@@ -335,8 +335,8 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
             ASFW_LOG(Hardware, "PHY CONFIG complete handle=0x%x quad=0x%08x", handle.value,
                      packetQuad);
         } else {
-            ASFW_LOG_ERROR(Hardware, "PHY CONFIG handle=0x%x failed status=%u quad=0x%08x",
-                           handle.value, static_cast<unsigned>(status), packetQuad);
+            ASFW_LOG_ERROR(Hardware, "PHY CONFIG handle=0x%x failed status=%{public}s quad=0x%08x",
+                           handle.value, ASFW::Async::ToString(status), packetQuad);
         }
     };
 
@@ -378,8 +378,8 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
             ASFW_LOG(Hardware, "PHY GLOBAL RESUME complete handle=0x%x quad=0x%08x", handle.value,
                      packetQuad);
         } else {
-            ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME handle=0x%x failed status=%u quad=0x%08x",
-                           handle.value, static_cast<unsigned>(status), packetQuad);
+            ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME handle=0x%x failed status=%{public}s quad=0x%08x",
+                           handle.value, ASFW::Async::ToString(status), packetQuad);
         }
     };
 
@@ -423,8 +423,8 @@ bool HardwareInterface::SendLinkOnPacket(uint8_t targetNodeId) {
             ASFW_LOG(Hardware, "Link-On complete handle=0x%x target=node %u quad=0x%08x",
                      handle.value, targetNodeId, packetQuad);
         } else {
-            ASFW_LOG_ERROR(Hardware, "Link-On handle=0x%x failed status=%u target=node %u quad=0x%08x",
-                           handle.value, static_cast<unsigned>(status), targetNodeId, packetQuad);
+            ASFW_LOG_ERROR(Hardware, "Link-On handle=0x%x failed status=%{public}s target=node %u quad=0x%08x",
+                           handle.value, ASFW::Async::ToString(status), targetNodeId, packetQuad);
         }
     };
 

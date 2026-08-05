@@ -493,8 +493,8 @@ void FCPTransport::OnAsyncWriteComplete(FCPWriteAttempt writeAttempt,
 
     if (status != Async::AsyncStatus::kSuccess) {
         ASFW_LOG_V1(FCP,
-                     "FCPTransport: Async write failed: %d",
-                     static_cast<int>(status));
+                     "FCPTransport: Async write failed: %{public}s",
+                     ASFW::Async::ToString(status));
 
         if (pending_->retriesLeft > 0) {
             pending_->retriesLeft--;

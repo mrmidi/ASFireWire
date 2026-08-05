@@ -9,6 +9,9 @@
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 
+#include <algorithm>
+#include <vector>
+
 #if !defined(ASFW_HOST_TEST)
 #include "../Protocols/DeviceProtocolFactory.hpp"
 #include "../../Protocols/Ports/FireWireBusPort.hpp"
@@ -73,6 +76,38 @@ std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::EnsureEndpointRuntim
     endpointsByGuid_.emplace(guid, created);
     IOLockUnlock(lock_);
     return created;
+}
+
+uint32_t AudioRuntimeRegistry::CopyAudioTelemetrySnapshots(
+    Runtime::AudioTelemetrySnapshot& out) noexcept {
+    out = {};
+    out.version = Runtime::kAudioTelemetryWireVersion;
+    if (!lock_) {
+        return 0;
+    }
+
+    std::vector<std::shared_ptr<AudioEndpointRuntime>> endpoints;
+    IOLockLock(lock_);
+    endpoints.reserve(std::min<size_t>(
+        endpointsByGuid_.size(), Runtime::kAudioTelemetryMaxEndpoints));
+    for (const auto& [guid, endpoint] : endpointsByGuid_) {
+        (void)guid;
+        if (endpoint) {
+            endpoints.push_back(endpoint);
+        }
+        if (endpoints.size() == Runtime::kAudioTelemetryMaxEndpoints) {
+            break;
+        }
+    }
+    IOLockUnlock(lock_);
+
+    for (const auto& endpoint : endpoints) {
+        if (endpoint->CopyAudioTelemetrySnapshot(
+                out.endpoints[out.endpointCount])) {
+            ++out.endpointCount;
+        }
+    }
+    return out.endpointCount;
 }
 
 std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(

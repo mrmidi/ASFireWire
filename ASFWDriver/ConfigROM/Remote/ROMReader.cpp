@@ -159,12 +159,12 @@ void ROMReader::HandleQuadletReadComplete(const std::shared_ptr<QuadletReadConte
                                           std::span<const uint8_t> responsePayload) {
     // TODO: Temporary ROM discovery triage log. Remove once Saffire init is understood.
     ASFW_LOG(ConfigROM,
-             "[TempROMScanRX] gen=%u node=%u quadIndex=%u/%u status=%u payloadBytes=%zu successSoFar=%u addr=0x%04x_%08x",
+             "[TempROMScanRX] gen=%u node=%u quadIndex=%u/%u status=%{public}s payloadBytes=%zu successSoFar=%u addr=0x%04x_%08x",
              ctx->generation.value,
              ctx->nodeId,
              ctx->quadletIndex,
              ctx->quadletCount,
-             static_cast<unsigned>(status),
+             Async::ToString(status),
              responsePayload.size(),
              ctx->successCount,
              FW::ConfigROMAddr::kAddressHi,

@@ -105,7 +105,7 @@ kern_return_t IsochHandler::TestIRMAllocation(IOUserClientMethodArguments* args)
                                                             // different diagnostic messages
                     ASFW_LOG(UserClient, "✅ IRM allocation succeeded!");
                 } else {
-                    ASFW_LOG(UserClient, "❌ IRM allocation failed: %d", static_cast<int>(status));
+                    ASFW_LOG(UserClient, "❌ IRM allocation failed: %{public}s", ASFW::IRM::ToString(status));
                 }
             });
     });
@@ -137,7 +137,7 @@ kern_return_t IsochHandler::TestIRMRelease(IOUserClientMethodArguments* args) {
                                                         // different diagnostic messages
                 ASFW_LOG(UserClient, "✅ IRM release succeeded!");
             } else {
-                ASFW_LOG(UserClient, "❌ IRM release failed: %d", static_cast<int>(status));
+                ASFW_LOG(UserClient, "❌ IRM release failed: %{public}s", ASFW::IRM::ToString(status));
             }
         });
 

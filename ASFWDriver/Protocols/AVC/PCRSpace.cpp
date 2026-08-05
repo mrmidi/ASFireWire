@@ -54,9 +54,9 @@ void PCRSpace::ReadPCR(PlugType type,
         [completionState, pcrAddress](Async::AsyncStatus status, std::span<const uint8_t> response) {
             if (status != Async::AsyncStatus::kSuccess) {
                 ASFW_LOG_ERROR(Async,
-                             "PCRSpace: PCR read failed at 0x%llx: status=%d",
+                             "PCRSpace: PCR read failed at 0x%llx: status=%{public}s",
                              pcrAddress,
-                             static_cast<int>(status));
+                             ASFW::Async::ToString(status));
                 Common::InvokeSharedCallback(completionState, std::optional<PCRValue>{});
                 return;
             }
@@ -157,9 +157,9 @@ void PCRSpace::UpdatePCR(PlugType type,
                                                 std::span<const uint8_t> response) {
             if (status != Async::AsyncStatus::kSuccess) {
                 ASFW_LOG_ERROR(Async,
-                             "PCRSpace: PCR lock failed at 0x%llx: status=%d",
+                             "PCRSpace: PCR lock failed at 0x%llx: status=%{public}s",
                              pcrAddress,
-                             static_cast<int>(status));
+                             ASFW::Async::ToString(status));
                 Common::InvokeSharedCallback(completionState, false);
                 return;
             }

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "../DriverKit/Runtime/DirectAudioBindingSource.hpp"
+#include "../Runtime/AudioTelemetrySnapshot.hpp"
 #include "../Model/ASFWAudioDevice.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
@@ -283,6 +284,39 @@ public:
 
     [[nodiscard]] bool IsStreaming() const noexcept {
         return streaming_.load(std::memory_order_acquire);
+    }
+
+    // This captures atomics while the endpoint still owns the mapping.  It is
+    // intentionally a value snapshot, never a directControl_ escape hatch.
+    [[nodiscard]] bool CopyAudioTelemetrySnapshot(
+        Runtime::AudioTelemetryEndpointSnapshot& out) noexcept {
+        out = {};
+        if (!lock_) {
+            return false;
+        }
+
+        IOLockLock(lock_);
+        if (!HasCompleteDirectAudioMemoryLocked()) {
+            IOLockUnlock(lock_);
+            return false;
+        }
+        out.guid = guid_;
+        out.endpointGeneration = directGeneration_;
+        out.flags = Runtime::kAudioTelemetryBindingReady;
+        if (streaming_.load(std::memory_order_acquire)) {
+            out.flags |= Runtime::kAudioTelemetryStreaming;
+        }
+        out.sampleRateHz = directSampleRateHz_;
+        out.outputChannels = directOutputChannels_;
+        out.inputChannels = directInputChannels_;
+        out.inputFrameCapacityFrames = directInputCapacityFrames_;
+        out.preparationLeadPackets =
+            IsochTransport::AudioTimingGeometry::kTxPreparationLeadPackets;
+        out.hardwareFloorPackets =
+            IsochTransport::AudioTimingGeometry::kTxHardwareRingPackets;
+        Runtime::CopyAudioTelemetrySnapshot(*directControl_, out);
+        IOLockUnlock(lock_);
+        return true;
     }
 
 private:

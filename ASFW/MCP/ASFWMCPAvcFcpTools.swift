@@ -205,6 +205,43 @@ struct ASFWMCPFcpCommandRequest: Equatable {
 /// slice. FW-100 will replace those observations with the transport's exact
 /// write-completion attempt context before this is used as a response matcher
 /// diagnostic.
+/// One retained FCP command/response exchange.
+///
+/// Scope: this ring records only exchanges issued **through MCP**. FCP traffic the
+/// driver originates itself (discovery, AV/C bring-up, CMP sequencing) does not appear
+/// here, so the tool reports `scope: "mcpIssued"` and an absence here is not evidence
+/// that no FCP occurred. Use the driver log ring's `FCP` category for driver-side
+/// chronology.
+struct ASFWMCPFcpRecord: Equatable {
+    let correlationId: String
+    let targetGUID: UInt64
+    let nodeId: UInt32?
+    let generation: UInt32
+    let intent: String
+    let request: [UInt8]
+    let response: [UInt8]?
+    let status: String
+    let durationUsec: UInt64?
+    let capturedAtUptimeNs: UInt64
+}
+
+extension ASFWMCPFcpRecord {
+    var mcpValue: ASFWMCPValue {
+        .object([
+            "correlationId": .string(correlationId),
+            "targetGuid": .string(String(format: "0x%016llX", targetGUID)),
+            "nodeId": nodeId.map { .int(Int($0)) } ?? .null,
+            "generation": .int(Int(generation)),
+            "intent": .string(intent),
+            "request": .string(request.map { String(format: "%02X", $0) }.joined()),
+            "response": response.map { .string($0.map { String(format: "%02X", $0) }.joined()) } ?? .null,
+            "status": .string(status),
+            "durationUsec": durationUsec.map { .uint64($0) } ?? .null,
+            "capturedAtUptimeNs": .uint64(capturedAtUptimeNs)
+        ])
+    }
+}
+
 struct ASFWMCPFcpCommandReceipt: Equatable {
     let targetGUID: UInt64
     let expectedNodeId: UInt32

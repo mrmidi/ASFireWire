@@ -324,6 +324,8 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var mcpLastError: String?
     var generation: UInt32 = 17
     var devices: [FWDeviceInfo] = []
+    var topologySnapshot: TopologySnapshot?
+    var configROM: ASFWDriverConnector.ConfigROMFetchResult?
     var avcUnits: [AVCUnitInfo] = []
     var avcSubunitCapabilities: AVCMusicCapabilities?
     var nextHandle: UInt16 = 0x44
@@ -350,6 +352,10 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
         localIrmResourceSnapshot
     }
     func mcpDiscoveredDevices() -> [FWDeviceInfo]? { devices }
+    func mcpTopologySnapshot() -> TopologySnapshot? { topologySnapshot }
+    func mcpConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult? {
+        configROM
+    }
     func mcpAVCUnits() -> [AVCUnitInfo]? { avcUnits }
     func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
         avcSubunitCapabilities

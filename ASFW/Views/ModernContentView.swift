@@ -43,7 +43,7 @@ struct ModernContentView: View {
         case async = "Async Commands"
         case topology = "Topology & Self-ID"
         case romExplorer = "ROM Explorer"
-        case metrics = "Isoch Metrics"
+        case audioTelemetry = "Audio Telemetry"
         case dvCapture = "DV Capture"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
@@ -67,7 +67,7 @@ struct ModernContentView: View {
             case .async: return "bolt.horizontal.circle"
             case .topology: return "network"
             case .romExplorer: return "memorychip"
-            case .metrics: return "chart.bar.xaxis"
+            case .audioTelemetry: return "waveform.path.ecg"
             case .dvCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
@@ -115,8 +115,8 @@ struct ModernContentView: View {
                     TopologyView(viewModel: topologyVM)
                 case .romExplorer:
                     ROMExplorerView(viewModel: romExplorerVM)
-                case .metrics:
-                    MetricsView(connector: debugVM.connector)
+                case .audioTelemetry:
+                    AudioTelemetryView(connector: debugVM.connector)
                 case .dvCapture:
                     DVCaptureView(viewModel: debugVM)
                 case .busReset:

@@ -203,6 +203,40 @@ TEST(IsochRxTimingTests, PacketProcessorWritesAM824CaptureAsFloat32) {
               1u);
 }
 
+TEST(IsochRxTimingTests, CaptureMailboxWrapIsNotAnOverrunUntilCoreAudioReads) {
+    std::array<float, 8> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    const ASFW::Audio::Runtime::AudioGraphBinding binding{
+        .sampleRateHz = 48000,
+        .memory = ASFW::Audio::Runtime::AudioStreamMemory{
+            .inputBase = input.data(),
+            .inputFrameCapacity = 4,
+            .inputChannels = 2,
+        },
+        .control = &control,
+        .deviceToHostAm824Slots = 2,
+    };
+
+    ASFW::AudioEngine::Direct::DirectInputWriter writer;
+    writer.Bind(&binding);
+
+    writer.PublishProducedEnd(5);
+    EXPECT_EQ(control.captureRingOverruns.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.rxCaptureBufferTelemetry.totalOverwrittenFrames.load(
+                  std::memory_order_relaxed),
+              0U);
+
+    control.client.PublishBeginRead(5, 1, 1);
+    control.counters.CountBeginRead();
+    control.captureRingReadFrame.store(5, std::memory_order_release);
+    writer.PublishProducedEnd(10);
+
+    EXPECT_EQ(control.captureRingOverruns.load(std::memory_order_relaxed), 1U);
+    EXPECT_EQ(control.rxCaptureBufferTelemetry.totalOverwrittenFrames.load(
+                  std::memory_order_relaxed),
+              1U);
+}
+
 TEST(IsochRxTimingTests, DirectReceiveConsumerOwnsDecodeAcrossOpaqueIsochSeam) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;

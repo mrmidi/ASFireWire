@@ -71,13 +71,22 @@ void ServiceContext::Reset(ResetMode mode) {
         sbp2NubPublisher->Shutdown();
         sbp2NubPublisher.reset();
     }
-    controller.reset();
-    audioCoordinator.reset();
     // Tear down the runtime audio protocols while the services they were built from
-    // (bus/hardware/IRM) are still alive. controller.reset() above dropped the controller's
-    // copy of this shared_ptr, so the deps copy is the last owner; resetting it here lets the
-    // protocol destructors run before the bus/IRM teardown below.
+    // (bus/hardware/IRM) are still alive. The bus is one of those services: it lives in
+    // ControllerCore::busImpl_, and IRMClient borrows it as a non-owning IFireWireBus&.
+    // Audio teardown releases IRM reservations through that reference, so every audio
+    // destructor must run *before* controller.reset() destroys the bus.
+    //
+    // ServiceContext solely owns audioCoordinator, so resetting it here destroys it now.
+    // The registry is co-owned by the controller's own deps_ copy, which must be dropped
+    // explicitly: ~ControllerCore destroys busImpl_ before deps_, so letting the registry
+    // die with the controller would call through a dangling bus.
+    audioCoordinator.reset();
+    if (controller) {
+        controller->ReleaseAudioRuntimeRegistry();
+    }
     deps.audioRuntimeRegistry.reset();
+    controller.reset();
     deps.hardware.reset();
     deps.busReset.reset();
     deps.busManager.reset();
