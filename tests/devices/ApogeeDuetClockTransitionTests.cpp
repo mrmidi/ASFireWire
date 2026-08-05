@@ -22,7 +22,7 @@ using ASFW::Testing::AvcTestRig;
 TEST(ApogeeDuetClockTransitionTests, ConcurrentApplyClockConfigReturnsBusy) {
     AvcTestRig rig;
 
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), nullptr, nullptr, nullptr, 100U,
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, nullptr, nullptr, 100U,
                                 &rig.Timers());
 
     // Initial ApplyClockConfig without transport returns kIOReturnNotReady
@@ -38,7 +38,7 @@ TEST(ApogeeDuetClockTransitionTests, ConcurrentApplyClockConfigReturnsBusy) {
 TEST(ApogeeDuetClockTransitionTests, ShutdownCancelsClockTransition) {
     AvcTestRig rig;
 
-    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), nullptr, nullptr, nullptr, 100U,
+    ApogeeDuetProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), nullptr, nullptr, nullptr, 100U,
                                 &rig.Timers());
 
     EXPECT_EQ(protocol.Shutdown(), kIOReturnSuccess);

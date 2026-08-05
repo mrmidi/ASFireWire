@@ -6,6 +6,8 @@
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Audio/Protocols/Oxford/OxfordCsr.hpp"
+#include "ASFWDriver/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "ASFWDriver/Bus/IRM/IRMClient.hpp"
 
 #include "AvcTestRig.hpp"
 
@@ -71,11 +73,12 @@ class OxfordCsrReadTests : public ::testing::Test {
 protected:
     AvcTestRig rig;
 
-    [[nodiscard]] static Oxford::RouteValidator AlwaysCurrent() {
-        return [] { return true; };
+    /// Resolves through the registry on every call, the way the driver does.
+    [[nodiscard]] Oxford::RouteProvider LiveRoute() {
+        return [this, guid = rig.Route().guid] { return rig.Routes().CurrentRoute(guid); };
     }
-    [[nodiscard]] static Oxford::RouteValidator NeverCurrent() {
-        return [] { return false; };
+    [[nodiscard]] static Oxford::RouteProvider NoRoute() {
+        return [] { return std::optional<ASFW::Discovery::DeviceRouteToken>{}; };
     }
 
     void MapId(const ASFW::Async::FWAddress& address, uint32_t value) {
@@ -90,7 +93,7 @@ TEST_F(OxfordCsrReadTests, ReadsFirmwareIdFromItsOwnRegister) {
 
     IOReturn status = kIOReturnNotReady;
     uint32_t id = 0;
-    Oxford::ReadFirmwareId(rig.Bus(), rig.Route(), AlwaysCurrent(),
+    Oxford::ReadFirmwareId(rig.Bus(), LiveRoute(),
                            [&](IOReturn s, uint32_t value) {
                                status = s;
                                id = value;
@@ -106,7 +109,7 @@ TEST_F(OxfordCsrReadTests, ReadsHardwareIdAndClassifiesTheDuetAsFw971) {
 
     IOReturn status = kIOReturnNotReady;
     uint32_t id = 0;
-    Oxford::ReadHardwareId(rig.Bus(), rig.Route(), AlwaysCurrent(),
+    Oxford::ReadHardwareId(rig.Bus(), LiveRoute(),
                            [&](IOReturn s, uint32_t value) {
                                status = s;
                                id = value;
@@ -117,13 +120,105 @@ TEST_F(OxfordCsrReadTests, ReadsHardwareIdAndClassifiesTheDuetAsFw971) {
     EXPECT_EQ(Oxford::ClassifyHardwareId(id), Asic::kFw971);
 }
 
-TEST_F(OxfordCsrReadTests, StaleRouteIsRefusedBeforeAnyBusTraffic) {
+TEST_F(OxfordCsrReadTests, DeviceWithNoLiveRouteIsRefusedBeforeAnyBusTraffic) {
     IOReturn status = kIOReturnSuccess;
-    Oxford::ReadHardwareId(rig.Bus(), rig.Route(), NeverCurrent(),
+    Oxford::ReadHardwareId(rig.Bus(), NoRoute(),
                            [&](IOReturn s, uint32_t) { status = s; });
 
     EXPECT_EQ(status, kIOReturnNotReady);
     EXPECT_EQ(rig.Bus().ReadCount(), 0U) << "a dead route must not reach the bus";
+}
+
+TEST_F(OxfordCsrReadTests, ProtocolBuiltWithoutACmpClientStillReadsCsrs) {
+    // FW-142's real defect, at the level that had it. The discovery prefetch
+    // path constructs ApogeeDuetProtocol with a live FCP transport and *null*
+    // IRM/CMP clients, and route liveness used to be asked of the CMP client —
+    // so it short-circuited on the null check and every CSR read failed
+    // "route not current" without ever comparing a route. Node and generation
+    // matched in the log because nothing looked at them.
+    //
+    // Route resolution goes through the registry now, which is the only
+    // authority both construction sites can supply.
+    ASFW::IRM::IRMClient irm(rig.Bus());
+    ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol protocol(
+        rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(), rig.Transport(),
+        /*irmClient=*/nullptr, /*cmpClient=*/nullptr);
+
+    MapId(Oxford::HardwareIdAddress(), Oxford::kHardwareIdFw971);
+
+    IOReturn status = kIOReturnNotReady;
+    uint32_t id = 0;
+    protocol.GetHardwareId([&status, &id](IOReturn s, uint32_t value) {
+        status = s;
+        id = value;
+    });
+
+    EXPECT_EQ(status, kIOReturnSuccess) << "a null CMP client must not block a register read";
+    EXPECT_EQ(Oxford::ClassifyHardwareId(id), Asic::kFw971);
+    EXPECT_GT(rig.Bus().ReadCount(), 0U) << "the read must actually reach the bus";
+}
+
+TEST_F(OxfordCsrReadTests, ProtocolBuiltWithoutARegistryReportsTheWiringFault) {
+    // The other half: with no route authority at all, the read must name that
+    // as its own fault rather than reporting it as "device has no live route".
+    ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol protocol(
+        rig.Bus(), rig.Bus(), rig.Route(), /*routeRegistry=*/nullptr, rig.Transport());
+
+    IOReturn status = kIOReturnSuccess;
+    protocol.GetFirmwareId([&status](IOReturn s, uint32_t) { status = s; });
+
+    EXPECT_EQ(status, kIOReturnNotReady);
+    EXPECT_EQ(rig.Bus().ReadCount(), 0U);
+}
+
+TEST_F(OxfordCsrReadTests, UnwiredProviderIsRefusedBeforeAnyBusTraffic) {
+    // Distinct from "device has no live route": this one is a programming
+    // error, and collapsing the two is what made FW-142 undiagnosable.
+    IOReturn status = kIOReturnSuccess;
+    Oxford::ReadHardwareId(rig.Bus(), Oxford::RouteProvider{},
+                           [&](IOReturn s, uint32_t) { status = s; });
+
+    EXPECT_EQ(status, kIOReturnNotReady);
+    EXPECT_EQ(rig.Bus().ReadCount(), 0U);
+}
+
+TEST_F(OxfordCsrReadTests, RouteReboundBeforeTheReadIsResolvedFreshNotFromASnapshot) {
+    // FW-142 regression. The device is rebound in the registry — same node, same
+    // generation, new routeEpoch — between the moment a caller would have
+    // captured a route and the moment the read is issued.
+    //
+    // The old API took (route, isRouteCurrent) and ApogeeDuetProtocol passed a
+    // token snapshotted at construction, so this exact sequence failed every CSR
+    // read with "route not current" against a device that was present and
+    // answering vendor commands on the identical node and generation.
+    MapId(Oxford::HardwareIdAddress(), Oxford::kHardwareIdFw971);
+
+    const auto snapshot = rig.Route();
+    ASSERT_TRUE(static_cast<bool>(snapshot));
+
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = snapshot.guid;
+    rom.gen = snapshot.generation;
+    rom.nodeId = static_cast<uint8_t>(snapshot.nodeId);
+    rig.Routes().InvalidateLiveMappingsForBusReset();
+    rig.Routes().UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+
+    const auto rebound = rig.Route();
+    ASSERT_NE(rebound.routeEpoch, snapshot.routeEpoch) << "test must actually rebind the route";
+    ASSERT_EQ(rebound.nodeId, snapshot.nodeId);
+    ASSERT_EQ(rebound.generation, snapshot.generation);
+    EXPECT_FALSE(rig.Routes().IsCurrent(snapshot))
+        << "the snapshot must be stale — otherwise this test proves nothing";
+
+    IOReturn status = kIOReturnNotReady;
+    uint32_t id = 0;
+    Oxford::ReadHardwareId(rig.Bus(), LiveRoute(), [&](IOReturn s, uint32_t value) {
+        status = s;
+        id = value;
+    });
+
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(Oxford::ClassifyHardwareId(id), Asic::kFw971);
 }
 
 TEST_F(OxfordCsrReadTests, ReadFailurePropagatesAsAnErrorRatherThanAZeroId) {
@@ -132,7 +227,7 @@ TEST_F(OxfordCsrReadTests, ReadFailurePropagatesAsAnErrorRatherThanAZeroId) {
     // legitimately classifies as unknown.
     IOReturn status = kIOReturnSuccess;
     uint32_t id = 0xDEADBEEFU;
-    Oxford::ReadFirmwareId(rig.Bus(), rig.Route(), AlwaysCurrent(),
+    Oxford::ReadFirmwareId(rig.Bus(), LiveRoute(),
                            [&](IOReturn s, uint32_t value) {
                                status = s;
                                id = value;
@@ -149,7 +244,7 @@ TEST_F(OxfordCsrReadTests, ShortPayloadIsRejected) {
                       std::vector<uint8_t>{0x39, 0x37});
 
     IOReturn status = kIOReturnSuccess;
-    Oxford::ReadFirmwareId(rig.Bus(), rig.Route(), AlwaysCurrent(),
+    Oxford::ReadFirmwareId(rig.Bus(), LiveRoute(),
                            [&](IOReturn s, uint32_t) { status = s; });
 
     EXPECT_EQ(status, kIOReturnError);
@@ -160,15 +255,15 @@ TEST_F(OxfordCsrReadTests, RouteInvalidatedDuringTheReadDiscardsTheAnswer) {
 
     // A bus reset between issue and completion means the quadlet may have come
     // from whatever now occupies that node.
-    bool current = true;
     IOReturn status = kIOReturnSuccess;
     uint32_t id = 0xDEADBEEFU;
+    int resolves = 0;
+    const auto live = rig.Route();
     Oxford::ReadHardwareId(
-        rig.Bus(), rig.Route(),
-        [&current] {
-            const bool wasCurrent = current;
-            current = false;  // invalidated by the time the completion re-checks
-            return wasCurrent;
+        rig.Bus(),
+        [&resolves, live]() -> std::optional<ASFW::Discovery::DeviceRouteToken> {
+            // Live at issue, retired by the time the completion re-resolves.
+            return resolves++ == 0 ? std::optional{live} : std::nullopt;
         },
         [&](IOReturn s, uint32_t value) {
             status = s;

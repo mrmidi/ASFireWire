@@ -133,6 +133,33 @@ public:
         return true;
     }
 
+    /// Hold lock (compare-swap) completions until DrainLocks, so a caller can
+    /// observe the state between issuing a CMP operation and its answer. Off by
+    /// default: locks complete inline, which is what every existing test
+    /// assumes. Required to test that a stage is genuinely continuation-passing
+    /// — with inline completion, a blocking implementation is indistinguishable
+    /// from a CPS one.
+    void SetDeferLocks(bool defer) noexcept { deferLocks_ = defer; }
+
+    [[nodiscard]] size_t PendingLockCount() const noexcept { return pendingLocks_.size(); }
+
+    /// Deliver every queued lock completion, including any queued *by* those
+    /// completions (a CMP stage chains read → compare-swap).
+    size_t DrainLocks(size_t maxSteps = 64) {
+        size_t delivered = 0;
+        while (!pendingLocks_.empty() && delivered < maxSteps) {
+            PendingLock pending = std::move(pendingLocks_.front());
+            pendingLocks_.pop_front();
+            ++delivered;
+            if (pending.callback) {
+                pending.callback(AsyncStatus::kSuccess,
+                                 std::span<const uint8_t>{pending.payload.data(),
+                                                          pending.responseBytes});
+            }
+        }
+        return delivered;
+    }
+
     bool CompleteWrite(AsyncHandle handle,
                        AsyncStatus status,
                        std::span<const uint8_t> payload = {}) {
@@ -232,9 +259,18 @@ public:
             oldValue[3] ^= 0x01U;
         }
 
+        const size_t responseBytes = std::min<size_t>(oldValue.size(), responseLength);
+        if (deferLocks_) {
+            pendingLocks_.push_back(PendingLock{
+                .payload = oldValue,
+                .responseBytes = responseBytes,
+                .callback = std::move(callback),
+            });
+            return handle;
+        }
+
         callback(AsyncStatus::kSuccess,
-                 std::span<const uint8_t>{oldValue.data(),
-                                          std::min<size_t>(oldValue.size(), responseLength)});
+                 std::span<const uint8_t>{oldValue.data(), responseBytes});
         return handle;
     }
 
@@ -278,6 +314,12 @@ private:
         InterfaceCompletionCallback callback;
     };
 
+    struct PendingLock {
+        std::array<uint8_t, 4> payload{};
+        size_t responseBytes{0};
+        InterfaceCompletionCallback callback;
+    };
+
     AsyncHandle NextHandle() noexcept {
         const AsyncHandle handle = nextHandle_;
         nextHandle_ = AsyncHandle{nextHandle_.value + 1};
@@ -304,6 +346,8 @@ private:
     LockMode lockMode_{LockMode::kZeroes};
     bool failNextCompareSwap_{false};
     bool failCompareSwap_{false};
+    bool deferLocks_{false};
+    std::deque<PendingLock> pendingLocks_;
     size_t lockCount_{0};
     std::vector<uint8_t> lastLockOperand_;
 };

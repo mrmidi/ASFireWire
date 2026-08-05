@@ -11,6 +11,7 @@
 #include "../../Audio/Model/ASFWAudioDevice.hpp"
 #include "../../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../../Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "../../Audio/Protocols/Oxford/OxfwStreamFormats.hpp"
 #include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
@@ -734,6 +735,9 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
         busOps_,
         busInfo_,
         *route,
+        // Register reads resolve through the registry, not through the CMP
+        // client — this path deliberately has no CMP/IRM client (FW-142).
+        &deviceRegistry_,
         &avcUnit->GetFCPTransport(),
         nullptr,
         nullptr,
@@ -912,28 +916,81 @@ void AVCDiscovery::ContinueDuetPrefetchHardware(
             }
             IOLockUnlock(lock_);
         }
-        // Linux OXFW configures the input formation before output and verifies
-        // the selected format before stream construction.  ApplyClockConfig
-        // implements that same control-plane sequence and readback; it owns no
-        // CMP/IRM resources, so this remains strictly pre-stream.
-        protocol->ApplyClockConfig(
-            ::ASFW::Audio::AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz},
-            [this, guid, protocol, operation, config](IOReturn clockStatus,
-                                                       const ::ASFW::Audio::ClockApplyResult& result) {
-                if (!IsDuetPrefetchCurrent(operation)) {
-                    return;
-                }
-                if (lock_) {
-                    IOLockLock(lock_);
-                    operation->state.clockStatus = clockStatus;
-                    operation->state.clockVerified =
-                        clockStatus == kIOReturnSuccess &&
-                        result.appliedClock.sampleRateHz == kDuetFixedSampleRateHz;
-                    IOLockUnlock(lock_);
-                }
-                FinishDuetPrefetch(operation, config, operation->state.clockVerified ? "complete" : "clock-failed");
-            });
+        ContinueDuetPrefetchStreamFormats(guid, protocol, operation, config);
     });
+}
+
+void AVCDiscovery::ContinueDuetPrefetchStreamFormats(
+    uint64_t guid,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<DuetPrefetchOperation>& operation,
+    const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
+    // FW-139: observational only. This runs the two-tier discovery and logs
+    // what the Duet reports, but the advertised rate set stays pinned to
+    // kDuetFixedSampleRateHz below. Unpinning it depends on which tier the
+    // device actually answers, and that is a hardware question — the reference
+    // stacks disagree on whether OXFW devices implement the format list at all.
+    // Read the `stream formats:` line from the Oxfw ring to settle it.
+    //
+    // Safe to run pre-publication: tier 1 is a STATUS query and tier 2 probes
+    // with SPECIFIC INQUIRY, so nothing here changes device state.
+    auto* transport = protocol->GetFCPTransport();
+    if (transport == nullptr) {
+        ContinueDuetPrefetchClock(guid, protocol, operation, config);
+        return;
+    }
+
+    ::ASFW::Audio::Oxford::DetectStreamFormats(
+        *transport, /*isOutput=*/false,
+        [this, guid, protocol, operation, config](
+            IOReturn status, const ::ASFW::Audio::Oxford::StreamFormatSet& formats) {
+            if (!IsDuetPrefetchCurrent(operation)) {
+                return;
+            }
+            if (status == kIOReturnSuccess) {
+                // The per-entry detail is logged by the Oxford layer; this line
+                // exists to tie the result to a GUID and to record whether the
+                // pinned 48 kHz is even in the device's own set.
+                const auto rates = formats.Rates();
+                ASFW_LOG(Oxfw,
+                         "Duet stream formats: %zu rate(s), %{public}s, has48k=%d GUID=%llx",
+                         rates.size(), formats.assumed ? "assumed" : "reported",
+                         formats.SupportsRate(kDuetFixedSampleRateHz) ? 1 : 0, guid);
+            } else {
+                ASFW_LOG_WARNING(Oxfw, "Duet stream-format discovery failed status=0x%x GUID=%llx",
+                                 status, guid);
+            }
+            ContinueDuetPrefetchClock(guid, protocol, operation, config);
+        });
+}
+
+void AVCDiscovery::ContinueDuetPrefetchClock(
+    uint64_t guid,
+    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+    const std::shared_ptr<DuetPrefetchOperation>& operation,
+    const ::ASFW::Audio::Model::ASFWAudioDevice& config) {
+    // Linux OXFW configures the input formation before output and verifies
+    // the selected format before stream construction.  ApplyClockConfig
+    // implements that same control-plane sequence and readback; it owns no
+    // CMP/IRM resources, so this remains strictly pre-stream.
+    protocol->ApplyClockConfig(
+        ::ASFW::Audio::AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz},
+        [this, guid, protocol, operation, config](IOReturn clockStatus,
+                                                   const ::ASFW::Audio::ClockApplyResult& result) {
+            (void)guid;
+            if (!IsDuetPrefetchCurrent(operation)) {
+                return;
+            }
+            if (lock_) {
+                IOLockLock(lock_);
+                operation->state.clockStatus = clockStatus;
+                operation->state.clockVerified =
+                    clockStatus == kIOReturnSuccess &&
+                    result.appliedClock.sampleRateHz == kDuetFixedSampleRateHz;
+                IOLockUnlock(lock_);
+            }
+            FinishDuetPrefetch(operation, config, operation->state.clockVerified ? "complete" : "clock-failed");
+        });
 }
 
 void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit) {

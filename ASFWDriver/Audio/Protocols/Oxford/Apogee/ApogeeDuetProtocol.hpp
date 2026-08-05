@@ -61,9 +61,16 @@ public:
     using VoidCallback = std::function<void(IOReturn)>;
     template<typename T> using ResultCallback = std::function<void(IOReturn, T)>;
 
+    /// `routeRegistry` is what the register reads resolve their route through.
+    /// It must be supplied on any path that reads CSRs or meters: the two
+    /// construction sites bind different subsets of the optional clients (the
+    /// discovery prefetch has an FCP transport but no CMP/IRM client; the
+    /// factory has CMP/IRM but no transport), so route resolution cannot hang
+    /// off any of them. See FW-142.
     ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                        Protocols::Ports::FireWireBusInfo& busInfo,
                        Discovery::DeviceRouteToken route,
+                       Discovery::DeviceRegistry* routeRegistry = nullptr,
                        Protocols::AVC::FCPTransport* fcpTransport = nullptr,
                        IRM::IRMClient* irmClient = nullptr,
                        CMP::CMPClient* cmpClient = nullptr,
@@ -89,6 +96,11 @@ public:
     }
     [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }
     [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
+
+    /// May be null before the runtime context is bound; callers must check.
+    [[nodiscard]] Protocols::AVC::FCPTransport* GetFCPTransport() const noexcept {
+        return runtime_.fcpTransport;
+    }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override {
         duplex_.UpdateRuntimeContext(route, transport);
@@ -156,7 +168,7 @@ private:
                                VendorSequenceCallback callback);
 
     /// Route-liveness policy handed to the chip-common CSR reads.
-    [[nodiscard]] Oxford::RouteValidator MakeRouteValidator() const;
+    [[nodiscard]] Oxford::RouteProvider MakeRouteProvider() const;
 
     // Declaration order matters: duplex_ binds a reference to runtime_.
     DuetRuntime runtime_;

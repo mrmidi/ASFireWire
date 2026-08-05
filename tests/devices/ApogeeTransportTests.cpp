@@ -13,6 +13,7 @@
 
 #include "AvcTestRig.hpp"
 
+#include <optional>
 #include <vector>
 
 namespace {
@@ -25,6 +26,16 @@ using ASFW::Testing::AvcTestRig;
 using Code = ApogeeVendorCommand::Code;
 namespace MeterRegisters = ASFW::Audio::Oxford::Apogee::MeterRegisters;
 namespace VendorFcp = ASFW::Audio::Oxford::Apogee::VendorFcp;
+namespace Apogee = ASFW::Audio::Oxford::Apogee;
+
+/// Resolves through the rig's registry on every call, the way the driver does.
+[[nodiscard]] Apogee::RouteProvider LiveRoute(AvcTestRig& rig) {
+    return [&rig, guid = rig.Route().guid] { return rig.Routes().CurrentRoute(guid); };
+}
+
+[[nodiscard]] Apogee::RouteProvider NoRoute() {
+    return [] { return std::optional<ASFW::Discovery::DeviceRouteToken>{}; };
+}
 
 // ============================================================================
 // Transport B - meter registers (no AV/C involved)
@@ -87,7 +98,7 @@ TEST(ApogeeMeterRegisters, ReadsInputMetersOffTheBusWithoutAnyFcpTraffic) {
 
     IOReturn status = kIOReturnNotReady;
     InputMeterState state{};
-    MeterRegisters::ReadInput(rig.Bus(), rig.Route(), [] { return true; },
+    MeterRegisters::ReadInput(rig.Bus(), LiveRoute(rig),
                               [&](IOReturn s, InputMeterState value) {
                                   status = s;
                                   state = value;
@@ -99,10 +110,10 @@ TEST(ApogeeMeterRegisters, ReadsInputMetersOffTheBusWithoutAnyFcpTraffic) {
     EXPECT_EQ(rig.Target().CommandCount(), 0U) << "meters are not an AV/C transport";
 }
 
-TEST(ApogeeMeterRegisters, StaleRouteIsRefusedBeforeAnyBusTraffic) {
+TEST(ApogeeMeterRegisters, DeviceWithNoLiveRouteIsRefusedBeforeAnyBusTraffic) {
     AvcTestRig rig;
     IOReturn status = kIOReturnSuccess;
-    MeterRegisters::ReadMixer(rig.Bus(), rig.Route(), [] { return false; },
+    MeterRegisters::ReadMixer(rig.Bus(), NoRoute(),
                               [&](IOReturn s, MixerMeterState) { status = s; });
 
     EXPECT_EQ(status, kIOReturnNotReady);
@@ -112,9 +123,44 @@ TEST(ApogeeMeterRegisters, StaleRouteIsRefusedBeforeAnyBusTraffic) {
 TEST(ApogeeMeterRegisters, UnmappedReadFailsRatherThanReportingZeroLevels) {
     AvcTestRig rig;  // nothing mapped, so the bus answers kTimeout
     IOReturn status = kIOReturnSuccess;
-    MeterRegisters::ReadInput(rig.Bus(), rig.Route(), [] { return true; },
+    MeterRegisters::ReadInput(rig.Bus(), LiveRoute(rig),
                               [&](IOReturn s, InputMeterState) { status = s; });
     EXPECT_EQ(status, kIOReturnError);
+}
+
+TEST(ApogeeMeterRegisters, RouteReboundBeforeTheReadIsResolvedFreshNotFromASnapshot) {
+    // FW-142 regression, meter half: meters shared the CSR reads' validator and
+    // therefore the same stale-snapshot defect.
+    AvcTestRig rig;
+    rig.Bus().MapRead(
+        (static_cast<uint64_t>(MeterRegisters::InputAddress().addressHi) << 32U) |
+            MeterRegisters::InputAddress().addressLo,
+        std::vector<uint8_t>{0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00});
+
+    const auto snapshot = rig.Route();
+    ASSERT_TRUE(static_cast<bool>(snapshot));
+
+    // Same node, same generation, new routeEpoch.
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = snapshot.guid;
+    rom.gen = snapshot.generation;
+    rom.nodeId = static_cast<uint8_t>(snapshot.nodeId);
+    rig.Routes().InvalidateLiveMappingsForBusReset();
+    rig.Routes().UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+
+    ASSERT_NE(rig.Route().routeEpoch, snapshot.routeEpoch);
+    EXPECT_FALSE(rig.Routes().IsCurrent(snapshot));
+
+    IOReturn status = kIOReturnNotReady;
+    InputMeterState state{};
+    MeterRegisters::ReadInput(rig.Bus(), LiveRoute(rig),
+                              [&](IOReturn s, InputMeterState value) {
+                                  status = s;
+                                  state = value;
+                              });
+
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(state.levels[0], 0x200);
 }
 
 // ============================================================================
