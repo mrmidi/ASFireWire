@@ -96,6 +96,24 @@ jobs:
               exit 1
             }
 
+      # The default build must NOT carry the SCSI personality (ASFW_ENABLE_SCSI
+      # defaults to NO): with it present, any dext that stalls in the HBA start
+      # chain can strand the registry into the 60 s busy-timeout boot panic.
+      # Assert absence so a preprocessor regression cannot silently ship it.
+      - name: Verify SCSI personality absent from default dext
+        run: |
+          PLIST=$(find build/DerivedData/Build/Products -path "*net.mrmidi.ASFW.ASFWDriver.dext/Info.plist" | head -1)
+          if [[ -z "$PLIST" ]]; then
+            echo "::error::Built dext Info.plist not found"
+            exit 1
+          fi
+          plutil -lint "$PLIST"
+          if /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:ASFWSCSIControllerService" "$PLIST" >/dev/null 2>&1; then
+            echo "::error::ASFWSCSIControllerService personality present in the DEFAULT build (ASFW_ENABLE_SCSI should default to NO)"
+            exit 1
+          fi
+          echo "SCSI personality absent from default build (expected)."
+
       - name: Configure Tests with Coverage
         run: |
           cmake -S tests -B build/tests \
