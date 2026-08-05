@@ -22,10 +22,6 @@ inline constexpr const char* kInputChannelNames = "ASFWInputChannelNames";
 inline constexpr const char* kOutputChannelNames = "ASFWOutputChannelNames";
 inline constexpr const char* kCurrentSampleRate = "ASFWCurrentSampleRate";
 inline constexpr const char* kStreamMode = "ASFWStreamMode";
-inline constexpr const char* kHasPhantomOverride = "ASFWHasPhantomOverride";
-inline constexpr const char* kPhantomSupportedMask = "ASFWPhantomSupportedMask";
-inline constexpr const char* kPhantomInitialMask = "ASFWPhantomInitialMask";
-inline constexpr const char* kBoolControlOverrides = "ASFWBoolControlOverrides";
 
 inline constexpr const char* kBoolClassId = "ClassID";
 inline constexpr const char* kBoolScope = "Scope";

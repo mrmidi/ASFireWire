@@ -657,7 +657,8 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
     return ctx->isoch.FreeTxIsochResources();
 }
 
-// Cross-process RPC (AudioDriver -> ASFWDriver process): runs in the nub's own
+// IIG dispatch across queues, not across processes (see ASFWAudioNub.iig:111
+// and Info.plist IOUserServerOneProcess): runs in the nub's own
 // process, so ivars and the parent -> ServiceContext -> AudioCoordinator chain
 // are valid here (a LOCALONLY variant would dereference the audio side's proxy
 // ivars, which are null).
