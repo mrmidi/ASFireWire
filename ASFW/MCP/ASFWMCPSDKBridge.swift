@@ -75,6 +75,43 @@ extension ASFWMCPToolDefinition {
 
     private var mcpInputSchema: MCP.Value {
         switch name {
+        case "asfw_get_config_rom":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "nodeId": .object([
+                        "type": .string("integer"), "minimum": .int(0), "maximum": .int(63),
+                        "description": .string("Current physical node ID from asfw://nodes.")
+                    ]),
+                    "generation": .object([
+                        "type": .string("integer"), "minimum": .int(0), "maximum": .int(65535),
+                        "description": .string("Current bus generation. Refresh it after every bus reset.")
+                    ]),
+                    "view": .object([
+                        "type": .string("string"),
+                        "enum": .array(["summary", "bib", "tree", "raw"].map(MCP.Value.string)),
+                        "default": .string("summary"),
+                        "description": .string("summary is the concise default; bib supplies annotated bitfields; tree and raw are follow-up views.")
+                    ]),
+                    "startQuadlet": .object([
+                        "type": .string("integer"), "minimum": .int(0),
+                        "default": .int(0),
+                        "description": .string("First cached quadlet for view=raw; ignored by other views.")
+                    ]),
+                    "maxQuadlets": .object([
+                        "type": .string("integer"), "minimum": .int(1), "maximum": .int(64),
+                        "default": .int(32),
+                        "description": .string("Maximum quadlets for view=raw; ignored by other views.")
+                    ]),
+                    "maxTreeEntries": .object([
+                        "type": .string("integer"), "minimum": .int(1), "maximum": .int(128),
+                        "default": .int(64),
+                        "description": .string("Maximum parsed entries for view=tree; ignored by other views.")
+                    ])
+                ]),
+                "required": .array([.string("nodeId"), .string("generation")]),
+                "additionalProperties": .bool(false)
+            ])
         case "asfw_log_query":
             return .object([
                 "type": .string("object"),

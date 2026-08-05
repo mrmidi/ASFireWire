@@ -22,6 +22,7 @@ protocol ASFWDriverControlling {
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
     func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
     func logRingStats() async -> ASFWLogRingStats?
+    func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth]
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -152,6 +153,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             exactGenerationMatch: requestedGeneration == generation,
             byteCount: 256,
             quadletCount: 64,
+            rootDirectoryStartQuadlet: 5,
             parsed: true,
             parseNote: nil,
             guid: node.guid,
@@ -164,8 +166,14 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             linkSpeed: 2,
             vendorName: node.vendorName,
             modelName: node.modelName,
+            vendorId: nil,
+            modelId: nil,
+            modalias: nil,
             units: [],
-            diagnostics: []
+            diagnostics: [],
+            bibFields: [],
+            rawQuadlets: [],
+            tree: []
         )
     }
 
@@ -576,6 +584,27 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             capacityRecords: 40_000,
             perCategory: ["CMP": 18, "Async": 9, "Audio": 15]
         )
+    }
+
+    func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth] {
+        // A device that is streaming cleanly: every packet carries data and the
+        // replay ring is being fed.
+        [ASFWMCPAudioStreamHealth(
+            guid: 0x0011_2233_4455_6677,
+            streaming: true,
+            sampleRateHz: 48_000,
+            inputChannels: 14,
+            outputChannels: 2,
+            packetsSeen: 8_000,
+            dataPackets: 7_936,
+            noDataPackets: 64,
+            shortPackets: 0,
+            invalidCipHeaders: 0,
+            zeroDataBlockSize: 0,
+            geometryMismatch: 0,
+            replayEntries: 7_936,
+            replayEpochResets: 1
+        )]
     }
 
     func recordUnexpectedWriteAttempt() {

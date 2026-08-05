@@ -56,6 +56,35 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
+    @Test func configRomSummaryIsReadOnlyAndCarriesAgentCacheNotes() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+
+        let result = await transport.callTool("asfw_get_config_rom", arguments: .object([
+            "nodeId": .int(0), "generation": .int(17)
+        ]))
+        let data = try object(result)
+
+        #expect(result.ok)
+        #expect(data["view"] == .string("summary"))
+        #expect(data["overview"] != nil)
+        #expect(data["agentNotes"] != nil)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func configRomRefusesAnUnknownView() async {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+
+        let result = await transport.callTool("asfw_get_config_rom", arguments: .object([
+            "nodeId": .int(0), "generation": .int(17), "view": .string("everything")
+        ]))
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .malformedRequest)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func malformedReadBlockReturnsSchemaError() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))

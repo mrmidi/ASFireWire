@@ -90,6 +90,14 @@ add_audio_test(AudioDirectRuntimeTests
 
 
 
+# RX packet decode outcome split. NOTE: the other files under AudioEngineDirect/
+# (DirectTxProbeTests, TxAudioPacketProcessorTests, TxAudioPacketWriterTests) are
+# not registered in any CMakeLists and therefore never run.
+add_audio_test(RxAudioPacketProcessorTests
+    AudioEngineDirect/RxAudioPacketProcessorTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
+)
+
 # Isoch TX Descriptor Slab Tests
 add_audio_test(IsochTxDescriptorSlabTests
     IsochTxDescriptorSlabTests.cpp
@@ -183,6 +191,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/AlesisMultiMixProfile.cpp"
 )
 
 # IT Descriptor Layout Tests

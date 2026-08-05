@@ -346,6 +346,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("summary")
     subparsers.add_parser("tools")
     subparsers.add_parser("resources")
+    rom = subparsers.add_parser(
+        "rom",
+        help="Read a cached Config-ROM view without expanding the MCP result envelope.",
+    )
+    rom.add_argument("node_id", type=int)
+    rom.add_argument("generation", type=int)
+    rom.add_argument("--view", choices=("summary", "bib", "tree", "raw"), default="summary")
+    rom.add_argument("--start-quadlet", type=int, default=0)
+    rom.add_argument("--max-quadlets", type=int, default=32)
+    rom.add_argument("--max-tree-entries", type=int, default=64)
     read = subparsers.add_parser("read")
     read.add_argument("uri")
     call = subparsers.add_parser("call")
@@ -375,6 +385,20 @@ def main() -> int:
             output = read_resource(client, args.uri)
             if args.compact:
                 output = unwrap(output)
+        elif args.command == "rom":
+            # This tool only projects the driver's discovery cache. It does not
+            # trigger a Config-ROM fetch or issue any bus transaction.
+            output = compact_call(client.request("tools/call", {
+                "name": "asfw_get_config_rom",
+                "arguments": {
+                    "nodeId": args.node_id,
+                    "generation": args.generation,
+                    "view": args.view,
+                    "startQuadlet": args.start_quadlet,
+                    "maxQuadlets": args.max_quadlets,
+                    "maxTreeEntries": args.max_tree_entries,
+                },
+            }))
         else:
             if not args.allow_mutation and not is_safe_tool(args.tool):
                 raise MCPError(

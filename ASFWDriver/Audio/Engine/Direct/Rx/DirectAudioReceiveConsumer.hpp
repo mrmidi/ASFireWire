@@ -104,6 +104,11 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     ReplayReadyCallback replayReadyCallback_{};
     bool replayReadyNotified_{false};
     bool replayResetForStart_{false};
+    // Bounded [RxReplayReset] records for a stream that has not established yet.
+    // Re-armed at each bring-up; without a budget a permanently-rejected stream
+    // would log at the isochronous packet rate.
+    static constexpr uint32_t kBootstrapResetLogBudget = 8;
+    uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
     ::ASFW::Audio::Runtime::PayloadWriterTelemetryAnomalyAggregator

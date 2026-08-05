@@ -53,6 +53,18 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let rxTotalStarvedFrames: UInt64
     let rxCompletedOccupancyHistogram: [UInt64]
     let inputFrameCapacityFrames: UInt32
+    // Wire v3 bring-up attribution. Read as a combination: all-zero means no
+    // packet reached the consumer at all; packetsSeen == noDataPackets means the
+    // device really is sending only CIP NO-DATA; a non-zero reject counter means
+    // ASFW rejected packets the device did send (geometryMismatch in particular
+    // means our profile and the device disagree on channels/DBS).
+    let rxPacketsSeen: UInt64
+    let rxDataPackets: UInt64
+    let rxNoDataPackets: UInt64
+    let rxShortPackets: UInt64
+    let rxInvalidCipHeaders: UInt64
+    let rxZeroDataBlockSize: UInt64
+    let rxGeometryMismatch: UInt64
 
     var id: UInt64 { guid }
     var isStreaming: Bool { (flags & (1 << 1)) != 0 }
@@ -88,9 +100,9 @@ extension ASFWDriverConnector {
 }
 
 private enum AudioTelemetryWireDecoder {
-    private static let version = 2
+    private static let version = 3
     private static let headerBytes = 8
-    private static let endpointBytes = 376
+    private static let endpointBytes = 432
     private static let maximumEndpoints = 8
 
     static func decode(_ data: Data) -> AudioTelemetrySnapshot? {
@@ -148,7 +160,14 @@ private enum AudioTelemetryWireDecoder {
               let rxStarvationEvents = u64(304),
               let rxTotalOverwrittenFrames = u64(312),
               let rxTotalStarvedFrames = u64(320),
-              let inputFrameCapacityFrames = u32(368) else {
+              let inputFrameCapacityFrames = u32(368),
+              let rxPacketsSeen = u64(376),
+              let rxDataPackets = u64(384),
+              let rxNoDataPackets = u64(392),
+              let rxShortPackets = u64(400),
+              let rxInvalidCipHeaders = u64(408),
+              let rxZeroDataBlockSize = u64(416),
+              let rxGeometryMismatch = u64(424) else {
             return nil
         }
         let latencyHistogram = (0..<6).compactMap { u64(96 + $0 * 8) }
@@ -196,7 +215,14 @@ private enum AudioTelemetryWireDecoder {
             rxTotalOverwrittenFrames: rxTotalOverwrittenFrames,
             rxTotalStarvedFrames: rxTotalStarvedFrames,
             rxCompletedOccupancyHistogram: rxOccupancyHistogram,
-            inputFrameCapacityFrames: inputFrameCapacityFrames
+            inputFrameCapacityFrames: inputFrameCapacityFrames,
+            rxPacketsSeen: rxPacketsSeen,
+            rxDataPackets: rxDataPackets,
+            rxNoDataPackets: rxNoDataPackets,
+            rxShortPackets: rxShortPackets,
+            rxInvalidCipHeaders: rxInvalidCipHeaders,
+            rxZeroDataBlockSize: rxZeroDataBlockSize,
+            rxGeometryMismatch: rxGeometryMismatch
         )
     }
 }

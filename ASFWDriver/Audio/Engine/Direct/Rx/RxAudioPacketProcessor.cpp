@@ -21,7 +21,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
-        result.status = DirectRxWriteStatus::kInvalidRange;
+        result.status = DirectRxWriteStatus::kShortPacket;
         return result;
     }
 
@@ -35,7 +35,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     // Decode CIP Header (quadlets[0] and quadlets[1])
     const auto cip = ASFW::Isoch::CIPHeader::Decode(quadlets[0], quadlets[1]);
     if (!cip) {
-        result.status = DirectRxWriteStatus::kInvalidRange;
+        result.status = DirectRxWriteStatus::kInvalidCipHeader;
         return result;
     }
 
@@ -48,7 +48,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     const size_t payloadBytes = length - kIsochHeaderSize - 8;
     const size_t dbsBytes = static_cast<size_t>(cip->dataBlockSize) * 4u;
     if (dbsBytes == 0) {
-        result.status = DirectRxWriteStatus::kInvalidRange;
+        result.status = DirectRxWriteStatus::kZeroDataBlockSize;
         return result;
     }
 
@@ -70,7 +70,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     if (channels == 0 ||
         cip->dataBlockSize < channels ||
         am824Slots != cip->dataBlockSize) {
-        result.status = DirectRxWriteStatus::kInvalidRange;
+        result.status = DirectRxWriteStatus::kGeometryMismatch;
         return result;
     }
 

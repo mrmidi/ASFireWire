@@ -17,7 +17,7 @@
 
 namespace ASFW::Audio::Runtime {
 
-constexpr uint32_t kAudioTelemetryWireVersion = 2;
+constexpr uint32_t kAudioTelemetryWireVersion = 3;
 constexpr uint32_t kAudioTelemetryMaxEndpoints = 8;
 
 enum AudioTelemetryFlags : uint32_t {
@@ -79,9 +79,25 @@ struct AudioTelemetryEndpointSnapshot final {
                    kRxCaptureOccupancyHistogramBuckets>
         rxCompletedOccupancyHistogram{};
     uint32_t inputFrameCapacityFrames{0};
+    // Wire v3. Appended at the tail deliberately: the app parses this struct by
+    // fixed byte offset (DriverConnector+AudioTelemetry.swift), so new fields go
+    // last or every existing offset shifts.
+    //
+    // Bring-up attribution; see AudioTransportControlBlock for how to read the
+    // combination. These make a never-establishing stream explainable without a
+    // packet analyser: all-zero means nothing arrived, seen == noData means the
+    // device really is sending only CIP NO-DATA, and a non-zero reject counter
+    // means ASFW rejected packets the device did send.
+    uint64_t rxPacketsSeen{0};
+    uint64_t rxDataPackets{0};
+    uint64_t rxNoDataPackets{0};
+    uint64_t rxShortPackets{0};
+    uint64_t rxInvalidCipHeaders{0};
+    uint64_t rxZeroDataBlockSize{0};
+    uint64_t rxGeometryMismatch{0};
 };
 
-static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 376);
+static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 432);
 
 struct AudioTelemetrySnapshot final {
     uint32_t version{kAudioTelemetryWireVersion};
@@ -89,7 +105,7 @@ struct AudioTelemetrySnapshot final {
     std::array<AudioTelemetryEndpointSnapshot, kAudioTelemetryMaxEndpoints> endpoints{};
 };
 
-static_assert(sizeof(AudioTelemetrySnapshot) == 3016);
+static_assert(sizeof(AudioTelemetrySnapshot) == 3464);
 
 inline void CopyAudioTelemetrySnapshot(
     const AudioTransportControlBlock& control,
@@ -105,6 +121,13 @@ inline void CopyAudioTelemetrySnapshot(
     out.preparationAtLeast1500Us = control.txPreparationAtLeast1500Us.load(memoryOrder);
     out.rxReplayEntries = control.rxReplayEntries.load(memoryOrder);
     out.rxReplayEpochResets = control.rxReplayEpochResets.load(memoryOrder);
+    out.rxPacketsSeen = control.rxPacketsSeen.load(memoryOrder);
+    out.rxDataPackets = control.rxDataPackets.load(memoryOrder);
+    out.rxNoDataPackets = control.rxNoDataPackets.load(memoryOrder);
+    out.rxShortPackets = control.rxShortPackets.load(memoryOrder);
+    out.rxInvalidCipHeaders = control.rxInvalidCipHeaders.load(memoryOrder);
+    out.rxZeroDataBlockSize = control.rxZeroDataBlockSize.load(memoryOrder);
+    out.rxGeometryMismatch = control.rxGeometryMismatch.load(memoryOrder);
     out.currentCommittedMarginPackets =
         control.txCurrentCommittedMarginPackets.load(memoryOrder);
     out.minimumCommittedMarginPackets =
