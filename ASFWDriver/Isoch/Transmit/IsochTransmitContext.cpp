@@ -6,6 +6,7 @@
 //
 
 #include "IsochTransmitContext.hpp"
+#include "../../Common/DriverKitOwnership.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Common/TimingUtils.hpp"
@@ -105,7 +106,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         ASFW_LOG(Isoch, "IT: Failed to map payload slab: 0x%08x", kr);
         return kr;
     }
-    payloadMap_ = OSSharedPtr<IOMemoryMap>(pMap, OSNoRetain);
+    payloadMap_ = Common::AdoptRetained(pMap);
     payloadBase_ = reinterpret_cast<uint8_t*>(payloadMap_->GetAddress());
 
     // Prepare Payload Slab for DMA (to get IOVA)
@@ -191,7 +192,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         ASFW_LOG(Isoch, "IT: Failed to map metadata ring: 0x%08x", kr);
         return kr;
     }
-    metadataMap_ = OSSharedPtr<IOMemoryMap>(mMap, OSNoRetain);
+    metadataMap_ = Common::AdoptRetained(mMap);
     metadataRing_ = reinterpret_cast<IsochTxPacketMeta*>(metadataMap_->GetAddress());
 
     // 3. Map Control Block
@@ -201,7 +202,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         ASFW_LOG(Isoch, "IT: Failed to map control block: 0x%08x", kr);
         return kr;
     }
-    controlMap_ = OSSharedPtr<IOMemoryMap>(cMap, OSNoRetain);
+    controlMap_ = Common::AdoptRetained(cMap);
     controlBlock_ = reinterpret_cast<IsochTxQueueControl*>(controlMap_->GetAddress());
 
     // Populate structural fields

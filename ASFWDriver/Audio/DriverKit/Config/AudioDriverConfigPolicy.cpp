@@ -5,17 +5,6 @@
 #include <cstring>
 
 namespace ASFW::Isoch::Audio {
-namespace {
-
-void AppendBoolControl(ParsedAudioDriverConfig& inOutConfig,
-                       const BoolControlDescriptor& descriptor) {
-    if (inOutConfig.boolControlCount >= kMaxBoolControls) {
-        return;
-    }
-    inOutConfig.boolControls[inOutConfig.boolControlCount++] = descriptor;
-}
-
-} // namespace
 
 void InitializeAudioDriverConfigDefaults(ParsedAudioDriverConfig& outConfig) {
     outConfig = {};

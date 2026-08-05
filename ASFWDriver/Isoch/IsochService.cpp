@@ -623,8 +623,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         ASFW_LOG(Isoch, "IsochService: Failed to allocate payload slab: 0x%08x", kr);
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txPayloadSlab_[streamIndex] =
-        OSSharedPtr<IOBufferMemoryDescriptor>(payloadDescriptor, OSNoRetain);
+    txPayloadSlab_[streamIndex] = Common::AdoptRetained(payloadDescriptor);
 
     // 2. Allocate metadata ring (cacheline aligned)
     const size_t metadataRingBytes =
@@ -637,8 +636,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         txPayloadSlab_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txMetadataRing_[streamIndex] =
-        OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
+    txMetadataRing_[streamIndex] = Common::AdoptRetained(metadataDescriptor);
 
     // 3. Allocate control block (cacheline aligned)
     const size_t controlBlockBytes = sizeof(ASFW::Isoch::IsochTxQueueControl);
@@ -651,8 +649,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         txMetadataRing_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txControlBlock_[streamIndex] =
-        OSSharedPtr<IOBufferMemoryDescriptor>(controlDescriptor, OSNoRetain);
+    txControlBlock_[streamIndex] = Common::AdoptRetained(controlDescriptor);
 
     // Return the descriptors to the caller with retained references
     *outPayloadSlab = txPayloadSlab_[streamIndex].get();

@@ -17,22 +17,6 @@ namespace {
 
 namespace Keys = ASFW::Audio::Model::PropertyKeys;
 
-[[nodiscard]] bool ReadOSBoolValue(OSObject* object, bool fallback) {
-    auto* booleanObject = OSDynamicCast(OSBoolean, object);
-    if (booleanObject == nullptr) {
-        return fallback;
-    }
-    return booleanObject == kOSBooleanTrue;
-}
-
-void AppendBoolControl(ParsedAudioDriverConfig& inOutConfig,
-                       const BoolControlDescriptor& descriptor) {
-    if (inOutConfig.boolControlCount >= kMaxBoolControls) {
-        return;
-    }
-    inOutConfig.boolControls[inOutConfig.boolControlCount++] = descriptor;
-}
-
 void ParseIdentityProperties(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
     if (auto* guid = OSDynamicCast(OSNumber, properties->getObject(Keys::kGuid))) {
         inOutConfig.guid = guid->unsigned64BitValue();
