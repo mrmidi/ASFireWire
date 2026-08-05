@@ -53,6 +53,8 @@ public:
     // never stalls is unaffected.
     void ReArmFrameCursorAlignment() noexcept;
 
+    [[nodiscard]] bool IsFrameCursorAligned() const noexcept { return frameCursorAligned_; }
+
     bool PrepareNextPacket(TxPacketSlotView slot,
                            const AmdtpTimingState& timing,
                            PreparedTxPacket& outPacket) noexcept;

@@ -260,16 +260,37 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         directControl->rxSequenceReplay, replay,
                         &replayDiagnostic);
                 }
+                bool selfHealed = false;
+                const bool masterAligned = ivars.runtime.txStreamEngine.IsFrameCursorAligned();
+                const bool secondaryAligned = ivars.runtime.txSecondaryActive && ivars.runtime.txStreamEngineSecondary.IsFrameCursorAligned();
+                if (masterAligned || secondaryAligned) {
+                    const uint64_t exposedFrame =
+                        ivars.runtime.txStreamEngine.Timeline().ExposedFrameEnd();
+                    const uint64_t writeFrame =
+                        directControl->txExposureSampleWriteFrame.load(
+                            std::memory_order_relaxed);
+                    if (writeFrame > exposedFrame) {
+                        if (masterAligned) {
+                            ivars.runtime.txStreamEngine.ReArmFrameCursorAlignment();
+                        }
+                        if (secondaryAligned) {
+                            ivars.runtime.txStreamEngineSecondary
+                                .ReArmFrameCursorAlignment();
+                        }
+                        selfHealed = true;
+                    }
+                }
                 ASFW_LOG_RING_ONLY_RL(
                     DirectAudio,
                     "tx-replay-reclamp",
                     1000u,
                     ::ASFW::Logging::LogLevel::Warning,
-                    "[TxReplay] reclamped pkt=%llu cur=%llu prod=%llu ok=%u",
+                    "[TxReplay] reclamped pkt=%llu cur=%llu prod=%llu ok=%u selfHealed=%u",
                     nextPacketToPrepare,
                     replayDiagnostic.readerCursor,
                     replayDiagnostic.producerCursor,
-                    replayReadable ? 1u : 0u);
+                    replayReadable ? 1u : 0u,
+                    selfHealed ? 1u : 0u);
             }
             if (replayReadable) {
                 directControl->txReplayEntries.fetch_add(
