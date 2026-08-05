@@ -274,6 +274,16 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
             FinishRecovery(guid);
             return;
         }
+        if (status == kIOReturnUnsupported) {
+            // The policy declined to recover; nothing ran, so this is neither a
+            // success to announce nor a failure to escalate (FW-146).
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: Recovery not applicable GUID=%llx reason=%u",
+                     guid,
+                     static_cast<unsigned>(reason));
+            FinishRecovery(guid);
+            return;
+        }
 
         ASFW_LOG_ERROR(Audio,
                        "DiceAudioBackend: Recovery failed GUID=%llx reason=%u kr=0x%x",
