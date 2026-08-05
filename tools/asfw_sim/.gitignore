@@ -1,0 +1,10 @@
+# uv-managed environment; recreate with `uv sync --extra dev`
+.venv/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# uv.lock IS committed: the sim's conclusions must be reproducible.
