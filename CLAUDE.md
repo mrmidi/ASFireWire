@@ -12,13 +12,14 @@ Two components:
 
 ## Build Commands
 
-**`ASFW.xcodeproj` is GENERATED from the root `project.yml` (XcodeGen).** Never
-edit the pbxproj or hand-tune settings in Xcode — change `project.yml` and run
-`xcodegen generate` (`./build.sh` does it automatically when xcodegen is
-installed). After adding/removing/renaming source files, regenerate and commit
-the updated `ASFW.xcodeproj` together with `project.yml`. Output is
-deterministic; the generated project stays committed so CI builds without
-xcodegen. (`ADKVirtualAudioLab/` has its own separate `project.yml`.)
+**`ASFW.xcodeproj` is GENERATED from the root `project.yml` (XcodeGen) and is
+gitignored — never commit it.** Never edit the pbxproj or hand-tune settings in
+Xcode either; change `project.yml` and run `xcodegen generate` (`./build.sh`
+does it automatically when xcodegen is installed). After adding/removing/renaming
+source files, update `project.yml` and commit *that* — there is no generated
+project to commit alongside it. XcodeGen is a build prerequisite for every
+checkout, including CI. (`ADKVirtualAudioLab/` has its own separate
+`project.yml`.)
 
 **Primary build (Xcode — required for signing and producing `.dext`):**
 ```bash

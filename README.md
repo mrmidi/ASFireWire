@@ -428,12 +428,12 @@ Build scripts or CMakeLists are for quick testing and creating compile_commands.
 
 `ASFW.xcodeproj` is generated from the root [`project.yml`](project.yml) with
 [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
-The generated project is committed, so plain checkouts (and CI) build without
-XcodeGen installed — but **never edit the pbxproj or project settings in the
-Xcode UI**; change `project.yml` instead.
+The generated project is **not committed** — it is gitignored, so XcodeGen is a
+build prerequisite for checkouts and CI alike. Never edit the pbxproj or project
+settings in the Xcode UI; change `project.yml` instead.
 
-After **adding, removing, or renaming source files**, regenerate the project
-and commit it together with your change:
+Generate it after cloning, and again after **adding, removing, or renaming
+source files**:
 
 ```bash
 xcodegen generate     # ./build.sh does this automatically when xcodegen is installed
@@ -561,11 +561,11 @@ Contributions are VERY welcome! If you want to contribute to the project, please
 4. Push your changes to your forked repository
 5. Open a pull request on the original repository, describing your changes and why they should be merged
 
-> **Note:** `ASFW.xcodeproj` is generated from `project.yml` (see
-> [Building](#building)). If your change adds, removes, or renames source
-> files, run `xcodegen generate` and include the regenerated project in the
-> same commit. Don't hand-edit the pbxproj or change build settings through
-> the Xcode UI — those changes will be overwritten; edit `project.yml` instead.
+> **Note:** `ASFW.xcodeproj` is generated from `project.yml` and is not tracked
+> in git (see [Building](#building)). If your change adds, removes, or renames
+> source files, edit `project.yml` and commit that. Don't hand-edit the pbxproj
+> or change build settings through the Xcode UI — those changes are wiped on the
+> next `xcodegen generate`.
 
 Literally any help is appreciated, from fixing typos in documentation to implementing new features or fixing bugs. Writing tests, improving code quality, testing on hardware, and reporting regressions are all valuable. Hardware reports for supported Saffire devices are especially useful right now. If you have any experience with FireWire protocol, just opening an issue or emailing me is invaluable. If you have any experience with Swift, the ASFW app could use some love too.
 

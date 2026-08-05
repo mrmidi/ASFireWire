@@ -34,6 +34,13 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
+      # ASFW.xcodeproj is gitignored XcodeGen output — build.sh regenerates it,
+      # but only when xcodegen is on PATH, so install it before building.
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
       - name: Build (Release, unsigned by design)
         run: |
           chmod +x build.sh bump.sh sign.sh

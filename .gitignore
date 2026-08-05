@@ -64,7 +64,8 @@ build-codex/
 # Node modules (for lint-math tooling)
 node_modules/
 
-# Xcode generated projects
+# Xcode generated projects (XcodeGen output — regenerate with `xcodegen generate`)
+/ASFW.xcodeproj/
 ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
 
 # In-tree reference stacks (third-party, local only — wire-compat doctrine refs)
