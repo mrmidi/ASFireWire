@@ -455,11 +455,6 @@ kern_return_t ControllerCore::Start(IOService* provider) {
         return kIOReturnSuccess;
     }
 
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kStarting, "ControllerCore::Start",
-                                         mach_absolute_time());
-    }
-
     LogBuildBanner();
 
     const kern_return_t initStatus = InitializeBusResetAndDiscovery();
@@ -478,21 +473,11 @@ kern_return_t ControllerCore::Start(IOService* provider) {
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Controller, "❌ Hardware initialization failed: 0x%08x", kr);
         hardwareAttached_ = false;
-        if (deps_.stateMachine) {
-            deps_.stateMachine->TransitionTo(ControllerState::kFailed,
-                                             "ControllerCore::Start hardware init failed",
-                                             mach_absolute_time());
-        }
         return kr;
     }
 
     if (!deps_.interrupts) {
         ASFW_LOG_V0(Controller, "❌ CRITICAL: No InterruptManager - cannot enable interrupts!");
-        if (deps_.stateMachine) {
-            deps_.stateMachine->TransitionTo(ControllerState::kFailed,
-                                             "ControllerCore::Start missing InterruptManager",
-                                             mach_absolute_time());
-        }
         return kIOReturnNoResources;
     }
 
@@ -511,11 +496,6 @@ kern_return_t ControllerCore::Start(IOService* provider) {
         deps_.interrupts->Disable();
         running_ = false;
         hardwareAttached_ = false;
-        if (deps_.stateMachine) {
-            deps_.stateMachine->TransitionTo(ControllerState::kFailed,
-                                             "ControllerCore::Start enable failed",
-                                             mach_absolute_time());
-        }
         return kr;
     }
 
@@ -527,10 +507,6 @@ kern_return_t ControllerCore::Start(IOService* provider) {
         }
     }
 
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kRunning,
-                                         "ControllerCore::Start complete", mach_absolute_time());
-    }
     return kIOReturnSuccess;
 }
 
@@ -541,19 +517,8 @@ void ControllerCore::Stop() {
 
     ASFW_LOG(Controller, "ControllerCore::Stop - beginning shutdown sequence");
 
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kQuiescing, "ControllerCore::Stop",
-                                         mach_absolute_time());
-    }
-
-    // Disable interrupts FIRST to prevent new events during shutdown
-    if (deps_.interrupts) {
-        ASFW_LOG(Controller, "Disabling IOInterruptDispatchSource...");
-        deps_.interrupts->Disable();
-        ASFW_LOG(Controller, "✓ Interrupts disabled");
-    }
-
-    // Mark as not running to prevent HandleInterrupt from processing events
+    // Root lifecycle admission and interrupt-source shutdown are owned by
+    // RuntimeLifecycleCoordinator. ControllerCore only tears down resources it owns.
     running_ = false;
 
     if (deps_.topologyMapService) {
@@ -564,22 +529,11 @@ void ControllerCore::Stop() {
         deps_.busManagerElectionDriver->Stop();
     }
 
-    if (hardwareAttached_ && deps_.hardware) {
-        if (deps_.configRomStager) {
-            deps_.configRomStager->Teardown(*deps_.hardware);
-        }
-        deps_.hardware->Detach();
-        hardwareAttached_ = false;
-    }
+    hardwareAttached_ = false;
 
     hardwareInitialised_ = false;
     phyProgramSupported_ = false;
     phyConfigOk_ = false;
-
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kStopped, "ControllerCore::Stop complete",
-                                         mach_absolute_time());
-    }
 
     ASFW_LOG(Controller, "✓ ControllerCore::Stop complete");
 }
@@ -839,7 +793,8 @@ kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
     // Before the link is up there is nothing to re-advertise — Start() stages the
     // Config ROM from rolePolicy_ during bring-up. Once running, re-stage the BIB
     // capabilities and force a long bus reset so peers re-read the local ROM.
-    if (!running_ || !deps_.hardware) {
+    if (!deps_.stateMachine || deps_.stateMachine->CurrentState() != ControllerState::kRunning ||
+        !deps_.hardware) {
         return kIOReturnSuccess;
     }
 
