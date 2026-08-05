@@ -462,24 +462,14 @@ Enabling `systemextensionsctl developer on` is recommended — it allows install
 
 Every build includes a SCSI host adapter (`ASFWSCSIControllerService`) that exposes
 SBP-2 FireWire devices — film scanners, disks — to macOS, so tools like VueScan see
-them as regular SCSI devices.
+them as regular SCSI devices. It needs no setup beyond the driver installation
+itself.
 
-Earlier versions kept this behind a build flag because of a boot-panic report
-(issue #54): if the driver's SCSI startup ever stalls, macOS panics the machine
-60 seconds into boot. The startup path has since been redesigned so it never
-waits on anything (a device is only published once one actually logs in on the
-bus), and this has been hardware-validated — booting with the FireWire adapter
-connected and no device powered on completes startup in milliseconds. The full
-mechanism analysis lives in issue #54 and PR #96.
-
-The SCSI part requires no extra setup: it uses the same SIP-disabled +
-developer-mode installation as the rest of the driver.
-
-If a machine ever ends up in a panic loop: boot into Recovery, `csrutil disable`,
-boot normally, uninstall the extension
+If the machine ever ends up in a boot panic loop with the driver installed: boot
+into Recovery, `csrutil disable`, boot normally, uninstall the extension
 (`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver`), then re-enable SIP.
-As a last resort, `sudo nvram boot-args="io=0"` sets `kIOWaitQuietPanics` off so the
-busy timeout logs instead of panicking (unverified; clear with `sudo nvram -d boot-args`).
+As a last resort, `sudo nvram boot-args="io=0"` makes macOS log the failure instead
+of panicking (clear with `sudo nvram -d boot-args`).
 
 ## Installing a prebuilt build (testers)
 
