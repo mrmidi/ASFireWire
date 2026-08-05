@@ -112,7 +112,7 @@ def test_empty_response_is_not_an_error():
     assert cap.cursor_rates() is None
 
 
-# --- the committed real capture -----------------------------------------------
+# --- the real capture (local-only, gitignored; these skip without it) -----------------------------------------------
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="real capture not present")
@@ -125,7 +125,7 @@ def test_real_capture_parses_into_known_tags():
 
 @pytest.mark.skipif(not REAL.exists(), reason="real capture not present")
 def test_real_capture_shows_the_deficit_ramp():
-    """The committed Duet run: E loses ground against W, monotonically enough
+    """The recorded Duet run: E loses ground against W, monotonically enough
     that a least-squares slope is unambiguously positive."""
     cap = load_capture(REAL)
     slope = cap.deficit_slope_per_s()

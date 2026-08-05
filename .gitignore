@@ -93,3 +93,13 @@ __pycache__/
 
 # references - libffado, apple, linux firewire ohci driver, linux sound/firewire stack, alsa snd-firewire-ctl-services
 /references/
+
+# Driver telemetry captures. Raw MCP/log dumps are megabytes of machine output
+# and belong on the machine that produced them, not in the tree. The analysis
+# that cites them stays committed (tools/asfw_sim/FINDINGS.md, captures/*.md);
+# asfw_sim's importer tests skip when the raw JSON is absent.
+/capture_died.json
+/raw_mcp_dump_died_new.json
+/mcp_log_query.json
+/mcp_log_query_latest.json
+/captures/**/*.json

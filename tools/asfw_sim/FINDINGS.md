@@ -377,7 +377,9 @@ MMIO on the driver's queue, and a single PHY timeout exceeds the stall cliff.
 ## F9 — a THIRD mechanism: E advances at a slower *rate* than W
 
 The 2026-07-19 cold-start capture (`captures/2026-07-19-duet-coldstart-to-silence.json`,
-192 s, 337 cursor points) does not match F6 or F2.
+192 s, 337 cursor points) does not match F6 or F2. That raw JSON is local-only —
+it is gitignored, so a fresh clone will not have it and `asfw_sim`'s importer
+tests skip. Ask for the file if you need to re-derive the numbers below.
 
 ```
 lead E-W:  +1352  ->  -39,860 frames     crossed zero at ~57 s
