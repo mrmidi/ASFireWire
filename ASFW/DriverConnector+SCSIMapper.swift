@@ -37,16 +37,18 @@ extension ASFWDriverConnector {
     }
 
     /// Pure selection logic, split out for testability: exact
-    /// `dart-<complex>-piodma` match first, then any DART in the same
-    /// complex, then any DART at all.
+    /// `mapper-<complex>-piodma` match first, then any mapper in the same
+    /// complex, then any mapper at all. The trailing hyphen in tier two
+    /// keeps `apciec1` from matching `mapper-apciec10-…`.
     static func selectDARTCandidate(
         complex: String?, candidates: [(name: String, id: UInt32)]
     ) -> UInt32? {
         if let complex {
-            if let exact = candidates.first(where: { $0.name == "dart-\(complex)-piodma" }) {
+            if let exact = candidates.first(where: { $0.name == "mapper-\(complex)-piodma" }) {
                 return exact.id
             }
-            if let sameComplex = candidates.first(where: { $0.name.hasPrefix("dart-\(complex)") }) {
+            if let sameComplex = candidates.first(where: { $0.name.hasPrefix("mapper-\(complex)-") })
+            {
                 return sameComplex.id
             }
         }
@@ -82,13 +84,14 @@ extension ASFWDriverConnector {
         }
     }
 
-    /// Every `dart-*`-named IOService-plane entry publishing an IOMapperID.
+    /// Every IODARTMapper publishing an IOMapperID, named by its
+    /// IODARTMapperNub parent (e.g. `mapper-apciec0-piodma`). No registry
+    /// entry named `dart-*` carries IOMapperID — the property lives on the
+    /// IODARTMapper child of the mapper nub.
     private static func dartMapperCandidates() -> [(name: String, id: UInt32)] {
         var iterator: io_iterator_t = 0
-        let root = IORegistryGetRootEntry(kIOMainPortDefault)
-        guard IORegistryEntryCreateIterator(
-            root, "IOService", IOOptionBits(kIORegistryIterateRecursively), &iterator)
-            == KERN_SUCCESS
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault, IOServiceMatching("IODARTMapper"), &iterator) == KERN_SUCCESS
         else { return [] }
         defer { IOObjectRelease(iterator) }
 
@@ -98,11 +101,6 @@ extension ASFWDriverConnector {
             guard entry != 0 else { break }
             defer { IOObjectRelease(entry) }
 
-            var nameBuffer = [CChar](repeating: 0, count: 128)
-            guard IORegistryEntryGetName(entry, &nameBuffer) == KERN_SUCCESS else { continue }
-            let name = String(cString: nameBuffer)
-            guard name.hasPrefix("dart-") else { continue }
-
             guard
                 let data = IORegistryEntryCreateCFProperty(
                     entry, "IOMapperID" as CFString, kCFAllocatorDefault, 0)?
@@ -110,7 +108,14 @@ extension ASFWDriverConnector {
                 data.count >= 4
             else { continue }
             let id = data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
-            candidates.append((name: name, id: UInt32(littleEndian: id)))
+
+            var parent: io_registry_entry_t = 0
+            guard IORegistryEntryGetParentEntry(entry, "IOService", &parent) == KERN_SUCCESS
+            else { continue }
+            defer { IOObjectRelease(parent) }
+            var nameBuffer = [CChar](repeating: 0, count: 128)
+            guard IORegistryEntryGetName(parent, &nameBuffer) == KERN_SUCCESS else { continue }
+            candidates.append((name: String(cString: nameBuffer), id: UInt32(littleEndian: id)))
         }
         return candidates
     }

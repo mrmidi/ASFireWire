@@ -3,10 +3,10 @@ import XCTest
 
 final class DARTCandidateSelectionTests: XCTestCase {
     private let candidates: [(name: String, id: UInt32)] = [
-        ("dart-apciec1-piodma", 0x61),
-        ("dart-apciec0", 0x55),
-        ("dart-apciec0-piodma", 0x57),
-        ("dart-disp0", 0x41),
+        ("mapper-apciec1-piodma", 0x61),
+        ("mapper-apciec0-3-0-0", 0x55),
+        ("mapper-apciec0-piodma", 0x57),
+        ("mapper-disp0-piodma", 0x41),
     ]
 
     func testPrefersExactPiodmaMatchForComplex() {
@@ -16,7 +16,7 @@ final class DARTCandidateSelectionTests: XCTestCase {
     }
 
     func testFallsBackToSameComplexPrefix() {
-        let withoutExact = candidates.filter { $0.name != "dart-apciec0-piodma" }
+        let withoutExact = candidates.filter { $0.name != "mapper-apciec0-piodma" }
         XCTAssertEqual(
             ASFWDriverConnector.selectDARTCandidate(complex: "apciec0", candidates: withoutExact),
             0x55)
