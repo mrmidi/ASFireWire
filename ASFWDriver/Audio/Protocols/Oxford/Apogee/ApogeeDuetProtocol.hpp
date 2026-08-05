@@ -10,6 +10,7 @@
 #include "../../IDeviceProtocol.hpp"
 #include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
+#include "../../../../Scheduling/ITimerScheduler.hpp"
 #include <DriverKit/IOReturn.h>
 #include <vector>
 #include <functional>
@@ -111,7 +112,8 @@ public:
                        IRM::IRMClient* irmClient = nullptr,
                        CMP::CMPClient* cmpClient = nullptr,
                        uint64_t deviceGuid = 0,
-                       uint32_t formatSettleDelayMs = 100U);
+                       uint32_t formatSettleDelayMs = 100U,
+                       Scheduling::ITimerScheduler* timerScheduler = nullptr);
     virtual ~ApogeeDuetProtocol() = default;
 
     // IDeviceProtocol implementation
@@ -245,6 +247,13 @@ private:
     bool outputConnected_{false};
     bool inputConnected_{false};
     uint32_t formatSettleDelayMs_{100U};
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+
+    std::shared_ptr<ClockTransition> activeClockTransition_{nullptr};
+    uint64_t activeClockTransitionEpoch_{0};
+    uint64_t nextClockTransitionEpoch_{0};
+
+    [[nodiscard]] bool IsActive(const ClockTransition& transition) const noexcept;
 
     // Helpers
     using VendorResultCallback = std::function<void(IOReturn, const VendorCommand&)>;
@@ -263,8 +272,11 @@ private:
     void AdvanceClockTransition(const std::shared_ptr<ClockTransition>& transition);
     void FailClockTransition(const std::shared_ptr<ClockTransition>& transition,
                              IOReturn status);
+    void CancelClockTransition(IOReturn status);
     void CompleteClockTransition(const std::shared_ptr<ClockTransition>& transition,
                                  IOReturn status);
+    void FinishClockTransition(const std::shared_ptr<ClockTransition>& transition,
+                                IOReturn status);
 
     static uint32_t ReadQuadletBE(const uint8_t* data) noexcept;
 
@@ -282,3 +294,4 @@ private:
 };
 
 } // namespace ASFW::Audio::Oxford::Apogee
+

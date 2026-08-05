@@ -79,7 +79,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         // Factory path intentionally does not bind FCP transport yet.
         // AVCDiscovery wires transport for live command execution.
         return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
-            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient, deviceGuid);
+            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient, deviceGuid, 100U, timerScheduler);
     }
 
     if (vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId) {
