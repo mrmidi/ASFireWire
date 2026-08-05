@@ -360,14 +360,24 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         return;
     }
 
-    if (!pending_->successfulWriteAttempt.has_value()) {
+    // AR Request and AR Response are separate DMA contexts. RxPath drains the
+    // request context first, so a target's FCP block write can be delivered
+    // before our earlier command-write acknowledgement is dispatched from AR
+    // Response. That ordering is normal on the wire: the FCP response itself
+    // is definitive proof that the target received and processed this command.
+    // Do not drop it merely because the local write-completion callback is
+    // still queued.
+    const bool responsePrecedesWriteCompletion = !pending_->successfulWriteAttempt.has_value();
+    if (responsePrecedesWriteCompletion && !pending_->activeWriteAttempt.has_value()) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP,
-                     "FCPTransport: Ignoring response before write completion");
+                     "FCPTransport: Ignoring response without an active write attempt");
         return;
     }
 
-    const FCPWriteAttempt successfulAttempt = *pending_->successfulWriteAttempt;
+    const FCPWriteAttempt successfulAttempt = responsePrecedesWriteCompletion
+                                                   ? *pending_->activeWriteAttempt
+                                                   : *pending_->successfulWriteAttempt;
     const uint16_t expectedNodeID = successfulAttempt.targetNodeID;
     const bool exactMatch = srcNodeID == expectedNodeID;
     const bool nodeNumberMatch = (srcNodeID & 0x3F) == (expectedNodeID & 0x3F);
@@ -401,6 +411,15 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         ASFW_LOG_V3(FCP,
                      "FCPTransport: Response validation failed (likely stale/duplicate response)");
         return;
+    }
+
+    if (responsePrecedesWriteCompletion) {
+        // Preserve the delivery proof for diagnostics and make a later async
+        // write completion a harmless stale callback after CompleteCommand().
+        pending_->successfulWriteAttempt = successfulAttempt;
+        ASFW_LOG_V2(FCP,
+                    "FCPTransport: Accepting FCP response before local write completion attempt=%llu",
+                    successfulAttempt.id);
     }
 
     FCPFrame response;

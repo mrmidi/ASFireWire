@@ -256,3 +256,54 @@ TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
 }
 
 } // namespace
+
+TEST(RxDrivenTimingTests, ReaderReBeginReanchorsAfterHistoryOverwritten) {
+    RxSequenceReplayState replay{};
+    replay.Reset();
+
+    auto publishCycles = [&replay](uint64_t firstCycle, uint64_t count) {
+        for (uint64_t cycle = firstCycle;
+             cycle < firstCycle + count;
+             ++cycle) {
+            RxSequenceEntry entry{};
+            entry.firstAudioFrame = cycle * 6;
+            entry.dataBlocks = static_cast<uint16_t>(
+                (cycle % 4) == 3 ? 0 : 8);
+            entry.sytOffset = entry.dataBlocks == 0
+                                  ? RxSequenceReplayState::kNoInfo
+                                  : static_cast<uint32_t>(cycle);
+            replay.Publish(entry);
+        }
+    };
+
+    publishCycles(0, RxSequenceReplayState::kCapacity);
+    ASSERT_TRUE(replay.MarkEstablished());
+
+    RxSequenceReplayReader reader{};
+    ASSERT_TRUE(reader.Begin(replay));
+    const uint32_t epochAtBegin = replay.Epoch();
+
+    // The producer runs a full capacity plus one ahead while the reader is
+    // idle: the reader's cursor now points below the retained window.
+    publishCycles(RxSequenceReplayState::kCapacity,
+                  RxSequenceReplayState::kCapacity + 1);
+
+    RxSequenceEntry entry{};
+    RxSequenceReplayReadDiagnostic diagnostic{};
+    ASSERT_FALSE(reader.TryRead(replay, entry, &diagnostic));
+    EXPECT_EQ(diagnostic.failure,
+              RxSequenceReplayReadFailure::kHistoryOverwritten);
+
+    // Re-anchoring is a repositioning of the same established stream, not an
+    // epoch transition: Begin() lands kReadDelay behind the live producer and
+    // the next read succeeds with the entry published for that cursor.
+    ASSERT_TRUE(reader.Begin(replay));
+    EXPECT_EQ(replay.Epoch(), epochAtBegin);
+    EXPECT_EQ(reader.NextCursor(),
+              replay.ProducerCursor() - RxSequenceReplayState::kReadDelay);
+
+    ASSERT_TRUE(reader.TryRead(replay, entry, &diagnostic));
+    const uint64_t expectedCycle =
+        replay.ProducerCursor() - RxSequenceReplayState::kReadDelay;
+    EXPECT_EQ(entry.firstAudioFrame, expectedCycle * 6);
+}

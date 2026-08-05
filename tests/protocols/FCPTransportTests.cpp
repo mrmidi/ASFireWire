@@ -65,7 +65,7 @@ protected:
     FCPTransportConfig config_{};
 };
 
-TEST_F(FCPTransportTests, IgnoresResponseUntilCommandWriteCompletes) {
+TEST_F(FCPTransportTests, AcceptsResponseBeforeCommandWriteCompletion) {
     int completionCount = 0;
     FCPStatus completionStatus = FCPStatus::kTransportError;
     const auto command = MakeUnitInfoCommand();
@@ -80,11 +80,12 @@ TEST_F(FCPTransportTests, IgnoresResponseUntilCommandWriteCompletes) {
     ASSERT_EQ(bus_.PendingWriteCount(), 1U);
 
     transport_->OnFCPResponse(2, 1, response);
-    EXPECT_EQ(completionCount, 0);
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(completionStatus, FCPStatus::kOk);
 
+    // AR Request is drained before AR Response. Once the target's FCP write
+    // proves delivery, the queued local write acknowledgement is stale.
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
-    transport_->OnFCPResponse(2, 1, response);
-
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(completionStatus, FCPStatus::kOk);
 }
