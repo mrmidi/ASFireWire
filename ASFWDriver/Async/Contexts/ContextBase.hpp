@@ -188,7 +188,8 @@ public:
      * - [5] dead: Context encountered fatal error
      */
     [[nodiscard]] uint32_t ReadControl() const noexcept {
-        return hw_->Read(Tag::kControlSetReg);
+        auto access = hw_->TryBeginAccess();
+        return access ? access.Read(Tag::kControlSetReg) : 0;
     }
 
     /**
@@ -201,7 +202,7 @@ public:
      * - Set wake bit: WriteControlSet(1 << 12)
      */
     void WriteControlSet(uint32_t bits) noexcept {
-        hw_->Write(Tag::kControlSetReg, bits);
+        if (auto access = hw_->TryBeginAccess()) access.Write(Tag::kControlSetReg, bits);
     }
 
     /**
@@ -213,7 +214,7 @@ public:
      * - Clear run bit: WriteControlClear(1 << 15)
      */
     void WriteControlClear(uint32_t bits) noexcept {
-        hw_->Write(Tag::kControlClearReg, bits);
+        if (auto access = hw_->TryBeginAccess()) access.Write(Tag::kControlClearReg, bits);
     }
 
     /**
@@ -230,7 +231,7 @@ public:
      * \warning Must be written BEFORE setting ContextControl.run bit.
      */
     void WriteCommandPtr(uint32_t commandPtr) noexcept {
-        hw_->Write(Tag::kCommandPtrReg, commandPtr);
+        if (auto access = hw_->TryBeginAccess()) access.Write(Tag::kCommandPtrReg, commandPtr);
     }
 
     /**
@@ -239,7 +240,8 @@ public:
      * @return Current CommandPtr value as last written by hardware or software.
      */
     [[nodiscard]] uint32_t ReadCommandPtr() const noexcept {
-        return hw_->Read(Tag::kCommandPtrReg);
+        auto access = hw_->TryBeginAccess();
+        return access ? access.Read(Tag::kCommandPtrReg) : 0;
     }
 
     /**

@@ -289,7 +289,9 @@ bool IsochTxDmaRing::DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
                                                uint32_t& outCmdPtr) noexcept {
     const Register32 cmdPtrReg =
         static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex));
-    outCmdPtr = hw.Read(cmdPtrReg);
+    auto access = hw.TryBeginAccess();
+    if (!access) return false;
+    outCmdPtr = access.Read(cmdPtrReg);
     const uint32_t cmdAddr = outCmdPtr & 0xFFFFFFF0u;
 
     uint32_t hwLogicalIndex = 0;
@@ -348,8 +350,12 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
     // 1. Capture CYCLE_TIMER and host time, and publish under seqlock.
     // Clock-smoothing / filtering is handled natively by AudioDriverKit's clock algorithms.
-    const uint32_t refillCycleTimer =
-        hw.Read(static_cast<Register32>(Register32::kCycleTimer));
+    auto access = hw.TryBeginAccess();
+    if (!access) {
+        out.failureReason = RefillFailureReason::InvalidSharedContract;
+        return out;
+    }
+    const uint32_t refillCycleTimer = access.Read(static_cast<Register32>(Register32::kCycleTimer));
     {
         const uint64_t hostTime = mach_absolute_time();
 
@@ -361,7 +367,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
     // 2. Check context status
     const Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
-    const uint32_t ctrl = hw.Read(ctrlReg);
+    const uint32_t ctrl = access.Read(ctrlReg);
     out.contextControl = ctrl;
     const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
     if (dead) {
@@ -675,7 +681,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
 void IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept {
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
-    const uint32_t ctrl = hw.Read(ctrlReg);
+    auto access = hw.TryBeginAccess();
+    if (!access) return;
+    const uint32_t ctrl = access.Read(ctrlReg);
 
     const bool run = (ctrl & Driver::ContextControl::kRun) != 0;
     const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
@@ -683,14 +691,16 @@ void IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t c
 
     if (run && !dead && !active) {
         Register32 ctrlSetReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex));
-        hw.Write(ctrlSetReg, Driver::ContextControl::kWake);
+        access.Write(ctrlSetReg, Driver::ContextControl::kWake);
     }
 }
 
 void IsochTxDmaRing::DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t contextIndex) const noexcept {
 #ifndef ASFW_HOST_TEST
     Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex));
-    const uint32_t cmdPtr = hw.Read(cmdPtrReg);
+    auto access = hw.TryBeginAccess();
+    if (!access) return;
+    const uint32_t cmdPtr = access.Read(cmdPtrReg);
     const uint32_t addr = cmdPtr & 0xFFFFFFF0u;
     const uint32_t z = cmdPtr & 0xF;
 

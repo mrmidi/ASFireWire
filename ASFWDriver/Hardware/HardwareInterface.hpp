@@ -20,6 +20,7 @@
 #include "../Common/BarrierUtils.hpp"
 #include "../Controller/ControllerTypes.hpp"
 #include "../Phy/PhyPackets.hpp"
+#include "HardwareAccessGate.hpp"
 #include "RegisterMap.hpp"
 
 // Forward declare IOLock for PHY register serialization
@@ -67,16 +68,16 @@ class HardwareInterface {
      * of Detach(), or from an independently signalled provider-revocation
      * path, before any concurrent software producer can touch OHCI.
      */
-    void Revoke() noexcept;
+    void RevokeAndDrain() noexcept;
     void Detach();
     void BindAsyncControllerPort(ASFW::Async::IAsyncControllerPort* controllerPort) noexcept;
 
     [[nodiscard]] bool Attached() const noexcept;
     [[nodiscard]] bool IsAvailable() const noexcept;
 
-    [[nodiscard]] uint32_t Read(Register32 reg) const noexcept;
-    void Write(Register32 reg, uint32_t value) noexcept;
-    void WriteAndFlush(Register32 reg, uint32_t value);
+    /// Starts one short, synchronous MMIO batch. The returned scope must not
+    /// cross an asynchronous boundary or be held while waiting.
+    [[nodiscard]] HardwareAccessScope TryBeginAccess() noexcept;
 
     void SetInterruptMask(uint32_t mask, bool enable);
     [[nodiscard]] InterruptSnapshot CaptureInterruptSnapshot(uint64_t timestamp) const noexcept;
@@ -164,13 +165,11 @@ class HardwareInterface {
 
     [[nodiscard]] bool HasAgereQuirk() const noexcept { return quirk_agere_lsi_; }
 
-    [[nodiscard]] uint32_t ReadIntEvent() const noexcept { return Read(Register32::kIntEvent); }
+    [[nodiscard]] uint32_t ReadIntEvent() const noexcept;
 
     [[nodiscard]] uint32_t ReadIntMask() const noexcept { return 0; }
 
-    [[nodiscard]] uint32_t ReadLinkControl() const noexcept {
-        return Read(Register32::kLinkControl);
-    }
+    [[nodiscard]] uint32_t ReadLinkControl() const noexcept;
 
     /**
      * @brief Checks if the local OHCI cycleMaster bit is currently set in LinkControl.
@@ -189,7 +188,7 @@ class HardwareInterface {
     // - seconds: 0-127 (wraps every 128 seconds, triggers cycle64Seconds interrupt)
     // - cycles: 0-7999 (8kHz isochronous cycle count)
     // - offset: 0-3071 (24.576 MHz sub-cycle ticks)
-    [[nodiscard]] uint32_t ReadCycleTime() const noexcept { return Read(Register32::kCycleTimer); }
+    [[nodiscard]] uint32_t ReadCycleTime() const noexcept;
 
     // Atomically read cycle timer and host uptime for timestamp correlation
     [[nodiscard]] std::pair<uint32_t, uint64_t> ReadCycleTimeAndUpTime() const noexcept;
@@ -237,11 +236,12 @@ class HardwareInterface {
 #endif
 
   private:
-    // Serializes the PCI object lifetime with every BAR access.  `ioEnabled_`
-    // is protected by this lock; Revoke() waits for any current access before
-    // returning, so no later caller can race Detach() or a force-closed BAR.
-    IOLock* accessLock_{nullptr};
-    bool ioEnabled_{false};
+    friend class HardwareAccessScope;
+    [[nodiscard]] uint32_t ReadScoped(Register32 reg) const noexcept;
+    void WriteScoped(Register32 reg, uint32_t value) const noexcept;
+    void FlushPostedWritesScoped() const noexcept;
+
+    HardwareAccessGate accessGate_;
     OSSharedPtr<IOPCIDevice> device_;
     IOService* owner_{nullptr};
     uint8_t barIndex_{0};

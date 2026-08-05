@@ -62,7 +62,9 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     HandleFaultInterrupts(events);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
-        const uint32_t generation = hw.Read(Register32::kSelfIDGeneration);
+        auto access = hw.TryBeginAccess();
+        if (!access) return;
+        const uint32_t generation = access.Read(Register32::kSelfIDGeneration);
         // A reset edge is a hard liveness boundary: no higher layer may retain
         // the old (generation,node) address while Self-ID and ROM discovery are
         // in flight. This matches the legacy IOFireWireFamily policy of

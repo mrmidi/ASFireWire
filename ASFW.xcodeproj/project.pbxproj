@@ -842,6 +842,7 @@
 		934A97DC159F9DBB258CEAA8 /* DiagnosticsTextFormatter+Bus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DiagnosticsTextFormatter+Bus.swift"; sourceTree = "<group>"; };
 		9379C84175E3D9E61640368D /* Scheduler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Scheduler.cpp; sourceTree = "<group>"; };
 		938E8D569A2265C3C8C91C9A /* SCSICommandSet.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SCSICommandSet.hpp; sourceTree = "<group>"; };
+		9404F1D903E3DB56F0EBE15A /* HardwareAccessScope.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareAccessScope.hpp; sourceTree = "<group>"; };
 		94AB388B752AED59FB03D3B1 /* SBP2TargetBridge.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2TargetBridge.hpp; sourceTree = "<group>"; };
 		94EF7FD118B54788C8319EFE /* IsochTxDmaRing.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IsochTxDmaRing.cpp; sourceTree = "<group>"; };
 		952F5CA89413DC995453B82F /* DeviceStreamModeQuirks.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceStreamModeQuirks.hpp; sourceTree = "<group>"; };
@@ -1037,6 +1038,7 @@
 		DC3BFFDB329DF788E56FCFF6 /* SBP2WireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2WireFormats.hpp; sourceTree = "<group>"; };
 		DC915CE751EF8C365B2EC9DB /* MetricsSink.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MetricsSink.cpp; sourceTree = "<group>"; };
 		DD3DC5F7E21C041C7390A754 /* IAudioBackend.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAudioBackend.hpp; sourceTree = "<group>"; };
+		DDC8BB9AD43F0F474F1D7F08 /* HardwareAccessGate.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareAccessGate.hpp; sourceTree = "<group>"; };
 		DE026823C14514E0CD526945 /* TxPayloadDmaMap.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxPayloadDmaMap.hpp; sourceTree = "<group>"; };
 		DE703C92C1385765D4A99A0E /* GapPolicyCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = GapPolicyCoordinator.cpp; sourceTree = "<group>"; };
 		DE7778D9CE7D3F4D24363D3F /* DriverInstallManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverInstallManager.swift; sourceTree = "<group>"; };
@@ -2328,6 +2330,8 @@
 		AF1ACC8667973EACC198C98C /* Hardware */ = {
 			isa = PBXGroup;
 			children = (
+				DDC8BB9AD43F0F474F1D7F08 /* HardwareAccessGate.hpp */,
+				9404F1D903E3DB56F0EBE15A /* HardwareAccessScope.hpp */,
 				9F7E564F41599A92B7D55B12 /* HardwareInterface.cpp */,
 				EDF5A258BCDC5915AF742794 /* HardwareInterface.hpp */,
 				F806076064BE18612AD246E1 /* HWNamespaceAlias.hpp */,
