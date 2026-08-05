@@ -84,8 +84,14 @@ void ServiceContext::Reset(ResetMode mode) {
     audioCoordinator.reset();
     if (controller) {
         controller->ReleaseAudioRuntimeRegistry();
+        // ROMScanner borrows the controller-owned IFireWireBus. Drop the
+        // controller's shared_ptr while that bus is still alive.
+        controller->AttachROMScanner(nullptr);
     }
     deps.audioRuntimeRegistry.reset();
+    // Drop the context's remaining scanner reference before destroying the
+    // controller. EnsureRomScanner will bind a fresh scanner after rebuild.
+    deps.romScanner.reset();
     controller.reset();
     deps.hardware.reset();
     deps.busReset.reset();
