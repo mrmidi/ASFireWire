@@ -35,6 +35,7 @@
 		175B02794EA67CEE144AD254 /* ASFWMCPMockTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D30FC4AF96CBDC4F5B068E /* ASFWMCPMockTransport.swift */; };
 		17C45BD159D713EF7947B119 /* ATContextBase.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 46AE02DCE8352CCACFE6DEF0 /* ATContextBase.cpp */; };
 		17E38AE2298BF12B578FECF5 /* MCPMockHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67FAC0642F9E1AC5D6CC4C88 /* MCPMockHarnessTests.swift */; };
+		19BCD916DD0254DAFADFED04 /* SBP2NubPublisher.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 96651C7BE9CC0A6579BE51CF /* SBP2NubPublisher.cpp */; };
 		1A2632C1A4F0C7F927DFD83C /* Item.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56A55E0C6EE306B863A46F3D /* Item.swift */; };
 		1AA921B5214974B982C6AF6D /* AmdtpPacketTimeline.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 63C9F7C33EAC13B5D679D034 /* AmdtpPacketTimeline.cpp */; };
 		1D96CF2CCFB988A78FBBF68A /* PayloadContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AB20705B5E5C72D4746FCF35 /* PayloadContext.cpp */; };
@@ -847,6 +848,7 @@
 		94EF7FD118B54788C8319EFE /* IsochTxDmaRing.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IsochTxDmaRing.cpp; sourceTree = "<group>"; };
 		952F5CA89413DC995453B82F /* DeviceStreamModeQuirks.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceStreamModeQuirks.hpp; sourceTree = "<group>"; };
 		958B3305F2AA2E420FDE4795 /* IRMFallbackCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMFallbackCoordinator.hpp; sourceTree = "<group>"; };
+		96651C7BE9CC0A6579BE51CF /* SBP2NubPublisher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SBP2NubPublisher.cpp; sourceTree = "<group>"; };
 		969C58B339AB3E30DB3B3E45 /* ASFWMCPCmpTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPCmpTools.swift; sourceTree = "<group>"; };
 		96F23E4439D260B0C9934D70 /* TxPacketState.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxPacketState.hpp; sourceTree = "<group>"; };
 		971D5A9356A91973832BB8F5 /* BarrierUtils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BarrierUtils.cpp; sourceTree = "<group>"; };
@@ -1020,6 +1022,7 @@
 		D422ACD2CFEE521E1C48294D /* ConfigROMParser.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMParser.hpp; sourceTree = "<group>"; };
 		D470EFDF4D88F23A855E7D86 /* RomExplorerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomExplorerViewModel.swift; sourceTree = "<group>"; };
 		D485F0921003035F8C08CBA8 /* DescriptorAccessor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DescriptorAccessor.cpp; sourceTree = "<group>"; };
+		D4AA7A3F0DBF93DF3B2AFCF4 /* SBP2NubPublisher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2NubPublisher.hpp; sourceTree = "<group>"; };
 		D568F73A9A2ECDA0829AFF6A /* ASFWAudioDriverDirect.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverDirect.cpp; sourceTree = "<group>"; };
 		D5894A84556C60E56D6EC81B /* DeviceDiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDiscoveryView.swift; sourceTree = "<group>"; };
 		D5D8CA6549248C65817F04F6 /* TopologyManager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyManager.hpp; sourceTree = "<group>"; };
@@ -1049,6 +1052,7 @@
 		DF378D7A8CBF72942CB67F13 /* AVCUnitWireParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVCUnitWireParsingTests.swift; sourceTree = "<group>"; };
 		DF440CE02C9739DD19E27EAB /* TransactionStorage.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TransactionStorage.hpp; sourceTree = "<group>"; };
 		DF7847CA58AF943FE7E5B5C1 /* BusResetCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusResetCoordinator.hpp; sourceTree = "<group>"; };
+		DFDD693FD1CC62C11029FEE4 /* DeviceRouteToken.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceRouteToken.hpp; sourceTree = "<group>"; };
 		DFF64153AF55C8E3D3A56754 /* DVCaptureSink.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DVCaptureSink.hpp; sourceTree = "<group>"; };
 		E01908F08E66CD99EB44C3AE /* IAVCDiscovery.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAVCDiscovery.hpp; sourceTree = "<group>"; };
 		E046501FE168EA65F0AB0E3B /* LocalRequestWiring.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LocalRequestWiring.cpp; sourceTree = "<group>"; };
@@ -1661,6 +1665,8 @@
 				8A3249A94E8CDB78EB9ACBBC /* ASFWSCSIController.iig */,
 				CA65E64C4DAEC918DD1EE8D6 /* SBP2BridgeHub.cpp */,
 				D846D7A387D0EEED5A819EC0 /* SBP2BridgeHub.hpp */,
+				96651C7BE9CC0A6579BE51CF /* SBP2NubPublisher.cpp */,
+				D4AA7A3F0DBF93DF3B2AFCF4 /* SBP2NubPublisher.hpp */,
 				EAD8530722F06400F33A2495 /* SBP2TargetBridge.cpp */,
 				94AB388B752AED59FB03D3B1 /* SBP2TargetBridge.hpp */,
 			);
@@ -2015,6 +2021,7 @@
 				40798EEB26FE751B40624648 /* DeviceManager.hpp */,
 				A36AAFA02BF525767005906A /* DeviceRegistry.cpp */,
 				9ABC4A951EE6C5BE29155255 /* DeviceRegistry.hpp */,
+				DFDD693FD1CC62C11029FEE4 /* DeviceRouteToken.hpp */,
 				E46CD124F0DE2E9FBB62732A /* DiscoveryConvergence.hpp */,
 				16EDC3DB7D3B7CD9AF5384DD /* DiscoveryTypes.hpp */,
 				821A6DB6E00A5845BCF00DC0 /* DiscoveryValues.hpp */,
@@ -3180,6 +3187,7 @@
 				D2C8FB86DE8AB0063A69E56A /* SBP2CommandORB.cpp in Sources */,
 				44186463A90955CBD9C5F370 /* SBP2Handler.cpp in Sources */,
 				FED988555C8E78A32E6399B9 /* SBP2ManagementORB.cpp in Sources */,
+				19BCD916DD0254DAFADFED04 /* SBP2NubPublisher.cpp in Sources */,
 				A401257E6941ABB9D4123AF4 /* SBP2TargetBridge.cpp in Sources */,
 				6E2E29F576BF9E75997AA395 /* SPro24DspProtocol.cpp in Sources */,
 				DA37C664D350AD585F6D5EA4 /* SPro24DspTypes.cpp in Sources */,

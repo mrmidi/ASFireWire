@@ -32,6 +32,7 @@
 #include <DriverKit/OSSharedPtr.h>
 
 #include <algorithm>
+#include <optional>
 
 static ASFWDriver* GetParentASFWDriver(const ASFWAudioNub_IVars* iv)
 {
@@ -77,7 +78,7 @@ static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVa
 }
 
 struct ProtocolRuntimeBinding {
-    ASFW::Discovery::DeviceRecord* device{nullptr};
+    std::optional<ASFW::Discovery::DeviceRecord> device{};
     // `protocolOwner` keeps the protocol alive for the lifetime of the binding (the
     // caller's stack frame); `protocol` is the borrowed view used by the call sites.
     std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocolOwner{};
@@ -191,8 +192,8 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
         return kIOReturnNotReady;
     }
 
-    auto* device = registry->FindByGuid(iv->guid);
-    if (!device) {
+    auto device = registry->SnapshotByGuid(iv->guid);
+    if (!device.has_value()) {
         return kIOReturnNotFound;
     }
 
@@ -210,7 +211,7 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
         return kIOReturnNotReady;
     }
 
-    outBinding.device = device;
+    outBinding.device = std::move(device);
     outBinding.protocolOwner = std::move(protocol);
     outBinding.protocol = outBinding.protocolOwner.get();
     outBinding.avcDiscovery = avcDiscovery;
@@ -520,7 +521,7 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     // hardcoded-nub path does not use FCP and remains independent.
     ProtocolRuntimeBinding binding{};
     const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
-    if (bindingStatus == kIOReturnSuccess && binding.device != nullptr) {
+    if (bindingStatus == kIOReturnSuccess && binding.device.has_value()) {
         const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
             binding.device->vendorId, binding.device->modelId);
         if (integration != ASFW::Audio::DeviceIntegrationMode::kHardcodedNub) {
@@ -534,7 +535,12 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
                          binding.device->nodeId);
                 return kIOReturnNotReady;
             }
-            binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+            binding.protocol->UpdateRuntimeContext(ASFW::Discovery::DeviceRouteToken{
+                                                    .guid = binding.device->guid,
+                                                    .deviceIncarnation = binding.device->deviceIncarnation,
+                                                    .routeEpoch = binding.device->routeEpoch,
+                                                    .generation = binding.device->gen,
+                                                    .nodeId = binding.device->nodeId}, transport);
             ASFW_LOG(Audio,
                      "ASFWAudioNub: refreshed AV/C protocol route GUID=0x%016llx node=%u",
                      ivars->guid,
@@ -765,7 +771,12 @@ kern_return_t IMPL(ASFWAudioNub, GetProtocolBooleanControl)
         return kIOReturnNotReady;
     }
 
-    binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+    binding.protocol->UpdateRuntimeContext(ASFW::Discovery::DeviceRouteToken{
+                                            .guid = binding.device->guid,
+                                            .deviceIncarnation = binding.device->deviceIncarnation,
+                                            .routeEpoch = binding.device->routeEpoch,
+                                            .generation = binding.device->gen,
+                                            .nodeId = binding.device->nodeId}, transport);
 
     bool value = false;
     const kern_return_t status = binding.protocol->GetBooleanControlValue(classIdFourCC, element, value);
@@ -796,6 +807,11 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
         return kIOReturnNotReady;
     }
 
-    binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+    binding.protocol->UpdateRuntimeContext(ASFW::Discovery::DeviceRouteToken{
+                                            .guid = binding.device->guid,
+                                            .deviceIncarnation = binding.device->deviceIncarnation,
+                                            .routeEpoch = binding.device->routeEpoch,
+                                            .generation = binding.device->gen,
+                                            .nodeId = binding.device->nodeId}, transport);
     return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
 }

@@ -11,6 +11,7 @@
 #include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
 #include "Bus/IRM/IRMClient.hpp"
+#include "Discovery/DeviceRegistry.hpp"
 #include "Protocols/AVC/CMP/CMPClient.hpp"
 #include "Protocols/AVC/FCPTransport.hpp"
 
@@ -45,6 +46,7 @@ void ResetDuetFormatFixture(uint8_t inputFrequency = 0x02U,
 
 class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
   public:
+    ASFW::Discovery::DeviceRegistry routes;
     ASFW::Async::AsyncHandle ReadBlock(
         ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress address, uint32_t,
         ASFW::FW::FwSpeed, ASFW::Async::InterfaceCompletionCallback callback) override {
@@ -97,6 +99,16 @@ class RecordingAVCBus final : public ASFW::Async::IFireWireBus {
   private:
     uint32_t handle_{0};
 };
+
+ASFW::Discovery::DeviceRouteToken Route(RecordingAVCBus& bus, uint64_t guid = 1,
+                                        uint16_t node = 2) {
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = guid;
+    rom.gen = ASFW::FW::Generation{1};
+    rom.nodeId = node;
+    (void)bus.routes.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+    return *bus.routes.CurrentRoute(guid);
+}
 
 } // namespace
 
@@ -465,7 +477,7 @@ TEST(ApogeeDuetDuplexAdapter, Applies48kToInputThenOutputUnitPlugsOnlyOnce) {
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
     auto transport = std::make_shared<FCPTransport>();
-    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), nullptr, nullptr, 0, 0);
+    ApogeeDuetProtocol protocol(bus, bus, Route(bus), transport.get(), nullptr, nullptr, 0);
     ResetDuetFormatFixture(0x01U, 0x01U);
 
     IOReturn completionStatus = kIOReturnNotReady;
@@ -509,9 +521,9 @@ TEST(ApogeeDuetDuplexAdapter, PrepareDuplexRevalidates48kBeforeResourceAllocatio
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
     ASFW::IRM::IRMClient irm(bus);
-    ASFW::CMP::CMPClient cmp(bus, bus);
+    ASFW::CMP::CMPClient cmp(bus, bus, bus.routes);
     auto transport = std::make_shared<FCPTransport>();
-    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), &irm, &cmp, 1, 0);
+    ApogeeDuetProtocol protocol(bus, bus, Route(bus), transport.get(), &irm, &cmp, 0);
     ASFW::Audio::AudioDuplexChannels channels{};
     IOReturn completionStatus = kIOReturnNotReady;
 
@@ -543,7 +555,7 @@ TEST(ApogeeDuetDuplexAdapter, MapsRequested44100RateIntoUnitPlugSignalFormat) {
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
     auto transport = std::make_shared<FCPTransport>();
-    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), nullptr, nullptr, 0, 0);
+    ApogeeDuetProtocol protocol(bus, bus, Route(bus), transport.get(), nullptr, nullptr, 0);
     ResetDuetFormatFixture();
 
     IOReturn completionStatus = kIOReturnNotReady;
@@ -563,7 +575,7 @@ TEST(ApogeeDuetDuplexAdapter, RestoresInputFormationWhenOutputFormatControlFails
     using namespace ASFW::Protocols::AVC;
     RecordingAVCBus bus;
     auto transport = std::make_shared<FCPTransport>();
-    ApogeeDuetProtocol protocol(bus, bus, 2, transport.get(), nullptr, nullptr, 0, 0);
+    ApogeeDuetProtocol protocol(bus, bus, Route(bus), transport.get(), nullptr, nullptr, 0);
     ResetDuetFormatFixture(0x01U, 0x01U);
     gFailNextOutputFormatControl = true;
 
@@ -587,8 +599,8 @@ TEST(ApogeeDuetDuplexAdapter, RestoresInputFormationWhenOutputFormatControlFails
 TEST(ApogeeDuetDuplexAdapter, ProgramsIRMChannelIntoOutputPCR) {
     RecordingAVCBus bus;
     ASFW::IRM::IRMClient irm(bus);
-    ASFW::CMP::CMPClient cmp(bus, bus);
-    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp, 1);
+    ASFW::CMP::CMPClient cmp(bus, bus, bus.routes);
+    ApogeeDuetProtocol protocol(bus, bus, Route(bus), nullptr, &irm, &cmp);
     ASFW::Audio::AudioDuplexChannels channels{};
     channels.deviceToHostIsoChannel = 5;
     protocol.SetAssignedChannels(channels);
@@ -614,10 +626,10 @@ TEST(CMPClientPCRBits, UsesSixBitPointToPointConnectionCount) {
 TEST(CMPClientPCRBits, RejectsChangingChannelOfExistingPointToPointConnection) {
     RecordingAVCBus bus;
     bus.pcrValue = 0x81030000U; // online, one connection, channel 3
-    ASFW::CMP::CMPClient cmp(bus, bus);
+    ASFW::CMP::CMPClient cmp(bus, bus, bus.routes);
 
     ASFW::CMP::CMPStatus status = ASFW::CMP::CMPStatus::Success;
-    cmp.ConnectOPCR({.guid = 1, .nodeId = ASFW::FW::NodeId{2}, .generation = ASFW::FW::Generation{1}},
+    cmp.ConnectOPCR({.route = Route(bus)},
                     0, 5, [&status](ASFW::CMP::CMPStatus result) {
         status = result;
     });
@@ -629,8 +641,8 @@ TEST(CMPClientPCRBits, RejectsChangingChannelOfExistingPointToPointConnection) {
 TEST(ApogeeDuetDuplexAdapter, MapsCompletedCmpFailureToErrorRatherThanTimeout) {
     RecordingAVCBus bus;
     ASFW::IRM::IRMClient irm(bus);
-    ASFW::CMP::CMPClient cmp(bus, bus);
-    ApogeeDuetProtocol protocol(bus, bus, 2, nullptr, &irm, &cmp, 1);
+    ASFW::CMP::CMPClient cmp(bus, bus, bus.routes);
+    ApogeeDuetProtocol protocol(bus, bus, Route(bus), nullptr, &irm, &cmp);
 
     IOReturn rxStatus = kIOReturnNotReady;
     protocol.ProgramRx([&rxStatus](IOReturn status, ASFW::Audio::DuplexStageResult) {
@@ -650,6 +662,7 @@ namespace ASFW::Protocols::AVC {
 bool FCPTransport::init(Protocols::Ports::FireWireBusOps*,
                         Protocols::Ports::FireWireBusInfo*,
                         Discovery::FWDevice*,
+                        Discovery::DeviceRegistry&,
                         Scheduling::ITimerScheduler&,
                         const FCPTransportConfig&) {
     return true;

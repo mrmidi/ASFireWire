@@ -40,6 +40,7 @@ add_protocols_test(BeBoBPlug0StreamDiscoveryTests
 add_protocols_test(FCPTransportTests
     FCPTransportTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
@@ -48,6 +49,7 @@ add_protocols_test(FCPTransportTests
 add_protocols_test(FCPResponseRouterTests
     FCPResponseRouterTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
@@ -56,6 +58,7 @@ add_protocols_test(FCPResponseRouterTests
 add_protocols_test(CMPConnectionTests
     CMPConnectionTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
 # Music Subunit Identifier Parser Tests
@@ -65,6 +68,7 @@ add_executable(MusicSubunitIdentifierParserTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
@@ -117,6 +121,7 @@ add_executable(MusicSubunitTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
@@ -156,6 +161,7 @@ add_executable(AVCHandlerTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
@@ -183,6 +189,7 @@ add_executable(AVCCapabilitiesSerializerTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"

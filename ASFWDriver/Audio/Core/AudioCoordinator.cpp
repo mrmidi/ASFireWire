@@ -171,8 +171,8 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
 IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     if (guid == 0) return nullptr;
 
-    const auto* record = registry_.FindByGuid(guid);
-    if (!record) {
+    const auto record = registry_.SnapshotByGuid(guid);
+    if (!record.has_value()) {
         return &avc_;
     }
 
@@ -312,8 +312,8 @@ IOReturn AudioCoordinator::RequestClockConfig(
         IOLockUnlock(lock_);
     }
 
-    const auto* record = registry_.FindByGuid(guid);
-    if (!record) {
+    const auto record = registry_.SnapshotByGuid(guid);
+    if (!record.has_value()) {
         ASFW_LOG_WARNING(Audio,
                          "AudioCoordinator: RequestDiceClockConfig no registry record for GUID=0x%016llx (device not registered yet?)",
                          guid);

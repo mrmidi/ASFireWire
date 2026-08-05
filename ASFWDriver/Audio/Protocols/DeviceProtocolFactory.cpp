@@ -19,17 +19,22 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     uint32_t modelId,
     Protocols::Ports::FireWireBusOps& busOps,
     Protocols::Ports::FireWireBusInfo& busInfo,
-    uint16_t nodeId,
-    uint64_t deviceGuid,
+    Discovery::DeviceRegistry& routeRegistry,
+    const Discovery::DeviceRouteToken& route,
     IRM::IRMClient* irmClient,
     CMP::CMPClient* cmpClient,
     Scheduling::ITimerScheduler* timerScheduler
 ) {
+    if (!route) {
+        return nullptr;
+    }
+    const uint16_t nodeId = route.nodeId;
     if (vendorId == kFocusriteVendorId) {
         if (modelId == kSPro24DspModelId) {
             ASFW_LOG(DICE, "Creating SPro24DspProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
                      vendorId, modelId, nodeId);
-            return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(busOps, busInfo, nodeId, irmClient);
+            return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(busOps, busInfo, routeRegistry,
+                                                                         route, irmClient);
         }
 
         if (modelId == kSPro14ModelId || modelId == kSPro24ModelId) {
@@ -40,7 +45,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                      vendorId,
                      modelId,
                      nodeId);
-            return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+            return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                    route, irmClient);
         }
     }
 
@@ -50,7 +56,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId,
                  modelId,
                  nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                route, irmClient);
     }
 
     if (vendorId == kMidasVendorId && modelId == kMidasVeniceModelId) {
@@ -59,7 +66,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId,
                  modelId,
                  nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                route, irmClient);
     }
 
     if (vendorId == kPreSonusVendorId && modelId == kStudioLive1602ModelId) {
@@ -68,7 +76,8 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId,
                  modelId,
                  nodeId);
-        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+        return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, routeRegistry,
+                                                                route, irmClient);
     }
 
     // Check for Apogee Duet FireWire (AV/C + vendor-dependent commands).
@@ -79,15 +88,15 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         // Factory path intentionally does not bind FCP transport yet.
         // AVCDiscovery wires transport for live command execution.
         return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(
-            busOps, busInfo, nodeId, nullptr, irmClient, cmpClient, deviceGuid, 100U, timerScheduler);
+            busOps, busInfo, route, nullptr, irmClient, cmpClient, 100U, timerScheduler);
     }
 
     if (vendorId == kTerraTecVendorId && modelId == kPhase88RackFwModelId) {
         ASFW_LOG(Audio,
                  "Creating Phase88Protocol BeBoB/CMP backend vendor=0x%06x model=0x%06x node=0x%04x",
                  vendorId, modelId, nodeId);
-        return std::make_unique<BeBoB::Phase88Protocol>(busOps, busInfo, nodeId, irmClient,
-                                                        cmpClient, deviceGuid, timerScheduler);
+        return std::make_unique<BeBoB::Phase88Protocol>(busOps, busInfo, route, irmClient,
+                                                        cmpClient, timerScheduler);
     }
     // Known BeBoB device without a verified custom protocol: generic fallback.
     // Conservative defaults — plug-0, CMP, no mixer programming. Discovery model
@@ -97,7 +106,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  "Creating GenericBeBoBProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
                  vendorId, modelId, nodeId);
         return std::make_unique<BeBoB::GenericBeBoBProtocol>(
-            busOps, busInfo, nodeId, irmClient, cmpClient, deviceGuid, timerScheduler,
+            busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
             BeBoB::DeviceModel{});
     }
 

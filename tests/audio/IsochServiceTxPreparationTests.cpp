@@ -207,6 +207,12 @@ TEST(IsochServiceTxPreparation, StopAllPropagatesActiveReceiveTimeoutAndRetainsC
     EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
     ASSERT_NE(service.ReceiveContext(0), nullptr);
     EXPECT_EQ(service.ReceiveContext(0)->GetState(), ASFW::Isoch::IRPolicy::State::Running);
+
+    // StopAll intentionally retains the context and its DMA binding on timeout.
+    // Complete the hardware quiesce before the test's stack-owned hardware goes
+    // away; production guarantees that HardwareInterface outlives IsochService.
+    hardware.SetTestRegister(controlSet, 0);
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
 }
 
 TEST(IsochServiceTxPreparation, ReceiveConsumerAttachesBeforePreparedStart) {

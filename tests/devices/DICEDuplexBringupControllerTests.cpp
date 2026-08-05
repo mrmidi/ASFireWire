@@ -5,6 +5,7 @@
 #include "Common/WireFormat.hpp"
 #include "Bus/IRM/IRMCSRConstants.hpp"
 #include "Bus/IRM/IRMClient.hpp"
+#include "Discovery/DeviceRegistry.hpp"
 #include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
@@ -53,6 +54,20 @@ namespace ClockSelectBits = ASFW::Audio::DICE::ClockSelect;
 namespace GlobalOffset = ASFW::Audio::DICE::GlobalOffset;
 namespace NotifyBits = ASFW::Audio::DICE::Notify;
 namespace RxOffset = ASFW::Audio::DICE::RxOffset;
+
+struct RouteState {
+    ASFW::Discovery::DeviceRegistry registry;
+    ASFW::Discovery::DeviceRouteToken route{};
+
+    RouteState() {
+        ASFW::Discovery::ConfigROM rom{};
+        rom.bib.guid = 0xD1CE000000000002ULL;
+        rom.gen = Generation{1};
+        rom.nodeId = 0x02;
+        (void)registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        route = *registry.CurrentRoute(rom.bib.guid);
+    }
+};
 namespace StatusBits = ASFW::Audio::DICE::StatusBits;
 namespace TxOffset = ASFW::Audio::DICE::TxOffset;
 
@@ -782,6 +797,7 @@ struct HostClockResetGuard {
 
 struct DuplexRig {
     RecordingFireWireBus bus;
+    RouteState routeState;
     ProtocolRegisterIO io;
     DICETransaction tx;
     IRMClient irm;
@@ -789,7 +805,7 @@ struct DuplexRig {
     DICEDuplexBringupController controller;
 
     DuplexRig()
-        : io(bus, bus, 0x02)
+        : io(bus, bus, routeState.registry, routeState.route)
         , tx(io)
         , irm(bus)
         , controller(tx, io, bus, nullptr, MakeGeneralSections()) {
@@ -861,7 +877,8 @@ TEST(DICEDuplexBringupControllerTests, NotificationMailboxMatchesReferenceAndLeg
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOUsesNegotiatedSpeedAndDiceReaderUsesFullGlobalReadSize) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     DICETransaction tx(io);
 
     std::optional<AsyncStatus> readStatus;
@@ -892,7 +909,8 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOUsesNegotiatedSpeedAndD
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesTimeout) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
 
     static constexpr std::array<ExpectedRequest, 1> kRequests{{
         {OpKind::Read, 0xFFFFU, 0xE00001A8U, 4U, FwSpeed::S400, 0U, {nullptr, 0U}},
@@ -914,9 +932,25 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesTimeo
     EXPECT_TRUE(bus.ScriptConsumed());
 }
 
+TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIORejectsInvalidatedRouteBeforeBusAccess) {
+    RecordingFireWireBus bus;
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
+    routeState.registry.InvalidateLiveMappingsForBusReset();
+
+    std::optional<AsyncStatus> readStatus;
+    (void)io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
+                         [&readStatus](AsyncStatus status, uint32_t) { readStatus = status; });
+
+    ASSERT_TRUE(readStatus.has_value());
+    EXPECT_EQ(*readStatus, AsyncStatus::kStaleGeneration);
+    EXPECT_TRUE(bus.Operations().empty());
+}
+
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesShortRead) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
 
     static constexpr std::array<uint8_t, 2> kShortPayload{{0x00, 0x46}};
     static constexpr std::array<ExpectedRequest, 1> kRequests{{
@@ -942,7 +976,8 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesShort
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOWriteQuadUsesNegotiatedSpeedAndBigEndianPayload) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
 
     std::optional<AsyncStatus> writeStatus;
     (void)io.WriteQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kIsochronous),
@@ -961,7 +996,8 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOWriteQuadUsesNegotiated
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOCompareSwap64UsesLockAndDecodesBigEndianPayload) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     const auto ownerOffset = MakeGeneralSections().global.offset + GlobalOffset::kOwnerHi;
 
     std::optional<AsyncStatus> lockStatus;
@@ -1293,7 +1329,8 @@ TEST(DICEDuplexBringupControllerTests, LateClockAcceptedNotifyDoesNotTriggerRoll
         queue.DispatchAsyncAfter(3'250'000'000ULL, [&bus]() { bus.PublishClockAccepted(); });
     });
 
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     DICETransaction tx(io);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
@@ -1334,7 +1371,8 @@ TEST(DICEDuplexBringupControllerTests, GlobalStateConfirmationRecoversIfMailboxM
     queue.SetManualDispatchForTesting(true);
     bus.SetClockSelectWriteHandler([&bus]() { bus.LatchClockAccepted(); });
 
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     DICETransaction tx(io);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});

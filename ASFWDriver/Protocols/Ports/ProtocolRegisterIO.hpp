@@ -2,6 +2,7 @@
 
 #include "FireWireBusPort.hpp"
 #include "../../Common/WireFormat.hpp"
+#include "../../Discovery/DeviceRegistry.hpp"
 
 #include <DriverKit/IOReturn.h>
 
@@ -44,23 +45,34 @@ public:
 
     ProtocolRegisterIO(FireWireBusOps& busOps,
                        FireWireBusInfo& busInfo,
-                       uint16_t nodeId)
+                       Discovery::DeviceRegistry& routeRegistry,
+                       const Discovery::DeviceRouteToken& route)
         : busOps_(busOps)
         , busInfo_(busInfo)
-        , nodeId_(FW::NodeId{static_cast<uint8_t>(nodeId & 0x3Fu)}) {}
+        , routeRegistry_(routeRegistry)
+        , route_(route) {}
 
     [[nodiscard]] Async::AsyncHandle ReadQuadBE(
         Async::FWAddress address,
         QuadReadCallback callback,
         std::optional<FW::FwSpeed> speedOverride = std::nullopt)
     {
-        return busOps_.ReadQuad(CurrentGeneration(),
-                                nodeId_,
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration, 0U);
+            return {};
+        }
+        const auto route = route_;
+        return busOps_.ReadQuad(route.generation,
+                                NodeId(),
                                 address,
                                 ResolveSpeed(speedOverride),
-                                [callback = std::move(callback)](Async::AsyncStatus status,
+                                [this, route, callback = std::move(callback)](Async::AsyncStatus status,
                                                                  std::span<const uint8_t> payload) mutable {
                                     if (!callback) {
+                                        return;
+                                    }
+                                    if (!routeRegistry_.IsCurrent(route)) {
+                                        callback(Async::AsyncStatus::kStaleGeneration, 0U);
                                         return;
                                     }
                                     if (status != Async::AsyncStatus::kSuccess) {
@@ -81,17 +93,24 @@ public:
         WriteCallback callback,
         std::optional<FW::FwSpeed> speedOverride = std::nullopt)
     {
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration);
+            return {};
+        }
         std::array<uint8_t, sizeof(uint32_t)> bytes{};
         FW::WriteBE32(bytes.data(), value);
-        return busOps_.WriteBlock(CurrentGeneration(),
-                                  nodeId_,
+        const auto route = route_;
+        return busOps_.WriteBlock(route.generation,
+                                  NodeId(),
                                   address,
                                   std::span<const uint8_t>(bytes.data(), bytes.size()),
                                   ResolveSpeed(speedOverride),
-                                  [callback = std::move(callback)](Async::AsyncStatus status,
+                                  [this, route, callback = std::move(callback)](Async::AsyncStatus status,
                                                                    std::span<const uint8_t>) mutable {
                                       if (callback) {
-                                          callback(status);
+                                          callback(routeRegistry_.IsCurrent(route)
+                                                       ? status
+                                                       : Async::AsyncStatus::kStaleGeneration);
                                       }
                                   });
     }
@@ -102,14 +121,23 @@ public:
         BlockReadCallback callback,
         std::optional<FW::FwSpeed> speedOverride = std::nullopt)
     {
-        return busOps_.ReadBlock(CurrentGeneration(),
-                                 nodeId_,
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration, {});
+            return {};
+        }
+        const auto route = route_;
+        return busOps_.ReadBlock(route.generation,
+                                 NodeId(),
                                  address,
                                  length,
                                  ResolveSpeed(speedOverride),
-                                 [callback = std::move(callback), length](Async::AsyncStatus status,
+                                 [this, route, callback = std::move(callback), length](Async::AsyncStatus status,
                                                                           std::span<const uint8_t> payload) mutable {
                                      if (!callback) {
+                                         return;
+                                     }
+                                     if (!routeRegistry_.IsCurrent(route)) {
+                                         callback(Async::AsyncStatus::kStaleGeneration, {});
                                          return;
                                      }
                                      if (status != Async::AsyncStatus::kSuccess) {
@@ -130,15 +158,22 @@ public:
         WriteCallback callback,
         std::optional<FW::FwSpeed> speedOverride = std::nullopt)
     {
-        return busOps_.WriteBlock(CurrentGeneration(),
-                                  nodeId_,
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration);
+            return {};
+        }
+        const auto route = route_;
+        return busOps_.WriteBlock(route.generation,
+                                  NodeId(),
                                   address,
                                   payload,
                                   ResolveSpeed(speedOverride),
-                                  [callback = std::move(callback)](Async::AsyncStatus status,
+                                  [this, route, callback = std::move(callback)](Async::AsyncStatus status,
                                                                    std::span<const uint8_t>) mutable {
                                       if (callback) {
-                                          callback(status);
+                                          callback(routeRegistry_.IsCurrent(route)
+                                                       ? status
+                                                       : Async::AsyncStatus::kStaleGeneration);
                                       }
                                   });
     }
@@ -150,20 +185,29 @@ public:
         CompareSwap64Callback callback,
         std::optional<FW::FwSpeed> speedOverride = std::nullopt)
     {
+        if (!IsRouteCurrent()) {
+            callback(Async::AsyncStatus::kStaleGeneration, 0ULL);
+            return {};
+        }
         std::array<uint8_t, 16> operand{};
         FW::WriteBE64(operand.data(), expected);
         FW::WriteBE64(operand.data() + 8, desired);
 
-        return busOps_.Lock(CurrentGeneration(),
-                            nodeId_,
+        const auto route = route_;
+        return busOps_.Lock(route.generation,
+                            NodeId(),
                             address,
                             FW::LockOp::kCompareSwap,
                             std::span<const uint8_t>(operand.data(), operand.size()),
                             8,
                             ResolveSpeed(speedOverride),
-                            [callback = std::move(callback)](Async::AsyncStatus status,
+                            [this, route, callback = std::move(callback)](Async::AsyncStatus status,
                                                              std::span<const uint8_t> payload) mutable {
                                 if (!callback) {
+                                    return;
+                                }
+                                if (!routeRegistry_.IsCurrent(route)) {
+                                    callback(Async::AsyncStatus::kStaleGeneration, 0ULL);
                                     return;
                                 }
                                 if (status != Async::AsyncStatus::kSuccess) {
@@ -179,25 +223,26 @@ public:
     }
 
     [[nodiscard]] FW::NodeId NodeId() const noexcept {
-        return nodeId_;
+        return FW::NodeId{static_cast<uint8_t>(route_.nodeId)};
     }
 
-    void SetNodeId(uint16_t nodeId) noexcept {
-        nodeId_ = FW::NodeId{static_cast<uint8_t>(nodeId & 0x3Fu)};
+    void UpdateRoute(const Discovery::DeviceRouteToken& route) noexcept {
+        route_ = route;
     }
 
-    [[nodiscard]] FW::Generation CurrentGeneration() const noexcept {
-        return busInfo_.GetGeneration();
+    [[nodiscard]] bool IsRouteCurrent() const noexcept {
+        return static_cast<bool>(route_) && routeRegistry_.IsCurrent(route_);
     }
 
 private:
     [[nodiscard]] FW::FwSpeed ResolveSpeed(std::optional<FW::FwSpeed> speedOverride) const {
-        return speedOverride.value_or(busInfo_.GetSpeed(nodeId_));
+        return speedOverride.value_or(busInfo_.GetSpeed(NodeId()));
     }
 
     FireWireBusOps& busOps_;
     FireWireBusInfo& busInfo_;
-    FW::NodeId nodeId_;
+    Discovery::DeviceRegistry& routeRegistry_;
+    Discovery::DeviceRouteToken route_{};
 };
 
 } // namespace ASFW::Protocols::Ports

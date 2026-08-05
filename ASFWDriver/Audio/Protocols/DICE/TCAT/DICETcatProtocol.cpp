@@ -69,11 +69,12 @@ bool DICETcatProtocol::MakeDiceClockConfiguration(
 
 DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                    Protocols::Ports::FireWireBusInfo& busInfo,
-                                   uint16_t nodeId,
+                                   Discovery::DeviceRegistry& routeRegistry,
+                                   const Discovery::DeviceRouteToken& route,
                                    ::ASFW::IRM::IRMClient* irmClient)
     : busInfo_(busInfo)
     , irmClient_(irmClient)
-    , io_(busOps, busInfo, nodeId)
+    , io_(busOps, busInfo, routeRegistry, route)
     , diceReader_(io_) {
 }
 
@@ -333,10 +334,10 @@ IOReturn DICETcatProtocol::StopDuplex() {
     return duplexCtrl_->StopDuplex();
 }
 
-void DICETcatProtocol::UpdateRuntimeContext(uint16_t nodeId,
+void DICETcatProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                             Protocols::AVC::FCPTransport* transport) {
     (void)transport;
-    io_.SetNodeId(nodeId);
+    io_.UpdateRoute(route);
 }
 
 void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {

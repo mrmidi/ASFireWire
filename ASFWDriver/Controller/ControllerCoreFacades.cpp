@@ -42,8 +42,9 @@
 namespace ASFW::Driver {
 
 const ControllerStateMachine& ControllerCore::StateMachine() const {
-    static ControllerStateMachine placeholder;
-    return deps_.stateMachine ? *deps_.stateMachine : placeholder;
+    // DriverWiring constructs the controller only after injecting the root
+    // runtime authority. Never substitute a private fallback state machine.
+    return *deps_.stateMachine;
 }
 
 MetricsSink& ControllerCore::Metrics() const {

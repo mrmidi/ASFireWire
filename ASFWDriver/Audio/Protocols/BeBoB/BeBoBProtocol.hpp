@@ -43,17 +43,16 @@ class BeBoBProtocol : public IDeviceProtocol,
 public:
     BeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
                   Protocols::Ports::FireWireBusInfo& busInfo,
-                  uint16_t nodeId,
+                  Discovery::DeviceRouteToken route,
                   IRM::IRMClient* irmClient,
                   CMP::CMPClient* cmpClient,
-                  uint64_t deviceGuid,
                   Scheduling::ITimerScheduler* timerScheduler) noexcept;
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
     IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
     const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
-    void UpdateRuntimeContext(uint16_t nodeId,
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 
     // IAVCCommandSubmitter
@@ -120,13 +119,12 @@ protected:
     [[nodiscard]] IOReturn ResetEpochIfNeeded() noexcept;
 
     Protocols::Ports::FireWireBusInfo& busInfo_;
-    uint16_t nodeId_{0};
+    Discovery::DeviceRouteToken route_{};
     IRM::IRMClient* irmClient_{nullptr};
     CMP::CMPClient* cmpClient_{nullptr};
     Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
-    uint64_t deviceGuid_{0};
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};
-    FW::Generation preparedGeneration_{0};
+    uint64_t preparedRouteEpoch_{0};
     AudioDuplexChannels duplexChannels_{};
     AudioClockConfig appliedClock_{.sampleRateHz = 0};
     bool inputConnected_{false};

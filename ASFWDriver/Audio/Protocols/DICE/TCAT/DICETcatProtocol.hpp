@@ -34,7 +34,8 @@ public:
 
     DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                      Protocols::Ports::FireWireBusInfo& busInfo,
-                     uint16_t nodeId,
+                     Discovery::DeviceRegistry& routeRegistry,
+                     const Discovery::DeviceRouteToken& route,
                      ::ASFW::IRM::IRMClient* irmClient = nullptr);
 
     IOReturn Initialize() override;
@@ -65,7 +66,7 @@ public:
     void ProgramTxAndEnableDuplex48k(VoidCallback callback) override;
     void ConfirmDuplex48kStart(VoidCallback callback) override;
     IOReturn StopDuplex() override;
-    void UpdateRuntimeContext(uint16_t nodeId,
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 
     [[nodiscard]] Protocols::Ports::ProtocolRegisterIO& IO() noexcept { return io_; }

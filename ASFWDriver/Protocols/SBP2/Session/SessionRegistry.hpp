@@ -23,6 +23,7 @@
 #include "../SCSICommandSet.hpp"
 #include "../AddressSpaceManager.hpp"
 #include "../../../Discovery/IDeviceManager.hpp"
+#include "../../../Discovery/DeviceRegistry.hpp"
 #include "../../../Discovery/DiscoveryTypes.hpp"
 #include "../../../Logging/Logging.hpp"
 
@@ -55,6 +56,7 @@ struct SessionRecord {
     void* owner{nullptr};
     uint64_t guid{0};
     uint32_t romOffset{0};
+    Discovery::DeviceRouteToken route{};
     std::shared_ptr<LoginSession> session;
     int32_t lastError{0};
     // Declared last so it is destroyed first (it references `session`/`lastError`).
@@ -66,6 +68,7 @@ public:
     SessionRegistry(Async::IFireWireBus& bus,
                     Async::IFireWireBusInfo& busInfo,
                     AddressSpaceManager& addrSpaceMgr,
+                    Discovery::DeviceRegistry& deviceRegistry,
                     Discovery::IDeviceManager& deviceManager,
                     ISessionScheduler& scheduler,
                     IODispatchQueue* workQueue = nullptr);
@@ -138,6 +141,7 @@ private:
     Async::IFireWireBus& bus_;
     Async::IFireWireBusInfo& busInfo_;
     AddressSpaceManager& addrSpaceMgr_;
+    Discovery::DeviceRegistry& deviceRegistry_;
     Discovery::IDeviceManager& deviceManager_;
     ISessionScheduler& scheduler_;
     IODispatchQueue* workQueue_{nullptr};

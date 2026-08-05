@@ -171,7 +171,8 @@ kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args
     auto* driver = driver_;
 
     constexpr uint8_t kTestChannel = 0;
-    cmpClient->ConnectOPCR(kTestPlug, kTestChannel, [driver](ASFW::CMP::CMPStatus status) {
+    cmpClient->ConnectOPCR(ASFW::CMP::CMPDevice{}, kTestPlug, kTestChannel,
+                           [driver](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) {
             ASFW_LOG(UserClient, "✅ CMP oPCR connect succeeded!");
 
@@ -204,7 +205,8 @@ kern_return_t IsochHandler::TestCMPDisconnectOPCR(IOUserClientMethodArguments* a
 
     auto* driver = driver_;
 
-    cmpClient->DisconnectOPCR(kTestPlug, [driver](ASFW::CMP::CMPStatus status) {
+    cmpClient->DisconnectOPCR(ASFW::CMP::CMPDevice{}, kTestPlug,
+                              [driver](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) {
             ASFW_LOG(UserClient, "✅ CMP oPCR disconnect succeeded!");
 
@@ -236,7 +238,8 @@ kern_return_t IsochHandler::TestCMPConnectIPCR(IOUserClientMethodArguments* args
 
     ASFW_LOG(UserClient, "TestCMPConnectIPCR: Connecting iPCR[%u] ch=%u", kTestPlug, kTestChannel);
 
-    cmpClient->ConnectIPCR(kTestPlug, kTestChannel, [](ASFW::CMP::CMPStatus status) {
+    cmpClient->ConnectIPCR(ASFW::CMP::CMPDevice{}, kTestPlug, kTestChannel,
+                           [](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) { // NOSONAR(cpp:S3923): branches log different
                                                        // diagnostic messages
             ASFW_LOG(UserClient, "✅ CMP iPCR connect succeeded!");
@@ -262,7 +265,8 @@ kern_return_t IsochHandler::TestCMPDisconnectIPCR(IOUserClientMethodArguments* a
     constexpr uint8_t kTestPlug = 0;
     ASFW_LOG(UserClient, "TestCMPDisconnectIPCR: Disconnecting iPCR[%u]", kTestPlug);
 
-    cmpClient->DisconnectIPCR(kTestPlug, [](ASFW::CMP::CMPStatus status) {
+    cmpClient->DisconnectIPCR(ASFW::CMP::CMPDevice{}, kTestPlug,
+                              [](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) { // NOSONAR(cpp:S3923): branches log different
                                                        // diagnostic messages
             ASFW_LOG(UserClient, "✅ CMP iPCR disconnect succeeded!");

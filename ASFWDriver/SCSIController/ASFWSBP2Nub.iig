@@ -2,13 +2,12 @@
 // ASFWSBP2Nub.iig
 // ASFWDriver
 //
-// Minimal nub published by ASFWDriver to give the SCSI HBA (ASFWSCSIController)
-// a provider to match on — mirrors the ASFWAudioNub/ASFWAudioDriver pattern.
-// Phase 0: one nub, no per-target state. Phase 1 carries SBP-2 login/unit
-// identity so the HBA can bind a target to a specific FireWire SBP-2 LUN.
+// Nub published by ASFWDriver only for a discovered SBP-2 unit. Its registry
+// properties carry the FireWire GUID plus unit-directory/LUN identity, and it
+// is terminated when that exact FWUnit is removed. It survives route-only
+// reset suspension because that does not change device service incarnation.
 //
-// ASFWDriver sets property ASFWNubType = "SBP2"; the ASFWSCSIControllerService
-// personality matches on it (IOPropertyMatch).
+// ASFWDriver sets property ASFWNubType = "SBP2" through its create properties.
 //
 
 #ifndef ASFWSBP2Nub_h

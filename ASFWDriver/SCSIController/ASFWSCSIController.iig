@@ -20,11 +20,11 @@
 // identity, the pre-login probe INQUIRY is deferred and replayed with the
 // device's real INQUIRY once login is up (generic, no per-device identity).
 //
-// Matching: this HBA co-matches the OHCI PCI device directly (IOProviderClass
-// IOPCIDevice + IOPCIMatch, distinct IOMatchCategory), alongside the main
-// ASFWDriver. ASFWDriver also publishes an ASFWSBP2Nub, but nothing matches on
-// it yet — it is staged for a future per-unit personality, not the current
-// match path.
+// Matching: this HBA currently co-matches the OHCI PCI device directly
+// (IOProviderClass IOPCIDevice + IOPCIMatch, distinct IOMatchCategory),
+// alongside the main ASFWDriver. ASFWDriver publishes ASFWSBP2Nub only for
+// real discovered units; those nubs carry per-unit service identity for the
+// eventual per-target HBA personality without creating phantom services.
 //
 
 #ifndef ASFWSCSIController_h

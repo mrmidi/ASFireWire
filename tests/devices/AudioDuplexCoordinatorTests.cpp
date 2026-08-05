@@ -631,13 +631,13 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
     }
 
     void InstallDevice(const std::shared_ptr<IDeviceProtocol>& protocol) {
-        registry_.UpsertFromROM(MakeConfigRom(kTestGuid), LinkPolicy{});
+        (void)registry_.UpsertFromROM(MakeConfigRom(kTestGuid), LinkPolicy{});
         runtime_.Insert(kTestGuid, protocol);
     }
 
     void InstallDeviceAtGeneration(Generation gen,
                                    const std::shared_ptr<IDeviceProtocol>& protocol) {
-        registry_.UpsertFromROM(
+        (void)registry_.UpsertFromROM(
             MakeConfigRom(kTestGuid, kFocusriteVendorId, kSPro24DspModelId, gen), LinkPolicy{});
         runtime_.Insert(kTestGuid, protocol);
         protocol_->healthGeneration = gen;
@@ -727,7 +727,7 @@ TEST_F(AudioDuplexCoordinatorTests, ColdStartTransitionsIdleToRunning) {
 
 TEST_F(AudioDuplexCoordinatorTests,
        AvcProfileReservesBothDirectionsAndInterleavesHostStartsWithDeviceStages) {
-    registry_.UpsertFromROM(
+    (void)registry_.UpsertFromROM(
         MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
     ClearLog();
 
@@ -783,7 +783,7 @@ TEST_F(AudioDuplexCoordinatorTests,
 
 TEST_F(AudioDuplexCoordinatorTests,
        ApogeeDuetStartForces48kBeforeDevicePreparationEvenAfterPersistedRate) {
-    registry_.UpsertFromROM(
+    (void)registry_.UpsertFromROM(
         MakeConfigRom(kTestGuid, kApogeeVendorId, kApogeeDuetModelId), LinkPolicy{});
 
     // A developer-only/manual rate request can leave an old value in the
@@ -1182,7 +1182,7 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingAbortsClockRequestsDuringRestar
     EXPECT_EQ(protocol_->stopCalls, 3);
 }
 
-TEST_F(AudioDuplexCoordinatorTests, GenerationChangeDuringPrepareInvalidatesRestartEpoch) {
+TEST_F(AudioDuplexCoordinatorTests, RouteRebindDuringPrepareInvalidatesRestartEpoch) {
     protocol_->SetHoldPrepare(true);
 
     std::promise<IOReturn> startPromise;
@@ -1191,7 +1191,8 @@ TEST_F(AudioDuplexCoordinatorTests, GenerationChangeDuringPrepareInvalidatesRest
         [&] { startPromise.set_value(coordinator_.StartStreaming(kTestGuid)); });
 
     ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(1));
-    InstallDeviceAtGeneration(Generation{2}, protocol_);
+    registry_.InvalidateLiveMappingsForBusReset();
+    InstallDeviceAtGeneration(Generation{1}, protocol_);
     protocol_->SetHoldPrepare(false);
 
     EXPECT_EQ(startFuture.get(), kIOReturnAborted);

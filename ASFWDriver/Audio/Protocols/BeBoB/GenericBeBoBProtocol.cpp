@@ -44,13 +44,12 @@ void ForEachFormationRate(const DeviceModel& model, F&& fn) noexcept {
 
 GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                            Protocols::Ports::FireWireBusInfo& busInfo,
-                                           uint16_t nodeId,
+                                           Discovery::DeviceRouteToken route,
                                            IRM::IRMClient* irmClient,
                                            CMP::CMPClient* cmpClient,
-                                           uint64_t deviceGuid,
                                            Scheduling::ITimerScheduler* timerScheduler,
                                            const DeviceModel& discoveryModel) noexcept
-    : BeBoBProtocol(busOps, busInfo, nodeId, irmClient, cmpClient, deviceGuid, timerScheduler),
+    : BeBoBProtocol(busOps, busInfo, route, irmClient, cmpClient, timerScheduler),
       supportedRates_(MakeSupportedRates(discoveryModel)) {
 
     deviceName_ = "Unknown BeBoB Device";

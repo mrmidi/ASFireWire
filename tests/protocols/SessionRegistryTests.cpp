@@ -128,7 +128,7 @@ void CompleteTaskManagementStatus(AddressSpaceManager& manager,
 class SessionRegistryRig {
 public:
     explicit SessionRegistryRig(uint32_t unitCharacteristics = 0x080400)
-        : registry(bus, bus, addressManager, deviceManager, scheduler, &queue) {
+        : registry(bus, bus, addressManager, deviceRegistry, deviceManager, scheduler, &queue) {
         queue.SetManualDispatchForTesting(true);
         ASFW::Testing::SetHostMonotonicClockForTesting([this]() { return nowNs; });
 
@@ -157,6 +157,7 @@ public:
         record.state = LifeState::Ready;
 
         ConfigROM rom{};
+        rom.bib.guid = kGuid;
         rom.gen = generation;
         rom.nodeId = record.nodeId;
         rom.vendorName = record.vendorName;
@@ -168,6 +169,8 @@ public:
             RomEntry{CfgKey::Management_Agent_Offset, 0x000080, 1, 0},
             RomEntry{CfgKey::Unit_Characteristics, unitCharacteristics, 0, 0},
         };
+
+        (void)deviceRegistry.UpsertFromROM(rom, record.link);
 
         auto device = deviceManager.UpsertDevice(record, rom);
         EXPECT_NE(nullptr, device);
@@ -234,6 +237,7 @@ public:
     ASFW::Async::Testing::DeferredFireWireBus bus;
     FakeSessionScheduler scheduler;
     AddressSpaceManager addressManager{nullptr};
+    DeviceRegistry deviceRegistry;
     DeviceManager deviceManager;
     IODispatchQueue queue;
     SessionRegistry registry;
@@ -828,16 +832,64 @@ TEST(SessionRegistryTests, BusResetInvalidatesRegistryMappingUntilNewRom) {
     rom.gen = Generation{1};
     rom.nodeId = 0x32;
 
-    auto& record = registry.UpsertFromROM(rom, LinkPolicy{});
-    EXPECT_EQ(&record, registry.FindByNode(Generation{1}, 0x32));
+    const auto record = registry.UpsertFromROM(rom, LinkPolicy{});
+    const auto byNode = registry.SnapshotByNode(Generation{1}, 0x32);
+    ASSERT_TRUE(byNode.has_value());
+    EXPECT_EQ(record.guid, byNode->guid);
     ASSERT_EQ(1u, registry.LiveDevices(Generation{1}).size());
 
     registry.InvalidateLiveMappingsForBusReset();
 
-    EXPECT_EQ(nullptr, registry.FindByNode(Generation{1}, 0x32));
-    ASSERT_NE(nullptr, registry.FindByGuid(SessionRegistryRig::kGuid));
-    EXPECT_EQ(kInvalidNodeId, registry.FindByGuid(SessionRegistryRig::kGuid)->nodeId);
+    EXPECT_FALSE(registry.SnapshotByNode(Generation{1}, 0x32).has_value());
+    const auto byGuid = registry.SnapshotByGuid(SessionRegistryRig::kGuid);
+    ASSERT_TRUE(byGuid.has_value());
+    EXPECT_EQ(kInvalidNodeId, byGuid->nodeId);
     EXPECT_TRUE(registry.LiveDevices(Generation{1}).empty());
+}
+
+TEST(SessionRegistryTests, RouteTokensRejectResetAndSameGuidReplugCallbacks) {
+    DeviceRegistry registry;
+    ConfigROM rom{};
+    rom.bib.guid = SessionRegistryRig::kGuid;
+    rom.gen = Generation{1};
+    rom.nodeId = 0x32;
+
+    const auto firstRecord = registry.UpsertFromROM(rom, LinkPolicy{});
+    const auto firstRoute = registry.CurrentRoute(rom.bib.guid);
+    ASSERT_TRUE(firstRoute.has_value());
+    EXPECT_TRUE(registry.IsCurrent(*firstRoute));
+
+    registry.InvalidateLiveMappingsForBusReset();
+    EXPECT_FALSE(registry.IsCurrent(*firstRoute));
+
+    rom.gen = Generation{2};
+    rom.nodeId = 0x21;
+    const auto reboundRecord = registry.UpsertFromROM(rom, LinkPolicy{});
+    const auto reboundRoute = registry.CurrentRoute(rom.bib.guid);
+    ASSERT_TRUE(reboundRoute.has_value());
+    EXPECT_TRUE(registry.IsCurrent(*reboundRoute));
+    EXPECT_EQ(firstRecord.deviceIncarnation, reboundRecord.deviceIncarnation);
+    EXPECT_NE(firstRoute->routeEpoch, reboundRoute->routeEpoch);
+
+    registry.RetireDevice(rom.bib.guid);
+    EXPECT_FALSE(registry.IsCurrent(*reboundRoute));
+
+    rom.gen = Generation{3};
+    rom.nodeId = 0x12;
+    const auto replugRecord = registry.UpsertFromROM(rom, LinkPolicy{});
+    const auto replugRoute = registry.CurrentRoute(rom.bib.guid);
+    ASSERT_TRUE(replugRoute.has_value());
+    EXPECT_TRUE(registry.IsCurrent(*replugRoute));
+    EXPECT_GT(replugRecord.deviceIncarnation, reboundRecord.deviceIncarnation);
+    EXPECT_NE(replugRoute->routeEpoch, reboundRoute->routeEpoch);
+}
+
+TEST(SessionRegistryTests, SessionAdmissionRejectsAnInvalidatedRoute) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+
+    rig.deviceRegistry.InvalidateLiveMappingsForBusReset();
+    EXPECT_FALSE(rig.registry.StartLogin(SessionRegistryRig::Owner(), handle));
 }
 
 TEST(SessionRegistryTests, SubmitCommandRejectsCDBLargerThanORBPayloadBudget) {
