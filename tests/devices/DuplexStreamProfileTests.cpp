@@ -15,6 +15,9 @@ using ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
 using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
 using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
+using ASFW::DeviceProfiles::Audio::kWeissInt202ModelId;
+using ASFW::DeviceProfiles::Audio::kWeissInt203ModelId;
+using ASFW::DeviceProfiles::Audio::kWeissVendorId;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Encoding::AudioWireFormat;
 
@@ -132,6 +135,34 @@ TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrder
     EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
     EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
     EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
+}
+
+TEST(DuplexStreamProfileTests, WeissIntStartsHostTransmitFirstWithoutPreEnableSourceLock) {
+    AudioStreamRuntimeCaps caps{
+        // CoreAudio presentation is output-only, but the DICE wire topology is
+        // still two PCM channels in both directions.
+        .hostInputPcmChannels = 0,
+        .hostOutputPcmChannels = 2,
+        .deviceToHostAm824Slots = 2,
+        .hostToDeviceAm824Slots = 2,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+
+    for (const uint32_t modelId : {kWeissInt202ModelId, kWeissInt203ModelId}) {
+        DeviceRecord record{
+            .vendorId = kWeissVendorId,
+            .modelId = modelId,
+        };
+        const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+
+        EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock) << modelId;
+        EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kTransmit) << modelId;
+        EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kReceive) << modelId;
+        EXPECT_EQ(profile.channels.captureStreamCount, 1U) << modelId;
+        EXPECT_EQ(profile.channels.playbackStreamCount, 1U) << modelId;
+    }
 }
 
 TEST(DuplexStreamProfileTests, AlesisModelsClampAdvertisedCaptureStreamsToOne) {

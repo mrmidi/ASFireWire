@@ -28,6 +28,22 @@ inline constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
 // macOS driver uses the same field during probe.
 inline constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
 
+// ---- Weiss Engineering (DICE / TCAT family) ----
+// Model identifiers are from the vendor/model match table in Linux
+// sound/firewire/dice/dice.c. Only INT202/INT203 are audio-enabled below; the
+// remainder are recognized for identity so future verified profiles do not
+// need to rediscover their Config-ROM identity.
+inline constexpr uint32_t kWeissVendorId          = 0x001c6a;
+inline constexpr uint32_t kWeissAdc2ModelId       = 0x000001;
+inline constexpr uint32_t kWeissVestaModelId      = 0x000002;
+inline constexpr uint32_t kWeissDac2ModelId       = 0x000003;
+inline constexpr uint32_t kWeissAfi1ModelId       = 0x000004;
+inline constexpr uint32_t kWeissInt202ModelId     = 0x000006;
+inline constexpr uint32_t kWeissDac202ModelId     = 0x000007;
+inline constexpr uint32_t kWeissMayaModelId       = 0x000008;
+inline constexpr uint32_t kWeissInt203ModelId     = 0x00000a;
+inline constexpr uint32_t kWeissMan301ModelId     = 0x00000b;
+
 // ---- Apogee (Oxford / AV/C family) ----
 inline constexpr uint32_t kApogeeVendorId    = 0x0003db;
 inline constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
@@ -65,6 +81,16 @@ inline constexpr const char* kSPro24DspModelName      = "Saffire Pro 24 DSP";
 inline constexpr const char* kSPro14ModelName         = "Saffire Pro 14";
 inline constexpr const char* kSPro26ModelName         = "Saffire Pro 26";
 inline constexpr const char* kSPro40Tcd3070ModelName  = "Saffire Pro 40 (TCD3070)";
+inline constexpr const char* kWeissVendorName         = "Weiss Engineering";
+inline constexpr const char* kWeissAdc2ModelName      = "ADC2";
+inline constexpr const char* kWeissVestaModelName     = "Vesta";
+inline constexpr const char* kWeissDac2ModelName      = "DAC2 / Minerva";
+inline constexpr const char* kWeissAfi1ModelName      = "AFI1";
+inline constexpr const char* kWeissInt202ModelName    = "INT202";
+inline constexpr const char* kWeissDac202ModelName    = "DAC202";
+inline constexpr const char* kWeissMayaModelName      = "MAYA";
+inline constexpr const char* kWeissInt203ModelName    = "INT203";
+inline constexpr const char* kWeissMan301ModelName    = "MAN301";
 inline constexpr const char* kApogeeVendorName        = "Apogee";
 inline constexpr const char* kApogeeDuetModelName     = "Duet";
 inline constexpr const char* kTerraTecVendorName      = "TerraTec Electronic GmbH";

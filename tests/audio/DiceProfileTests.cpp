@@ -15,6 +15,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
+#include "Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
@@ -61,6 +62,27 @@ TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+}
+
+TEST(DiceProfileTests, WeissIntProfileKeepsDuplexWireShapeButHidesCaptureFromCoreAudio) {
+    constexpr uint32_t kWeissVendorId = 0x001c6a;
+    constexpr uint32_t kInt202ModelId = 0x000006;
+    constexpr uint32_t kInt203ModelId = 0x00000a;
+
+    for (const uint32_t modelId : {kInt202ModelId, kInt203ModelId}) {
+        const auto* profile = AudioProfileRegistry::FindProfile(kWeissVendorId, modelId, 0);
+        ASSERT_NE(profile, nullptr);
+        EXPECT_STREQ(profile->Name(), "Weiss INT (DICE)");
+        EXPECT_EQ(profile->TxChannelCount(), 2U);
+        EXPECT_EQ(profile->RxChannelCount(), 0U);
+        EXPECT_EQ(profile->SupportedSampleRates(), (std::vector<uint32_t>{44100U, 48000U}));
+
+        const auto* wireProfile = static_cast<const IAudioStreamProfile*>(profile);
+        AudioStreamConfig capture{};
+        ASSERT_TRUE(wireProfile->BuildDefaultRxStreamConfig(capture));
+        EXPECT_EQ(capture.pcmChannels, 2U);
+        EXPECT_EQ(capture.dbs, 2U);
+    }
 }
 
 TEST(DiceProfileTests, ResolvesApogeeDuetProfileWithoutDICEName) {

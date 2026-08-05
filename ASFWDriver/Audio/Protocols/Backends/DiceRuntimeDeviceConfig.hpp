@@ -14,12 +14,13 @@ namespace ASFW::Audio {
 
 // DICE stream geometry is discovered from the device's TX/RX sections. Keep
 // that runtime result as the source of truth for the HAL-facing endpoint rather
-// than replacing it with the generic profile's stereo fallback.
+// than replacing it with the generic profile's stereo fallback. A zero input
+// count is valid when a profile deliberately hides a physical DICE return
+// stream from CoreAudio (e.g. Weiss INT202); a zero output remains unusable.
 [[nodiscard]] inline bool ApplyDiceRuntimeCapsToDeviceConfig(
     const AudioStreamRuntimeCaps& caps,
     Model::ASFWAudioDevice& config) {
-    if (caps.sampleRateHz == 0 || caps.hostInputPcmChannels == 0 ||
-        caps.hostOutputPcmChannels == 0) {
+    if (caps.sampleRateHz == 0 || caps.hostOutputPcmChannels == 0) {
         return false;
     }
 

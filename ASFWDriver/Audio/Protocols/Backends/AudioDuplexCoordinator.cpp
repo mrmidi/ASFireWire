@@ -1278,7 +1278,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     session.generation = programRx.value.generation;
     SetSessionPhase(session, DuplexRestartPhase::kProgrammingDeviceRx);
     session.deviceRxProgrammed = true;
-    session.runtimeCaps = programRx.value.runtimeCaps.hostInputPcmChannels != 0
+    session.runtimeCaps = programRx.value.runtimeCaps.hostOutputPcmChannels != 0
                               ? programRx.value.runtimeCaps
                               : session.runtimeCaps;
     SetSessionPhase(session, DuplexRestartPhase::kDeviceRxProgrammed);
@@ -1323,7 +1323,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     session.generation = programTx.value.generation;
     SetSessionPhase(session, DuplexRestartPhase::kProgrammingDeviceTx);
     session.deviceTxArmed = true;
-    session.runtimeCaps = programTx.value.runtimeCaps.hostInputPcmChannels != 0
+    session.runtimeCaps = programTx.value.runtimeCaps.hostOutputPcmChannels != 0
                               ? programTx.value.runtimeCaps
                               : session.runtimeCaps;
     SetSessionPhase(session, DuplexRestartPhase::kDeviceTxArmed);

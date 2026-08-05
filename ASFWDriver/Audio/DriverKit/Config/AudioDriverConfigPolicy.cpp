@@ -48,21 +48,21 @@ void ApplyBringupSingleFormatPolicy(ParsedAudioDriverConfig& inOutConfig) {
 
 void ClampAudioDriverChannels(ParsedAudioDriverConfig& inOutConfig,
                               uint32_t maxSupportedChannels) {
-    if (inOutConfig.inputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitInputChannelCount && inOutConfig.inputChannelCount == 0) {
         inOutConfig.inputChannelCount = inOutConfig.channelCount;
     } else if (inOutConfig.inputChannelCount > maxSupportedChannels) {
         inOutConfig.inputChannelCount = maxSupportedChannels;
     }
-    if (inOutConfig.outputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitOutputChannelCount && inOutConfig.outputChannelCount == 0) {
         inOutConfig.outputChannelCount = inOutConfig.channelCount;
     } else if (inOutConfig.outputChannelCount > maxSupportedChannels) {
         inOutConfig.outputChannelCount = maxSupportedChannels;
     }
 
-    if (inOutConfig.inputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitInputChannelCount && inOutConfig.inputChannelCount == 0) {
         inOutConfig.inputChannelCount = kDefaultChannelCount;
     }
-    if (inOutConfig.outputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitOutputChannelCount && inOutConfig.outputChannelCount == 0) {
         inOutConfig.outputChannelCount = kDefaultChannelCount;
     }
 

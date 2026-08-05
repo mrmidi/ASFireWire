@@ -109,3 +109,39 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
     inputMemory->release();
     controlMemory->release();
 }
+
+TEST(AudioEndpointRuntime, PlaybackOnlyPresentationKeepsPhysicalReturnRingForDuplexTransport) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    auto config = MakeDeviceConfig();
+    config.channelCount = 2;
+    config.inputChannelCount = 0;  // CoreAudio-visible topology.
+    config.outputChannelCount = 2;
+    runtime.UpdateConfig(config);
+
+    IOMemoryDescriptor* outputMemory = nullptr;
+    IOMemoryDescriptor* inputMemory = nullptr;
+    IOMemoryDescriptor* controlMemory = nullptr;
+    uint32_t outputFrames = 0;
+    uint32_t outputChannels = 0;
+    uint32_t inputFrames = 0;
+    uint32_t inputChannels = 0;
+    uint32_t sampleRateHz = 0;
+    uint64_t generation = 0;
+
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(&outputMemory,
+                                            &inputMemory,
+                                            &controlMemory,
+                                            &outputFrames,
+                                            &outputChannels,
+                                            &inputFrames,
+                                            &inputChannels,
+                                            &sampleRateHz,
+                                            &generation),
+              kIOReturnSuccess);
+    EXPECT_EQ(outputChannels, 2U);
+    EXPECT_EQ(inputChannels, 2U);
+
+    outputMemory->release();
+    inputMemory->release();
+    controlMemory->release();
+}

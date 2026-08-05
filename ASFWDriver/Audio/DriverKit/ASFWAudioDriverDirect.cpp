@@ -254,7 +254,8 @@ uint32_t FrameCapacityFromSegment(const IOAddressSegment& segment,
          : static_cast<uint32_t>(frameCapacity);
 }
 
-bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
+bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
+                             DirectAudioMemoryGeometry physicalGeometry) noexcept {
     if (!ivars.audioDevice) {
         ASFW_LOG(DirectAudio,
                  "ADK FATAL BIND skeleton failed null_audioDevice guid=0x%016llx",
@@ -286,9 +287,9 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
     outputSegment.length = ivars.outputMap->GetLength();
 
     const uint32_t inputFrameCapacity =
-        FrameCapacityFromSegment(inputSegment, ivars.device.inputChannelCount);
+        FrameCapacityFromSegment(inputSegment, physicalGeometry.inputChannels);
     const uint32_t outputFrameCapacity =
-        FrameCapacityFromSegment(outputSegment, ivars.device.outputChannelCount);
+        FrameCapacityFromSegment(outputSegment, physicalGeometry.outputChannels);
 
     // Resolve the device profile to determine the host-to-device wire format.
     // Standard DICE fallback profiles use AM824 sub-frame formatting, while
@@ -309,13 +310,13 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
             .outputBase = reinterpret_cast<const float*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
             .inputFrameCapacity = inputFrameCapacity,
             .outputFrameCapacity = outputFrameCapacity,
-            .inputChannels = ivars.device.inputChannelCount,
-            .outputChannels = ivars.device.outputChannelCount,
+            .inputChannels = physicalGeometry.inputChannels,
+            .outputChannels = physicalGeometry.outputChannels,
             .storage = ASFW::Audio::Runtime::AudioSampleStorage::kFloat32Native,
         },
         .control = control,
-        .deviceToHostAm824Slots = ivars.device.inputChannelCount,
-        .hostToDeviceAm824Slots = ivars.device.outputChannelCount,
+        .deviceToHostAm824Slots = physicalGeometry.inputChannels,
+        .hostToDeviceAm824Slots = physicalGeometry.outputChannels,
         .streamMode = DirectStreamModeFromRaw(ivars.device.streamModeRaw),
         .hostToDeviceWireFormat = wireFormat,
         .audioDevice = ivars.audioDevice.get(),

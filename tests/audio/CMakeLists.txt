@@ -192,6 +192,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/AlesisMultiMixProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.cpp"
 )
 
 # IT Descriptor Layout Tests
