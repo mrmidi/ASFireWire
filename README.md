@@ -423,49 +423,22 @@ NOTE: You need an Apple Developer account (paid) and appropriate entitlements �
 
 Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build
 
-### SCSI HBA (SBP-2 scanners/disks) — opt-in
+### SCSI HBA (SBP-2 scanners/disks)
 
-The SCSI HBA (`ASFWSCSIControllerService`, for SBP-2 devices such as FireWire film
-scanners and disks) is **excluded from the default build** while its boot-safety
-validation is pending.
+Every build includes a SCSI host adapter (`ASFWSCSIControllerService`) that exposes
+SBP-2 FireWire devices — film scanners, disks — to macOS, so tools like VueScan see
+them as regular SCSI devices.
 
-The risk it guards against is xnu's generic **60 s registry busy-timeout boot panic**
-(`IOService.cpp:5947` on current xnu; `:5986` on earlier builds): the kernel-side
-`IOUserSCSIParallelInterfaceController` shim instantiates when the FireWire card
-matches at boot and drives the dext's HBA bring-up as **synchronous calls with no
-timeout**. Anything in that chain that waits — historically, a probe INQUIRY held
-for an SBP-2 login that never arrives on a device-less bus (issue #54) — keeps the
-PCI nub busy past watchdogd's 60 s boot quiesce and panics the machine, regardless
-of SIP/AMFI state. The IOSCSIParallelFamily kext itself contains no panic sites;
-the panic is purely this stall-past-the-deadline mechanism.
+Earlier versions kept this behind a build flag because of a boot-panic report
+(issue #54): if the driver's SCSI startup ever stalls, macOS panics the machine
+60 seconds into boot. The startup path has since been redesigned so it never
+waits on anything (a device is only published once one actually logs in on the
+bus), and this has been hardware-validated — booting with the FireWire adapter
+connected and no device powered on completes startup in milliseconds. The full
+mechanism analysis lives in issue #54 and PR #96.
 
-The current HBA is designed to make that impossible: the bring-up chain never
-waits (constant capability answers, presence scan answers false, target 0 is
-created only on an actual SBP-2 login edge) — **pending hardware validation** of
-the device-less/power-off/unplug-during-boot cases.
-
-The build also needs the restricted
-`com.apple.developer.driverkit.family.scsicontroller` entitlement. On a machine
-where AMFI enforces entitlements, the ad-hoc-signed dext carrying it is killed at
-launch, taking the audio driver down with it (everything runs in one process).
-That failure is expected to be a silent no-load, not a panic — xnu's dext-launch
-failure path detaches the nub without re-registering it — but this has not been
-verified on hardware with SIP enabled.
-
-The default build carries neither the personality nor the entitlement and cannot
-trigger any of this.
-
-To include the HBA, opt in explicitly:
-
-```bash
-./build.sh --scsi          # or: xcodebuild … ASFW_ENABLE_SCSI=YES
-./sign.sh                  # picks the +SCSI entitlements automatically
-```
-
-> **Until the boot-safety validation lands**, keep the old precautions when running
-> `--scsi` builds: power the SBP-2 device on before booting, and avoid restarting or
-> unplugging the adapter while it is attached with no powered-on SBP-2 device on
-> the bus.
+The SCSI part requires no extra setup: it uses the same SIP-disabled +
+developer-mode installation as the rest of the driver.
 
 If a machine ever ends up in a panic loop: boot into Recovery, `csrutil disable`,
 boot normally, uninstall the extension
@@ -486,10 +459,10 @@ for experimental testing only — not general use.
 > as-is; run it only if you understand and accept that.
 >
 > **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI refuses
-> to launch the ad-hoc-signed dext; an installed build that includes the SCSI HBA then
-> leaves an orphaned kernel-side SCSI stub behind at every boot, which can panic the
-> machine into a boot loop (recovery: Recovery → `csrutil disable` → boot → uninstall
-> → `csrutil enable`).
+> to launch the ad-hoc-signed dext at every boot. That is expected to be a silent
+> no-load, but it has not been verified on hardware with SIP enabled — don't leave the
+> extension installed in a state where it can never launch (recovery, should a boot
+> loop ever occur: Recovery → `csrutil disable` → boot → uninstall → `csrutil enable`).
 
 **Requirements:** an Apple Silicon Mac running macOS 26 (Tahoe), and FireWire hardware
 (a PCIe FireWire/OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
