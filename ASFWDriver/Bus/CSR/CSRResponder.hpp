@@ -42,12 +42,6 @@ struct ICycleMasterControl {
     [[nodiscard]] virtual bool IsCycleMasterEnabled() const noexcept = 0;
 };
 
-// Triggers a physical bus reset on the local bus.
-struct IBusResetTrigger {
-    virtual ~IBusResetTrigger() = default;
-    virtual void TriggerBusReset(bool shortReset) noexcept = 0;
-};
-
 class BroadcastChannelCSR;
 
 // Supplies TOPOLOGY_MAP quadlets. Installed by FW-20; until then the responder
@@ -76,7 +70,6 @@ public:
     struct Deps {
         IRootStatus* root{nullptr};
         ICycleMasterControl* cycleMaster{nullptr};
-        IBusResetTrigger* resetTrigger{nullptr};
         ITopologyMapProvider* topologyMap{nullptr};
         ISpeedMapProvider* speedMap{nullptr};
         BroadcastChannelCSR* broadcastChannel{nullptr};

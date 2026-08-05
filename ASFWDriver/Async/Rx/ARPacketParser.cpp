@@ -33,6 +33,20 @@ ARPacketParser::ExtractPhyPacketQuadletsHostOrder(std::span<const uint8_t> heade
     };
 }
 
+std::optional<uint8_t>
+ARPacketParser::ExtractBusResetMarkerGeneration(std::span<const uint8_t> header) {
+    // A link-internal packet is always 3 header quadlets (see GetHeaderLength), and
+    // the generation lives in the last of them. Anything shorter is a truncated read,
+    // not a marker we can trust.
+    if (header.size() < 12) {
+        return std::nullopt;
+    }
+
+    // Quadlet 2, bits [23:16] — raw byte 10. See the header comment for the Linux and
+    // Apple citations that pin this offset.
+    return static_cast<uint8_t>((le32_at(header.data() + 8) >> 16) & 0xFFU);
+}
+
 std::expected<ARPacketParser::PacketInfo, ARPacketParser::ParseFailure>
 ARPacketParser::ParseNext(std::span<const uint8_t> buffer, size_t offset) {
     const size_t bufferSize = buffer.size();
@@ -187,8 +201,10 @@ size_t ARPacketParser::GetHeaderLength(uint8_t tCode) {
         // TCODE_LINK_INTERNAL (0xe): p.header_length = 12 (3 quadlets)
         // PHY packet structure per OHCI §8.4.2.3:
         //   Quadlet 0: tcode[31:28]=0xE, event[3:0]
-        //   Quadlets 1-2: PHY payload; synthetic bus-reset markers reuse
-        //   quadlet 1 for the selfIDGeneration[23:16] field.
+        //   Quadlets 1-2: PHY payload; controller-synthesized bus-reset markers carry
+        //   selfIDGeneration in quadlet **2**, bits [23:16] (see
+        //   ExtractBusResetMarkerGeneration — Linux ohci.c:981 + AppleFWOHCI both read
+        //   that quadlet; an earlier revision here wrongly named quadlet 1).
         // Total: 12 bytes header + 4 bytes trailer = 16 bytes
         length = 12; // 3 quadlets (matches Linux!)
         break;

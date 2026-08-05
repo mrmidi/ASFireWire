@@ -59,20 +59,10 @@ private:
     ASFW::Driver::HardwareInterface* hw_;
 };
 
-// Physical bus reset trigger adapter.
-class HardwareBusResetTrigger final : public IBusResetTrigger {
-public:
-    explicit HardwareBusResetTrigger(ASFW::Driver::HardwareInterface* hw) noexcept : hw_(hw) {}
-
-    void TriggerBusReset(bool shortReset) noexcept override {
-        if (hw_ == nullptr) {
-            return;
-        }
-        hw_->InitiateBusReset(shortReset);
-    }
-
-private:
-    ASFW::Driver::HardwareInterface* hw_;
-};
-
+// NOTE: there is deliberately no bus-reset adapter here. Software bus resets are
+// issued exclusively by BusResetCoordinator, which owns the IEEE 1394-2008 §8.2.1
+// repeated-reset holdoff and the PHY-config pairing. Apple draws the same line:
+// IOFireWireUserClient::busReset() reaches the raw link (getLink()->resetBus())
+// only when the debug-only "unsafe bus resets" property is set, and otherwise goes
+// through IOFireWireController::resetBus(), the policy path.
 } // namespace ASFW::Bus

@@ -230,12 +230,9 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
         d.csrRootStatus = std::make_shared<ASFW::Bus::HardwareRootStatus>(d.hardware.get());
         d.csrCycleMasterControl =
             std::make_shared<ASFW::Bus::HardwareCycleMasterControl>(d.hardware.get());
-        d.csrResetTrigger =
-            std::make_shared<ASFW::Bus::HardwareBusResetTrigger>(d.hardware.get());
         d.csrResponder = std::make_shared<ASFW::Bus::CSRResponder>(ASFW::Bus::CSRResponder::Deps{
             .root = d.csrRootStatus.get(),
             .cycleMaster = d.csrCycleMasterControl.get(),
-            .resetTrigger = d.csrResetTrigger.get(),
             .topologyMap = d.topologyMapService.get(),
             .broadcastChannel = d.broadcastChannel.get(),
         });

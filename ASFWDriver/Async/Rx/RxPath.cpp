@@ -371,16 +371,19 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
 }
 
 void RxPath::HandleSyntheticBusResetPacket(const ARPacketView& view, uint8_t newGeneration, Debug::BusResetPacketCapture* busResetCapture) {
-    // OHCI §8.4.2.3, Linux handle_ar_packet() Bus-Reset path
-    // This function is called when we detect the synthetic Bus-Reset packet
-    // Format per OHCI Table 8-4:
-    //   q0: tcode=0xE, reserved fields (big-endian)
-    //   q1: selfIDGeneration[23:16], event=0x5h09[15:0] (big-endian)
+    // OHCI §8.4.2.3, Linux handle_ar_packet() Bus-Reset path.
+    // Called when the controller-synthesized Bus-Reset marker is detected.
+    // Layout (3 header quadlets + OHCI trailer, matching Linux header_length=12 and
+    // Apple's getPacket(0x10) for TCODE_LINK_INTERNAL):
+    //   q0: tcode=0xE, reserved fields
+    //   q1: reserved (reads 0 on real hardware — NOT the generation)
+    //   q2: selfIDGeneration[23:16]
+    // See ARPacketParser::ExtractBusResetMarkerGeneration for the Linux/Apple citations.
 
     const auto header = view.header;
-    if (header.size() < 8) {
+    if (header.size() < 12) {
         ASFW_LOG(Async,
-                 "RxPath::HandleSyntheticBusResetPacket: short header (len=%zu)",
+                 "RxPath::HandleSyntheticBusResetPacket: short header (len=%zu, need 12)",
                  header.size());
         return;
     }
@@ -392,9 +395,7 @@ void RxPath::HandleSyntheticBusResetPacket(const ARPacketView& view, uint8_t new
     std::array<uint32_t, 4> rawQuadlets{};
     __builtin_memcpy(&rawQuadlets[0], header.data(), 4);
     __builtin_memcpy(&rawQuadlets[1], header.data() + 4, 4);
-    if (header.size() >= 12) {
-        __builtin_memcpy(&rawQuadlets[2], header.data() + 8, 4);
-    }
+    __builtin_memcpy(&rawQuadlets[2], header.data() + 8, 4);
     rawQuadlets[3] = (static_cast<uint32_t>(view.xferStatus) << 16) |
                      static_cast<uint32_t>(view.timeStamp);
 
@@ -402,21 +403,27 @@ void RxPath::HandleSyntheticBusResetPacket(const ARPacketView& view, uint8_t new
         OSSwapLittleToHostInt32(rawQuadlets[0]);  // LE bytes → BE wire format
     const uint32_t q1 =
         OSSwapLittleToHostInt32(rawQuadlets[1]);  // LE bytes → BE wire format
+    const uint32_t q2 =
+        OSSwapLittleToHostInt32(rawQuadlets[2]);  // LE bytes → BE wire format
 
-    // Extract tCode from first byte (high byte in big-endian wire format)
-    const uint8_t wireByte0 = static_cast<uint8_t>(q0 >> 24);
-    const uint8_t tCode = (wireByte0 >> 4) & 0xF;
+    // tCode is bits [7:4] of quadlet 0, not the top byte: the AR quadlet is already in
+    // host order here, and IEEE 1394 puts destination_ID in [31:16] with tcode down at
+    // [7:4]. Cross-validated with Linux async_header_get_tcode()
+    // (packet-header-definitions.h:20-21, mask 0x000000f0 >> 4).
+    // Reading the top byte printed tCode=0x0 for every marker, on packets that are
+    // 0xE by definition — observed on hardware 2026-07-27 with q0=0x000000E0.
+    const uint8_t tCode = static_cast<uint8_t>((q0 >> 4) & 0xFU);
 
-    const uint8_t genFromPacket = static_cast<uint8_t>((q1 >> 16) & 0xFF);
+    const uint8_t genFromPacket =
+        ARPacketParser::ExtractBusResetMarkerGeneration(header).value_or(0);
 
-    ASFW_LOG_HEX(Async, "RxPath Bus-Reset packet parsing:");
-    ASFW_LOG_HEX(Async, "  q0 (host): 0x%08X wireByte0=0x%02X", q0, wireByte0);
-    ASFW_LOG_HEX(Async, "  q1 (host): 0x%08X", q1);
-    ASFW_LOG_HEX(Async, "  tCode: 0x%X (should be 0xE)", tCode);
-    ASFW_LOG_HEX(Async, "  generation from packet: %u (arg: %u)", genFromPacket, newGeneration);
-
-    ASFW_LOG(Async, "RxPath: Synthetic bus reset packet: tCode=0x%X gen=%u (controller=%u)",
-             tCode, genFromPacket, newGeneration);
+    // Raw quadlets stay in the line: the marker generation was read from the wrong
+    // quadlet for a long time, and the only way to prove which offset the controller
+    // actually populates is to see all three next to the extracted value.
+    ASFW_LOG(Async,
+             "RxPath: Synthetic bus reset packet: tCode=0x%X gen=%u (controller=%u) "
+             "q0=0x%08X q1=0x%08X q2=0x%08X",
+             tCode, genFromPacket, newGeneration, q0, q1, q2);
 
     if (genFromPacket != newGeneration) {
         ASFW_LOG(Async, "⚠️  WARNING: Generation mismatch in bus-reset packet! (%u vs %u)",
@@ -438,7 +445,15 @@ void RxPath::HandleSyntheticBusResetPacket(const ARPacketView& view, uint8_t new
     // and is set via ConfirmBusGeneration() after Self-ID decode completes.
     // This prevents race where synthetic packet overwrites the real generation.
     //
-    // generationTracker_.OnSyntheticBusReset(newGeneration);  // REMOVED - causes race!
+    // generationTracker_.OnConfirmedBusGeneration(newGeneration);  // REMOVED - causes race!
+    //
+    // TODO(FW-148 follow-up): the "race" may have been the wrong-quadlet read — this
+    // extracted quadlet 1, which is 0 on real hardware (confirmed 2026-07-27:
+    // q1=0x00000000, q2=0x00030000), so feeding it here fed a constant 0 into the
+    // tracker. Now that the value is real, re-evaluate against a trace before
+    // re-enabling: both references make the marker generation load-bearing (Linux
+    // stamps inbound requests with it; Apple's handleSelfIDInt spins until it matches
+    // the Self-ID buffer generation), and ASFW currently uses it for nothing.
 }
 
 void RxPath::HandlePhyRequestPacket(const ARPacketView& view) {
@@ -465,8 +480,16 @@ void RxPath::HandlePhyRequestPacket(const ARPacketView& view) {
     constexpr OHCIEventCode OHCI_EVT_BUS_RESET = OHCIEventCode::kEvtBusReset;
 
     if (eventCode == OHCI_EVT_BUS_RESET) {
-        // Extract generation from packet (OHCI Table 8-4)
-        const uint8_t genFromPacket = static_cast<uint8_t>((q1 >> 16) & 0xFF);
+        // selfIDGeneration lives in quadlet 2, bits [23:16] — see
+        // ARPacketParser::ExtractBusResetMarkerGeneration for the Linux/Apple citations.
+        const auto markerGeneration = ARPacketParser::ExtractBusResetMarkerGeneration(view.header);
+        if (!markerGeneration.has_value()) {
+            ASFW_LOG(Async,
+                     "RxPath AR/RQ: bus-reset marker with short header (len=%zu) — dropping",
+                     view.header.size());
+            return;
+        }
+        const uint8_t genFromPacket = *markerGeneration;
 
         ASFW_LOG(Async,
                  "🔥 SYNTHETIC BUS-RESET PACKET via PacketRouter: gen=%u event=0x%02X xferStatus=0x%04X",

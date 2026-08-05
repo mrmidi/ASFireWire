@@ -103,6 +103,18 @@ class BusResetCoordinatorTestPeer {
                    BusResetCoordinator::ResetRequestKind::GapCorrection;
     }
 
+    static bool PendingResetIsDelegation(const BusResetCoordinator& coordinator) {
+        return coordinator.cycle_.pendingReset.has_value() &&
+               coordinator.cycle_.pendingReset->kind ==
+                   BusResetCoordinator::ResetRequestKind::Delegation;
+    }
+
+    static bool PendingResetIsRolePolicyRestage(const BusResetCoordinator& coordinator) {
+        return coordinator.cycle_.pendingReset.has_value() &&
+               coordinator.cycle_.pendingReset->kind ==
+                   BusResetCoordinator::ResetRequestKind::RolePolicyRestage;
+    }
+
     static std::optional<uint8_t> PendingGapCount(const BusResetCoordinator& coordinator) {
         if (!coordinator.cycle_.pendingReset.has_value() ||
             !coordinator.cycle_.pendingReset->phyConfig.has_value()) {
@@ -582,6 +594,241 @@ TEST(BusResetCoordinatorTests, GapMismatchResetIsDeferredThenSentWithPhyConfig) 
     ASSERT_GE(operations.size(), 2U);
     EXPECT_EQ(operations[operations.size() - 2U], HardwareInterface::TestOperation::SendPhyConfig);
     EXPECT_EQ(operations.back(), HardwareInterface::TestOperation::InitiateBusReset);
+}
+
+// ---- §8.2.1: software resets must restate the current gap count -----------------
+//
+// "When gap_count has a value other than 63, bus resets initiated by software should
+//  be immediately preceded by the transmission of a PHY configuration packet with a
+//  nonzero T bit and gap_cnt equal to the current value of gap_count. Without this
+//  precaution, the bus manager is almost certain to transmit a PHY configuration
+//  packet to restore the optimal value of gap_count and then generate an additional
+//  bus reset."
+//
+// The failure mode is therefore an *extra reset from a peer*, not a local error.
+// Cross-validated with Linux core-card.c:252 (br_work sends
+// FW_PHY_CONFIG_CURRENT_GAP_COUNT immediately before every scheduled reset).
+
+namespace {
+
+// Drive a full reset cycle that settles on a uniform gap count across two nodes,
+// leaving the coordinator Idle with an accepted topology.
+void SettleWithUniformGap(BusResetTestRig& rig, uint8_t generation, uint8_t gapCount) {
+    rig.StartResetCycle();
+    rig.PrimeCapture(MakeRawSelfIDCapture(generation,
+                                          {MakeBaseSelfID(0U, gapCount, true, true),
+                                           MakeBaseSelfID(1U, gapCount, true, false)}),
+                     generation);
+    rig.TriggerStickyCompletion();
+    rig.AdvanceMs(2000U);
+}
+
+} // namespace
+
+TEST(BusResetCoordinatorTests, BareSoftwareResetRestatesCurrentGapCount) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    SettleWithUniformGap(rig, 30U, 21U);
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    ASSERT_TRUE(rig.publishedTopologies.back().gapCountConsistent);
+    ASSERT_EQ(rig.publishedTopologies.back().gapCount, 21U);
+
+    rig.ResetHardwareState();
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator, false);
+    rig.AdvanceMs(2000U);
+
+    ASSERT_TRUE(rig.hardware.TestBusResetIssued());
+    EXPECT_TRUE(rig.hardware.TestPhyConfigIssued())
+        << "a bare software reset must restate gap_count (IEEE 1394-2008 §8.2.1)";
+    EXPECT_EQ(rig.hardware.TestLastGapCount(), 21U);
+
+    // Ordering matters: the PHY config is only meaningful immediately before the reset.
+    const auto operations = rig.hardware.CopyTestOperations();
+    ASSERT_GE(operations.size(), 2U);
+    EXPECT_EQ(operations[operations.size() - 2U], HardwareInterface::TestOperation::SendPhyConfig);
+    EXPECT_EQ(operations.back(), HardwareInterface::TestOperation::InitiateBusReset);
+}
+
+TEST(BusResetCoordinatorTests, BareSoftwareResetAtGap63SendsNoPhyConfig) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    SettleWithUniformGap(rig, 31U, 63U);
+    ASSERT_EQ(rig.publishedTopologies.back().gapCount, 63U);
+
+    rig.ResetHardwareState();
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator, false);
+    rig.AdvanceMs(2000U);
+
+    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
+    EXPECT_FALSE(rig.hardware.TestPhyConfigIssued())
+        << "63 is the post-reset default; restating it would be pure bus noise";
+}
+
+TEST(BusResetCoordinatorTests, BareSoftwareResetWithInconsistentGapsSendsNoPhyConfig) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    rig.StartResetCycle();
+    rig.PrimeCapture(MakeRawSelfIDCapture(32U, {MakeBaseSelfID(0U, 10U, true, true),
+                                                MakeBaseSelfID(1U, 20U, true, false)}),
+                     32U);
+    rig.TriggerStickyCompletion();
+    rig.AdvanceMs(2000U);
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    ASSERT_FALSE(rig.publishedTopologies.back().gapCountConsistent);
+
+    rig.ResetHardwareState();
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator, false);
+    rig.AdvanceMs(2000U);
+
+    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
+    EXPECT_FALSE(rig.hardware.TestPhyConfigIssued())
+        << "nodes disagree, so there is no single current gap_count to restate";
+}
+
+TEST(BusResetCoordinatorTests, BareSoftwareResetWithoutAcceptedTopologySendsNoPhyConfig) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    // No reset cycle has completed, so nothing is known about the bus yet.
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator, false);
+    rig.AdvanceMs(2000U);
+
+    EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
+}
+
+TEST(BusResetCoordinatorTests, GapPreservingPhyConfigFailureAbortsTheReset) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    SettleWithUniformGap(rig, 33U, 21U);
+    ASSERT_EQ(rig.publishedTopologies.back().gapCount, 21U);
+
+    rig.ResetHardwareState();
+    rig.SetSendPhyConfigResult(false);
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator, false);
+    rig.AdvanceMs(2000U);
+
+    // Resetting after a failed PHY config would strand the bus at the wrong gap and
+    // invite the very peer-initiated extra reset §8.2.1 warns about.
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+}
+
+TEST(BusResetCoordinatorTests, CallerSuppliedPhyConfigOverridesPreservedGapCount) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    SettleWithUniformGap(rig, 34U, 21U);
+    ASSERT_EQ(rig.publishedTopologies.back().gapCount, 21U);
+
+    rig.ResetHardwareState();
+    // An explicit gap-correction request must win over the preserved current value.
+    BusResetCoordinatorTestPeer::RequestGapCorrectionReset(rig.coordinator, true, 30U);
+    rig.AdvanceMs(2000U);
+
+    ASSERT_TRUE(rig.hardware.TestPhyConfigIssued());
+    EXPECT_EQ(rig.hardware.TestLastGapCount(), 30U);
+    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
+}
+
+// ---- Config ROM re-stage resets are coordinator-owned ---------------------------
+//
+// ControllerCore::ApplyRolePolicy used to call HardwareInterface::InitiateBusReset
+// directly, bypassing the §8.2.1 holdoff, the gap-preserving PHY config and the
+// reset-origin attribution. Apple draws the same line we now do: the raw link path
+// (IOFireWireUserClient::busReset -> getLink()->resetBus()) is reachable only behind
+// the debug-only "unsafe bus resets" property.
+
+TEST(BusResetCoordinatorTests, ConfigRomRestageResetIsLongAndDistinctlyLabelled) {
+    BusResetCoordinator coordinator;
+
+    coordinator.RequestConfigRomRestageReset("Role policy BIB re-stage");
+
+    ASSERT_TRUE(BusResetCoordinatorTestPeer::HasPendingSoftwareReset(coordinator));
+    EXPECT_TRUE(BusResetCoordinatorTestPeer::PendingResetIsLong(coordinator))
+        << "peers must re-read the ROM; a short reset may not force re-enumeration";
+    EXPECT_TRUE(BusResetCoordinatorTestPeer::PendingResetIsRolePolicyRestage(coordinator))
+        << "the kind is the only reset-origin attribution a trace carries";
+}
+
+TEST(BusResetCoordinatorTests, ConfigRomRestageResetObservesRepeatedResetHoldoff) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    // Stay inside the holdoff: it is armed at Self-ID completion, so the request has
+    // to be made before the window elapses for the deferral to be exercised at all.
+    rig.StartResetCycle();
+    rig.PrimeCapture(MakeRawSelfIDCapture(40U, {MakeBaseSelfID(0U, 63U, true, true),
+                                                MakeBaseSelfID(1U, 63U, true, false)}),
+                     40U);
+    rig.TriggerStickyCompletion();
+    ASSERT_FALSE(rig.hardware.TestBusResetIssued());
+
+    rig.coordinator.RequestConfigRomRestageReset("Role policy BIB re-stage");
+    rig.AdvanceMs(1U);
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued())
+        << "must not fire inside the 2 s window (IEEE 1394-2008 §8.2.1)";
+
+    rig.AdvanceMs(1999U);
+    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
+    EXPECT_FALSE(rig.hardware.TestLastBusResetWasShort());
+}
+
+TEST(BusResetCoordinatorTests, ConfigRomRestageResetRestatesCurrentGapCount) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    rig.SetLocalNode(0U);
+
+    SettleWithUniformGap(rig, 41U, 21U);
+    ASSERT_EQ(rig.publishedTopologies.back().gapCount, 21U);
+    rig.ResetHardwareState();
+
+    rig.coordinator.RequestConfigRomRestageReset("Role policy BIB re-stage");
+    rig.AdvanceMs(2000U);
+
+    // Inherits the §8.2.1 gap-preservation the direct-to-PHY path never had.
+    ASSERT_TRUE(rig.hardware.TestPhyConfigIssued());
+    EXPECT_EQ(rig.hardware.TestLastGapCount(), 21U);
+    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
+}
+
+TEST(BusResetCoordinatorTests, ConfigRomRestageDoesNotOutrankBusWidePolicyResets) {
+    // A restage is local housekeeping. If it coalesces with a request carrying
+    // bus-wide policy, the policy kind must survive the merge — otherwise the trace
+    // attributes a gap correction or delegation to a ROM re-stage.
+    {
+        BusResetCoordinator coordinator;
+        coordinator.RequestConfigRomRestageReset("restage");
+        BusResetCoordinatorTestPeer::RequestGapCorrectionReset(coordinator, true, 21U);
+        EXPECT_TRUE(BusResetCoordinatorTestPeer::PendingResetIsGapCorrection(coordinator));
+    }
+    {
+        BusResetCoordinator coordinator;
+        coordinator.RequestConfigRomRestageReset("restage");
+        BusResetCoordinatorTestPeer::RequestDelegationReset(coordinator, true, 2U);
+        EXPECT_TRUE(BusResetCoordinatorTestPeer::PendingResetIsDelegation(coordinator));
+    }
+}
+
+TEST(BusResetCoordinatorTests, ConfigRomRestageOutranksPlainRecovery) {
+    // Against an unattributed Recovery, the more specific cause wins so the trace
+    // still says why the reset happened.
+    BusResetCoordinator coordinator;
+
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(coordinator, false);
+    coordinator.RequestConfigRomRestageReset("restage");
+
+    EXPECT_TRUE(BusResetCoordinatorTestPeer::PendingResetIsRolePolicyRestage(coordinator));
+    EXPECT_TRUE(BusResetCoordinatorTestPeer::PendingResetIsLong(coordinator));
 }
 
 TEST(BusResetCoordinatorTests, EarlyTopologyPolicyDoesNotDelegateBeforeEvidence) {

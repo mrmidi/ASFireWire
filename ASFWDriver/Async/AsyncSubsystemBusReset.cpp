@@ -187,7 +187,7 @@ void AsyncSubsystem::ConfirmBusGeneration(uint8_t confirmedGeneration) {
 
     // Set the generation from hardware (SelfIDCount register is authoritative per OHCI §11.2)
     if (generationTracker_) {
-        generationTracker_->OnSyntheticBusReset(confirmedGeneration);
+        generationTracker_->OnConfirmedBusGeneration(confirmedGeneration);
         ASFW_LOG(Async, "GenerationTracker updated: %u→%u", currentState.generation8, confirmedGeneration);
     }
 
