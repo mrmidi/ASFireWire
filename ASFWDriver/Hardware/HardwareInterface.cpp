@@ -36,6 +36,17 @@ struct IOLockGuard {
 namespace ASFW::Driver {
 
 namespace {
+
+[[nodiscard]] constexpr bool IsProviderPresenceProbe(Register32 reg) noexcept {
+    // Linux firewire/ohci.c:2321-2323 treats an all-ones HCControl read as an
+    // ejected card. Do not generalize this to arbitrary OHCI registers: for
+    // example, InitialChannelsAvailableLo is validly all ones at startup.
+    return reg == Register32::kHCControl;
+}
+
+} // namespace
+
+namespace {
 constexpr uint8_t kDefaultBAR = 0;
 constexpr uint64_t kDefaultDMAMaxAddressBits = 32;
 #ifndef ASFW_HOST_TEST
@@ -135,11 +146,23 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     barSize_ = barSize;
     barType_ = barType;
     // No MMIO is legal until the provider and BAR metadata are complete.
+    hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kNone),
+                              std::memory_order_release);
     accessGate_.Open();
     return kIOReturnSuccess;
 }
 
 void HardwareInterface::RevokeAndDrain() noexcept {
+    accessGate_.RevokeAndDrain();
+}
+
+void HardwareInterface::LatchProviderRevokedAndDrain() noexcept {
+    uint8_t expected = static_cast<uint8_t>(HardwareGoneReason::kNone);
+    if (hardwareGoneReason_.compare_exchange_strong(
+            expected, static_cast<uint8_t>(HardwareGoneReason::kProviderRevoked),
+            std::memory_order_acq_rel, std::memory_order_acquire)) {
+        ASFW_LOG(Hardware, "[Lifecycle] hardware-gone latched source=provider-revoked");
+    }
     accessGate_.RevokeAndDrain();
 }
 
@@ -162,6 +185,16 @@ bool HardwareInterface::Attached() const noexcept { return IsAvailable(); }
 
 bool HardwareInterface::IsAvailable() const noexcept {
     return accessGate_.IsOpen() && static_cast<bool>(device_);
+}
+
+bool HardwareInterface::HardwareGone() const noexcept {
+    return hardwareGoneReason_.load(std::memory_order_acquire) !=
+           static_cast<uint8_t>(HardwareGoneReason::kNone);
+}
+
+HardwareGoneReason HardwareInterface::GoneReason() const noexcept {
+    return static_cast<HardwareGoneReason>(
+        hardwareGoneReason_.load(std::memory_order_acquire));
 }
 
 void HardwareInterface::BindAsyncControllerPort(
@@ -217,24 +250,47 @@ void HardwareAccessScope::WriteAndFlush(Register32 reg, uint32_t value) const no
 }
 
 uint32_t HardwareInterface::ReadScoped(Register32 reg) const noexcept {
+    if (HardwareGone()) {
+        return 0xFFFFFFFFu;
+    }
     if (!device_) {
         return 0;
     }
     uint32_t value = 0;
     device_->MemoryRead32(barIndex_, static_cast<uint64_t>(reg), &value);
+    if (value == 0xFFFFFFFFu && IsProviderPresenceProbe(reg)) {
+        LatchHardwareGoneFromPresenceProbe(reg);
+    }
     return value;
 }
 
 void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexcept {
-    if (!device_) {
+    if (!device_ || HardwareGone()) {
         return;
     }
     device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(reg), value);
 }
 
 void HardwareInterface::FlushPostedWritesScoped() const noexcept {
-    (void)ReadScoped(Register32::kHCControl);
+    if (!HardwareGone()) {
+        (void)ReadScoped(Register32::kHCControl);
+    }
     FullBarrier();
+}
+
+void HardwareInterface::LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept {
+    uint8_t expected = static_cast<uint8_t>(HardwareGoneReason::kNone);
+    if (hardwareGoneReason_.compare_exchange_strong(
+            expected, static_cast<uint8_t>(HardwareGoneReason::kMmioPresenceProbeAllOnes),
+            std::memory_order_acq_rel, std::memory_order_acquire)) {
+        // The caller holds the gate's lock through HardwareAccessScope. Close
+        // it in place so the current scope can finish without self-deadlocking;
+        // its destructor provides the drain barrier for subsequent callers.
+        accessGate_.RevokeFromAdmittedScope();
+        ASFW_LOG(Hardware,
+                 "[Lifecycle] hardware-gone latched source=mmio-presence-probe-all-ones register=0x%03x",
+                 static_cast<uint32_t>(reg));
+    }
 }
 
 void HardwareInterface::SetInterruptMask(uint32_t mask, bool enable) {

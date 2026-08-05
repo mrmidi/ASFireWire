@@ -493,6 +493,18 @@ kern_return_t IsochService::StopAll() {
     const kern_return_t transmitStatus = StopTransmit();
     if (receiveStatus != kIOReturnSuccess || transmitStatus != kIOReturnSuccess) {
         const kern_return_t failure = receiveStatus != kIOReturnSuccess ? receiveStatus : transmitStatus;
+        if (hardware_ && hardware_->HardwareGone()) {
+            // A revoked provider cannot DMA. This is the inverse of the live-
+            // hardware timeout rule above: release rather than retain every
+            // software-owned reservation and mapping.
+            reserved_.Reset();
+            activeGuid_ = 0;
+            ASFW_LOG(Isoch,
+                     "[Lifecycle] IsochService StopAll hardware-gone action=release "
+                     "receive=0x%08x transmit=0x%08x",
+                     receiveStatus, transmitStatus);
+            return kIOReturnSuccess;
+        }
         ASFW_LOG_ERROR(Isoch,
                        "IsochService: StopAll did not quiesce every context kr=0x%08x; retaining reservations and DMA mappings",
                        failure);
@@ -500,7 +512,16 @@ kern_return_t IsochService::StopAll() {
     }
     reserved_.Reset();
     activeGuid_ = 0;
+    if (hardware_ && hardware_->HardwareGone()) {
+        ASFW_LOG(Isoch,
+                 "[Lifecycle] IsochService StopAll hardware-gone action=release receive=0x%08x transmit=0x%08x",
+                 receiveStatus, transmitStatus);
+    }
     return kIOReturnSuccess;
+}
+
+bool IsochService::HardwareGone() const noexcept {
+    return hardware_ && hardware_->HardwareGone();
 }
 
 void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {

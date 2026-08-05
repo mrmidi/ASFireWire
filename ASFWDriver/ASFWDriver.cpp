@@ -178,12 +178,16 @@ void EnsureRomScanner(ServiceContext& ctx) {
 }
 
 void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
-    const bool providerRevoked = plan.reason == QuiesceReason::kProviderRevoked;
+    const bool providerRevoked = plan.reason == QuiesceReason::kProviderRevoked ||
+                                 (ctx.deps.hardware && ctx.deps.hardware->HardwareGone());
 
     // A provider notification can arrive while another quiesce is in progress.
     // Revoke first so no later software teardown can enter an OHCI MMIO scope.
     if (providerRevoked && ctx.deps.hardware) {
-        ctx.deps.hardware->RevokeAndDrain();
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
+        ASFW_LOG(Controller,
+                 "[Lifecycle] runtime teardown mode=provider-revoked reason=%u",
+                 static_cast<uint32_t>(plan.reason));
     }
 
 #ifndef ASFW_HOST_TEST
@@ -218,21 +222,29 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
             ctx.deps.interrupts->Teardown();
         }
     }
-    (void)ctx.isoch.StopAll();
+    // AudioCoordinator owns the neutral isoch session when it exists. Startup
+    // failures before audio composition still need this direct fallback.
+    if (!ctx.audioCoordinator) {
+        (void)ctx.isoch.StopAll();
+    }
 
     ctx.statusPublisher.BindListener(nullptr);
     ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
                                 SharedStatusReason::Disconnect);
 
+    const bool hardwareGone = ctx.deps.hardware && ctx.deps.hardware->HardwareGone();
     // Surprise removal skips all final register cleanup. The teardown calls
     // above are software-safe and their old direct-MMIO helpers are revoked.
-    if (!providerRevoked && plan.completedStartStage >= StartStage::kProviderOpened) {
+    if (!hardwareGone && plan.completedStartStage >= StartStage::kProviderOpened) {
         if (ctx.deps.selfId && ctx.deps.hardware) {
             ctx.deps.selfId->Disarm(*ctx.deps.hardware);
         }
         if (ctx.deps.configRomStager && ctx.deps.hardware) {
             ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
         }
+    } else if (hardwareGone) {
+        ASFW_LOG(Controller,
+                 "[Lifecycle] runtime teardown hardware-gone action=skip-final-mmio-cleanup");
     }
     if (ctx.deps.selfId) {
         ctx.deps.selfId->ReleaseBuffers();
@@ -550,7 +562,7 @@ void ASFWDriver::RequestRuntimeQuiesce(uint32_t rawReason) {
     // still fence OHCI immediately. The active executor will observe its
     // state as Revoked before publishing its final transition.
     if (plan->revokeImmediately && !plan->runTeardown && ctx.deps.hardware) {
-        ctx.deps.hardware->RevokeAndDrain();
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
     }
     if (plan->runTeardown) {
         ExecuteRuntimeTeardown(ctx, *plan);
@@ -978,6 +990,9 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
         return;
     }
 
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
+    }
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kProviderRevoked));
 #endif
 }

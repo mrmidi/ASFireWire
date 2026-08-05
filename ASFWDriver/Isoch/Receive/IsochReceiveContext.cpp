@@ -120,6 +120,20 @@ kern_return_t IsochReceiveContext::Stop() {
         access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskClear, contextMask);
         access.WriteAndFlush(registers_.ContextControlClear, Driver::ContextControl::kRun);
     } else {
+        if (hardware_->HardwareGone()) {
+            // Provider revocation is proof that this controller cannot issue a
+            // late DMA write. Retaining the direct binding in that case turns
+            // a safe surprise-removal into a leak/UAF hazard.
+            Transition(IRPolicy::State::Stopped, 0, "Stop/provider-gone");
+            if (receiveConsumer_) {
+                receiveConsumer_->OnReceiveQuiesced();
+            }
+            ASFW_LOG(Isoch,
+                     "[Lifecycle] IR stop context=%u hardware-gone action=release-direct-binding",
+                     contextIndex_);
+            rxLock_.clear(std::memory_order_release);
+            return kIOReturnSuccess;
+        }
         rxLock_.clear(std::memory_order_release);
         return kIOReturnNotReady;
     }

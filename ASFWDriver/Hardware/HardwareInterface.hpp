@@ -53,6 +53,11 @@ struct LocalCSRWriteResult {
     LocalCSRLockResult::Status status{LocalCSRLockResult::Status::HardwareUnavailable};
 };
 
+enum class HardwareGoneReason : uint8_t {
+    kNone,
+    kProviderRevoked,
+    kMmioPresenceProbeAllOnes,
+};
 
 class HardwareInterface {
   public:
@@ -69,11 +74,15 @@ class HardwareInterface {
      * path, before any concurrent software producer can touch OHCI.
      */
     void RevokeAndDrain() noexcept;
+    /// Latch a revoked PCI provider before any software teardown reaches OHCI.
+    void LatchProviderRevokedAndDrain() noexcept;
     void Detach();
     void BindAsyncControllerPort(ASFW::Async::IAsyncControllerPort* controllerPort) noexcept;
 
     [[nodiscard]] bool Attached() const noexcept;
     [[nodiscard]] bool IsAvailable() const noexcept;
+    [[nodiscard]] bool HardwareGone() const noexcept;
+    [[nodiscard]] HardwareGoneReason GoneReason() const noexcept;
 
     /// Starts one short, synchronous MMIO batch. The returned scope must not
     /// cross an asynchronous boundary or be held while waiting.
@@ -240,8 +249,9 @@ class HardwareInterface {
     [[nodiscard]] uint32_t ReadScoped(Register32 reg) const noexcept;
     void WriteScoped(Register32 reg, uint32_t value) const noexcept;
     void FlushPostedWritesScoped() const noexcept;
+    void LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept;
 
-    HardwareAccessGate accessGate_;
+    mutable HardwareAccessGate accessGate_;
     OSSharedPtr<IOPCIDevice> device_;
     IOService* owner_{nullptr};
     uint8_t barIndex_{0};
@@ -258,6 +268,12 @@ class HardwareInterface {
 
     //! Advisory: is an isoch stream running? See SetIsochStreamingActive().
     std::atomic<bool> isochStreamingActive_{false};
+
+    // Once PCI decoding disappears, an all-ones BAR read is terminal for this
+    // provider incarnation. It is deliberately separate from a planned
+    // RevokeAndDrain(), which merely closes an otherwise live provider.
+    mutable std::atomic<uint8_t>
+        hardwareGoneReason_{static_cast<uint8_t>(HardwareGoneReason::kNone)};
 
     std::optional<uint8_t> ReadPhyRegisterUnlocked(uint8_t address);
     bool WritePhyRegisterUnlocked(uint8_t address, uint8_t value);

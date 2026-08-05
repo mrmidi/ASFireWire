@@ -6,6 +6,7 @@
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/IEEE1394.hpp"
 #include "Hardware/RegisterMap.hpp"
+#include "Bus/IRM/IRMCSRConstants.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
@@ -169,6 +170,16 @@ TEST_F(HardwareInterfaceOrderTests, RevokeBlocksAllFurtherBarAccess) {
     hardware_.SetInterruptMask(0xFFFFFFFFu, false);
 }
 
+TEST_F(HardwareInterfaceOrderTests, ProviderRevocationLatchesHardwareGoneAndBlocksAllBarAccess) {
+    hardware_.LatchProviderRevokedAndDrain();
+
+    EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+    EXPECT_TRUE(hardware_.HardwareGone());
+    EXPECT_EQ(hardware_.GoneReason(), HardwareGoneReason::kProviderRevoked);
+    EXPECT_FALSE(hardware_.TryBeginAccess());
+}
+
 TEST_F(HardwareInterfaceOrderTests, RevokeWaitsForActiveAccessScope) {
     std::atomic<bool> scopeEntered{false};
     std::atomic<bool> releaseScope{false};
@@ -193,6 +204,54 @@ TEST_F(HardwareInterfaceOrderTests, RevokeWaitsForActiveAccessScope) {
     EXPECT_EQ(revoke.wait_for(std::chrono::seconds(1)), std::future_status::ready);
     worker.join();
     EXPECT_FALSE(hardware_.TryBeginAccess());
+}
+
+TEST_F(HardwareInterfaceOrderTests, AllOnesPresenceProbeLatchesHardwareGoneAndFencesLaterMmio) {
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0xFFFFFFFFu; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+
+    auto access = hardware_.TryBeginAccess();
+    ASSERT_TRUE(access);
+    EXPECT_EQ(access.Read(Register32::kHCControl), 0xFFFFFFFFu);
+    EXPECT_TRUE(hardware_.HardwareGone());
+    EXPECT_EQ(hardware_.GoneReason(), HardwareGoneReason::kMmioPresenceProbeAllOnes);
+
+    // The current scope is still responsible for releasing the gate lock, but
+    // it cannot submit another BAR operation after the faulting read.
+    access.Write(Register32::kIntMaskClear, 0xFFFFFFFFu);
+    access = {};
+    EXPECT_FALSE(hardware_.TryBeginAccess());
+}
+
+TEST_F(HardwareInterfaceOrderTests, InitialChannelsLowAllOnesIsNotProviderRemoval) {
+    using namespace ASFW::Driver::IRMCSR;
+
+    InSequence seq;
+    const auto expectFlush = [this] {
+        EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
+            .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
+    };
+
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kInitialBandwidthAvailable),
+                                             kInitialBandwidthAvailable));
+    expectFlush();
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kInitialChannelsAvailableHi),
+                                             kInitialChannelsAvailableHi));
+    expectFlush();
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kInitialChannelsAvailableLo),
+                                             kInitialChannelsAvailableLo));
+    expectFlush();
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kInitialBandwidthAvailable), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = kInitialBandwidthAvailable; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kInitialChannelsAvailableHi), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = kInitialChannelsAvailableHi; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kInitialChannelsAvailableLo), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = kInitialChannelsAvailableLo; });
+
+    EXPECT_EQ(hardware_.ProgramInitialIRMResourceRegisters(), kIOReturnSuccess);
+    EXPECT_FALSE(hardware_.HardwareGone());
+    EXPECT_TRUE(hardware_.TryBeginAccess());
 }
 
 TEST_F(HardwareInterfaceOrderTests, ScopeBatchesMultipleRegisterOperations) {

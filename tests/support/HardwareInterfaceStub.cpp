@@ -63,6 +63,8 @@ HardwareInterface::~HardwareInterface() {
 
 kern_return_t HardwareInterface::Attach(IOService*, IOService*) {
     WithState(this, [](HardwareTestState& state) { state.available = true; });
+    hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kNone),
+                              std::memory_order_release);
     accessGate_.Open();
     return kIOReturnSuccess;
 }
@@ -72,12 +74,28 @@ void HardwareInterface::RevokeAndDrain() noexcept {
     accessGate_.RevokeAndDrain();
 }
 
+void HardwareInterface::LatchProviderRevokedAndDrain() noexcept {
+    hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kProviderRevoked),
+                              std::memory_order_release);
+    RevokeAndDrain();
+}
+
 void HardwareInterface::Detach() { RevokeAndDrain(); }
 
 bool HardwareInterface::Attached() const noexcept { return IsAvailable(); }
 
 bool HardwareInterface::IsAvailable() const noexcept {
     return WithState(this, [](HardwareTestState& state) { return state.available; });
+}
+
+bool HardwareInterface::HardwareGone() const noexcept {
+    return hardwareGoneReason_.load(std::memory_order_acquire) !=
+           static_cast<uint8_t>(HardwareGoneReason::kNone);
+}
+
+HardwareGoneReason HardwareInterface::GoneReason() const noexcept {
+    return static_cast<HardwareGoneReason>(
+        hardwareGoneReason_.load(std::memory_order_acquire));
 }
 
 void HardwareInterface::BindAsyncControllerPort(ASFW::Async::IAsyncControllerPort* controllerPort) noexcept {
@@ -131,6 +149,9 @@ void HardwareAccessScope::WriteAndFlush(Register32 reg, uint32_t value) const no
 }
 
 uint32_t HardwareInterface::ReadScoped(Register32 reg) const noexcept {
+    if (HardwareGone()) {
+        return 0xFFFFFFFFu;
+    }
     return WithState(this, [reg](HardwareTestState& state) -> uint32_t {
         if (!state.available) {
             return 0;
@@ -141,6 +162,9 @@ uint32_t HardwareInterface::ReadScoped(Register32 reg) const noexcept {
 }
 
 void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexcept {
+    if (HardwareGone()) {
+        return;
+    }
     WithState(this, [reg, value](HardwareTestState& state) {
         if (!state.available) {
             return;
@@ -166,6 +190,13 @@ void HardwareInterface::FlushPostedWritesScoped() const noexcept {
     WithState(this, [](HardwareTestState& state) {
         state.operations.push_back(TestOperation::WriteAndFlush);
     });
+}
+
+void HardwareInterface::LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept {
+    (void)reg;
+    hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kMmioPresenceProbeAllOnes),
+                               std::memory_order_release);
+    accessGate_.RevokeFromAdmittedScope();
 }
 
 void HardwareInterface::SetInterruptMask(uint32_t mask, bool enable) {

@@ -33,7 +33,8 @@ public:
     AVCAudioBackend(AudioNubPublisher& publisher,
                     Discovery::DeviceRegistry& registry,
                     AudioRuntimeRegistry& runtime,
-                    Driver::IsochService& isoch,
+                    IIsochDuplexHostTransport& hostTransport,
+                    AudioDuplexCoordinator& duplexCoordinator,
                     Driver::HardwareInterface& hardware) noexcept;
     ~AVCAudioBackend() noexcept override;
 
@@ -43,50 +44,32 @@ public:
     [[nodiscard]] const char* Name() const noexcept override { return "AV/C"; }
 
     void OnAudioConfigurationReady(uint64_t guid, const Model::ASFWAudioDevice& config) noexcept;
-    void OnDeviceRemoved(uint64_t guid) noexcept;
+    // The coordinator owns remote-device teardown. AV/C only drops queued
+    // recovery/configuration work for the retired GUID.
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept;
     void OnDeviceResumed(uint64_t guid) noexcept;
     void BeginTeardown() noexcept;
+
+    // Called by the backend-neutral AudioCoordinator transport callback.
+    void HandleTimingLoss(uint64_t guid) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
 
 private:
-    // RX timing-loss escalation (doc AVC_STREAM_HEALTH_AND_RECOVERY.md §6). The
-    // transport fires this once when an established replay cadence dies. AV/C has
-    // no health register, so the verdict is the RX cadence itself: debounce a
-    // settle window (let the [TxAlign] self-heal absorb host-side StartIO/StopIO
-    // gaps), then if replay has NOT re-established, escalate to a coordinator
-    // restart (CMP break/re-establish) — matching bebob/FFADO/AppleFWAudio.
-    void HandleTimingLoss(uint64_t guid) noexcept;
     // Clears the per-GUID in-flight recovery flag (recoveringGuids_). Shared exit
     // point for the timing-loss escalation block.
     void FinishRecovery(uint64_t guid) noexcept;
 
-    // FW-144. A device-removal stop that reports failure must not strand the
-    // nub: the CoreAudio device then outlives the hardware it represents until
-    // the whole driver tears down. Record the removal as owed, re-attempt it,
-    // and only tear the nub down once the stop actually succeeds.
-    /// Whether `guid` is still the backend's active device. Debounced work must
-    /// re-check this: the device can be removed during a settle window, and
-    /// FinishDeviceRemoval clearing activeGuid_ is how that becomes observable.
     [[nodiscard]] bool IsActiveDevice(uint64_t guid) noexcept;
-    /// True when the removal may proceed: either the stop succeeded, or the
-    /// device record is already gone, in which case the device-side stages are
-    /// moot and only the host-side cleanup (run here) still matters.
-    [[nodiscard]] bool IsRemovalStopSettled(uint64_t guid, IOReturn stopStatus) noexcept;
-    void DeferNubRemoval(uint64_t guid, IOReturn stopStatus) noexcept;
-    void RetryPendingNubRemovals() noexcept;
-    /// Nub teardown plus per-GUID state cleanup. Shared by the immediate and
-    /// deferred removal paths so they cannot drift apart.
-    void FinishDeviceRemoval(uint64_t guid) noexcept;
 
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
-    IsochDuplexHostTransport hostTransport_;
+    IIsochDuplexHostTransport& hostTransport_;
     std::atomic<bool> stopping_{false};
-    AudioDuplexCoordinator duplexCoordinator_;
+    AudioDuplexCoordinator& duplexCoordinator_;
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};
@@ -96,8 +79,6 @@ private:
     // Reset on self-heal or a successful restart; bounds a restart-loop against a
     // genuinely gone device. Guarded by lock_.
     std::unordered_map<uint64_t, uint8_t> timingLossAttempts_{};
-    // Devices whose nub teardown is owed but was not yet safe. Guarded by lock_.
-    std::unordered_set<uint64_t> pendingNubRemoval_{};
     uint64_t activeGuid_{0};
 
     // Debounce before escalating an RX timing-loss to a restart. AppleFWAudio

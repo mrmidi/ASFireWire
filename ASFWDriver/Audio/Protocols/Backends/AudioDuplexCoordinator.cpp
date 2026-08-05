@@ -205,6 +205,9 @@ IOReturn AudioDuplexCoordinator::StartStreaming(uint64_t guid) noexcept {
                  guid);
         return kIOReturnAborted;
     }
+    if (IsStopRequested(guid)) {
+        return kIOReturnNoDevice;
+    }
 
     const DuplexRestartSession session = LoadSession(guid);
     LogFsmEvent("start", guid, session.restartId, session.topologyGeneration, session.state,
@@ -371,6 +374,9 @@ IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
                  guid);
         return kIOReturnAborted;
     }
+    if (IsStopRequested(guid)) {
+        return kIOReturnAborted;
+    }
 
     const DuplexRestartSession session = LoadSession(guid);
     LogFsmEvent("recover", guid, session.restartId, session.topologyGeneration, session.state,
@@ -413,6 +419,22 @@ void AudioDuplexCoordinator::ClearSession(uint64_t guid) noexcept {
     gate_.ReleaseLocked(guid);
     gate_.ClearStopLocked(guid);
     IOLockUnlock(lock_);
+}
+
+void AudioDuplexCoordinator::CancelRemoteDevice(uint64_t guid) noexcept {
+    if (guid == 0) {
+        return;
+    }
+    gate_.MarkRemoteDeviceLost(guid);
+    FailPendingClockRequest(guid, DuplexClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+}
+
+void AudioDuplexCoordinator::AcknowledgeDevicePresent(uint64_t guid) noexcept {
+    gate_.AcknowledgeDevicePresent(guid);
+}
+
+bool AudioDuplexCoordinator::IsDeviceOperationCancelled(uint64_t guid) const noexcept {
+    return TeardownRequested() || IsStopRequested(guid);
 }
 
 std::optional<DuplexRestartSession>
@@ -539,6 +561,16 @@ IOReturn AudioDuplexCoordinator::RunStopStreaming(uint64_t guid) noexcept {
         return kIOReturnAborted;
     }
 
+    // A cleanly stopped session has no host or device footprint. Treat a
+    // duplicate stop as an acknowledgement rather than asking the one global
+    // host transport to tear down the same session again.
+    const std::optional<DuplexRestartSession> existingSession = GetSession(guid);
+    if (existingSession && !HasAnyRestartState(*existingSession) &&
+        existingSession->phase == DuplexRestartPhase::kIdle &&
+        existingSession->state == DuplexRestartState::kIdle) {
+        return kIOReturnSuccess;
+    }
+
     IDuplexDeviceControl* deviceControl = nullptr;
     std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
     auto record = RequireDuplexRecord(guid, deviceControl, protoHold);
@@ -559,7 +591,7 @@ IOReturn AudioDuplexCoordinator::RunStopStreaming(uint64_t guid) noexcept {
         return kIOReturnNoDevice;
     }
 
-    DuplexRestartSession session = LoadSession(guid);
+    DuplexRestartSession session = existingSession.value_or(LoadSession(guid));
     return RunDuplexStop(guid, *record, *deviceControl, session);
 }
 
@@ -1517,11 +1549,9 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
         } else if (cleanupStatus != kIOReturnSuccess) {
             result = cleanupStatus;
         }
-        // Three independent statuses collapse into one `result`, and callers act
-        // on it — AVCAudioBackend::OnDeviceRemoved abandons the nub when this is
-        // non-success (FW-144). Without naming the stage, the caller's log says
-        // only that "the stop failed", which is not enough to tell a transient
-        // from a permanent one. Anomaly-only: a clean stop prints nothing.
+        // Three independent statuses collapse into one `result`. Normal stream
+        // stop reports the failed stage; confirmed remote removal bypasses this
+        // device-side path and is owned by AudioCoordinator instead.
         if (result != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio,
                            "RunDuplexStop: failed guid=0x%016llx tx=0x%08x rx=0x%08x "

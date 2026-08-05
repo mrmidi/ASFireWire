@@ -725,6 +725,21 @@ TEST_F(AudioDuplexCoordinatorTests, ColdStartTransitionsIdleToRunning) {
                              }));
 }
 
+TEST_F(AudioDuplexCoordinatorTests, RemoteDeviceLossRejectsRestartUntilRediscovery) {
+    coordinator_.CancelRemoteDevice(kTestGuid);
+    EXPECT_TRUE(coordinator_.IsDeviceOperationCancelled(kTestGuid));
+
+    EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNoDevice);
+    EXPECT_EQ(coordinator_.RecoverStreaming(kTestGuid, DiceRestartReason::kRecoverAfterTimingLoss),
+              kIOReturnAborted);
+    EXPECT_EQ(hostTransport_.beginCalls, 0);
+    EXPECT_EQ(protocol_->prepareCalls, 0);
+
+    coordinator_.AcknowledgeDevicePresent(kTestGuid);
+    EXPECT_FALSE(coordinator_.IsDeviceOperationCancelled(kTestGuid));
+    EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+}
+
 TEST_F(AudioDuplexCoordinatorTests,
        AvcProfileReservesBothDirectionsAndInterleavesHostStartsWithDeviceStages) {
     (void)registry_.UpsertFromROM(
@@ -876,6 +891,17 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingClearsRestartProgressAndStopsHo
     EXPECT_EQ(hostTransport_.stopCalls, 1);
     EXPECT_EQ(protocol_->stopCalls, 1);
     EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{"host.stop", "device.stop"}));
+}
+
+TEST_F(AudioDuplexCoordinatorTests, DuplicateStopDoesNotReenterGlobalHostTeardown) {
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+    ASSERT_EQ(coordinator_.StopStreaming(kTestGuid), kIOReturnSuccess);
+    ClearLog();
+
+    EXPECT_EQ(coordinator_.StopStreaming(kTestGuid), kIOReturnSuccess);
+    EXPECT_EQ(hostTransport_.stopCalls, 1);
+    EXPECT_EQ(protocol_->stopCalls, 1);
+    EXPECT_TRUE(LogSnapshot().empty());
 }
 
 TEST_F(AudioDuplexCoordinatorTests, IdleClockApplyUsesDeviceOnlyPathAndReturnsToIdle) {
@@ -1178,8 +1204,11 @@ TEST_F(AudioDuplexCoordinatorTests, StopStreamingAbortsClockRequestsDuringRestar
     ASSERT_TRUE(session->lastClockCompletion.has_value());
     EXPECT_EQ(session->lastClockCompletion->outcome, DiceClockRequestOutcome::kAbortedByStop);
     EXPECT_EQ(protocol_->prepareCalls, 2);
-    EXPECT_EQ(hostTransport_.stopCalls, 3);
-    EXPECT_EQ(protocol_->stopCalls, 3);
+    // The in-flight clock operation already stopped the session. The explicit
+    // stop acknowledges that terminal state without duplicating global host
+    // teardown or protocol stop.
+    EXPECT_EQ(hostTransport_.stopCalls, 2);
+    EXPECT_EQ(protocol_->stopCalls, 2);
 }
 
 TEST_F(AudioDuplexCoordinatorTests, RouteRebindDuringPrepareInvalidatesRestartEpoch) {
