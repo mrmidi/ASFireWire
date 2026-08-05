@@ -1,0 +1,17 @@
+name: f9-uncorrelated-collapse
+description: >
+  F9 negative control. At -4478 ppm with uncorrelated ZTS (broken/absent clock
+  tracking), W advances at nominal 48 kHz while E advances at the device's
+  actual rate. The 2400-frame horizon is spent in ~11 s and the stream collapses.
+  This is what happens without ZTS correlation — it must reproduce the F9 signature.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 30
+  bus_drift_ppm: -4478
+  zts_mode: uncorrelated
+  self_heal: false
+
+expect:
+  collapsed: true

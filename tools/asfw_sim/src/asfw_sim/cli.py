@@ -138,16 +138,18 @@ def cmd_geometry(args) -> int:
     _row("kTimelineSlots", t["kTimelineSlots"], "packets", "timeline slot array")
 
     _rule("RX replay ring (RxSequenceReplay.hpp)")
-    _row("kCapacity", r["kCapacity"], "entries", f"{_ms(r['kCapacity'])} of RX history")
+    _row("kCapacity", r["kCapacity"], "entries", f"{_ms(r['kCapacity'])} of RX history -- PRODUCER-STALL RECOVERY BUDGET")
     _row("kReadDelay", r["kReadDelay"], "entries",
-         f"{_ms(r['kReadDelay'])} -- PRODUCER-STALL RECOVERY BUDGET")
+         f"{_ms(r['kReadDelay'])} -- reader history starting lag")
 
     _rule("Derived budgets (not written down in any header)")
     lead = t["kTxPreparationLeadPackets"]
     read_delay = r["kReadDelay"]
     horizon = t["kTxDataHorizonPackets"]
-    _row("stall tolerance (law)", f"{(read_delay + horizon) / 8:.1f}", "ms",
-         "(kReadDelay + horizon) / 8 -- see FINDINGS.md F3")
+    geometry_default = Geometry.from_headers(t["kSampleRateHz"], h)
+    cliff_cycles = _cliff(geometry_default, seconds=5, hi=8000)
+    _row("measured stall tolerance", f"{cliff_cycles / 8:.1f}", "ms",
+         "measured limit beyond which terminal collapse occurs")
     _row("replay headroom", read_delay - lead, "packets",
          "kReadDelay - lead; NOT the failure mechanism (F1)")
     _row("prefill before IT arm", t["kTxSharedSlotPackets"], "packets",
@@ -300,12 +302,15 @@ def cmd_fingerprint(args) -> int:
 
 def cmd_diagnose(args) -> int:
     g = Geometry.from_headers(args.rate)
+    ahead_delta = None
+    if args.ahead_start is not None and args.ahead_end is not None:
+        ahead_delta = args.ahead_end - args.ahead_start
     d = diagnose(
         deficit_start_frames=args.deficit_start,
         deficit_end_frames=args.deficit_end,
         elapsed_s=args.elapsed_s,
         geometry=g,
-        ahead=args.ahead,
+        ahead_delta=ahead_delta,
         align_count=args.align,
     )
     print(f"\n  \033[1m{d.cause}\033[0m  (confidence: {d.confidence})\n")
@@ -358,11 +363,14 @@ def cmd_capture(args) -> int:
             print("\n  not enough cursor points to classify")
             return 1
         span = pts[-1][0] - pts[0][0]
+        t_start, t_end = pts[0][0], pts[-1][0]
+        ahead_delta = cap.ahead_count_in_window(t_start, t_end)
         d = diagnose(
             deficit_start_frames=pts[0][1] - pts[0][2],
             deficit_end_frames=pts[-1][1] - pts[-1][2],
             elapsed_s=span,
             geometry=cap.geometry_object(),
+            ahead_delta=ahead_delta if ahead_delta > 0 else None,
         )
         print(f"\n  \033[1m{d.cause}\033[0m  (confidence: {d.confidence})")
         for line in _wrap(d.reasoning, 72):
@@ -371,6 +379,11 @@ def cmd_capture(args) -> int:
             print(
                 f"\n  estimated RX loss: {d.estimated_rx_loss_per_s:.1f} packets/s "
                 f"({d.estimated_rx_loss_percent:.3f}%)"
+            )
+        if ahead_delta > 0:
+            print(
+                f"\n  note: {ahead_delta} ahead events from rate-limited ring "
+                "records; actual misses may be higher."
             )
         if span < 300:
             print(
@@ -381,36 +394,48 @@ def cmd_capture(args) -> int:
 
 
 def cmd_run(args) -> int:
-    print(_run(_geometry(args), args.seconds, args.stall_ms).summary())
+    g = _geometry(args)
+    result = run(
+        SimConfig(
+            geometry=g,
+            duration_cycles=CYCLES * args.seconds,
+            stall_at_cycle=CYCLES * 4,
+            stall_cycles=int(args.stall_ms * 8),
+            bus_drift_ppm=args.drift_ppm,
+            zts_mode=args.zts_mode,
+        )
+    )
+    print(result.summary())
     return 0
 
 
 def cmd_cliff(args) -> int:
     g = _geometry(args)
     cycles = _cliff(g, args.seconds)
-    predicted = (g.replay_read_delay + g.tx_data_horizon_packets) / 8
     print(
         f"rate={g.sample_rate} readDelay={g.replay_read_delay} "
-        f"horizon={g.tx_data_horizon_packets}\n"
+        f"capacity={g.replay_capacity} horizon={g.tx_data_horizon_packets}\n"
         f"  survivable producer stall: {cycles / 8:.1f} ms ({cycles} cycles)\n"
-        f"  kReadDelay+horizon law predicts: {predicted:.1f} ms"
+        f"  (FINDINGS F3: kCapacity dominates tolerance, not readDelay+horizon)"
     )
     return 0
 
 
 def cmd_sweep(args) -> int:
     base = Geometry.from_headers(args.rate)
-    print(f"  {'readDelay':>9} {'horizon':>8} {'cliff':>9} {'law':>9}")
+    print(f"  {'readDelay':>9} {'capacity':>9} {'horizon':>8} {'cliff':>9}")
     for read_delay, horizon in [(256, 400), (512, 400), (1024, 400), (256, 160), (1024, 800)]:
+        capacity = max(512, 2 * read_delay)
         g = base.evolve(
             replay_read_delay=read_delay,
-            replay_capacity=max(512, 2 * read_delay),
+            replay_capacity=capacity,
             tx_data_horizon_packets=horizon,
         )
         print(
-            f"  {read_delay:>9} {horizon:>8} {_cliff(g, args.seconds) / 8:>8.1f}ms "
-            f"{(read_delay + horizon) / 8:>8.1f}ms"
+            f"  {read_delay:>9} {capacity:>9} {horizon:>8} "
+            f"{_cliff(g, args.seconds) / 8:>8.1f}ms"
         )
+    print("  # F3: the old readDelay+horizon law was falsified; see FINDINGS.md")
     return 0
 
 
@@ -429,6 +454,10 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--ring-multiple", type=int, default=4)
     run_p = sub.add_parser("run", help="run one scenario")
     run_p.add_argument("--stall-ms", type=float, default=0.0)
+    run_p.add_argument("--drift-ppm", type=float, default=0.0,
+                       help="device audio oscillator drift in ppm")
+    run_p.add_argument("--zts-mode", choices=["correlated", "uncorrelated", "perfect"],
+                       default="correlated", help="ZTS clock correlation mode")
     sub.add_parser("cliff", help="bisect the stall-tolerance cliff")
     sub.add_parser("sweep", help="compare readDelay/horizon variants")
     scen = sub.add_parser(
@@ -452,8 +481,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="W-E in frames at the first sample (negative = healthy)")
     diag.add_argument("--deficit-end", type=int, required=True)
     diag.add_argument("--elapsed-s", type=float, required=True)
-    diag.add_argument("--ahead", type=int, default=None,
-                      help="cumulative [TxReplay] fail=ahead count")
+    diag.add_argument("--ahead-start", type=int, default=None,
+                      help="cumulative [TxReplay] fail=ahead count at first sample")
+    diag.add_argument("--ahead-end", type=int, default=None,
+                      help="cumulative [TxReplay] fail=ahead count at second sample")
     diag.add_argument("--align", type=int, default=None,
                       help="cumulative [TxAlign] count")
 

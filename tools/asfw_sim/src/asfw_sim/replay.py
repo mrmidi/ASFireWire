@@ -91,20 +91,33 @@ class RxSequenceReplayState:
                 f"replay capacity must be a power of two (header static_assert), "
                 f"got {self.capacity}"
             )
-        self._slots = [None] * self.capacity
-        self._sequences = [0] * self.capacity
+        self.use_dict = self.capacity > 65536
+        if self.use_dict:
+            self._slots_dict: dict[int, ReplayEntry] = {}
+            self._sequences_dict: dict[int, int] = {}
+        else:
+            self._slots = [None] * self.capacity
+            self._sequences = [0] * self.capacity
 
     def reset(self) -> None:
         self.established = False
         self.producer_cursor = 0
         self.epoch += 1
-        self._sequences = [0] * self.capacity
+        if self.use_dict:
+            self._slots_dict = {}
+            self._sequences_dict = {}
+        else:
+            self._sequences = [0] * self.capacity
 
     def publish(self, entry: ReplayEntry) -> None:
         cursor = self.producer_cursor
         index = cursor % self.capacity
-        self._slots[index] = entry
-        self._sequences[index] = cursor + 1
+        if self.use_dict:
+            self._slots_dict[index] = entry
+            self._sequences_dict[index] = cursor + 1
+        else:
+            self._slots[index] = entry
+            self._sequences[index] = cursor + 1
         self.producer_cursor = cursor + 1
 
     def mark_established(self) -> bool:
@@ -115,9 +128,14 @@ class RxSequenceReplayState:
 
     def read(self, cursor: int) -> ReplayEntry | None:
         index = cursor % self.capacity
-        if self._sequences[index] != cursor + 1:
-            return None
-        return self._slots[index]
+        if self.use_dict:
+            if self._sequences_dict.get(index) != cursor + 1:
+                return None
+            return self._slots_dict.get(index)
+        else:
+            if self._sequences[index] != cursor + 1:
+                return None
+            return self._slots[index]
 
 
 @dataclass

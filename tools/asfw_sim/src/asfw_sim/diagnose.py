@@ -49,6 +49,7 @@ def _deficit(result) -> int:
 
 
 def _measure(geometry: Geometry, seconds_a: int = 15, seconds_b: int = 30, **kw):
+    kw.setdefault("self_heal", False)
     a = run(SimConfig(geometry=geometry, duration_cycles=CYCLES_PER_SECOND * seconds_a, **kw))
     b = run(SimConfig(geometry=geometry, duration_cycles=CYCLES_PER_SECOND * seconds_b, **kw))
     slope = (_deficit(b) - _deficit(a)) / (seconds_b - seconds_a)
@@ -64,13 +65,14 @@ def frames_lost_per_drop(geometry: Geometry | None = None) -> float:
     """
     g = geometry or Geometry.from_headers()
     baseline = run(
-        SimConfig(geometry=g, duration_cycles=CYCLES_PER_SECOND * 30)
+        SimConfig(geometry=g, duration_cycles=CYCLES_PER_SECOND * 30, self_heal=False)
     )
     lossy = run(
         SimConfig(
             geometry=g,
             duration_cycles=CYCLES_PER_SECOND * 30,
             rx_drop_every_cycles=200,
+            self_heal=False,
         )
     )
     if lossy.rx_dropped == 0:  # pragma: no cover - defensive
@@ -92,6 +94,11 @@ def fingerprints(geometry: Geometry | None = None) -> list[Fingerprint]:
             "producer-stall",
             {"stall_at_cycle": CYCLES_PER_SECOND * 5, "stall_cycles": 800},
             "F2: deficit steps once, then FLAT",
+        ),
+        (
+            "rate-mismatch-uncorrelated",
+            {"bus_drift_ppm": -4478, "zts_mode": "uncorrelated"},
+            "F9: E rate < W rate; ahead count too low to explain deficit",
         ),
         (
             "replay-ring-churn",
@@ -144,13 +151,18 @@ def diagnose(
     deficit_end_frames: int,
     elapsed_s: float,
     geometry: Geometry | None = None,
-    ahead: int | None = None,
+    ahead_delta: int | None = None,
     align_count: int | None = None,
 ) -> Diagnosis:
     """Classify an observed run from two `[PayloadWriter]` deficit samples.
 
     `deficit_*` is `W - E` in frames (the driver reports it as the exposure
     deficit; a healthy stream reports a negative value, or none at all).
+
+    `ahead_delta` is the number of [TxReplay] fail=ahead events that occurred
+    **between** the two deficit samples (NOT a cumulative lifetime count).
+    If None, F9 cannot be distinguished from F6 and the classifier falls
+    through to the F6 branch.
     """
     g = geometry or Geometry.from_headers()
     if elapsed_s <= 0:
@@ -177,6 +189,28 @@ def diagnose(
             outlook = "the horizon is already spent; audio is silent now"
         else:
             outlook = f"silence in ~{seconds_left:.0f} s at this rate"
+
+        if ahead_delta is not None:
+            deficit_delta = deficit_end_frames - deficit_start_frames
+            explainable = ahead_delta * per_drop
+            if deficit_delta > 0 and explainable < deficit_delta * 0.1:
+                estimated_ppm = (
+                    slope / (g.sample_rate / CYCLES_PER_SECOND) * 1e6 / CYCLES_PER_SECOND
+                )
+                return Diagnosis(
+                    cause="rate-mismatch (F9)",
+                    confidence="medium",
+                    reasoning=(
+                        f"deficit grows {slope:+.1f} frames/s but only {ahead_delta} "
+                        f"`ahead` events in this window cannot pay for it at "
+                        f"{per_drop:.1f} frames each ({explainable:.0f} explainable "
+                        f"vs {deficit_delta} observed). E advances slower than W "
+                        f"continuously — a rate mismatch, not an event ratchet. "
+                        f"Equivalent to ~{estimated_ppm:.0f} ppm device drift. "
+                        f"Check ZTS correlation and preparation-path cadence."
+                    ),
+                )
+
         return Diagnosis(
             cause="rx-observation-loss (F6)",
             confidence="high" if slope > 20 else "medium",
@@ -203,12 +237,12 @@ def diagnose(
             ),
         )
 
-    if ahead:
+    if ahead_delta:
         return Diagnosis(
             cause="benign replay churn",
             confidence="medium",
             reasoning=(
-                f"{ahead} `ahead` events but the deficit is still negative "
+                f"{ahead_delta} `ahead` events but the deficit is still negative "
                 f"({deficit_end_frames}) and flat. `ahead` alone is not a fault: "
                 "a small replay ring generates them while audio stays intact."
             ),

@@ -12,6 +12,7 @@ scenario:
   duration_s: 20
   stall_ms: 100
   stall_at_s: 5
+  self_heal: false
 
 expect:
   collapsed: true

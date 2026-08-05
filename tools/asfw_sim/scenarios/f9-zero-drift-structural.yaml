@@ -1,0 +1,15 @@
+name: f9-zero-drift-structural
+description: >
+  F9 structural check. At zero bus drift, all three ZTS modes must produce a
+  healthy stream. If any mode shows W > E ramping at 0 ppm, the under-production
+  is a driver bug in the preparation path, not an oscillator mismatch.
+base: driver
+rate: 48000
+
+sweep:
+  zts_mode: [correlated, uncorrelated, perfect]
+
+scenario:
+  duration_s: 30
+  bus_drift_ppm: 0
+  self_heal: false
