@@ -51,13 +51,12 @@ SWIFT_COVERAGE=false
 SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
 # When true, include the SCSI HBA: the ASFWSCSIControllerService personality in
 # Info.plist and the restricted scsicontroller entitlement in the dext signature.
-# Default OFF: the personality matches the FireWire card at boot, and with no
-# powered SBP-2 device on the bus the HBA's probe INQUIRY stalls target-0
-# registration past watchdogd's 60 s boot quiesce (registry busy-timeout panic,
-# IOService.cpp:5986) — regardless of SIP state. On AMFI-enforcing machines the
-# ad-hoc signature carrying the restricted entitlement additionally gets the dext
-# killed at launch, stranding the orphaned kernel stub in the same panic.
-# See README "SCSI HBA — opt-in".
+# Default OFF while boot-safety validation is pending: the kernel shim drives HBA
+# bring-up as synchronous, timeout-less calls, so any stall in that chain panics
+# the machine at watchdogd's 60 s boot quiesce (registry busy-timeout,
+# IOService.cpp:5947) — regardless of SIP state. The current login-driven-target
+# HBA is designed never to stall there, but the device-less/power-off boot cases
+# are not yet HW-validated. See README "SCSI HBA — opt-in".
 ENABLE_SCSI=false
 
 usage() {
@@ -72,8 +71,8 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --commands         Generate compile_commands.json via xcpretty
   --analyze          Run PVS-Studio static analyzer after build
   --scsi             Include the SCSI HBA (personality + restricted entitlement);
-                     requires SIP disabled, and is NOT cold-boot-safe without a
-                     powered-on SBP-2 device attached — see README
+                     requires SIP disabled; cold-boot safety without a powered-on
+                     SBP-2 device is pending HW validation — see README
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})

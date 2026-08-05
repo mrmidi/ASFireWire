@@ -426,25 +426,34 @@ Enabling `systemextensionsctl developer on` is recommended — it allows install
 ### SCSI HBA (SBP-2 scanners/disks) — opt-in
 
 The SCSI HBA (`ASFWSCSIControllerService`, for SBP-2 devices such as FireWire film
-scanners and disks) is **excluded from the default build**, because shipping it by
-default can **panic the machine into a boot loop** (~60 s registry busy-timeout,
-`IOService.cpp:5986`, no device attached) through two independent paths:
+scanners and disks) is **excluded from the default build** while its boot-safety
+validation is pending.
 
-- Its Info.plist personality instantiates a kernel-side
-  `IOUserSCSIParallelInterfaceController` as soon as the FireWire card matches at
-  boot. The HBA currently reports SCSI target 0 as present unconditionally, and the
-  probe INQUIRY is then held with no deadline waiting for an SBP-2 login that never
-  arrives when no SBP-2 device is on the bus (audio interfaces are not SBP-2). The
-  stalled target registration keeps the PCI nub busy past watchdogd's 60 s boot
-  quiesce. This happens **regardless of SIP/AMFI state**.
-- It requires the restricted
-  `com.apple.developer.driverkit.family.scsicontroller` entitlement. On a machine
-  where AMFI enforces entitlements, the ad-hoc-signed dext carrying it is killed at
-  launch (taking the audio driver down with it, since everything runs in one
-  process), and the orphaned kernel stub strands the same busy chain.
+The risk it guards against is xnu's generic **60 s registry busy-timeout boot panic**
+(`IOService.cpp:5947` on current xnu; `:5986` on earlier builds): the kernel-side
+`IOUserSCSIParallelInterfaceController` shim instantiates when the FireWire card
+matches at boot and drives the dext's HBA bring-up as **synchronous calls with no
+timeout**. Anything in that chain that waits — historically, a probe INQUIRY held
+for an SBP-2 login that never arrives on a device-less bus (issue #54) — keeps the
+PCI nub busy past watchdogd's 60 s boot quiesce and panics the machine, regardless
+of SIP/AMFI state. The IOSCSIParallelFamily kext itself contains no panic sites;
+the panic is purely this stall-past-the-deadline mechanism.
+
+The current HBA is designed to make that impossible: the bring-up chain never
+waits (constant capability answers, presence scan answers false, target 0 is
+created only on an actual SBP-2 login edge) — **pending hardware validation** of
+the device-less/power-off/unplug-during-boot cases.
+
+The build also needs the restricted
+`com.apple.developer.driverkit.family.scsicontroller` entitlement. On a machine
+where AMFI enforces entitlements, the ad-hoc-signed dext carrying it is killed at
+launch, taking the audio driver down with it (everything runs in one process).
+That failure is expected to be a silent no-load, not a panic — xnu's dext-launch
+failure path detaches the nub without re-registering it — but this has not been
+verified on hardware with SIP enabled.
 
 The default build carries neither the personality nor the entitlement and cannot
-trigger either path.
+trigger any of this.
 
 To include the HBA, opt in explicitly:
 
@@ -453,16 +462,16 @@ To include the HBA, opt in explicitly:
 ./sign.sh                  # picks the +SCSI entitlements automatically
 ```
 
-> **Warning:** this branch moves SCSI target creation to SBP-2 login (the HBA
-> reports no target until a device is actually logged in), which removes the
-> cold-boot panic path — **pending hardware validation**. Until that validation
-> lands, keep the old precautions when running `--scsi` builds: power the SBP-2
-> device on before booting, and avoid restarting or unplugging the adapter while
-> it is attached with no powered-on SBP-2 device on the bus.
+> **Until the boot-safety validation lands**, keep the old precautions when running
+> `--scsi` builds: power the SBP-2 device on before booting, and avoid restarting or
+> unplugging the adapter while it is attached with no powered-on SBP-2 device on
+> the bus.
 
 If a machine ever ends up in a panic loop: boot into Recovery, `csrutil disable`,
 boot normally, uninstall the extension
 (`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver`), then re-enable SIP.
+As a last resort, `sudo nvram boot-args="io=0"` sets `kIOWaitQuietPanics` off so the
+busy timeout logs instead of panicking (unverified; clear with `sudo nvram -d boot-args`).
 
 ## Installing a prebuilt build (testers)
 
