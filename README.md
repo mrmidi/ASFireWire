@@ -439,11 +439,9 @@ files, and verifies that the required entitlements are present in both signature
 Use the script rather than manually signing an app bundle.
 
 This local path does not depend on a provisioning profile or an Apple Developer
-account. Apple Developer membership by itself also does not guarantee access to
-restricted DriverKit entitlements; authorization and provisioning are separate
-Apple-controlled requirements for other signing or distribution paths. For this
-repository's ad-hoc test path, enable system-extension developer mode and keep SIP
-disabled while testing:
+account. It uses ad-hoc signing (`codesign --sign -`) with the checked-in entitlement
+files. For this repository's ad-hoc test path, enable system-extension developer mode
+and keep SIP disabled while testing:
 
 ```bash
 systemextensionsctl developer on
@@ -453,6 +451,9 @@ See [Installing](https://github.com/mrmidi/ASFireWire/wiki/Installing) for the f
 SIP and recovery procedure. `./build.sh --no-bump` is useful for builds that are not
 being installed; when replacing an installed extension, build without that option or
 turn off **Require a newer build** in **Overview → Driver Management**.
+
+Tagged release ZIPs use the separate `install.sh` workflow described below: signing
+happens locally on the tester's Mac with the same ad-hoc signing path.
 
 ### SCSI HBA (SBP-2 scanners/disks)
 
@@ -469,15 +470,27 @@ of panicking (clear with `sudo nvram -d boot-args`).
 
 ## Installing a prebuilt build (testers)
 
-Tagged releases attach a prebuilt `ASFW.app`. This build is **ad-hoc signed and NOT
-notarized**, so it can only be loaded on a machine with System Integrity Protection (SIP)
-disabled. It is intended for experimental testing only — not general use.
+Tagged releases attach an unsigned `ASFW-<version>.zip` containing `ASFW.app`,
+`install.sh`, and the entitlement resources needed for local signing. Run the
+installer from the extracted release directory:
+
+```bash
+cd ASFW-<version>
+./install.sh
+```
+
+The installer checks that SIP is disabled, enables system-extension developer mode,
+removes the download quarantine flag, ad-hoc signs the dext first and the app second,
+verifies the embedded entitlements, copies the result to `/Applications`, and opens
+the installed app.
+
+No Apple Developer account, signing identity, or provisioning profile is required for
+this experimental ad-hoc install path. The script does not ask for or upload an Apple
+ID password.
 
 > **Warning:** installing requires disabling SIP, which lowers your Mac's security
-> system-wide. **Uninstall the extension _before_ re-enabling SIP** — with SIP back on,
-> AMFI refuses to launch the ad-hoc-signed dext. That is expected to be a silent
-> no-load, but it has not been verified on hardware with SIP enabled, so don't leave
-> the extension installed in a state where it can never launch.
+> system-wide. **Uninstall the extension before re-enabling SIP.** The installer is
+> intentionally conservative and refuses to install while SIP is enabled.
 
 **→ Full instructions: [Installing (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Installing)**
 

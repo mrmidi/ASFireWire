@@ -1,18 +1,18 @@
 name: Release (prebuilt tester build)
 
-# Produces an ad-hoc-signed, ready-to-install ASFW.app for eager testers.
-#   - Push a tag matching v*        -> tests, builds, signs, and attaches the zip to a GitHub Release.
+# Produces an unsigned ASFW.app plus a local installer for eager testers.
+#   - Push a tag matching v*        -> tests, builds, packages, and attaches the zip to a GitHub Release.
 #   - Run manually (workflow_dispatch) -> same, but uploads the zip as a workflow artifact only
 #     (useful for testing this pipeline on a fork before tagging).
 #
-# The build is UNSIGNED by design (build.sh forces CODE_SIGNING_ALLOWED=NO); sign.sh then
-# ad-hoc re-signs the dext + app with their entitlements so the extension can load with
-# SIP off + `systemextensionsctl developer on`. Ad-hoc has no team/profile, so one zip
-# installs on any Mac. This is NOT notarized and requires SIP disabled — testers only.
+# The build is UNSIGNED by design (build.sh forces CODE_SIGNING_ALLOWED=NO). The ZIP
+# carries install.sh and the entitlement resources; install.sh runs on the tester's
+# Mac, ad-hoc signs the dext and app locally, checks SIP, and copies the result to
+# /Applications. CI never receives or uses Apple signing credentials.
 #
-# THE TAG IS THE SOURCE OF TRUTH for the version. On a tag push the workflow writes the
-# tag into VERSION.txt (driver semantic version) and overrides MARKETING_VERSION (the
-# bundles' CFBundleShortVersionString), so a release can never disagree with its tag.
+# THE TAG IS THE SOURCE OF TRUTH for the version. On a tag push the workflow overrides
+# the driver's semantic version metadata and MARKETING_VERSION (the bundles'
+# CFBundleShortVersionString), so a release can never disagree with its tag.
 
 on:
   push:
@@ -43,7 +43,7 @@ jobs:
           ./build.sh --test-only
 
   release:
-    name: Build & ad-hoc sign
+    name: Build & package unsigned
     needs: test
     runs-on: macos-26
     env:
@@ -61,9 +61,7 @@ jobs:
       # There are two independent sources in the repo:
       #   VERSION.txt      -> bump.sh -> DriverVersion.hpp (driver's kSemanticVersion)
       #   project.yml      -> MARKETING_VERSION -> CFBundleShortVersionString
-      # CFBundleShortVersionString must stay numeric dot-separated, so a semver
-      # pre-release/build suffix (v0.2.0-audio) is kept for VERSION.txt and the asset
-      # name but stripped for MARKETING_VERSION.
+      # CFBundleShortVersionString stays numeric and matches the release tag.
       - name: Resolve version
         id: version
         run: |
@@ -95,7 +93,7 @@ jobs:
         env:
           ASFW_VERSION_OVERRIDE: ${{ steps.version.outputs.full }}
         run: |
-          chmod +x build.sh bump.sh sign.sh
+          chmod +x build.sh bump.sh install.sh
           ./bump.sh refresh
           grep -E 'kSemanticVersion|kGitDirty' ASFWDriver/Version/DriverVersion.hpp
           git diff --quiet || { echo "::error::Working tree dirty before build — the release would be stamped DIRTY."; git status --short; exit 1; }
@@ -105,18 +103,20 @@ jobs:
           ./build.sh --no-bump --config Release \
             --set MARKETING_VERSION="${{ steps.version.outputs.numeric }}"
 
-      - name: Ad-hoc sign (embed entitlements)
-        run: ./sign.sh
-
-      - name: Package
+      - name: Package unsigned app and local installer
         id: package
         run: |
           APP="build/DerivedData/Build/Products/Release/ASFW.app"
           [ -d "$APP" ] || { echo "::error::App not found at $APP"; exit 1; }
-          # "-adhoc" suffix keeps ASFW-<version>.zip free for a future
-          # properly signed/notarized asset on the same release.
-          ZIP="ASFW-${{ steps.version.outputs.full }}-adhoc.zip"
-          ditto -c -k --keepParent "$APP" "$ZIP"
+          STAGE="$RUNNER_TEMP/ASFW-${{ steps.version.outputs.full }}"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/Entitlements"
+          ditto --rsrc --extattr --acl "$APP" "$STAGE/ASFW.app"
+          install -m 0755 install.sh "$STAGE/install.sh"
+          install -m 0644 ASFW/App.entitlements "$STAGE/Entitlements/App.entitlements"
+          install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriver.entitlements"
+          ZIP="ASFW-${{ steps.version.outputs.full }}.zip"
+          ditto -c -k --keepParent "$STAGE" "$ZIP"
           SHA="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
@@ -148,18 +148,21 @@ jobs:
           cat >> NOTES.md <<EOF
           ## Install
 
-          Experimental prebuilt tester build — **ad-hoc signed, NOT notarized**.
-          It only loads on a Mac with SIP disabled and \`systemextensionsctl developer on\`.
+          Experimental prebuilt tester bundle — the app is unsigned until \`install.sh\` runs locally.
+          The installer checks that SIP is disabled, ad-hoc signs the app and dext, and copies
+          the result to \`/Applications\`.
+
+          Run \`./install.sh\` from the extracted release directory. It does not collect or upload
+          Apple ID passwords, and it does not require an Apple Developer account or provisioning
+          profile for this ad-hoc test install.
 
           Read the **[Installing guide](https://github.com/mrmidi/ASFireWire/wiki/Installing)** before installing.
           Hitting problems? **[Troubleshooting](https://github.com/mrmidi/ASFireWire/wiki/Troubleshooting)** ·
           **[Reporting Issues](https://github.com/mrmidi/ASFireWire/wiki/Reporting-Issues)**
 
           > [!WARNING]
-          > **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI
-          > refuses to launch the ad-hoc-signed dext at every boot. That is expected to be
-          > a silent no-load, but it has not been verified on hardware with SIP enabled —
-          > don't leave the extension installed in a state where it can never launch.
+          > **Uninstall the extension _before_ re-enabling SIP.** This experimental installer
+          > intentionally requires SIP to be disabled and refuses to install otherwise.
           >
           > Recovery, should a boot problem occur: Recovery → \`csrutil disable\` → boot → \`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver\` → \`csrutil enable\`.
 
@@ -177,7 +180,7 @@ jobs:
         with:
           # No .zip suffix: artifact downloads are zip containers themselves,
           # so a .zip name would yield ASFW-x.zip.zip.
-          name: ASFW-${{ steps.version.outputs.full }}-adhoc
+          name: ASFW-${{ steps.version.outputs.full }}
           path: ${{ steps.package.outputs.zip }}
           if-no-files-found: error
 
