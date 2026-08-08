@@ -143,7 +143,7 @@ kern_return_t DVCaptureService::Start(
 
     LockGuard guard(lock_);
     if (active_) {
-        return ownerToken_ == ownerToken && deviceGuid_ == deviceGuid
+        return ownerToken_ == ownerToken && route_.guid == deviceGuid
                    ? kIOReturnSuccess
                    : kIOReturnExclusiveAccess;
     }
@@ -154,18 +154,16 @@ kern_return_t DVCaptureService::Start(
         return kIOReturnBusy;
     }
 
-    const auto* record = registry.FindByGuid(deviceGuid);
+    const auto record = registry.SnapshotByGuid(deviceGuid);
     if (!record || record->state == Discovery::LifeState::Lost ||
         record->state == Discovery::LifeState::Quarantined) {
         return kIOReturnNotFound;
     }
     const auto node = Discovery::TryOperationalNodeId(record->nodeId);
     if (!node) return kIOReturnNotReady;
-    const CMP::CMPDevice cmpDevice{
-        .guid = deviceGuid,
-        .nodeId = FW::NodeId{*node},
-        .generation = record->gen,
-    };
+    const auto route = registry.CurrentRoute(deviceGuid);
+    if (!route || !*route) return kIOReturnNotReady;
+    const CMP::CMPDevice cmpDevice{.route = *route};
 
     ConnectionMode mode = ConnectionMode::BroadcastFallback;
     uint8_t channel = 63;
@@ -248,9 +246,7 @@ kern_return_t DVCaptureService::Start(
 
     irm_ = &irm;
     cmp_ = &cmp;
-    deviceGuid_ = deviceGuid;
-    deviceNodeId_ = *node;
-    deviceGeneration_ = record->gen.value;
+    route_ = *route;
     channel_ = channel;
     outputPlug_ = outputPlug;
     bandwidthUnits_ = bandwidthUnits;
@@ -391,7 +387,7 @@ void DVCaptureService::HandleBusReset(
     (void)TeardownConnection(true);
     ASFW_LOG_WARNING(Isoch,
                      "[DV] capture terminated by bus reset GUID=0x%llx",
-                     deviceGuid_);
+                     route_.guid);
     ResetState();
 }
 
@@ -400,14 +396,10 @@ kern_return_t DVCaptureService::TeardownConnection(
     kern_return_t result = kIOReturnSuccess;
     bool mayReleaseResources = !pcrConnected_;
 
-    const CMP::CMPDevice cmpDevice{
-        .guid = deviceGuid_,
-        .nodeId = FW::NodeId{deviceNodeId_},
-        .generation = FW::Generation{deviceGeneration_},
-    };
+    const CMP::CMPDevice cmpDevice{.route = route_};
 
-    if (generationInvalid && cmp_ && deviceGuid_ != 0) {
-        cmp_->InvalidateDevice(deviceGuid_);
+    if (generationInvalid && cmp_ && route_) {
+        cmp_->InvalidateRoute(route_);
     }
 
     if (!generationInvalid && pcrConnected_ && cmp_ && outputPlug_ <= 30) {
@@ -469,9 +461,7 @@ void DVCaptureService::ResetState() noexcept {
     sink_.Detach();
     ring_.Reset();
     ownerToken_ = 0;
-    deviceGuid_ = 0;
-    deviceNodeId_ = 0xFF;
-    deviceGeneration_ = 0;
+    route_ = {};
     channel_ = 0xFF;
     outputPlug_ = 0xFF;
     bandwidthUnits_ = 0;

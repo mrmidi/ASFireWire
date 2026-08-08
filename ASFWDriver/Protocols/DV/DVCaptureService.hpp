@@ -8,6 +8,7 @@
 #include <DriverKit/OSSharedPtr.h>
 
 #include "../../Common/DriverKitOwnership.hpp"
+#include "../../Discovery/DeviceRouteToken.hpp"
 #include "DVConnectionPlan.hpp"
 #include "DVCaptureSink.hpp"
 
@@ -85,9 +86,10 @@ private:
     RingMapping ring_{};
     DVCaptureSink sink_{};
     uint64_t ownerToken_{0};
-    uint64_t deviceGuid_{0};
-    uint8_t deviceNodeId_{0xFF};
-    uint32_t deviceGeneration_{0};
+    // dev2 route/nub model: identity and liveness travel together in one token
+    // (Discovery::DeviceRouteToken), replacing the separate guid/nodeId/generation
+    // scalars. Matches BeBoBProtocol and ApogeeDuetDuplex.
+    Discovery::DeviceRouteToken route_{};
     uint8_t channel_{0xFF};
     uint8_t outputPlug_{0xFF};
     uint32_t bandwidthUnits_{0};
