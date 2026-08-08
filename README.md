@@ -488,9 +488,9 @@ No Apple Developer account, signing identity, or provisioning profile is require
 this experimental ad-hoc install path. The script does not ask for or upload an Apple
 ID password.
 
-> **Warning:** installing requires disabling SIP, which lowers your Mac's security
-> system-wide. **Uninstall the extension before re-enabling SIP.** The installer is
-> intentionally conservative and refuses to install while SIP is enabled.
+> **Note:** installing requires disabling SIP, which lowers your Mac's security
+> system-wide. Re-enable SIP when you are finished testing. The installer refuses to
+> install while SIP is enabled.
 
 **→ Full instructions: [Installing (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Installing)**
 

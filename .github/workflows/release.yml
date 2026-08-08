@@ -160,12 +160,6 @@ jobs:
           Hitting problems? **[Troubleshooting](https://github.com/mrmidi/ASFireWire/wiki/Troubleshooting)** ·
           **[Reporting Issues](https://github.com/mrmidi/ASFireWire/wiki/Reporting-Issues)**
 
-          > [!WARNING]
-          > **Uninstall the extension _before_ re-enabling SIP.** This experimental installer
-          > intentionally requires SIP to be disabled and refuses to install otherwise.
-          >
-          > Recovery, should a boot problem occur: Recovery → \`csrutil disable\` → boot → \`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver\` → \`csrutil enable\`.
-
           Requires an Apple Silicon Mac on macOS 26 (Tahoe) and FireWire hardware
           (PCIe OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
 
