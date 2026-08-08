@@ -120,7 +120,9 @@ DEXT_PATH="$(find "$APP_PATH/Contents/Library/SystemExtensions" -maxdepth 1 -typ
 [[ -n "$DEXT_PATH" ]] || fail "The release bundle does not contain a DriverKit extension under ASFW.app/Contents/Library/SystemExtensions."
 
 APP_INFO_PLIST="${APP_PATH}/Contents/Info.plist"
-DEXT_INFO_PLIST="${DEXT_PATH}/Contents/Info.plist"
+# A .dext is itself the bundle; unlike the enclosing app, its Info.plist is at
+# the bundle root rather than under a nested Contents directory.
+DEXT_INFO_PLIST="${DEXT_PATH}/Info.plist"
 [[ -f "$APP_INFO_PLIST" && -f "$DEXT_INFO_PLIST" ]] || fail "The app or dext is missing its Info.plist; the release bundle may be damaged."
 
 APP_BUNDLE_ID="$(read_plist_value "$APP_INFO_PLIST" "CFBundleIdentifier")"
