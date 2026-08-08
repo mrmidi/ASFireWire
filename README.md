@@ -47,7 +47,7 @@ What is real today:
 - Async FireWire transactions are in place and used by discovery and protocol code.
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
-- Personally tested audio hardware now includes the Apogee Duet FireWire path, Focusrite Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming), and the Midas Venice F32 (full duplex 32-in/32-out streaming).
+- Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, and Focusrite Saffire Pro 24 DSP. Contributors have additionally verified the PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming) and the Midas Venice F32 (full duplex 32-in/32-out streaming).
 - Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2, and the Midas Venice F32.
 - **Multi-stream DICE now works.** The Midas Venice F32 runs two isochronous streams per direction (2×16 channels = 32×32 total duplex).
 - **Host-controlled sample-rate switching is implemented**, including 44.1 kHz alongside 48 kHz. The driver decodes the device's advertised clock capabilities and drives DICE `CLOCK_SELECT`, so a rate change in the host (e.g. Logic) reprograms the device live without a reconnect. Switching rates on a CoreAudio aggregate device whose clock master is the FireWire interface is supported.
@@ -65,8 +65,8 @@ Please test these currently enabled DICE devices:
 - Focusrite Saffire Pro 14
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
-- PreSonus StudioLive 16.0.2 (personally tested on one unit; broader validation welcome)
-- Midas Venice F32 (personally tested; broader validation welcome)
+- PreSonus StudioLive 16.0.2 (contributor-verified on one unit; broader validation welcome)
+- Midas Venice F32 (contributor-verified; broader validation welcome)
 
 StudioLive 16.4.2 / 24.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
 
@@ -150,14 +150,23 @@ Audio-device support in tree today:
 - PreSonus StudioLive 16.0.2
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 - Terratec PHASE 88 Rack
+- Weiss INT202 and INT203 (DICE 2-channel layout; wired up but **never run against real hardware**)
 
-Personally tested with working audio:
+Personally tested with working audio (hardware owned by the maintainer):
 
 - Apogee Duet FireWire
 - Terratec PHASE 88 Rack
 - Focusrite Saffire Pro 24 DSP
-- PreSonus StudioLive 16.0.2
+
+Verified working by contributors on their own hardware:
+
+- PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out)
 - Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching)
+- Nikon Coolscan 9000 — SBP-2/SCSI film scanner, via the opt-in SCSI HBA build
+
+A fuller breakdown, including recognized-but-not-enabled devices and how to report your
+own results, lives on the
+[Device Compatibility wiki page](https://github.com/mrmidi/ASFireWire/wiki/Device-Compatibility).
 
 Recognized but not enabled yet:
 
@@ -166,6 +175,7 @@ Recognized but not enabled yet:
 - Focusrite Saffire Pro 40 TCD3070
 - Focusrite Liquid Saffire 56
 - PreSonus StudioLive 16.4.2 / 24.4.2 / 32.4.2 (stream layout not yet captured from hardware)
+- Weiss ADC2, Vesta, DAC2/Minerva, AFI1, DAC202, Maya, MAN301 (identified by name; audio enablement needs a verified stream/clock trace per model)
 
 In theory the driver can be extended to other OHCI controllers and many more FireWire devices, but hardware access is still the limiting factor. Host-controller matching and audio-device enablement are intentionally conservative until more real machines are tested.
 
@@ -489,64 +499,19 @@ boot normally, uninstall the extension
 
 ## Installing a prebuilt build (testers)
 
-If you want to test ASFireWire without building it yourself, tagged releases attach a
-prebuilt `ASFW.app`. This build is **ad-hoc signed and NOT notarized**, so it can only
-be loaded on a machine with System Integrity Protection (SIP) disabled. It is intended
-for experimental testing only — not general use.
+Tagged releases attach a prebuilt `ASFW.app`. This build is **ad-hoc signed and NOT
+notarized**, so it can only be loaded on a machine with System Integrity Protection (SIP)
+disabled. It is intended for experimental testing only — not general use.
 
-> **Warning:** These steps disable SIP, which lowers your Mac's security system-wide.
-> Only do this on a machine you are comfortable using for testing, and re-enable SIP
-> (`csrutil enable`) when you are done. The build is unsigned/un-notarized and provided
-> as-is; run it only if you understand and accept that.
->
-> **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI refuses
-> to launch the ad-hoc-signed dext; an installed build that includes the SCSI HBA then
-> leaves an orphaned kernel-side SCSI stub behind at every boot, which can panic the
-> machine into a boot loop (recovery: Recovery → `csrutil disable` → boot → uninstall
-> → `csrutil enable`).
+> **Warning:** installing requires disabling SIP, which lowers your Mac's security
+> system-wide. **Uninstall the extension _before_ re-enabling SIP** — with SIP back on,
+> a build that includes the SCSI HBA can panic the machine into a boot loop.
 
-**Requirements:** an Apple Silicon Mac running macOS 26 (Tahoe), and FireWire hardware
-(a PCIe FireWire/OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
+**→ Full instructions: [Installing (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Installing)**
 
-1. **Download** the `ASFW-<version>-adhoc.zip` from the [Releases](../../releases) page and unzip it.
-2. **Remove the quarantine flag** (Gatekeeper quarantines downloaded apps):
-   ```bash
-   xattr -dr com.apple.quarantine ASFW.app
-   ```
-3. **Disable SIP** (see Apple's guide on
-   [disabling and enabling System Integrity Protection](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection)).
-   Shut down, then boot into
-   [Recovery](https://support.apple.com/en-us/102518) (hold the power button until
-   "Loading startup options" appears → **Options** → open **Terminal**), and run:
-   ```bash
-   csrutil disable
-   ```
-   Reboot back into macOS. Confirm with `csrutil status` (should report disabled).
-4. **Enable system-extension developer mode** (runtime toggle, no reboot; requires SIP
-   already off):
-   ```bash
-   systemextensionsctl developer on
-   ```
-5. **Install the driver.** Move `ASFW.app` to `/Applications`, open it, and use its
-   **Install** button. Approve the extension in **System Settings → General → Login Items
-   & Extensions** if prompted (the prompt may not appear in developer mode).
-6. **Verify** the driver is active:
-   ```bash
-   systemextensionsctl list
-   ```
-   You should see `net.mrmidi.ASFW.ASFWDriver` marked `[activated enabled]`.
-
-**Uninstall / revert:** remove the extension via the app, or manually (ad-hoc builds
-have no team ID, hence the `-`):
-```bash
-systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver
-```
-Then re-enable SIP from Recovery with `csrutil enable`.
-
-**Troubleshooting:** if installation fails with `Missing entitlement
-com.apple.developer.system-extension.install`, the build was not signed with its
-entitlements embedded — that is a packaging bug in the release, not something to fix on
-your machine; please open an issue rather than changing boot-args.
+To build and sign it yourself instead, see
+[Building and Signing (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Building-and-Signing).
+For bug reports, see [Reporting Issues (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Reporting-Issues).
 
 ## Contributing
 
