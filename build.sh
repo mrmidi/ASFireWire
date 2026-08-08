@@ -34,6 +34,10 @@ VERBOSE=false
 NO_BUMP=false
 RUN_TESTS=false
 TEST_ONLY=false
+# Extra `KEY=VALUE` build settings appended to the xcodebuild invocation
+# (repeatable `--set`). Used by the release workflow to stamp MARKETING_VERSION
+# from the git tag without editing project.yml.
+EXTRA_SETTINGS=()
 # When true, generate `compile_commands.json` by piping xcodebuild to xcpretty
 GENERATE_COMMANDS=false
 # Path to write compile_commands.json (relative to script working dir)
@@ -77,6 +81,7 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})
+  --set KEY=VALUE    Append an xcodebuild build setting (repeatable)
   --derived PATH     Set DerivedData path (default: ${DERIVED})
 EOF
 }
@@ -93,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --commands) GENERATE_COMMANDS=true; shift;;
     --analyze) RUN_ANALYZER=true; shift;;
     --scsi) ENABLE_SCSI=true; shift;;
+    --set) EXTRA_SETTINGS+=("$2"); shift 2;;
     --scheme) SCHEME_NAME="$2"; shift 2;;
     --config) CONFIGURATION="$2"; shift 2;;
     --arch) ARCH_NAME="$2"; shift 2;;
@@ -332,6 +338,7 @@ run_build() {
 	    CODE_SIGNING_REQUIRED=NO \
 	    CODE_SIGN_IDENTITY="" \
     ${SCSI_FLAG[@]+"${SCSI_FLAG[@]}"} \
+    ${EXTRA_SETTINGS[@]+"${EXTRA_SETTINGS[@]}"} \
     ${QUIET_FLAG[@]+"${QUIET_FLAG[@]}"} \
     build \
     2>&1 | tee "${RAW_LOG}"
