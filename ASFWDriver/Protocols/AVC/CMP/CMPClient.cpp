@@ -38,12 +38,23 @@ CMPClient::~CMPClient() {
 
 void CMPClient::ReadOMPR(const CMPDevice& device,
                          PCRReadCallback callback) {
-    if (!device.IsValid()) {
+    // IsCurrent, not IsValid: a well-formed token can still be stale. Every other
+    // entry point here checks the route is the registry's current one, so that a
+    // read cannot be issued against a node another device now occupies.
+    if (!IsCurrent(device)) {
         callback(false, 0);
         return;
     }
-    ReadQuadlet(device, PCRRegisters::kOMPR,
-                busInfo_.GetSpeed(device.nodeId), std::move(callback));
+    // GetSpeed takes FW::NodeId (uint8_t); the route token carries a uint16_t whose
+    // invalid sentinel is 0xFFFF. Narrow through TryOperationalNodeId rather than a
+    // raw cast, which would fold 0xFFFF into a plausible-looking node 0xFF.
+    const auto node = Discovery::TryOperationalNodeId(device.route.nodeId);
+    if (!node) {
+        callback(false, 0);
+        return;
+    }
+    ReadQuadlet(device, PCRRegisters::kOMPR, busInfo_.GetSpeed(FW::NodeId{*node}),
+                std::move(callback));
 }
 
 void CMPClient::ReadOPCR(const CMPDevice& device, uint8_t plugNum, PCRReadCallback callback) {
