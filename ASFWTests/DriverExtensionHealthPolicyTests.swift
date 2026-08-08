@@ -71,7 +71,7 @@ struct DriverExtensionHealthPolicyTests {
         #expect(disposition == .detached)
     }
 
-    @Test func replacementRequiresStrictlyNewerNumericBuild() {
+    @Test func replacementVersionComparisonUsesNumericOrdering() {
         #expect(DriverExtensionVersionPolicy.replacementIsNewer(
             existing: "1",
             replacement: "2"
@@ -90,6 +90,34 @@ struct DriverExtensionHealthPolicyTests {
         ))
     }
 
+    @Test func replacementVersionGuardIsOptIn() {
+        #expect(DriverExtensionVersionPolicy.replacementIsAllowed(
+            existing: "2",
+            replacement: "2",
+            requireNewerBuild: false
+        ))
+        #expect(DriverExtensionVersionPolicy.replacementIsAllowed(
+            existing: "3",
+            replacement: "2",
+            requireNewerBuild: false
+        ))
+        #expect(!DriverExtensionVersionPolicy.replacementIsAllowed(
+            existing: "2",
+            replacement: "2",
+            requireNewerBuild: true
+        ))
+        #expect(!DriverExtensionVersionPolicy.replacementIsAllowed(
+            existing: "3",
+            replacement: "2",
+            requireNewerBuild: true
+        ))
+        #expect(DriverExtensionVersionPolicy.replacementIsAllowed(
+            existing: "9",
+            replacement: "10",
+            requireNewerBuild: true
+        ))
+    }
+
     @MainActor
     @Test func liveConnectionOverridesStaleActivationError() {
         let viewModel = DriverViewModel()
@@ -99,11 +127,11 @@ struct DriverExtensionHealthPolicyTests {
 
         #expect(viewModel.isDriverConnected)
         #expect(viewModel.displayedStatus ==
-                "Driver loaded — UserClient connected")
+                "Driver is loaded and connected")
 
         viewModel.updateDriverConnection(false)
 
         #expect(!viewModel.isDriverConnected)
-        #expect(viewModel.displayedStatus == "Driver disconnected")
+        #expect(viewModel.displayedStatus == "Driver is disconnected")
     }
 }

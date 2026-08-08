@@ -62,6 +62,8 @@ final class ASFWDriverConnector: ObservableObject {
         case stopAudioStreaming = 63
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
+        // Driver-owned LogRing category names and named filter presets.
+        case getLogCatalog = 1014
     }
 
     // MARK: - Re-exported Models
@@ -127,7 +129,11 @@ final class ASFWDriverConnector: ObservableObject {
         interpretIOReturn: { [weak self] kr in
             self?.interpretIOReturn(kr) ?? String(format: "Unknown error 0x%x (%d)", UInt32(bitPattern: kr), kr)
         },
-        errorHandler: { [weak self] message in self?.lastError = message }
+        errorHandler: { [weak self] message in
+            DispatchQueue.main.async { [weak self] in
+                self?.lastError = message
+            }
+        }
     )
 
     // MARK: - Initialisation

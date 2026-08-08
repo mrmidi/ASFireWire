@@ -9,6 +9,7 @@ import SwiftUI
 
 struct OverviewView: View {
     @ObservedObject var viewModel: DriverViewModel
+    @Binding var requireNewerBuild: Bool
     
     var body: some View {
         ScrollView {
@@ -34,19 +35,58 @@ struct OverviewView: View {
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 
-                // Status Card
+                // Driver Management Card
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Driver Status", systemImage: "circle.hexagonpath")
+                    Label("Driver Management", systemImage: "circle.hexagonpath")
                         .font(.headline)
                     
-                    HStack {
+                    HStack(spacing: 10) {
                         statusIndicator
-                        Text(viewModel.displayedStatus)
-                            .font(.system(.body, design: .monospaced))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Current status")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(viewModel.displayedStatus)
+                                .font(.system(.body, design: .monospaced))
+                        }
                         Spacer()
                     }
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+
+                    HStack(spacing: 12) {
+                        Button {
+                            viewModel.installDriver(requireNewerBuild: requireNewerBuild)
+                        } label: {
+                            Label("Install", systemImage: "arrow.down.circle.fill")
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(viewModel.isBusy)
+
+                        Button(role: .destructive) {
+                            viewModel.uninstallDriver()
+                        } label: {
+                            Label("Delete", systemImage: "trash.fill")
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.isBusy)
+                    }
+
+                    Divider()
+
+                    Toggle(isOn: $requireNewerBuild) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Require a newer build")
+                            Text("Only replace an installed driver when the incoming build number is higher.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .disabled(viewModel.isBusy)
+                    .help("When enabled, ASFW rejects an equal or older build during installation.")
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -84,7 +124,7 @@ struct OverviewView: View {
                 }
                 
                 // Help Text
-                Text("💡 You may need to allow the system extension in **System Settings > Privacy & Security** after first activation.")
+                Text("After the first installation, macOS may ask you to approve ASFW in System Settings > General > Login Items & Extensions > Driver Extensions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding()
@@ -110,5 +150,8 @@ struct OverviewView: View {
                     .opacity(viewModel.isBusy ? 0 : 1)
                     .animation(viewModel.isBusy ? .easeInOut(duration: 1.0).repeatForever(autoreverses: true) : .default, value: viewModel.isBusy)
             )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Driver status indicator")
+            .accessibilityValue(viewModel.displayedStatus)
     }
 }

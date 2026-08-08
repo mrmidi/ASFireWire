@@ -210,6 +210,22 @@ kern_return_t DiagnosticsHandler::GetLogStats(IOUserClientMethodArguments* args)
     return kIOReturnSuccess;
 }
 
+kern_return_t DiagnosticsHandler::GetLogCatalog(IOUserClientMethodArguments* args) {
+    if (!args) {
+        return kIOReturnBadArgument;
+    }
+
+    ASFW::Logging::LogCategoryCatalogWire catalog{};
+    ASFW::Logging::PackLogCategoryCatalog(catalog);
+    OSData* data = OSData::withBytes(&catalog, sizeof(catalog));
+    if (!data) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
 kern_return_t DiagnosticsHandler::GetAudioTelemetry(
     IOUserClientMethodArguments* args) {
     if (!args || !driver_) {

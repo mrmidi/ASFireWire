@@ -18,6 +18,8 @@ struct ModernContentView: View {
     @StateObject private var mcpVM: ASFWMCPControlViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
+    @AppStorage(DriverInstallSettings.requireNewerBuildKey)
+    private var requireNewerBuild = DriverInstallSettings.defaultRequireNewerBuild
 
     init() {
         let driverViewModel = DriverViewModel()
@@ -102,7 +104,8 @@ struct ModernContentView: View {
             Group {
                 switch selectedSection {
                 case .overview:
-                    OverviewView(viewModel: driverVM)
+                    OverviewView(viewModel: driverVM,
+                                 requireNewerBuild: $requireNewerBuild)
                 case .devices:
                     DeviceDiscoveryView(viewModel: debugVM)
                 case .avcUnits:
@@ -126,7 +129,7 @@ struct ModernContentView: View {
                 case .busReset:
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:
-                    SystemLogsView(viewModel: driverVM)
+                    SystemLogsView(connector: debugVM.connector)
                 case .loggingSettings:
                     LoggingSettingsView(connector: debugVM.connector)
                 case .mcpSettings:
@@ -155,18 +158,20 @@ struct ModernContentView: View {
                         }
                         
                         Button {
-                            driverVM.installDriver()
+                            driverVM.installDriver(requireNewerBuild: requireNewerBuild)
                         } label: {
                             Label("Install", systemImage: "arrow.down.circle.fill")
                         }
+                        .labelStyle(.titleAndIcon)
                         .disabled(driverVM.isBusy)
                         .keyboardShortcut("i", modifiers: .command)
                         
                         Button {
                             driverVM.uninstallDriver()
                         } label: {
-                            Label("Uninstall", systemImage: "trash.fill")
+                            Label("Delete", systemImage: "trash.fill")
                         }
+                        .labelStyle(.titleAndIcon)
                         .disabled(driverVM.isBusy)
                         .tint(.red)
                         .keyboardShortcut("u", modifiers: .command)

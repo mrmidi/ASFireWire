@@ -11,14 +11,14 @@ import SwiftUI
 
 @MainActor
 class DriverViewModel: ObservableObject {
-    @Published var activationStatus: String = "Idle"
+    @Published var activationStatus: String = "Ready"
     @Published var isBusy: Bool = false
     @Published var logMessages: [LogEntry] = []
     @Published var driverVersion: DriverVersionInfo?
     @Published private(set) var isDriverConnected: Bool = false
 
     var displayedStatus: String {
-        isDriverConnected ? "Driver loaded — UserClient connected" : activationStatus
+        isDriverConnected ? "Driver is loaded and connected" : activationStatus
     }
     
     struct LogEntry: Identifiable, Equatable {
@@ -78,23 +78,24 @@ class DriverViewModel: ObservableObject {
         isDriverConnected = connected
 
         if connected {
-            activationStatus = "Driver loaded — UserClient connected"
+            activationStatus = "Driver is loaded and connected"
             if changed {
                 log(activationStatus, source: .userClient, level: .success)
             }
         } else if changed {
-            activationStatus = "Driver disconnected"
+            activationStatus = "Driver is disconnected"
             driverVersion = nil
             log(activationStatus, source: .userClient, level: .warning)
         }
     }
     
-    func installDriver() {
+    func installDriver(requireNewerBuild: Bool = DriverInstallSettings.defaultRequireNewerBuild) {
         isBusy = true
-        activationStatus = "Requesting activation..."
-        log("Activation request submitted", source: .app, level: .info)
+        activationStatus = "Requesting driver installation…"
+        log("Driver installation request submitted", source: .app, level: .info)
         
-        DriverInstallManager.shared.activate(progress: { [weak self] message in
+        DriverInstallManager.shared.activate(requireNewerBuild: requireNewerBuild,
+                                             progress: { [weak self] message in
             Task { @MainActor in
                 self?.activationStatus = message
                 self?.log(message, source: .app, level: .info)
@@ -118,8 +119,8 @@ class DriverViewModel: ObservableObject {
     
     func uninstallDriver() {
         isBusy = true
-        activationStatus = "Requesting deactivation..."
-        log("Deactivation request submitted", source: .app, level: .info)
+        activationStatus = "Requesting driver removal…"
+        log("Driver removal request submitted", source: .app, level: .info)
         
         DriverInstallManager.shared.deactivate(progress: { [weak self] message in
             Task { @MainActor in

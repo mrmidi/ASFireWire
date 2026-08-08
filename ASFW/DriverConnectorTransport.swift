@@ -19,15 +19,22 @@ final class DriverConnectorTransport {
         self.interpretIOReturn = interpretIOReturn
     }
 
-    func callStruct(selector: UInt32, input: Data? = nil, initialCap: Int = 64 * 1024) -> Data? {
+    func callStruct(selector: UInt32,
+                    input: Data? = nil,
+                    initialCap: Int = 64 * 1024,
+                    traceCalls: Bool = true) -> Data? {
         let connection = connectionProvider()
         guard connection != 0 else {
             errorHandler("Not connected to driver")
-            print("[Connector] ❌ callStruct: connection=0 (not connected)")
+            if traceCalls {
+                print("[Connector] ❌ callStruct: connection=0 (not connected)")
+            }
             return nil
         }
 
-        print("[Connector] 📞 callStruct: selector=\(selector) connection=0x\(String(connection, radix: 16)) initialCap=\(initialCap)")
+        if traceCalls {
+            print("[Connector] 📞 callStruct: selector=\(selector) connection=0x\(String(connection, radix: 16)) initialCap=\(initialCap)")
+        }
 
         var outSize = initialCap
         var out = Data(count: outSize)
@@ -50,19 +57,25 @@ final class DriverConnectorTransport {
 
         var kr = doCall()
         if kr == kIOReturnNoSpace {
-            print("[Connector] callStruct: got kIOReturnNoSpace, retrying with size=\(outSize)")
+            if traceCalls {
+                print("[Connector] callStruct: got kIOReturnNoSpace, retrying with size=\(outSize)")
+            }
             out = Data(count: outSize)
             kr = doCall()
         }
 
         guard kr == KERN_SUCCESS else {
             let errMsg = "selector \(selector) failed: \(interpretIOReturn(kr))"
-            print("[Connector] ❌ callStruct error: \(errMsg)")
+            if traceCalls {
+                print("[Connector] ❌ callStruct error: \(errMsg)")
+            }
             errorHandler(errMsg)
             return nil
         }
 
-        print("[Connector] ✅ callStruct success: selector=\(selector) outSize=\(outSize)")
+        if traceCalls {
+            print("[Connector] ✅ callStruct success: selector=\(selector) outSize=\(outSize)")
+        }
         out.count = outSize
         return out
     }

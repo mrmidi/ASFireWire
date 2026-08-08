@@ -391,6 +391,39 @@ TEST(LogRingTests, StatsCountPerCategory) {
     EXPECT_EQ(stats.totalEmitted, 3U);
 }
 
+TEST(LogRingTests, CategoryCatalogExportsNamesAndDriverOwnedTxPreset) {
+    ASFW::Logging::LogCategoryCatalogWire catalog{};
+    ASFW::Logging::PackLogCategoryCatalog(catalog);
+
+    EXPECT_EQ(catalog.header.abiVersion,
+              ASFW::Logging::kLogCategoryCatalogAbiVersion);
+    EXPECT_EQ(catalog.header.categoryCount,
+              ASFW::Logging::kLogRingCategoryCount);
+    EXPECT_EQ(catalog.header.presetCount, 1U);
+    EXPECT_EQ(catalog.header.totalBytes, sizeof(catalog));
+
+    const auto directAudio = static_cast<uint8_t>(LogCategory::DirectAudio);
+    ASSERT_LT(directAudio, catalog.header.categoryCount);
+    const auto& descriptor = catalog.categories[directAudio];
+    EXPECT_EQ(descriptor.category, directAudio);
+    EXPECT_EQ(std::string(descriptor.name, descriptor.nameLength),
+              "DirectAudio");
+
+    const auto& txPreset = catalog.presets[0];
+    EXPECT_EQ(std::string(txPreset.name, txPreset.nameLength),
+              "Audio Transmit");
+    const auto contains = [&txPreset](LogCategory category) {
+        return (txPreset.categoryMask & ASFW::Logging::CategoryBit(category)) != 0;
+    };
+    EXPECT_TRUE(contains(LogCategory::Isoch));
+    EXPECT_TRUE(contains(LogCategory::Audio));
+    EXPECT_TRUE(contains(LogCategory::DirectAudio));
+    EXPECT_TRUE(contains(LogCategory::Zts));
+    EXPECT_TRUE(contains(LogCategory::TxSyt));
+    EXPECT_TRUE(contains(LogCategory::PayloadWriter));
+    EXPECT_FALSE(contains(LogCategory::Metrics));
+}
+
 TEST(LogRingTests, ConcurrentContentionIsReportedRatherThanRacingTheSlot) {
     RingFixture fixture(1);
     ASSERT_NE(fixture.ring, nullptr);

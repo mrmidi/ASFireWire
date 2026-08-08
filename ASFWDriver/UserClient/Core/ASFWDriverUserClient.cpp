@@ -400,6 +400,7 @@ constexpr uint64_t kMethodDiagGetPostResetTiming  = 1010;
 constexpr uint64_t kMethodDiagGetLogRecords       = 1011;
 constexpr uint64_t kMethodDiagGetLogStats         = 1012;
 constexpr uint64_t kMethodDiagGetAudioTelemetry   = 1013;
+constexpr uint64_t kMethodDiagGetLogCatalog       = 1014;
 
 MethodDispatchResult DispatchDiagnosticsMethods(
     ASFW::UserClient::UserClientRuntimeState& runtimeState,
@@ -433,6 +434,8 @@ MethodDispatchResult DispatchDiagnosticsMethods(
         return runtimeState.Diagnostics().GetLogStats(arguments);
     case kMethodDiagGetAudioTelemetry:
         return runtimeState.Diagnostics().GetAudioTelemetry(arguments);
+    case kMethodDiagGetLogCatalog:
+        return runtimeState.Diagnostics().GetLogCatalog(arguments);
     default:
         return std::nullopt;
     }

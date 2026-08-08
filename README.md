@@ -82,53 +82,19 @@ Even a failed test report is valuable. "It does not enumerate at all" is still u
 
 ## Collecting logs
 
-If you are reporting a bug, driver logs from the moment the device appears, publishes an audio device, or fails to start are extremely helpful.
+If you are reporting a bug, please share the logs from the ASFW app:
 
-Important detail: DriverKit does not expose `os_log_create()` to this project, so ASFW driver logs do not show up as nice unified-log categories. Instead, they are easiest to find by process/bundle name and by message prefixes such as `[DICE]`, `[Audio]`, `[Async]`, `[AVC]`, `[Discovery]`, and `[Isoch]`.
+1. Open **System Logs** in the sidebar.
+2. Reproduce the problem.
+3. Copy the log entries around the failure and attach them to the report.
 
-### From Terminal
+Please include the ASFW version, device, and approximate time of the reproduction. Do
+not worry about interpreting the messages or removing repeated lines — the complete
+log is more useful.
 
-To watch logs live while reproducing the problem:
-
-```sh
-log stream --style compact \
-  --predicate 'processImagePath CONTAINS[c] "ASFWDriver" OR eventMessage CONTAINS[c] "[DICE]" OR eventMessage CONTAINS[c] "[Audio]" OR eventMessage CONTAINS[c] "[Async]" OR eventMessage CONTAINS[c] "[AVC]" OR eventMessage CONTAINS[c] "[Discovery]" OR eventMessage CONTAINS[c] "[Isoch]"'
-```
-
-To save the last 10 minutes of likely ASFW driver logs to a file:
-
-```sh
-log show --last 10m --style compact \
-  --predicate 'processImagePath CONTAINS[c] "ASFWDriver" OR eventMessage CONTAINS[c] "[DICE]" OR eventMessage CONTAINS[c] "[Audio]" OR eventMessage CONTAINS[c] "[Async]" OR eventMessage CONTAINS[c] "[AVC]" OR eventMessage CONTAINS[c] "[Discovery]" OR eventMessage CONTAINS[c] "[Isoch]"' \
-  > ~/Desktop/asfw-driver.log
-```
-
-If you want a broader capture for a difficult issue, collect a full log archive right after reproducing it:
-
-```sh
-sudo log collect --last 10m --output ~/Desktop/asfw-driver.logarchive
-```
-
-### From Console.app
-
-1. Open `Console.app`.
-2. Select your Mac in the sidebar.
-3. In the search field, try one of these filters:
-   - `ASFWDriver`
-   - `net.mrmidi.ASFW.ASFWDriver`
-   - `[DICE]`
-   - `[Audio]`
-4. Reproduce the issue.
-5. Save or export the matching lines, or copy the relevant window around the failure.
-
-### What to include in a bug report
-
-- the exact time the issue happened
-- whether this was during enumeration, playback start, capture start, or after some minutes of streaming
-- the shell log snippet or `.logarchive`
-- whether the failure is repeatable
-
-If the logs are too sparse, mention that too. The driver has runtime verbosity knobs in `ASFWDriver/Info.plist`, and those can be turned up for a follow-up repro.
+If the app cannot show logs, use Console.app to reproduce the problem and export the
+entries mentioning ASFW, then attach that file instead. The [Logging wiki page](https://github.com/mrmidi/ASFireWire/wiki/Logging)
+has optional fallback instructions if a maintainer asks for a broader capture.
 
 ## Hardware compatibility
 
@@ -434,7 +400,9 @@ The driver is organized into functional subsystems:
 
 ## Building
 
-Build scripts or CMakeLists are for quick testing and creating compile_commands.json for static analysis tools. The proper way to build and sign the driver is via Xcode.
+The repository uses the root build scripts for reproducible project generation and
+installable builds. The complete build-and-sign procedure is in the
+[Building and Signing wiki](https://github.com/mrmidi/ASFireWire/wiki/Building-and-Signing).
 
 ### Xcode project is generated (XcodeGen)
 
@@ -451,12 +419,40 @@ source files**:
 xcodegen generate     # ./build.sh does this automatically when xcodegen is installed
 ```
 
-Output is deterministic — regenerating with no changes produces an identical
-pbxproj.
+Output is deterministic — regenerating with no changes produces an identical project.
 
-NOTE: You need an Apple Developer account (paid) and appropriate entitlements — or a free account plus SIP disabled — to build/load the driver on your machine. See Apple's documentation for details: https://developer.apple.com/documentation/driverkit/debugging-and-testing-system-extensions
+### Build and sign locally
 
-Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build
+`build.sh` deliberately produces an unsigned app and dext. It also refreshes the
+generated version metadata and, for an installable build, increments
+`CFBundleVersion` unless `--no-bump` is supplied:
+
+```bash
+./build.sh --config Release
+./sign.sh
+```
+
+The default output is
+`build/DerivedData/Build/Products/Release/ASFW.app`. `sign.sh` ad-hoc signs the
+embedded dext first and then the app with the checked-in per-target entitlement
+files, and verifies that the required entitlements are present in both signatures.
+Use the script rather than manually signing an app bundle.
+
+This local path does not depend on a provisioning profile or an Apple Developer
+account. Apple Developer membership by itself also does not guarantee access to
+restricted DriverKit entitlements; authorization and provisioning are separate
+Apple-controlled requirements for other signing or distribution paths. For this
+repository's ad-hoc test path, enable system-extension developer mode and keep SIP
+disabled while testing:
+
+```bash
+systemextensionsctl developer on
+```
+
+See [Installing](https://github.com/mrmidi/ASFireWire/wiki/Installing) for the full
+SIP and recovery procedure. `./build.sh --no-bump` is useful for builds that are not
+being installed; when replacing an installed extension, build without that option or
+turn off **Require a newer build** in **Overview → Driver Management**.
 
 ### SCSI HBA (SBP-2 scanners/disks)
 

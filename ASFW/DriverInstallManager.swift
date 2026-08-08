@@ -25,24 +25,24 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
             case .operationInProgress(let kind):
                 return "A driver \(kind.rawValue) request is already in progress."
             case .replacementVersionNotNewer(let existing, let replacement):
-                return "Refusing to replace ASFW build \(existing) with non-newer build \(replacement)."
+                return "Cannot replace ASFW build \(existing) with build \(replacement): the replacement is not newer."
             case .orphanedDriverServer:
                 return "ASFW has an orphaned DriverKit server with no attached services."
             case .driverDidNotAttach:
-                return "ASFW was enabled, but ASFWDriver did not attach to the FireWire PCI controller."
+                return "ASFW was enabled, but ASFWDriver did not attach to the FireWire controller."
             case .driverDidNotDetach:
-                return "ASFW deactivation completed, but the driver or DriverKit server did not terminate."
+                return "ASFW deactivation completed, but the driver or DriverKit server is still running."
             }
         }
 
         var recoverySuggestion: String? {
             switch self {
             case .replacementVersionNotNewer:
-                return "Build again without --no-bump so CFBundleVersion increases."
+                return "Turn off “Require a newer build” for local development, or build without --no-bump to increment CFBundleVersion."
             case .orphanedDriverServer, .driverDidNotDetach:
-                return "Quit ASFW and reboot before installing the newer build. Do not delete files from /Library/SystemExtensions manually."
+                return "Quit ASFW and reboot before installing the new build. Do not delete files from /Library/SystemExtensions manually."
             case .driverDidNotAttach:
-                return "Reconnect the FireWire adapter. If the controller is present, deactivate ASFW, wait for detachment, and activate the newer build."
+                return "Reconnect the FireWire adapter. If the controller is present, remove ASFW, wait for it to detach, and install the build again."
             case .operationInProgress:
                 return "Wait for the current system-extension request to finish."
             }
@@ -51,15 +51,18 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     private final class PendingOperation {
         let kind: OperationKind
+        let requireNewerBuild: Bool
         let progress: ProgressHandler?
         let completion: CompletionHandler
         var resultDescription = ""
         var replacementError: OperationError?
 
         init(kind: OperationKind,
+             requireNewerBuild: Bool,
              progress: ProgressHandler?,
              completion: @escaping CompletionHandler) {
             self.kind = kind
+            self.requireNewerBuild = requireNewerBuild
             self.progress = progress
             self.completion = completion
         }
@@ -73,7 +76,8 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     private override init() {}
 
-    func activate(progress: ProgressHandler? = nil,
+    func activate(requireNewerBuild: Bool = DriverInstallSettings.defaultRequireNewerBuild,
+                  progress: ProgressHandler? = nil,
                   completion: @escaping CompletionHandler) {
         let request = OSSystemExtensionRequest.activationRequest(
             forExtensionWithIdentifier: extensionIdentifier,
@@ -81,6 +85,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         )
         submit(kind: .activation,
                request: request,
+               requireNewerBuild: requireNewerBuild,
                progress: progress,
                completion: completion)
         logBundleScan()
@@ -94,12 +99,14 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         )
         submit(kind: .deactivation,
                request: request,
+               requireNewerBuild: false,
                progress: progress,
                completion: completion)
     }
 
     private func submit(kind: OperationKind,
                         request: OSSystemExtensionRequest,
+                        requireNewerBuild: Bool,
                         progress: ProgressHandler?,
                         completion: @escaping CompletionHandler) {
         guard pending == nil else {
@@ -110,6 +117,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         }
 
         let operation = PendingOperation(kind: kind,
+                                         requireNewerBuild: requireNewerBuild,
                                          progress: progress,
                                          completion: completion)
         pending = operation
@@ -149,9 +157,10 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     ) -> OSSystemExtensionRequest.ReplacementAction {
         let existingVersion = existing.bundleVersion
         let replacementVersion = replacement.bundleVersion
-        guard DriverExtensionVersionPolicy.replacementIsNewer(
+        guard DriverExtensionVersionPolicy.replacementIsAllowed(
             existing: existingVersion,
-            replacement: replacementVersion
+            replacement: replacementVersion,
+            requireNewerBuild: pending?.requireNewerBuild ?? DriverInstallSettings.defaultRequireNewerBuild
         ) else {
             pending?.replacementError = .replacementVersionNotNewer(
                 existing: existingVersion,

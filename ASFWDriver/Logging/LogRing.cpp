@@ -36,6 +36,17 @@ bool Contains(const char* haystack, const char* needle) noexcept {
     return strstr(haystack, needle) != nullptr;
 }
 
+template <size_t Capacity>
+void CopyCatalogName(const char* source, char (&destination)[Capacity],
+                     uint8_t& outLength) noexcept {
+    size_t length = 0;
+    while (source != nullptr && source[length] != '\0' && length < Capacity) {
+        destination[length] = source[length];
+        ++length;
+    }
+    outLength = static_cast<uint8_t>(length);
+}
+
 } // namespace
 
 LogRing& LogRing::Shared() noexcept {
@@ -287,6 +298,26 @@ void PackLogStats(const LogRing& ring, LogRingStatsWire& outStats) noexcept {
     outStats.categoryCount = kLogRingCategoryCount;
     for (uint32_t index = 0; index < kLogRingCategoryCount; ++index) {
         outStats.perCategory[index] = stats.perCategory[index];
+    }
+}
+
+void PackLogCategoryCatalog(LogCategoryCatalogWire& outCatalog) noexcept {
+    outCatalog = LogCategoryCatalogWire{};
+    outCatalog.header.totalBytes = sizeof(outCatalog);
+
+    for (uint32_t index = 0; index < kLogRingCategoryCount; ++index) {
+        const LogCategoryDefinition& definition = kLogCategoryDefinitions[index];
+        LogCategoryDescriptorWire& wire = outCatalog.categories[index];
+        wire.category = static_cast<uint8_t>(definition.category);
+        CopyCatalogName(definition.name, wire.name, wire.nameLength);
+    }
+
+    for (uint32_t index = 0; index < kLogCategoryPresetCount; ++index) {
+        const LogCategoryPresetDefinition& definition =
+            kLogCategoryPresetDefinitions[index];
+        LogCategoryPresetWire& wire = outCatalog.presets[index];
+        wire.categoryMask = definition.categoryMask;
+        CopyCatalogName(definition.name, wire.name, wire.nameLength);
     }
 }
 

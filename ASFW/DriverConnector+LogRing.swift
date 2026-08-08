@@ -1,6 +1,6 @@
 import Foundation
 
-// Client for the driver-owned log ring (user-client selectors 1011/1012).
+// Client for the driver-owned log ring (user-client selectors 1011/1012/1014).
 //
 // The dext keeps a 10 MiB ring of structured ASFW_LOG records (sequence,
 // timestamp, category, level, formatted text). This extension drains it with
@@ -17,13 +17,14 @@ struct ASFWLogRingQuery: Sendable {
     var maxRecords: Int = 200
 }
 
-struct ASFWLogRingRecord: Sendable {
+struct ASFWLogRingRecord: Identifiable, Equatable, Sendable {
     let sequence: UInt64
     let timestampNs: UInt64
     let category: UInt8
     let level: UInt8
     let message: String
 
+    var id: UInt64 { sequence }
     var categoryName: String { ASFWLogRingCategories.name(for: category) }
     var levelName: String { ASFWLogRingCategories.levelName(for: level) }
 }
@@ -59,7 +60,8 @@ struct ASFWLogRingStats: Sendable {
     let perCategory: [String: UInt64]
 }
 
-/// Mirrors ASFW::Logging::LogCategory (wire values are frozen; append-only).
+/// Legacy category mapping retained for MCP request compatibility. The GUI
+/// renders selector 1014's driver-exported catalog and presets instead.
 enum ASFWLogRingCategories {
     static let names: [String] = [
         "Controller", "Hardware", "BusReset", "Topology", "Metrics", "Async",
@@ -102,11 +104,18 @@ extension ASFWDriverConnector {
     private enum LogRingWire {
         static let querySelector: UInt32 = 1011
         static let statsSelector: UInt32 = 1012
+        static let catalogSelector: UInt32 = 1014
         static let requestSize = 72
         static let responseHeaderSize = 40
         static let recordHeaderSize = 20
         static let containsCapacity = 48
         static let perCallCapacity = 4096
+        static let catalogHeaderSize = 16
+        static let categoryRecordSize = 32
+        static let categoryNameCapacity = 28
+        static let presetRecordSize = 32
+        static let presetNameCapacity = 24
+        static let catalogABIVersion: UInt32 = 1
     }
 
     /// Drains filtered records, looping the 4 KiB user-client calls until
@@ -127,7 +136,8 @@ extension ASFWDriverConnector {
             guard let data = transport.callStruct(
                 selector: LogRingWire.querySelector,
                 input: request,
-                initialCap: LogRingWire.perCallCapacity
+                initialCap: LogRingWire.perCallCapacity,
+                traceCalls: false
             ), let page = Self.decodeLogPage(data) else {
                 return records.isEmpty
                     ? nil
@@ -160,11 +170,52 @@ extension ASFWDriverConnector {
 
     func logRingStats() -> ASFWLogRingStats? {
         guard let data = transport.callStruct(
-            selector: LogRingWire.statsSelector, input: nil, initialCap: 256
+            selector: LogRingWire.statsSelector,
+            input: nil,
+            initialCap: 256,
+            traceCalls: false
         ) else {
             return nil
         }
         return Self.decodeLogStats(data)
+    }
+
+    func logCategoryCatalog() -> ASFWLogCategoryCatalog? {
+        guard let data = transport.callStruct(
+            selector: LogRingWire.catalogSelector,
+            input: nil,
+            initialCap: 1_024,
+            traceCalls: false
+        ) else {
+            return nil
+        }
+        return Self.decodeLogCategoryCatalog(data)
+    }
+
+    /// Executes log-ring I/O away from the main actor and serializes it with
+    /// connector lifecycle work. The GUI uses this instead of blocking redraws.
+    func queryLogRecordsAsync(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse? {
+        await withCheckedContinuation { continuation in
+            connectionQueue.async { [weak self] in
+                continuation.resume(returning: self?.queryLogRecords(query))
+            }
+        }
+    }
+
+    func logRingStatsAsync() async -> ASFWLogRingStats? {
+        await withCheckedContinuation { continuation in
+            connectionQueue.async { [weak self] in
+                continuation.resume(returning: self?.logRingStats())
+            }
+        }
+    }
+
+    func logCategoryCatalogAsync() async -> ASFWLogCategoryCatalog? {
+        await withCheckedContinuation { continuation in
+            connectionQueue.async { [weak self] in
+                continuation.resume(returning: self?.logCategoryCatalog())
+            }
+        }
     }
 
     private func encodeRequest(
@@ -266,5 +317,91 @@ extension ASFWDriverConnector {
         return ASFWLogRingStats(totalEmitted: u64(0), droppedRecords: u64(droppedOffset), latestSequence: u64(8),
                                 oldestSequence: u64(16), capacityRecords: u32(24),
                                 perCategory: perCategory)
+    }
+
+    /// Decodes selector 1014. Internal for Swift Testing coverage.
+    static func decodeLogCategoryCatalog(_ data: Data) -> ASFWLogCategoryCatalog? {
+        guard data.count >= LogRingWire.catalogHeaderSize else { return nil }
+        let bytes = [UInt8](data)
+
+        func u16(_ offset: Int) -> UInt16 {
+            UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8
+        }
+        func u32(_ offset: Int) -> UInt32 {
+            UInt32(bytes[offset]) | UInt32(bytes[offset + 1]) << 8 |
+                UInt32(bytes[offset + 2]) << 16 | UInt32(bytes[offset + 3]) << 24
+        }
+        func string(at offset: Int, length: Int, capacity: Int) -> String? {
+            guard length > 0, length <= capacity,
+                  offset >= 0, offset + length <= bytes.count else {
+                return nil
+            }
+            return String(bytes: bytes[offset..<offset + length], encoding: .utf8)
+        }
+
+        let abiVersion = u32(0)
+        let categoryCount = Int(u16(4))
+        let presetCount = Int(u16(6))
+        let categoryRecordSize = Int(u16(8))
+        let presetRecordSize = Int(u16(10))
+        let totalBytes = Int(u32(12))
+        guard abiVersion == LogRingWire.catalogABIVersion,
+              categoryCount > 0,
+              categoryCount <= 32,
+              presetCount <= 32,
+              categoryRecordSize == LogRingWire.categoryRecordSize,
+              presetRecordSize == LogRingWire.presetRecordSize else {
+            return nil
+        }
+
+        let categoryBytes = categoryCount * categoryRecordSize
+        let presetBytes = presetCount * presetRecordSize
+        let expectedBytes = LogRingWire.catalogHeaderSize + categoryBytes + presetBytes
+        guard totalBytes == expectedBytes, data.count >= totalBytes else { return nil }
+
+        var categories: [ASFWLogCategoryDescriptor] = []
+        categories.reserveCapacity(categoryCount)
+        var seenCategories: Set<UInt8> = []
+        var knownMask: UInt32 = 0
+        for index in 0..<categoryCount {
+            let base = LogRingWire.catalogHeaderSize + index * categoryRecordSize
+            let category = bytes[base]
+            let nameLength = Int(bytes[base + 1])
+            guard category < 32,
+                  seenCategories.insert(category).inserted,
+                  let name = string(
+                    at: base + 4,
+                    length: nameLength,
+                    capacity: LogRingWire.categoryNameCapacity
+                  ) else {
+                return nil
+            }
+            knownMask |= 1 << UInt32(category)
+            categories.append(ASFWLogCategoryDescriptor(id: category, name: name))
+        }
+
+        var presets: [ASFWLogCategoryPreset] = []
+        presets.reserveCapacity(presetCount)
+        let presetsStart = LogRingWire.catalogHeaderSize + categoryBytes
+        for index in 0..<presetCount {
+            let base = presetsStart + index * presetRecordSize
+            let categoryMask = u32(base)
+            let nameLength = Int(bytes[base + 4])
+            guard categoryMask & ~knownMask == 0,
+                  let name = string(
+                    at: base + 8,
+                    length: nameLength,
+                    capacity: LogRingWire.presetNameCapacity
+                  ) else {
+                return nil
+            }
+            presets.append(ASFWLogCategoryPreset(
+                id: index,
+                name: name,
+                categoryMask: categoryMask
+            ))
+        }
+
+        return ASFWLogCategoryCatalog(categories: categories, presets: presets)
     }
 }

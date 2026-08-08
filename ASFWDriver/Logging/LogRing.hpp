@@ -76,6 +76,71 @@ enum class LogLevel : uint8_t {
 
 inline constexpr uint32_t kLogRingCategoryCount =
     static_cast<uint32_t>(LogCategory::Count);
+inline constexpr size_t kLogCategoryNameCapacity = 28;
+inline constexpr size_t kLogCategoryPresetNameCapacity = 24;
+
+[[nodiscard]] constexpr size_t CatalogNameLength(const char* name) noexcept {
+    size_t length = 0;
+    while (name != nullptr && name[length] != '\0') {
+        ++length;
+    }
+    return length;
+}
+
+struct LogCategoryDefinition {
+    LogCategory category;
+    const char* name;
+};
+
+/// C++ is the source of truth for category IDs and display names. The table is
+/// exported through selector 1014 so clients never need to mirror this enum.
+inline constexpr LogCategoryDefinition kLogCategoryDefinitions[] = {
+    {LogCategory::Controller, "Controller"},
+    {LogCategory::Hardware, "Hardware"},
+    {LogCategory::BusReset, "BusReset"},
+    {LogCategory::Topology, "Topology"},
+    {LogCategory::Metrics, "Metrics"},
+    {LogCategory::Async, "Async"},
+    {LogCategory::UserClient, "UserClient"},
+    {LogCategory::Discovery, "Discovery"},
+    {LogCategory::IRM, "IRM"},
+    {LogCategory::BusManager, "BusManager"},
+    {LogCategory::ConfigROM, "ConfigROM"},
+    {LogCategory::MusicSubunit, "MusicSubunit"},
+    {LogCategory::FCP, "FCP"},
+    {LogCategory::CMP, "CMP"},
+    {LogCategory::AVC, "AVC"},
+    {LogCategory::Isoch, "Isoch"},
+    {LogCategory::Audio, "Audio"},
+    {LogCategory::DirectAudio, "DirectAudio"},
+    {LogCategory::DICE, "DICE"},
+    {LogCategory::Zts, "Zts"},
+    {LogCategory::TxSyt, "TxSyt"},
+    {LogCategory::PayloadWriter, "PayloadWriter"},
+    {LogCategory::Oxfw, "Oxfw"},
+};
+
+[[nodiscard]] constexpr uint32_t CategoryBit(LogCategory category) noexcept {
+    return 1U << static_cast<uint8_t>(category);
+}
+
+constexpr bool LogCategoryDefinitionsAreValid() noexcept {
+    if (sizeof(kLogCategoryDefinitions) / sizeof(kLogCategoryDefinitions[0]) !=
+        kLogRingCategoryCount) {
+        return false;
+    }
+    for (uint32_t index = 0; index < kLogRingCategoryCount; ++index) {
+        if (static_cast<uint8_t>(kLogCategoryDefinitions[index].category) != index ||
+            CatalogNameLength(kLogCategoryDefinitions[index].name) == 0 ||
+            CatalogNameLength(kLogCategoryDefinitions[index].name) >
+                kLogCategoryNameCapacity) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(LogCategoryDefinitionsAreValid(),
+              "log category catalog must cover every frozen ID in order");
 
 /// Fixed-size record copied into the packed user-client response.
 struct LogRecord {
@@ -189,6 +254,96 @@ struct __attribute__((packed)) LogRingStatsWire {
 static_assert(sizeof(LogRingStatsWire) == 40 + (8 * kLogRingCategoryCount),
               "log stats wire layout is frozen");
 
+// ---------------------------------------------------------------------------
+// Category catalog wire format (selector 1014).
+//
+// Named presets are exported alongside categories because preset membership
+// is semantic driver knowledge. In particular, TX diagnostics span several
+// categories and must not be reconstructed independently by each UI client.
+// ---------------------------------------------------------------------------
+
+inline constexpr uint32_t kLogCategoryCatalogAbiVersion = 1;
+
+struct LogCategoryPresetDefinition {
+    const char* name;
+    uint32_t categoryMask;
+};
+
+inline constexpr LogCategoryPresetDefinition kLogCategoryPresetDefinitions[] = {
+    {
+        "Audio Transmit",
+        CategoryBit(LogCategory::Isoch) |
+            CategoryBit(LogCategory::Audio) |
+            CategoryBit(LogCategory::DirectAudio) |
+            CategoryBit(LogCategory::Zts) |
+            CategoryBit(LogCategory::TxSyt) |
+            CategoryBit(LogCategory::PayloadWriter),
+    },
+};
+inline constexpr uint32_t kLogCategoryPresetCount =
+    static_cast<uint32_t>(sizeof(kLogCategoryPresetDefinitions) /
+                          sizeof(kLogCategoryPresetDefinitions[0]));
+
+constexpr bool LogCategoryPresetDefinitionsAreValid() noexcept {
+    uint32_t knownCategoryMask = 0;
+    for (const auto& definition : kLogCategoryDefinitions) {
+        knownCategoryMask |= CategoryBit(definition.category);
+    }
+    for (const auto& preset : kLogCategoryPresetDefinitions) {
+        const size_t nameLength = CatalogNameLength(preset.name);
+        if (nameLength == 0 || nameLength > kLogCategoryPresetNameCapacity ||
+            preset.categoryMask == 0 ||
+            (preset.categoryMask & ~knownCategoryMask) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(LogCategoryPresetDefinitionsAreValid(),
+              "log presets must have valid names and known category bits");
+
+struct __attribute__((packed)) LogCategoryCatalogHeaderWire {
+    uint32_t abiVersion{kLogCategoryCatalogAbiVersion};
+    uint16_t categoryCount{static_cast<uint16_t>(kLogRingCategoryCount)};
+    uint16_t presetCount{static_cast<uint16_t>(kLogCategoryPresetCount)};
+    uint16_t categoryRecordSize{32};
+    uint16_t presetRecordSize{32};
+    uint32_t totalBytes{0};
+};
+static_assert(sizeof(LogCategoryCatalogHeaderWire) == 16,
+              "log category catalog header layout is frozen");
+
+struct __attribute__((packed)) LogCategoryDescriptorWire {
+    uint8_t category{0};
+    uint8_t nameLength{0};
+    uint16_t flags{0};
+    char name[kLogCategoryNameCapacity]{};
+};
+static_assert(sizeof(LogCategoryDescriptorWire) == 32,
+              "log category descriptor layout is frozen");
+
+struct __attribute__((packed)) LogCategoryPresetWire {
+    uint32_t categoryMask{0};
+    uint8_t nameLength{0};
+    uint8_t reserved[3]{};
+    char name[kLogCategoryPresetNameCapacity]{};
+};
+static_assert(sizeof(LogCategoryPresetWire) == 32,
+              "log category preset layout is frozen");
+
+struct __attribute__((packed)) LogCategoryCatalogWire {
+    LogCategoryCatalogHeaderWire header{};
+    LogCategoryDescriptorWire categories[kLogRingCategoryCount]{};
+    LogCategoryPresetWire presets[kLogCategoryPresetCount]{};
+};
+static_assert(sizeof(LogCategoryCatalogWire) ==
+                  sizeof(LogCategoryCatalogHeaderWire) +
+                      (sizeof(LogCategoryDescriptorWire) * kLogRingCategoryCount) +
+                      (sizeof(LogCategoryPresetWire) * kLogCategoryPresetCount),
+              "log category catalog must not contain padding");
+static_assert(sizeof(LogCategoryCatalogWire) <= 4096,
+              "log category catalog must fit inline user-client output");
+
 /// Drains filtered records into `outBuffer` in the packed wire format
 /// (header + records), bounded by `bufferCapacity`. Returns the total bytes
 /// written (header included); 0 only if the buffer cannot hold the header.
@@ -197,6 +352,9 @@ size_t PackLogRecords(const LogRing& ring, const LogRingQueryRequestWire& reques
 
 /// Fills the stats wire struct from the ring.
 void PackLogStats(const LogRing& ring, LogRingStatsWire& outStats) noexcept;
+
+/// Fills the category and named-preset catalog exported to clients.
+void PackLogCategoryCatalog(LogCategoryCatalogWire& outCatalog) noexcept;
 
 /// Maps a raw os_log_type_t value onto the ring's severity scale.
 [[nodiscard]] constexpr LogLevel RingLevelForOsType(uint8_t osLogType) noexcept {

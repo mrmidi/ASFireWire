@@ -30,23 +30,19 @@ struct DriverConnectorLogMessage: Identifiable, Equatable {
 }
 
 final class DriverConnectorLogStore {
-    private let maxEntries: Int
-    private var buffer: [DriverConnectorLogMessage] = []
+    private var buffer: BoundedDeque<DriverConnectorLogMessage>
 
     init(maxEntries: Int = 100) {
-        self.maxEntries = maxEntries
+        buffer = BoundedDeque(capacity: maxEntries)
     }
 
     func append(_ message: DriverConnectorLogMessage) -> [DriverConnectorLogMessage] {
         buffer.append(message)
-        if buffer.count > maxEntries {
-            buffer.removeFirst(buffer.count - maxEntries)
-        }
-        return buffer
+        return buffer.elements
     }
 
     var messages: [DriverConnectorLogMessage] {
-        buffer
+        buffer.elements
     }
 
     func clear() {
