@@ -1,6 +1,6 @@
 import Foundation
 
-enum ASFWMCPRuntimeMode: String, Equatable {
+enum ASFWMCPRuntimeMode: String, Equatable, Sendable {
     case disabled
     case mock
     case readOnlyDeveloper
@@ -11,14 +11,14 @@ enum ASFWMCPRuntimeMode: String, Equatable {
     case unrestrictedWrite
 }
 
-enum ASFWMCPVisibility: String, Equatable {
+enum ASFWMCPVisibility: String, Equatable, Sendable {
     case always
     case readOnly
     case developerWrite
     case rawDeveloper
 }
 
-enum ASFWMCPErrorCode: String, Equatable {
+enum ASFWMCPErrorCode: String, Equatable, Sendable {
     case driverNotConnected
     case mcpDisabled
     case unsupportedRuntimeMode
@@ -40,7 +40,7 @@ enum ASFWMCPErrorCode: String, Equatable {
     case rawDataOmitted
 }
 
-enum ASFWMCPValue: Equatable {
+enum ASFWMCPValue: Equatable, Sendable {
     case null
     case bool(Bool)
     case int(Int)
@@ -50,7 +50,7 @@ enum ASFWMCPValue: Equatable {
     case object([String: ASFWMCPValue])
 }
 
-struct ASFWMCPResourceError: Equatable {
+struct ASFWMCPResourceError: Equatable, Sendable {
     let code: ASFWMCPErrorCode
     let reason: String
 }
@@ -70,7 +70,7 @@ struct ASFWMCPResourceEnvelope: Equatable {
     let errors: [ASFWMCPResourceError]
 }
 
-struct ASFWMCPToolCallResult: Equatable {
+struct ASFWMCPToolCallResult: Equatable, Sendable {
     let toolName: String
     let ok: Bool
     let data: ASFWMCPValue
@@ -129,7 +129,7 @@ struct ASFWMCPResourceDefinition: Equatable {
     let summary: String
 }
 
-struct ASFWMCPRuntimeConfiguration: Equatable {
+struct ASFWMCPRuntimeConfiguration: Equatable, Sendable {
     var mode: ASFWMCPRuntimeMode
     var writePolicyAvailable: Bool
     var swiftTestGatePassed: Bool
@@ -167,13 +167,13 @@ struct ASFWMCPRuntimeConfiguration: Equatable {
     }
 }
 
-struct ASFWMCPPolicyTelemetry: Equatable {
+struct ASFWMCPPolicyTelemetry: Equatable, Sendable {
     let runtimeMode: ASFWMCPRuntimeMode
     let writesListed: Bool
     let writeGate: String
 }
 
-struct ASFWMCPControllerTelemetry: Equatable {
+struct ASFWMCPControllerTelemetry: Equatable, Sendable {
     let state: String
     let linkActive: Bool
     let localNodeId: UInt32?
@@ -183,7 +183,7 @@ struct ASFWMCPControllerTelemetry: Equatable {
     let isCycleMaster: Bool
 }
 
-struct ASFWMCPBusTelemetry: Equatable {
+struct ASFWMCPBusTelemetry: Equatable, Sendable {
     let generation: UInt32
     let nodeCount: UInt32
     let busResetCount: UInt64
@@ -191,21 +191,21 @@ struct ASFWMCPBusTelemetry: Equatable {
     let topologyValid: Bool
 }
 
-struct ASFWMCPAsyncTelemetry: Equatable {
+struct ASFWMCPAsyncTelemetry: Equatable, Sendable {
     let recentEventCount: UInt32
     let droppedEventCount: UInt32
     let timeouts: UInt32
     let lastCompletionNs: UInt64?
 }
 
-struct ASFWMCPProtocolTelemetry: Equatable {
+struct ASFWMCPProtocolTelemetry: Equatable, Sendable {
     let avcUnits: UInt32
     let sbp2Units: UInt32
     let diceTcatNodes: UInt32
     let cmpCapableNodes: UInt32
 }
 
-struct ASFWMCPNodeSummary: Equatable {
+struct ASFWMCPNodeSummary: Equatable, Sendable {
     let nodeId: UInt32
     let address16: String
     let guid: String?
@@ -217,7 +217,7 @@ struct ASFWMCPNodeSummary: Equatable {
     let protocolHints: [String]
 }
 
-struct ASFWMCPTransactionEvent: Equatable {
+struct ASFWMCPTransactionEvent: Equatable, Sendable {
     let timestampNs: UInt64
     let generation: UInt32
     let direction: String
@@ -235,7 +235,7 @@ struct ASFWMCPTransactionEvent: Equatable {
     let dropReason: String?
 }
 
-struct ASFWMCPTelemetrySnapshot: Equatable {
+struct ASFWMCPTelemetrySnapshot: Equatable, Sendable {
     let snapshotId: String
     let capturedAt: Date?
     let monotonicNs: UInt64?

@@ -35,6 +35,16 @@ CMPClient::~CMPClient() {
     }
 }
 
+void CMPClient::ReadOMPR(const CMPDevice& device,
+                         PCRReadCallback callback) {
+    if (!device.IsValid()) {
+        callback(false, 0);
+        return;
+    }
+    ReadQuadlet(device, PCRRegisters::kOMPR,
+                busInfo_.GetSpeed(device.nodeId), std::move(callback));
+}
+
 void CMPClient::ReadOPCR(const CMPDevice& device, uint8_t plugNum, PCRReadCallback callback) {
     if (!device.IsValid() || plugNum > kMaxPlugNumber) {
         callback(false, 0);

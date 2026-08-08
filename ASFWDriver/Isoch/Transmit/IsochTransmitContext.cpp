@@ -364,12 +364,16 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         // barrier before it lets DMA resources go away.
         hardware_->WriteAndFlush(ctrlClrReg, Driver::ContextControl::kRun);
 
-        if ((hardware_->Read(ctrlSetReg) & Driver::ContextControl::kActive) != 0) {
+        const uint32_t initialControl = hardware_->Read(ctrlSetReg);
+        if (initialControl != 0xFFFFFFFFu &&
+            (initialControl & Driver::ContextControl::kActive) != 0) {
             IODelay(5);
             constexpr uint32_t kMaxIterations = 250;
             constexpr uint32_t kBaseDelayMicros = 6;
             for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
-                if ((hardware_->Read(ctrlSetReg) & Driver::ContextControl::kActive) == 0) {
+                const uint32_t polledControl = hardware_->Read(ctrlSetReg);
+                if (polledControl == 0xFFFFFFFFu ||
+                    (polledControl & Driver::ContextControl::kActive) == 0) {
                     break;
                 }
                 IODelay(kBaseDelayMicros + iteration);
@@ -377,7 +381,8 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         }
 
         const uint32_t control = hardware_->Read(ctrlSetReg);
-        if ((control & Driver::ContextControl::kActive) != 0) {
+        if (control != 0xFFFFFFFFu &&
+            (control & Driver::ContextControl::kActive) != 0) {
             const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
                 ? kIOReturnDMAError
                 : kIOReturnTimeout;

@@ -123,12 +123,18 @@ kern_return_t IsochReceiveContext::Stop() {
     hardware_->WriteAndFlush(registers_.ContextControlClear, Driver::ContextControl::kRun);
     ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
 
-    if ((hardware_->Read(registers_.ContextControlSet) & Driver::ContextControl::kActive) != 0) {
+    const uint32_t initialControl =
+        hardware_->Read(registers_.ContextControlSet);
+    if (initialControl != 0xFFFFFFFFu &&
+        (initialControl & Driver::ContextControl::kActive) != 0) {
         IODelay(5);
         constexpr uint32_t kMaxIterations = 250;
         constexpr uint32_t kBaseDelayMicros = 6;
         for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
-            if ((hardware_->Read(registers_.ContextControlSet) & Driver::ContextControl::kActive) == 0) {
+            const uint32_t polledControl =
+                hardware_->Read(registers_.ContextControlSet);
+            if (polledControl == 0xFFFFFFFFu ||
+                (polledControl & Driver::ContextControl::kActive) == 0) {
                 break;
             }
             IODelay(kBaseDelayMicros + iteration);
@@ -136,7 +142,8 @@ kern_return_t IsochReceiveContext::Stop() {
     }
 
     const uint32_t control = hardware_->Read(registers_.ContextControlSet);
-    if ((control & Driver::ContextControl::kActive) != 0) {
+    if (control != 0xFFFFFFFFu &&
+        (control & Driver::ContextControl::kActive) != 0) {
         const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
             ? kIOReturnDMAError
             : kIOReturnTimeout;

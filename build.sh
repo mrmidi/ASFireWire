@@ -53,7 +53,7 @@ usage() {
   cat <<EOF
 Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
   --verbose          Show full xcodebuild output (disables quiet filtering)
-  --no-bump          Skip ./bump.sh
+  --no-bump          Keep CURRENT_PROJECT_VERSION unchanged
   --test             Run C++ tests before building
   --test-only        Run C++ tests only (skip xcodebuild)
   --swift-test-only  Run Swift/XCTest tests only (skip main build)
@@ -173,8 +173,16 @@ run_tests() {
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 
   log "Building tests..."
+  local build_jobs="${ASFW_BUILD_JOBS:-}"
+  if [[ -z "$build_jobs" ]]; then
+    build_jobs=$(sysctl -n hw.ncpu 2>/dev/null || true)
+  fi
+  if [[ ! "$build_jobs" =~ ^[1-9][0-9]*$ ]]; then
+    build_jobs=4
+  fi
   # Use cmake --build for portability; forward config for multi-config generators
-  cmake --build "${TEST_BUILD_DIR}" --config "${CONFIGURATION}" -- -j$(sysctl -n hw.ncpu) >/dev/null
+  cmake --build "${TEST_BUILD_DIR}" --config "${CONFIGURATION}" \
+    --parallel "$build_jobs" >/dev/null
 
   log "Running tests (verbose output)..."
   # If user supplied a filter pattern, pass -R to ctest. Use -V for verbose output of all tests.
@@ -203,6 +211,8 @@ run_swift_tests() {
     -derivedDataPath "${DERIVED}"
     -destination "platform=macOS,arch=${ARCH_NAME}"
     -only-testing:ASFWTests
+    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_REQUIRED=NO
   )
   
   # Add coverage flag if requested
@@ -216,7 +226,7 @@ run_swift_tests() {
   if $VERBOSE; then
     xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1
   else
-    xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | grep -E '(Test Case|passed|failed|error:)' || true
+    xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | grep -E '(Test Case|passed|failed|error:)'
   fi
   local test_status=${PIPESTATUS[0]}
   set -e
@@ -268,12 +278,22 @@ export_swift_coverage() {
 }
 
 bump_version() {
-  $NO_BUMP && { warn "Skipping version bump (--no-bump)"; return; }
   if [[ -x "./bump.sh" ]]; then
-    log "Bumping version…"
-    ./bump.sh >/dev/null && ok "Version bumped"
+    if $NO_BUMP; then
+      warn "Keeping CFBundleVersion unchanged (--no-bump)"
+      ./bump.sh refresh >/dev/null
+    else
+      log "Bumping installable build number…"
+      ./bump.sh build >/dev/null && ok "Build number bumped"
+    fi
   else
     warn "bump.sh missing or not executable – skipping"
+  fi
+}
+
+refresh_version_metadata() {
+  if [[ -x "./bump.sh" ]]; then
+    ./bump.sh refresh >/dev/null
   fi
 }
 
@@ -417,10 +437,10 @@ main() {
   echo "==============================="
 
   preflight
-  bump_version
 
   # If --commands was requested, generate compile_commands.json and exit.
   if $GENERATE_COMMANDS; then
+    refresh_version_metadata
     if generate_compile_commands; then
       ok "compile_commands.json generated successfully."
       exit 0
@@ -431,6 +451,7 @@ main() {
 
   # If --test-only was requested, run tests and exit according to their result.
   if $TEST_ONLY; then
+    refresh_version_metadata
     run_tests
     local test_status=$?
     if (( test_status == 0 )); then
@@ -443,6 +464,7 @@ main() {
 
   # If --swift-test-only was requested, run Swift/XCTest tests and exit.
   if $SWIFT_TEST_ONLY; then
+    refresh_version_metadata
     run_swift_tests false
     local test_status=$?
     if (( test_status == 0 )); then
@@ -455,6 +477,7 @@ main() {
 
   # If --swift-coverage was requested, run Swift tests with coverage and export.
   if $SWIFT_COVERAGE; then
+    refresh_version_metadata
     run_swift_tests true
     local test_status=$?
     if (( test_status == 0 )); then
@@ -468,6 +491,7 @@ main() {
 
   # If --test was requested, run tests before doing the xcodebuild. If they fail, abort.
   if $RUN_TESTS; then
+    refresh_version_metadata
     run_tests
     local test_status=$?
     if (( test_status != 0 )); then
@@ -476,6 +500,10 @@ main() {
       ok "Pre-build tests passed. Proceeding to xcodebuild."
     fi
   fi
+
+  # Only installable app/dext builds consume a new CFBundleVersion. Analysis,
+  # command generation, and test-only runs leave the build number unchanged.
+  bump_version
 
   # Clean previous logs/bundle (keep Derived to speed up builds)
   rm -rf "${RESULT_BUNDLE}" "${RAW_LOG}" "${ERR_LOG}" "${WRN_LOG}"

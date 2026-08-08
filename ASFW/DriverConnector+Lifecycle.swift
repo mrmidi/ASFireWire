@@ -115,15 +115,13 @@ extension ASFWDriverConnector {
     }
 
     func closeConnectionLocked(reason: String) {
-        if asyncSource != nil {
-            asyncSource?.cancel()
+        if let source = asyncSource {
+            source.cancel()
             asyncSource = nil
-        }
-
-        if asyncPort != mach_port_t(MACH_PORT_NULL) {
+        } else if asyncPort != mach_port_t(MACH_PORT_NULL) {
             mach_port_deallocate(mach_task_self_, asyncPort)
-            asyncPort = mach_port_t(MACH_PORT_NULL)
         }
+        asyncPort = mach_port_t(MACH_PORT_NULL)
 
         if sharedMemoryPointer != nil {
             IOConnectUnmapMemory64(connection,

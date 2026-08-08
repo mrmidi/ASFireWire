@@ -58,6 +58,7 @@ void ServiceContext::Reset(ResetMode mode) {
     if (audioCoordinator) {
         audioCoordinator->BeginTeardown();
     }
+    dvCapture.StopAll(isoch);
     if (deps.avcDiscovery) {
         deps.avcDiscovery->Shutdown();
     }
@@ -109,6 +110,7 @@ void ServiceContext::Reset(ResetMode mode) {
     deps.irmClient.reset();         // Clean up IRM client
     deps.asyncController.reset();
     deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    deps.busResetStartedCallback = {};
     deps.cycleInconsistentCallback = {};
     statusPublisher.Reset();
     watchdog.Reset();
@@ -215,6 +217,10 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     } else {
         d.cycleInconsistentCallback = {};
     }
+
+    d.busResetStartedCallback = [&ctx] {
+        ctx.dvCapture.HandleBusReset(ctx.isoch);
+    };
 
     // AV/C discovery wiring is done after ControllerCore is created so it can
     // depend only on IFireWireBus ports (ControllerCore::Bus()).
@@ -360,6 +366,7 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->BeginTeardown();
     }
+    ctx.dvCapture.StopAll(ctx.isoch);
     if (ctx.deps.avcDiscovery) {
         ctx.deps.avcDiscovery->Shutdown();
     }

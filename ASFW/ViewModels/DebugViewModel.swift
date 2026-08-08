@@ -31,9 +31,9 @@ class DebugViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
                 self?.isConnected = connected
+                self?.driverViewModel?.updateDriverConnection(connected)
                 if !connected {
                     self?.sharedStatus = nil
-                    self?.driverViewModel?.driverVersion = nil
                 } else {
                     self?.fetchDriverVersion()
                 }
@@ -52,6 +52,10 @@ class DebugViewModel: ObservableObject {
     
     func setDriverViewModel(_ viewModel: DriverViewModel) {
         self.driverViewModel = viewModel
+        viewModel.updateDriverConnection(isConnected)
+        if isConnected {
+            fetchDriverVersion()
+        }
     }
     
     private func observeConnectorLogs() {
@@ -154,9 +158,7 @@ class DebugViewModel: ObservableObject {
     }
     
     func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
-        return await Task.detached {
-            return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
-        }.value
+        return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
     }
 
 

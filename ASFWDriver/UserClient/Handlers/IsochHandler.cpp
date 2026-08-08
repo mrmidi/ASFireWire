@@ -23,7 +23,15 @@
 
 namespace ASFW::UserClient {
 
-IsochHandler::IsochHandler(::ASFWDriver* driver) : driver_(driver) {}
+IsochHandler::IsochHandler(::ASFWDriver* driver, uint64_t ownerToken)
+    : driver_(driver), ownerToken_(ownerToken) {}
+
+void IsochHandler::ReleaseOwner() noexcept {
+    if (driver_ && ownsDVCapture_) {
+        (void)driver_->StopDVCapture(ownerToken_);
+        ownsDVCapture_ = false;
+    }
+}
 
 // ============================================================================
 // IRM Test Methods
@@ -303,20 +311,30 @@ kern_return_t IsochHandler::StopIsochReceive(IOUserClientMethodArguments* args) 
 // ============================================================================
 
 kern_return_t IsochHandler::StartDVCapture(IOUserClientMethodArguments* args) {
-    // Arguments: [0] = channel (DV camcorders broadcast on 63 by default)
+    // Arguments: [0] = stable device GUID. The driver resolves the current
+    // node/generation and negotiates the receive channel through CMP/IRM.
     if (args->scalarInputCount < 1)
         return kIOReturnBadArgument;
-    const uint64_t channel = args->scalarInput[0];
-    if (channel > 63)
+    const uint64_t deviceGuid = args->scalarInput[0];
+    if (deviceGuid == 0)
         return kIOReturnBadArgument;
 
-    ASFW_LOG(UserClient, "StartDVCapture called for channel %llu", channel);
-    return driver_->StartDVCapture(static_cast<uint8_t>(channel));
+    ASFW_LOG(UserClient, "StartDVCapture called for GUID 0x%llx", deviceGuid);
+    const kern_return_t kr = driver_->StartDVCapture(
+        deviceGuid, ownerToken_);
+    if (kr == kIOReturnSuccess) {
+        ownsDVCapture_ = true;
+    }
+    return kr;
 }
 
 kern_return_t IsochHandler::StopDVCapture(IOUserClientMethodArguments* args) {
     ASFW_LOG(UserClient, "StopDVCapture called");
-    return driver_->StopDVCapture();
+    const kern_return_t kr = driver_->StopDVCapture(ownerToken_);
+    if (kr == kIOReturnSuccess) {
+        ownsDVCapture_ = false;
+    }
+    return kr;
 }
 
 // ============================================================================

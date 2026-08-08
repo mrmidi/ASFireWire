@@ -253,7 +253,9 @@ public:
      */
     [[nodiscard]] bool IsActive() const noexcept {
         constexpr uint32_t kActiveBit = 1u << 13;
-        return (ReadControl() & kActiveBit) != 0;
+        const uint32_t ctl = ReadControl();
+        if (ctl == 0xFFFFFFFFu) { return false; }
+        return (ctl & kActiveBit) != 0;
     }
 
     /**
@@ -263,7 +265,9 @@ public:
      */
     [[nodiscard]] bool IsRunning() const noexcept {
         constexpr uint32_t kRunBit = 1u << 15;
-        return (ReadControl() & kRunBit) != 0;
+        const uint32_t ctl = ReadControl();
+        if (ctl == 0xFFFFFFFFu) { return false; }
+        return (ctl & kRunBit) != 0;
     }
 
     /**

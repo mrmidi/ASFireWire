@@ -145,6 +145,46 @@ kern_return_t IsochService::StartPreparedReceive() {
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochService::StartPacketReceive(
+    uint8_t channel, HardwareInterface& hardware,
+    ASFW::Isoch::IIsochReceiveConsumer* consumer) {
+    if (!consumer) {
+        return kIOReturnBadArgument;
+    }
+    if (isochReceiveContext_ &&
+        isochReceiveContext_->GetState() != ASFW::Isoch::IRPolicy::State::Stopped) {
+        return kIOReturnBusy;
+    }
+
+    SetReceiveConsumer(0, consumer);
+    const kern_return_t prepareStatus = PrepareReceive(channel, hardware, nullptr);
+    if (prepareStatus != kIOReturnSuccess) {
+        SetReceiveConsumer(0, nullptr);
+        return prepareStatus;
+    }
+
+    const kern_return_t startStatus = StartPreparedReceive();
+    if (startStatus != kIOReturnSuccess) {
+        SetReceiveConsumer(0, nullptr);
+    }
+    return startStatus;
+}
+
+kern_return_t IsochService::StopPacketReceive(
+    ASFW::Isoch::IIsochReceiveConsumer* consumer) {
+    if (!consumer || receiveConsumers_[0] != consumer) {
+        return kIOReturnBadArgument;
+    }
+
+    const kern_return_t stopStatus = StopReceive();
+    if (stopStatus == kIOReturnSuccess) {
+        // StopReceive observed ACTIVE clear, so the transport cannot invoke
+        // this caller-owned consumer after it is detached.
+        SetReceiveConsumer(0, nullptr);
+    }
+    return stopStatus;
+}
+
 kern_return_t IsochService::StopReceive() {
     kern_return_t result = kIOReturnSuccess;
     if (isochReceiveContext_) {
@@ -167,105 +207,7 @@ kern_return_t IsochService::StopReceive() {
         }
     }
 
-    if (dvCaptureActive_ && result == kIOReturnSuccess) {
-        dvSink_.Detach();
-        dvRing_.Reset();
-        dvCaptureActive_ = false;
-        ASFW_LOG(Isoch, "IsochService: DV capture stopped");
-    }
-
     return result;
-}
-
-// ============================================================================
-// DV capture (minimal IEC 61883-2 tap; see Receive/DVCaptureSink.hpp)
-// ============================================================================
-
-kern_return_t IsochService::StartDVCapture(uint8_t channel, HardwareInterface& hardware) {
-    if (dvCaptureActive_) {
-        ASFW_LOG(Isoch, "IsochService: DV capture already active; StartDVCapture is idempotent");
-        return kIOReturnSuccess;
-    }
-
-    if (isochReceiveContext_ &&
-        isochReceiveContext_->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
-        ASFW_LOG(Isoch,
-                 "IsochService: StartDVCapture blocked: IR context busy (audio receive running)");
-        return kIOReturnBusy;
-    }
-
-    // ~3.9MB ring = 8192 DIF chunks ≈ 1.1s of DV at 3.6MB/s.
-    constexpr uint32_t kDVRingRecords = 8192;
-    const uint64_t ringBytes = ASFW::Isoch::Rx::DVCaptureSink::RequiredBytes(kDVRingRecords);
-
-    IOBufferMemoryDescriptor* memRaw = nullptr;
-    kern_return_t kr =
-        IOBufferMemoryDescriptor::Create(kIOMemoryDirectionOutIn, ringBytes, 64, &memRaw);
-    if (kr != kIOReturnSuccess || !memRaw) {
-        ASFW_LOG(Isoch, "IsochService: StartDVCapture ring allocation failed: 0x%x", kr);
-        return kr ? kr : kIOReturnNoMemory;
-    }
-    kr = memRaw->SetLength(ringBytes);
-    if (kr != kIOReturnSuccess) {
-        memRaw->release();
-        return kr;
-    }
-
-    dvRing_.Reset();
-    dvRing_.memory = Common::AdoptRetained(memRaw);
-    dvRing_.bytes = ringBytes;
-
-    kr = Common::CreateSharedMapping(dvRing_.memory, dvRing_.map);
-    if (kr != kIOReturnSuccess) {
-        dvRing_.Reset();
-        return kr;
-    }
-
-    if (!dvSink_.InitializeAndAttach(dvRing_.BaseAddress(), ringBytes, kDVRingRecords)) {
-        ASFW_LOG(Isoch, "IsochService: StartDVCapture sink init failed");
-        dvRing_.Reset();
-        return kIOReturnInternalError;
-    }
-
-    auto* sink = &dvSink_;
-    kr = StartReceive(
-        channel, hardware,
-        [sink](std::span<const uint8_t> data, uint32_t status, uint64_t /*timestamp*/) {
-            sink->OnPacket(data.data(), data.size(), status);
-        });
-    if (kr != kIOReturnSuccess) {
-        dvSink_.Detach();
-        dvRing_.Reset();
-        return kr;
-    }
-
-    dvCaptureActive_ = true;
-    ASFW_LOG(Isoch, "IsochService: DV capture started on channel %u (ring=%llu bytes)", channel,
-             ringBytes);
-    return kIOReturnSuccess;
-}
-
-kern_return_t IsochService::StopDVCapture() {
-    if (!dvCaptureActive_) {
-        return kIOReturnSuccess;
-    }
-    return StopReceive();
-}
-
-kern_return_t IsochService::CopyDVCaptureMemory(uint64_t* options,
-                                                IOMemoryDescriptor** memory) const {
-    if (!memory) {
-        return kIOReturnBadArgument;
-    }
-    if (!dvCaptureActive_ || !dvRing_.memory) {
-        return kIOReturnNotReady;
-    }
-    if (options) {
-        *options = 0;
-    }
-    dvRing_.memory->retain();
-    *memory = dvRing_.memory.get();
-    return kIOReturnSuccess;
 }
 
 kern_return_t IsochService::StartTransmit(uint8_t channel, HardwareInterface& hardware,

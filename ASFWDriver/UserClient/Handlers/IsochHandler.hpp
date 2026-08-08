@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <DriverKit/IOReturn.h>
 
 // Forward declarations
@@ -17,8 +19,10 @@ namespace ASFW::UserClient {
 
 class IsochHandler {
 public:
-    explicit IsochHandler(::ASFWDriver* driver);
+    IsochHandler(::ASFWDriver* driver, uint64_t ownerToken);
     ~IsochHandler() = default;
+
+    void ReleaseOwner() noexcept;
 
     // IRM Test Methods
     kern_return_t TestIRMAllocation(IOUserClientMethodArguments* args);
@@ -48,6 +52,8 @@ public:
 
 private:
     ::ASFWDriver* driver_;
+    uint64_t ownerToken_{0};
+    bool ownsDVCapture_{false};
 };
 
 } // namespace ASFW::UserClient

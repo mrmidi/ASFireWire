@@ -8,7 +8,7 @@
 
 namespace ASFW::AudioEngine::Direct::Rx {
 
-static constexpr size_t kIsochHeaderSize = 8; // Timestamp + isoch header
+static constexpr size_t kIsochHeaderSize = 8; // Timestamp (4) + 1394 Isoch Header (4)
 
 RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t* payload,
                                                                    size_t length,

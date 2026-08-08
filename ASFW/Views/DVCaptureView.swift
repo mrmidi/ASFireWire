@@ -22,115 +22,148 @@ final class DVCaptureController: ObservableObject {
     @Published var bytesWritten: UInt64 = 0
     @Published var framesSeen: Int = 0
     @Published var droppedFrames: Int = 0
+    @Published var duplicateBlocks: Int = 0
+    @Published var invalidBlocks: Int = 0
     @Published var stats = DVCaptureStats()
     @Published var systemLabel = "—"
     @Published var lastError: String?
 
     private var ring: DVCaptureRing?
-    private var fileHandle: FileHandle?
+    private var fileWriter: DVFileWriter?
     private var captureTask: Task<Void, Never>?
+    private var assembler = DVFrameAssembler()
 
-    // Frame accumulator: only exact-size frames are written, so a duplicated
-    // or lost packet corrupts one frame instead of misaligning the whole file
-    // (DV demuxers read fixed 120000/144000-byte records with no resync).
-    private var currentFrame = Data()
-    private var inFrame = false
-    private var expectedFrameBytes = 120_000
-
-    func start(connector: ASFWDriverConnector, channel: UInt8, url: URL) {
+    func start(connector: ASFWDriverConnector,
+               deviceGUID: UInt64,
+               url: URL) {
         guard !isCapturing else { return }
         lastError = nil
 
-        guard FileManager.default.createFile(atPath: url.path, contents: nil),
-              let handle = try? FileHandle(forWritingTo: url) else {
-            lastError = "Could not create \(url.lastPathComponent)"
-            return
-        }
-
-        guard connector.startDVCapture(channel: channel) else {
+        guard connector.startDVCapture(deviceGUID: deviceGUID) else {
             lastError = connector.lastError ?? "startDVCapture failed (is audio receive running?)"
-            try? handle.close()
             return
         }
 
         guard let mappedRing = connector.mapDVCaptureRing() else {
             lastError = "Failed to map DV ring"
             _ = connector.stopDVCapture()
-            try? handle.close()
             return
         }
 
-        fileHandle = handle
+        let writer: DVFileWriter
+        do {
+            writer = try DVFileWriter(url: url)
+        } catch {
+            lastError = "Could not create \(url.lastPathComponent): \(error.localizedDescription)"
+            _ = connector.stopDVCapture()
+            mappedRing.unmap()
+            return
+        }
+
+        fileWriter = writer
         ring = mappedRing
         bytesWritten = 0
         framesSeen = 0
         droppedFrames = 0
-        currentFrame.removeAll()
-        inFrame = false
+        duplicateBlocks = 0
+        invalidBlocks = 0
+        assembler.reset()
         systemLabel = "—"
         isCapturing = true
 
         captureTask = Task { [weak self] in
             while !Task.isCancelled {
-                self?.tick()
+                guard let self else { return }
+                await self.tick(connector: connector)
                 try? await Task.sleep(nanoseconds: 33_000_000) // ~30 Hz
             }
         }
     }
 
-    func stop(connector: ASFWDriverConnector) {
+    func stop(connector: ASFWDriverConnector) async {
         guard isCapturing else { return }
 
         captureTask?.cancel()
         captureTask = nil
 
         // Final drain so the tail of the stream lands in the file.
-        tick()
-        flushCurrentFrame()
+        await tick(connector: connector)
+        await apply(assembler.finish(), connector: connector)
+        await shutdown(connector: connector)
+    }
 
+    func reportError(_ message: String) {
+        lastError = message
+    }
+
+    private func tick(connector: ASFWDriverConnector) async {
+        guard let ring else { return }
+
+        var completedFrames: [Data] = []
+        var dropped = 0
+        var duplicates = 0
+        var invalid = 0
+        ring.drain { chunk in
+            let result = assembler.ingest(chunk)
+            if let frame = result.completedFrame { completedFrames.append(frame) }
+            if result.droppedFrame { dropped += 1 }
+            duplicates += result.duplicateBlocks
+            invalid += result.invalidBlocks
+        }
+
+        droppedFrames += dropped
+        duplicateBlocks += duplicates
+        invalidBlocks += invalid
+        if systemLabel == "—", let isPAL = assembler.isPAL {
+            systemLabel = isPAL ? "PAL (625/50)" : "NTSC (525/60)"
+        }
+        if !completedFrames.isEmpty {
+            await write(completedFrames, connector: connector)
+        }
+        stats = ring.stats
+        if DVCaptureSessionState(rawValue: stats.sessionState) == .busReset {
+            lastError = "Capture stopped because the FireWire bus reset. Select the camcorder again and restart capture."
+            await shutdown(connector: connector)
+        }
+    }
+
+    private func apply(_ result: DVFrameAssemblyResult,
+                       connector: ASFWDriverConnector) async {
+        if result.droppedFrame { droppedFrames += 1 }
+        duplicateBlocks += result.duplicateBlocks
+        invalidBlocks += result.invalidBlocks
+        if let frame = result.completedFrame {
+            await write([frame], connector: connector)
+        }
+    }
+
+    private func write(_ frames: [Data],
+                       connector: ASFWDriverConnector) async {
+        guard let fileWriter else { return }
+        do {
+            bytesWritten += try await fileWriter.write(frames)
+            framesSeen += frames.count
+        } catch {
+            lastError = "DV file write failed: \(error.localizedDescription)"
+            await shutdown(connector: connector)
+        }
+    }
+
+    private func shutdown(connector: ASFWDriverConnector) async {
+        captureTask?.cancel()
+        captureTask = nil
         _ = connector.stopDVCapture()
         ring?.unmap()
         ring = nil
-        try? fileHandle?.close()
-        fileHandle = nil
+        if let fileWriter {
+            do {
+                try await fileWriter.close()
+            } catch where lastError == nil {
+                lastError = "Could not finalize DV file: \(error.localizedDescription)"
+            } catch { }
+        }
+        self.fileWriter = nil
         isCapturing = false
-    }
-
-    private func tick() {
-        guard let ring else { return }
-
-        ring.drain { chunk in
-            // Frame start: first DIF block is a header-section block (SCT=0)
-            // with sequence number 0. Masked comparison per Apple's
-            // AVCVideoServices DVReceiver ((u16 & 0xE0FC) == 0x0004) - the
-            // unmasked bits are reserved/arbitrary and vary between devices.
-            let isFrameStart = (chunk[0] & 0xE0) == 0x00 && (chunk[1] & 0xFC) == 0x04
-            if isFrameStart {
-                flushCurrentFrame()
-                inFrame = true
-                let isPAL = (chunk[3] & 0x80) != 0
-                expectedFrameBytes = isPAL ? 144_000 : 120_000
-                if systemLabel == "—" {
-                    systemLabel = isPAL ? "PAL (625/50)" : "NTSC (525/60)"
-                }
-                currentFrame.removeAll(keepingCapacity: true)
-            }
-            guard inFrame else { return }
-            currentFrame.append(contentsOf: chunk)
-        }
-
-        stats = ring.stats
-    }
-
-    private func flushCurrentFrame() {
-        guard inFrame, !currentFrame.isEmpty else { return }
-        if currentFrame.count == expectedFrameBytes, let fileHandle {
-            fileHandle.write(currentFrame)
-            bytesWritten += UInt64(currentFrame.count)
-            framesSeen += 1
-        } else {
-            droppedFrames += 1
-        }
     }
 }
 
@@ -142,7 +175,6 @@ struct DVCaptureView: View {
 
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
     @State private var selectedUnitGUID: UInt64?
-    @State private var channelText = "63"
     @State private var outputURL: URL?
     @State private var transportBusy = false
     @State private var transportStatus: String?
@@ -156,6 +188,9 @@ struct DVCaptureView: View {
         .formStyle(.grouped)
         .navigationTitle("DV Capture")
         .onAppear { refreshUnits() }
+        .onDisappear {
+            Task { await controller.stop(connector: viewModel.connector) }
+        }
     }
 
     // MARK: Sections
@@ -225,15 +260,6 @@ struct DVCaptureView: View {
     private var captureSection: some View {
         Section("Capture") {
             HStack {
-                TextField("Channel", text: $channelText)
-                    .frame(width: 60)
-                Text("Isoch channel (camcorders broadcast on 63)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .disabled(controller.isCapturing)
-
-            HStack {
                 Button("Choose Output File…") { chooseOutputFile() }
                     .disabled(controller.isCapturing)
                 Text(outputURL?.lastPathComponent ?? "No file selected")
@@ -242,7 +268,7 @@ struct DVCaptureView: View {
 
             if controller.isCapturing {
                 Button {
-                    controller.stop(connector: viewModel.connector)
+                    Task { await controller.stop(connector: viewModel.connector) }
                 } label: {
                     Label("Stop Capture", systemImage: "stop.circle.fill")
                 }
@@ -253,7 +279,7 @@ struct DVCaptureView: View {
                 } label: {
                     Label("Start Capture", systemImage: "record.circle")
                 }
-                .disabled(!viewModel.isConnected || outputURL == nil)
+                .disabled(!viewModel.isConnected || outputURL == nil || selectedUnitGUID == nil)
             }
 
             captureStats
@@ -263,6 +289,12 @@ struct DVCaptureView: View {
     private var captureStats: some View {
         Group {
             LabeledContent("System", value: controller.systemLabel)
+            LabeledContent("Isoch channel",
+                           value: controller.stats.channel <= 63
+                               ? "\(controller.stats.channel)"
+                               : "—")
+            LabeledContent("Connection",
+                           value: connectionModeLabel(controller.stats.connectionMode))
             LabeledContent("Frames", value: "\(controller.framesSeen)")
             LabeledContent("Dropped frames", value: "\(controller.droppedFrames)")
                 .foregroundColor(controller.droppedFrames > 0 ? .orange : .primary)
@@ -272,6 +304,9 @@ struct DVCaptureView: View {
             LabeledContent("Non-DV packets", value: "\(controller.stats.nonDvPackets)")
             LabeledContent("Ring overruns", value: "\(controller.stats.overruns)")
                 .foregroundColor(controller.stats.overruns > 0 ? .orange : .primary)
+            LabeledContent("DBC discontinuities", value: "\(controller.stats.dbcDiscontinuities)")
+            LabeledContent("Invalid DIF chunks", value: "\(controller.stats.invalidDifBlocks)")
+            LabeledContent("Duplicate DIF blocks", value: "\(controller.duplicateBlocks)")
             if controller.stats.nonDvPackets > 0 {
                 LabeledContent("Last rejected",
                                value: String(format: "len=%u q0=%08X q1=%08X",
@@ -295,11 +330,15 @@ struct DVCaptureView: View {
         guard viewModel.isConnected else { return }
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let units = viewModel.connector.getAVCUnits() ?? []
+            let units = (viewModel.connector.getAVCUnits() ?? []).sorted {
+                let lhsTape = $0.subunits.contains { $0.type == 0x04 }
+                let rhsTape = $1.subunits.contains { $0.type == 0x04 }
+                return lhsTape && !rhsTape
+            }
             DispatchQueue.main.async {
                 self.avcUnits = units
-                if self.selectedUnitGUID == nil, let first = units.first {
-                    self.selectedUnitGUID = first.guid
+                if !units.contains(where: { $0.guid == self.selectedUnitGUID }) {
+                    self.selectedUnitGUID = units.first?.guid
                 }
             }
         }
@@ -351,11 +390,20 @@ struct DVCaptureView: View {
     }
 
     private func startCapture() {
-        guard let url = outputURL else { return }
-        let channel = UInt8(channelText) ?? 63
+        guard let url = outputURL, let guid = selectedUnitGUID else { return }
         controller.start(connector: viewModel.connector,
-                         channel: min(channel, 63),
+                         deviceGUID: guid,
                          url: url)
+    }
+
+    private func connectionModeLabel(_ rawValue: UInt8) -> String {
+        switch rawValue {
+        case 1: return "Broadcast"
+        case 2: return "CMP overlay"
+        case 3: return "CMP point-to-point"
+        case 4: return "Broadcast fallback"
+        default: return "—"
+        }
     }
 
     private func formatBytes(_ bytes: UInt64) -> String {

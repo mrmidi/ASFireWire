@@ -36,7 +36,7 @@ class UserClientRuntimeState final {
 
     [[nodiscard]] bool IsValid() const noexcept { return transactionStorage_.IsValid(); }
 
-    [[nodiscard]] bool BindDriver(ASFWDriver* driver) {
+    [[nodiscard]] bool BindDriver(ASFWDriver* driver, void* owner) {
         ResetHandlers();
         if (driver == nullptr) {
             return false;
@@ -54,7 +54,8 @@ class UserClientRuntimeState final {
         auto* sbp2Manager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
         auto* sbp2Registry = controllerCore ? controllerCore->GetSbp2SessionRegistry() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
-        isochHandler_ = std::make_unique<IsochHandler>(driver);
+        isochHandler_ = std::make_unique<IsochHandler>(
+            driver, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(owner)));
         sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager, sbp2Registry);
         diagnosticsHandler_ = std::make_unique<DiagnosticsHandler>(driver);
 
@@ -62,6 +63,9 @@ class UserClientRuntimeState final {
     }
 
     void ResetHandlers() noexcept {
+        if (isochHandler_ != nullptr) {
+            isochHandler_->ReleaseOwner();
+        }
         sbp2Handler_.reset();
         isochHandler_.reset();
         avcHandler_.reset();
@@ -75,6 +79,9 @@ class UserClientRuntimeState final {
     }
 
     void ReleaseOwner(void* owner) noexcept {
+        if (isochHandler_ != nullptr) {
+            isochHandler_->ReleaseOwner();
+        }
         if (owner != nullptr && sbp2Handler_ != nullptr) {
             sbp2Handler_->ReleaseOwner(owner);
         }

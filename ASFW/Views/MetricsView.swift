@@ -19,7 +19,6 @@ class MetricsViewModel: ObservableObject {
     @Published var history: [Double] = []  // Last 30 seconds of pkts/sec
     
     private var connector: ASFWDriverConnector
-    private var timer: Timer?
     private var lastPacketCount: UInt64 = 0
     private var lastTimestamp = Date()
     
@@ -27,17 +26,20 @@ class MetricsViewModel: ObservableObject {
         self.connector = connector
     }
     
+    private var pollingTask: Task<Void, Never>?
+    
     func startPolling() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.fetchMetrics()
+        pollingTask = Task { @MainActor in
+            while !Task.isCancelled {
+                self.fetchMetrics()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
     }
     
     func stopPolling() {
-        timer?.invalidate()
-        timer = nil
+        pollingTask?.cancel()
+        pollingTask = nil
     }
     
     func fetchMetrics() {

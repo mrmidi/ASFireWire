@@ -164,6 +164,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
         std::shared_ptr<ASFW::CMP::CMPClient> cmpClient;
         std::shared_ptr<ASFW::Bus::BusManagerElectionDriver> busManagerElectionDriver;
+        std::function<void()> busResetStartedCallback;
         std::function<void()> cycleInconsistentCallback;
     };
 

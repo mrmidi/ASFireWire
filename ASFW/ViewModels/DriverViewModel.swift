@@ -15,6 +15,11 @@ class DriverViewModel: ObservableObject {
     @Published var isBusy: Bool = false
     @Published var logMessages: [LogEntry] = []
     @Published var driverVersion: DriverVersionInfo?
+    @Published private(set) var isDriverConnected: Bool = false
+
+    var displayedStatus: String {
+        isDriverConnected ? "Driver loaded — UserClient connected" : activationStatus
+    }
     
     struct LogEntry: Identifiable, Equatable {
         let id = UUID()
@@ -67,13 +72,34 @@ class DriverViewModel: ObservableObject {
             logMessages.removeFirst(logMessages.count - 200)
         }
     }
+
+    func updateDriverConnection(_ connected: Bool) {
+        let changed = connected != isDriverConnected
+        isDriverConnected = connected
+
+        if connected {
+            activationStatus = "Driver loaded — UserClient connected"
+            if changed {
+                log(activationStatus, source: .userClient, level: .success)
+            }
+        } else if changed {
+            activationStatus = "Driver disconnected"
+            driverVersion = nil
+            log(activationStatus, source: .userClient, level: .warning)
+        }
+    }
     
     func installDriver() {
         isBusy = true
         activationStatus = "Requesting activation..."
         log("Activation request submitted", source: .app, level: .info)
         
-        DriverInstallManager.shared.activate { [weak self] result in
+        DriverInstallManager.shared.activate(progress: { [weak self] message in
+            Task { @MainActor in
+                self?.activationStatus = message
+                self?.log(message, source: .app, level: .info)
+            }
+        }) { [weak self] result in
             guard let self = self else { return }
             Task { @MainActor in
                 self.isBusy = false
@@ -82,8 +108,9 @@ class DriverViewModel: ObservableObject {
                     self.activationStatus = message
                     self.log(message, source: .app, level: .success)
                 case .failure(let error):
-                    self.activationStatus = "Error: \(error.localizedDescription)"
-                    self.log(error.localizedDescription, source: .app, level: .error)
+                    let message = self.installErrorMessage(error)
+                    self.activationStatus = "Error: \(message)"
+                    self.log(message, source: .app, level: .error)
                 }
             }
         }
@@ -94,7 +121,12 @@ class DriverViewModel: ObservableObject {
         activationStatus = "Requesting deactivation..."
         log("Deactivation request submitted", source: .app, level: .info)
         
-        DriverInstallManager.shared.deactivate { [weak self] result in
+        DriverInstallManager.shared.deactivate(progress: { [weak self] message in
+            Task { @MainActor in
+                self?.activationStatus = message
+                self?.log(message, source: .app, level: .info)
+            }
+        }) { [weak self] result in
             guard let self = self else { return }
             Task { @MainActor in
                 self.isBusy = false
@@ -103,10 +135,20 @@ class DriverViewModel: ObservableObject {
                     self.activationStatus = message
                     self.log(message, source: .app, level: .success)
                 case .failure(let error):
-                    self.activationStatus = "Error: \(error.localizedDescription)"
-                    self.log(error.localizedDescription, source: .app, level: .error)
+                    let message = self.installErrorMessage(error)
+                    self.activationStatus = "Error: \(message)"
+                    self.log(message, source: .app, level: .error)
                 }
             }
         }
+    }
+
+    private func installErrorMessage(_ error: Error) -> String {
+        let nsError = error as NSError
+        guard let recovery = nsError.localizedRecoverySuggestion,
+              !recovery.isEmpty else {
+            return nsError.localizedDescription
+        }
+        return "\(nsError.localizedDescription) \(recovery)"
     }
 }
