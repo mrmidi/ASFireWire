@@ -28,7 +28,10 @@ public:
     // provider chain) registers a target-state observer so the FireWire side can
     // drive SCSI target create/destroy on SBP-2 login/logout. loggedIn=true on
     // login up, false on logout/failure. The HBA registers on Start and clears
-    // on Stop; NotifyTargetState fires the observer outside the hub lock.
+    // on Stop. NotifyTargetState fires the observer UNDER the hub lock — the
+    // HBA's Stop is load-bearing on that synchrony (once ClearTargetObserver
+    // returns, no observer call is running or can start), so the observer must
+    // only schedule non-blocking work; see NotifyTargetState.
     using TargetStateCallback = std::function<void(uint64_t guid, bool loggedIn)>;
     static void SetTargetObserver(TargetStateCallback observer);
     static void ClearTargetObserver();

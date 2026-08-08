@@ -3,15 +3,10 @@
 # does it automatically) and commit the regenerated project alongside it.
 #
 # Fidelity notes (mirrors the hand-maintained project this replaced):
-# - Dext entitlements are selected via nested variable expansion:
-#   CODE_SIGN_ENTITLEMENTS = $(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI)).
-#   `./build.sh --scsi` flips ASFW_ENABLE_SCSI=YES on the xcodebuild command
-#   line, which also enables the #if ASFW_ENABLE_SCSI personality in
-#   ASFWDriver/Info.plist through INFOPLIST_PREPROCESS.
 # - The app has no Info.plist file on purpose (GENERATE_INFOPLIST_FILE=YES);
 #   do not add an `info:` block to the ASFW target.
 # - ASFWDriver/Info.plist is excluded from sources: it is consumed via
-#   INFOPLIST_FILE and contains C-preprocessor directives.
+#   INFOPLIST_FILE.
 name: ASFW
 options:
   minimumXcodeGenVersion: "2.44.0"
@@ -131,17 +126,9 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: F6YA6B56LR
-        ASFW_ENABLE_SCSI: NO
-        ASFW_DEXT_ENTITLEMENTS_NO: ASFWDriver/ASFWDriver.entitlements
-        ASFW_DEXT_ENTITLEMENTS_YES: ASFWDriver/ASFWDriver+SCSI.entitlements
-        CODE_SIGN_ENTITLEMENTS: $(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI))
-        ASFW_INFOPLIST_DEFS_NO: ""
-        ASFW_INFOPLIST_DEFS_YES: ASFW_ENABLE_SCSI=1
+        CODE_SIGN_ENTITLEMENTS: ASFWDriver/ASFWDriver.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: ASFWDriver/Info.plist
-        INFOPLIST_PREPROCESS: YES
-        INFOPLIST_OTHER_PREPROCESSOR_FLAGS: -traditional
-        INFOPLIST_PREPROCESSOR_DEFINITIONS: $(ASFW_INFOPLIST_DEFS_$(ASFW_ENABLE_SCSI))
         CLANG_CXX_LANGUAGE_STANDARD: gnu++23
         CLANG_ENABLE_MODULES: YES
         EXCLUDED_SOURCE_FILE_NAMES: "*.md"
