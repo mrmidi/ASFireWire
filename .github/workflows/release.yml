@@ -1,14 +1,18 @@
 name: Release (prebuilt tester build)
 
 # Produces an ad-hoc-signed, ready-to-install ASFW.app for eager testers.
-#   - Push a tag matching v*        -> builds, signs, and attaches the zip to a GitHub Release.
-#   - Run manually (workflow_dispatch) -> builds, signs, and uploads the zip as a workflow artifact
+#   - Push a tag matching v*        -> tests, builds, signs, and attaches the zip to a GitHub Release.
+#   - Run manually (workflow_dispatch) -> same, but uploads the zip as a workflow artifact only
 #     (useful for testing this pipeline on a fork before tagging).
 #
 # The build is UNSIGNED by design (build.sh forces CODE_SIGNING_ALLOWED=NO); sign.sh then
 # ad-hoc re-signs the dext + app with their entitlements so the extension can load with
 # SIP off + `systemextensionsctl developer on`. Ad-hoc has no team/profile, so one zip
 # installs on any Mac. This is NOT notarized and requires SIP disabled — testers only.
+#
+# THE TAG IS THE SOURCE OF TRUTH for the version. On a tag push the workflow writes the
+# tag into VERSION.txt (driver semantic version) and overrides MARKETING_VERSION (the
+# bundles' CFBundleShortVersionString), so a release can never disagree with its tag.
 
 on:
   push:
@@ -20,8 +24,27 @@ permissions:
   contents: write   # needed to attach assets to a Release on tag pushes
 
 jobs:
+  # Gate the release on the C++ suite. These run host-side with ASFW_HOST_TEST (no
+  # hardware, no DriverKit), and `--test-only` exits with ctest's real status.
+  # The Swift path is deliberately NOT used as a gate: run_swift_tests pipes xcodebuild
+  # into `grep ... || true`, so it reports success even when tests fail (build.sh:235).
+  # Swift/XCTest coverage comes from build-and-test.yml on PRs and main.
+  test:
+    name: C++ tests
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run C++ test suite
+        run: |
+          chmod +x build.sh
+          ./build.sh --test-only
+
   release:
     name: Build & ad-hoc sign
+    needs: test
     runs-on: macos-26
     env:
       CONFIGURATION: Release
@@ -34,6 +57,30 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
+      # Derive every version string from the tag so they cannot drift apart.
+      # There are two independent sources in the repo:
+      #   VERSION.txt      -> bump.sh -> DriverVersion.hpp (driver's kSemanticVersion)
+      #   project.yml      -> MARKETING_VERSION -> CFBundleShortVersionString
+      # CFBundleShortVersionString must stay numeric dot-separated, so a semver
+      # pre-release/build suffix (v0.2.0-audio) is kept for VERSION.txt and the asset
+      # name but stripped for MARKETING_VERSION.
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            FULL="${GITHUB_REF_NAME#v}"
+          else
+            FULL="0.0.0-dev.${GITHUB_SHA:0:8}"
+          fi
+          NUMERIC="${FULL%%-*}"; NUMERIC="${NUMERIC%%+*}"
+          if ! printf '%s' "$NUMERIC" | grep -qE '^[0-9]+(\.[0-9]+){0,2}$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not yield a numeric version (got '${NUMERIC}'). Use vMAJOR.MINOR.PATCH[-suffix]."
+            exit 1
+          fi
+          echo "full=$FULL"       >> "$GITHUB_OUTPUT"
+          echo "numeric=$NUMERIC" >> "$GITHUB_OUTPUT"
+          echo "Release version: $FULL (CFBundleShortVersionString $NUMERIC)"
+
       # ASFW.xcodeproj is gitignored XcodeGen output — build.sh regenerates it,
       # but only when xcodegen is on PATH, so install it before building.
       - name: Install XcodeGen
@@ -41,10 +88,22 @@ jobs:
           brew install xcodegen
           xcodegen --version
 
-      - name: Build (Release, unsigned by design)
+      # ASFW_VERSION_OVERRIDE stamps the tag's version without touching VERSION.txt.
+      # Writing that tracked file would leave the tree dirty, and bump.sh would then
+      # record kGitDirty = true — every release would report itself as a dirty build.
+      - name: Stamp version into the driver header
+        env:
+          ASFW_VERSION_OVERRIDE: ${{ steps.version.outputs.full }}
         run: |
           chmod +x build.sh bump.sh sign.sh
-          ./build.sh --no-bump --config Release
+          ./bump.sh refresh
+          grep -E 'kSemanticVersion|kGitDirty' ASFWDriver/Version/DriverVersion.hpp
+          git diff --quiet || { echo "::error::Working tree dirty before build — the release would be stamped DIRTY."; git status --short; exit 1; }
+
+      - name: Build (Release, unsigned by design)
+        run: |
+          ./build.sh --no-bump --config Release \
+            --set MARKETING_VERSION="${{ steps.version.outputs.numeric }}"
 
       - name: Ad-hoc sign (embed entitlements)
         run: ./sign.sh
@@ -54,31 +113,71 @@ jobs:
         run: |
           APP="build/DerivedData/Build/Products/Release/ASFW.app"
           [ -d "$APP" ] || { echo "::error::App not found at $APP"; exit 1; }
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            VERSION="${GITHUB_REF_NAME}"
-          else
-            VERSION="dev-${GITHUB_SHA:0:8}"
-          fi
-          # Warn (non-fatal) if the tag disagrees with the app's own version —
-          # build.sh runs with --no-bump, so the app reports whatever is committed.
-          APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || true)"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "v${APP_VERSION}" != "${VERSION}" ]; then
-            echo "::warning::Tag ${VERSION} != app CFBundleShortVersionString ${APP_VERSION} (built with --no-bump)"
-          fi
           # "-adhoc" suffix keeps ASFW-<version>.zip free for a future
           # properly signed/notarized asset on the same release.
-          ZIP="ASFW-${VERSION}-adhoc.zip"
+          ZIP="ASFW-${{ steps.version.outputs.full }}-adhoc.zip"
           ditto -c -k --keepParent "$APP" "$ZIP"
+          SHA="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          shasum -a 256 "$ZIP"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Packaged $ZIP ($SHA)"
+
+      # Release body = the CHANGELOG section matching this tag (when present) plus a
+      # fixed install/safety footer. The footer is unconditional: the SIP boot-loop
+      # warning must appear on every release regardless of changelog state.
+      - name: Compose release notes
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.full }}"
+          : > NOTES.md
+          if [ -f CHANGELOG.md ]; then
+            # index(...)==1 is a literal anchored match — avoids treating '.' / '+'
+            # in the version as regex metacharacters.
+            awk -v hdr="## [$VERSION]" '
+              index($0, hdr) == 1 { grab = 1; next }
+              grab && /^## / { exit }
+              grab { print }
+            ' CHANGELOG.md | sed -e '/./,$!d' > SECTION.md
+            if [ -s SECTION.md ]; then
+              cat SECTION.md >> NOTES.md
+              printf '\n' >> NOTES.md
+            else
+              echo "::warning::No '## [${VERSION}]' section in CHANGELOG.md — publishing with install/safety notes only."
+            fi
+          fi
+          cat >> NOTES.md <<EOF
+          ## Install
+
+          Experimental prebuilt tester build — **ad-hoc signed, NOT notarized**.
+          It only loads on a Mac with SIP disabled and \`systemextensionsctl developer on\`.
+
+          Read the **[Installing guide](https://github.com/mrmidi/ASFireWire/wiki/Installing)** before installing.
+          Hitting problems? **[Troubleshooting](https://github.com/mrmidi/ASFireWire/wiki/Troubleshooting)** ·
+          **[Reporting Issues](https://github.com/mrmidi/ASFireWire/wiki/Reporting-Issues)**
+
+          > [!WARNING]
+          > **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI
+          > refuses to launch the ad-hoc-signed dext. A build that includes the SCSI HBA
+          > then leaves an orphaned kernel-side SCSI stub behind at every boot, which can
+          > panic the machine into a boot loop.
+          >
+          > Recovery: Recovery → \`csrutil disable\` → boot → \`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver\` → \`csrutil enable\`.
+
+          Requires an Apple Silicon Mac on macOS 26 (Tahoe) and FireWire hardware
+          (PCIe OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
+
+          \`\`\`
+          SHA-256  ${{ steps.package.outputs.sha }}
+          \`\`\`
+          EOF
+          echo "--- release notes ---"; cat NOTES.md
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
           # No .zip suffix: artifact downloads are zip containers themselves,
           # so a .zip name would yield ASFW-x.zip.zip.
-          name: ASFW-${{ steps.package.outputs.version }}-adhoc
+          name: ASFW-${{ steps.version.outputs.full }}-adhoc
           path: ${{ steps.package.outputs.zip }}
           if-no-files-found: error
 
@@ -89,6 +188,6 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" "${{ steps.package.outputs.zip }}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "Experimental prebuilt tester build (ad-hoc signed, NOT notarized). Requires SIP off + \`systemextensionsctl developer on\`. See the README install section." \
+            --notes-file NOTES.md \
             --prerelease \
           || gh release upload "${GITHUB_REF_NAME}" "${{ steps.package.outputs.zip }}" --clobber
