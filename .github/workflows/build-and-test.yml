@@ -106,6 +106,22 @@ jobs:
               exit 1
             }
 
+      # The SCSI HBA ships in every build. Assert the personality actually
+      # landed in the built dext so a plist regression cannot silently drop it.
+      - name: Verify SCSI personality in built dext
+        run: |
+          PLIST=$(find build/DerivedData/Build/Products -path "*net.mrmidi.ASFW.ASFWDriver.dext/Info.plist" | head -1)
+          if [[ -z "$PLIST" ]]; then
+            echo "::error::Built dext Info.plist not found"
+            exit 1
+          fi
+          plutil -lint "$PLIST"
+          if ! /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:ASFWSCSIControllerService:IOClass" "$PLIST" >/dev/null 2>&1; then
+            echo "::error::ASFWSCSIControllerService personality missing from built dext Info.plist"
+            exit 1
+          fi
+          echo "SCSI personality present."
+
       - name: Configure Tests with Coverage
         run: |
           cmake -S tests -B build/tests \
@@ -164,49 +180,3 @@ jobs:
       #   run: |
       #     ./build.sh
 
-  # The SCSI HBA is opt-in (ASFW_ENABLE_SCSI, ./build.sh --scsi) and OFF in the
-  # default build above, so the Info.plist personality preprocessing and the
-  # SCSI entitlement selection are never exercised by the main job. Build the
-  # variant here so the gated configuration cannot rot while the flag stays
-  # default-off — a malformed personality only surfaces on an opt-in user's
-  # machine otherwise, and the failure mode there is a boot panic (#54).
-  build-scsi:
-    name: Build (SCSI HBA enabled)
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Build Driver (ASFW_ENABLE_SCSI=YES)
-        run: |
-          set -o pipefail
-          xcodebuild -project ASFW.xcodeproj \
-            -scheme ASFW \
-            -configuration Debug \
-            -arch arm64 \
-            -derivedDataPath build/DerivedData \
-            build \
-            ASFW_ENABLE_SCSI=YES \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
-            > xcodebuild-scsi.log 2>&1 || {
-              echo "::error::SCSI-enabled build failed! Showing last 100 lines of log:"
-              tail -n 100 xcodebuild-scsi.log
-              exit 1
-            }
-
-      # The personality is injected by Info.plist preprocessing; assert it
-      # actually landed in the built dext so a silent preprocessor regression
-      # cannot pass CI.
-      - name: Verify SCSI personality in built dext
-        run: |
-          PLIST=$(find build/DerivedData/Build/Products -path "*net.mrmidi.ASFW.ASFWDriver.dext/Info.plist" | head -1)
-          if [[ -z "$PLIST" ]]; then
-            echo "::error::Built dext Info.plist not found"
-            exit 1
-          fi
-          plutil -lint "$PLIST"
-          if ! /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:ASFWSCSIControllerService:IOClass" "$PLIST" >/dev/null 2>&1; then
-            echo "::error::ASFWSCSIControllerService personality missing from built dext Info.plist despite ASFW_ENABLE_SCSI=YES"
-            exit 1
-          fi
-          echo "SCSI personality present:"
-          /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:ASFWSCSIControllerService" "$PLIST" | head -20

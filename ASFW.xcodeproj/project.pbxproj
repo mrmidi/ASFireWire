@@ -628,7 +628,6 @@
 		4869BB87D8A8B57A73DF3A1C /* AudioDuplexCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioDuplexCoordinator.cpp; sourceTree = "<group>"; };
 		487FFDBA8B98968F6A7E5DCB /* DriverConnectorLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverConnectorLogStore.swift; sourceTree = "<group>"; };
 		49272738AA5479B3357D6624 /* ASFWDriver.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; path = ASFWDriver.iig; sourceTree = "<group>"; };
-		492F816729EBB471D53E3D0B /* ASFWDriver+SCSI.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "ASFWDriver+SCSI.entitlements"; sourceTree = "<group>"; };
 		4A29B65AFF65A07671ACC9BB /* InterruptDispatcher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = InterruptDispatcher.cpp; sourceTree = "<group>"; };
 		4A89236ABF709F1C06A46D40 /* RoleCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RoleCoordinator.hpp; sourceTree = "<group>"; };
 		4AE8FA92BD497B00B01107A3 /* ITimerScheduler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ITimerScheduler.hpp; sourceTree = "<group>"; };
@@ -2178,7 +2177,6 @@
 				BC54AD9BD749D537A0D2BF05 /* ASFWDriver.cpp */,
 				7C269EF508CFAF654ABF9C1A /* ASFWDriver.entitlements */,
 				49272738AA5479B3357D6624 /* ASFWDriver.iig */,
-				492F816729EBB471D53E3D0B /* ASFWDriver+SCSI.entitlements */,
 				2254C12CF4D1CC75F2B3216B /* Async */,
 				103323B33769AFC97E9FE82E /* Audio */,
 				37645CFD142621E6653F3E7F /* Bus */,
@@ -3458,14 +3456,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
-				ASFW_DEXT_ENTITLEMENTS_NO = ASFWDriver/ASFWDriver.entitlements;
-				ASFW_DEXT_ENTITLEMENTS_YES = "ASFWDriver/ASFWDriver+SCSI.entitlements";
-				ASFW_ENABLE_SCSI = NO;
-				ASFW_INFOPLIST_DEFS_NO = "";
-				ASFW_INFOPLIST_DEFS_YES = "ASFW_ENABLE_SCSI=1";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI))";
+				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
@@ -3479,9 +3472,6 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
-				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = "-traditional";
-				INFOPLIST_PREPROCESS = YES;
-				INFOPLIST_PREPROCESSOR_DEFINITIONS = "$(ASFW_INFOPLIST_DEFS_$(ASFW_ENABLE_SCSI))";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
@@ -3540,14 +3530,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
-				ASFW_DEXT_ENTITLEMENTS_NO = ASFWDriver/ASFWDriver.entitlements;
-				ASFW_DEXT_ENTITLEMENTS_YES = "ASFWDriver/ASFWDriver+SCSI.entitlements";
-				ASFW_ENABLE_SCSI = NO;
-				ASFW_INFOPLIST_DEFS_NO = "";
-				ASFW_INFOPLIST_DEFS_YES = "ASFW_ENABLE_SCSI=1";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DEXT_ENTITLEMENTS_$(ASFW_ENABLE_SCSI))";
+				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
@@ -3561,9 +3546,6 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
-				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = "-traditional";
-				INFOPLIST_PREPROCESS = YES;
-				INFOPLIST_PREPROCESSOR_DEFINITIONS = "$(ASFW_INFOPLIST_DEFS_$(ASFW_ENABLE_SCSI))";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
