@@ -157,11 +157,11 @@ jobs:
 
           > [!WARNING]
           > **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI
-          > refuses to launch the ad-hoc-signed dext. A build that includes the SCSI HBA
-          > then leaves an orphaned kernel-side SCSI stub behind at every boot, which can
-          > panic the machine into a boot loop.
+          > refuses to launch the ad-hoc-signed dext at every boot. That is expected to be
+          > a silent no-load, but it has not been verified on hardware with SIP enabled —
+          > don't leave the extension installed in a state where it can never launch.
           >
-          > Recovery: Recovery → \`csrutil disable\` → boot → \`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver\` → \`csrutil enable\`.
+          > Recovery, should a boot problem occur: Recovery → \`csrutil disable\` → boot → \`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver\` → \`csrutil enable\`.
 
           Requires an Apple Silicon Mac on macOS 26 (Tahoe) and FireWire hardware
           (PCIe OHCI card, or an Apple Thunderbolt-to-FireWire adapter).

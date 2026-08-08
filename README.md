@@ -160,9 +160,10 @@ Personally tested with working audio (hardware owned by the maintainer):
 
 Verified working by contributors on their own hardware:
 
-- PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out)
-- Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching)
-- Nikon Coolscan 9000 — SBP-2/SCSI film scanner, via the opt-in SCSI HBA build
+- PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out) — [@klochowicz](https://github.com/klochowicz)
+- Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching) — [@alicankaralar](https://github.com/alicankaralar)
+- Nikon Coolscan 9000 and Coolscan 4000 — SBP-2/SCSI film scanners, plug and play — [@mhellevang](https://github.com/mhellevang)
+- Panasonic MiniDV camcorder — DV capture and tape transport — [@hoffmabc](https://github.com/hoffmabc)
 
 A fuller breakdown, including recognized-but-not-enabled devices and how to report your
 own results, lives on the
@@ -242,6 +243,7 @@ This project is in active development. The following features are implemented:
 - Multi-stream DICE duplex (two isochronous streams per direction) for higher-channel devices such as the Midas Venice F32 (32×32)
 - Host-controlled sample-rate switching (44.1 kHz / 48 kHz) driven from the device's advertised clock capabilities, including live rate changes on CoreAudio aggregate devices clocked by the FireWire interface
 - DICE per-channel naming (device nickname plus TX/RX channel labels) surfaced to CoreAudio
+- DV (IEC 61883-2) capture from MiniDV camcorders to raw `.dv` files, with AV/C tape transport control (play/stop/rewind) from the app. DV capture and audio receive are mutually exclusive — both use IR context 0
 
 ## Driver initialization (high level)
 
