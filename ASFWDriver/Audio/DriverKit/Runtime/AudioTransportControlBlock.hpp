@@ -12,6 +12,9 @@
 #include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace ASFW::Audio::Runtime {
@@ -78,6 +81,39 @@ enum class TxProducerFaultReason : uint32_t {
         case TxProducerFaultReason::kSlotUnavailable: return "slot-unavailable";
         case TxProducerFaultReason::kPacketizerRejected: return "packetizer-rejected";
         case TxProducerFaultReason::kSlotPublishFailed: return "slot-publish-failed";
+    }
+    return "unknown";
+}
+
+/// Why the CoreAudio write frontier (W) has overtaken the exposure frontier (E).
+///
+/// W > E means the payload writer found no packet for a host frame and dropped
+/// it: audible silence with transport still perfectly healthy. Three mechanisms
+/// produce it, and they are distinguishable only by how the deficit MOVES --
+/// see tools/asfw_sim/FINDINGS.md F2/F6/F9, where each was reproduced.
+enum class TxExposureReason : uint32_t {
+    kUnknown = 0,
+    /// E leads W by about the content horizon: the intended state.
+    kHealthy,
+    /// One step, then flat. A producer-wake stall past the exposure budget
+    /// (the observable signature of a dead IT interrupt path, TX-IRQ-001).
+    kStall,
+    /// Ramping, and the replay-miss count accounts for the lost frames. Every
+    /// miss ships NODATA, which never advances E, and alignment is one-shot.
+    kReplayMiss,
+    /// Ramping, and the replay-miss count CANNOT account for the lost frames:
+    /// E is advancing at a slower rate than W (TX cadence under-production).
+    kRateMismatch,
+};
+
+[[nodiscard]] inline const char* TxExposureReasonName(
+    TxExposureReason reason) noexcept {
+    switch (reason) {
+        case TxExposureReason::kUnknown: return "unknown";
+        case TxExposureReason::kHealthy: return "healthy";
+        case TxExposureReason::kStall: return "stall";
+        case TxExposureReason::kReplayMiss: return "replay-miss";
+        case TxExposureReason::kRateMismatch: return "rate-mismatch";
     }
     return "unknown";
 }
@@ -162,6 +198,172 @@ struct TxProducerFaultSnapshot final {
             }
         }
         return false;
+    }
+};
+
+// RX capture-ring telemetry is intentionally about frame ownership, not
+// payload amplitude. Both the direct RX writer and the CoreAudio reader sample
+// the same absolute frame frontiers, so the watermarks identify the buffer
+// slack that can be reduced when tuning round-trip latency.
+struct RxCaptureBufferTelemetry final {
+    using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+
+    std::atomic<uint64_t> currentAvailableFrames{0};
+    std::atomic<uint64_t> intervalMinimumAvailableFrames{UINT64_MAX};
+    std::atomic<uint64_t> intervalMaximumAvailableFrames{0};
+    std::atomic<uint64_t> intervalMinimumFreeHeadroomFrames{UINT64_MAX};
+    std::array<std::atomic<uint64_t>,
+               Geometry::kRxCaptureOccupancyHistogramBuckets>
+        intervalOccupancyHistogram{};
+    std::atomic<uint64_t> intervalOverrunEvents{0};
+    std::atomic<uint64_t> intervalOverwrittenFrames{0};
+    std::atomic<uint64_t> intervalStarvationEvents{0};
+    std::atomic<uint64_t> intervalStarvedFrames{0};
+    // A BeginRead is the only authoritative indication that CoreAudio is
+    // consuming capture frames. A full ring without one is the normal
+    // latest-window mailbox state, not an input overrun.
+    std::atomic<uint64_t> intervalReaderBeginReadCalls{0};
+
+    // Written by the heartbeat owner. Odd while copying, even when readers
+    // may snapshot the completed interval without locking the audio path.
+    std::atomic<uint64_t> completedIntervalSequence{0};
+    std::atomic<uint64_t> completedMinimumAvailableFrames{UINT64_MAX};
+    std::atomic<uint64_t> completedMaximumAvailableFrames{0};
+    std::atomic<uint64_t> completedMinimumFreeHeadroomFrames{UINT64_MAX};
+    std::array<std::atomic<uint64_t>,
+               Geometry::kRxCaptureOccupancyHistogramBuckets>
+        completedOccupancyHistogram{};
+    std::atomic<uint64_t> completedOverrunEvents{0};
+    std::atomic<uint64_t> completedOverwrittenFrames{0};
+    std::atomic<uint64_t> completedStarvationEvents{0};
+    std::atomic<uint64_t> completedStarvedFrames{0};
+    std::atomic<uint64_t> completedReaderBeginReadCalls{0};
+    std::atomic<uint64_t> totalOverwrittenFrames{0};
+    std::atomic<uint64_t> totalStarvedFrames{0};
+
+    static void UpdateMinimum(std::atomic<uint64_t>& target,
+                              uint64_t candidate) noexcept {
+        uint64_t previous = target.load(std::memory_order_relaxed);
+        while (candidate < previous &&
+               !target.compare_exchange_weak(
+                   previous, candidate, std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+    }
+
+    static void UpdateMaximum(std::atomic<uint64_t>& target,
+                              uint64_t candidate) noexcept {
+        uint64_t previous = target.load(std::memory_order_relaxed);
+        while (candidate > previous &&
+               !target.compare_exchange_weak(
+                   previous, candidate, std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+    }
+
+    void Observe(uint64_t writeFrame, uint64_t readFrame,
+                 uint32_t capacityFrames) noexcept {
+        if (capacityFrames == 0) {
+            return;
+        }
+        const uint64_t available = writeFrame >= readFrame
+            ? std::min(writeFrame - readFrame,
+                       static_cast<uint64_t>(capacityFrames))
+            : 0;
+        const uint64_t freeHeadroom = capacityFrames - available;
+        currentAvailableFrames.store(available, std::memory_order_relaxed);
+        UpdateMinimum(intervalMinimumAvailableFrames, available);
+        UpdateMaximum(intervalMaximumAvailableFrames, available);
+        UpdateMinimum(intervalMinimumFreeHeadroomFrames, freeHeadroom);
+        const uint32_t bucket = static_cast<uint32_t>(
+            std::min<uint64_t>(
+                (available * Geometry::kRxCaptureOccupancyHistogramBuckets) /
+                    capacityFrames,
+                Geometry::kRxCaptureOccupancyHistogramBuckets - 1));
+        intervalOccupancyHistogram[bucket].fetch_add(
+            1, std::memory_order_relaxed);
+    }
+
+    void RecordOverrun(uint64_t overwrittenFrames) noexcept {
+        intervalOverrunEvents.fetch_add(1, std::memory_order_relaxed);
+        intervalOverwrittenFrames.fetch_add(
+            overwrittenFrames, std::memory_order_relaxed);
+        totalOverwrittenFrames.fetch_add(
+            overwrittenFrames, std::memory_order_relaxed);
+    }
+
+    void RecordStarvation(uint64_t starvedFrames) noexcept {
+        intervalStarvationEvents.fetch_add(1, std::memory_order_relaxed);
+        intervalStarvedFrames.fetch_add(
+            starvedFrames, std::memory_order_relaxed);
+        totalStarvedFrames.fetch_add(
+            starvedFrames, std::memory_order_relaxed);
+    }
+
+    void RecordReaderBeginRead() noexcept {
+        intervalReaderBeginReadCalls.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void CompleteInterval() noexcept {
+        completedIntervalSequence.fetch_add(1, std::memory_order_relaxed);
+        completedMinimumAvailableFrames.store(
+            intervalMinimumAvailableFrames.exchange(
+                UINT64_MAX, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        completedMaximumAvailableFrames.store(
+            intervalMaximumAvailableFrames.exchange(
+                0, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        completedMinimumFreeHeadroomFrames.store(
+            intervalMinimumFreeHeadroomFrames.exchange(
+                UINT64_MAX, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        for (size_t index = 0; index < intervalOccupancyHistogram.size(); ++index) {
+            completedOccupancyHistogram[index].store(
+                intervalOccupancyHistogram[index].exchange(
+                    0, std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+        completedOverrunEvents.store(intervalOverrunEvents.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedOverwrittenFrames.store(intervalOverwrittenFrames.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedStarvationEvents.store(intervalStarvationEvents.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedStarvedFrames.store(intervalStarvedFrames.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedReaderBeginReadCalls.store(intervalReaderBeginReadCalls.exchange(
+            0, std::memory_order_relaxed), std::memory_order_relaxed);
+        completedIntervalSequence.fetch_add(1, std::memory_order_release);
+    }
+
+    void Reset() noexcept {
+        currentAvailableFrames.store(0, std::memory_order_relaxed);
+        intervalMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        intervalMaximumAvailableFrames.store(0, std::memory_order_relaxed);
+        intervalMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        for (auto& bucket : intervalOccupancyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        intervalOverrunEvents.store(0, std::memory_order_relaxed);
+        intervalOverwrittenFrames.store(0, std::memory_order_relaxed);
+        intervalStarvationEvents.store(0, std::memory_order_relaxed);
+        intervalStarvedFrames.store(0, std::memory_order_relaxed);
+        intervalReaderBeginReadCalls.store(0, std::memory_order_relaxed);
+        completedIntervalSequence.store(0, std::memory_order_relaxed);
+        completedMinimumAvailableFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        completedMaximumAvailableFrames.store(0, std::memory_order_relaxed);
+        completedMinimumFreeHeadroomFrames.store(UINT64_MAX, std::memory_order_relaxed);
+        for (auto& bucket : completedOccupancyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        completedOverrunEvents.store(0, std::memory_order_relaxed);
+        completedOverwrittenFrames.store(0, std::memory_order_relaxed);
+        completedStarvationEvents.store(0, std::memory_order_relaxed);
+        completedStarvedFrames.store(0, std::memory_order_relaxed);
+        completedReaderBeginReadCalls.store(0, std::memory_order_relaxed);
+        totalOverwrittenFrames.store(0, std::memory_order_relaxed);
+        totalStarvedFrames.store(0, std::memory_order_relaxed);
     }
 };
 
@@ -304,6 +506,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingOverruns{0};
     std::atomic<uint64_t> txScheduledSampleFrame{0};
     std::atomic<uint64_t> txCompletedSampleFrame{0};
+    std::atomic<uint32_t> txCurrentCommittedMarginPackets{0};
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
     std::atomic<uint32_t> txMinimumCommittedMarginPackets{UINT32_MAX};
     std::atomic<uint64_t> txLastPreparationLatencyTicks{0};
@@ -311,9 +514,70 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> txPreparationLatencySamples{0};
     std::atomic<uint64_t> txPreparationAtMost750Us{0};
     std::atomic<uint64_t> txPreparationAtLeast1500Us{0};
+    // Snapshot-and-reset [TxPrep] telemetry.  These characterize the interval
+    // since the previous emitted line; the adjacent fields remain since-start
+    // watermarks/counters for long-run fault evidence.
+    std::atomic<uint32_t> txIntervalCommittedMarginMinPackets{UINT32_MAX};
+    std::atomic<uint32_t> txIntervalCommittedMarginMaxPackets{0};
+    std::atomic<uint64_t> txIntervalPreparationLatencyMaxTicks{0};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxPreparationLatencyHistogramBuckets>
+        txIntervalPreparationLatencyHistogram{};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxCommittedMarginHistogramBuckets>
+        txIntervalCommittedMarginHistogram{};
+    // Last complete interval, copied by the control plane.  The audio thread
+    // writes it under txCompletedIntervalSequence (odd while mutating, even
+    // when stable); readers only ever receive a value-owned snapshot.
+    std::atomic<uint64_t> txCompletedIntervalSequence{0};
+    std::atomic<uint32_t> txCompletedIntervalMarginMinPackets{UINT32_MAX};
+    std::atomic<uint32_t> txCompletedIntervalMarginMaxPackets{0};
+    std::atomic<uint64_t> txCompletedIntervalPreparationLatencyMaxTicks{0};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxPreparationLatencyHistogramBuckets>
+        txCompletedIntervalPreparationLatencyHistogram{};
+    std::array<std::atomic<uint64_t>,
+               ASFW::IsochTransport::AudioTimingGeometry::
+                   kTxCommittedMarginHistogramBuckets>
+        txCompletedIntervalCommittedMarginHistogram{};
+    /// Host-tick stamp of the last emitted [TxPrep] line. The heartbeat is
+    /// wall-clock paced rather than wake-count paced so its rate does not scale
+    /// with sample rate (a %N-of-wakes trigger fires 2-4x faster at 96/192 kHz,
+    /// flooding the log ring exactly when retention matters most).
+    std::atomic<uint64_t> txHeartbeatLastHostTicks{0};
     std::atomic<int64_t> txLastLeadTicks{0};
     std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
     std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
+
+    // --- TX exposure attribution (W > E) -----------------------------------
+    // W = CoreAudio write frontier, E = exposed frame end. A PCM frame survives
+    // iff it is written before its packet is exposed, so W > E is silence.
+    // Three distinct mechanisms produce it and they are separable only by
+    // *rate*, not by any single counter (tools/asfw_sim FINDINGS F2/F6/F9):
+    //
+    //   stall         W-E steps once, then holds flat
+    //   replay-miss   W-E ramps, and the miss count can PAY for the lost
+    //                 frames at ~kFramesPerDataPacket each
+    //   rate-mismatch W-E ramps, and the miss count cannot -- E is simply
+    //                 advancing slower than W
+    //
+    // These carry the previous sample so the driver can compute the ramp and
+    // attribute it, instead of leaving it to post-hoc log arithmetic.
+    std::atomic<uint64_t> txExposureSampleHostTicks{0};
+    std::atomic<uint64_t> txExposureSampleWriteFrame{0};
+    std::atomic<uint64_t> txExposureSampleExposedFrame{0};
+    std::atomic<uint64_t> txExposureSampleMisses{0};
+    //! Frames of deficit attributed to replay misses since stream start.
+    std::atomic<uint64_t> txExposureDebtReplayFrames{0};
+    //! Frames of deficit no replay miss can account for (the F9 residue).
+    std::atomic<uint64_t> txExposureDebtUnexplainedFrames{0};
+    //! Last classified TxExposureReason; 0 until the first classification.
+    std::atomic<uint32_t> txExposureReason{0};
+    //! Measured (W rate - E rate) in ppm; positive means E is falling behind.
+    std::atomic<int32_t> txExposurePpm{0};
 
     // RX control block members
     ASFW::Driver::RxSytCadence rxSytCadence{};
@@ -322,6 +586,32 @@ struct AudioTransportControlBlock final {
     std::atomic<uint32_t> txTransferDelayTicks{12800};
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
+
+    // Bring-up attribution. Every packet the master stream decodes bumps
+    // rxPacketsSeen plus at most one outcome counter, so a stream that never
+    // establishes can be explained without a packet analyser:
+    //
+    //   all zero                        -> nothing arrived; the IR context is
+    //                                      not delivering (wrong channel, never
+    //                                      started, device not enabled).
+    //   seen == noData                  -> the device really is sending only
+    //                                      CIP NO-DATA (SYT 0xFFFF).
+    //   any reject counter non-zero     -> WE rejected its packets; the device
+    //                                      may be streaming fine. geometry in
+    //                                      particular means our profile and the
+    //                                      device disagree on channels/DBS.
+    //   data > 0 but never established  -> valid SYTs arrive but the cadence
+    //                                      detector refuses them; see
+    //                                      RxSytCadence::Observe.
+    //
+    // Without the split these are one indistinguishable silence.
+    std::atomic<uint64_t> rxPacketsSeen{0};
+    std::atomic<uint64_t> rxDataPackets{0};
+    std::atomic<uint64_t> rxNoDataPackets{0};
+    std::atomic<uint64_t> rxShortPackets{0};
+    std::atomic<uint64_t> rxInvalidCipHeaders{0};
+    std::atomic<uint64_t> rxZeroDataBlockSize{0};
+    std::atomic<uint64_t> rxGeometryMismatch{0};
     std::atomic<uint64_t> txReplayEntries{0};
     std::atomic<uint64_t> txReplayUnderflows{0};
     std::atomic<uint64_t> txReplayInvalidSyt{0};
@@ -336,6 +626,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> captureRingReadFrame{0};
     std::atomic<uint64_t> captureRingOverruns{0};
     std::atomic<uint64_t> captureRingStarvations{0};
+    RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
 
     [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
         uint64_t sampleFrame,
@@ -391,6 +682,7 @@ struct AudioTransportControlBlock final {
         playbackRingOverruns.store(0, std::memory_order_relaxed);
         txScheduledSampleFrame.store(0, std::memory_order_relaxed);
         txCompletedSampleFrame.store(0, std::memory_order_relaxed);
+        txCurrentCommittedMarginPackets.store(0, std::memory_order_relaxed);
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_relaxed);
         txMinimumCommittedMarginPackets.store(
             UINT32_MAX, std::memory_order_relaxed);
@@ -399,6 +691,30 @@ struct AudioTransportControlBlock final {
         txPreparationLatencySamples.store(0, std::memory_order_relaxed);
         txPreparationAtMost750Us.store(0, std::memory_order_relaxed);
         txPreparationAtLeast1500Us.store(0, std::memory_order_relaxed);
+        txIntervalCommittedMarginMinPackets.store(
+            UINT32_MAX, std::memory_order_relaxed);
+        txIntervalCommittedMarginMaxPackets.store(0, std::memory_order_relaxed);
+        txIntervalPreparationLatencyMaxTicks.store(
+            0, std::memory_order_relaxed);
+        for (auto& bucket : txIntervalPreparationLatencyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        for (auto& bucket : txIntervalCommittedMarginHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        txCompletedIntervalSequence.store(0, std::memory_order_relaxed);
+        txCompletedIntervalMarginMinPackets.store(
+            UINT32_MAX, std::memory_order_relaxed);
+        txCompletedIntervalMarginMaxPackets.store(0, std::memory_order_relaxed);
+        txCompletedIntervalPreparationLatencyMaxTicks.store(
+            0, std::memory_order_relaxed);
+        for (auto& bucket : txCompletedIntervalPreparationLatencyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        for (auto& bucket : txCompletedIntervalCommittedMarginHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        txHeartbeatLastHostTicks.store(0, std::memory_order_relaxed);
         txLastLeadTicks.store(0, std::memory_order_relaxed);
         txMinimumLeadTicks.store(INT64_MAX, std::memory_order_relaxed);
         txMaximumLeadTicks.store(INT64_MIN, std::memory_order_relaxed);
@@ -408,6 +724,13 @@ struct AudioTransportControlBlock final {
         rxSequenceReplay.Reset();
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
+        rxPacketsSeen.store(0, std::memory_order_relaxed);
+        rxDataPackets.store(0, std::memory_order_relaxed);
+        rxNoDataPackets.store(0, std::memory_order_relaxed);
+        rxShortPackets.store(0, std::memory_order_relaxed);
+        rxInvalidCipHeaders.store(0, std::memory_order_relaxed);
+        rxZeroDataBlockSize.store(0, std::memory_order_relaxed);
+        rxGeometryMismatch.store(0, std::memory_order_relaxed);
         txReplayEntries.store(0, std::memory_order_relaxed);
         txReplayUnderflows.store(0, std::memory_order_relaxed);
         txReplayInvalidSyt.store(0, std::memory_order_relaxed);
@@ -420,6 +743,7 @@ struct AudioTransportControlBlock final {
         captureRingReadFrame.store(0, std::memory_order_relaxed);
         captureRingOverruns.store(0, std::memory_order_relaxed);
         captureRingStarvations.store(0, std::memory_order_relaxed);
+        rxCaptureBufferTelemetry.Reset();
 
         generation.fetch_add(1, std::memory_order_acq_rel);
     }

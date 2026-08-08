@@ -91,14 +91,33 @@ void WatchdogCoordinator::Stop() {
 }
 
 void WatchdogCoordinator::Reset() {
-    Stop();
-    action_.reset();
-    timer_.reset();
+    // Cancel is terminal. Keep both the source and its OSAction alive until
+    // DriverKit confirms that every queued timer callback has returned; the
+    // timer retains its handler until cancellation (IOTimerDispatchSource.h).
+    if (timer_) {
+        IOTimerDispatchSource* timer = timer_.detach();
+        OSAction* action = action_.detach();
+        const kern_return_t kr = timer->Cancel(^{
+            if (action) {
+                action->release();
+            }
+            timer->release();
+        });
+        if (kr != kIOReturnSuccess) {
+            if (action) {
+                action->release();
+            }
+            timer->release();
+        }
+    } else {
+        action_.reset();
+    }
     isochLogDivider_ = 0;
     itLogDivider_ = 0;
     ztsLogDivider_ = 0;
     payloadWriterLogDivider_ = 0;
     txSytTraceDivider_ = 0;
+    lastDrainEligible_ = true;
 }
 
 void WatchdogCoordinator::Schedule(uint64_t delayUsec) {
@@ -153,7 +172,22 @@ void WatchdogCoordinator::TickIsochReceive(
     // cadence (tick = 1 ms). Gated by the DirectAudio verbosity so it shares
     // the direct-audio diagnostics kill switch (default on). Draining remains
     // frequent; the receive-side log gate controls the much lower print rate.
-    if (isRunning && ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1) {
+    // 951abcc7 made all three drains conditional on IsochReceiveContext's
+    // receiveConsumer_ (they used to drain a context-owned ring
+    // unconditionally). Zts, TxSyt and [PayloadWriter] have been silent for a
+    // whole hardware session since - and LogTransmitTimingTrace has no anomaly
+    // gate, so its silence cannot be explained by a healthy stream. Report the
+    // two preconditions once per transition so the dead precondition is named
+    // rather than inferred.
+    const bool drainEligible =
+        isRunning && ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1;
+    if (drainEligible != lastDrainEligible_) {
+        lastDrainEligible_ = drainEligible;
+        ASFW_LOG(Isoch, "[RxDrain] eligible=%d running=%d verbosity=%u", drainEligible,
+                 isRunning, ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity());
+    }
+
+    if (drainEligible) {
         if (++ztsLogDivider_ >= kZtsDrainIntervalTicks) {
             ztsLogDivider_ = 0;
             isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);

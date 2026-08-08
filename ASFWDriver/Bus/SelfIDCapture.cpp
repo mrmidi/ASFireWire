@@ -163,7 +163,11 @@ kern_return_t SelfIDCapture::Arm(HardwareInterface& hw) {
     // Per OHCI §11.2, SelfIDCount register is hardware-managed (all fields "ru")
     // Software MUST NOT write to it - hardware updates it automatically after DMA
     const uint32_t paddr = static_cast<uint32_t>(segment_.address);
-    hw.WriteAndFlush(Register32::kSelfIDBuffer, paddr);
+    if (auto access = hw.TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kSelfIDBuffer, paddr);
+    } else {
+        return kIOReturnNotReady;
+    }
     ASFW_LOG(Hardware, "Self-ID buffer armed: paddr=0x%08x size=%llu bytes",
              paddr, segment_.length);
 
@@ -175,7 +179,9 @@ void SelfIDCapture::Disarm(HardwareInterface& hw) {
     if (armed_) {
         // Per OHCI §11.1: Writing 0 to SelfIDBuffer disables Self-ID DMA
         // Do NOT write to SelfIDCount - it's hardware-managed per §11.2
-        hw.WriteAndFlush(Register32::kSelfIDBuffer, 0);
+        if (auto access = hw.TryBeginAccess()) {
+            access.WriteAndFlush(Register32::kSelfIDBuffer, 0);
+        }
     }
     armed_ = false;
 }
@@ -248,7 +254,12 @@ SelfIDCapture::Decode(uint32_t selfIDCountReg, HardwareInterface& hw) const {
         const uint32_t headerQuad = base[0];
         const uint32_t genMem = (headerQuad >> 16) & 0xFF;
 
-        const uint32_t selfIDCountReg2 = hw.Read(Register32::kSelfIDCount);
+        auto access = hw.TryBeginAccess();
+        if (!access) {
+            return std::unexpected(
+                MakeDecodeError(DecodeErrorCode::BufferUnavailable, selfIDCountReg, generation));
+        }
+        const uint32_t selfIDCountReg2 = access.Read(Register32::kSelfIDCount);
         const uint32_t generation2 =
             (selfIDCountReg2 & SelfIDCountBits::kGenerationMask) >> SelfIDCountBits::kGenerationShift;
 

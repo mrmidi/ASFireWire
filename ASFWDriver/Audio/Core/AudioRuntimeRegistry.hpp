@@ -15,6 +15,8 @@
 
 #include <DriverKit/IOLib.h>
 
+#include "../Runtime/AudioTelemetrySnapshot.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -34,6 +36,7 @@ class CMPClient;
 
 namespace ASFW::Discovery {
 struct DeviceRecord;
+class DeviceRegistry;
 }
 
 namespace ASFW::Scheduling {
@@ -59,6 +62,8 @@ public:
     [[nodiscard]] std::shared_ptr<IDeviceProtocol> FindShared(uint64_t guid) noexcept;
     [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> FindEndpointRuntime(uint64_t guid) noexcept;
     [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> EnsureEndpointRuntime(uint64_t guid) noexcept;
+    [[nodiscard]] uint32_t CopyAudioTelemetrySnapshots(
+        Runtime::AudioTelemetrySnapshot& out) noexcept;
 
     // Set before discovery creates AV/C protocol instances. The registry does not
     // own the client; DriverContext owns it for the service lifetime.
@@ -78,9 +83,10 @@ public:
     // nullptr for unknown devices (Create returns nullptr) or when bus ports / a
     // valid operational node id are unavailable.
     std::shared_ptr<IDeviceProtocol> EnsureForDevice(const Discovery::DeviceRecord& record,
-                                                     Async::IFireWireBusOps* busOps,
-                                                     Async::IFireWireBusInfo* busInfo,
-                                                     IRM::IRMClient* irmClient) noexcept;
+                                                      Async::IFireWireBusOps* busOps,
+                                                      Async::IFireWireBusInfo* busInfo,
+                                                      Discovery::DeviceRegistry& routeRegistry,
+                                                      IRM::IRMClient* irmClient) noexcept;
 
     // Registers an already-constructed protocol for `guid`, replacing any existing entry.
     // For external creators/tests that build the protocol themselves rather than going

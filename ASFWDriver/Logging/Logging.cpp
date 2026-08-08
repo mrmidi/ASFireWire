@@ -35,5 +35,6 @@ os_log_t DICE()       { static os_log_t log = MakeCategory("dice");       return
 os_log_t Zts()        { static os_log_t log = MakeCategory("zts");        return log; }
 os_log_t TxSyt()      { static os_log_t log = MakeCategory("txsyt");      return log; }
 os_log_t PayloadWriter() { static os_log_t log = MakeCategory("payloadwriter"); return log; }
+os_log_t Oxfw()       { static os_log_t log = MakeCategory("oxfw");       return log; }
 
 } // namespace ASFW::Driver::Logging

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <atomic>
+#include <memory>
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -18,6 +18,7 @@
 #include "../Isoch/IsochService.hpp"
 #include "../Protocols/DV/DVCaptureService.hpp"
 #include "../Scheduling/WatchdogCoordinator.hpp"
+#include "Lifecycle/RuntimeLifecycleCoordinator.hpp"
 
 class ASFWDriver;
 
@@ -26,6 +27,7 @@ class AudioCoordinator;
 }
 
 namespace ASFW::Protocols::SBP2 {
+class SBP2NubPublisher;
 class SBP2TargetBridge;
 }
 
@@ -46,13 +48,14 @@ struct ServiceContext {
     OSSharedPtr<IOServiceNotificationDispatchSource> providerNotifications;
     OSSharedPtr<OSAction> providerNotificationAction;
 #endif
-    std::atomic<bool> stopping{false};
+    std::unique_ptr<ASFW::Driver::RuntimeLifecycleCoordinator> lifecycle;
     ASFW::Driver::StatusPublisher statusPublisher;
     ASFW::Driver::WatchdogCoordinator watchdog;
     ASFW::Driver::IsochService isoch;
     ASFW::Protocols::DV::DVCaptureService dvCapture;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
+    std::shared_ptr<ASFW::Protocols::SBP2::SBP2NubPublisher> sbp2NubPublisher;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2TargetBridge> sbp2Bridge;
 
     void DisarmProviderNotifications();
@@ -77,7 +80,6 @@ public:
     static kern_return_t PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx);
     static kern_return_t PrepareInterrupts(ASFWDriver& service, IOService* provider, ::ServiceContext& ctx);
     static kern_return_t PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx);
-    static void CleanupStartFailure(::ServiceContext& ctx);
 };
 
 } // namespace ASFW::Driver

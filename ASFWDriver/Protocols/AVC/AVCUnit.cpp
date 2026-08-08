@@ -19,11 +19,13 @@ using namespace ASFW::Protocols::AVC;
 
 AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                  std::shared_ptr<Discovery::FWUnit> unit,
+                 Discovery::DeviceRegistry& routeRegistry,
                  Protocols::Ports::FireWireBusOps& busOps,
                  Protocols::Ports::FireWireBusInfo& busInfo,
                  Scheduling::ITimerScheduler& timerScheduler)
     : device_(device),
       unit_(unit),
+      routeRegistry_(routeRegistry),
       busOps_(busOps),
       busInfo_(busInfo),
       timerScheduler_(timerScheduler) {
@@ -41,7 +43,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     // Create FCP transport
     fcpTransport_ = std::make_shared<FCPTransport>();
     if (fcpTransport_) {
-        if (!fcpTransport_->init(&busOps_, &busInfo_, device.get(), timerScheduler_, config)) {
+        if (!fcpTransport_->init(&busOps_, &busInfo_, device.get(), routeRegistry_, timerScheduler_, config)) {
             ASFW_LOG_ERROR(AVC, "AVCUnit: Failed to initialize FCPTransport");
             fcpTransport_.reset();
             return;
@@ -635,9 +637,10 @@ void AVCUnit::OnBusReset(uint32_t newGeneration) {
     // and re-probe automatically
 }
 
-void AVCUnit::OnRouteRevalidated(uint32_t generation) {
-    if (fcpTransport_) {
-        fcpTransport_->OnRouteRevalidated(generation);
+void AVCUnit::OnRouteRevalidated() {
+    const auto route = routeRegistry_.CurrentRoute(GetGUID());
+    if (fcpTransport_ && route.has_value()) {
+        fcpTransport_->OnRouteRevalidated(*route);
     }
 }
 

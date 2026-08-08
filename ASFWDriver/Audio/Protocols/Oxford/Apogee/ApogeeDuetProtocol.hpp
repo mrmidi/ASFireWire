@@ -3,18 +3,35 @@
 //
 // ApogeeDuetProtocol.hpp - Protocol implementation for Apogee Duet FireWire
 // Reference: snd-firewire-ctl-services/protocols/oxfw/src/apogee.rs
+//
+// What is left here after the FW-124 decomposition is composition plus the
+// device's own control surface:
+//
+//   ApogeeVendorCodec     command table and operand encoding   (FW-126)
+//   ApogeeTransport       FCP dispatch and meter register IO   (FW-129)
+//   ApogeeParamsSerdes    parameter serialization              (FW-128)
+//   OxfordCsr             chip-common FW970/971 ID registers   (FW-137)
+//   ApogeeDuetDuplex      duplex lifecycle and clock FSM       (FW-127)
+//
+// The duplex controller is a member rather than a base class, so this type no
+// longer carries the IDuplexDeviceControl vtable; AsDuplexDeviceControl hands
+// out the member. The IDeviceProtocol methods that overlap the duplex surface
+// stay here as forwarders, because callers reach them through IDeviceProtocol.
 
 #pragma once
 
+#include "ApogeeDuetDuplex.hpp"
 #include "ApogeeTypes.hpp"
+#include "ApogeeVendorCodec.hpp"
+#include "../OxfordCsr.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include "../../Duplex/IDuplexDeviceControl.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
+#include "../../../../Scheduling/ITimerScheduler.hpp"
 #include <DriverKit/IOReturn.h>
 #include <vector>
 #include <functional>
 #include <cstdint>
-#include <memory>
 #include <span>
 
 namespace ASFW::Protocols::AVC {
@@ -32,114 +49,69 @@ struct CMPDevice;
 
 namespace ASFW::Audio::Oxford::Apogee {
 
-class ApogeeDuetProtocol final : public IDeviceProtocol,
-                                 public IDuplexDeviceControl {
+class ApogeeDuetProtocol final : public IDeviceProtocol {
 public:
-    struct VendorCommand {
-        enum class Code : uint8_t {
-            MicPolarity = 0x00,
-            XlrIsMicLevel = 0x01,
-            XlrIsConsumerLevel = 0x02,
-            MicPhantom = 0x03,
-            OutIsConsumerLevel = 0x04,
-            InGain = 0x05,
-            HwState = 0x07,
-            OutMute = 0x09,
-            InputSourceIsPhone = 0x0C,
-            MixerSrc = 0x10,
-            OutSourceIsMixer = 0x11,
-            DisplayOverholdTwoSec = 0x13,
-            DisplayClear = 0x14,
-            OutVolume = 0x15,
-            MuteForLineOut = 0x16,
-            MuteForHpOut = 0x17,
-            UnmuteForLineOut = 0x18,
-            UnmuteForHpOut = 0x19,
-            DisplayIsInput = 0x1B,
-            InClickless = 0x1E,
-            DisplayFollowToKnob = 0x22,
-        };
+    // The command table and operand encoding moved to ApogeeVendorCodec (FW-126);
+    // this alias keeps every existing ApogeeDuetProtocol::VendorCommand use valid.
+    using VendorCommand = ApogeeVendorCommand;
 
-        Code code{};
-        uint8_t index{0};
-        uint8_t index2{0};
-        bool boolValue{false};
-        uint8_t u8Value{0};
-        uint16_t u16Value{0};
-        std::array<uint8_t, 11> hwState{};
-
-        static VendorCommand Bool(Code code, bool value);
-        static VendorCommand IndexedBool(Code code, uint8_t index, bool value);
-        static VendorCommand InGain(uint8_t index, uint8_t value);
-        static VendorCommand OutVolume(uint8_t value);
-        static VendorCommand MixerSrc(uint8_t source, uint8_t destination, uint16_t gain);
-        static VendorCommand HwState(const std::array<uint8_t, 11>& raw);
-        static VendorCommand Make(Code code);
-
-        [[nodiscard]] std::vector<uint8_t> BuildOperandBase() const;
-        void AppendControlValue(std::vector<uint8_t>& operands) const;
-        [[nodiscard]] bool ParseStatusPayload(std::span<const uint8_t> payload);
-    };
-
-    static std::vector<VendorCommand> BuildKnobStateQuery();
-    static VendorCommand BuildKnobStateControl(const KnobState& state);
-    static KnobState ParseKnobState(const VendorCommand& command);
-
-    static std::vector<VendorCommand> BuildOutputParamsQuery();
-    static std::vector<VendorCommand> BuildOutputParamsControl(const OutputParams& params);
-    static OutputParams ParseOutputParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildInputParamsQuery();
-    static std::vector<VendorCommand> BuildInputParamsControl(const InputParams& params);
-    static InputParams ParseInputParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildMixerParamsQuery();
-    static std::vector<VendorCommand> BuildMixerParamsControl(const MixerParams& params);
-    static MixerParams ParseMixerParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildDisplayParamsQuery();
-    static std::vector<VendorCommand> BuildDisplayParamsControl(const DisplayParams& params);
-    static DisplayParams ParseDisplayParams(const std::vector<VendorCommand>& commands);
+    // Params serialization moved to ApogeeParamsSerdes (FW-128). It is pure and
+    // static, so it is tested directly rather than through this class.
 
     using VoidCallback = std::function<void(IOReturn)>;
     template<typename T> using ResultCallback = std::function<void(IOReturn, T)>;
 
+    /// `routeRegistry` is what the register reads resolve their route through.
+    /// It must be supplied on any path that reads CSRs or meters: the two
+    /// construction sites bind different subsets of the optional clients (the
+    /// discovery prefetch has an FCP transport but no CMP/IRM client; the
+    /// factory has CMP/IRM but no transport), so route resolution cannot hang
+    /// off any of them. See FW-142.
     ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
                        Protocols::Ports::FireWireBusInfo& busInfo,
-                       uint16_t nodeId,
+                       Discovery::DeviceRouteToken route,
+                       Discovery::DeviceRegistry* routeRegistry = nullptr,
                        Protocols::AVC::FCPTransport* fcpTransport = nullptr,
                        IRM::IRMClient* irmClient = nullptr,
                        CMP::CMPClient* cmpClient = nullptr,
-                       uint64_t deviceGuid = 0,
-                       uint32_t formatSettleDelayMs = 100U);
-    virtual ~ApogeeDuetProtocol() = default;
+                       uint32_t formatSettleDelayMs = 100U,
+                       Scheduling::ITimerScheduler* timerScheduler = nullptr);
+    ~ApogeeDuetProtocol() override = default;
 
     // IDeviceProtocol implementation
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
-    const char* GetName() const override { return "Apogee Duet FireWire"; }
-    bool HasDsp() const override { return true; } // Has mixer/DSP features
-    bool HasMixer() const override { return true; }
-    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
-    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return this; }
-    const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
+    [[nodiscard]] const char* GetName() const override { return "Apogee Duet FireWire"; }
+    [[nodiscard]] bool HasDsp() const override { return true; } // Has mixer/DSP features
+    [[nodiscard]] bool HasMixer() const override { return true; }
+    IDuplexDeviceControl* AsDuplexDeviceControl() noexcept override { return &duplex_; }
+    [[nodiscard]] const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override {
+        return &duplex_;
+    }
 
-    // IDuplexDeviceControl: the generic lifecycle owns IRM + host isoch;
-    // this adapter owns only AV/C signal-format and CMP/PCR operations.
-    void PrepareDuplex(const AudioDuplexChannels& channels,
-                       const AudioClockConfig& desiredClock,
-                       PrepareCallback callback) override;
-    void SetAssignedChannels(const AudioDuplexChannels& channels) noexcept override;
-    void ProgramRx(StageCallback callback) override;
-    void ProgramTxAndEnableDuplex(StageCallback callback) override;
-    void ConfirmDuplexStart(ConfirmCallback callback) override;
+    // IDeviceProtocol members the duplex controller answers. Kept here because
+    // callers hold an IDeviceProtocol, not an IDuplexDeviceControl.
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override {
+        return duplex_.GetRuntimeAudioStreamCaps(outCaps);
+    }
+    [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }
+    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
+
+    /// May be null before the runtime context is bound; callers must check.
+    [[nodiscard]] Protocols::AVC::FCPTransport* GetFCPTransport() const noexcept {
+        return runtime_.fcpTransport;
+    }
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
+                              Protocols::AVC::FCPTransport* transport) override {
+        duplex_.UpdateRuntimeContext(route, transport);
+    }
+
+    /// Discovery applies the 48 kHz formation before publishing, holding the
+    /// concrete type rather than the duplex seam.
     void ApplyClockConfig(const AudioClockConfig& desiredClock,
-                          ClockApplyCallback callback) override;
-    void ReadDuplexHealth(HealthCallback callback) override;
-    void DisconnectPlayback(VoidCallback callback) override;
-    void DisconnectCapture(VoidCallback callback) override;
-    [[nodiscard]] IOReturn StopDuplex() override;
-    [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
+                          IDuplexDeviceControl::ClockApplyCallback callback) {
+        duplex_.ApplyClockConfig(desiredClock, std::move(callback));
+    }
 
     // ========================================================================
     // Parameter Access (Async)
@@ -177,75 +149,12 @@ public:
     // Oxford ID Registers (Async)
     // ========================================================================
 
+    // Register map, decode and ASIC classification are chip-common and live in
+    // Oxford/OxfordCsr.hpp (FW-137). These remain as the Duet's entry points.
     void GetFirmwareId(ResultCallback<uint32_t> callback);
     void GetHardwareId(ResultCallback<uint32_t> callback);
 
-    // Oxford hardware identifiers (from snd-firewire-ctl-services/oxford.rs).
-    static constexpr uint32_t kHardwareIdFw970 = 0x39443841; // '9''D''8''A'
-    static constexpr uint32_t kHardwareIdFw971 = 0x39373100; // '9''7''1''\0'
-
-    // Runtime integration hook. Not wired by factory yet.
-    void SetFCPTransport(Protocols::AVC::FCPTransport* fcpTransport) noexcept {
-        // The cache describes commands accepted through one transport epoch;
-        // a replacement transport must re-establish the device formation.
-        if (fcpTransport_ != fcpTransport) {
-            clockConfigApplied_ = false;
-        }
-        fcpTransport_ = fcpTransport;
-    }
-
-    // IDeviceProtocol boolean control overrides
-    void UpdateRuntimeContext(uint16_t nodeId,
-                              Protocols::AVC::FCPTransport* transport) override;
-    bool SupportsBooleanControl(uint32_t classIdFourCC,
-                                uint32_t element) const override;
-    IOReturn GetBooleanControlValue(uint32_t classIdFourCC,
-                                    uint32_t element,
-                                    bool& outValue) override;
-    IOReturn SetBooleanControlValue(uint32_t classIdFourCC,
-                                    uint32_t element,
-                                    bool value) override;
-
-    // Mapping helper for tests and call sites.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    static bool TryMapBooleanControl(uint32_t classIdFourCC,
-                                     uint32_t element,
-                                     uint8_t& outChannelIndex) noexcept {
-        const bool supportedClass =
-            (classIdFourCC == static_cast<uint32_t>('phan')) ||
-            (classIdFourCC == static_cast<uint32_t>('phsi'));
-        if (!supportedClass) {
-            return false;
-        }
-        if (element == 1u) {
-            outChannelIndex = 0u;
-            return true;
-        }
-        if (element == 2u) {
-            outChannelIndex = 1u;
-            return true;
-        }
-        return false;
-    }
-
 private:
-    struct ClockTransition;
-
-    Protocols::Ports::FireWireBusOps& busOps_;
-    Protocols::Ports::FireWireBusInfo& busInfo_;
-    uint16_t nodeId_;
-    Protocols::AVC::FCPTransport* fcpTransport_{nullptr};
-    IRM::IRMClient* irmClient_{nullptr};
-    CMP::CMPClient* cmpClient_{nullptr};
-    uint64_t deviceGuid_{0};
-    AudioDuplexChannels duplexChannels_{};
-    AudioClockConfig appliedClock_{};
-    FW::Generation preparedGeneration_{0};
-    bool clockConfigApplied_{false};
-    bool outputConnected_{false};
-    bool inputConnected_{false};
-    uint32_t formatSettleDelayMs_{100U};
-
     // Helpers
     using VendorResultCallback = std::function<void(IOReturn, const VendorCommand&)>;
     using VendorSequenceCallback =
@@ -258,27 +167,12 @@ private:
                                bool isStatus,
                                VendorSequenceCallback callback);
 
-    [[nodiscard]] CMP::CMPDevice CurrentCMPDevice() const noexcept;
+    /// Route-liveness policy handed to the chip-common CSR reads.
+    [[nodiscard]] Oxford::RouteProvider MakeRouteProvider() const;
 
-    void AdvanceClockTransition(const std::shared_ptr<ClockTransition>& transition);
-    void FailClockTransition(const std::shared_ptr<ClockTransition>& transition,
-                             IOReturn status);
-    void CompleteClockTransition(const std::shared_ptr<ClockTransition>& transition,
-                                 IOReturn status);
-
-    static uint32_t ReadQuadletBE(const uint8_t* data) noexcept;
-
-    // Meter and Oxford CSR constants.
-    static constexpr uint64_t kMeterBaseAddress = 0xFFFFF0080000ULL;
-    static constexpr uint32_t kMeterInputOffset = 0x0004;
-    static constexpr uint32_t kMeterMixerOffset = 0x0404;
-    static constexpr uint64_t kOxfordCsrBase = 0xFFFFF0000000ULL;
-    static constexpr uint64_t kOxfordFirmwareIdOffset = 0x50000ULL;
-    static constexpr uint64_t kOxfordHardwareIdOffset = 0x90020ULL;
-
-    // Apogee Constants
-    static constexpr uint8_t kOUI[3] = {0x00, 0x03, 0xDB};
-    static constexpr uint8_t kPrefix[3] = {0x50, 0x43, 0x4D}; // PCM
+    // Declaration order matters: duplex_ binds a reference to runtime_.
+    DuetRuntime runtime_;
+    ApogeeDuetDuplex duplex_;
 };
 
 } // namespace ASFW::Audio::Oxford::Apogee

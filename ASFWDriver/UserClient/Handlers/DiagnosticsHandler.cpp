@@ -1,5 +1,7 @@
 #include "DiagnosticsHandler.hpp"
 #include "../../Controller/ControllerCore.hpp"
+#include "../../Audio/Core/AudioRuntimeRegistry.hpp"
+#include "../../Audio/Runtime/AudioTelemetrySnapshot.hpp"
 #include "../../Diagnostics/DiagnosticsService.hpp"
 #include "../../Async/AsyncSubsystem.hpp"
 #include "../../Async/Interfaces/IAsyncSubsystemPort.hpp"
@@ -7,6 +9,7 @@
 #include "../../Logging/Logging.hpp"
 #include "ASFWDriver.h"
 #include "ControllerCoreAccess.hpp"
+#include "../WireFormats/DiagnosticsWireEnvelope.hpp"
 
 #include <DriverKit/OSData.h>
 #include <cstddef>
@@ -80,7 +83,12 @@ kern_return_t CollectAndPack(Diagnostics::DiagnosticsService* service, IOUserCli
 
     StructType val{};
     ASFWDiagStatus status = (service->*collectFn)(&val);
-    (void)status; // Handled via header status field
+
+    // Collectors intentionally return status-only failures when a hardware
+    // snapshot is unsafe (for example PHY reads while isochronous DMA runs).
+    // Always preserve a valid ABI envelope so the app can consume that status.
+    Wire::EnsureDiagnosticsWireEnvelope(val);
+    val.header.status = static_cast<uint32_t>(status);
 
     size_t sizeToCopy = PrepareForWire(val);
 
@@ -194,6 +202,28 @@ kern_return_t DiagnosticsHandler::GetLogStats(IOUserClientMethodArguments* args)
     ASFW::Logging::PackLogStats(ASFW::Logging::LogRing::Shared(), stats);
 
     OSData* data = OSData::withBytes(&stats, sizeof(stats));
+    if (!data) {
+        return kIOReturnNoMemory;
+    }
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+kern_return_t DiagnosticsHandler::GetAudioTelemetry(
+    IOUserClientMethodArguments* args) {
+    if (!args || !driver_) {
+        return kIOReturnBadArgument;
+    }
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* runtime = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    if (!runtime) {
+        return kIOReturnNotReady;
+    }
+
+    ASFW::Audio::Runtime::AudioTelemetrySnapshot snapshot{};
+    (void)runtime->CopyAudioTelemetrySnapshots(snapshot);
+    OSData* data = OSData::withBytes(&snapshot, sizeof(snapshot));
     if (!data) {
         return kIOReturnNoMemory;
     }

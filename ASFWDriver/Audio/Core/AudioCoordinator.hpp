@@ -11,6 +11,7 @@
 #include "AudioNubPublisher.hpp"
 #include "../Protocols/Backends/AVCAudioBackend.hpp"
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
+#include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 
 #include "../../Logging/Logging.hpp"
 #include "../Protocols/DeviceProtocolFactory.hpp"
@@ -18,8 +19,10 @@
 #include "../../Discovery/IDeviceManager.hpp"
 
 #include <DriverKit/IOLib.h>
+#include <atomic>
 #include <cstdint>
 #include <optional>
+#include <unordered_set>
 
 class IOService;
 
@@ -69,17 +72,27 @@ public:
 
 private:
     [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
+    [[nodiscard]] kern_return_t StopHostTransport(const char* reason,
+                                                   bool generationInvalidated = false) noexcept;
+    void HandleHostTimingLoss(uint64_t guid) noexcept;
 
     AudioNubPublisher publisher_;
-    DiceAudioBackend dice_;
-    AVCAudioBackend avc_;
-
     Discovery::IDeviceManager& deviceManager_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
+    // The one controller-global isoch transport session. Backends borrow this
+    // neutral interface; none owns a second wrapper around IsochService.
+    IsochDuplexHostTransport hostTransport_;
+    std::atomic<bool> teardownRequested_{false};
+    AudioDuplexCoordinator duplexCoordinator_;
+    DiceAudioBackend dice_;
+    AVCAudioBackend avc_;
 
     IOLock* lock_{nullptr};
     uint64_t activeGuid_{0};
+    // A CoreAudio StopIO can arrive after discovery has retired the GUID. Keep
+    // that callback from re-entering a backend that now has no remote device.
+    std::unordered_set<uint64_t> remoteLostGuids_{};
 };
 
 } // namespace ASFW::Audio

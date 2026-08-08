@@ -217,9 +217,9 @@ struct ASFWMCPHardwareSmokeRunner<Driver: ASFWDriverControlling> {
     }
 
     private func hostRegisterProbe() async -> ASFWMCPHardwareSmokeStepResult {
-        // The catalog already advertises this read-only surface.  Calling it
-        // makes adapter gaps explicit in the smoke report rather than silently
-        // treating OHCI register inspection as covered by telemetry.
+        // Reads the covered OHCI registers from the diagnostics snapshot. Calling it
+        // keeps host-register inspection explicit in the smoke report rather than
+        // silently treating it as covered by telemetry.
         let probe = await core.callTool(name: "asfw_snapshot_ohci_registers")
         return toolResult(
             name: "Snapshot selected OHCI registers",

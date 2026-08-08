@@ -269,8 +269,8 @@ void AsyncSubsystem::ExecuteNextCommand() {
                 if (shouldRetry && !cmdPtr->cancelRequested.load(std::memory_order_acquire)) {
                     cmdPtr->retriesRemaining--;
                     ASFW_LOG(Async,
-                             "🔄 Command failed (status=%u), retrying (%u attempts left) handle=0x%x",
-                             static_cast<unsigned>(status),
+                             "🔄 Command failed (status=%{public}s), retrying (%u attempts left) handle=0x%x",
+                             ASFW::Async::ToString(status),
                              cmdPtr->retriesRemaining,
                              cmdPtr->publicHandle.value);
 
@@ -288,9 +288,9 @@ void AsyncSubsystem::ExecuteNextCommand() {
 
             // No retry or retries exhausted - final failure.
             ASFW_LOG(Async,
-                     "❌ Command failed permanently: handle=0x%x status=%u",
+                     "❌ Command failed permanently: handle=0x%x status=%{public}s",
                      cmdPtr->publicHandle.value,
-                     static_cast<unsigned>(status));
+                     ASFW::Async::ToString(status));
 
             if (cmdPtr->userCallback) {
                 cmdPtr->userCallback(cmdPtr->publicHandle, status, responseCode, responsePayload);

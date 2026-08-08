@@ -76,6 +76,11 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
         return AsyncHandle{0};
     }
 
+    // TODO: Temporary topology/ROM triage log. Remove once Saffire init is understood.
+    // The whole block only feeds the log, so gate it entirely — otherwise the
+    // decoded fields are unused in every translation unit that includes this
+    // header, which is the bulk of the driver's -Wunused-variable noise.
+#if ASFW_DEBUG_TEMP_RX_TX
     if (headerSize >= 12) {
         uint32_t q0 = 0;
         uint32_t q1 = 0;
@@ -90,8 +95,6 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
         const uint16_t headerDest = static_cast<uint16_t>((q1 >> 16) & 0xFFFFu);
         const uint16_t headerAddrHi = static_cast<uint16_t>(q1 & 0xFFFFu);
 
-        // TODO: Temporary topology/ROM triage log. Remove once Saffire init is understood.
-#if ASFW_DEBUG_TEMP_RX_TX
         ASFW_LOG_V4(Async,
                  "[TempTX] gen=%u handle=0x%08x src=0x%04x metaDst=0x%04x hdrDst=0x%04x tLabel=%u hdrTLabel=%u tCode=0x%x hdrTCode=0x%x ctxSpeed=%u hdrSpeed=%u addr=0x%04x_%08x len=%u strategy=%u q0=0x%08x q1=0x%08x q2=0x%08x",
                  meta.generation,
@@ -112,9 +115,9 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
                  q0,
                  q1,
                  q2);
-#endif
     }
-    
+#endif
+
     // Step 6: Prepare DMA payload (if needed) - CRTP dispatch
     std::unique_ptr<PayloadContext> payload = 
         static_cast<Derived*>(this)->PreparePayload(*subsys.GetHardware());

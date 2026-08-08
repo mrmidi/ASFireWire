@@ -49,10 +49,11 @@ public:
     /// Construct protocol handler
     /// @param busOps     FireWire bus operations port
     /// @param busInfo    FireWire bus info port
-    /// @param nodeId     Target device node ID
+    /// @param route      Current registry-issued device route
     SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                       Protocols::Ports::FireWireBusInfo& busInfo,
-                      uint16_t nodeId,
+                      Discovery::DeviceRegistry& routeRegistry,
+                      const Discovery::DeviceRouteToken& route,
                       ::ASFW::IRM::IRMClient* irmClient = nullptr);
     
     /// Initialize protocol (generic DICE init is delegated to the TCAT core)
@@ -82,7 +83,7 @@ public:
     void ConfirmDuplex48kStart(VoidCallback callback) override;
     IOReturn StopDuplex() override;
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return tcat_.GetIRMClient(); }
-    void UpdateRuntimeContext(uint16_t nodeId,
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
     
     // ========================================================================

@@ -35,65 +35,70 @@
 #include "../Protocols/SBP2/Session/DriverKitSessionScheduler.hpp"
 #include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../SCSIController/SBP2BridgeHub.hpp"
+#include "../SCSIController/SBP2NubPublisher.hpp"
 #include "../SCSIController/SBP2TargetBridge.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
 void ServiceContext::DisarmProviderNotifications() {
 #ifndef ASFW_HOST_TEST
     if (providerNotifications) {
-        (void)providerNotifications->SetEnableWithCompletion(false, nullptr);
-        // Do not call Cancel(nullptr) here. DriverKit dispatches cancel asynchronously,
-        // and releasing the source before that block runs can crash in Cancel_Impl.
+        // Cancellation is terminal, so retain the source and its OSAction until
+        // DriverKit reports that all queued notification handlers completed.
+        auto* source = providerNotifications.detach();
+        auto* action = providerNotificationAction.detach();
+        const kern_return_t kr = source->Cancel(^{
+            if (action) {
+                action->release();
+            }
+            source->release();
+        });
+        if (kr != kIOReturnSuccess) {
+            if (action) {
+                action->release();
+            }
+            source->release();
+        }
+        return;
     }
-    providerNotifications.reset();
     providerNotificationAction.reset();
 #endif
 }
 
 void ServiceContext::Reset(ResetMode mode) {
-    stopping.store(true, std::memory_order_release);
-    if (deps.asyncSubsystem) {
-        deps.asyncSubsystem->BeginQuiesce();
+    // Runtime stopping is owned by RuntimeLifecycleCoordinator. Reset only
+    // releases resources after its quiesce executor has stopped them.
+    if (mode == ResetMode::Full && sbp2NubPublisher) {
+        sbp2NubPublisher->Shutdown();
+        sbp2NubPublisher.reset();
     }
-    if (audioCoordinator) {
-        audioCoordinator->BeginTeardown();
-    }
-    dvCapture.StopAll(isoch);
-    if (deps.avcDiscovery) {
-        deps.avcDiscovery->Shutdown();
-    }
-    // Unpublish + shut down the HBA bridge while the session registry and bus
-    // are still alive: Shutdown() releases the SBP-2 session (logout on the
-    // wire) and aborts in-flight/queued HBA tasks back to the SCSI layer.
-    ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
-    if (sbp2Bridge) {
-        sbp2Bridge->Shutdown();
-        sbp2Bridge.reset();
-    }
-    (void)isoch.StopAll();
-    // The ROM scanner holds a bare IFireWireBus& into the controller-owned
-    // FireWireBusImpl, fixed at construction. Destroy it while the bus is still
-    // alive (the controller's own shared_ptr copy is dropped first) so the
-    // rebuild path in EnsureRomScanner creates a fresh scanner against the new
-    // controller's bus, instead of reusing one bound to freed memory.
+    // Tear down the runtime audio protocols while the services they were built from
+    // (bus/hardware/IRM) are still alive. The bus is one of those services: it lives in
+    // ControllerCore::busImpl_, and IRMClient borrows it as a non-owning IFireWireBus&.
+    // Audio teardown releases IRM reservations through that reference, so every audio
+    // destructor must run *before* controller.reset() destroys the bus.
+    //
+    // ServiceContext solely owns audioCoordinator, so resetting it here destroys it now.
+    // The registry is co-owned by the controller's own deps_ copy, which must be dropped
+    // explicitly: ~ControllerCore destroys busImpl_ before deps_, so letting the registry
+    // die with the controller would call through a dangling bus.
+    audioCoordinator.reset();
     if (controller) {
+        controller->ReleaseAudioRuntimeRegistry();
+        // ROMScanner borrows the controller-owned IFireWireBus. Drop the
+        // controller's shared_ptr while that bus is still alive.
         controller->AttachROMScanner(nullptr);
     }
+    deps.audioRuntimeRegistry.reset();
+    // Drop the context's remaining scanner reference before destroying the
+    // controller. EnsureRomScanner will bind a fresh scanner after rebuild.
     deps.romScanner.reset();
     controller.reset();
-    audioCoordinator.reset();
-    // Tear down the runtime audio protocols while the services they were built from
-    // (bus/hardware/IRM) are still alive. controller.reset() above dropped the controller's
-    // copy of this shared_ptr, so the deps copy is the last owner; resetting it here lets the
-    // protocol destructors run before the bus/IRM teardown below.
-    deps.audioRuntimeRegistry.reset();
     deps.hardware.reset();
     deps.busReset.reset();
     deps.busManager.reset();
     deps.selfId.reset();
     deps.scheduler.reset();
     deps.metrics.reset();
-    deps.stateMachine.reset();
     deps.configRom.reset();
     deps.configRomStager.reset();
     if (mode == ResetMode::Full) {
@@ -110,6 +115,13 @@ void ServiceContext::Reset(ResetMode mode) {
     deps.irmClient.reset();         // Clean up IRM client
     deps.asyncController.reset();
     deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    if (mode == ResetMode::Full) {
+        // A new provider incarnation must rediscover remote hardware. Retaining
+        // old FWDevice/FWUnit objects here would let a new SBP-2 nub publisher
+        // adopt a stale unit before a fresh ROM scan establishes its route.
+        deps.deviceManager.reset();
+        deps.deviceRegistry.reset();
+    }
     deps.busResetStartedCallback = {};
     deps.cycleInconsistentCallback = {};
     statusPublisher.Reset();
@@ -118,6 +130,7 @@ void ServiceContext::Reset(ResetMode mode) {
     if (mode == ResetMode::Full) {
         workQueue.reset();
         interruptAction.reset();
+        lifecycle.reset();
     }
 }
 
@@ -142,6 +155,9 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     }
     if (!d.stateMachine) {
         d.stateMachine = std::make_shared<ControllerStateMachine>();
+    }
+    if (!ctx.lifecycle) {
+        ctx.lifecycle = std::make_unique<RuntimeLifecycleCoordinator>(d.stateMachine);
     }
     if (!d.configRom) {
         d.configRom = std::make_shared<ConfigROMBuilder>();
@@ -251,10 +267,11 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
     }
 
     if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
-        d.deviceManager && d.sbp2SessionScheduler) {
+        d.deviceRegistry && d.deviceManager && d.sbp2SessionScheduler) {
         auto& bus = ctx.controller->Bus();
         d.sbp2SessionRegistry = std::make_shared<ASFW::Protocols::SBP2::SessionRegistry>(
-            bus, bus, *d.sbp2AddressSpaceManager, *d.deviceManager, *d.sbp2SessionScheduler,
+            bus, bus, *d.sbp2AddressSpaceManager, *d.deviceRegistry, *d.deviceManager,
+            *d.sbp2SessionScheduler,
             ctx.workQueue.get());
         if (d.busReset) {
             // Last-resort recovery for targets whose fetch engine wedges so hard
@@ -285,6 +302,13 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
         ctx.sbp2Bridge->Start();
         ASFW::Protocols::SBP2::SBP2BridgeHub::Set(ctx.sbp2Bridge);
         ASFW_LOG(Controller, "[Controller] SBP2 target bridge initialized");
+    }
+
+    if (!ctx.sbp2NubPublisher && d.deviceManager && ctx.workQueue) {
+        ctx.sbp2NubPublisher = std::make_shared<ASFW::Protocols::SBP2::SBP2NubPublisher>(
+            &service, *d.deviceManager, ctx.workQueue.get());
+        ctx.sbp2NubPublisher->Start();
+        ASFW_LOG(Controller, "[Controller] SBP-2 real-unit nub publisher initialized");
     }
 
     // Inbound local-request routing remains owned centrally by LocalRequestDispatch
@@ -356,50 +380,6 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
 
 kern_return_t DriverWiring::PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx) {
     return ctx.watchdog.Prepare(service, ctx.workQueue);
-}
-
-void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
-    ctx.stopping.store(true, std::memory_order_release);
-    if (ctx.deps.asyncSubsystem) {
-        ctx.deps.asyncSubsystem->BeginQuiesce();
-    }
-    if (ctx.audioCoordinator) {
-        ctx.audioCoordinator->BeginTeardown();
-    }
-    ctx.dvCapture.StopAll(ctx.isoch);
-    if (ctx.deps.avcDiscovery) {
-        ctx.deps.avcDiscovery->Shutdown();
-    }
-    ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
-    if (ctx.sbp2Bridge) {
-        ctx.sbp2Bridge->Shutdown();
-        ctx.sbp2Bridge.reset();
-    }
-    (void)ctx.isoch.StopAll();
-    if (ctx.deps.interrupts)
-        ctx.deps.interrupts->Teardown();
-    if (ctx.deps.selfId && ctx.deps.hardware)
-        ctx.deps.selfId->Disarm(*ctx.deps.hardware);
-    if (ctx.deps.selfId)
-        ctx.deps.selfId->ReleaseBuffers();
-    if (ctx.deps.configRomStager && ctx.deps.hardware)
-        ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
-
-    // Stop the async engine before ControllerCore::Stop closes the PCI BAR.
-    if (ctx.deps.asyncSubsystem) {
-        ctx.deps.asyncSubsystem->Stop();
-    }
-    if (ctx.controller) {
-        ctx.controller->Stop();
-        ctx.controller.reset();
-    }
-    if (ctx.deps.hardware)
-        ctx.deps.hardware->Detach();
-    ctx.interruptAction.reset();
-    ctx.watchdog.Reset();
-    ctx.DisarmProviderNotifications();
-    ctx.workQueue.reset();
-    ctx.statusPublisher.Reset();
 }
 
 } // namespace ASFW::Driver

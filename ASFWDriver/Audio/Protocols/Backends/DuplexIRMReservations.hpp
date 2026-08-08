@@ -103,6 +103,17 @@ class DuplexIRMReservations final {
         }
     }
 
+    // An IRM allocation belongs to the bus generation in which it was made.
+    // Once that generation is invalid (including provider removal), a release
+    // transaction is both unnecessary and unable to complete. Apple
+    // IOFWIsochChannel.cpp:1243-1269 likewise clears local allocation state
+    // after a bus reset instead of releasing resources on the old generation.
+    void InvalidateAfterGenerationChange() noexcept {
+        while (count_ > 0) {
+            entries_[--count_] = {};
+        }
+    }
+
     [[nodiscard]] size_t Count() const noexcept { return count_; }
 
   private:
@@ -261,6 +272,11 @@ class DuplexIRMReservationPair final {
     void ReleaseAll() noexcept {
         capture_.ReleaseAll();
         playback_.ReleaseAll();
+    }
+
+    void InvalidateAfterGenerationChange() noexcept {
+        capture_.InvalidateAfterGenerationChange();
+        playback_.InvalidateAfterGenerationChange();
     }
 
     [[nodiscard]] size_t PlaybackCount() const noexcept { return playback_.Count(); }

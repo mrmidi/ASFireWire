@@ -1,0 +1,22 @@
+name: f3-capacity-2048-fix
+description: >
+  F4. The recommended fix, and the one the driver change must keep green.
+  kCapacity alone goes 512 -> 2048; kReadDelay stays at 256. This gives MORE
+  stall tolerance (179 ms) than the originally proposed two-constant change
+  (kReadDelay 1024 + kCapacity 2048 = 174 ms) while avoiding its 32 -> 128 ms
+  bring-up regression, since MarkEstablished() gates deferred IT start on
+  producer >= kReadDelay. One constant, strictly better on both axes.
+base: driver
+rate: 48000
+
+geometry:
+  replay_capacity: 2048
+
+scenario:
+  duration_s: 20
+  stall_ms: 100
+  stall_at_s: 5
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.95

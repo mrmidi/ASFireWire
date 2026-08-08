@@ -10,6 +10,8 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpFetchDiagnostics() throws -> ASFWDiagnosticsSnapshot
     func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot?
     func mcpDiscoveredDevices() -> [FWDeviceInfo]?
+    func mcpTopologySnapshot() -> TopologySnapshot?
+    func mcpConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult?
     func mcpAVCUnits() -> [AVCUnitInfo]?
     func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities?
 
@@ -24,6 +26,7 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
     func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse?
     func mcpLogRingStats() -> ASFWLogRingStats?
+    func mcpAudioTelemetry() -> AudioTelemetrySnapshot?
 }
 
 extension ASFWDriverConnector: ASFWLiveDriverBackend {
@@ -42,6 +45,10 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
         try ASFWDiagnosticsClient(connector: self).fetchSnapshot()
     }
 
+    func mcpAudioTelemetry() -> AudioTelemetrySnapshot? {
+        getAudioTelemetry()
+    }
+
     func mcpLocalIrmResourceSnapshot() -> ASFWMCPLocalIrmResourceSnapshot? {
         guard let diagnostics = try? mcpFetchDiagnostics(),
               let localNodeId = diagnostics.busContract.localNode.nodeIdOrNil,
@@ -57,13 +64,26 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
             isLocalIRM: busManager.localIsIRM != 0,
             readbackValid: busManager.localIrmReadbackValid != 0,
             bandwidthAvailable: busManager.localIrmBandwidthAvailable,
-            channelsAvailable31_0: busManager.localIrmChannelsAvailableLo,
-            channelsAvailable63_32: busManager.localIrmChannelsAvailableHi
+            // CHANNELS_AVAILABLE_HI carries channels 0..31 and LO carries 32..63.
+            // Proof in-tree: LocalIRMResourceController.cpp:81 tests
+            // `channelsAvailableHi & 0x1` for the channel-31 broadcast reservation, so
+            // channel N sits at bit (31 - N) of the HI word. These two were previously
+            // swapped here, which inverted both halves of `asfw_irm_get_channels`.
+            channelsAvailable31_0: busManager.localIrmChannelsAvailableHi,
+            channelsAvailable63_32: busManager.localIrmChannelsAvailableLo
         )
     }
 
     func mcpDiscoveredDevices() -> [FWDeviceInfo]? {
         getDiscoveredDevices()
+    }
+
+    func mcpTopologySnapshot() -> TopologySnapshot? {
+        getTopologySnapshot()
+    }
+
+    func mcpConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult? {
+        getConfigROM(nodeId: nodeId, generation: generation)
     }
 
     func mcpAVCUnits() -> [AVCUnitInfo]? {
@@ -132,6 +152,26 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     private let pollIntervalNs: UInt64
     private let busResetTimeout: TimeInterval
 
+    /// Bounded ring of MCP-issued FCP exchanges, newest last. Driver-originated FCP
+    /// is not captured here — see `ASFWMCPFcpRecord`.
+    private var fcpRecords: [ASFWMCPFcpRecord] = []
+    private static let fcpRecordCapacity = 64
+
+    private static func bigEndianQuadlets(from data: Data) -> [UInt32] {
+        guard data.count >= 4 else { return [] }
+        let end = data.count - (data.count % 4)
+        var result: [UInt32] = []
+        result.reserveCapacity(end / 4)
+        for offset in stride(from: 0, to: end, by: 4) {
+            let high = UInt32(data[offset]) << 24
+            let upperMiddle = UInt32(data[offset + 1]) << 16
+            let lowerMiddle = UInt32(data[offset + 2]) << 8
+            let low = UInt32(data[offset + 3])
+            result.append(high | upperMiddle | lowerMiddle | low)
+        }
+        return result
+    }
+
     init(
         backend: any ASFWLiveDriverBackend,
         transactionTimeout: TimeInterval = 2.0,
@@ -193,6 +233,162 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
 
     func listNodes() async -> [ASFWMCPNodeSummary] {
         listNodesFromBackend()
+    }
+
+    func fetchTopology() async -> ASFWMCPTopologySnapshot? {
+        guard let topology = backend.mcpTopologySnapshot() else { return nil }
+        return ASFWMCPTopologySnapshot(
+            generation: topology.generation,
+            nodeCount: Int(topology.nodeCount),
+            rootNodeId: topology.rootNodeId.map(Int.init),
+            irmNodeId: topology.irmNodeId.map(Int.init),
+            localNodeId: topology.localNodeId.map(Int.init),
+            gapCount: Int(topology.gapCount),
+            busBase16: UInt32(topology.busBase16),
+            nodes: topology.nodes.map(Self.topologyNode(from:)),
+            warnings: topology.warnings
+        )
+    }
+
+    private static func topologyNode(from node: TopologyNode) -> ASFWMCPTopologyNode {
+        ASFWMCPTopologyNode(
+            nodeId: Int(node.nodeId),
+            portCount: Int(node.portCount),
+            gapCount: Int(node.gapCount),
+            speedMbps: node.maxSpeedMbps,
+            linkActive: node.linkActive,
+            contender: node.isIRMCandidate,
+            isRoot: node.isRoot,
+            initiatedReset: node.initiatedReset,
+            parentPort: node.parentPort.map(Int.init),
+            ports: node.portStates.enumerated().map { index, state in
+                let link = index < node.links.count ? node.links[index] : PortLink.unconnected
+                return ASFWMCPTopologyPort(
+                    port: index,
+                    state: Self.portStateName(state),
+                    remoteNodeId: link.connected ? Int(link.remoteNodeId) : nil,
+                    remotePort: link.connected ? Int(link.remotePort) : nil
+                )
+            }
+        )
+    }
+
+    /// Maps the port state by case. The raw 2-bit values are the Self-ID wire
+    /// contract and must never be reordered or derived arithmetically.
+    private static func portStateName(_ state: PortState) -> String {
+        switch state {
+        case .notPresent: return "notPresent"
+        case .notActive: return "notActive"
+        case .parent: return "parent"
+        case .child: return "child"
+        }
+    }
+
+    func fetchIrmAllocations() async -> ASFWMCPIrmAllocationReport? {
+        guard let local = backend.mcpLocalIrmResourceSnapshot() else { return nil }
+        return ASFWMCPIrmAllocationReport(
+            generation: local.generation,
+            irmNodeId: local.irmNodeId,
+            localIsIRM: local.isLocalIRM,
+            readbackValid: local.readbackValid,
+            bandwidthAvailable: local.bandwidthAvailable,
+            channelsAvailable31_0: local.channelsAvailable31_0,
+            channelsAvailable63_32: local.channelsAvailable63_32
+        )
+    }
+
+    func fetchOhciSnapshot() async -> ASFWMCPOhciSnapshot? {
+        guard let diagnostics = try? backend.mcpFetchDiagnostics() else { return nil }
+        let ohci = diagnostics.ohci
+        return ASFWMCPOhciSnapshot(
+            generation: diagnostics.busContract.header.generation,
+            registers: ASFWMCPOhciRegisterMap.covered.map { entry in
+                ASFWMCPOhciRegister(name: entry.name, offset: entry.offset, value: ohci[keyPath: entry.field])
+            }
+        )
+    }
+
+    func fetchConfigROM(nodeId: UInt32, generation: UInt32) async -> ASFWMCPConfigRomSummary? {
+        guard nodeId <= UInt32(UInt8.max), generation <= UInt32(UInt16.max) else { return nil }
+        guard let fetched = backend.mcpConfigROM(
+            nodeId: UInt8(truncatingIfNeeded: nodeId),
+            generation: UInt16(truncatingIfNeeded: generation)
+        ) else {
+            return nil
+        }
+
+        let byteCount = fetched.data.count
+        let rawQuadlets = Self.bigEndianQuadlets(from: fetched.data)
+        let base = ASFWMCPConfigRomSummary(
+            nodeId: nodeId,
+            requestedGeneration: UInt32(fetched.requestedGeneration),
+            resolvedGeneration: UInt32(fetched.resolvedGeneration),
+            exactGenerationMatch: fetched.isExactGenerationMatch,
+            byteCount: byteCount,
+            quadletCount: byteCount / 4,
+            rootDirectoryStartQuadlet: nil,
+            parsed: false,
+            parseNote: nil,
+            guid: nil,
+            busName: nil,
+            irmc: nil, cmc: nil, isc: nil, bmc: nil,
+            maxRec: nil, linkSpeed: nil,
+            vendorName: nil, modelName: nil,
+            vendorId: nil, modelId: nil, modalias: nil,
+            units: [],
+            diagnostics: [],
+            bibFields: [],
+            rawQuadlets: rawQuadlets,
+            tree: []
+        )
+
+        // The discovery cache legitimately holds only a fetched prefix of a ROM, so a
+        // parse failure is reported as an unparsed prefix rather than as a malformed
+        // device ROM. Callers needing proof must do a generation-pinned full read.
+        guard let tree = try? RomParser.parse(data: fetched.data) else {
+            return base.withParseNote(
+                "Cached bytes could not be parsed as a complete ROM; this is expected when discovery cached only a prefix."
+            )
+        }
+
+        let summary = Summarizer.summarize(tree: tree)
+        let options = tree.busInfo.busOptions
+        return ASFWMCPConfigRomSummary(
+            nodeId: nodeId,
+            requestedGeneration: UInt32(fetched.requestedGeneration),
+            resolvedGeneration: UInt32(fetched.resolvedGeneration),
+            exactGenerationMatch: fetched.isExactGenerationMatch,
+            byteCount: byteCount,
+            quadletCount: byteCount / 4,
+            rootDirectoryStartQuadlet: tree.rootDirectoryStartQ,
+            parsed: true,
+            parseNote: nil,
+            guid: String(format: "0x%016llX", tree.busInfo.guid),
+            busName: tree.busInfo.busNameString,
+            irmc: options.irmc,
+            cmc: options.cmc,
+            isc: options.isc,
+            bmc: options.bmc,
+            maxRec: options.maxRec,
+            linkSpeed: options.linkSpd,
+            vendorName: summary.vendorName,
+            modelName: summary.modelName,
+            vendorId: summary.vendorId,
+            modelId: summary.modelId,
+            modalias: summary.modalias,
+            units: summary.units.map {
+                ASFWMCPConfigRomUnit(
+                    specifierId: $0.specifierId,
+                    version: $0.version,
+                    modelId: $0.modelId,
+                    modelName: $0.modelName
+                )
+            },
+            diagnostics: tree.diagnostics.map { "\($0.severity.rawValue): \($0.message)" },
+            bibFields: ASFWMCPConfigRomBIBField.makeFields(from: tree.busInfo),
+            rawQuadlets: rawQuadlets,
+            tree: tree.rootDirectory.map(ASFWMCPConfigRomTreeEntry.init(entry:))
+        )
     }
 
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {
@@ -355,24 +551,56 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         )
     }
 
+    func recentFcpRecords(limit: Int) async -> [ASFWMCPFcpRecord] {
+        guard limit > 0 else { return [] }
+        return Array(fcpRecords.suffix(limit).reversed())
+    }
+
+    /// Retains the exchange and returns the receipt unchanged so call sites stay
+    /// single-expression returns.
+    @discardableResult
+    private func recordFcp(
+        _ request: ASFWMCPFcpCommandRequest,
+        _ receipt: ASFWMCPFcpCommandReceipt
+    ) -> ASFWMCPFcpCommandReceipt {
+        fcpRecords.append(
+            ASFWMCPFcpRecord(
+                correlationId: receipt.correlationId,
+                targetGUID: receipt.targetGUID,
+                nodeId: receipt.observedNodeId,
+                generation: receipt.observedGeneration,
+                intent: request.intent.rawValue,
+                request: request.payload,
+                response: receipt.response,
+                status: receipt.status.rawValue,
+                durationUsec: receipt.durationUsec,
+                capturedAtUptimeNs: DispatchTime.now().uptimeNanoseconds
+            )
+        )
+        if fcpRecords.count > Self.fcpRecordCapacity {
+            fcpRecords.removeFirst(fcpRecords.count - Self.fcpRecordCapacity)
+        }
+        return receipt
+    }
+
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {
         let correlationId = "live-fcp-\(UUID().uuidString)"
         let currentGeneration = backend.mcpCurrentGeneration() ?? 0
         guard backend.mcpIsConnected else {
-            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
-                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil)
+            return recordFcp(request, fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil))
         }
         guard currentGeneration == request.address.generation else {
-            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
-                              response: nil, status: .staleGeneration, correlationId: correlationId, durationUsec: nil)
+            return recordFcp(request, fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .staleGeneration, correlationId: correlationId, durationUsec: nil))
         }
 
         let guidText = String(format: "0x%016llX", request.targetGUID)
         guard let node = listNodesFromBackend().first(where: {
             $0.guid == guidText && $0.nodeId == request.address.nodeId && $0.protocolHints.contains("avc")
         }) else {
-            return fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
-                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil)
+            return recordFcp(request, fcpReceipt(request, observedNodeId: nil, observedGeneration: currentGeneration,
+                              response: nil, status: .unavailable, correlationId: correlationId, durationUsec: nil))
         }
 
         let started = Date()
@@ -385,7 +613,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         let status: ASFWMCPTransactionStatus = completedGeneration == currentGeneration
             ? (response == nil ? .timeout : .ok)
             : .busReset
-        return fcpReceipt(
+        return recordFcp(request, fcpReceipt(
             request,
             observedNodeId: node.nodeId,
             observedGeneration: completedGeneration,
@@ -393,7 +621,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             status: status,
             correlationId: correlationId,
             durationUsec: elapsedUsec(since: started)
-        )
+        ))
     }
 
     func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {
@@ -574,6 +802,12 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     func logRingStats() async -> ASFWLogRingStats? {
         guard backend.mcpIsConnected else { return nil }
         return backend.mcpLogRingStats()
+    }
+
+    func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth] {
+        guard backend.mcpIsConnected else { return [] }
+        guard let snapshot = backend.mcpAudioTelemetry() else { return [] }
+        return snapshot.endpoints.map { $0.mcpStreamHealth }
     }
 
     private func executeTransaction(

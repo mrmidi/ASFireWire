@@ -8,6 +8,7 @@
 #include "../../AudioTypes.hpp"
 #include "../../Duplex/AudioClockConfig.hpp"
 #include "../../../../Async/AsyncTypes.hpp"
+#include "../../../../Discovery/DeviceRouteToken.hpp"
 
 #include <DriverKit/IOReturn.h>
 
@@ -161,6 +162,7 @@ struct DiceDuplexHealthResult {
 struct DiceRestartSession {
     uint64_t guid{0};
     uint64_t restartId{0};
+    Discovery::DeviceRouteToken route{};
     FW::Generation generation{0};
     FW::Generation topologyGeneration{0};
     AudioDuplexChannels channels{};

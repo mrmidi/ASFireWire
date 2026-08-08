@@ -20,16 +20,18 @@ using namespace ASFW::Protocols::AVC;
 bool FCPTransport::init(Protocols::Ports::FireWireBusOps* busOps,
                         Protocols::Ports::FireWireBusInfo* busInfo,
                         Discovery::FWDevice* device,
+                        Discovery::DeviceRegistry& routeRegistry,
                         Scheduling::ITimerScheduler& timerScheduler,
                         const FCPTransportConfig& config) {
     busOps_ = busOps;
     busInfo_ = busInfo;
     device_ = device;
+    routeRegistry_ = &routeRegistry;
     timerScheduler_ = &timerScheduler;
     config_ = config;
     shuttingDown_ = false;
 
-    if (!busOps_ || !busInfo_ || !device_) {
+    if (!busOps_ || !busInfo_ || !device_ || !routeRegistry_) {
         ASFW_LOG_V1(FCP, "FCPTransport: Missing bus port or target device");
         return false;
     }
@@ -160,13 +162,14 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
 ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame,
                                                            FCPWriteAttempt writeAttempt) {
     IOLockLock(lock_);
-    if (shuttingDown_ || !busOps_ || !device_) {
+    if (shuttingDown_ || !busOps_ || !routeRegistry_ ||
+        !routeRegistry_->IsCurrent(writeAttempt.route)) {
         IOLockUnlock(lock_);
         return Async::AsyncHandle{0};
     }
 
-    const FW::Generation gen{writeAttempt.generation};
-    const FW::NodeId node{static_cast<uint8_t>(writeAttempt.targetNodeID & 0x3Fu)};
+    const FW::Generation gen{writeAttempt.route.generation.value};
+    const FW::NodeId node{static_cast<uint8_t>(writeAttempt.route.nodeId & 0x3Fu)};
     const Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = static_cast<uint16_t>((config_.commandAddress >> 32U) & 0xFFFFU),
         .addressLo = static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFU),
@@ -195,16 +198,22 @@ bool FCPTransport::StartPendingWrite() {
     }
 
     IOLockLock(lock_);
-    if (shuttingDown_ || !pending_ || !busInfo_ || !device_) {
+    if (shuttingDown_ || !pending_ || !routeRegistry_) {
         IOLockUnlock(lock_);
+        return false;
+    }
+
+    const auto route = routeRegistry_->CurrentRoute(device_->GetGUID());
+    if (!route.has_value()) {
+        IOLockUnlock(lock_);
+        CompleteCommand(FCPStatus::kBusReset, {});
         return false;
     }
 
     pending_->asyncHandle = {};
     const FCPWriteAttempt writeAttempt{
         .id = ++nextWriteAttempt_,
-        .targetNodeID = device_->GetNodeID(),
-        .generation = static_cast<uint32_t>(busInfo_->GetGeneration().value),
+        .route = *route,
     };
     pending_->activeWriteAttempt = writeAttempt;
     pending_->successfulWriteAttempt.reset();
@@ -213,8 +222,9 @@ bool FCPTransport::StartPendingWrite() {
     IOLockUnlock(lock_);
 
     ASFW_LOG_V2(FCP,
-                "FCPTransport: Issuing write attempt=%llu node=0x%04x generation=%u",
-                writeAttempt.id, writeAttempt.targetNodeID, writeAttempt.generation);
+                "FCPTransport: Issuing write attempt=%llu node=0x%04x generation=%u routeEpoch=%llu",
+                writeAttempt.id, writeAttempt.route.nodeId, writeAttempt.route.generation.value,
+                writeAttempt.route.routeEpoch);
     const auto handle = SubmitWriteCommand(commandCopy, writeAttempt);
     if (!handle.value) {
         ASFW_LOG_V1(FCP, "FCPTransport: Failed to submit async write");
@@ -360,15 +370,31 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         return;
     }
 
-    if (!pending_->successfulWriteAttempt.has_value()) {
+    // AR Request and AR Response are separate DMA contexts. RxPath drains the
+    // request context first, so a target's FCP block write can be delivered
+    // before our earlier command-write acknowledgement is dispatched from AR
+    // Response. That ordering is normal on the wire: the FCP response itself
+    // is definitive proof that the target received and processed this command.
+    // Do not drop it merely because the local write-completion callback is
+    // still queued.
+    const bool responsePrecedesWriteCompletion = !pending_->successfulWriteAttempt.has_value();
+    if (responsePrecedesWriteCompletion && !pending_->activeWriteAttempt.has_value()) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP,
-                     "FCPTransport: Ignoring response before write completion");
+                     "FCPTransport: Ignoring response without an active write attempt");
         return;
     }
 
-    const FCPWriteAttempt successfulAttempt = *pending_->successfulWriteAttempt;
-    const uint16_t expectedNodeID = successfulAttempt.targetNodeID;
+    const FCPWriteAttempt successfulAttempt = responsePrecedesWriteCompletion
+                                                   ? *pending_->activeWriteAttempt
+                                                   : *pending_->successfulWriteAttempt;
+    if (!routeRegistry_ || !routeRegistry_->IsCurrent(successfulAttempt.route)) {
+        IOLockUnlock(lock_);
+        ASFW_LOG_V3(FCP, "FCPTransport: Ignoring response for invalidated route token");
+        return;
+    }
+
+    const uint16_t expectedNodeID = successfulAttempt.route.nodeId;
     const bool exactMatch = srcNodeID == expectedNodeID;
     const bool nodeNumberMatch = (srcNodeID & 0x3F) == (expectedNodeID & 0x3F);
     if (!exactMatch && !nodeNumberMatch) {
@@ -385,14 +411,11 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
                      srcNodeID, expectedNodeID);
     }
 
-    // Match the generation captured for this write attempt exactly.  A retry
-    // after a bus reset starts a new write attempt with its new generation;
-    // it must not make an old-generation response eligible for completion.
-    if (generation != successfulAttempt.generation) {
+    if (generation != successfulAttempt.route.generation.value) {
         IOLockUnlock(lock_);
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Response generation mismatch: %u (expected %u)",
-                     generation, successfulAttempt.generation);
+                     generation, successfulAttempt.route.generation.value);
         return;
     }
 
@@ -401,6 +424,15 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         ASFW_LOG_V3(FCP,
                      "FCPTransport: Response validation failed (likely stale/duplicate response)");
         return;
+    }
+
+    if (responsePrecedesWriteCompletion) {
+        // Preserve the delivery proof for diagnostics and make a later async
+        // write completion a harmless stale callback after CompleteCommand().
+        pending_->successfulWriteAttempt = successfulAttempt;
+        ASFW_LOG_V2(FCP,
+                    "FCPTransport: Accepting FCP response before local write completion attempt=%llu",
+                    successfulAttempt.id);
     }
 
     FCPFrame response;
@@ -453,10 +485,16 @@ void FCPTransport::OnAsyncWriteComplete(FCPWriteAttempt writeAttempt,
         return;
     }
 
+    if (!routeRegistry_ || !routeRegistry_->IsCurrent(writeAttempt.route)) {
+        IOLockUnlock(lock_);
+        ASFW_LOG_V3(FCP, "FCPTransport: Ignoring write completion for invalidated route token");
+        return;
+    }
+
     if (status != Async::AsyncStatus::kSuccess) {
         ASFW_LOG_V1(FCP,
-                     "FCPTransport: Async write failed: %d",
-                     static_cast<int>(status));
+                     "FCPTransport: Async write failed: %{public}s",
+                     ASFW::Async::ToString(status));
 
         if (pending_->retriesLeft > 0) {
             pending_->retriesLeft--;
@@ -612,15 +650,15 @@ void FCPTransport::OnBusReset(uint32_t newGeneration) {
         return;
     }
 
-    const uint32_t activeGeneration = pending_->successfulWriteAttempt
-                                          ? pending_->successfulWriteAttempt->generation
-                                          : (pending_->activeWriteAttempt
-                                                 ? pending_->activeWriteAttempt->generation
-                                                 : 0U);
+    const auto activeRoute = pending_->successfulWriteAttempt
+                                 ? std::optional<Discovery::DeviceRouteToken>{pending_->successfulWriteAttempt->route}
+                                 : (pending_->activeWriteAttempt
+                                        ? std::optional<Discovery::DeviceRouteToken>{pending_->activeWriteAttempt->route}
+                                        : std::nullopt);
     ASFW_LOG_V2(FCP,
                 "FCPTransport: Bus reset during command (gen %u → %u, "
                 "allowRetry=%d, retriesLeft=%u)",
-                activeGeneration, newGeneration,
+                activeRoute.has_value() ? activeRoute->generation.value : 0U, newGeneration,
                 pending_->allowBusResetRetry, pending_->retriesLeft);
 
     const Async::AsyncHandle priorHandle = pending_->asyncHandle;
@@ -640,7 +678,7 @@ void FCPTransport::OnBusReset(uint32_t newGeneration) {
         // (IOFireWireAVCCommand.cpp:430-458). This is a clean-room policy for
         // our asynchronous, rebinding transport.
         pending_->awaitingRouteRevalidation = true;
-        pending_->resetGeneration = newGeneration;
+        pending_->resetRoute = activeRoute;
         pending_->gotInterim = false;
 
         ASFW_LOG_V2(FCP,
@@ -660,7 +698,7 @@ void FCPTransport::OnBusReset(uint32_t newGeneration) {
     CompleteCommand(FCPStatus::kBusReset, {});
 }
 
-void FCPTransport::OnRouteRevalidated(uint32_t generation) {
+void FCPTransport::OnRouteRevalidated(const Discovery::DeviceRouteToken& route) {
     IOLockLock(lock_);
 
     if (shuttingDown_ || !pending_ || !pending_->awaitingRouteRevalidation) {
@@ -668,27 +706,25 @@ void FCPTransport::OnRouteRevalidated(uint32_t generation) {
         return;
     }
 
-    const bool routeIsCurrent = generation == pending_->resetGeneration &&
-                                busInfo_ && device_ && device_->IsReady() &&
-                                device_->GetGeneration().value == generation &&
-                                busInfo_->GetGeneration().value == generation &&
-                                device_->GetNodeID() != 0xFFFFU;
+    const bool routeIsCurrent = routeRegistry_ && routeRegistry_->IsCurrent(route) &&
+                                pending_->resetRoute.has_value() &&
+                                route.deviceIncarnation == pending_->resetRoute->deviceIncarnation;
     if (!routeIsCurrent) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP,
-                    "FCPTransport: Ignoring route revalidation for generation %u",
-                    generation);
+                    "FCPTransport: Ignoring route revalidation for token epoch=%llu",
+                    route.routeEpoch);
         return;
     }
 
     pending_->awaitingRouteRevalidation = false;
-    pending_->resetGeneration = 0;
+    pending_->resetRoute.reset();
     --pending_->retriesLeft;
     IOLockUnlock(lock_);
 
     ASFW_LOG_V2(FCP,
-                "FCPTransport: Retrying idempotent command on revalidated generation %u",
-                generation);
+                "FCPTransport: Retrying idempotent command on revalidated route epoch=%llu",
+                route.routeEpoch);
     (void)StartPendingWrite();
 }
 

@@ -32,7 +32,7 @@ public:
     DiceAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
-                     Driver::IsochService& isoch,
+                     AudioDuplexCoordinator& duplexCoordinator,
                      Driver::HardwareInterface& hardware) noexcept;
     ~DiceAudioBackend() noexcept override;
 
@@ -42,7 +42,9 @@ public:
     [[nodiscard]] const char* Name() const noexcept override { return "DICE"; }
 
     void OnDeviceRecordUpdated(uint64_t guid) noexcept;
-    void OnDeviceRemoved(uint64_t guid) noexcept;
+    // The coordinator owns remote-device teardown. DICE only cancels its
+    // per-device notification/recovery work so it cannot revive a dead GUID.
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept;
     void HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
@@ -75,9 +77,8 @@ private:
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
-    IsochDuplexHostTransport hostTransport_;
     std::atomic<bool> stopping_{false}; // FW-61 teardown latch
-    AudioDuplexCoordinator restartCoordinator_;
+    AudioDuplexCoordinator& restartCoordinator_;
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};

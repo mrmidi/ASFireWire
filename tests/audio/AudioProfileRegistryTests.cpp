@@ -10,6 +10,8 @@
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "DeviceProfiles/Audio/AudioProfileRegistry.hpp"
 
+#include <utility>
+
 namespace {
 
 namespace ids = ASFW::DeviceProfiles::Audio;
@@ -54,6 +56,10 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
     EXPECT_EQ(ModeFor(ids::kMidasVendorId, ids::kMidasVeniceModelId),
               AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(ModeFor(ids::kPreSonusVendorId, ids::kStudioLive1602ModelId),
+              AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(ModeFor(ids::kWeissVendorId, ids::kWeissInt202ModelId),
+              AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(ModeFor(ids::kWeissVendorId, ids::kWeissInt203ModelId),
               AudioIntegrationMode::kHardcodedNub);
 }
 
@@ -208,6 +214,32 @@ TEST(AudioProfileRegistryTests, RecognizesMidasVeniceDiceProfile) {
     ASSERT_TRUE(profile.has_value());
     EXPECT_EQ(profile->mode, AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
+}
+
+TEST(AudioProfileRegistryTests, RecognizesWeissIntDevicesButKeepsOtherModelsDisabled) {
+    for (const auto [modelId, modelName] :
+         {std::pair{ids::kWeissInt202ModelId, ids::kWeissInt202ModelName},
+          std::pair{ids::kWeissInt203ModelId, ids::kWeissInt203ModelName}}) {
+        const auto identity =
+            AudioProfileRegistry::LookupIdentity(ByVendorModel(ids::kWeissVendorId, modelId));
+        ASSERT_TRUE(identity.has_value());
+        EXPECT_STREQ(identity->vendorName, ids::kWeissVendorName);
+        EXPECT_STREQ(identity->modelName, modelName);
+        EXPECT_EQ(ModeFor(ids::kWeissVendorId, modelId), AudioIntegrationMode::kHardcodedNub);
+    }
+
+    for (const uint32_t modelId : {ids::kWeissAdc2ModelId,
+                                   ids::kWeissVestaModelId,
+                                   ids::kWeissDac2ModelId,
+                                   ids::kWeissAfi1ModelId,
+                                   ids::kWeissDac202ModelId,
+                                   ids::kWeissMayaModelId,
+                                   ids::kWeissMan301ModelId}) {
+        EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                        ByVendorModel(ids::kWeissVendorId, modelId))
+                        .has_value());
+        EXPECT_EQ(ModeFor(ids::kWeissVendorId, modelId), AudioIntegrationMode::kNone);
+    }
 }
 
 } // namespace

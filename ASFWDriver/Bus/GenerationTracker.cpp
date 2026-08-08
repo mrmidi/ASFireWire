@@ -22,10 +22,17 @@ GenerationTracker::BusState GenerationTracker::GetCurrentState() const noexcept 
     return BusState{ .generation16 = gen16, .generation8 = gen8, .localNodeID = node };
 }
 
-void GenerationTracker::OnSyntheticBusReset(uint8_t newGenerationFromPacket) noexcept {
-    ASFW_LOG(Async, "GenerationTracker: Synthetic bus reset detected. New generation: %u", newGenerationFromPacket);
+void GenerationTracker::OnConfirmedBusGeneration(uint8_t confirmedGeneration) noexcept {
+    // Named for its actual source: the caller passes the generation read from the OHCI
+    // SelfIDCount register (see AsyncSubsystem::ConfirmBusGeneration), NOT the value in
+    // the controller-synthesized AR bus-reset marker. RxPath deliberately does not feed
+    // the marker generation here at all. The old "synthetic" naming made traces read as
+    // though the marker had supplied the generation, which is precisely the confusion
+    // that made the wrong-quadlet marker bug hard to see.
+    ASFW_LOG(Async, "GenerationTracker: Bus generation confirmed from SelfIDCount: %u",
+             confirmedGeneration);
     localNodeID_.store(0, std::memory_order_release);
-    ApplyBusGeneration(newGenerationFromPacket, "synthetic-packet");
+    ApplyBusGeneration(confirmedGeneration, "selfid-count");
 }
 
 void GenerationTracker::OnSelfIDComplete(uint16_t newNodeID) noexcept {

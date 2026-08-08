@@ -8,6 +8,7 @@
 
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBProtocol.hpp"
 #include "ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
+#include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
 
 #include <array>
@@ -136,18 +137,29 @@ private:
 
 class BeBoBProtocolTest : public testing::Test {
 protected:
+    BeBoBProtocolTest() : cmp_(bus_, bus_, routes_) {
+        ASFW::Discovery::ConfigROM rom{};
+        rom.bib.guid = kGuid;
+        rom.gen = Generation{1};
+        rom.nodeId = kNode;
+        (void)routes_.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        route_ = *routes_.CurrentRoute(kGuid);
+    }
+
     BeBoBBus bus_;
-    ASFW::CMP::CMPClient cmp_{bus_, bus_};
+    ASFW::Discovery::DeviceRegistry routes_;
+    ASFW::CMP::CMPClient cmp_;
     ASFW::Testing::FakeTimerScheduler timer_;
     StubBusOps busOps_;
     static constexpr uint64_t kGuid = 0x000aac0300b1d1f7ULL;
     static constexpr uint8_t kNode = 2;
+    ASFW::Discovery::DeviceRouteToken route_{};
 };
 
 // ApplyClockConfig rejects unsupported rates before issuing any FCP command.
 TEST_F(BeBoBProtocolTest, RejectsUnsupportedRate) {
-    TestBeBoBProtocol proto(busOps_, bus_, kNode, nullptr, &cmp_, kGuid, &timer_);
-    proto.UpdateRuntimeContext(kNode, nullptr);  // no FCP transport
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    proto.UpdateRuntimeContext(route_, nullptr);  // no FCP transport
 
     IOReturn status = kIOReturnSuccess;
     proto.ApplyClockConfig({.sampleRateHz = 44100},
@@ -157,8 +169,8 @@ TEST_F(BeBoBProtocolTest, RejectsUnsupportedRate) {
 
 // Shutdown during settle cancels the timer and aborts the callback.
 TEST_F(BeBoBProtocolTest, ShutdownCancelsSettle) {
-    TestBeBoBProtocol proto(busOps_, bus_, kNode, nullptr, &cmp_, kGuid, &timer_);
-    proto.UpdateRuntimeContext(kNode, nullptr);
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    proto.UpdateRuntimeContext(route_, nullptr);
 
     IOReturn status = kIOReturnBusy;
     bool called = false;
@@ -172,8 +184,8 @@ TEST_F(BeBoBProtocolTest, ShutdownCancelsSettle) {
 
 // Shutdown after the settle timer starts cancels it before it fires.
 TEST_F(BeBoBProtocolTest, ShutdownAfterTimerStarts) {
-    TestBeBoBProtocol proto(busOps_, bus_, kNode, nullptr, &cmp_, kGuid, &timer_);
-    proto.UpdateRuntimeContext(kNode, nullptr);
+    TestBeBoBProtocol proto(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    proto.UpdateRuntimeContext(route_, nullptr);
 
     IOReturn status = kIOReturnBusy;
     bool called = false;

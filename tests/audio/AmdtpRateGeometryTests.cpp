@@ -60,6 +60,12 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::TxDataHorizonFrames(44100), 2205U);
     EXPECT_EQ(Geometry::kTxSharedSlotPackets, 912U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 48U);
+    EXPECT_EQ(Geometry::kTxPreparationLatencyHistogramBuckets, 6U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginHistogramBuckets, 5U);
+    EXPECT_EQ(Geometry::kTxPreparationLatency250Us, 250U);
+    EXPECT_EQ(Geometry::kTxPreparationLatency1500Us, 1500U);
+    EXPECT_EQ(Geometry::kTxCommittedMargin2xFloorPackets, 96U);
+    EXPECT_EQ(Geometry::kTxCommittedMargin16xFloorPackets, 768U);
     EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 144U);
     EXPECT_EQ(Geometry::kTxExposureLeadPackets, 438U);

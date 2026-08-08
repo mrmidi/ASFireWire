@@ -1,0 +1,16 @@
+name: f2-stall-survivable
+description: >
+  F2, the other side of the cliff. A 50 ms stall sits inside HEAD's 78 ms budget
+  and must be absorbed with no lasting content loss. Pairs with
+  f2-stall-cliff: together they show the transition is a cliff, not a slope.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 20
+  stall_ms: 50
+  stall_at_s: 5
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.95

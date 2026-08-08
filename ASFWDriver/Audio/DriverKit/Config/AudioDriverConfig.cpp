@@ -17,22 +17,6 @@ namespace {
 
 namespace Keys = ASFW::Audio::Model::PropertyKeys;
 
-[[nodiscard]] bool ReadOSBoolValue(OSObject* object, bool fallback) {
-    auto* booleanObject = OSDynamicCast(OSBoolean, object);
-    if (booleanObject == nullptr) {
-        return fallback;
-    }
-    return booleanObject == kOSBooleanTrue;
-}
-
-void AppendBoolControl(ParsedAudioDriverConfig& inOutConfig,
-                       const BoolControlDescriptor& descriptor) {
-    if (inOutConfig.boolControlCount >= kMaxBoolControls) {
-        return;
-    }
-    inOutConfig.boolControls[inOutConfig.boolControlCount++] = descriptor;
-}
-
 void ParseIdentityProperties(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
     if (auto* guid = OSDynamicCast(OSNumber, properties->getObject(Keys::kGuid))) {
         inOutConfig.guid = guid->unsigned64BitValue();
@@ -50,17 +34,6 @@ void ParseIdentityProperties(OSDictionary* properties, ParsedAudioDriverConfig& 
     if (auto* outputChannels = OSDynamicCast(OSNumber, properties->getObject(Keys::kOutputChannelCount))) {
         inOutConfig.outputChannelCount = outputChannels->unsigned32BitValue();
         inOutConfig.hasExplicitOutputChannelCount = true;
-    }
-}
-
-void ParsePhantomProperties(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
-    inOutConfig.hasPhantomOverride =
-        ReadOSBoolValue(properties->getObject(Keys::kHasPhantomOverride), false);
-    if (auto* supportedMask = OSDynamicCast(OSNumber, properties->getObject(Keys::kPhantomSupportedMask))) {
-        inOutConfig.phantomSupportedMask = supportedMask->unsigned32BitValue();
-    }
-    if (auto* initialMask = OSDynamicCast(OSNumber, properties->getObject(Keys::kPhantomInitialMask))) {
-        inOutConfig.phantomInitialMask = initialMask->unsigned32BitValue();
     }
 }
 
@@ -133,36 +106,6 @@ void ParseChannelNames(OSDictionary* properties, ParsedAudioDriverConfig& inOutC
     ParseChannelNameArray(properties, Keys::kOutputChannelNames, inOutConfig.deviceOutputChannelNames);
 }
 
-void ParseBoolControlOverrides(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
-    auto* overrideArray = OSDynamicCast(OSArray, properties->getObject(Keys::kBoolControlOverrides));
-    if (overrideArray == nullptr) {
-        return;
-    }
-
-    for (uint32_t index = 0; index < overrideArray->getCount(); ++index) {
-        auto* entry = OSDynamicCast(OSDictionary, overrideArray->getObject(index));
-        if (!entry) {
-            continue;
-        }
-
-        auto* classNumber = OSDynamicCast(OSNumber, entry->getObject(Keys::kBoolClassId));
-        auto* scopeNumber = OSDynamicCast(OSNumber, entry->getObject(Keys::kBoolScope));
-        auto* elementNumber = OSDynamicCast(OSNumber, entry->getObject(Keys::kBoolElement));
-        if (classNumber == nullptr || scopeNumber == nullptr || elementNumber == nullptr) {
-            continue;
-        }
-
-        const BoolControlDescriptor descriptor{
-            .classIdFourCC = classNumber->unsigned32BitValue(),
-            .scopeFourCC = scopeNumber->unsigned32BitValue(),
-            .element = elementNumber->unsigned32BitValue(),
-            .isSettable = ReadOSBoolValue(entry->getObject(Keys::kBoolSettable), false),
-            .initialValue = ReadOSBoolValue(entry->getObject(Keys::kBoolInitial), false),
-        };
-        AppendBoolControl(inOutConfig, descriptor);
-    }
-}
-
 } // namespace
 
 // Fill each element name, preferring a per-channel device label when present
@@ -206,12 +149,10 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
     }
 
     ParseIdentityProperties(properties, inOutConfig);
-    ParsePhantomProperties(properties, inOutConfig);
     ParseDevicePresentationProperties(properties, inOutConfig);
     ParseSampleRates(properties, inOutConfig);
     ParsePlugNames(properties, inOutConfig);
     ParseChannelNames(properties, inOutConfig);
-    ParseBoolControlOverrides(properties, inOutConfig);
     BuildChannelNamesFromPlugs(inOutConfig);
 }
 

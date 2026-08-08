@@ -24,10 +24,9 @@ class GenericBeBoBProtocol final : public BeBoBProtocol {
 public:
     GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
                          Protocols::Ports::FireWireBusInfo& busInfo,
-                         uint16_t nodeId,
+                         Discovery::DeviceRouteToken route,
                          IRM::IRMClient* irmClient,
                          CMP::CMPClient* cmpClient,
-                         uint64_t deviceGuid,
                          Scheduling::ITimerScheduler* timerScheduler,
                          const DeviceModel& discoveryModel) noexcept;
 

@@ -14,6 +14,7 @@ struct ModernContentView: View {
     @StateObject private var topologyVM: TopologyViewModel
     @StateObject private var romExplorerVM: RomExplorerViewModel
     @StateObject private var diagnosticsStore: DiagnosticsStore
+    @StateObject private var diceReportStore: DiceReportStore
     @StateObject private var mcpVM: ASFWMCPControlViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
@@ -30,6 +31,7 @@ struct ModernContentView: View {
             topologyViewModel: topologyViewModel
         ))
         _diagnosticsStore = StateObject(wrappedValue: DiagnosticsStore(connector: debugViewModel.connector))
+        _diceReportStore = StateObject(wrappedValue: DiceReportStore(connector: debugViewModel.connector))
         _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
     }
 
@@ -43,7 +45,7 @@ struct ModernContentView: View {
         case async = "Async Commands"
         case topology = "Topology & Self-ID"
         case romExplorer = "ROM Explorer"
-        case metrics = "Isoch Metrics"
+        case audioTelemetry = "Audio Telemetry"
         case dvCapture = "DV Capture"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
@@ -53,6 +55,7 @@ struct ModernContentView: View {
         case saffire = "Saffire"
         case duet = "Duet"
         case diagnostics = "1394 Diagnostics"
+        case diceReport = "DICE Report"
 
         var id: String { rawValue }
 
@@ -67,7 +70,7 @@ struct ModernContentView: View {
             case .async: return "bolt.horizontal.circle"
             case .topology: return "network"
             case .romExplorer: return "memorychip"
-            case .metrics: return "chart.bar.xaxis"
+            case .audioTelemetry: return "waveform.path.ecg"
             case .dvCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
@@ -77,6 +80,7 @@ struct ModernContentView: View {
             case .saffire: return "slider.vertical.3"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
             case .diagnostics: return "heart.text.square"
+            case .diceReport: return "doc.text.magnifyingglass"
             }
         }
 
@@ -115,8 +119,8 @@ struct ModernContentView: View {
                     TopologyView(viewModel: topologyVM)
                 case .romExplorer:
                     ROMExplorerView(viewModel: romExplorerVM)
-                case .metrics:
-                    MetricsView(connector: debugVM.connector)
+                case .audioTelemetry:
+                    AudioTelemetryView(connector: debugVM.connector)
                 case .dvCapture:
                     DVCaptureView(viewModel: debugVM)
                 case .busReset:
@@ -135,6 +139,8 @@ struct ModernContentView: View {
                     DuetControlView(connector: debugVM.connector)
                 case .diagnostics:
                     DiagnosticsView(store: diagnosticsStore)
+                case .diceReport:
+                    DiceReportView(store: diceReportStore)
                 case .none:
                     Text("Select a section")
                         .foregroundStyle(.secondary)

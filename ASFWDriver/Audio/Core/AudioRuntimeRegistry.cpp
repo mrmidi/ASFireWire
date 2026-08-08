@@ -7,6 +7,10 @@
 #include "../../Logging/Logging.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
+#include "../../Discovery/DeviceRegistry.hpp"
+
+#include <algorithm>
+#include <vector>
 
 #if !defined(ASFW_HOST_TEST)
 #include "../Protocols/DeviceProtocolFactory.hpp"
@@ -74,18 +78,56 @@ std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::EnsureEndpointRuntim
     return created;
 }
 
+uint32_t AudioRuntimeRegistry::CopyAudioTelemetrySnapshots(
+    Runtime::AudioTelemetrySnapshot& out) noexcept {
+    out = {};
+    out.version = Runtime::kAudioTelemetryWireVersion;
+    if (!lock_) {
+        return 0;
+    }
+
+    std::vector<std::shared_ptr<AudioEndpointRuntime>> endpoints;
+    IOLockLock(lock_);
+    endpoints.reserve(std::min<size_t>(
+        endpointsByGuid_.size(), Runtime::kAudioTelemetryMaxEndpoints));
+    for (const auto& [guid, endpoint] : endpointsByGuid_) {
+        (void)guid;
+        if (endpoint) {
+            endpoints.push_back(endpoint);
+        }
+        if (endpoints.size() == Runtime::kAudioTelemetryMaxEndpoints) {
+            break;
+        }
+    }
+    IOLockUnlock(lock_);
+
+    for (const auto& endpoint : endpoints) {
+        if (endpoint->CopyAudioTelemetrySnapshot(
+                out.endpoints[out.endpointCount])) {
+            ++out.endpointCount;
+        }
+    }
+    return out.endpointCount;
+}
+
 std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     const Discovery::DeviceRecord& record,
     Async::IFireWireBusOps* busOps,
     Async::IFireWireBusInfo* busInfo,
+    Discovery::DeviceRegistry& routeRegistry,
     IRM::IRMClient* irmClient) noexcept {
     const uint64_t guid = record.guid;
+    const auto route = routeRegistry.CurrentRoute(guid);
+    if (!route.has_value()) {
+        return nullptr;
+    }
 
     // Creation is orchestrator-serialized: EnsureForDevice runs only on the single Default
     // queue (the controller discovery path), so there is no concurrent create for the same
     // GUID. The lock below still guards the map against off-queue FindShared/Remove callers.
     // Idempotent: an existing instance short-circuits (e.g. re-scan on resume).
     if (auto existing = FindShared(guid)) {
+        existing->UpdateRuntimeContext(*route, nullptr);
         return existing;
     }
 
@@ -105,7 +147,9 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // applied (recognized devices are precisely those with a non-None integration
     // mode). No protocol is created, and nothing is logged, for unknown devices.
     auto created = DeviceProtocolFactory::Create(
-        record.vendorId, record.modelId, *busOps, *busInfo, *operationalNodeId, record.guid, irmClient,
+        record.vendorId, record.modelId, *busOps, *busInfo, routeRegistry,
+        *route,
+        irmClient,
         cmpClient_, timerScheduler_);
     if (!created) {
         return nullptr;
@@ -135,6 +179,7 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
 #else
     (void)busOps;
     (void)busInfo;
+    (void)routeRegistry;
     (void)irmClient;
     return nullptr;
 #endif

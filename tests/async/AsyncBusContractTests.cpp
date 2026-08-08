@@ -104,7 +104,7 @@ TEST(AsyncBusContract, Cancel_UnknownHandle_ReturnsFalse_NoCallback) {
 
 TEST(AsyncBusContract, GenerationMismatch_AdapterCompletesStaleGeneration_AsyncNotInline) {
     ASFW::Async::AsyncSubsystem async;
-    async.GetGenerationTracker().OnSyntheticBusReset(10);
+    async.GetGenerationTracker().OnConfirmedBusGeneration(10);
     async.HostTest_SetDeferPostedWork(true);
 
     ASFW::Driver::TopologyManager topo;
@@ -194,7 +194,7 @@ TEST(AsyncBusContract, StaleBitmapRecoveryPreservesGeneration) {
     allocator.Reset();
     ASFW::Async::Bus::GenerationTracker tracker{allocator};
     tracker.Reset();
-    tracker.OnSyntheticBusReset(10);
+    tracker.OnConfirmedBusGeneration(10);
 
     TransactionManager txnMgr;
     auto initRes = txnMgr.Initialize();

@@ -84,7 +84,9 @@ void BusResetCoordinator::ClearStaleSelfIDComplete2() {
 
     // OHCI 1.1 §6.1 / Table 6-1 and §11.5: `selfIDComplete2` retains state
     // across bus resets and is cleared only through `IntEventClear`.
-    hardware_->WriteAndFlush(Register32::kIntEventClear, IntEventBits::kSelfIDComplete2);
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kIntEventClear, IntEventBits::kSelfIDComplete2);
+    }
     selfIdLatch_.stickyComplete = false;
     selfIdLatch_.stickyCompleteTimeNs = 0;
 }
@@ -104,7 +106,9 @@ void BusResetCoordinator::ClearConsumedSelfIDInterrupts() {
     }
 
     if (clearMask != 0U) {
-        hardware_->WriteAndFlush(Register32::kIntEventClear, clearMask);
+        if (auto access = hardware_->TryBeginAccess()) {
+            access.WriteAndFlush(Register32::kIntEventClear, clearMask);
+        }
     }
 
     selfIdLatch_.Reset();
@@ -141,7 +145,15 @@ bool BusResetCoordinator::DecodeSelfID() {
         return false;
     }
 
-    const uint32_t countRegister = hardware_->Read(Register32::kSelfIDCount);
+    uint32_t countRegister = 0;
+    {
+        auto access = hardware_->TryBeginAccess();
+        if (!access) return false;
+        countRegister = access.Read(Register32::kSelfIDCount);
+    }
+    // Decode performs the mandated second SelfIDCount read to reject a capture
+    // that changed under us. That read needs its own short scope; never hold a
+    // HardwareAccessScope across a call which can acquire another one.
     auto decoded = selfIdCapture_->Decode(countRegister, *hardware_);
     if (!decoded) {
         RecordRecoveryReason(std::string{"Self-ID decode failed: "} +
@@ -166,7 +178,9 @@ bool BusResetCoordinator::BuildTopology() {
         return false;
     }
 
-    const uint32_t nodeIDRegister = hardware_->Read(Register32::kNodeID);
+    auto access = hardware_->TryBeginAccess();
+    if (!access) return false;
+    const uint32_t nodeIDRegister = access.Read(Register32::kNodeID);
     const uint64_t timestamp = MonotonicNow();
 
     auto snapshot =
@@ -234,8 +248,10 @@ void BusResetCoordinator::RestoreConfigROM() {
     }
 
     configRomStager_->RestoreHeaderAfterBusReset();
-    hardware_->WriteAndFlush(Register32::kBusOptions, configRomStager_->ExpectedBusOptions());
-    hardware_->WriteAndFlush(Register32::kConfigROMHeader, configRomStager_->ExpectedHeader());
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kBusOptions, configRomStager_->ExpectedBusOptions());
+        access.WriteAndFlush(Register32::kConfigROMHeader, configRomStager_->ExpectedHeader());
+    }
 }
 
 void BusResetCoordinator::ClearBusReset() {
@@ -243,7 +259,9 @@ void BusResetCoordinator::ClearBusReset() {
         return;
     }
 
-    hardware_->WriteAndFlush(Register32::kIntEventClear, IntEventBits::kBusReset);
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kIntEventClear, IntEventBits::kBusReset);
+    }
     busResetClearTime_ = MonotonicNow();
 }
 
@@ -252,7 +270,9 @@ void BusResetCoordinator::EnableFilters() {
         return;
     }
 
-    hardware_->Write(Register32::kAsReqFilterHiSet, kAsReqAcceptAllMask);
+    if (auto access = hardware_->TryBeginAccess()) {
+        access.Write(Register32::kAsReqFilterHiSet, kAsReqAcceptAllMask);
+    }
     filtersEnabled_ = true;
 }
 
@@ -392,6 +412,12 @@ BusResetCoordinator::ResetRequest BusResetCoordinator::MergeResetRequests(
         if (lhs == ResetRequestKind::ManualBusManager || rhs == ResetRequestKind::ManualBusManager) {
             return ResetRequestKind::ManualBusManager;
         }
+        // Below ManualBusManager: a restage is a local housekeeping reset, and any of
+        // the above carry bus-wide policy that must not be relabelled as one.
+        if (lhs == ResetRequestKind::RolePolicyRestage ||
+            rhs == ResetRequestKind::RolePolicyRestage) {
+            return ResetRequestKind::RolePolicyRestage;
+        }
         return ResetRequestKind::Recovery;
     };
 
@@ -438,6 +464,8 @@ bool BusResetCoordinator::MaybeDispatchPendingSoftwareReset() {
             return "Delegation";
         case ResetRequestKind::ManualBusManager:
             return "ManualBusManager";
+        case ResetRequestKind::RolePolicyRestage:
+            return "RolePolicyRestage";
         }
         return "Unknown";
     };
@@ -481,6 +509,8 @@ bool BusResetCoordinator::DispatchSoftwareReset(const ResetRequest& request) {
             return "Delegation";
         case ResetRequestKind::ManualBusManager:
             return "ManualBusManager";
+        case ResetRequestKind::RolePolicyRestage:
+            return "RolePolicyRestage";
         }
         return "Unknown";
     };
@@ -541,10 +571,60 @@ void BusResetCoordinator::ClearSoftwareResetTracking(const ResetRequest& request
     }
 }
 
+std::optional<uint8_t> BusResetCoordinator::CurrentGapCountForBareReset() const noexcept {
+    // IEEE 1394-2008 §8.2.1: "When gap_count has a value other than 63, bus resets
+    // initiated by software should be immediately preceded by the transmission of a
+    // PHY configuration packet with a nonzero T bit and gap_cnt equal to the current
+    // value of gap_count. Without this precaution, the bus manager is almost certain
+    // to transmit a PHY configuration packet to restore the optimal value of
+    // gap_count and then generate an additional bus reset."
+    //
+    // i.e. skipping this provokes an *extra* reset from a peer bus manager. Linux does
+    // exactly this on every scheduled reset — core-card.c:252, br_work():
+    //     fw_send_phy_config(card, FW_PHY_CONFIG_NO_NODE_ID, card->generation,
+    //                        FW_PHY_CONFIG_CURRENT_GAP_COUNT);
+    //     reset_bus(card, card->br_short);
+    //
+    // At gap_count 63 there is nothing to preserve (63 is the post-reset default that
+    // an unconfigured bus lands on anyway), so the packet would be pure noise.
+    if (!cycle_.acceptedTopology.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto& topology = *cycle_.acceptedTopology;
+    if (!topology.gapCountConsistent) {
+        // Nodes disagree: there is no single "current value of gap_count" to restate.
+        // Leave it alone and let the gap-correction path force 63 deliberately.
+        return std::nullopt;
+    }
+    if (topology.gapCount == kConservativeMismatchGapCount) {
+        return std::nullopt;
+    }
+    return topology.gapCount;
+}
+
 bool BusResetCoordinator::ApplySoftwareResetPhyConfig(const ResetRequest& request,
                                                       bool carriesDelegation) {
     if (!request.phyConfig.has_value()) {
-        return true;
+        // No caller-supplied config: restate the current gap count so a peer bus
+        // manager does not have to correct it with a second reset. See
+        // CurrentGapCountForBareReset() for the §8.2.1 / Linux citation.
+        const auto preservedGap = CurrentGapCountForBareReset();
+        if (!preservedGap.has_value()) {
+            return true;
+        }
+
+        if (hardware_->SendPhyConfig(preservedGap, std::nullopt, request.reason.c_str())) {
+            ASFW_LOG_V2(BusReset,
+                        "Preceded bare %{public}s reset with PHY config gap=%u (IEEE 1394-2008 §8.2.1)",
+                        request.reason.c_str(), static_cast<unsigned>(*preservedGap));
+            return true;
+        }
+
+        RecordRecoveryReason(std::string{"Gap-preserving PHY config dispatch failed: "} +
+                             request.reason);
+        ClearSoftwareResetTracking(request, carriesDelegation);
+        return false;
     }
 
     const auto& command = *request.phyConfig;
@@ -636,6 +716,13 @@ void BusResetCoordinator::RequestUserReset(bool shortReset, const char* reason) 
     RequestSoftwareReset({ResetRequestKind::ManualBusManager,
                           shortReset ? ResetFlavor::Short : ResetFlavor::Long, std::nullopt,
                           reason, std::nullopt});
+}
+
+void BusResetCoordinator::RequestConfigRomRestageReset(const char* reason) {
+    // Long reset: peers must re-read the local Config ROM, and a short (arbitrated)
+    // reset is not guaranteed to make every node re-enumerate.
+    RequestSoftwareReset({ResetRequestKind::RolePolicyRestage, ResetFlavor::Long, std::nullopt,
+                          reason != nullptr ? reason : "Config ROM re-stage", std::nullopt});
 }
 
 void BusResetCoordinator::RequestRolePolicyReset(uint8_t targetRoot, bool longReset,

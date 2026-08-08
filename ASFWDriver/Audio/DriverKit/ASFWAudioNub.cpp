@@ -32,6 +32,7 @@
 #include <DriverKit/OSSharedPtr.h>
 
 #include <algorithm>
+#include <optional>
 
 static ASFWDriver* GetParentASFWDriver(const ASFWAudioNub_IVars* iv)
 {
@@ -77,7 +78,7 @@ static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVa
 }
 
 struct ProtocolRuntimeBinding {
-    ASFW::Discovery::DeviceRecord* device{nullptr};
+    std::optional<ASFW::Discovery::DeviceRecord> device{};
     // `protocolOwner` keeps the protocol alive for the lifetime of the binding (the
     // caller's stack frame); `protocol` is the borrowed view used by the call sites.
     std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocolOwner{};
@@ -122,6 +123,8 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
     uint32_t input = iv->inputChannelCount;
     uint32_t output = iv->outputChannelCount;
     uint32_t sampleRate = iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000;
+    bool hasInputCountProperty = false;
+    bool hasOutputCountProperty = false;
 
     namespace Keys = ASFW::Audio::Model::PropertyKeys;
 
@@ -130,23 +133,25 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
     }
     if (auto* inputCount = OSDynamicCast(OSNumber, props->getObject(Keys::kInputChannelCount))) {
         input = ClampAudioChannels(inputCount->unsigned32BitValue());
+        hasInputCountProperty = true;
     }
     if (auto* outputCount = OSDynamicCast(OSNumber, props->getObject(Keys::kOutputChannelCount))) {
         output = ClampAudioChannels(outputCount->unsigned32BitValue());
+        hasOutputCountProperty = true;
     }
     if (auto* currentRate = OSDynamicCast(OSNumber, props->getObject(Keys::kCurrentSampleRate))) {
         sampleRate = currentRate->unsigned32BitValue();
     }
 
-    if (input == 0) {
+    if (!hasInputCountProperty && input == 0) {
         input = aggregate;
     }
-    if (output == 0) {
+    if (!hasOutputCountProperty && output == 0) {
         output = aggregate;
     }
     aggregate = std::max(input, output);
 
-    if (aggregate == 0 || input == 0 || output == 0) {
+    if (aggregate == 0) {
         return;
     }
 
@@ -191,8 +196,8 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
         return kIOReturnNotReady;
     }
 
-    auto* device = registry->FindByGuid(iv->guid);
-    if (!device) {
+    auto device = registry->SnapshotByGuid(iv->guid);
+    if (!device.has_value()) {
         return kIOReturnNotFound;
     }
 
@@ -210,7 +215,7 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
         return kIOReturnNotReady;
     }
 
-    outBinding.device = device;
+    outBinding.device = std::move(device);
     outBinding.protocolOwner = std::move(protocol);
     outBinding.protocol = outBinding.protocolOwner.get();
     outBinding.avcDiscovery = avcDiscovery;
@@ -520,7 +525,7 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     // hardcoded-nub path does not use FCP and remains independent.
     ProtocolRuntimeBinding binding{};
     const kern_return_t bindingStatus = ResolveProtocolRuntimeBinding(ivars, binding);
-    if (bindingStatus == kIOReturnSuccess && binding.device != nullptr) {
+    if (bindingStatus == kIOReturnSuccess && binding.device.has_value()) {
         const auto integration = ASFW::Audio::DeviceProtocolFactory::LookupIntegrationMode(
             binding.device->vendorId, binding.device->modelId);
         if (integration != ASFW::Audio::DeviceIntegrationMode::kHardcodedNub) {
@@ -534,7 +539,12 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
                          binding.device->nodeId);
                 return kIOReturnNotReady;
             }
-            binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+            binding.protocol->UpdateRuntimeContext(ASFW::Discovery::DeviceRouteToken{
+                                                    .guid = binding.device->guid,
+                                                    .deviceIncarnation = binding.device->deviceIncarnation,
+                                                    .routeEpoch = binding.device->routeEpoch,
+                                                    .generation = binding.device->gen,
+                                                    .nodeId = binding.device->nodeId}, transport);
             ASFW_LOG(Audio,
                      "ASFWAudioNub: refreshed AV/C protocol route GUID=0x%016llx node=%u",
                      ivars->guid,
@@ -651,7 +661,8 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
     return ctx->isoch.FreeTxIsochResources();
 }
 
-// Cross-process RPC (AudioDriver -> ASFWDriver process): runs in the nub's own
+// IIG dispatch across queues, not across processes (see ASFWAudioNub.iig:111
+// and Info.plist IOUserServerOneProcess): runs in the nub's own
 // process, so ivars and the parent -> ServiceContext -> AudioCoordinator chain
 // are valid here (a LOCALONLY variant would dereference the audio side's proxy
 // ivars, which are null).
@@ -708,13 +719,13 @@ uint32_t ASFWAudioNub::GetChannelCount() const
 uint32_t ASFWAudioNub::GetInputChannelCount() const
 {
     if (!ivars) return 0;
-    return ivars->inputChannelCount ? ivars->inputChannelCount : ivars->channelCount;
+    return ivars->inputChannelCount;
 }
 
 uint32_t ASFWAudioNub::GetOutputChannelCount() const
 {
     if (!ivars) return 0;
-    return ivars->outputChannelCount ? ivars->outputChannelCount : ivars->channelCount;
+    return ivars->outputChannelCount;
 }
 
 void ASFWAudioNub::SetGuid(uint64_t guid)
@@ -765,7 +776,12 @@ kern_return_t IMPL(ASFWAudioNub, GetProtocolBooleanControl)
         return kIOReturnNotReady;
     }
 
-    binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+    binding.protocol->UpdateRuntimeContext(ASFW::Discovery::DeviceRouteToken{
+                                            .guid = binding.device->guid,
+                                            .deviceIncarnation = binding.device->deviceIncarnation,
+                                            .routeEpoch = binding.device->routeEpoch,
+                                            .generation = binding.device->gen,
+                                            .nodeId = binding.device->nodeId}, transport);
 
     bool value = false;
     const kern_return_t status = binding.protocol->GetBooleanControlValue(classIdFourCC, element, value);
@@ -796,6 +812,11 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
         return kIOReturnNotReady;
     }
 
-    binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+    binding.protocol->UpdateRuntimeContext(ASFW::Discovery::DeviceRouteToken{
+                                            .guid = binding.device->guid,
+                                            .deviceIncarnation = binding.device->deviceIncarnation,
+                                            .routeEpoch = binding.device->routeEpoch,
+                                            .generation = binding.device->gen,
+                                            .nodeId = binding.device->nodeId}, transport);
     return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
 }

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "../DriverKit/Runtime/DirectAudioBindingSource.hpp"
+#include "../Runtime/AudioTelemetrySnapshot.hpp"
 #include "../Model/ASFWAudioDevice.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
@@ -285,6 +286,39 @@ public:
         return streaming_.load(std::memory_order_acquire);
     }
 
+    // This captures atomics while the endpoint still owns the mapping.  It is
+    // intentionally a value snapshot, never a directControl_ escape hatch.
+    [[nodiscard]] bool CopyAudioTelemetrySnapshot(
+        Runtime::AudioTelemetryEndpointSnapshot& out) noexcept {
+        out = {};
+        if (!lock_) {
+            return false;
+        }
+
+        IOLockLock(lock_);
+        if (!HasCompleteDirectAudioMemoryLocked()) {
+            IOLockUnlock(lock_);
+            return false;
+        }
+        out.guid = guid_;
+        out.endpointGeneration = directGeneration_;
+        out.flags = Runtime::kAudioTelemetryBindingReady;
+        if (streaming_.load(std::memory_order_acquire)) {
+            out.flags |= Runtime::kAudioTelemetryStreaming;
+        }
+        out.sampleRateHz = directSampleRateHz_;
+        out.outputChannels = directOutputChannels_;
+        out.inputChannels = directInputChannels_;
+        out.inputFrameCapacityFrames = directInputCapacityFrames_;
+        out.preparationLeadPackets =
+            IsochTransport::AudioTimingGeometry::kTxPreparationLeadPackets;
+        out.hardwareFloorPackets =
+            IsochTransport::AudioTimingGeometry::kTxHardwareRingPackets;
+        Runtime::CopyAudioTelemetrySnapshot(*directControl_, out);
+        IOLockUnlock(lock_);
+        return true;
+    }
+
 private:
     [[nodiscard]] static uint32_t ClampAudioChannels(uint32_t channels) noexcept {
         if (channels == 0) {
@@ -425,6 +459,11 @@ private:
             return kIOReturnNotReady;
         }
 
+        // Direct memory serves the physical DICE transport, not only visible
+        // CoreAudio streams. A playback-only device can retain an operational
+        // device->host stream for its firmware/clock protocol while explicitly
+        // publishing zero CoreAudio input channels. In that case the aggregate
+        // count is the transport buffer's safe fallback geometry.
         const uint32_t outputChannels = ClampAudioChannels(
             config_.outputChannelCount ? config_.outputChannelCount : config_.channelCount);
         const uint32_t inputChannels = ClampAudioChannels(

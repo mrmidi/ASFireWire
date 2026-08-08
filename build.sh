@@ -34,6 +34,10 @@ VERBOSE=false
 NO_BUMP=false
 RUN_TESTS=false
 TEST_ONLY=false
+# Extra `KEY=VALUE` build settings appended to the xcodebuild invocation
+# (repeatable `--set`). Used by the release workflow to stamp MARKETING_VERSION
+# from the git tag without editing project.yml.
+EXTRA_SETTINGS=()
 # When true, generate `compile_commands.json` by piping xcodebuild to xcpretty
 GENERATE_COMMANDS=false
 # Path to write compile_commands.json (relative to script working dir)
@@ -63,6 +67,7 @@ Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Override architecture passed to xcodebuild (default: ${ARCH_NAME})
+  --set KEY=VALUE    Append an xcodebuild build setting (repeatable)
   --derived PATH     Set DerivedData path (default: ${DERIVED})
 EOF
 }
@@ -78,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --test-filter) SELECTED_TESTS_PATTERN="$2"; shift 2;;
     --commands) GENERATE_COMMANDS=true; shift;;
     --analyze) RUN_ANALYZER=true; shift;;
+    --set) EXTRA_SETTINGS+=("$2"); shift 2;;
     --scheme) SCHEME_NAME="$2"; shift 2;;
     --config) CONFIGURATION="$2"; shift 2;;
     --arch) ARCH_NAME="$2"; shift 2;;
@@ -100,11 +106,12 @@ preflight() {
   # When running test-only we don't need xcodebuild or the Xcode project present.
   if ! $TEST_ONLY; then
     require_cmd xcodebuild
-    # The Xcode project is generated from project.yml (XcodeGen). Regenerate so
-    # source globs pick up added/removed files; output is deterministic, so this
-    # is a no-op when nothing changed. Falls through to the committed project
-    # when xcodegen isn't installed (e.g. CI runners).
-    if [[ -f "project.yml" ]] && command -v xcodegen >/dev/null 2>&1; then
+    # The Xcode project is generated from project.yml (XcodeGen) and is NOT
+    # committed, so xcodegen is a hard build prerequisite. Regenerating also
+    # picks up added/removed source files; output is deterministic, so this is
+    # a no-op when nothing changed.
+    if [[ -f "project.yml" ]]; then
+      require_cmd xcodegen
       log "Regenerating ${PROJECT_NAME}.xcodeproj from project.yml..."
       xcodegen generate --quiet || { err "xcodegen generate failed"; exit 1; }
     fi
@@ -330,6 +337,7 @@ run_build() {
 	    CODE_SIGNING_ALLOWED=NO \
 	    CODE_SIGNING_REQUIRED=NO \
 	    CODE_SIGN_IDENTITY="" \
+    ${EXTRA_SETTINGS[@]+"${EXTRA_SETTINGS[@]}"} \
     ${QUIET_FLAG[@]+"${QUIET_FLAG[@]}"} \
     build \
     2>&1 | tee "${RAW_LOG}"

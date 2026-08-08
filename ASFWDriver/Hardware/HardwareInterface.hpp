@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <optional>
 #include <utility> // for std::pair
 
@@ -19,6 +20,7 @@
 #include "../Common/BarrierUtils.hpp"
 #include "../Controller/ControllerTypes.hpp"
 #include "../Phy/PhyPackets.hpp"
+#include "HardwareAccessGate.hpp"
 #include "RegisterMap.hpp"
 
 // Forward declare IOLock for PHY register serialization
@@ -51,6 +53,11 @@ struct LocalCSRWriteResult {
     LocalCSRLockResult::Status status{LocalCSRLockResult::Status::HardwareUnavailable};
 };
 
+enum class HardwareGoneReason : uint8_t {
+    kNone,
+    kProviderRevoked,
+    kMmioPresenceProbeAllOnes,
+};
 
 class HardwareInterface {
   public:
@@ -66,16 +73,20 @@ class HardwareInterface {
      * of Detach(), or from an independently signalled provider-revocation
      * path, before any concurrent software producer can touch OHCI.
      */
-    void Revoke() noexcept;
+    void RevokeAndDrain() noexcept;
+    /// Latch a revoked PCI provider before any software teardown reaches OHCI.
+    void LatchProviderRevokedAndDrain() noexcept;
     void Detach();
     void BindAsyncControllerPort(ASFW::Async::IAsyncControllerPort* controllerPort) noexcept;
 
     [[nodiscard]] bool Attached() const noexcept;
     [[nodiscard]] bool IsAvailable() const noexcept;
+    [[nodiscard]] bool HardwareGone() const noexcept;
+    [[nodiscard]] HardwareGoneReason GoneReason() const noexcept;
 
-    [[nodiscard]] uint32_t Read(Register32 reg) const noexcept;
-    void Write(Register32 reg, uint32_t value) noexcept;
-    void WriteAndFlush(Register32 reg, uint32_t value);
+    /// Starts one short, synchronous MMIO batch. The returned scope must not
+    /// cross an asynchronous boundary or be held while waiting.
+    [[nodiscard]] HardwareAccessScope TryBeginAccess() noexcept;
 
     void SetInterruptMask(uint32_t mask, bool enable);
     [[nodiscard]] InterruptSnapshot CaptureInterruptSnapshot(uint64_t timestamp) const noexcept;
@@ -105,6 +116,25 @@ class HardwareInterface {
     [[nodiscard]] std::optional<uint8_t> ReadPhyRegister(uint8_t address);
     [[nodiscard]] bool WritePhyRegister(uint8_t address, uint8_t value);
     [[nodiscard]] bool UpdatePhyRegister(uint8_t address, uint8_t clearBits, uint8_t setBits);
+
+    /// Isochronous streaming liveness, published by the isoch layer.
+    ///
+    /// A PHY register access serialises on `phyLock_` and blocks until the OHCI
+    /// rdDone handshake or a timeout. A single timeout was measured at 115 ms,
+    /// which exceeds the ~78 ms producer-stall budget that keeps an audio
+    /// stream's exposure frontier ahead of CoreAudio -- so a *diagnostic* PHY
+    /// dump can silently kill a healthy stream (2026-07-19; see
+    /// captures/2026-07-19-duet-avc-recovery-001.md).
+    ///
+    /// This is advisory state for callers whose reads are optional. Bus
+    /// management still reads the PHY whenever it must: correctness outranks a
+    /// stream, and reset/gap/root handling is not optional.
+    void SetIsochStreamingActive(bool active) noexcept {
+        isochStreamingActive_.store(active, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool IsIsochStreamingActive() const noexcept {
+        return isochStreamingActive_.load(std::memory_order_relaxed);
+    }
 
     struct DMABuffer {
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor;
@@ -144,13 +174,11 @@ class HardwareInterface {
 
     [[nodiscard]] bool HasAgereQuirk() const noexcept { return quirk_agere_lsi_; }
 
-    [[nodiscard]] uint32_t ReadIntEvent() const noexcept { return Read(Register32::kIntEvent); }
+    [[nodiscard]] uint32_t ReadIntEvent() const noexcept;
 
     [[nodiscard]] uint32_t ReadIntMask() const noexcept { return 0; }
 
-    [[nodiscard]] uint32_t ReadLinkControl() const noexcept {
-        return Read(Register32::kLinkControl);
-    }
+    [[nodiscard]] uint32_t ReadLinkControl() const noexcept;
 
     /**
      * @brief Checks if the local OHCI cycleMaster bit is currently set in LinkControl.
@@ -169,7 +197,7 @@ class HardwareInterface {
     // - seconds: 0-127 (wraps every 128 seconds, triggers cycle64Seconds interrupt)
     // - cycles: 0-7999 (8kHz isochronous cycle count)
     // - offset: 0-3071 (24.576 MHz sub-cycle ticks)
-    [[nodiscard]] uint32_t ReadCycleTime() const noexcept { return Read(Register32::kCycleTimer); }
+    [[nodiscard]] uint32_t ReadCycleTime() const noexcept;
 
     // Atomically read cycle timer and host uptime for timestamp correlation
     [[nodiscard]] std::pair<uint32_t, uint64_t> ReadCycleTimeAndUpTime() const noexcept;
@@ -217,11 +245,13 @@ class HardwareInterface {
 #endif
 
   private:
-    // Serializes the PCI object lifetime with every BAR access.  `ioEnabled_`
-    // is protected by this lock; Revoke() waits for any current access before
-    // returning, so no later caller can race Detach() or a force-closed BAR.
-    IOLock* accessLock_{nullptr};
-    bool ioEnabled_{false};
+    friend class HardwareAccessScope;
+    [[nodiscard]] uint32_t ReadScoped(Register32 reg) const noexcept;
+    void WriteScoped(Register32 reg, uint32_t value) const noexcept;
+    void FlushPostedWritesScoped() const noexcept;
+    void LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept;
+
+    mutable HardwareAccessGate accessGate_;
     OSSharedPtr<IOPCIDevice> device_;
     IOService* owner_{nullptr};
     uint8_t barIndex_{0};
@@ -235,6 +265,15 @@ class HardwareInterface {
 
     bool quirk_agere_lsi_{false};
     bool initialIRMRegistersProgrammed_{false};
+
+    //! Advisory: is an isoch stream running? See SetIsochStreamingActive().
+    std::atomic<bool> isochStreamingActive_{false};
+
+    // Once PCI decoding disappears, an all-ones BAR read is terminal for this
+    // provider incarnation. It is deliberately separate from a planned
+    // RevokeAndDrain(), which merely closes an otherwise live provider.
+    mutable std::atomic<uint8_t>
+        hardwareGoneReason_{static_cast<uint8_t>(HardwareGoneReason::kNone)};
 
     std::optional<uint8_t> ReadPhyRegisterUnlocked(uint8_t address);
     bool WritePhyRegisterUnlocked(uint8_t address, uint8_t value);

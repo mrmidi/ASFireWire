@@ -1,0 +1,30 @@
+name: f5-io-4096
+description: >
+  F5. Geometry for a 15-4096 CoreAudio buffer range, as derived by
+  `asfw-sim plan-io --frames 4096`. require_valid makes the header's own
+  static_asserts part of the pass condition, so this fails if the cascade stops
+  being self-consistent. The larger horizon also lifts stall tolerance
+  82 -> 119 ms, so the 100 ms stall is survived here but degraded; pair with
+  kReadDelay 2048 to make it clean.
+base: driver
+rate: 48000
+require_valid: true
+
+geometry:
+  hal_io_period_frames: 4096
+  frame_ring_frames: 16384
+  tx_data_horizon_packets: 696
+  tx_preparation_lead_packets: 1650
+  tx_shared_slot_packets: 1704
+  timeline_slots: 2048
+  replay_read_delay: 2048
+  replay_capacity: 4096
+
+scenario:
+  duration_s: 20
+  stall_ms: 100
+  stall_at_s: 5
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.95

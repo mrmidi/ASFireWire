@@ -9,8 +9,6 @@
 #include "../../../../Common/WireFormat.hpp"
 #include "../../../../Logging/Logging.hpp"
 
-#include <DriverKit/IOLib.h>
-
 #include <atomic>
 #include <limits>
 #include <memory>
@@ -20,9 +18,12 @@ namespace ASFW::Audio::DICE {
 
 namespace {
 
-constexpr uint32_t kAsyncTimeoutMs = 2000;
+// Linux DICE waits for CLOCK_ACCEPTED for NOTIFICATION_TIMEOUT_MS (150 ms) after
+// GLOBAL_CLOCK_SELECT. Source-lock policy is a separate, device-profile decision.
+// Cross-validated with linux-sound-firewire-stack/firewire/dice/dice-stream.c:60-98.
+constexpr uint32_t kClockAcceptedTimeoutMs = 150;
+constexpr uint32_t kStreamingClockLockTimeoutMs = 2000;
 constexpr uint32_t kPollIntervalMs = 10;
-constexpr uint32_t kActiveStatusPollIntervalMs = 200;
 constexpr uint32_t kReadyTimeoutMs = 200;
 constexpr uint32_t kStopSyncTimeoutMs = 5000;
 constexpr uint32_t kStopSyncPollMs = 10;
@@ -104,12 +105,20 @@ DICEDuplexBringupController::DICEDuplexBringupController(
     Protocols::Ports::ProtocolRegisterIO& io,
     Protocols::Ports::FireWireBusInfo& busInfo,
     IODispatchQueue* workQueue,
-    GeneralSections sections)
+    GeneralSections sections,
+    Scheduling::ITimerScheduler* timerScheduler,
+    DICEBringupPolicy bringupPolicy)
     : diceReader_(diceReader)
     , io_(io)
     , busInfo_(busInfo)
     , workQueue_(workQueue)
-    , sections_(sections) {
+    , timerScheduler_(timerScheduler)
+    , sections_(sections)
+    , bringupPolicy_(bringupPolicy) {
+}
+
+DICEDuplexBringupController::~DICEDuplexBringupController() {
+    CancelScheduledRetry();
 }
 
 void DICEDuplexBringupController::ProgramRx(StageCallback callback) {
@@ -174,6 +183,7 @@ void DICEDuplexBringupController::ApplyClockConfig(
         return;
     }
 
+    CancelScheduledRetry();
     flowMode_ = FlowMode::kClockApply;
     NotificationMailbox::Reset();
     stopSequenceError_ = kIOReturnSuccess;
@@ -202,47 +212,43 @@ void DICEDuplexBringupController::ApplyClockConfig(
                        });
 }
 
-void DICEDuplexBringupController::ScheduleRetry(uint64_t delayMs, std::function<void()> work) {
-    if (!work) {
-        return;
+bool DICEDuplexBringupController::ScheduleRetry(uint64_t delayMs, std::function<void()> work) {
+    if (!work || timerScheduler_ == nullptr) {
+        return false;
     }
 
-    if (!workQueue_) {
-        if (delayMs > 0) {
-            IOSleep(static_cast<unsigned int>(delayMs));
-        }
-        work();
-        return;
+    CancelScheduledRetry();
+    const uint64_t epoch = scheduledRetryEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const auto token = timerScheduler_->ScheduleAfter(
+        delayMs * 1'000'000ULL,
+        [this, epoch, work = std::move(work)]() mutable {
+            if (scheduledRetryEpoch_.load(std::memory_order_acquire) != epoch) {
+                return;
+            }
+            scheduledRetry_.store(Scheduling::kInvalidTimerToken, std::memory_order_release);
+            work();
+        });
+    if (token == Scheduling::kInvalidTimerToken) {
+        return false;
     }
-
-#ifdef ASFW_HOST_TEST
-    if (workQueue_->UsesManualDispatchForTesting()) {
-        workQueue_->DispatchAsyncAfter(delayMs * 1'000'000ULL, std::move(work));
-        return;
-    }
-
-    workQueue_->DispatchAsync([delayMs, work = std::move(work)]() mutable {
-        if (delayMs > 0) {
-            IOSleep(static_cast<unsigned int>(delayMs));
-        }
-        work();
-    });
-#else
-    auto sharedWork = std::make_shared<std::function<void()>>(std::move(work));
-    workQueue_->DispatchAsync(^{
-        if (delayMs > 0) {
-            IOSleep(static_cast<unsigned int>(delayMs));
-        }
-        (*sharedWork)();
-    });
-#endif
+    scheduledRetry_.store(token, std::memory_order_release);
+    return true;
 }
 
-bool DICEDuplexBringupController::EnsureGenerationCurrent() const noexcept {
+void DICEDuplexBringupController::CancelScheduledRetry() noexcept {
+    scheduledRetryEpoch_.fetch_add(1, std::memory_order_acq_rel);
+    const auto token = scheduledRetry_.exchange(Scheduling::kInvalidTimerToken,
+                                                std::memory_order_acq_rel);
+    if (token != Scheduling::kInvalidTimerToken && timerScheduler_ != nullptr) {
+        timerScheduler_->Cancel(token);
+    }
+}
+
+bool DICEDuplexBringupController::EnsureRouteCurrent() const noexcept {
     if (restartSession_.phase == DiceRestartPhase::kIdle) {
         return true;
     }
-    return busInfo_.GetGeneration() == restartSession_.generation;
+    return io_.IsRouteCurrent();
 }
 
 bool DICEDuplexBringupController::TeardownRequested() const noexcept {
@@ -286,6 +292,7 @@ void DICEDuplexBringupController::PrepareDuplex48k(
         callback(kIOReturnNotReady);
         return;
     }
+    CancelScheduledRetry();
     if (HasAnyRestartState(restartSession_)) {
         const IOReturn stopStatus = StopDuplex();
         if (stopStatus != kIOReturnSuccess) {
@@ -342,6 +349,7 @@ void DICEDuplexBringupController::PrepareDuplex(
         callback(kIOReturnUnsupported, {});
         return;
     }
+    CancelScheduledRetry();
     if (HasAnyRestartState(restartSession_)) {
         const IOReturn stopStatus = StopDuplex();
         if (stopStatus != kIOReturnSuccess) {
@@ -390,7 +398,7 @@ void DICEDuplexBringupController::PrepareDuplex(
 void DICEDuplexBringupController::DoReadGlobalStatus(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -409,7 +417,7 @@ void DICEDuplexBringupController::DoReadGlobalStatus(
 void DICEDuplexBringupController::DoRefreshSectionLayout(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -428,7 +436,7 @@ void DICEDuplexBringupController::DoRefreshSectionLayout(
 void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -454,7 +462,7 @@ void DICEDuplexBringupController::DoReadGlobalBeforeClaim(
 void DICEDuplexBringupController::DoReadOwnerBeforeClaim(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -478,7 +486,7 @@ void DICEDuplexBringupController::DoReadOwnerBeforeClaim(
 void DICEDuplexBringupController::DoClaimOwner(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -506,7 +514,7 @@ void DICEDuplexBringupController::DoClaimOwner(
 void DICEDuplexBringupController::DoReadOwnerAfterClaim(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -533,7 +541,7 @@ void DICEDuplexBringupController::DoReadOwnerAfterClaim(
 void DICEDuplexBringupController::DoWriteClockSelect(
     AudioDuplexChannels channels,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -579,7 +587,7 @@ void DICEDuplexBringupController::DoActiveClockCheck(
     AudioDuplexChannels channels,
     uint32_t accumulatedNotify,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -633,7 +641,7 @@ void DICEDuplexBringupController::DoWaitClockAccepted(
     AudioDuplexChannels channels,
     uint32_t attempt,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -648,34 +656,29 @@ void DICEDuplexBringupController::DoWaitClockAccepted(
         return;
     }
 
-    if (attempt * kPollIntervalMs >= kAsyncTimeoutMs) {
+    if (attempt * kPollIntervalMs >= kClockAcceptedTimeoutMs) {
         ASFW_LOG(DICE,
                  "PrepareDuplex48k: CLOCK_ACCEPTED wait reached %u ms; performing final confirmation",
-                 kAsyncTimeoutMs);
+                 kClockAcceptedTimeoutMs);
         DoConfirmClockAccepted(channels, mailboxBits, std::move(cb));
         return;
     }
 
-    // Periodically do an active global status read instead of only checking the mailbox
-    const uint32_t elapsedMs = attempt * kPollIntervalMs;
-    if (elapsedMs > 0 && (elapsedMs % kActiveStatusPollIntervalMs) == 0) {
-        ASFW_LOG(DICE,
-                 "PrepareDuplex48k: active status poll at %u ms",
-                 elapsedMs);
-        DoActiveClockCheck(channels, mailboxBits, std::move(cb));
-        return;
+    if (!ScheduleRetry(kPollIntervalMs,
+                       [this, channels, attempt, cb]() mutable {
+                           DoWaitClockAccepted(channels, attempt + 1, std::move(cb));
+                       })) {
+        ASFW_LOG_ERROR(DICE,
+                       "PrepareDuplex48k: cannot schedule CLOCK_ACCEPTED deadline continuation");
+        DoRollback(kIOReturnNotReady, std::move(cb));
     }
-
-    ScheduleRetry(kPollIntervalMs, [this, channels, attempt, cb = std::move(cb)]() mutable {
-        DoWaitClockAccepted(channels, attempt + 1, std::move(cb));
-    });
 }
 
 void DICEDuplexBringupController::DoConfirmClockAccepted(
     AudioDuplexChannels channels,
     uint32_t observedNotify,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -696,7 +699,7 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
     uint32_t observedNotify,
     IOReturn failureStatus,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -762,19 +765,16 @@ void DICEDuplexBringupController::DoAwaitStreamingClockLock(
     AudioDuplexChannels channels,
     uint32_t attempt,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
 
-    // The clock "confirm" above can fire on the device's CLOCK_ACCEPTED ack alone,
-    // which only means the device received the CLOCK_SELECT write -- NOT that its PLL
-    // has re-locked at the new rate. Enabling the isoch streams while the PLL is still
-    // relocking (status reports the old rate / locked=0) wedges the device until a hard
-    // reset: a rate change then kills audio permanently, even after switching back to
-    // 48 kHz (HW-observed). So before programming/enabling streams, poll the global
-    // status until it reports a stable lock at the target rate. A same-rate restart is
-    // already locked, so this returns on the first read.
+    // CLOCK_ACCEPTED means the device received CLOCK_SELECT, not that the PLL
+    // has reached the requested rate. Never enable streams at the old rate.
+    // Most DICE products additionally require GLOBAL source lock here. The
+    // narrowly scoped playback-only policy still waits for the target rate,
+    // but lets host IT establish an otherwise unavailable receive-clock lock.
     diceReader_.ReadGlobalStateFull(
         sections_,
         [this, channels, attempt, cb = std::move(cb)](IOReturn status, GlobalState state) mutable {
@@ -783,33 +783,41 @@ void DICEDuplexBringupController::DoAwaitStreamingClockLock(
                 return;
             }
 
-            const bool lockedAtTarget =
-                IsSourceLocked(state.status) &&
+            const bool rateAtTarget =
                 NominalRateHz(state.status) == restartSession_.desiredClock.sampleRateHz &&
                 state.sampleRate == restartSession_.desiredClock.sampleRateHz;
+            const bool sourceLocked = IsSourceLocked(state.status);
+            const bool readyForEnable = rateAtTarget &&
+                                        (sourceLocked || !bringupPolicy_.requireSourceLockBeforeStreamEnable);
 
-            if (lockedAtTarget) {
+            if (readyForEnable) {
                 if (attempt > 0) {
                     ASFW_LOG(DICE,
-                             "PrepareDuplex48k: streaming clock stable-locked at %u Hz after %u ms; enabling streams",
-                             state.sampleRate, attempt * kPollIntervalMs);
+                             "PrepareDuplex48k: target rate ready at %u Hz after %u ms; sourceLock=%u; enabling streams",
+                             state.sampleRate, attempt * kPollIntervalMs, sourceLocked ? 1U : 0U);
                 }
                 DoDiscoverStreams(channels, 0, std::move(cb));
                 return;
             }
 
-            if (attempt * kPollIntervalMs >= kAsyncTimeoutMs) {
+            if (attempt * kPollIntervalMs >= kStreamingClockLockTimeoutMs) {
                 ASFW_LOG(DICE,
-                         "PrepareDuplex48k: clock not stable-locked within %u ms (status=0x%08x rate=%u target=%u); aborting bring-up",
-                         kAsyncTimeoutMs, state.status, state.sampleRate,
+                         "PrepareDuplex48k: target rate%s not ready within %u ms (status=0x%08x rate=%u target=%u); aborting bring-up",
+                         bringupPolicy_.requireSourceLockBeforeStreamEnable ? " and source lock" : "",
+                         kStreamingClockLockTimeoutMs, state.status, state.sampleRate,
                          restartSession_.desiredClock.sampleRateHz);
                 DoRollback(kIOReturnTimeout, std::move(cb));
                 return;
             }
 
-            ScheduleRetry(kPollIntervalMs, [this, channels, attempt, cb = std::move(cb)]() mutable {
-                DoAwaitStreamingClockLock(channels, attempt + 1, std::move(cb));
-            });
+            if (!ScheduleRetry(kPollIntervalMs,
+                               [this, channels, attempt, cb]() mutable {
+                                   DoAwaitStreamingClockLock(channels, attempt + 1, std::move(cb));
+                               })) {
+                ASFW_LOG_ERROR(DICE,
+                               "PrepareDuplex48k: cannot schedule streaming clock-lock continuation");
+                DoRollback(kIOReturnNotReady, std::move(cb));
+            }
         });
 }
 
@@ -817,7 +825,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
     AudioDuplexChannels channels,
     uint32_t step,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -993,7 +1001,7 @@ void DICEDuplexBringupController::DoProgramRx(
     uint32_t streamIndex,
     uint32_t entrySizeBytes,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -1064,7 +1072,7 @@ void DICEDuplexBringupController::DoProgramTx(
     uint32_t streamIndex,
     uint32_t entrySizeBytes,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -1126,7 +1134,7 @@ void DICEDuplexBringupController::DoEnableGlobal(
     AudioDuplexChannels channels,
     VoidCallback cb) {
     (void)channels;
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         DoRollback(kIOReturnOffline, std::move(cb));
         return;
     }
@@ -1244,6 +1252,7 @@ void DICEDuplexBringupController::RefreshRuntimeCaps(VoidCallback cb) {
 }
 
 void DICEDuplexBringupController::DoRollback(IOReturn error, VoidCallback cb) {
+    CancelScheduledRetry();
     restartSession_.phase = DiceRestartPhase::kFailed;
     restartSession_.terminalError = error;
 
@@ -1254,7 +1263,7 @@ void DICEDuplexBringupController::DoRollback(IOReturn error, VoidCallback cb) {
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         ResetRestartSession(restartSession_);
         flowMode_ = FlowMode::kNone;
         cb(error);
@@ -1274,7 +1283,7 @@ void DICEDuplexBringupController::DoPollSourceLock(
     uint32_t attempt,
     uint32_t accumulatedNotify,
     VoidCallback cb) {
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         (void)StopDuplex();
         cb(kIOReturnOffline);
         return;
@@ -1290,7 +1299,14 @@ void DICEDuplexBringupController::DoPollSourceLock(
                             return;
                         }
 
-                        if (IsSourceLocked(statusValue)) {
+                        const bool sourceLocked = IsSourceLocked(statusValue);
+                        if (sourceLocked || !bringupPolicy_.requireSourceLockAtConfirm) {
+                            if (!sourceLocked) {
+                                ASFW_LOG(DICE,
+                                         "ConfirmDuplex48kStart: proceeding with advisory source lock "
+                                         "status=0x%08x",
+                                         statusValue);
+                            }
                             (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kNotification),
                                            [this, notify, statusValue, cb = std::move(cb)](Async::AsyncStatus notifyTransport, uint32_t nv) mutable {
                                                 const IOReturn ns = MapTransportStatus(notifyTransport);
@@ -1302,48 +1318,9 @@ void DICEDuplexBringupController::DoPollSourceLock(
                                                                     const IOReturn es = MapTransportStatus(extTransport);
                                                                     const uint32_t extStatus =
                                                                         (es == kIOReturnSuccess) ? ev : 0;
-                                                                    confirmNotification_ = notify;
-                                                                    confirmStatus_ = statusValue;
-                                                                    confirmExtStatus_ = extStatus;
-                                                                    RefreshRuntimeCaps([this,
-                                                                                        notify,
-                                                                                        statusValue,
-                                                                                        extStatus,
-                                                                                        cb = std::move(cb)](IOReturn refreshStatus) mutable {
-                                                                        if (refreshStatus != kIOReturnSuccess) {
-                                                                            (void)StopDuplex();
-                                                                            cb(refreshStatus);
-                                                                            return;
-                                                                        }
-
-                                                                        const bool channelsMatch =
-                                                                            runtimeCaps_.deviceToHostIsoChannel ==
-                                                                                restartSession_.channels.deviceToHostIsoChannel &&
-                                                                            runtimeCaps_.hostToDeviceIsoChannel ==
-                                                                                restartSession_.channels.hostToDeviceIsoChannel;
-                                                                        if (!channelsMatch) {
-                                                                            ASFW_LOG_ERROR(
-                                                                                DICE,
-                                                                                "ConfirmDuplex48kStart: stream channel readback mismatch expected d2h=%u h2d=%u actual d2h=%u h2d=%u",
-                                                                                restartSession_.channels.deviceToHostIsoChannel,
-                                                                                restartSession_.channels.hostToDeviceIsoChannel,
-                                                                                runtimeCaps_.deviceToHostIsoChannel,
-                                                                                runtimeCaps_.hostToDeviceIsoChannel);
-                                                                            (void)StopDuplex();
-                                                                            cb(kIOReturnNotReady);
-                                                                            return;
-                                                                        }
-
-                                                                        restartSession_.deviceRunning = true;
-                                                                        restartSession_.phase = DiceRestartPhase::kRunning;
-                                                                        restartSession_.appliedClock = restartSession_.desiredClock;
-                                                                        ASFW_LOG(DICE,
-                                                                                 "ConfirmDuplex48kStart: source lock ok notify=0x%08x status=0x%08x ext=0x%08x",
-                                                                                 notify,
-                                                                                 statusValue,
-                                                                                 extStatus);
-                                                                        cb(kIOReturnSuccess);
-                                                                    });
+                                                                    DoCompleteConfirm(
+                                                                        notify, statusValue, extStatus,
+                                                                        std::move(cb));
                                                                 });
                                             });
                             return;
@@ -1358,11 +1335,59 @@ void DICEDuplexBringupController::DoPollSourceLock(
                             return;
                         }
 
-                        ScheduleRetry(kPollIntervalMs,
-                                      [this, attempt, notify, cb = std::move(cb)]() mutable {
-                                          DoPollSourceLock(attempt + 1, notify, std::move(cb));
-                                      });
+                        if (!ScheduleRetry(kPollIntervalMs,
+                                           [this, attempt, notify, cb]() mutable {
+                                               DoPollSourceLock(attempt + 1, notify, std::move(cb));
+                                           })) {
+                            ASFW_LOG_ERROR(DICE,
+                                           "ConfirmDuplex48kStart: cannot schedule source-lock continuation");
+                            DoRollback(kIOReturnNotReady, std::move(cb));
+                        }
                     });
+}
+
+void DICEDuplexBringupController::DoCompleteConfirm(
+    uint32_t notification,
+    uint32_t status,
+    uint32_t extStatus,
+    VoidCallback cb) {
+    confirmNotification_ = notification;
+    confirmStatus_ = status;
+    confirmExtStatus_ = extStatus;
+    RefreshRuntimeCaps([this, notification, status, extStatus, cb = std::move(cb)](IOReturn refreshStatus) mutable {
+        if (refreshStatus != kIOReturnSuccess) {
+            (void)StopDuplex();
+            cb(refreshStatus);
+            return;
+        }
+
+        const bool channelsMatch =
+            runtimeCaps_.deviceToHostIsoChannel == restartSession_.channels.deviceToHostIsoChannel &&
+            runtimeCaps_.hostToDeviceIsoChannel == restartSession_.channels.hostToDeviceIsoChannel;
+        if (!channelsMatch) {
+            ASFW_LOG_ERROR(
+                DICE,
+                "ConfirmDuplex48kStart: stream channel readback mismatch expected d2h=%u h2d=%u actual d2h=%u h2d=%u",
+                restartSession_.channels.deviceToHostIsoChannel,
+                restartSession_.channels.hostToDeviceIsoChannel,
+                runtimeCaps_.deviceToHostIsoChannel,
+                runtimeCaps_.hostToDeviceIsoChannel);
+            (void)StopDuplex();
+            cb(kIOReturnNotReady);
+            return;
+        }
+
+        restartSession_.deviceRunning = true;
+        restartSession_.phase = DiceRestartPhase::kRunning;
+        restartSession_.appliedClock = restartSession_.desiredClock;
+        ASFW_LOG(DICE,
+                 "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x ext=0x%08x",
+                 IsSourceLocked(status) ? 1U : 0U,
+                 notification,
+                 status,
+                 extStatus);
+        cb(kIOReturnSuccess);
+    });
 }
 
 void DICEDuplexBringupController::ProgramRxForDuplex48k(VoidCallback callback) {
@@ -1370,7 +1395,7 @@ void DICEDuplexBringupController::ProgramRxForDuplex48k(VoidCallback callback) {
         callback(kIOReturnNotReady);
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         callback(kIOReturnOffline);
         return;
     }
@@ -1391,7 +1416,7 @@ void DICEDuplexBringupController::ProgramTxAndEnableDuplex48k(VoidCallback callb
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         callback(kIOReturnOffline);
         return;
     }
@@ -1407,12 +1432,14 @@ void DICEDuplexBringupController::ConfirmDuplex48kStart(VoidCallback callback) {
         return;
     }
 
+    CancelScheduledRetry();
     restartSession_.phase = DiceRestartPhase::kConfirmingDeviceStart;
     NotificationMailbox::Reset();
     DoPollSourceLock(0, 0, std::move(callback));
 }
 
 IOReturn DICEDuplexBringupController::StopDuplex() {
+    CancelScheduledRetry();
     if (!HasDeviceRestartState(restartSession_)) {
         return kIOReturnSuccess;
     }
@@ -1453,6 +1480,7 @@ IOReturn DICEDuplexBringupController::StopDuplex() {
 }
 
 void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
+    CancelScheduledRetry();
     if (!restartSession_.ownerClaimed) {
         callback(kIOReturnSuccess);
         return;
@@ -1463,7 +1491,7 @@ void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         restartSession_.ownerClaimed = false;
         callback(kIOReturnSuccess);
         return;
@@ -1505,7 +1533,7 @@ void DICEDuplexBringupController::DoStopDisableGlobal(
     if (AbortStopIfTeardown("DisableGlobal", cb)) {
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         ResetRestartSession(restartSession_);
         cb(stopSequenceError_);
@@ -1530,7 +1558,7 @@ void DICEDuplexBringupController::DoStopDisableTx(
     if (AbortStopIfTeardown("DisableTx", cb)) {
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         cb(stopSequenceError_);
         return;
@@ -1612,7 +1640,7 @@ void DICEDuplexBringupController::DoStopDisableRx(
     if (AbortStopIfTeardown("DisableRx", cb)) {
         return;
     }
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         cb(stopSequenceError_);
         return;
@@ -1708,7 +1736,7 @@ void DICEDuplexBringupController::DoStopReleaseOwner(VoidCallback cb) {
         return;
     }
 
-    if (!EnsureGenerationCurrent()) {
+    if (!EnsureRouteCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         ResetRestartSession(restartSession_);
         flowMode_ = FlowMode::kNone;

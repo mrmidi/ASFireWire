@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <deque>
+#include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -21,11 +24,85 @@ public:
         std::vector<uint8_t> data;
     };
 
+    /// How Lock() answers a compare-swap.
+    ///
+    /// `kZeroes` is the historical behaviour and stays the default so the
+    /// SBP-2 / FCP suites that predate the programmable modes are unaffected.
+    enum class LockMode : uint8_t {
+        kZeroes,        ///< Always succeed, returning zeroes.
+        kEchoCompare,   ///< Return the operand's compare half, so a CAS "succeeds".
+    };
+
     DeferredFireWireBus() = default;
 
     void SetGeneration(FW::Generation generation) noexcept { generation_ = generation; }
     void SetLocalNodeID(FW::NodeId nodeId) noexcept { localNodeId_ = nodeId; }
     void SetDefaultSpeed(FW::FwSpeed speed) noexcept { defaultSpeed_ = speed; }
+
+    // -------------------------------------------------------------------------
+    // Programmable reads
+    //
+    // Unmapped addresses keep the historical `kTimeout` answer, so adding a map
+    // cannot change the behaviour any existing consumer already relies on.
+    // -------------------------------------------------------------------------
+
+    void MapRead(uint64_t address, std::vector<uint8_t> bytes) {
+        readMap_[address] = std::move(bytes);
+    }
+
+    void MapReadQuadlet(uint64_t address, uint32_t valueBigEndian) {
+        readMap_[address] = {
+            static_cast<uint8_t>(valueBigEndian >> 24),
+            static_cast<uint8_t>(valueBigEndian >> 16),
+            static_cast<uint8_t>(valueBigEndian >> 8),
+            static_cast<uint8_t>(valueBigEndian),
+        };
+    }
+
+    void ClearReadMap() noexcept { readMap_.clear(); }
+
+    /// Answer every otherwise-unmapped read with this quadlet. Without it,
+    /// unmapped addresses keep returning kTimeout.
+    void SetDefaultReadQuadlet(uint32_t valueBigEndian) {
+        defaultRead_ = {
+            static_cast<uint8_t>(valueBigEndian >> 24),
+            static_cast<uint8_t>(valueBigEndian >> 16),
+            static_cast<uint8_t>(valueBigEndian >> 8),
+            static_cast<uint8_t>(valueBigEndian),
+        };
+    }
+
+    void ClearDefaultRead() noexcept { defaultRead_.reset(); }
+
+    // -------------------------------------------------------------------------
+    // Lock behaviour
+    // -------------------------------------------------------------------------
+
+    void SetLockMode(LockMode mode) noexcept { lockMode_ = mode; }
+
+    /// Corrupt the next returned "old value" so a compare-swap reports failure.
+    void FailNextCompareSwap() noexcept { failNextCompareSwap_ = true; }
+
+    /// Same, but latched: every compare-swap fails until cleared.
+    void SetFailCompareSwap(bool fail) noexcept { failCompareSwap_ = fail; }
+
+    [[nodiscard]] const std::vector<uint8_t>& LastLockOperand() const noexcept {
+        return lastLockOperand_;
+    }
+    [[nodiscard]] size_t LockCount() const noexcept { return lockCount_; }
+
+    // -------------------------------------------------------------------------
+    // Read/write recording
+    // -------------------------------------------------------------------------
+
+    struct ReadSummary {
+        FW::NodeId nodeId{0};
+        FWAddress address{};
+        uint32_t length{0};
+    };
+
+    [[nodiscard]] size_t ReadCount() const noexcept { return readHistory_.size(); }
+    [[nodiscard]] const ReadSummary& ReadAt(size_t index) const { return readHistory_.at(index); }
 
     // Force the next WriteBlock to fail synchronously (return a null handle),
     // modelling AT ring-full / async-label-pool exhaustion / a bus-reset
@@ -36,6 +113,12 @@ public:
     [[nodiscard]] size_t WriteCount() const noexcept { return writeHistory_.size(); }
     [[nodiscard]] const WriteSummary& WriteAt(size_t index) const noexcept { return writeHistory_.at(index); }
     [[nodiscard]] size_t PendingWriteCount() const noexcept { return pendingWrites_.size(); }
+
+    /// Inspect a queued-but-uncompleted write without completing it, so a
+    /// caller can route by destination address before draining.
+    [[nodiscard]] const WriteSummary& PendingWriteAt(size_t index) const {
+        return pendingWrites_.at(index).summary;
+    }
 
     bool CompleteNextWrite(AsyncStatus status, std::span<const uint8_t> payload = {}) {
         if (pendingWrites_.empty()) {
@@ -48,6 +131,33 @@ public:
             pending.callback(status, payload);
         }
         return true;
+    }
+
+    /// Hold lock (compare-swap) completions until DrainLocks, so a caller can
+    /// observe the state between issuing a CMP operation and its answer. Off by
+    /// default: locks complete inline, which is what every existing test
+    /// assumes. Required to test that a stage is genuinely continuation-passing
+    /// — with inline completion, a blocking implementation is indistinguishable
+    /// from a CPS one.
+    void SetDeferLocks(bool defer) noexcept { deferLocks_ = defer; }
+
+    [[nodiscard]] size_t PendingLockCount() const noexcept { return pendingLocks_.size(); }
+
+    /// Deliver every queued lock completion, including any queued *by* those
+    /// completions (a CMP stage chains read → compare-swap).
+    size_t DrainLocks(size_t maxSteps = 64) {
+        size_t delivered = 0;
+        while (!pendingLocks_.empty() && delivered < maxSteps) {
+            PendingLock pending = std::move(pendingLocks_.front());
+            pendingLocks_.pop_front();
+            ++delivered;
+            if (pending.callback) {
+                pending.callback(AsyncStatus::kSuccess,
+                                 std::span<const uint8_t>{pending.payload.data(),
+                                                          pending.responseBytes});
+            }
+        }
+        return delivered;
     }
 
     bool CompleteWrite(AsyncHandle handle,
@@ -77,7 +187,24 @@ public:
                           FW::FwSpeed speed,
                           InterfaceCompletionCallback callback) override {
         const AsyncHandle handle = NextHandle();
-        callback(AsyncStatus::kTimeout, std::span<const uint8_t>{});
+        readHistory_.push_back(ReadSummary{
+            .nodeId = nodeId,
+            .address = address,
+            .length = length,
+        });
+
+        const auto it = readMap_.find(AddressKey(address));
+        if (it == readMap_.end() && !defaultRead_.has_value()) {
+            callback(AsyncStatus::kTimeout, std::span<const uint8_t>{});
+            return handle;
+        }
+
+        const auto& bytes = (it != readMap_.end()) ? it->second : *defaultRead_;
+        if (bytes.size() < length) {
+            callback(AsyncStatus::kShortRead, std::span<const uint8_t>{});
+            return handle;
+        }
+        callback(AsyncStatus::kSuccess, std::span<const uint8_t>{bytes.data(), length});
         return handle;
     }
 
@@ -118,10 +245,32 @@ public:
                      FW::FwSpeed speed,
                      InterfaceCompletionCallback callback) override {
         const AsyncHandle handle = NextHandle();
-        std::array<uint8_t, 4> zeroes{};
+        ++lockCount_;
+        lastLockOperand_.assign(operand.begin(), operand.end());
+
+        std::array<uint8_t, 4> oldValue{};
+        if (lockMode_ == LockMode::kEchoCompare && operand.size() >= oldValue.size()) {
+            // A compare-swap operand is [compare || new]; echoing the compare
+            // half makes the CAS report success.
+            std::copy_n(operand.begin(), oldValue.size(), oldValue.begin());
+        }
+        if (failNextCompareSwap_ || failCompareSwap_) {
+            failNextCompareSwap_ = false;
+            oldValue[3] ^= 0x01U;
+        }
+
+        const size_t responseBytes = std::min<size_t>(oldValue.size(), responseLength);
+        if (deferLocks_) {
+            pendingLocks_.push_back(PendingLock{
+                .payload = oldValue,
+                .responseBytes = responseBytes,
+                .callback = std::move(callback),
+            });
+            return handle;
+        }
+
         callback(AsyncStatus::kSuccess,
-                 std::span<const uint8_t>{zeroes.data(),
-                                          std::min<size_t>(zeroes.size(), responseLength)});
+                 std::span<const uint8_t>{oldValue.data(), responseBytes});
         return handle;
     }
 
@@ -165,10 +314,22 @@ private:
         InterfaceCompletionCallback callback;
     };
 
+    struct PendingLock {
+        std::array<uint8_t, 4> payload{};
+        size_t responseBytes{0};
+        InterfaceCompletionCallback callback;
+    };
+
     AsyncHandle NextHandle() noexcept {
         const AsyncHandle handle = nextHandle_;
         nextHandle_ = AsyncHandle{nextHandle_.value + 1};
         return handle;
+    }
+
+    /// Node-independent 48-bit key: bits[47:32] = addressHi, bits[31:0] = addressLo.
+    [[nodiscard]] static uint64_t AddressKey(const FWAddress& address) noexcept {
+        return (static_cast<uint64_t>(address.addressHi) << 32U) |
+               static_cast<uint64_t>(address.addressLo);
     }
 
     FW::Generation generation_{1};
@@ -178,6 +339,17 @@ private:
     AsyncHandle nextHandle_{1};
     std::vector<WriteSummary> writeHistory_;
     std::deque<PendingWrite> pendingWrites_;
+
+    std::unordered_map<uint64_t, std::vector<uint8_t>> readMap_;
+    std::optional<std::vector<uint8_t>> defaultRead_;
+    std::vector<ReadSummary> readHistory_;
+    LockMode lockMode_{LockMode::kZeroes};
+    bool failNextCompareSwap_{false};
+    bool failCompareSwap_{false};
+    bool deferLocks_{false};
+    std::deque<PendingLock> pendingLocks_;
+    size_t lockCount_{0};
+    std::vector<uint8_t> lastLockOperand_;
 };
 
 } // namespace ASFW::Async::Testing

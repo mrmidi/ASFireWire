@@ -146,7 +146,7 @@ TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuies
     EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Running);
 
-    hardware.SetTestRegister(controlSet, 0);
+    hardware.LatchProviderRevokedAndDrain();
     EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Stopped);
 }
@@ -207,6 +207,32 @@ TEST(IsochServiceTxPreparation, StopAllPropagatesActiveReceiveTimeoutAndRetainsC
     EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
     ASSERT_NE(service.ReceiveContext(0), nullptr);
     EXPECT_EQ(service.ReceiveContext(0)->GetState(), ASFW::Isoch::IRPolicy::State::Running);
+
+    // StopAll intentionally retains the context and its DMA binding on timeout.
+    // Complete the hardware quiesce before the test's stack-owned hardware goes
+    // away; production guarantees that HardwareInterface outlives IsochService.
+    hardware.SetTestRegister(controlSet, 0);
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
+}
+
+TEST(IsochServiceTxPreparation, StopAllReleasesActiveReceiveWhenProviderIsGone) {
+    IsochService service;
+    HardwareInterface hardware;
+    RecordingReceiveConsumer consumer;
+
+    service.SetReceiveConsumer(/*streamIndex=*/0, &consumer);
+    ASSERT_EQ(service.PrepareReceive(/*channel=*/2, hardware), kIOReturnSuccess);
+    ASSERT_EQ(service.StartPreparedReceive(), kIOReturnSuccess);
+
+    const Register32 controlSet =
+        static_cast<Register32>(DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware.SetTestRegister(controlSet, ASFW::Driver::ContextControl::kActive);
+    hardware.LatchProviderRevokedAndDrain();
+
+    EXPECT_EQ(service.StopAll(), kIOReturnSuccess);
+    ASSERT_NE(service.ReceiveContext(0), nullptr);
+    EXPECT_EQ(service.ReceiveContext(0)->GetState(), ASFW::Isoch::IRPolicy::State::Stopped);
+    EXPECT_EQ(consumer.quiesced, 1u);
 }
 
 TEST(IsochServiceTxPreparation, ReceiveConsumerAttachesBeforePreparedStart) {

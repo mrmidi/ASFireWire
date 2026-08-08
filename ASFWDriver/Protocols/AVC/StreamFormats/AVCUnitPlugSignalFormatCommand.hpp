@@ -56,7 +56,28 @@ public:
                                    uint8_t plugID,
                                    bool isInput,
                                    SampleRate rate)
-        : AVCCommand(transport, BuildCdb(plugID, isInput, rate)) {}
+        : AVCCommand(transport, BuildCdb(plugID, isInput, rate,
+                                         AVC::AVCCommandType::kControl)) {}
+
+    /// Tag selecting SPECIFIC INQUIRY rather than CONTROL.
+    ///
+    /// The operands are identical to a set, but the ctype asks "would you
+    /// accept this?" instead of "do this". Discovery must probe with inquiry:
+    /// probing with CONTROL would retune the device once per candidate rate,
+    /// which is a device-visible side effect during what is meant to be a
+    /// read-only capability scan. See AV/C General §, and the reference use in
+    /// snd-firewire-ctl-services oxfw/src/lib.rs (specific_inquiry).
+    struct InquireRate {
+        SampleRate rate{SampleRate::kUnknown};
+    };
+
+    /// Constructor (Specific Inquiry — capability probe, no state change)
+    AVCUnitPlugSignalFormatCommand(AVC::FCPTransport& transport,
+                                   uint8_t plugID,
+                                   bool isInput,
+                                   InquireRate inquiry)
+        : AVCCommand(transport, BuildCdb(plugID, isInput, inquiry.rate,
+                                         AVC::AVCCommandType::kInquiry)) {}
 
     /// Submit command with signal format response
     void Submit(std::function<void(AVC::AVCResult, SignalFormat)> completion) {
@@ -89,16 +110,16 @@ public:
     }
 
 private:
-    static AVC::AVCCdb BuildCdb(uint8_t plugID, bool isInput, 
-                               std::optional<SampleRate> setRate) {
+    static AVC::AVCCdb BuildCdb(uint8_t plugID, bool isInput,
+                               std::optional<SampleRate> setRate,
+                               AVC::AVCCommandType ctype = AVC::AVCCommandType::kStatus) {
         AVC::AVCCdb cdb;
-        
-        if (setRate.has_value()) {
-            cdb.ctype = static_cast<uint8_t>(AVC::AVCCommandType::kControl);
-        } else {
-            cdb.ctype = static_cast<uint8_t>(AVC::AVCCommandType::kStatus);
-        }
-        
+
+        // A rate-bearing frame is CONTROL or INQUIRY depending on the caller;
+        // a rate-less frame is always a STATUS query.
+        cdb.ctype = static_cast<uint8_t>(setRate.has_value() ? ctype
+                                                             : AVC::AVCCommandType::kStatus);
+
         cdb.subunit = 0xFF;  // Unit level
         cdb.opcode = isInput ? 0x19 : 0x18; // INPUT/OUTPUT PLUG SIGNAL FORMAT
 

@@ -21,6 +21,7 @@
 #include "AVCUnit.hpp"
 #include "../Ports/FireWireBusPort.hpp"
 #include "../../Discovery/IDeviceManager.hpp"
+#include "../../Discovery/DeviceRouteToken.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Audio/Core/IAVCAudioConfigListener.hpp"
@@ -28,7 +29,7 @@
 #include "../../Scheduling/ITimerScheduler.hpp"
 
 // Forward declarations
-namespace ASFW::Discovery { struct DeviceRecord; }
+namespace ASFW::Discovery { class DeviceRegistry; struct DeviceRecord; }
 namespace ASFW::Audio::Model { struct ASFWAudioDevice; }
 namespace ASFW::Audio::Oxford::Apogee { class ApogeeDuetProtocol; }
 namespace ASFW::Protocols::AVC::Music { class MusicSubunit; }
@@ -46,6 +47,7 @@ class AVCDiscovery : public Discovery::IUnitObserver,
                      public std::enable_shared_from_this<AVCDiscovery> {
 public:
     AVCDiscovery(IOService* driver,
+                 Discovery::DeviceRegistry& deviceRegistry,
                  Discovery::IDeviceManager& deviceManager,
                  Protocols::Ports::FireWireBusOps& busOps,
                  Protocols::Ports::FireWireBusInfo& busInfo,
@@ -96,6 +98,17 @@ private:
         bool timedOut{false};
     };
 
+    struct DuetPrefetchOperation {
+        Discovery::DeviceRouteToken route{};
+        uint64_t operationSerial{0};
+        uint64_t startTimeNs{0};
+
+        DuetPrefetchState state{};
+        std::atomic<bool> completed{false};
+
+        Scheduling::TimerToken timeoutToken{Scheduling::kInvalidTimerToken};
+    };
+
     bool IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const;
     bool IsApogeeDuet(const Discovery::FWDevice& device) const noexcept;
 
@@ -121,34 +134,45 @@ private:
     void PrefetchDuetStateAndCreateNub(uint64_t guid,
                                        const std::shared_ptr<AVCUnit>& avcUnit,
                                        const ::ASFW::Audio::Model::ASFWAudioDevice& config);
+    void FinishDuetPrefetch(const std::shared_ptr<DuetPrefetchOperation>& operation,
+                            const ::ASFW::Audio::Model::ASFWAudioDevice& config,
+                            const char* reason);
     void ContinueDuetPrefetchMixer(uint64_t guid,
                                    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                   const std::shared_ptr<DuetPrefetchState>& state,
-                                   const std::shared_ptr<std::atomic<bool>>& completed,
-                                   const std::shared_ptr<std::function<void(const char*)>>& finish);
+                                   const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                   const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ContinueDuetPrefetchOutput(uint64_t guid,
                                     const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                    const std::shared_ptr<DuetPrefetchState>& state,
-                                    const std::shared_ptr<std::atomic<bool>>& completed,
-                                    const std::shared_ptr<std::function<void(const char*)>>& finish);
+                                    const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                    const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ContinueDuetPrefetchDisplay(uint64_t guid,
                                      const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                     const std::shared_ptr<DuetPrefetchState>& state,
-                                     const std::shared_ptr<std::atomic<bool>>& completed,
-                                     const std::shared_ptr<std::function<void(const char*)>>& finish);
+                                     const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                     const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ContinueDuetPrefetchFirmware(uint64_t guid,
                                       const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                      const std::shared_ptr<DuetPrefetchState>& state,
-                                      const std::shared_ptr<std::atomic<bool>>& completed,
-                                      const std::shared_ptr<std::function<void(const char*)>>& finish);
+                                      const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                      const ::ASFW::Audio::Model::ASFWAudioDevice& config);
+    void ContinueDuetPrefetchStreamFormats(uint64_t guid,
+                                           const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                           const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                           const ::ASFW::Audio::Model::ASFWAudioDevice& config);
+    void ContinueDuetPrefetchClock(uint64_t guid,
+                                   const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                   const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                   const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ContinueDuetPrefetchHardware(uint64_t guid,
                                       const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
-                                      const std::shared_ptr<DuetPrefetchState>& state,
-                                      const std::shared_ptr<std::atomic<bool>>& completed,
-                                      const std::shared_ptr<std::function<void(const char*)>>& finish);
+                                      const std::shared_ptr<DuetPrefetchOperation>& operation,
+                                      const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
+    [[nodiscard]] bool IsDuetPrefetchCurrent(
+        const std::shared_ptr<DuetPrefetchOperation>& operation) const noexcept;
+    [[nodiscard]] bool IsRescanCurrent(const Discovery::DeviceRouteToken& route,
+                                       uint64_t operationSerial) const noexcept;
 
     IOService* driver_{nullptr};
+    Discovery::DeviceRegistry& deviceRegistry_;
     Discovery::IDeviceManager& deviceManager_;
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
@@ -162,6 +186,11 @@ private:
     std::unordered_map<uint16_t, std::shared_ptr<FCPTransport>> fcpTransportsByNodeID_;
     std::unordered_map<uint64_t, uint8_t> rescanAttempts_;
     std::unordered_map<uint64_t, DuetPrefetchState> duetPrefetchByGuid_;
+    std::unordered_map<uint64_t, std::shared_ptr<DuetPrefetchOperation>> activeDuetPrefetchByGuid_;
+    std::unordered_map<uint64_t, Scheduling::TimerToken> rescanTimersByGuid_;
+    std::unordered_map<uint64_t, uint64_t> activeRescanSerialByGuid_;
+    uint64_t nextDuetPrefetchEpoch_{0};
+    uint64_t nextRescanOperationSerial_{0};
 
     OSSharedPtr<IODispatchQueue> rescanQueue_;
 

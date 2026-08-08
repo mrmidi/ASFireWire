@@ -126,7 +126,7 @@ private:
     void RecordTeardownAbort(const char* stage, uint64_t guid) noexcept;
     [[nodiscard]] bool IsStopRequested(uint64_t guid) const noexcept;
     [[nodiscard]] bool IsRestartEpochCurrent(uint64_t guid, uint64_t restartId,
-                                             FW::Generation topologyGeneration) const noexcept;
+                                             const Discovery::DeviceRouteToken& route) const noexcept;
     [[nodiscard]] Runtime::IDirectAudioBindingSource* GetDirectAudioBindingSource(
         uint64_t guid) const noexcept;
     [[nodiscard]] IOReturn WaitForStableGlobalClock(
@@ -156,19 +156,17 @@ bool DuplexStartTransaction::IsStopRequested(uint64_t guid) const noexcept {
 }
 
 bool DuplexStartTransaction::IsRestartEpochCurrent(
-    uint64_t guid, uint64_t restartId, FW::Generation topologyGeneration) const noexcept {
-    if (guid == 0 || restartId == 0 || IsStopRequested(guid)) {
+    uint64_t guid, uint64_t restartId, const Discovery::DeviceRouteToken& route) const noexcept {
+    if (guid == 0 || restartId == 0 || !route || IsStopRequested(guid)) {
         return false;
     }
 
     const DuplexRestartSession session = dependencies_.sessionStore.LoadSession(guid);
-    if (session.restartId != restartId || session.topologyGeneration != topologyGeneration) {
+    if (session.restartId != restartId || session.route != route ||
+        !dependencies_.registry.IsCurrent(route)) {
         return false;
     }
-
-    const auto* liveRecord = dependencies_.registry.FindByGuid(guid);
-    return liveRecord != nullptr && liveRecord->gen == topologyGeneration &&
-           Discovery::TryOperationalNodeId(liveRecord->nodeId).has_value();
+    return route.guid == guid;
 }
 
 Runtime::IDirectAudioBindingSource* DuplexStartTransaction::GetDirectAudioBindingSource(
@@ -206,6 +204,9 @@ IOReturn AudioDuplexCoordinator::StartStreaming(uint64_t guid) noexcept {
                  "AudioDuplexCoordinator: StartStreaming refused by teardown GUID=%llx",
                  guid);
         return kIOReturnAborted;
+    }
+    if (IsStopRequested(guid)) {
+        return kIOReturnNoDevice;
     }
 
     const DuplexRestartSession session = LoadSession(guid);
@@ -373,6 +374,9 @@ IOReturn AudioDuplexCoordinator::RecoverStreaming(uint64_t guid,
                  guid);
         return kIOReturnAborted;
     }
+    if (IsStopRequested(guid)) {
+        return kIOReturnAborted;
+    }
 
     const DuplexRestartSession session = LoadSession(guid);
     LogFsmEvent("recover", guid, session.restartId, session.topologyGeneration, session.state,
@@ -417,6 +421,22 @@ void AudioDuplexCoordinator::ClearSession(uint64_t guid) noexcept {
     IOLockUnlock(lock_);
 }
 
+void AudioDuplexCoordinator::CancelRemoteDevice(uint64_t guid) noexcept {
+    if (guid == 0) {
+        return;
+    }
+    gate_.MarkRemoteDeviceLost(guid);
+    FailPendingClockRequest(guid, DuplexClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+}
+
+void AudioDuplexCoordinator::AcknowledgeDevicePresent(uint64_t guid) noexcept {
+    gate_.AcknowledgeDevicePresent(guid);
+}
+
+bool AudioDuplexCoordinator::IsDeviceOperationCancelled(uint64_t guid) const noexcept {
+    return TeardownRequested() || IsStopRequested(guid);
+}
+
 std::optional<DuplexRestartSession>
 AudioDuplexCoordinator::GetSession(uint64_t guid) const noexcept {
     return store_.GetSession(guid);
@@ -440,7 +460,7 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
 
     IDuplexDeviceControl* deviceControl = nullptr;
     std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
-    auto* record = RequireDuplexRecord(guid, deviceControl, protoHold);
+    auto record = RequireDuplexRecord(guid, deviceControl, protoHold);
     if (!record || !deviceControl) {
         FailPendingClockRequest(guid, DuplexClockRequestOutcome::kFailed, kIOReturnNotReady);
         return kIOReturnNotReady;
@@ -541,19 +561,37 @@ IOReturn AudioDuplexCoordinator::RunStopStreaming(uint64_t guid) noexcept {
         return kIOReturnAborted;
     }
 
+    // A cleanly stopped session has no host or device footprint. Treat a
+    // duplicate stop as an acknowledgement rather than asking the one global
+    // host transport to tear down the same session again.
+    const std::optional<DuplexRestartSession> existingSession = GetSession(guid);
+    if (existingSession && !HasAnyRestartState(*existingSession) &&
+        existingSession->phase == DuplexRestartPhase::kIdle &&
+        existingSession->state == DuplexRestartState::kIdle) {
+        return kIOReturnSuccess;
+    }
+
     IDuplexDeviceControl* deviceControl = nullptr;
     std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
-    auto* record = RequireDuplexRecord(guid, deviceControl, protoHold);
+    auto record = RequireDuplexRecord(guid, deviceControl, protoHold);
     if (!record || !deviceControl) {
         DuplexRestartSession session = LoadSession(guid);
         ClearFailureSnapshot(session);
         ClearRestartProgress(session);
         StoreSession(session);
         LogTerminal(session);
-        return kIOReturnNotReady;
+        // kIOReturnNoDevice, not kIOReturnNotReady: these are opposite
+        // situations and callers act on the difference. "Not ready" invites a
+        // retry, but a stop with no device record has nothing left to stop and
+        // will never succeed — the record does not come back. Reporting it as
+        // NotReady is what left the CoreAudio device stranded in FW-144, since
+        // the caller kept deferring teardown waiting for a success that could
+        // not arrive. Device-side stages need a device; host-side cleanup does
+        // not, and is the caller's to run.
+        return kIOReturnNoDevice;
     }
 
-    DuplexRestartSession session = LoadSession(guid);
+    DuplexRestartSession session = existingSession.value_or(LoadSession(guid));
     return RunDuplexStop(guid, *record, *deviceControl, session);
 }
 
@@ -565,7 +603,7 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
 
     IDuplexDeviceControl* deviceControl = nullptr;
     std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
-    auto* record = RequireDuplexRecord(guid, deviceControl, protoHold);
+    auto record = RequireDuplexRecord(guid, deviceControl, protoHold);
     DuplexRestartSession session = LoadSession(guid);
     session.guid = guid;
     if (IsRecoveryReason(reason)) {
@@ -584,7 +622,7 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
         .hasRestartIntent = HasRestartIntent(session),
         .hasHostFootprint = HasHostRestartState(session),
         .hasDeviceFootprint = HasDeviceRestartState(session),
-        .hasDiceRecord = (record != nullptr),
+        .hasDiceRecord = record.has_value(),
         .hasProtocol = (deviceControl != nullptr),
         .lastFailureRetryable = session.lastFailure.has_value() && session.lastFailure->retryable,
     };
@@ -592,10 +630,17 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
     LogRecoveryPolicy(session, reason, decision);
 
     if (decision.disposition == DiceRecoveryDisposition::kIgnore) {
+        // kIOReturnUnsupported, not kIOReturnSuccess: the policy declined to
+        // run a recovery, which is not the same as running one that worked.
+        // Callers act on the difference — AVCAudioBackend used to log
+        // "recovery succeeded" here and reset its escalation budget, which is
+        // what kTimingLossMaxAttempts exists to accumulate (FW-146). The
+        // codebase already treats Unsupported as a benign no-op rather than a
+        // failure (see the device-stop status check below).
         return (decision.reason == DiceRecoveryPolicyReason::kSuppressedByStop ||
                 decision.reason == DiceRecoveryPolicyReason::kIdleApplyInvalidated)
                    ? kIOReturnAborted
-                   : kIOReturnSuccess;
+                   : kIOReturnUnsupported;
     }
 
     if (decision.disposition == DiceRecoveryDisposition::kFailSession) {
@@ -723,7 +768,7 @@ AudioDuplexCoordinator::ApplyClockRequest(uint64_t guid,
 
     IDuplexDeviceControl* deviceControl = nullptr;
     std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
-    auto* record = RequireDuplexRecord(guid, deviceControl, protoHold);
+    auto record = RequireDuplexRecord(guid, deviceControl, protoHold);
     if (!record || !deviceControl) {
         return kIOReturnNotReady;
     }
@@ -784,8 +829,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         return this->IsStopRequested(requestGuid);
     };
     auto IsRestartEpochCurrent = [this](uint64_t requestGuid, uint64_t restartId,
-                                        FW::Generation generation) noexcept {
-        return this->IsRestartEpochCurrent(requestGuid, restartId, generation);
+                                        const Discovery::DeviceRouteToken& route) noexcept {
+        return this->IsRestartEpochCurrent(requestGuid, restartId, route);
     };
     auto GetDirectAudioBindingSource = [this](uint64_t requestGuid) noexcept {
         return this->GetDirectAudioBindingSource(requestGuid);
@@ -807,7 +852,11 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     if (abortIfTeardown("RunDuplexStart")) {
         return kIOReturnAborted;
     }
-    const FW::Generation topologyGeneration = record.gen;
+    const auto route = dependencies_.registry.CurrentRoute(record.guid);
+    if (!route.has_value() || !dependencies_.registry.IsCurrent(*route)) {
+        return kIOReturnNotReady;
+    }
+    const FW::Generation topologyGeneration = route->generation;
     auto runtimeProtocol = runtime_.FindShared(record.guid);
 
     // Pre-read the device's static stream geometry so channel resolution and IRM reservation see
@@ -841,6 +890,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                bool deviceStateKnown) noexcept {
         session.guid = guid;
         session.restartId = restartId;
+        session.route = *route;
         session.generation = topologyGeneration;
         session.topologyGeneration = topologyGeneration;
         session.channels = channels;
@@ -893,6 +943,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
 
         session.guid = guid;
         session.restartId = restartId;
+        session.route = *route;
         session.generation = topologyGeneration;
         session.topologyGeneration = topologyGeneration;
         session.channels = channels;
@@ -932,6 +983,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
 
     session.guid = guid;
     session.restartId = restartId;
+    session.route = *route;
     session.generation = topologyGeneration;
     session.topologyGeneration = topologyGeneration;
     session.channels = channels;
@@ -973,7 +1025,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         return rollbackToFailure(prepare.status, DuplexRestartPhase::kPreparingDevice,
                                  DuplexRestartFailureCause::kPrepare);
     }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+    if (!IsRestartEpochCurrent(guid, restartId, *route)) {
         return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kPreparingDevice,
                                       DuplexRestartFailureCause::kPrepare);
     }
@@ -1011,7 +1063,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (i == 0) {
             channels.hostToDeviceIsoChannel = assignedChannel;
         }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        if (!IsRestartEpochCurrent(guid, restartId, *route)) {
             return rollbackToInvalidation(kIOReturnAborted,
                                           DuplexRestartPhase::kReservingPlaybackResources,
                                           DuplexRestartFailureCause::kReservePlayback);
@@ -1040,7 +1092,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         if (i == 0) {
             channels.deviceToHostIsoChannel = assignedChannel;
         }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        if (!IsRestartEpochCurrent(guid, restartId, *route)) {
             return rollbackToInvalidation(kIOReturnAborted,
                                           DuplexRestartPhase::kReservingCaptureResources,
                                           DuplexRestartFailureCause::kReserveCapture);
@@ -1091,7 +1143,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                          DuplexRestartPhase::kStartingHostReceive,
                                          DuplexRestartFailureCause::kStartReceive);
             }
-            if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            if (!IsRestartEpochCurrent(guid, restartId, *route)) {
                 return rollbackToInvalidation(kIOReturnAborted,
                                               DuplexRestartPhase::kStartingHostReceive,
                                               DuplexRestartFailureCause::kStartReceive);
@@ -1112,7 +1164,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                     return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
                                              DuplexRestartFailureCause::kStartReceive);
                 }
-                if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+                if (!IsRestartEpochCurrent(guid, restartId, *route)) {
                     return rollbackToInvalidation(kIOReturnAborted,
                                                   DuplexRestartPhase::kStartingHostReceive,
                                                   DuplexRestartFailureCause::kStartReceive);
@@ -1131,7 +1183,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             return rollbackToFailure(prepareTransmitStatus, DuplexRestartPhase::kStartingHostTransmit,
                                      DuplexRestartFailureCause::kStartTransmit);
         }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        if (!IsRestartEpochCurrent(guid, restartId, *route)) {
             return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kStartingHostTransmit,
                                           DuplexRestartFailureCause::kStartTransmit);
         }
@@ -1151,7 +1203,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                 return rollbackToFailure(status, DuplexRestartPhase::kStartingHostTransmit,
                                          DuplexRestartFailureCause::kStartTransmit);
             }
-            if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            if (!IsRestartEpochCurrent(guid, restartId, *route)) {
                 return rollbackToInvalidation(kIOReturnAborted,
                                               DuplexRestartPhase::kStartingHostTransmit,
                                               DuplexRestartFailureCause::kStartTransmit);
@@ -1171,7 +1223,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             return rollbackToFailure(clockLockStatus, DuplexRestartPhase::kWaitingGlobalClock,
                                      DuplexRestartFailureCause::kGlobalClockLock);
         }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        if (!IsRestartEpochCurrent(guid, restartId, *route)) {
             return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kWaitingGlobalClock,
                                           DuplexRestartFailureCause::kGlobalClockLock);
         }
@@ -1196,7 +1248,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
                                      DuplexRestartFailureCause::kStartReceive);
         }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        if (!IsRestartEpochCurrent(guid, restartId, *route)) {
             return rollbackToInvalidation(kIOReturnAborted,
                                           DuplexRestartPhase::kStartingHostReceive,
                                           DuplexRestartFailureCause::kStartReceive);
@@ -1219,14 +1271,14 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         return rollbackToFailure(programRx.status, DuplexRestartPhase::kProgrammingDeviceRx,
                                  DuplexRestartFailureCause::kProgramRx);
     }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+    if (!IsRestartEpochCurrent(guid, restartId, *route)) {
         return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kProgrammingDeviceRx,
                                       DuplexRestartFailureCause::kProgramRx);
     }
     session.generation = programRx.value.generation;
     SetSessionPhase(session, DuplexRestartPhase::kProgrammingDeviceRx);
     session.deviceRxProgrammed = true;
-    session.runtimeCaps = programRx.value.runtimeCaps.hostInputPcmChannels != 0
+    session.runtimeCaps = programRx.value.runtimeCaps.hostOutputPcmChannels != 0
                               ? programRx.value.runtimeCaps
                               : session.runtimeCaps;
     SetSessionPhase(session, DuplexRestartPhase::kDeviceRxProgrammed);
@@ -1241,7 +1293,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             return rollbackToFailure(status, DuplexRestartPhase::kStartingHostTransmit,
                                      DuplexRestartFailureCause::kStartTransmit);
         }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        if (!IsRestartEpochCurrent(guid, restartId, *route)) {
             return rollbackToInvalidation(kIOReturnAborted,
                                           DuplexRestartPhase::kStartingHostTransmit,
                                           DuplexRestartFailureCause::kStartTransmit);
@@ -1264,14 +1316,14 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         return rollbackToFailure(programTx.status, DuplexRestartPhase::kProgrammingDeviceTx,
                                  DuplexRestartFailureCause::kProgramTx);
     }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+    if (!IsRestartEpochCurrent(guid, restartId, *route)) {
         return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kProgrammingDeviceTx,
                                       DuplexRestartFailureCause::kProgramTx);
     }
     session.generation = programTx.value.generation;
     SetSessionPhase(session, DuplexRestartPhase::kProgrammingDeviceTx);
     session.deviceTxArmed = true;
-    session.runtimeCaps = programTx.value.runtimeCaps.hostInputPcmChannels != 0
+    session.runtimeCaps = programTx.value.runtimeCaps.hostOutputPcmChannels != 0
                               ? programTx.value.runtimeCaps
                               : session.runtimeCaps;
     SetSessionPhase(session, DuplexRestartPhase::kDeviceTxArmed);
@@ -1299,7 +1351,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                 return rollbackToFailure(startReceiveStatus, DuplexRestartPhase::kStartingHostReceive,
                                          DuplexRestartFailureCause::kStartReceive);
             }
-            if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            if (!IsRestartEpochCurrent(guid, restartId, *route)) {
                 return rollbackToInvalidation(kIOReturnAborted,
                                               DuplexRestartPhase::kStartingHostReceive,
                                               DuplexRestartFailureCause::kStartReceive);
@@ -1322,7 +1374,7 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             return rollbackToFailure(startTransmitStatus, DuplexRestartPhase::kStartingHostTransmit,
                                      DuplexRestartFailureCause::kStartTransmit);
         }
-        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        if (!IsRestartEpochCurrent(guid, restartId, *route)) {
             return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kStartingHostTransmit,
                                           DuplexRestartFailureCause::kStartTransmit);
         }
@@ -1344,7 +1396,7 @@ if (confirm.status != kIOReturnSuccess) {
     return rollbackToFailure(confirm.status, DuplexRestartPhase::kConfirmingDeviceStart,
                              DuplexRestartFailureCause::kConfirmStart);
 }
-if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+if (!IsRestartEpochCurrent(guid, restartId, *route)) {
     return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kConfirmingDeviceStart,
                                   DuplexRestartFailureCause::kConfirmStart);
 }
@@ -1497,6 +1549,15 @@ IOReturn DuplexStartTransaction::Stop(const StopRequest& request) noexcept {
         } else if (cleanupStatus != kIOReturnSuccess) {
             result = cleanupStatus;
         }
+        // Three independent statuses collapse into one `result`. Normal stream
+        // stop reports the failed stage; confirmed remote removal bypasses this
+        // device-side path and is owned by AudioCoordinator instead.
+        if (result != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Audio,
+                           "RunDuplexStop: failed guid=0x%016llx tx=0x%08x rx=0x%08x "
+                           "cleanup=0x%08x -> 0x%08x",
+                           guid, transmitStopStatus, receiveStopStatus, cleanupStatus, result);
+        }
     } else {
         // DICE retains its original teardown contract unchanged.
         const kern_return_t hostStatus = hostTransport_.StopAll();
@@ -1552,8 +1613,8 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
         return this->IsStopRequested(requestGuid);
     };
     auto IsRestartEpochCurrent = [this](uint64_t requestGuid, uint64_t restartId,
-                                        FW::Generation generation) noexcept {
-        return this->IsRestartEpochCurrent(requestGuid, restartId, generation);
+                                        const Discovery::DeviceRouteToken& route) noexcept {
+        return this->IsRestartEpochCurrent(requestGuid, restartId, route);
     };
 
     if (TeardownRequested()) {
@@ -1561,9 +1622,15 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
         return kIOReturnAborted;
     }
 
+    const auto route = dependencies_.registry.CurrentRoute(guid);
+    if (!route.has_value() || !dependencies_.registry.IsCurrent(*route)) {
+        return kIOReturnNotReady;
+    }
+
     const uint64_t restartId = AllocateRestartId();
     session.guid = guid;
     session.restartId = restartId;
+    session.route = *route;
     session.generation = topologyGeneration;
     session.topologyGeneration = topologyGeneration;
     session.reason = reason;
@@ -1591,7 +1658,7 @@ IOReturn DuplexStartTransaction::ApplyIdleClock(const IdleClockApplyRequest& req
         LogTerminal(session);
         return apply.status;
     }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+    if (!IsRestartEpochCurrent(guid, restartId, *route)) {
         session.terminalError = kIOReturnSuccess;
         RecordIssue(session, session.lastInvalidation, DuplexRestartPhase::kPreparingDevice,
                     IsStopRequested(guid) ? DuplexRestartErrorClass::kStopIntent
@@ -1654,24 +1721,24 @@ IOReturn AudioDuplexCoordinator::RunIdleClockApply(
                                                        topologyGeneration, desiredClock, reason});
 }
 
-Discovery::DeviceRecord* AudioDuplexCoordinator::RequireDuplexRecord(
+std::optional<Discovery::DeviceRecord> AudioDuplexCoordinator::RequireDuplexRecord(
     uint64_t guid, IDuplexDeviceControl*& outDeviceControl,
     std::shared_ptr<IDeviceProtocol>& outHold) noexcept {
     outDeviceControl = nullptr;
     outHold.reset();
-    auto* record = registry_.FindByGuid(guid);
-    if (!record || !Discovery::TryOperationalNodeId(record->nodeId).has_value()) {
-        return nullptr;
+    auto record = registry_.SnapshotByGuid(guid);
+    if (!record.has_value() || !Discovery::TryOperationalNodeId(record->nodeId).has_value()) {
+        return std::nullopt;
     }
 
     auto protocol = runtime_.FindShared(guid);
     if (!protocol) {
-        return nullptr;
+        return std::nullopt;
     }
 
     outDeviceControl = protocol->AsDuplexDeviceControl();
     if (outDeviceControl == nullptr) {
-        return nullptr;
+        return std::nullopt;
     }
     outDeviceControl->SetTeardownCancelToken(cancel_);
 
@@ -1713,8 +1780,8 @@ uint64_t AudioDuplexCoordinator::AllocateRestartId() noexcept {
 }
 
 bool AudioDuplexCoordinator::IsRestartEpochCurrent(
-    uint64_t guid, uint64_t restartId, FW::Generation topologyGeneration) const noexcept {
-    if (guid == 0 || restartId == 0) {
+    uint64_t guid, uint64_t restartId, const Discovery::DeviceRouteToken& route) const noexcept {
+    if (guid == 0 || restartId == 0 || !route || route.guid != guid) {
         return false;
     }
     if (IsStopRequested(guid)) {
@@ -1728,19 +1795,13 @@ bool AudioDuplexCoordinator::IsRestartEpochCurrent(
     IOLockLock(lock_);
     const auto* sessionPtr = store_.FindSessionLocked(guid);
     const bool sessionMatches = (sessionPtr != nullptr) && sessionPtr->restartId == restartId &&
-                                sessionPtr->topologyGeneration == topologyGeneration;
+                                sessionPtr->route == route;
     IOLockUnlock(lock_);
     if (!sessionMatches) {
         return false;
     }
 
-    const auto* liveRecord = registry_.FindByGuid(guid);
-    if (!liveRecord || liveRecord->gen != topologyGeneration ||
-        !Discovery::TryOperationalNodeId(liveRecord->nodeId).has_value()) {
-        return false;
-    }
-
-    return true;
+    return registry_.IsCurrent(route);
 }
 
 bool AudioDuplexCoordinator::TryConsumePendingClockRequest(uint64_t guid,

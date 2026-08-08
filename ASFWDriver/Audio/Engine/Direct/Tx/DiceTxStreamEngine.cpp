@@ -74,6 +74,10 @@ void DiceTxStreamEngine::ReArmFrameCursorAlignment() noexcept {
     packetizer_.ReArmFrameCursorAlignment();
 }
 
+bool DiceTxStreamEngine::IsFrameCursorAligned() const noexcept {
+    return packetizer_.IsFrameCursorAligned();
+}
+
 TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
     uint32_t packetIndex, const AMDTP::AmdtpTimingState& timing) noexcept {
     if (slotProvider_ == nullptr) {

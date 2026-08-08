@@ -28,7 +28,9 @@ struct MCPHardwareSmokeRunnerTests {
         #expect(report.detectedNodes.count == 2)
         #expect(report.results.contains { $0.name == "Read Config ROM header (node 0)" && $0.disposition == .passed })
         #expect(report.results.contains { $0.name == "Read Config ROM prefix (node 0)" && $0.disposition == .passed })
-        #expect(report.results.contains { $0.name == "Snapshot selected OHCI registers" && $0.disposition == .unsupported })
+        // `asfw_snapshot_ohci_registers` is now backed by the ASFWDiagOHCI diagnostics
+        // snapshot, so this step reports a real result instead of an adapter gap.
+        #expect(report.results.contains { $0.name == "Snapshot selected OHCI registers" && $0.disposition == .passed })
         #expect(report.results.contains { $0.name == "Probe avc capability (node 0)" && $0.disposition == .passed })
         #expect(report.failures.isEmpty)
         #expect(await driver.unexpectedWriteAttemptCount() == 0)

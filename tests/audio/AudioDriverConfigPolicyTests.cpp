@@ -70,6 +70,22 @@ TEST(AudioDriverConfigPolicyTests, ClampChannelsRespectsMaxSupportedForExplicitD
     EXPECT_EQ(config.channelCount, 16u);
 }
 
+TEST(AudioDriverConfigPolicyTests, ClampChannelsPreservesExplicitPlaybackOnlyTopology) {
+    ParsedAudioDriverConfig config{};
+    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
+    config.channelCount = 2;
+    config.inputChannelCount = 0;
+    config.outputChannelCount = 2;
+    config.hasExplicitInputChannelCount = true;
+    config.hasExplicitOutputChannelCount = true;
+
+    ASFW::Isoch::Audio::ClampAudioDriverChannels(config, 16);
+
+    EXPECT_EQ(config.inputChannelCount, 0U);
+    EXPECT_EQ(config.outputChannelCount, 2U);
+    EXPECT_EQ(config.channelCount, 2U);
+}
+
 TEST(AudioDriverConfigPolicyTests, RuntimeDirectionalCountsWinOverProfileFallback) {
     ParsedAudioDriverConfig config{};
     ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
@@ -94,53 +110,6 @@ TEST(AudioDriverConfigPolicyTests, ProfileCountsRemainFallbackForLegacyNubs) {
     EXPECT_EQ(config.inputChannelCount, 8U);
     EXPECT_EQ(config.outputChannelCount, 6U);
     EXPECT_EQ(config.channelCount, 8U);
-}
-
-TEST(AudioDriverConfigPolicyTests, BuildFallbackBoolControlsMapsPhantomMask) {
-    ParsedAudioDriverConfig config{};
-    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
-    config.boolControlCount = 0;
-    config.hasPhantomOverride = true;
-    config.phantomSupportedMask = 0b1011U;  // elements 1,2,4
-    config.phantomInitialMask = 0b1001U;    // elements 1,4 enabled
-
-    ASFW::Isoch::Audio::BuildFallbackBoolControls(config);
-
-    ASSERT_EQ(config.boolControlCount, 3u);
-    const BoolControlDescriptor& first = config.boolControls[0];
-    const BoolControlDescriptor& second = config.boolControls[1];
-    const BoolControlDescriptor& third = config.boolControls[2];
-
-    EXPECT_EQ(first.classIdFourCC, ASFW::Isoch::Audio::kClassIdPhantomPower);
-    EXPECT_EQ(first.scopeFourCC, ASFW::Isoch::Audio::kScopeInput);
-    EXPECT_EQ(first.element, 1u);
-    EXPECT_TRUE(first.initialValue);
-
-    EXPECT_EQ(second.element, 2u);
-    EXPECT_FALSE(second.initialValue);
-
-    EXPECT_EQ(third.element, 4u);
-    EXPECT_TRUE(third.initialValue);
-}
-
-TEST(AudioDriverConfigPolicyTests, BuildFallbackBoolControlsIsNoopWhenOverridesExist) {
-    ParsedAudioDriverConfig config{};
-    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
-    config.boolControlCount = 1;
-    config.boolControls[0] = BoolControlDescriptor{
-        .classIdFourCC = static_cast<uint32_t>('test'),
-        .scopeFourCC = ASFW::Isoch::Audio::kScopeInput,
-        .element = 7,
-        .isSettable = false,
-        .initialValue = false,
-    };
-    config.hasPhantomOverride = true;
-    config.phantomSupportedMask = 0xFFFF;
-
-    ASFW::Isoch::Audio::BuildFallbackBoolControls(config);
-
-    EXPECT_EQ(config.boolControlCount, 1u);
-    EXPECT_EQ(config.boolControls[0].element, 7u);
 }
 
 TEST(AudioDriverConfigPolicyTests, BringupPolicyForcesSingle48kFormat) {

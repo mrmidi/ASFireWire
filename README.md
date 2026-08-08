@@ -47,7 +47,7 @@ What is real today:
 - Async FireWire transactions are in place and used by discovery and protocol code.
 - AV/C FCP and CMP plumbing exists and is working on the main test rig.
 - Audio publication and experimental streaming paths exist in-tree.
-- Personally tested audio hardware now includes the Apogee Duet FireWire path, Focusrite Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming), and the Midas Venice F32 (full duplex 32-in/32-out streaming).
+- Audio hardware tested by the maintainer: the Apogee Duet FireWire path, Terratec PHASE 88 Rack, and Focusrite Saffire Pro 24 DSP. Contributors have additionally verified the PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out streaming) and the Midas Venice F32 (full duplex 32-in/32-out streaming).
 - Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, Saffire Pro 24 DSP, PreSonus StudioLive 16.0.2, and the Midas Venice F32.
 - **Multi-stream DICE now works.** The Midas Venice F32 runs two isochronous streams per direction (2×16 channels = 32×32 total duplex).
 - **Host-controlled sample-rate switching is implemented**, including 44.1 kHz alongside 48 kHz. The driver decodes the device's advertised clock capabilities and drives DICE `CLOCK_SELECT`, so a rate change in the host (e.g. Logic) reprograms the device live without a reconnect. Switching rates on a CoreAudio aggregate device whose clock master is the FireWire interface is supported.
@@ -65,8 +65,8 @@ Please test these currently enabled DICE devices:
 - Focusrite Saffire Pro 14
 - Focusrite Saffire Pro 24
 - Focusrite Saffire Pro 24 DSP
-- PreSonus StudioLive 16.0.2 (personally tested on one unit; broader validation welcome)
-- Midas Venice F32 (personally tested; broader validation welcome)
+- PreSonus StudioLive 16.0.2 (contributor-verified on one unit; broader validation welcome)
+- Midas Venice F32 (contributor-verified; broader validation welcome)
 
 StudioLive 16.4.2 / 24.4.2 / 32.4.2 owners can help too: the driver recognizes these mixers but does not enable audio yet because their stream layout has not been captured from hardware. If you own one, open an issue — a short register capture using the ASFW app is all that is needed to add support.
 
@@ -150,14 +150,24 @@ Audio-device support in tree today:
 - PreSonus StudioLive 16.0.2
 - Midas Venice F32 (multi-stream DICE, 32-in/32-out)
 - Terratec PHASE 88 Rack
+- Weiss INT202 and INT203 (DICE 2-channel layout; wired up but **never run against real hardware**)
 
-Personally tested with working audio:
+Personally tested with working audio (hardware owned by the maintainer):
 
 - Apogee Duet FireWire
 - Terratec PHASE 88 Rack
 - Focusrite Saffire Pro 24 DSP
-- PreSonus StudioLive 16.0.2
-- Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching)
+
+Verified working by contributors on their own hardware:
+
+- PreSonus StudioLive 16.0.2 (full duplex 16-in/16-out) — [@klochowicz](https://github.com/klochowicz)
+- Midas Venice F32 (32×32 full duplex, 44.1 kHz and 48 kHz, live host-driven rate switching) — [@alicankaralar](https://github.com/alicankaralar)
+- Nikon Coolscan 9000 and Coolscan 4000 — SBP-2/SCSI film scanners, plug and play — [@mhellevang](https://github.com/mhellevang)
+- Panasonic MiniDV camcorder — DV capture and tape transport — [@hoffmabc](https://github.com/hoffmabc)
+
+A fuller breakdown, including recognized-but-not-enabled devices and how to report your
+own results, lives on the
+[Device Compatibility wiki page](https://github.com/mrmidi/ASFireWire/wiki/Device-Compatibility).
 
 Recognized but not enabled yet:
 
@@ -166,6 +176,7 @@ Recognized but not enabled yet:
 - Focusrite Saffire Pro 40 TCD3070
 - Focusrite Liquid Saffire 56
 - PreSonus StudioLive 16.4.2 / 24.4.2 / 32.4.2 (stream layout not yet captured from hardware)
+- Weiss ADC2, Vesta, DAC2/Minerva, AFI1, DAC202, Maya, MAN301 (identified by name; audio enablement needs a verified stream/clock trace per model)
 
 In theory the driver can be extended to other OHCI controllers and many more FireWire devices, but hardware access is still the limiting factor. Host-controller matching and audio-device enablement are intentionally conservative until more real machines are tested.
 
@@ -232,6 +243,7 @@ This project is in active development. The following features are implemented:
 - Multi-stream DICE duplex (two isochronous streams per direction) for higher-channel devices such as the Midas Venice F32 (32×32)
 - Host-controlled sample-rate switching (44.1 kHz / 48 kHz) driven from the device's advertised clock capabilities, including live rate changes on CoreAudio aggregate devices clocked by the FireWire interface
 - DICE per-channel naming (device nickname plus TX/RX channel labels) surfaced to CoreAudio
+- DV (IEC 61883-2) capture from MiniDV camcorders to raw `.dv` files, with AV/C tape transport control (play/stop/rewind) from the app. DV capture and audio receive are mutually exclusive — both use IR context 0
 
 ## Driver initialization (high level)
 
@@ -275,6 +287,29 @@ Key points:
 - Design and usage are documented under `documentation/MCP_*.md` (control-plane architecture, tool taxonomy, write policy, mock/smoke harness, telemetry resources, tool-use examples, and agent workflows).
 
 Because this can issue real bus transactions, keep it disabled unless you are actively developing against it.
+
+### Advertised tools that are not implemented (TODO)
+
+The catalog advertises a few read-only tools whose dispatch arms are still stubs. They
+return `capabilityUnavailable` with an explicit reason rather than fabricating state.
+An agent must report the gap, not work around it or substitute a mutating call.
+
+| Tool | Why it is not implemented | What it needs |
+|------|---------------------------|---------------|
+| `asfw_sbp2_list_units` | No app-side plumbing. The dext has `UserClient/Handlers/SBP2Handler.cpp`, but there is no `DriverConnector+SBP2.swift` to reach it. | A connector extension exposing SBP-2 unit inventory, then a `ASFWDriverControlling` method. Related: FW-54/FW-56 session port. |
+| `asfw_sbp2_inspect_unit` | Same as above. Unit-directory decode could come from the cached Config ROM, but session/ORB state cannot. | Same. |
+| `asfw_sbp2_get_session_status` | Same as above, and login/fetch-agent state lives only in the driver. | Same. |
+| `asfw_avc_get_subunit_descriptor` | Not a routing gap. AV/C descriptor access is a wire-observable `OPEN`/`READ`/`CLOSE DESCRIPTOR` sequence, so it must be written against the AV/C descriptor mechanism and cross-checked with `references/IOFireWireAVC` before issuing FCP to a real device. | Reference-validated descriptor implementation plus hardware verification. |
+| `asfw_dice_decode_status` | Decoding is a pure function over quadlets, but every offset and mask lives in `ASFWDriver/Audio/Protocols/DICE/Core/DICETypes.hpp`, a C++ header that cannot be bridged to Swift. Mirroring it by hand would create a second source of truth. | Either generate the Swift constants from the header or add a parity test, then decode. Only testable with a DICE/TCAT device attached. |
+
+Two shipped tools are also narrower than their names suggest, by design:
+
+- `asfw_read_ohci_register` / `asfw_snapshot_ohci_registers` read the **diagnostics
+  snapshot** (`ASFWDiagOHCI`), which covers a fixed set of named registers. They are not
+  arbitrary MMIO offset reads; an uncovered offset is refused rather than guessed.
+- `asfw_irm_list_allocations` reports **bus-wide occupancy** from the IRM resource CSRs.
+  Those registers cannot say which node holds a channel, so the result carries
+  `ownershipAttributed: false`.
 
 ## Codex MCP skill
 
@@ -405,12 +440,12 @@ Build scripts or CMakeLists are for quick testing and creating compile_commands.
 
 `ASFW.xcodeproj` is generated from the root [`project.yml`](project.yml) with
 [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
-The generated project is committed, so plain checkouts (and CI) build without
-XcodeGen installed — but **never edit the pbxproj or project settings in the
-Xcode UI**; change `project.yml` instead.
+The generated project is **not committed** — it is gitignored, so XcodeGen is a
+build prerequisite for checkouts and CI alike. Never edit the pbxproj or project
+settings in the Xcode UI; change `project.yml` instead.
 
-After **adding, removing, or renaming source files**, regenerate the project
-and commit it together with your change:
+Generate it after cloning, and again after **adding, removing, or renaming
+source files**:
 
 ```bash
 xcodegen generate     # ./build.sh does this automatically when xcodegen is installed
@@ -438,64 +473,21 @@ of panicking (clear with `sudo nvram -d boot-args`).
 
 ## Installing a prebuilt build (testers)
 
-If you want to test ASFireWire without building it yourself, tagged releases attach a
-prebuilt `ASFW.app`. This build is **ad-hoc signed and NOT notarized**, so it can only
-be loaded on a machine with System Integrity Protection (SIP) disabled. It is intended
-for experimental testing only — not general use.
+Tagged releases attach a prebuilt `ASFW.app`. This build is **ad-hoc signed and NOT
+notarized**, so it can only be loaded on a machine with System Integrity Protection (SIP)
+disabled. It is intended for experimental testing only — not general use.
 
-> **Warning:** These steps disable SIP, which lowers your Mac's security system-wide.
-> Only do this on a machine you are comfortable using for testing, and re-enable SIP
-> (`csrutil enable`) when you are done. The build is unsigned/un-notarized and provided
-> as-is; run it only if you understand and accept that.
->
-> **Uninstall the extension _before_ re-enabling SIP.** With SIP back on, AMFI refuses
-> to launch the ad-hoc-signed dext at every boot. That is expected to be a silent
-> no-load, but it has not been verified on hardware with SIP enabled — don't leave the
-> extension installed in a state where it can never launch (recovery, should a boot
-> loop ever occur: Recovery → `csrutil disable` → boot → uninstall → `csrutil enable`).
+> **Warning:** installing requires disabling SIP, which lowers your Mac's security
+> system-wide. **Uninstall the extension _before_ re-enabling SIP** — with SIP back on,
+> AMFI refuses to launch the ad-hoc-signed dext. That is expected to be a silent
+> no-load, but it has not been verified on hardware with SIP enabled, so don't leave
+> the extension installed in a state where it can never launch.
 
-**Requirements:** an Apple Silicon Mac running macOS 26 (Tahoe), and FireWire hardware
-(a PCIe FireWire/OHCI card, or an Apple Thunderbolt-to-FireWire adapter).
+**→ Full instructions: [Installing (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Installing)**
 
-1. **Download** the `ASFW-<version>-adhoc.zip` from the [Releases](../../releases) page and unzip it.
-2. **Remove the quarantine flag** (Gatekeeper quarantines downloaded apps):
-   ```bash
-   xattr -dr com.apple.quarantine ASFW.app
-   ```
-3. **Disable SIP** (see Apple's guide on
-   [disabling and enabling System Integrity Protection](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection)).
-   Shut down, then boot into
-   [Recovery](https://support.apple.com/en-us/102518) (hold the power button until
-   "Loading startup options" appears → **Options** → open **Terminal**), and run:
-   ```bash
-   csrutil disable
-   ```
-   Reboot back into macOS. Confirm with `csrutil status` (should report disabled).
-4. **Enable system-extension developer mode** (runtime toggle, no reboot; requires SIP
-   already off):
-   ```bash
-   systemextensionsctl developer on
-   ```
-5. **Install the driver.** Move `ASFW.app` to `/Applications`, open it, and use its
-   **Install** button. Approve the extension in **System Settings → General → Login Items
-   & Extensions** if prompted (the prompt may not appear in developer mode).
-6. **Verify** the driver is active:
-   ```bash
-   systemextensionsctl list
-   ```
-   You should see `net.mrmidi.ASFW.ASFWDriver` marked `[activated enabled]`.
-
-**Uninstall / revert:** remove the extension via the app, or manually (ad-hoc builds
-have no team ID, hence the `-`):
-```bash
-systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver
-```
-Then re-enable SIP from Recovery with `csrutil enable`.
-
-**Troubleshooting:** if installation fails with `Missing entitlement
-com.apple.developer.system-extension.install`, the build was not signed with its
-entitlements embedded — that is a packaging bug in the release, not something to fix on
-your machine; please open an issue rather than changing boot-args.
+To build and sign it yourself instead, see
+[Building and Signing (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Building-and-Signing).
+For bug reports, see [Reporting Issues (wiki)](https://github.com/mrmidi/ASFireWire/wiki/Reporting-Issues).
 
 ## Contributing
 
@@ -509,11 +501,11 @@ Contributions are VERY welcome! If you want to contribute to the project, please
 4. Push your changes to your forked repository
 5. Open a pull request on the original repository, describing your changes and why they should be merged
 
-> **Note:** `ASFW.xcodeproj` is generated from `project.yml` (see
-> [Building](#building)). If your change adds, removes, or renames source
-> files, run `xcodegen generate` and include the regenerated project in the
-> same commit. Don't hand-edit the pbxproj or change build settings through
-> the Xcode UI — those changes will be overwritten; edit `project.yml` instead.
+> **Note:** `ASFW.xcodeproj` is generated from `project.yml` and is not tracked
+> in git (see [Building](#building)). If your change adds, removes, or renames
+> source files, edit `project.yml` and commit that. Don't hand-edit the pbxproj
+> or change build settings through the Xcode UI — those changes are wiped on the
+> next `xcodegen generate`.
 
 Literally any help is appreciated, from fixing typos in documentation to implementing new features or fixing bugs. Writing tests, improving code quality, testing on hardware, and reporting regressions are all valuable. Hardware reports for supported Saffire devices are especially useful right now. If you have any experience with FireWire protocol, just opening an issue or emailing me is invaluable. If you have any experience with Swift, the ASFW app could use some love too.
 

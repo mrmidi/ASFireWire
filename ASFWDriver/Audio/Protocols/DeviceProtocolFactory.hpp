@@ -19,6 +19,10 @@ namespace ASFW::CMP {
 class CMPClient;
 }
 
+namespace ASFW::Discovery {
+class DeviceRegistry;
+}
+
 namespace ASFW::IRM {
 class IRMClient;
 }
@@ -58,6 +62,9 @@ public:
     static constexpr uint32_t kSPro14ModelId = DeviceProfiles::Audio::kSPro14ModelId;
     static constexpr uint32_t kSPro26ModelId = DeviceProfiles::Audio::kSPro26ModelId;
     static constexpr uint32_t kSPro40Tcd3070ModelId = DeviceProfiles::Audio::kSPro40Tcd3070ModelId;
+    static constexpr uint32_t kWeissVendorId = DeviceProfiles::Audio::kWeissVendorId;
+    static constexpr uint32_t kWeissInt202ModelId = DeviceProfiles::Audio::kWeissInt202ModelId;
+    static constexpr uint32_t kWeissInt203ModelId = DeviceProfiles::Audio::kWeissInt203ModelId;
     static constexpr uint32_t kApogeeVendorId = DeviceProfiles::Audio::kApogeeVendorId;
     static constexpr uint32_t kApogeeDuetModelId = DeviceProfiles::Audio::kApogeeDuetModelId;
     static constexpr uint32_t kTerraTecVendorId = DeviceProfiles::Audio::kTerraTecVendorId;
@@ -81,6 +88,9 @@ public:
     static constexpr const char* kSPro26ModelName = DeviceProfiles::Audio::kSPro26ModelName;
     static constexpr const char* kSPro40Tcd3070ModelName =
         DeviceProfiles::Audio::kSPro40Tcd3070ModelName;
+    static constexpr const char* kWeissVendorName = DeviceProfiles::Audio::kWeissVendorName;
+    static constexpr const char* kWeissInt202ModelName = DeviceProfiles::Audio::kWeissInt202ModelName;
+    static constexpr const char* kWeissInt203ModelName = DeviceProfiles::Audio::kWeissInt203ModelName;
     static constexpr const char* kApogeeVendorName = DeviceProfiles::Audio::kApogeeVendorName;
     static constexpr const char* kApogeeDuetModelName = DeviceProfiles::Audio::kApogeeDuetModelName;
     static constexpr const char* kAlesisVendorName = DeviceProfiles::Audio::kAlesisVendorName;
@@ -151,15 +161,15 @@ public:
     /// @param modelId    Model ID from Config ROM
     /// @param busOps     FireWire bus operations port
     /// @param busInfo    FireWire bus info port
-    /// @param nodeId     Target device node ID
+    /// @param route      Current, registry-issued route token
     /// @return Protocol handler, or nullptr if device is not recognized
     static std::unique_ptr<IDeviceProtocol> Create(
         uint32_t vendorId,
         uint32_t modelId,
         Protocols::Ports::FireWireBusOps& busOps,
         Protocols::Ports::FireWireBusInfo& busInfo,
-        uint16_t nodeId,
-        uint64_t deviceGuid,
+        Discovery::DeviceRegistry& routeRegistry,
+        const Discovery::DeviceRouteToken& route,
         ::ASFW::IRM::IRMClient* irmClient = nullptr,
         ::ASFW::CMP::CMPClient* cmpClient = nullptr,
         Scheduling::ITimerScheduler* timerScheduler = nullptr

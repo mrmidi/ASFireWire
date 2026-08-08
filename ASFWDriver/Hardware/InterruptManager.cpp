@@ -115,7 +115,9 @@ uint32_t InterruptManager::EnabledMask() const {
 
 void InterruptManager::MaskInterrupts(HardwareInterface* hw, uint32_t bits) {
     if (!hw) return;
-    hw->Write(Register32::kIntMaskClear, bits);
+    if (auto access = hw->TryBeginAccess()) {
+        access.Write(Register32::kIntMaskClear, bits);
+    }
     DisableInterrupts(bits);
 }
 
@@ -127,7 +129,11 @@ void InterruptManager::UnmaskInterrupts(HardwareInterface* hw, uint32_t bits) {
     const uint32_t add  = want & ~cur;
     
     if (add) {
-        hw->Write(Register32::kIntMaskSet, add);
+        if (auto access = hw->TryBeginAccess()) {
+            access.Write(Register32::kIntMaskSet, add);
+        } else {
+            return;
+        }
         shadowMask_.fetch_or(add, std::memory_order_release);
         ASFW_LOG(Hardware, "IntMask updated: shadow=0x%08x add=0x%08x (masterEnable=%d busReset=%d)",
                  shadowMask_.load(), add,

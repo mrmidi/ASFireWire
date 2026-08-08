@@ -5,17 +5,6 @@
 #include <cstring>
 
 namespace ASFW::Isoch::Audio {
-namespace {
-
-void AppendBoolControl(ParsedAudioDriverConfig& inOutConfig,
-                       const BoolControlDescriptor& descriptor) {
-    if (inOutConfig.boolControlCount >= kMaxBoolControls) {
-        return;
-    }
-    inOutConfig.boolControls[inOutConfig.boolControlCount++] = descriptor;
-}
-
-} // namespace
 
 void InitializeAudioDriverConfigDefaults(ParsedAudioDriverConfig& outConfig) {
     outConfig = {};
@@ -39,29 +28,6 @@ void InitializeAudioDriverConfigDefaults(ParsedAudioDriverConfig& outConfig) {
     }
 }
 
-void BuildFallbackBoolControls(ParsedAudioDriverConfig& inOutConfig) {
-    if (inOutConfig.boolControlCount != 0 || !inOutConfig.hasPhantomOverride) {
-        return;
-    }
-
-    const uint32_t mask = inOutConfig.phantomSupportedMask;
-    for (uint32_t bit = 0; bit < 32; ++bit) {
-        const uint32_t flag = 1u << bit;
-        if ((mask & flag) == 0u) {
-            continue;
-        }
-
-        const BoolControlDescriptor descriptor{
-            .classIdFourCC = kClassIdPhantomPower,
-            .scopeFourCC = kScopeInput,
-            .element = bit + 1u,
-            .isSettable = true,
-            .initialValue = (inOutConfig.phantomInitialMask & flag) != 0u,
-        };
-        AppendBoolControl(inOutConfig, descriptor);
-    }
-}
-
 void ApplyBringupSingleFormatPolicy(ParsedAudioDriverConfig& inOutConfig) {
     // Bring-up note: dynamic sample-rate advertisement is intentionally deferred.
     inOutConfig.sampleRates[0] = kDefaultSampleRate;
@@ -71,21 +37,21 @@ void ApplyBringupSingleFormatPolicy(ParsedAudioDriverConfig& inOutConfig) {
 
 void ClampAudioDriverChannels(ParsedAudioDriverConfig& inOutConfig,
                               uint32_t maxSupportedChannels) {
-    if (inOutConfig.inputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitInputChannelCount && inOutConfig.inputChannelCount == 0) {
         inOutConfig.inputChannelCount = inOutConfig.channelCount;
     } else if (inOutConfig.inputChannelCount > maxSupportedChannels) {
         inOutConfig.inputChannelCount = maxSupportedChannels;
     }
-    if (inOutConfig.outputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitOutputChannelCount && inOutConfig.outputChannelCount == 0) {
         inOutConfig.outputChannelCount = inOutConfig.channelCount;
     } else if (inOutConfig.outputChannelCount > maxSupportedChannels) {
         inOutConfig.outputChannelCount = maxSupportedChannels;
     }
 
-    if (inOutConfig.inputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitInputChannelCount && inOutConfig.inputChannelCount == 0) {
         inOutConfig.inputChannelCount = kDefaultChannelCount;
     }
-    if (inOutConfig.outputChannelCount == 0) {
+    if (!inOutConfig.hasExplicitOutputChannelCount && inOutConfig.outputChannelCount == 0) {
         inOutConfig.outputChannelCount = kDefaultChannelCount;
     }
 

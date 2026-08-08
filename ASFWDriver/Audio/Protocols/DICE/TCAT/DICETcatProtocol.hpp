@@ -20,7 +20,24 @@ namespace ASFW::IRM {
 class IRMClient;
 }
 
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+}
+
 namespace ASFW::Audio::DICE::TCAT {
+
+// Separates DICE's operational stream topology from the channels the HAL
+// publishes. Some hardware needs both DICE directions active for its clock or
+// firmware protocol while exposing only one analog/audio direction to users.
+struct DICETcatRuntimePolicy final {
+    bool exposeDeviceToHostToCoreAudio{true};
+    // Keep the target-rate transition strict, but do not require a GLOBAL
+    // source-lock indication before/just after host IT starts. This is for
+    // devices whose selected receive-clock path only locks once host packets
+    // are flowing; it does not select ARX1 as a clock source.
+    bool requireSourceLockBeforeStreamEnable{true};
+    bool requireSourceLockAtConfirm{true};
+};
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
                                public Audio::IDuplexDeviceControl {
@@ -34,8 +51,11 @@ public:
 
     DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                      Protocols::Ports::FireWireBusInfo& busInfo,
-                     uint16_t nodeId,
-                     ::ASFW::IRM::IRMClient* irmClient = nullptr);
+                     Discovery::DeviceRegistry& routeRegistry,
+                     const Discovery::DeviceRouteToken& route,
+                     ::ASFW::IRM::IRMClient* irmClient = nullptr,
+                     ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr,
+                     DICETcatRuntimePolicy runtimePolicy = {});
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -65,7 +85,7 @@ public:
     void ProgramTxAndEnableDuplex48k(VoidCallback callback) override;
     void ConfirmDuplex48kStart(VoidCallback callback) override;
     IOReturn StopDuplex() override;
-    void UpdateRuntimeContext(uint16_t nodeId,
+    void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
 
     [[nodiscard]] Protocols::Ports::ProtocolRegisterIO& IO() noexcept { return io_; }
@@ -91,6 +111,8 @@ private:
     DICETransaction diceReader_;
     std::optional<ASFW::Audio::DICE::DICEDuplexBringupController> duplexCtrl_;
     const std::atomic<bool>* teardownCancel_{nullptr};
+    ::ASFW::Scheduling::ITimerScheduler* timerScheduler_{nullptr};  // driver-owned
+    DICETcatRuntimePolicy runtimePolicy_{};
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};

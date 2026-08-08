@@ -15,23 +15,15 @@ namespace ASFW::Audio {
 AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                                  Discovery::DeviceRegistry& registry,
                                  AudioRuntimeRegistry& runtime,
-                                 Driver::IsochService& isoch,
+                                 IIsochDuplexHostTransport& hostTransport,
+                                 AudioDuplexCoordinator& duplexCoordinator,
                                  Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , hardware_(hardware)
-    , hostTransport_(isoch)
-    , duplexCoordinator_(
-          registry,
-          runtime,
-          hostTransport_,
-          hardware,
-          &stopping_,
-          [this](uint64_t guid) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
-              auto endpoint = runtime_.FindEndpointRuntime(guid);
-              return endpoint ? endpoint.get() : nullptr;
-          }) {
+    , hostTransport_(hostTransport)
+    , duplexCoordinator_(duplexCoordinator) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AVCAudioBackend: Failed to allocate lock");
@@ -47,14 +39,9 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                        queueStatus);
     }
 
-    // Subscribe to RX timing loss. Unlike DICE (which health-gates on a register
-    // probe), AV/C has no health register — HandleTimingLoss reads the RX replay
-    // cadence itself after a debounce. See AVC_STREAM_HEALTH_AND_RECOVERY.md §6.
-    hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleTimingLoss(guid); });
 }
 
 AVCAudioBackend::~AVCAudioBackend() noexcept {
-    hostTransport_.SetTimingLossCallback({});
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -73,34 +60,8 @@ void AVCAudioBackend::OnAudioConfigurationReady(uint64_t guid, const Model::ASFW
     (void)publisher_.EnsureNub(guid, config, "AVC");
 }
 
-void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
+void AVCAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
     if (guid == 0) return;
-
-    bool shouldStop = false;
-    if (lock_) {
-        IOLockLock(lock_);
-        shouldStop = (activeGuid_ == guid);
-        IOLockUnlock(lock_);
-    }
-
-    if (shouldStop) {
-        const IOReturn stopStatus = StopStreaming(guid);
-        if (stopStatus != kIOReturnSuccess) {
-            // StopStreaming only succeeds after every OHCI context reports
-            // ACTIVE clear.  Removing the nub sooner can revoke the backing
-            // mapping while DMA still owns it, which is fatal on Apple silicon.
-            ASFW_LOG_ERROR(Audio,
-                           "AVCAudioBackend: retaining nub after unsafe device-removal stop GUID=0x%016llx kr=0x%08x",
-                           guid, stopStatus);
-            return;
-        }
-    } else {
-        ASFW_LOG(Audio,
-                 "AVCAudioBackend: OnDeviceRemoved skipping stop for inactive GUID=0x%016llx",
-                 guid);
-    }
-    publisher_.TerminateNub(guid, "AVC-Removed");
-    duplexCoordinator_.ClearSession(guid);
 
     if (lock_) {
         IOLockLock(lock_);
@@ -112,6 +73,20 @@ void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
         }
         IOLockUnlock(lock_);
     }
+
+    ASFW_LOG(Audio,
+             "AVCAudioBackend: remote-device work cancelled GUID=0x%016llx",
+             guid);
+}
+
+bool AVCAudioBackend::IsActiveDevice(uint64_t guid) noexcept {
+    if (!lock_) {
+        return true;
+    }
+    IOLockLock(lock_);
+    const bool active = (activeGuid_ == guid);
+    IOLockUnlock(lock_);
+    return active;
 }
 
 void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
@@ -140,7 +115,10 @@ void AVCAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
         if (!stopping_.load(std::memory_order_acquire)) {
             const IOReturn status = duplexCoordinator_.RecoverStreaming(
                 guid, DuplexRestartReason::kBusResetRebind);
-            if (status != kIOReturnSuccess) {
+            // Unsupported means the policy declined to act — a decision, not a
+            // fault. Reporting it as a failure would put an error line on a
+            // benign path (FW-146).
+            if (status != kIOReturnSuccess && status != kIOReturnUnsupported) {
                 ASFW_LOG_ERROR(Audio,
                                "AVCAudioBackend: post-reset recovery failed GUID=0x%016llx kr=0x%x",
                                guid,
@@ -215,15 +193,29 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
         // before any PCR/MMIO work, so it cannot run after hardware detaches.
         // Debounce off the RX queue: give the [TxAlign] self-heal its transient
         // window. Poll stopping_ so teardown aborts within one tick.
+        // stopping_ only covers driver teardown. The device itself can be
+        // unplugged during the settle window — that is the ordinary case, not
+        // an edge one — and nothing else cancels this block, so without the
+        // liveness check the escalation runs against a device whose record,
+        // nub and CoreAudio presence are already gone (FW-146). The generic
+        // remote-device owner clears activeGuid_ before it unpublishes the nub.
         for (uint32_t waited = 0; waited < kTimingLossSettleMs;
              waited += kTimingLossPollMs) {
             if (stopping_.load(std::memory_order_acquire)) {
                 FinishRecovery(guid);
                 return;
             }
+            if (!IsActiveDevice(guid)) {
+                ASFW_LOG(Audio,
+                         "AVCAudioBackend: timing-loss abandoned; device left during settle "
+                         "GUID=0x%016llx",
+                         guid);
+                FinishRecovery(guid);
+                return;
+            }
             IOSleep(kTimingLossPollMs);
         }
-        if (stopping_.load(std::memory_order_acquire)) {
+        if (stopping_.load(std::memory_order_acquire) || !IsActiveDevice(guid)) {
             FinishRecovery(guid);
             return;
         }
@@ -280,6 +272,14 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
             ASFW_LOG(Audio,
                      "AVCAudioBackend: timing-loss recovery succeeded GUID=0x%016llx",
                      guid);
+        } else if (status == kIOReturnUnsupported) {
+            // The policy declined to recover. Nothing was restarted, so the
+            // budget must keep accumulating — resetting it here would mean a
+            // device that always declines can never exhaust its escalations.
+            ASFW_LOG(Audio,
+                     "AVCAudioBackend: timing-loss recovery not applicable "
+                     "(attempt=%u retained) GUID=0x%016llx",
+                     attempt, guid);
         } else {
             ASFW_LOG_ERROR(Audio,
                            "AVCAudioBackend: timing-loss recovery failed GUID=0x%016llx kr=0x%x",
@@ -301,9 +301,6 @@ void AVCAudioBackend::BeginTeardown() noexcept {
     }
 
     const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
-    // Stop new timing-loss escalations from being queued during teardown; any
-    // block already queued bails on the stopping_ latch below.
-    hostTransport_.SetTimingLossCallback({});
     // Drain queued recovery before hardware detaches. Each queued block checks
     // stopping_ before it can re-establish PCRs in the teardown window.
     if (workQueue_) {
@@ -313,7 +310,6 @@ void AVCAudioBackend::BeginTeardown() noexcept {
         workQueue_->DispatchSync(^{ });
 #endif
     }
-    (void)hostTransport_.StopAll();
     ASFW_LOG(Audio,
              "AVCAudioBackend: BeginTeardown stopping=true already=%u",
              wasStopping ? 1U : 0U);
@@ -373,7 +369,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return failStart(kIOReturnNotReady, "config");
     }
 
-    if (!registry_.FindByGuid(guid)) {
+    if (!registry_.SnapshotByGuid(guid).has_value()) {
         ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (no device record) GUID=0x%016llx", guid);
         return failStart(kIOReturnNotReady, "device record");
     }

@@ -72,6 +72,9 @@
 #include "Scheduling/Scheduler.hpp"
 #include "Service/DriverContext.hpp"
 #include "Service/LocalRequestWiring.hpp"
+#include "SCSIController/SBP2BridgeHub.hpp"
+#include "SCSIController/SBP2NubPublisher.hpp"
+#include "SCSIController/SBP2TargetBridge.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
@@ -173,6 +176,111 @@ void EnsureRomScanner(ServiceContext& ctx) {
         ctx.controller->AttachROMScanner(ctx.deps.romScanner);
     }
 }
+
+void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
+    const bool providerRevoked = plan.reason == QuiesceReason::kProviderRevoked ||
+                                 (ctx.deps.hardware && ctx.deps.hardware->HardwareGone());
+
+    // A provider notification can arrive while another quiesce is in progress.
+    // Revoke first so no later software teardown can enter an OHCI MMIO scope.
+    if (providerRevoked && ctx.deps.hardware) {
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
+        ASFW_LOG(Controller,
+                 "[Lifecycle] runtime teardown mode=provider-revoked reason=%u",
+                 static_cast<uint32_t>(plan.reason));
+    }
+
+#ifndef ASFW_HOST_TEST
+    ctx.DisarmProviderNotifications();
+#endif
+
+    if (ctx.deps.asyncSubsystem) {
+        ctx.deps.asyncSubsystem->BeginQuiesce();
+    }
+    if (ctx.audioCoordinator) {
+        ctx.audioCoordinator->BeginTeardown();
+    }
+    // DV capture holds an isoch receive consumer and a shared ring mapping, so it
+    // must stop before buffers, mappings or hardware are released. In the merged
+    // lifecycle this belongs here rather than in ServiceContext::Reset, which only
+    // releases resources after the quiesce executor has stopped them.
+    ctx.dvCapture.StopAll(ctx.isoch);
+    if (ctx.deps.avcDiscovery) {
+        ctx.deps.avcDiscovery->Shutdown();
+    }
+    ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
+    if (ctx.sbp2Bridge) {
+        ctx.sbp2Bridge->Shutdown();
+        ctx.sbp2Bridge.reset();
+    }
+    if (ctx.sbp2NubPublisher && plan.reason != QuiesceReason::kSystemSuspend &&
+        plan.reason != QuiesceReason::kWakeRebuild) {
+        ctx.sbp2NubPublisher->Shutdown();
+        ctx.sbp2NubPublisher.reset();
+    }
+
+    ctx.watchdog.Stop();
+    if (ctx.deps.interrupts) {
+        ctx.deps.interrupts->Disable();
+        if (plan.reason != QuiesceReason::kSystemSuspend &&
+            plan.reason != QuiesceReason::kWakeRebuild) {
+            ctx.deps.interrupts->Teardown();
+        }
+    }
+    // AudioCoordinator owns the neutral isoch session when it exists. Startup
+    // failures before audio composition still need this direct fallback.
+    if (!ctx.audioCoordinator) {
+        (void)ctx.isoch.StopAll();
+    }
+
+    ctx.statusPublisher.BindListener(nullptr);
+    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
+                                SharedStatusReason::Disconnect);
+
+    const bool hardwareGone = ctx.deps.hardware && ctx.deps.hardware->HardwareGone();
+    // Surprise removal skips all final register cleanup. The teardown calls
+    // above are software-safe and their old direct-MMIO helpers are revoked.
+    if (!hardwareGone && plan.completedStartStage >= StartStage::kProviderOpened) {
+        if (ctx.deps.selfId && ctx.deps.hardware) {
+            ctx.deps.selfId->Disarm(*ctx.deps.hardware);
+        }
+        if (ctx.deps.configRomStager && ctx.deps.hardware) {
+            ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
+        }
+    } else if (hardwareGone) {
+        ASFW_LOG(Controller,
+                 "[Lifecycle] runtime teardown hardware-gone action=skip-final-mmio-cleanup");
+    }
+    if (ctx.deps.selfId) {
+        ctx.deps.selfId->ReleaseBuffers();
+    }
+    if (ctx.deps.asyncSubsystem) {
+        ctx.deps.asyncSubsystem->Stop();
+    }
+    if (ctx.controller) {
+        ctx.controller->Stop();
+    }
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->Detach();
+    }
+}
+
+void ReleaseQuiescedRuntime(ServiceContext& ctx, const QuiescePlan& plan) {
+    if (!ctx.lifecycle || !plan.runTeardown) {
+        return;
+    }
+    ctx.lifecycle->CompleteQuiesce(plan, "runtime teardown complete", mach_absolute_time());
+    const auto finalState = ctx.lifecycle->CurrentState();
+    // A provider revocation can race synchronous bring-up. Leave the stopped
+    // graph intact until StartRuntime observes the failed completion and
+    // returns; otherwise the callback would free objects still in use by that
+    // stack frame.
+    if (plan.stateBefore == ControllerState::kStarting) {
+        return;
+    }
+    ctx.Reset(finalState == ControllerState::kSuspended ? ServiceContext::ResetMode::ForSuspend
+                                                         : ServiceContext::ResetMode::Full);
+}
 } // namespace
 
 bool ASFWDriver::init() {
@@ -224,8 +332,25 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         return kIOReturnNoMemory;
     kern_return_t kr = kIOReturnSuccess;
     auto& ctx = *ivars->context;
-    ctx.stopping.store(false, std::memory_order_release);
     DriverWiring::EnsureDeps(this, ctx);
+    if (!ctx.lifecycle || !ctx.lifecycle->BeginStart("runtime start", mach_absolute_time())) {
+        return kIOReturnBusy;
+    }
+    ctx.lifecycle->MarkStageComplete(StartStage::kDependenciesReady);
+    const auto failStart = [&ctx](kern_return_t status, const char* detail) {
+        if (ctx.lifecycle) {
+            if (const auto plan = ctx.lifecycle->BeginFailedStart(detail, mach_absolute_time())) {
+                if (plan->runTeardown) {
+                    ExecuteRuntimeTeardown(ctx, *plan);
+                    ReleaseQuiescedRuntime(ctx, *plan);
+                }
+            }
+        }
+        if (ctx.lifecycle && ctx.lifecycle->CurrentState() == ControllerState::kStopped) {
+            ctx.Reset(ServiceContext::ResetMode::Full);
+        }
+        return status;
+    };
     bool traceProperty = false;
     if (OSDictionary* serviceProperties = nullptr;
         CopyProperties(&serviceProperties) == kIOReturnSuccess && serviceProperties != nullptr) {
@@ -244,25 +369,25 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     ASFW_LOG(Controller, "ASFWDriver::Start(): ASFWTraceDMACoherency property=%{public}s",
              traceProperty ? "true" : "false");
     if (auto statusKr = ctx.statusPublisher.Prepare(); statusKr != kIOReturnSuccess) {
-        DriverWiring::CleanupStartFailure(ctx);
-        return statusKr;
+        return failStart(statusKr, "status publisher prepare failed");
     }
     kr = DriverWiring::PrepareQueue(*this, ctx);
     if (kr != kIOReturnSuccess) {
-        DriverWiring::CleanupStartFailure(ctx);
-        return kr;
+        return failStart(kr, "dispatch queue prepare failed");
     }
-
-#ifndef ASFW_HOST_TEST
-    // Provider termination notifications (hot-unplug): quiesce ASAP to avoid fatal MMIO reads.
-    ArmProviderTerminationNotifications(*this, provider, ctx);
-#endif
+    ctx.lifecycle->MarkStageComplete(StartStage::kQueueReady);
 
     kr = ctx.deps.hardware->Attach(this, provider);
     if (kr != kIOReturnSuccess) {
-        DriverWiring::CleanupStartFailure(ctx);
-        return kr;
+        return failStart(kr, "provider attach failed");
     }
+    ctx.lifecycle->MarkStageComplete(StartStage::kProviderOpened);
+
+#ifndef ASFW_HOST_TEST
+    // Arm only after Attach succeeds. A revocation can then only fence an
+    // already-open hardware incarnation; it cannot race a later Attach().
+    ArmProviderTerminationNotifications(*this, provider, ctx);
+#endif
     // Populate the shared host timebase before any interrupt can fire. The
     // InterruptOccurred handler converts the DriverKit mach-tick timestamp to
     // nanoseconds via ASFW::Timing::hostTicksToNanos(), which needs
@@ -272,9 +397,9 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
     kr = DriverWiring::PrepareInterrupts(*this, provider, ctx);
     if (kr != kIOReturnSuccess) {
-        DriverWiring::CleanupStartFailure(ctx);
-        return kr;
+        return failStart(kr, "interrupt preparation failed");
     }
+    ctx.lifecycle->MarkStageComplete(StartStage::kInterruptSourceReady);
 
     // Initialize AsyncSubsystem (requires hardware, workQueue, and a completion action)
     if (ctx.deps.asyncSubsystem && ctx.deps.hardware && ctx.workQueue && ctx.interruptAction) {
@@ -282,20 +407,19 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
                                             ctx.interruptAction.get());
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Controller, "AsyncSubsystem::Start() failed: 0x%08x", kr);
-            DriverWiring::CleanupStartFailure(ctx);
-            return kr;
+            return failStart(kr, "async subsystem start failed");
         }
         const bool traceActive = ASFW::Shared::DMAMemoryManager::IsTracingEnabled();
         ASFW_LOG(Controller,
                  "ASFWDriver::Start(): DMA coherency tracing %{public}s (requested=%{public}s)",
                  traceActive ? "ENABLED" : "disabled", traceProperty ? "true" : "false");
     }
+    ctx.lifecycle->MarkStageComplete(StartStage::kAsyncReady);
 
     kr = DriverWiring::PrepareWatchdog(*this, ctx);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Controller, "Failed to prepare async watchdog: 0x%08x", kr);
-        DriverWiring::CleanupStartFailure(ctx);
-        return kr;
+        return failStart(kr, "watchdog preparation failed");
     }
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 
@@ -305,14 +429,13 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     // must exist before AV/C discovery constructs per-unit FCP transports.
     kr = DriverWiring::EnsureSbp2Deps(*this, ctx);
     if (kr != kIOReturnSuccess) {
-        DriverWiring::CleanupStartFailure(ctx);
-        return kr;
+        return failStart(kr, "SBP-2 dependency preparation failed");
     }
 
-    if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager) {
+    if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager && ctx.deps.deviceRegistry) {
         auto& bus = ctx.controller->Bus();
         ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
-            this, *ctx.deps.deviceManager, bus, bus, *ctx.deps.sbp2SessionScheduler,
+            this, *ctx.deps.deviceRegistry, *ctx.deps.deviceManager, bus, bus, *ctx.deps.sbp2SessionScheduler,
             ctx.audioCoordinator.get());
         ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
         ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
@@ -332,9 +455,9 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
     kr = ctx.controller->Start(provider);
     if (kr != kIOReturnSuccess) {
-        DriverWiring::CleanupStartFailure(ctx);
-        return kr;
+        return failStart(kr, "controller start failed");
     }
+    ctx.lifecycle->MarkStageComplete(StartStage::kControllerReady);
 
     if (!ctx.deps.irmClient) {
         ctx.deps.irmClient = std::make_shared<ASFW::IRM::IRMClient>(
@@ -345,8 +468,12 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
 
     if (!ctx.deps.cmpClient) {
+        if (!ctx.deps.deviceRegistry) {
+            return failStart(kIOReturnNotReady, "device registry unavailable for CMP");
+        }
         ctx.deps.cmpClient = std::make_shared<ASFW::CMP::CMPClient>(ctx.controller->Bus(),
-                                                                      ctx.controller->Bus());
+                                                                      ctx.controller->Bus(),
+                                                                      *ctx.deps.deviceRegistry);
         ctx.controller->SetCMPClient(ctx.deps.cmpClient);
         ASFW_LOG(Controller, "✅ CMPClient initialized");
     }
@@ -367,24 +494,15 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
 
-    // Publish once per instance: StartRuntime() is re-entered on wake, and the
-    // SBP-2 nub and RegisterService() must not repeat across sleep/wake cycles.
+    // Register once per service instance: StartRuntime() is re-entered on wake.
+    // SBP-2 nubs are published separately and only for discovered SBP-2 units.
     if (!ivars->serviceRegistered) {
-        // Publish the SBP-2 nub. The SCSI HBA currently co-matches the PCI device
-        // directly (see Info.plist ASFWSCSIControllerService), so nothing matches on
-        // this nub yet — it is staged for a future per-unit personality carrying
-        // login/unit identity, and kept published now to reserve the discovery seam.
-        IOService* sbp2NubService = nullptr;
-        kern_return_t nubKr = Create(this, "ASFWSBP2NubProperties", &sbp2NubService);
-        if (nubKr != kIOReturnSuccess || sbp2NubService == nullptr) {
-            ASFW_LOG(Controller, "[SCSIHBA] Failed to create ASFWSBP2Nub: 0x%08x", nubKr);
-        } else {
-            // IOKit retains the nub as our child; the nub's Start() calls RegisterService().
-            sbp2NubService->release();
-        }
-
         RegisterService();
         ivars->serviceRegistered = true;
+    }
+
+    if (!ctx.lifecycle->CompleteStart("runtime start complete", mach_absolute_time())) {
+        return failStart(kIOReturnError, "runtime start completion rejected");
     }
 
     // NOTE: do NOT call ChangePowerState/SetPowerOverride here. The kernel
@@ -402,80 +520,58 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 }
 
 kern_return_t IMPL(ASFWDriver, Stop) {
-    if (ivars && ivars->context && ivars->context->deps.interrupts) {
-        // The interrupt source unregisters itself asynchronously on its cancel
-        // completion. Start that process while the PCI provider is valid.
-        ivars->context->deps.interrupts->Teardown();
-    }
-    QuiesceRuntime();
+    RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kPlannedStop));
     if (ivars) {
         if (ivars->wakeVerifyTimer) {
-            // Disable only, then release — Cancel() dispatches async and can
-            // run after the source is freed (see WatchdogCoordinator::Stop).
-            // Releasing the action breaks the OSAction→service retain cycle.
-            ivars->wakeVerifyTimer->SetEnableWithCompletion(false, nullptr);
-            ivars->wakeVerifyTimer->release();
+            // Final stop is terminal.  DriverKit retains the timer's action
+            // until cancellation, and invokes this completion only after any
+            // queued timer callback returns.
+            auto* timer = ivars->wakeVerifyTimer;
+            auto* action = ivars->wakeVerifyAction;
             ivars->wakeVerifyTimer = nullptr;
-        }
-        if (ivars->wakeVerifyAction) {
-            ivars->wakeVerifyAction->release();
             ivars->wakeVerifyAction = nullptr;
+            const kern_return_t kr = timer->Cancel(^{
+                if (action) {
+                    action->release();
+                }
+                timer->release();
+            });
+            if (kr != kIOReturnSuccess) {
+                if (action) {
+                    action->release();
+                }
+                timer->release();
+            }
         }
         ivars->powerProvider = nullptr;
     }
     return Stop(provider, SUPERDISPATCH);
 }
 
-void ASFWDriver::QuiesceRuntime() {
-    if (ivars && ivars->context) {
-        auto& ctx = *ivars->context;
-        ctx.stopping.store(true, std::memory_order_release);
+void ASFWDriver::RequestRuntimeQuiesce(uint32_t rawReason) {
+    if (!ivars || !ivars->context) {
+        return;
+    }
+    auto& ctx = *ivars->context;
+    if (!ctx.lifecycle) {
+        return;
+    }
 
-#ifndef ASFW_HOST_TEST
-        ctx.DisarmProviderNotifications();
-#endif
+    const auto reason = static_cast<QuiesceReason>(rawReason);
+    const auto plan = ctx.lifecycle->BeginQuiesce(reason, "runtime quiesce", mach_absolute_time());
+    if (!plan.has_value()) {
+        return;
+    }
 
-        // Gate new transactions first, but retain the BAR until every user of
-        // it has stopped. HardwareInterface::Detach() calls IOPCIDevice::Close,
-        // which disables PCI memory decoding; it must be the final step.
-        if (ctx.deps.asyncSubsystem) {
-            ctx.deps.asyncSubsystem->BeginQuiesce();
-        }
-
-        ASFW_LOG(Controller, "Stop: quiescing audio coordinator before Detach");
-        if (ctx.audioCoordinator) {
-            ctx.audioCoordinator->BeginTeardown();
-        }
-        if (ctx.deps.avcDiscovery) {
-            ctx.deps.avcDiscovery->Shutdown();
-        }
-        ctx.dvCapture.StopAll(ctx.isoch);
-        // Stop periodic callbacks before dismantling their targets.
-        ctx.watchdog.Stop();
-        if (ctx.deps.interrupts) {
-            ctx.deps.interrupts->Disable();
-        }
-        ASFW_LOG(Controller, "Stop: audio quiesced - stopping isoch before Detach");
-        (void)ctx.isoch.StopAll();
-
-        ctx.statusPublisher.BindListener(nullptr);
-        ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
-                                    SharedStatusReason::Disconnect);
-        if (ctx.deps.selfId && ctx.deps.hardware)
-            ctx.deps.selfId->Disarm(*ctx.deps.hardware);
-        if (ctx.deps.selfId)
-            ctx.deps.selfId->ReleaseBuffers();
-        if (ctx.deps.configRomStager && ctx.deps.hardware)
-            ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
-        if (ctx.deps.asyncSubsystem) {
-            ctx.deps.asyncSubsystem->Stop();
-        }
-        if (ctx.controller) {
-            ctx.controller->Stop();
-        }
-        if (ctx.deps.hardware) {
-            ctx.deps.hardware->Detach();
-        }
+    // A revocation request that races an already-running planned teardown must
+    // still fence OHCI immediately. The active executor will observe its
+    // state as Revoked before publishing its final transition.
+    if (plan->revokeImmediately && !plan->runTeardown && ctx.deps.hardware) {
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
+    }
+    if (plan->runTeardown) {
+        ExecuteRuntimeTeardown(ctx, *plan);
+        ReleaseQuiescedRuntime(ctx, *plan);
     }
 }
 
@@ -496,11 +592,10 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
             // controller still answers MMIO. The silicon loses its programmed
             // state in low power (Linux ohci.c pci_suspend does software_reset;
             // Apple gates all hardware access while asleep).
-            if (!ivars->runtimeSuspended && ivars->context) {
+            if (ivars->context && ivars->context->lifecycle &&
+                ivars->context->lifecycle->CurrentState() == ControllerState::kRunning) {
                 ASFW_LOG(Controller, "SetPowerState: quiescing runtime for sleep");
-                QuiesceRuntime();
-                ivars->context->Reset(ServiceContext::ResetMode::ForSuspend);
-                ivars->runtimeSuspended = true;
+                RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kSystemSuspend));
             }
         } else {
             // Pin our power desire to full-on. A bus controller must stay
@@ -521,11 +616,11 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
                      "SetPowerState: pin desire On -> 0x%08x, override -> 0x%08x",
                      pmKr, ovKr);
         }
-        if (poweredOn && ivars->runtimeSuspended) {
+        if (poweredOn && ivars->context && ivars->context->lifecycle &&
+            ivars->context->lifecycle->CurrentState() == ControllerState::kSuspended) {
             // Wake: rebuild the runtime from scratch — full OHCI re-init ending
             // in a forced bus reset, after which normal discovery re-publishes
             // devices (Linux pci_resume runs the same ohci_enable as cold probe).
-            ivars->runtimeSuspended = false;
             if (ivars->powerProvider) {
                 ASFW_LOG(Controller, "SetPowerState: wake - rebuilding runtime");
                 const kern_return_t kr = StartRuntime(ivars->powerProvider);
@@ -547,12 +642,12 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
 }
 
 void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
-    if (!ivars || !ivars->context || ivars->runtimeSuspended) {
+    if (!ivars || !ivars->context || !ivars->context->lifecycle ||
+        !ivars->context->lifecycle->AdmitsNormalWork()) {
         return; // slept again (or tearing down) before the check fired
     }
     auto& ctx = *ivars->context;
-    if (ctx.stopping.load(std::memory_order_acquire) || !ctx.deps.hardware ||
-        !ctx.deps.busReset) {
+    if (!ctx.deps.hardware || !ctx.deps.busReset) {
         return;
     }
 
@@ -560,7 +655,16 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
     // advances via the full interrupt path (IRQ → Self-ID → coordinator). A
     // completed reset therefore proves interrupt delivery end to end.
     const uint32_t resets = ctx.deps.busReset->Metrics().resetCount;
-    const uint32_t hcControl = ctx.deps.hardware->Read(Register32::kHCControl);
+    uint32_t hcControl = 0;
+    uint32_t intEvent = 0;
+    {
+        auto access = ctx.deps.hardware->TryBeginAccess();
+        if (!access) {
+            return;
+        }
+        hcControl = access.Read(Register32::kHCControl);
+        intEvent = access.Read(Register32::kIntEvent);
+    }
     const bool mmioAlive = (hcControl != 0xFFFFFFFFu);
     const bool linkEnabled = mmioAlive && (hcControl & HCControlBits::kLinkEnable);
 
@@ -574,7 +678,9 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
     // with resetCount==0 means the reset happened but the IRQ never arrived
     // (interrupt path dead); linkEnable clear means the controller was reset
     // under us after the rebuild; 0xFFFFFFFF means MMIO itself is gone.
-    const uint32_t intEvent = mmioAlive ? ctx.deps.hardware->Read(Register32::kIntEvent) : 0;
+    if (!mmioAlive) {
+        intEvent = 0;
+    }
     ASFW_LOG(Controller,
              "Wake verify: ❌ dead controller (resets=%u HCControl=0x%08x IntEvent=0x%08x "
              "attempt=%llu/%llu) - rebuilding",
@@ -589,8 +695,7 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
         return;
     }
 
-    QuiesceRuntime();
-    ctx.Reset(ServiceContext::ResetMode::ForSuspend);
+    RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kWakeRebuild));
     const kern_return_t kr = StartRuntime(ivars->powerProvider);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Controller, "Wake verify: ❌ rebuild failed: 0x%08x", kr);
@@ -797,7 +902,7 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
         return;
     }
     auto& ctx = *ivars->context;
-    if (ctx.stopping.load(std::memory_order_acquire)) {
+    if (!ctx.lifecycle || !ctx.lifecycle->AdmitsBringupInterrupts()) {
         return;
     }
     if (!ctx.controller || !ctx.deps.hardware) {
@@ -825,7 +930,7 @@ void ASFWDriver::ScheduleAsyncWatchdog(uint64_t delayUsec) {
         return;
     }
     auto& ctx = *ivars->context;
-    if (ctx.stopping.load(std::memory_order_acquire)) {
+    if (!ctx.lifecycle || !ctx.lifecycle->AdmitsNormalWork()) {
         return;
     }
     ctx.watchdog.Schedule(delayUsec);
@@ -837,7 +942,7 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
 
     if (ivars && ivars->context) {
         auto& ctx = *ivars->context;
-        if (ctx.stopping.load(std::memory_order_acquire)) {
+        if (!ctx.lifecycle || !ctx.lifecycle->AdmitsNormalWork()) {
             return;
         }
         ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncController.get(),
@@ -856,7 +961,7 @@ void ASFWDriver::SBP2SessionTimerFired_Impl(ASFWDriver_SBP2SessionTimerFired_Arg
         return;
     }
     auto& ctx = *ivars->context;
-    if (ctx.stopping.load(std::memory_order_acquire) || !ctx.deps.sbp2SessionScheduler) {
+    if (!ctx.lifecycle || !ctx.lifecycle->AdmitsNormalWork() || !ctx.deps.sbp2SessionScheduler) {
         return;
     }
 
@@ -890,13 +995,10 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
         return;
     }
 
-    if (ctx.deps.interrupts) {
-        ctx.deps.interrupts->Teardown();
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->LatchProviderRevokedAndDrain();
     }
-
-    // Quiesce immediately. QuiesceRuntime() closes producer gates before
-    // stopping OHCI users, and closes the PCI provider only as its last step.
-    QuiesceRuntime();
+    RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kProviderRevoked));
 #endif
 }
 
@@ -999,12 +1101,12 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
                        "runtime-dependencies", guid);
         return kIOReturnNotReady;
     }
-    auto* record = ctx.deps.deviceRegistry->FindByGuid(guid);
+    const auto record = ctx.deps.deviceRegistry->SnapshotByGuid(guid);
     auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
-    if (!record || !protocol) {
+    if (!record.has_value() || !protocol) {
         ASFW_LOG_ERROR(Audio,
                        "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx record=%u protocol=%u",
-                       "device-config", guid, record != nullptr, protocol != nullptr);
+                       "device-config", guid, record.has_value(), protocol != nullptr);
         return kIOReturnNotReady;
     }
     auto* transport = ctx.deps.avcDiscovery->GetFCPTransportForNodeID(record->nodeId);
@@ -1014,7 +1116,11 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
                  guid, record->nodeId);
         return kIOReturnNotReady;
     }
-    protocol->UpdateRuntimeContext(record->nodeId, transport);
+    const auto route = ctx.deps.deviceRegistry->CurrentRoute(guid);
+    if (!route) {
+        return kIOReturnNotReady;
+    }
+    protocol->UpdateRuntimeContext(*route, transport);
     ASFW_LOG(Audio, "[BeBoB] developer stream start GUID=0x%016llx", guid);
     return ctx.audioCoordinator->StartStreaming(guid);
 }
@@ -1088,7 +1194,9 @@ kern_return_t ASFWDriver::StartDVCapture(uint64_t deviceGuid,
         ASFW_LOG(Controller, "[Isoch] ❌ StartDVCapture: hardware not ready");
         return kIOReturnNotReady;
     }
-    if (ctx.stopping.load(std::memory_order_acquire)) {
+    // dev2 replaced the ServiceContext::stopping flag with the lifecycle
+    // coordinator's state machine; only a fully running runtime may start capture.
+    if (!ctx.lifecycle || ctx.lifecycle->CurrentState() != ControllerState::kRunning) {
         return kIOReturnOffline;
     }
     if (!ctx.deps.deviceRegistry || !ctx.deps.irmClient ||

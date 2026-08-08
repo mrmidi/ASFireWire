@@ -51,6 +51,14 @@ public:
         DuplexRestartReason reason) noexcept;
     [[nodiscard]] IOReturn RecoverStreaming(uint64_t guid, DuplexRestartReason reason) noexcept;
 
+    // Called once discovery has conclusively retired a GUID after a bus reset.
+    // It cancels this GUID's queued work without treating the whole controller
+    // as gone; AcknowledgeDevicePresent reopens it after rediscovery.
+    void CancelRemoteDevice(uint64_t guid) noexcept;
+    void AcknowledgeDevicePresent(uint64_t guid) noexcept;
+    // Backend work queues use this before any device-side probe or recovery.
+    // It covers both service teardown and a GUID retired by discovery.
+    [[nodiscard]] bool IsDeviceOperationCancelled(uint64_t guid) const noexcept;
     void ClearSession(uint64_t guid) noexcept;
     [[nodiscard]] std::optional<DuplexRestartSession> GetSession(uint64_t guid) const noexcept;
     // True while a host-initiated duplex operation (start/stop/clock change/recovery) holds the
@@ -91,7 +99,7 @@ private:
     // Resolves the record + its protocol-neutral duplex surface for `guid`. `outHold` receives a
     // shared_ptr to the owning IDeviceProtocol; callers must keep it alive for as long as
     // they use `outDeviceControl` (it is a view into the held protocol).
-    [[nodiscard]] Discovery::DeviceRecord* RequireDuplexRecord(
+    [[nodiscard]] std::optional<Discovery::DeviceRecord> RequireDuplexRecord(
         uint64_t guid,
         IDuplexDeviceControl*& outDeviceControl,
         std::shared_ptr<IDeviceProtocol>& outHold) noexcept;
@@ -104,7 +112,7 @@ private:
     [[nodiscard]] uint64_t AllocateRestartId() noexcept;
     [[nodiscard]] bool IsRestartEpochCurrent(uint64_t guid,
                                              uint64_t restartId,
-                                             FW::Generation topologyGeneration) const noexcept;
+                                             const Discovery::DeviceRouteToken& route) const noexcept;
     [[nodiscard]] bool TryConsumePendingClockRequest(uint64_t guid, PendingClockRequest& outRequest) noexcept;
     [[nodiscard]] bool TryTakeCompletedClockRequest(
         uint64_t guid,

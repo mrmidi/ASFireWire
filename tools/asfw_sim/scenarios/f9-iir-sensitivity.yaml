@@ -1,0 +1,16 @@
+name: f9-iir-sensitivity
+description: >
+  Sensitivity analysis: does correlated mode absorb -4478 ppm across a range
+  of IIR coefficients? The driver selects SimpleIIR but does not expose its
+  alpha. This sweep shows the result is not an artefact of one chosen value.
+base: driver
+rate: 48000
+
+sweep:
+  iir_alpha: [0.05, 0.10, 0.25, 0.50, 0.90]
+
+scenario:
+  duration_s: 60
+  bus_drift_ppm: -4478
+  zts_mode: correlated
+  self_heal: false

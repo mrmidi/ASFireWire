@@ -1,0 +1,19 @@
+name: f3-readdelay-sweep
+description: >
+  F3. The 2D sweep that falsified the first version of the law. The original
+  claim was `survivable stall ~= (kReadDelay + horizon)/8`, fitted along a
+  diagonal where every run happened to set kCapacity = 2*kReadDelay. Varying the
+  two independently shows kCapacity dominates and kReadDelay is mildly INVERSE:
+  at capacity 4096 the cliff falls 451 -> 339 ms as kReadDelay rises 128 -> 1024.
+  Exploration, so no expect block -- read the table, do not fit a line to it.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 15
+  stall_at_s: 4
+
+sweep:
+  replay_read_delay: [128, 256, 1024]
+  replay_capacity: [512, 2048, 4096]
+  stall_ms: [100, 200, 400]

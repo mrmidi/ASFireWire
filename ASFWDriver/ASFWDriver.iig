@@ -35,9 +35,10 @@ public:
     // setPowerState.
     virtual kern_return_t SetPowerState(uint32_t powerFlags) override;
 
-    // Runtime bring-up/quiesce, shared by Start/Stop and SetPowerState.
+    // Runtime bring-up shared by Start and wake resume. Teardown requests are
+    // routed exclusively through RuntimeLifecycleCoordinator.
     kern_return_t StartRuntime(IOService* provider) LOCALONLY;
-    void QuiesceRuntime() LOCALONLY;
+    void RequestRuntimeQuiesce(uint32_t reason) LOCALONLY;
 
     // Post-wake health check. The SetPowerState(On) callback can arrive during
     // dark wake, before the PCIe/Thunderbolt path is fully restored: the rebuild
@@ -134,7 +135,6 @@ public:
 struct ASFWDriver_IVars {
     ServiceContext* context;
     IOService* powerProvider;   // borrowed from Start; cleared in Stop
-    bool runtimeSuspended;      // true between sleep quiesce and wake rebuild
     bool serviceRegistered;     // RegisterService() must run once per instance
 
     // Wake-verify timer. Lives on the default queue (stable for the service

@@ -78,18 +78,17 @@ using SignalSampleRate = Protocols::AVC::StreamFormats::SampleRate;
 
 BeBoBProtocol::BeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
                              Protocols::Ports::FireWireBusInfo& busInfo,
-                             uint16_t nodeId,
+                             Discovery::DeviceRouteToken route,
                              IRM::IRMClient* irmClient,
                              CMP::CMPClient* cmpClient,
-                             uint64_t deviceGuid,
                              Scheduling::ITimerScheduler* timerScheduler) noexcept
-    : busInfo_(busInfo), nodeId_(nodeId), irmClient_(irmClient), cmpClient_(cmpClient),
-      deviceGuid_(deviceGuid), timerScheduler_(timerScheduler) {
+    : busInfo_(busInfo), route_(route), irmClient_(irmClient), cmpClient_(cmpClient),
+      timerScheduler_(timerScheduler) {
     (void)busOps;
 }
 
 IOReturn BeBoBProtocol::Initialize() {
-    return (irmClient_ && cmpClient_ && deviceGuid_ != 0 && timerScheduler_ != nullptr)
+    return (irmClient_ && cmpClient_ && route_ && timerScheduler_ != nullptr)
                ? kIOReturnSuccess
                : kIOReturnNotReady;
 }
@@ -97,43 +96,39 @@ IOReturn BeBoBProtocol::Initialize() {
 IOReturn BeBoBProtocol::Shutdown() {
     CancelClockApply();
     const IOReturn status = StopDuplex();
-    if (cmpClient_ && deviceGuid_ != 0) {
-        cmpClient_->InvalidateDevice(deviceGuid_);
+    if (cmpClient_ && route_) {
+        cmpClient_->InvalidateRoute(route_);
     }
-    preparedGeneration_ = FW::Generation{0};
+    preparedRouteEpoch_ = 0;
     return status;
 }
 
-void BeBoBProtocol::UpdateRuntimeContext(uint16_t nodeId,
+void BeBoBProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                          Protocols::AVC::FCPTransport* transport) {
-    if ((nodeId_ != nodeId || fcpTransport_ != transport) && cmpClient_ && deviceGuid_ != 0) {
+    if ((route_ != route || fcpTransport_ != transport) && cmpClient_ && route_) {
         CancelClockApply();
-        cmpClient_->InvalidateDevice(deviceGuid_);
+        cmpClient_->InvalidateRoute(route_);
         inputConnected_ = false;
         outputConnected_ = false;
-        preparedGeneration_ = FW::Generation{0};
+        preparedRouteEpoch_ = 0;
     }
-    nodeId_ = nodeId;
+    route_ = route;
     fcpTransport_ = transport;
 }
 
 CMP::CMPDevice BeBoBProtocol::CurrentCMPDevice() const noexcept {
     return CMP::CMPDevice{
-        .guid = deviceGuid_,
-        .nodeId = FW::NodeId{nodeId_ <= 0x3fU ? static_cast<uint8_t>(nodeId_)
-                                              : static_cast<uint8_t>(0xffU)},
-        .generation = busInfo_.GetGeneration(),
+        .route = route_,
     };
 }
 
 IOReturn BeBoBProtocol::ResetEpochIfNeeded() noexcept {
-    const FW::Generation current = busInfo_.GetGeneration();
-    if (preparedGeneration_ == current) return kIOReturnSuccess;
+    if (preparedRouteEpoch_ == route_.routeEpoch) return kIOReturnSuccess;
     CancelClockApply();
-    if (cmpClient_ && deviceGuid_ != 0) cmpClient_->InvalidateDevice(deviceGuid_);
+    if (cmpClient_ && route_) cmpClient_->InvalidateRoute(route_);
     inputConnected_ = false;
     outputConnected_ = false;
-    preparedGeneration_ = current;
+    preparedRouteEpoch_ = route_.routeEpoch;
     return kIOReturnSuccess;
 }
 
@@ -424,7 +419,7 @@ void BeBoBProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
                     return;
                 }
                 ASFW_LOG(Audio, "[BeBoB] CMP verified iPCR=0x%08x oPCR=0x%08x GUID=0x%016llx",
-                         inputPCR, outputPCR, deviceGuid_);
+                         inputPCR, outputPCR, route_.guid);
                 callback(kIOReturnSuccess,
                          DuplexConfirmResult{.generation = busInfo_.GetGeneration(),
                                              .channels = channels,

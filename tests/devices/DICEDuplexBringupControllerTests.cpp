@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
+#include "FakeTimerScheduler.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Common/WireFormat.hpp"
 #include "Bus/IRM/IRMCSRConstants.hpp"
 #include "Bus/IRM/IRMClient.hpp"
+#include "Discovery/DeviceRegistry.hpp"
 #include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
@@ -31,6 +33,7 @@ using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioDuplexChannels;
 using ASFW::Audio::DICE::ClockSource;
 using ASFW::Audio::DICE::DICETransaction;
+using ASFW::Audio::DICE::DICEBringupPolicy;
 using ASFW::Audio::DICE::DiceDuplexConfirmResult;
 using ASFW::Audio::DICE::DiceDuplexPrepareResult;
 using ASFW::Audio::DICE::DiceDuplexStageResult;
@@ -53,6 +56,20 @@ namespace ClockSelectBits = ASFW::Audio::DICE::ClockSelect;
 namespace GlobalOffset = ASFW::Audio::DICE::GlobalOffset;
 namespace NotifyBits = ASFW::Audio::DICE::Notify;
 namespace RxOffset = ASFW::Audio::DICE::RxOffset;
+
+struct RouteState {
+    ASFW::Discovery::DeviceRegistry registry;
+    ASFW::Discovery::DeviceRouteToken route{};
+
+    RouteState() {
+        ASFW::Discovery::ConfigROM rom{};
+        rom.bib.guid = 0xD1CE000000000002ULL;
+        rom.gen = Generation{1};
+        rom.nodeId = 0x02;
+        (void)registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        route = *registry.CurrentRoute(rom.bib.guid);
+    }
+};
 namespace StatusBits = ASFW::Audio::DICE::StatusBits;
 namespace TxOffset = ASFW::Audio::DICE::TxOffset;
 
@@ -344,6 +361,13 @@ public:
 
     void SetClockSelectWriteHandler(std::function<void()> handler) {
         clockSelectWriteHandler_ = std::move(handler);
+    }
+
+    void SetGlobalClockState(uint32_t status, uint32_t sampleRate,
+                             uint32_t notification = 0) {
+        status_ = status;
+        sampleRate_ = sampleRate;
+        notification_ = notification;
     }
 
     void SetGeneration(Generation generation) {
@@ -782,17 +806,19 @@ struct HostClockResetGuard {
 
 struct DuplexRig {
     RecordingFireWireBus bus;
+    RouteState routeState;
     ProtocolRegisterIO io;
     DICETransaction tx;
     IRMClient irm;
+    ASFW::Testing::FakeTimerScheduler timer;
     std::atomic<bool> cancel{false};
     DICEDuplexBringupController controller;
 
-    DuplexRig()
-        : io(bus, bus, 0x02)
+    explicit DuplexRig(DICEBringupPolicy bringupPolicy = {})
+        : io(bus, bus, routeState.registry, routeState.route)
         , tx(io)
         , irm(bus)
-        , controller(tx, io, bus, nullptr, MakeGeneralSections()) {
+        , controller(tx, io, bus, nullptr, MakeGeneralSections(), &timer, bringupPolicy) {
         controller.SetTeardownCancelToken(&cancel);
         irm.SetIRMNode(0x03, Generation{1});
     }
@@ -861,7 +887,8 @@ TEST(DICEDuplexBringupControllerTests, NotificationMailboxMatchesReferenceAndLeg
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOUsesNegotiatedSpeedAndDiceReaderUsesFullGlobalReadSize) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     DICETransaction tx(io);
 
     std::optional<AsyncStatus> readStatus;
@@ -892,7 +919,8 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOUsesNegotiatedSpeedAndD
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesTimeout) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
 
     static constexpr std::array<ExpectedRequest, 1> kRequests{{
         {OpKind::Read, 0xFFFFU, 0xE00001A8U, 4U, FwSpeed::S400, 0U, {nullptr, 0U}},
@@ -914,9 +942,25 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesTimeo
     EXPECT_TRUE(bus.ScriptConsumed());
 }
 
+TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIORejectsInvalidatedRouteBeforeBusAccess) {
+    RecordingFireWireBus bus;
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
+    routeState.registry.InvalidateLiveMappingsForBusReset();
+
+    std::optional<AsyncStatus> readStatus;
+    (void)io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
+                         [&readStatus](AsyncStatus status, uint32_t) { readStatus = status; });
+
+    ASSERT_TRUE(readStatus.has_value());
+    EXPECT_EQ(*readStatus, AsyncStatus::kStaleGeneration);
+    EXPECT_TRUE(bus.Operations().empty());
+}
+
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesShortRead) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
 
     static constexpr std::array<uint8_t, 2> kShortPayload{{0x00, 0x46}};
     static constexpr std::array<ExpectedRequest, 1> kRequests{{
@@ -942,7 +986,8 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesShort
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOWriteQuadUsesNegotiatedSpeedAndBigEndianPayload) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
 
     std::optional<AsyncStatus> writeStatus;
     (void)io.WriteQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kIsochronous),
@@ -961,7 +1006,8 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOWriteQuadUsesNegotiated
 
 TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOCompareSwap64UsesLockAndDecodesBigEndianPayload) {
     RecordingFireWireBus bus;
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     const auto ownerOffset = MakeGeneralSections().global.offset + GlobalOffset::kOwnerHi;
 
     std::optional<AsyncStatus> lockStatus;
@@ -1276,6 +1322,112 @@ TEST(DICEDuplexBringupControllerTests,
     EXPECT_FALSE(rig.controller.IsRunning());
 }
 
+TEST(DICEDuplexBringupControllerTests,
+     AdvisorySourceLockPreservesTargetRateAndCompletesStart) {
+    DuplexRig rig(DICEBringupPolicy{
+        .requireSourceLockBeforeStreamEnable = false,
+        .requireSourceLockAtConfirm = false,
+    });
+    NotificationMailbox::Reset();
+    rig.bus.SetGlobalClockState(
+        ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+        48000U,
+        NotifyBits::kClockAccepted);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.SetGlobalClockState(
+            ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+            48000U,
+            NotifyBits::kClockAccepted);
+        NotificationMailbox::Publish(NotifyBits::kClockAccepted);
+    });
+
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+    std::optional<IOReturn> prepareStatus;
+    rig.controller.PrepareDuplex48k(
+        channels, [&prepareStatus](IOReturn status) { prepareStatus = status; });
+    ASSERT_EQ(prepareStatus, kIOReturnSuccess);
+    ASSERT_TRUE(rig.controller.IsPrepared());
+
+    std::optional<IOReturn> rxStatus;
+    rig.controller.ProgramRxForDuplex48k(
+        [&rxStatus](IOReturn status) { rxStatus = status; });
+    ASSERT_EQ(rxStatus, kIOReturnSuccess);
+
+    std::optional<IOReturn> txStatus;
+    rig.controller.ProgramTxAndEnableDuplex48k(
+        [&txStatus](IOReturn status) { txStatus = status; });
+    ASSERT_EQ(txStatus, kIOReturnSuccess);
+
+    std::optional<IOReturn> confirmStatus;
+    rig.controller.ConfirmDuplex48kStart(
+        [&confirmStatus](IOReturn status) { confirmStatus = status; });
+    EXPECT_EQ(confirmStatus, kIOReturnSuccess);
+    EXPECT_TRUE(rig.controller.IsRunning());
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     ClockAcceptedRetryUsesVirtualTimerAndCompletesAfterDelayedNotification) {
+    DuplexRig rig;
+    NotificationMailbox::Reset();
+    rig.bus.SetGlobalClockState(/*status=*/0, /*sampleRate=*/0);
+    rig.bus.SetClockSelectWriteHandler([] {});
+
+    std::optional<IOReturn> startStatus;
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+    rig.controller.PrepareDuplex48k(
+        channels, [&startStatus](IOReturn status) { startStatus = status; });
+
+    ASSERT_FALSE(startStatus.has_value());
+    EXPECT_EQ(rig.timer.PendingCount(), 1U);
+
+    // No wall-clock wait is involved: the first timer tick observes no notification,
+    // then the following tick consumes the asynchronously published CLOCK_ACCEPTED bit.
+    rig.timer.Advance(10'000'000ULL);
+    EXPECT_FALSE(startStatus.has_value());
+    EXPECT_EQ(rig.timer.PendingCount(), 1U);
+
+    rig.bus.PublishClockAccepted();
+    rig.timer.Advance(10'000'000ULL);
+
+    ASSERT_TRUE(startStatus.has_value());
+    EXPECT_EQ(*startStatus, kIOReturnSuccess);
+    EXPECT_TRUE(rig.controller.IsPrepared());
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     ClockAcceptedDeadlineTimesOutAfterVirtual150Milliseconds) {
+    DuplexRig rig;
+    NotificationMailbox::Reset();
+    rig.bus.SetGlobalClockState(/*status=*/0, /*sampleRate=*/0);
+    rig.bus.SetClockSelectWriteHandler([] {});
+
+    std::optional<IOReturn> startStatus;
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+    rig.controller.PrepareDuplex48k(
+        channels, [&startStatus](IOReturn status) { startStatus = status; });
+
+    ASSERT_FALSE(startStatus.has_value());
+    EXPECT_EQ(rig.timer.PendingCount(), 1U);
+
+    rig.timer.Advance(150'000'000ULL);
+
+    ASSERT_TRUE(startStatus.has_value());
+    EXPECT_EQ(*startStatus, kIOReturnTimeout);
+    EXPECT_FALSE(rig.controller.IsPrepared());
+    EXPECT_FALSE(rig.controller.IsOwnerClaimed());
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
 TEST(DICEDuplexBringupControllerTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
     // With active clock check, even when the mailbox notification is delayed,
     // the controller reads global state immediately after clock select write
@@ -1293,7 +1445,8 @@ TEST(DICEDuplexBringupControllerTests, LateClockAcceptedNotifyDoesNotTriggerRoll
         queue.DispatchAsyncAfter(3'250'000'000ULL, [&bus]() { bus.PublishClockAccepted(); });
     });
 
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     DICETransaction tx(io);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
@@ -1334,7 +1487,8 @@ TEST(DICEDuplexBringupControllerTests, GlobalStateConfirmationRecoversIfMailboxM
     queue.SetManualDispatchForTesting(true);
     bus.SetClockSelectWriteHandler([&bus]() { bus.LatchClockAccepted(); });
 
-    ProtocolRegisterIO io(bus, bus, 0x02);
+    RouteState routeState;
+    ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     DICETransaction tx(io);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
@@ -1554,6 +1708,31 @@ TEST(DICEDuplexBringupControllerTests,
 
     reservations.ReleaseAll();
     EXPECT_EQ(reservations.Count(), 0U);
+    EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     DuplexIRMReservationsInvalidatesAfterGenerationChangeWithoutWireRelease) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+
+    ASSERT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnSuccess);
+    ASSERT_EQ(reservations.Reserve(irm, 1, 576U), kIOReturnSuccess);
+    bus.ClearOperations();
+
+    // A bus reset returns the IRM resource state to its initial values. The
+    // old generation cannot accept a release transaction, so only local
+    // bookkeeping may change here.
+    bus.SetGeneration(Generation{2});
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    reservations.InvalidateAfterGenerationChange();
+
+    EXPECT_EQ(reservations.Count(), 0U);
+    EXPECT_TRUE(bus.Operations().empty());
     EXPECT_EQ(bus.BandwidthAvailable(), 4915U);
     EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFFU);
 }

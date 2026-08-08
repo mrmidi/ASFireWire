@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Discovery/FWDevice.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPResponseRouter.hpp"
 #include "DeferredFireWireBus.hpp"
@@ -11,6 +12,7 @@ using ASFW::Async::AsyncStatus;
 using ASFW::Async::Testing::DeferredFireWireBus;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceRecord;
+using ASFW::Discovery::DeviceRegistry;
 using ASFW::Discovery::FWDevice;
 using ASFW::FW::Generation;
 using ASFW::Protocols::AVC::AVCUnit;
@@ -65,17 +67,23 @@ protected:
         record.gen = Generation{1};
         device_ = FWDevice::Create(record, ConfigROM{});
         EXPECT_NE(device_, nullptr);
+        ConfigROM rom{};
+        rom.bib.guid = record.guid;
+        rom.gen = record.gen;
+        rom.nodeId = record.nodeId;
+        (void)routes_.UpsertFromROM(rom, {});
 
         auto transport = std::make_shared<FCPTransport>();
         FCPTransportConfig config{};
         config.timeoutMs = 10;
         config.maxRetries = 0;
-        EXPECT_TRUE(transport->init(&bus_, &bus_, device_.get(), scheduler_, config));
+        EXPECT_TRUE(transport->init(&bus_, &bus_, device_.get(), routes_, scheduler_, config));
         return transport;
     }
 
     DeferredFireWireBus bus_;
     FakeSessionScheduler scheduler_;
+    DeviceRegistry routes_;
     std::shared_ptr<FWDevice> device_;
 };
 

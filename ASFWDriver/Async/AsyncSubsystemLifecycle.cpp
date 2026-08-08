@@ -195,9 +195,9 @@ void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, uint8_t respo
         // Final completion - no more retries available or success achieved
         // Invoke user callback with actual result
         if (status != AsyncStatus::kSuccess) {
-            ASFW_LOG(Async, "ReadWithRetry: Final completion after %u attempts: status=%u",
+            ASFW_LOG(Async, "ReadWithRetry: Final completion after %u attempts: status=%{public}s",
                      state->policy.maxRetries - state->attemptsRemaining + 1,
-                     static_cast<unsigned>(status));
+                     ASFW::Async::ToString(status));
         }
 
         if (state->userCallback) {

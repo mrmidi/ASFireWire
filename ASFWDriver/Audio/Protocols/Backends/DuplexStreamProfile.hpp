@@ -191,6 +191,13 @@ class DuplexStreamProfileResolver final {
     }
 
     [[nodiscard]] static constexpr bool
+    IsWeissInt(const Discovery::DeviceRecord& record) noexcept {
+        return record.vendorId == DeviceProfiles::Audio::kWeissVendorId &&
+               (record.modelId == DeviceProfiles::Audio::kWeissInt202ModelId ||
+                record.modelId == DeviceProfiles::Audio::kWeissInt203ModelId);
+    }
+
+    [[nodiscard]] static constexpr bool
     IsBeBoB(const Discovery::DeviceRecord& record) noexcept {
         return DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(record.vendorId, record.modelId);
     }
@@ -329,6 +336,19 @@ class DuplexStreamProfileResolver final {
                 DuplexHostDirection::kTransmit,
             };
             profile.startOrder.postDeviceEnableDelayMs = 0;
+        }
+        if (IsWeissInt(record)) {
+            // INT202/203 are output-only in CoreAudio but retain both DICE
+            // directions on the wire. Start host IT first after GLOBAL_ENABLE
+            // so its AM824 packets can establish the device receive-clock path;
+            // source lock is inspected by the DICE adapter post-start, not used
+            // as a coordinator admission gate. Linux's Weiss tables retain
+            // two PCM channels for both DICE directions (dice-weiss.c:10-35).
+            profile.startOrder.requiresPreStreamClockLock = false;
+            profile.startOrder.startOrder = {
+                DuplexHostDirection::kTransmit,
+                DuplexHostDirection::kReceive,
+            };
         }
         return profile;
     }

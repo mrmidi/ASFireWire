@@ -40,6 +40,21 @@ enum ASFWMCPErrorCode: String, Equatable, Sendable {
     case rawDataOmitted
 }
 
+enum ASFWMCPConfigRomView: String, Equatable, Sendable {
+    /// Compact identity, unit, cache, and parser information. This is the
+    /// normal agent entry point; use the other views only when it leaves a
+    /// concrete question unresolved.
+    case summary
+    /// Decoded Bus Information Block fields, each with its bit position and a
+    /// short operational meaning.
+    case bib
+    /// Parsed IEEE 1212 directory entries. Raw leaf bytes are intentionally
+    /// omitted to keep routine inspection bounded.
+    case tree
+    /// Big-endian cached ROM quadlets, paged by quadlet index.
+    case raw
+}
+
 enum ASFWMCPValue: Equatable, Sendable {
     case null
     case bool(Bool)

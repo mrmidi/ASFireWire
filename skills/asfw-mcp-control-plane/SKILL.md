@@ -11,12 +11,16 @@ Use the bundled client instead of reconstructing MCP HTTP/SSE sessions or pastin
 
 Run these commands from the ASFireWire repository root.
 
-1. Confirm the app-hosted MCP server is enabled. The current local endpoint is
-   `http://127.0.0.1:8765/mcp` (do not rely on the stale `8766` default in old
-   examples). Set it explicitly for every investigation:
+1. Confirm the app-hosted MCP server is enabled. The default local endpoint is
+   `http://127.0.0.1:8766/mcp`, which is also the client's built-in
+   `DEFAULT_ENDPOINT`, so no export is needed in the normal case.
+
+   The port is user-configurable in the app's **MCP Control Plane** settings.
+   On `Connection refused`, read the port shown in that panel and set the
+   endpoint explicitly rather than assuming the server is down:
 
    ```bash
-   export ASFW_MCP_ENDPOINT=http://127.0.0.1:8765/mcp
+   export ASFW_MCP_ENDPOINT=http://127.0.0.1:<port>/mcp
    ```
 
 2. Ask the versioned health resource whether deeper reads are trustworthy:
@@ -45,6 +49,128 @@ Run these commands from the ASFireWire repository root.
    ```
 
 Pass `--endpoint` or set `ASFW_MCP_ENDPOINT` when the server uses a non-default loopback port.
+
+## Config-ROM explorer
+
+`asfw_get_config_rom` is a **read-only projection of the driver's discovery
+cache**. It never starts a ROM fetch and never issues a FireWire transaction.
+First obtain the current `nodeId` and generation from `summary`; after any bus
+reset, refresh them before asking for another view.
+
+The default `summary` view is deliberately compact: cache/generation status,
+GUID, vendor/model/unit identity, parser diagnostics, and two reminders that
+avoid common false conclusions. Use it before requesting the more detailed
+views:
+
+```bash
+# Compact normal entry point: summary is default.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17
+
+# BIB bitfields, each with bit position, decoded value, and a short meaning.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view bib
+
+# Parsed IEEE 1212 directory tree (default 64 entries; raw leaf bytes omitted).
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view tree
+
+# Big-endian cached quadlets; bounded to 64 per response and page by index.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view raw --start-quadlet 0 --max-quadlets 32
+```
+
+Equivalent direct calls are useful when another MCP client does not use the
+bundled script:
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_config_rom \
+  '{"nodeId":0,"generation":17,"view":"bib"}'
+```
+
+Interpret the annotated BIB carefully:
+
+- `IRMC`, `BMC`, `CMC`, and `ISC` are the device's Config-ROM capability
+  claims. They do not establish physical root, designated IRM, or Bus Manager
+  ownership.
+- `generation` in the BIB is the device's four-bit ROM field; it can differ
+  from the current host topology generation supplied to the tool.
+- `max_rec` describes an asynchronous payload code. It is not an isochronous
+  audio packet size.
+- A tree leaf reported as `not fetched from partial cache` is not evidence of a
+  malformed ROM. The discovery cache may contain only a prefix. Likewise, a
+  cached result from another generation is useful only as stale description,
+  never as a target for a follow-up transaction.
+
+## DICE registers by name
+
+`asfw_dice_read_register` accepts a **symbolic** `register` instead of a raw
+address. It resolves against the device's own section table, so no section base
+is ever assumed:
+
+```bash
+# How many PCM channels does the device's playback (host->device) stream carry?
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_dice_read_register \
+  '{"nodeId":0,"generation":17,"register":"RX_NUMBER_AUDIO","streamIndex":0}'
+
+# Clock source and rate, decoded.
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_dice_read_register \
+  '{"nodeId":0,"generation":17,"register":"GLOBAL_CLOCK_SELECT","decode":true}'
+```
+
+The response carries `resolvedAddress`, `sectionOffsetBytes` and (for per-stream
+registers) `streamConfigSizeBytes`, so the derivation is auditable rather than
+trusted. Omitting `register` falls back to the raw-address behaviour unchanged.
+
+**TX and RX are the device's directions, not the host's.** DICE `TX` is what the
+device transmits — the host's *capture*. DICE `RX` is what the device receives —
+the host's *playback*. ASFW's own profile fields use the opposite convention
+(`TxChannelCount` is playback), so never transcribe one onto the other. The
+offsets differ too: `TX_NUMBER_AUDIO` is at `0x0C` while `RX_NUMBER_AUDIO` is at
+`0x10`, because RX inserts `SEQ_START` ahead of it.
+
+Registers with no defined decoding return the raw value only; `decode: true`
+never invents an interpretation. `asfw_dice_decode_status` decodes a value you
+already hold, without touching the bus:
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_dice_decode_status \
+  '{"register":"GLOBAL_EXTENDED_STATUS","value":64}'
+```
+
+`GLOBAL_EXTENDED_STATUS` splits into `locked` and `slipping`; `arx1..arx4` are
+the device's *receive* streams, so `arx1` reflects the host-to-device transmit.
+
+These reads are `readOnly` but **not idempotent** — each issues a real FireWire
+transaction against a live generation. Do not run them during an active audio
+endurance run; prefer `asfw_get_audio_stream_health`, which reads driver-held
+counters and touches no bus.
+
+## Tool visibility is not device capability
+
+`tools` lists a filtered view, never the full catalog. Two independent filters
+apply (`ASFW/MCP/ASFWMCPCore.swift`, `listTools`):
+
+1. **Visibility tier vs runtime mode** — `always`, `readOnly`, `developerWrite`,
+   and `rawDeveloper` are admitted according to the server's current mode.
+2. **Protocol-hint prefilter** — evaluated *before* the tier check, against the
+   union of `protocolHints` across all currently discovered nodes.
+
+The hint prefilter is **any-of, not all-of**: a tool is listed when it declares
+no hints, or when *at least one* of its declared hints is present. A tool
+declaring `["bebob", "cmp"]` is therefore listed on a `cmp`-only bus.
+
+Two consequences:
+
+- An absent tool means "not listed for this generation's hints and mode". It is
+  **not** evidence that the driver lacks the capability or that the device lacks
+  the protocol. Check `ASFWMCPToolCatalog` for the defined set and ask
+  `asfw_explain_capability` for the specific reason.
+- Visibility does not follow the read-only/destructive gradient. Observed with
+  only an Apogee Duet attached (`avc`, `cmp`): `asfw_phase88_start_48k` and
+  `asfw_phase88_stop` are listed because they declare `cmp`, while every
+  read-only BeBoB diagnostic (`asfw_bebob_get_unit_plug_info`,
+  `asfw_bebob_get_clock_topology`, `asfw_phase88_get_clock`, …) is hidden
+  because it declares `bebob` alone. The destructive lifecycle tools are
+  reachable while the state queries that would justify using them are not.
+  Never infer device state from which tools appear; re-list after any
+  generation change.
 
 ## Ring-first diagnostic workflow
 
@@ -106,6 +232,47 @@ The packetizer snapshot is intentionally best-effort and read-only across the
 audio callback/TX-preparation boundary.  Interpret a cursor mismatch or a
 cursor-epoch change as evidence for a timeline transition; do not treat the
 diagnostic snapshot as a synchronization primitive.
+
+### Stream will not start: attribute it before theorising
+
+When a device enumerates but audio never flows, ask
+`asfw_get_audio_stream_health` **first**. It is a read-only projection of
+driver-held counters — no FireWire transaction, safe during an active run — and
+it separates three failures that otherwise present identically as silence.
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_audio_stream_health '{}'
+```
+
+Each endpoint carries a `verdict` and the raw `counters` behind it:
+
+| `verdict` | Means |
+|---|---|
+| `noPacketsReceived` | No packet reached the audio consumer. The IR context is not delivering — wrong iso channel, context never started, or the device stream was never enabled. Not a device-side fault yet. |
+| `geometryMismatch` | Packets arrived whose data block shape our stream config rejects. The **profile and the device disagree** on channels/DBS. Host-side rejection. |
+| `packetsRejected` | Packets arrived but failed decode (runt, undecodable CIP header, zero DBS). The device may be streaming correctly. |
+| `deviceSendsOnlyNoData` | Valid CIP headers with SYT `0xFFFF` and no audio frames. |
+| `dataNotAccepted` | Valid SYTs arrived but no replay entry was published. Inspect the SYT cadence detector, not the device. |
+| `receivingData` | Data is arriving and being accepted. |
+
+Read `deviceSendsOnlyNoData` precisely: it states **what the device sent**, not
+what the device is waiting for. It is not evidence that the device requires host
+timestamps first — the TCAT and Linux DICE stacks both withhold host SYT until
+the device has already sent valid ones, so a NO-DATA stall does not by itself
+imply a host-side handshake obligation. Report the counters; do not infer intent.
+
+`packetsSeen` counts every packet the master stream decoded, so
+`packetsSeen == noDataPackets` is the only sound basis for "the device is sending
+only NO-DATA". A non-zero reject counter with `packetsSeen > 0` means the device
+did send us something we threw away.
+
+Pair it with the bring-up records, which are emitted for a stream that has **not**
+established yet (bounded per start, so a healthy stream stays silent):
+
+```bash
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
+  '{"categories":["DirectAudio"],"contains":"[RxReplayReset] phase=bootstrap","maxLevel":"debug","maxRecords":20}'
+```
 
 ### Audio timing-loss first-fault query
 

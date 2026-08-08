@@ -33,7 +33,8 @@ public:
     AVCAudioBackend(AudioNubPublisher& publisher,
                     Discovery::DeviceRegistry& registry,
                     AudioRuntimeRegistry& runtime,
-                    Driver::IsochService& isoch,
+                    IIsochDuplexHostTransport& hostTransport,
+                    AudioDuplexCoordinator& duplexCoordinator,
                     Driver::HardwareInterface& hardware) noexcept;
     ~AVCAudioBackend() noexcept override;
 
@@ -43,32 +44,32 @@ public:
     [[nodiscard]] const char* Name() const noexcept override { return "AV/C"; }
 
     void OnAudioConfigurationReady(uint64_t guid, const Model::ASFWAudioDevice& config) noexcept;
-    void OnDeviceRemoved(uint64_t guid) noexcept;
+    // The coordinator owns remote-device teardown. AV/C only drops queued
+    // recovery/configuration work for the retired GUID.
+    void CancelRemoteDeviceWork(uint64_t guid) noexcept;
     void OnDeviceResumed(uint64_t guid) noexcept;
     void BeginTeardown() noexcept;
+
+    // Called by the backend-neutral AudioCoordinator transport callback.
+    void HandleTimingLoss(uint64_t guid) noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
 
 private:
-    // RX timing-loss escalation (doc AVC_STREAM_HEALTH_AND_RECOVERY.md §6). The
-    // transport fires this once when an established replay cadence dies. AV/C has
-    // no health register, so the verdict is the RX cadence itself: debounce a
-    // settle window (let the [TxAlign] self-heal absorb host-side StartIO/StopIO
-    // gaps), then if replay has NOT re-established, escalate to a coordinator
-    // restart (CMP break/re-establish) — matching bebob/FFADO/AppleFWAudio.
-    void HandleTimingLoss(uint64_t guid) noexcept;
     // Clears the per-GUID in-flight recovery flag (recoveringGuids_). Shared exit
     // point for the timing-loss escalation block.
     void FinishRecovery(uint64_t guid) noexcept;
+
+    [[nodiscard]] bool IsActiveDevice(uint64_t guid) noexcept;
 
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
-    IsochDuplexHostTransport hostTransport_;
+    IIsochDuplexHostTransport& hostTransport_;
     std::atomic<bool> stopping_{false};
-    AudioDuplexCoordinator duplexCoordinator_;
+    AudioDuplexCoordinator& duplexCoordinator_;
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};

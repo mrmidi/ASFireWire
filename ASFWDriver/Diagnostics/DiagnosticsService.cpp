@@ -350,33 +350,37 @@ ASFWDiagStatus DiagnosticsService::CollectOHCI(ASFWDiagOHCI* out) const noexcept
     const uint32_t startGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
 
     std::memset(out, 0, sizeof(ASFWDiagOHCI));
+    auto access = hw->TryBeginAccess();
+    if (!access) {
+        return ASFWDiagStatusUnavailable;
+    }
 
-    out->version = hw->Read(Driver::Register32::kVersion);
-    out->guidROM = hw->Read(Driver::Register32::kGUIDROM);
-    out->atRetries = hw->Read(Driver::Register32::kATRetries);
-    out->csrData = hw->Read(Driver::Register32::kCSRData);
-    out->csrCompareData = hw->Read(Driver::Register32::kCSRCompareData);
-    out->csrControl = hw->Read(Driver::Register32::kCSRControl);
-    out->configROMHeader = hw->Read(Driver::Register32::kConfigROMHeader);
-    out->busIdRegister = hw->Read(Driver::Register32::kBusID);
-    out->busOptions = hw->Read(Driver::Register32::kBusOptions);
-    out->guidHi = hw->Read(Driver::Register32::kGUIDHi);
-    out->guidLo = hw->Read(Driver::Register32::kGUIDLo);
-    out->configROMMap = hw->Read(Driver::Register32::kConfigROMMap);
-    out->postedWriteAddressLo = hw->Read(Driver::Register32::kPostedWriteAddressLo);
-    out->postedWriteAddressHi = hw->Read(Driver::Register32::kPostedWriteAddressHi);
-    out->vendorId = hw->Read(Driver::Register32::kVendorId);
-    out->hcControlSet = hw->ReadHCControl();
+    out->version = access.Read(Driver::Register32::kVersion);
+    out->guidROM = access.Read(Driver::Register32::kGUIDROM);
+    out->atRetries = access.Read(Driver::Register32::kATRetries);
+    out->csrData = access.Read(Driver::Register32::kCSRData);
+    out->csrCompareData = access.Read(Driver::Register32::kCSRCompareData);
+    out->csrControl = access.Read(Driver::Register32::kCSRControl);
+    out->configROMHeader = access.Read(Driver::Register32::kConfigROMHeader);
+    out->busIdRegister = access.Read(Driver::Register32::kBusID);
+    out->busOptions = access.Read(Driver::Register32::kBusOptions);
+    out->guidHi = access.Read(Driver::Register32::kGUIDHi);
+    out->guidLo = access.Read(Driver::Register32::kGUIDLo);
+    out->configROMMap = access.Read(Driver::Register32::kConfigROMMap);
+    out->postedWriteAddressLo = access.Read(Driver::Register32::kPostedWriteAddressLo);
+    out->postedWriteAddressHi = access.Read(Driver::Register32::kPostedWriteAddressHi);
+    out->vendorId = access.Read(Driver::Register32::kVendorId);
+    out->hcControlSet = access.Read(Driver::Register32::kHCControl);
     out->hcControlClear = out->hcControlSet; // HCControl read back
-    out->selfIdBuffer = hw->Read(Driver::Register32::kSelfIDBuffer);
-    out->selfIdCount = hw->Read(Driver::Register32::kSelfIDCount);
-    out->intEventSet = hw->ReadIntEvent();
-    out->intMaskSet = hw->Read(Driver::Register32::kIntMaskSet);
-    out->linkControlSet = hw->ReadLinkControl();
+    out->selfIdBuffer = access.Read(Driver::Register32::kSelfIDBuffer);
+    out->selfIdCount = access.Read(Driver::Register32::kSelfIDCount);
+    out->intEventSet = access.Read(Driver::Register32::kIntEvent);
+    out->intMaskSet = access.Read(Driver::Register32::kIntMaskSet);
+    out->linkControlSet = access.Read(Driver::Register32::kLinkControl);
     out->linkControlClear = out->linkControlSet;
-    out->nodeId = hw->ReadNodeID();
-    out->phyControl = hw->Read(Driver::Register32::kPhyControl);
-    out->isochronousCycleTimer = hw->ReadCycleTime();
+    out->nodeId = access.Read(Driver::Register32::kNodeID);
+    out->phyControl = access.Read(Driver::Register32::kPhyControl);
+    out->isochronousCycleTimer = access.Read(Driver::Register32::kCycleTimer);
 
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {
@@ -394,6 +398,10 @@ ASFWDiagStatus DiagnosticsService::CollectPHY(ASFWDiagPHY* out) const noexcept {
 
     auto* hw = controller_->GetHardware();
     if (!hw) {
+        return ASFWDiagStatusUnavailable;
+    }
+
+    if (hw->IsIsochStreamingActive()) {
         return ASFWDiagStatusUnavailable;
     }
 
@@ -623,7 +631,9 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
 
     auto* hw = controller_->GetHardware();
     if (hw) {
-        const uint32_t busOptions = hw->Read(Driver::Register32::kBusOptions);
+        auto access = hw->TryBeginAccess();
+        if (!access) return ASFWDiagStatusUnavailable;
+        const uint32_t busOptions = access.Read(Driver::Register32::kBusOptions);
         auto caps = ASFW::FW::DecodeBusOptions(ASFW::FW::NormalizeLocalBusOptions(
             busOptions, rolePolicy.roleMode, rolePolicy.fullBMActivityLevel));
         out->advertisedBmc = caps.bmc ? 1 : 0;
@@ -665,9 +675,11 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         auto* const hw = controller_->GetHardware();
         if (hw) {
             using namespace ASFW::Driver;
-            out->initialBandwidthAvailable = hw->Read(Register32::kInitialBandwidthAvailable);
-            out->initialChannelsAvailableHi = hw->Read(Register32::kInitialChannelsAvailableHi);
-            out->initialChannelsAvailableLo = hw->Read(Register32::kInitialChannelsAvailableLo);
+            if (auto access = hw->TryBeginAccess()) {
+                out->initialBandwidthAvailable = access.Read(Register32::kInitialBandwidthAvailable);
+                out->initialChannelsAvailableHi = access.Read(Register32::kInitialChannelsAvailableHi);
+                out->initialChannelsAvailableLo = access.Read(Register32::kInitialChannelsAvailableLo);
+            }
         }
     }
 

@@ -26,14 +26,6 @@ enum class StreamMode : uint8_t {
     kBlocking = 1,
 };
 
-struct BoolControlOverride {
-    uint32_t classIdFourCC{0};
-    uint32_t scopeFourCC{0};
-    uint32_t element{0};
-    bool isSettable{false};
-    bool initialValue{false};
-};
-
 struct ASFWAudioDevice {
     uint64_t guid{0};
     uint32_t vendorId{0};
@@ -50,10 +42,6 @@ struct ASFWAudioDevice {
     std::vector<std::string> inputChannelNames{};
     std::vector<std::string> outputChannelNames{};
     StreamMode streamMode{StreamMode::kNonBlocking};
-    bool hasPhantomOverride{false};
-    uint32_t phantomSupportedMask{0};
-    uint32_t phantomInitialMask{0};
-    std::vector<BoolControlOverride> boolControlOverrides{};
 
     // Populate properties consumed by ASFWAudioDriver.
     // Returns false only if required objects could not be created.

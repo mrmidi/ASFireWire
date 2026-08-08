@@ -19,7 +19,10 @@ public:
 
     [[nodiscard]] BusState GetCurrentState() const noexcept;
 
-    void OnSyntheticBusReset(uint8_t newGenerationFromPacket) noexcept;
+    /// Apply the generation confirmed from the OHCI SelfIDCount register.
+    /// This is NOT the AR bus-reset marker generation — that value is informational
+    /// only and is never fed into the tracker.
+    void OnConfirmedBusGeneration(uint8_t confirmedGeneration) noexcept;
 
     void OnSelfIDComplete(uint16_t newNodeID) noexcept;
 

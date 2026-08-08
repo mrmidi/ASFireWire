@@ -72,12 +72,14 @@ SBP2TargetInfo BuildTargetInfoFromUnit(const Discovery::FWUnit& unit) {
 SessionRegistry::SessionRegistry(Async::IFireWireBus& bus,
                                  Async::IFireWireBusInfo& busInfo,
                                  AddressSpaceManager& addrSpaceMgr,
+                                 Discovery::DeviceRegistry& deviceRegistry,
                                  Discovery::IDeviceManager& deviceManager,
                                  ISessionScheduler& scheduler,
                                  IODispatchQueue* workQueue)
     : bus_(bus)
     , busInfo_(busInfo)
     , addrSpaceMgr_(addrSpaceMgr)
+    , deviceRegistry_(deviceRegistry)
     , deviceManager_(deviceManager)
     , scheduler_(scheduler)
     , workQueue_(workQueue) {
@@ -109,6 +111,10 @@ SessionRegistry::~SessionRegistry() {
 std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
                                                             uint64_t guid,
                                                             uint32_t romOffset) {
+    const auto route = deviceRegistry_.CurrentRoute(guid);
+    if (!route.has_value()) {
+        return std::unexpected(kIOReturnNotReady);
+    }
     auto unit = ResolveUnit(guid, romOffset);
     if (!unit) {
         ASFW_LOG(Async, "SessionRegistry: no unit found for guid=0x%016llx romOffset=%u",
@@ -129,7 +135,7 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     }
 
     auto targetInfo = BuildTargetInfoFromUnit(*unit);
-    if (targetInfo.managementAgentOffset == 0) {
+    if (targetInfo.managementAgentOffset == 0 || targetInfo.targetNodeId != route->nodeId) {
         return std::unexpected(kIOReturnUnsupported);
     }
 
@@ -152,6 +158,7 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     record.owner = owner;
     record.guid = guid;
     record.romOffset = romOffset;
+    record.route = *route;
     record.session = std::make_shared<LoginSession>(bus_, busInfo_, addrSpaceMgr_, scheduler_);
     record.session->Configure(targetInfo);
     // record.lastError lives at a stable address (map node), so the executor may
@@ -171,6 +178,9 @@ bool SessionRegistry::StartLogin(void* owner, uint64_t handle) {
         IOLockGuard lock(lock_);
         auto* record = FindByHandleForOwner(owner, handle);
         if (!record || !record->session) {
+            return false;
+        }
+        if (!deviceRegistry_.IsCurrent(record->route)) {
             return false;
         }
         if (record->session->State() != LoginState::Idle) {
@@ -221,7 +231,7 @@ std::optional<SBP2SessionState> SessionRegistry::GetSessionState(void* owner,
 bool SessionRegistry::SubmitInquiry(void* owner, uint64_t handle, uint8_t allocationLength) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandleForOwner(owner, handle);
-    if (!record || !record->executor) {
+    if (!record || !record->executor || !deviceRegistry_.IsCurrent(record->route)) {
         return false;
     }
     return record->executor->SubmitInquiry(allocationLength);
@@ -230,7 +240,7 @@ bool SessionRegistry::SubmitInquiry(void* owner, uint64_t handle, uint8_t alloca
 std::optional<SCSI::CommandResult> SessionRegistry::GetInquiryResult(void* owner, uint64_t handle) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandleForOwner(owner, handle);
-    if (!record || !record->executor) {
+    if (!record || !record->executor || !deviceRegistry_.IsCurrent(record->route)) {
         return std::nullopt;
     }
     return record->executor->GetInquiryResult();
@@ -241,7 +251,7 @@ bool SessionRegistry::SubmitCommand(void* owner, uint64_t handle,
                                     CommandExecutor::ResultCallback callback) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandleForOwner(owner, handle);
-    if (!record || !record->executor) {
+    if (!record || !record->executor || !deviceRegistry_.IsCurrent(record->route)) {
         return false;
     }
     return record->executor->SubmitCommand(request, std::move(callback));
@@ -250,7 +260,7 @@ bool SessionRegistry::SubmitCommand(void* owner, uint64_t handle,
 std::optional<SCSI::CommandResult> SessionRegistry::GetCommandResult(void* owner, uint64_t handle) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandleForOwner(owner, handle);
-    if (!record || !record->executor) {
+    if (!record || !record->executor || !deviceRegistry_.IsCurrent(record->route)) {
         return std::nullopt;
     }
     return record->executor->GetCommandResult();
@@ -260,7 +270,7 @@ bool SessionRegistry::SubmitTaskManagement(void* owner, uint64_t handle,
                                            SBP2ManagementORB::Function function) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandleForOwner(owner, handle);
-    if (!record || !record->executor) {
+    if (!record || !record->executor || !deviceRegistry_.IsCurrent(record->route)) {
         return false;
     }
     return record->executor->SubmitTaskManagement(function);
@@ -399,6 +409,12 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
                 continue;
             }
 
+            const auto route = deviceRegistry_.CurrentRoute(record.guid);
+            if (!route.has_value() || route->generation != gen ||
+                route->deviceIncarnation != record.route.deviceIncarnation) {
+                continue;
+            }
+
             auto unit = ResolveUnit(record.guid, record.romOffset);
             if (!unit) {
                 ASFW_LOG(Async, "SessionRegistry: RefreshTargets: unit not found for handle=%llu",
@@ -407,6 +423,7 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
             }
 
             record.session->Configure(BuildTargetInfoFromUnit(*unit));
+            record.route = *route;
             ASFW_LOG(Async, "SessionRegistry: reconnecting session handle=%llu gen=%u",
                      handle, gen.value);
             toReconnect.push_back(record.session);

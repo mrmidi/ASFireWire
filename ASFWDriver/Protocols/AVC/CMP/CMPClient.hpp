@@ -3,6 +3,7 @@
 #include "../../../Async/Interfaces/IFireWireBusInfo.hpp"
 #include "../../../Async/Interfaces/IFireWireBusOps.hpp"
 #include "../../../Bus/IRM/IRMTypes.hpp"
+#include "../../../Discovery/DeviceRegistry.hpp"
 #include "PCRCodec.hpp"
 
 #include <cstdint>
@@ -27,14 +28,12 @@ inline constexpr uint32_t GetIPCRAddress(uint8_t plug) { return kIPCRBase + plug
 
 enum class PCRDirection : uint8_t { kOutput, kInput };
 
-// The identity required for every remote CMP operation. GUID is the lease key;
-// node/generation are only a current routing epoch and cannot be global state.
+// The identity required for every remote CMP operation. Route validity belongs
+// exclusively to DeviceRegistry; callers never synthesize a node/generation.
 struct CMPDevice {
-    uint64_t guid{0};
-    FW::NodeId nodeId{0};
-    FW::Generation generation{0};
+    Discovery::DeviceRouteToken route{};
 
-    [[nodiscard]] bool IsValid() const noexcept { return guid != 0 && nodeId.value < 64; }
+    [[nodiscard]] bool IsValid() const noexcept { return static_cast<bool>(route); }
 };
 
 using CMPStatus = IRM::AllocationStatus;
@@ -45,7 +44,8 @@ using PCRReadCallback = std::function<void(bool success, uint32_t value)>;
 // preventing a disconnect from decrementing another device's p2p count.
 class CMPClient {
 public:
-    CMPClient(Async::IFireWireBusOps& busOps, Async::IFireWireBusInfo& busInfo);
+    CMPClient(Async::IFireWireBusOps& busOps, Async::IFireWireBusInfo& busInfo,
+              Discovery::DeviceRegistry& routeRegistry);
     ~CMPClient();
 
     CMPClient(const CMPClient&) = delete;
@@ -65,28 +65,25 @@ public:
                        PCRBoolCallback callback);
     void BreakBothConnections(const CMPDevice& device, uint8_t plugNum, CMPCallback callback);
 
-    // Compatibility shims for legacy user-client diagnostics. They deliberately
-    // cannot issue bus traffic: an operation without a GUID/node/generation
-    // must never select an arbitrary device.
-    void ConnectOPCR(uint8_t, uint8_t, CMPCallback callback) { callback(CMPStatus::Failed); }
-    void DisconnectOPCR(uint8_t, CMPCallback callback) { callback(CMPStatus::Failed); }
-    void ConnectIPCR(uint8_t, uint8_t, CMPCallback callback) { callback(CMPStatus::Failed); }
-    void DisconnectIPCR(uint8_t, CMPCallback callback) { callback(CMPStatus::Failed); }
+    [[nodiscard]] bool IsRouteCurrent(const Discovery::DeviceRouteToken& route) const noexcept;
 
     // Bus reset destroys remote PCR state. Drop only local bookkeeping; never
     // issue a BREAK in a new generation for an old connection.
-    void InvalidateDevice(uint64_t guid);
+    void InvalidateRoute(const Discovery::DeviceRouteToken& route);
+    void InvalidateAllLeasesForBusReset();
 
 private:
     struct LeaseKey {
-        uint64_t guid;
+        Discovery::DeviceRouteToken route;
         PCRDirection direction;
         uint8_t plugNum;
         bool operator==(const LeaseKey&) const = default;
     };
     struct LeaseKeyHash {
         size_t operator()(const LeaseKey& key) const noexcept {
-            return std::hash<uint64_t>{}(key.guid) ^
+            return std::hash<uint64_t>{}(key.route.guid) ^
+                   (std::hash<uint64_t>{}(key.route.deviceIncarnation) << 1U) ^
+                   (std::hash<uint64_t>{}(key.route.routeEpoch) << 2U) ^
                    (static_cast<size_t>(key.direction) << 8U) ^ key.plugNum;
         }
     };
@@ -122,9 +119,11 @@ private:
     [[nodiscard]] static uint32_t PCRAddress(PCRDirection direction, uint8_t plugNum) noexcept;
     [[nodiscard]] static uint32_t MPRAddress(PCRDirection direction) noexcept;
     [[nodiscard]] static uint8_t OverheadIdForGapCount(uint8_t gapCount) noexcept;
+    [[nodiscard]] bool IsCurrent(const CMPDevice& device) const noexcept;
 
     Async::IFireWireBusOps& busOps_;
     Async::IFireWireBusInfo& busInfo_;
+    Discovery::DeviceRegistry& routeRegistry_;
     IOLock* lock_{nullptr};
     std::unordered_map<LeaseKey, Lease, LeaseKeyHash> leases_;
 };

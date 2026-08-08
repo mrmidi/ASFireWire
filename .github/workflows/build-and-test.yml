@@ -23,24 +23,14 @@ jobs:
         run: |
           gem install xcpretty
 
-      # ASFW.xcodeproj is generated from project.yml (XcodeGen) and committed.
-      # Fail if they drifted apart — someone edited project.yml or added source
-      # files without regenerating, or hand-edited the pbxproj. If this fails
-      # after an xcodegen version bump changed the output format, regenerate
-      # locally with the new version and commit.
-      - name: Verify ASFW.xcodeproj matches project.yml (XcodeGen)
+      # ASFW.xcodeproj is generated from project.yml (XcodeGen) and gitignored,
+      # so CI must generate it before anything can build. project.yml is the
+      # only tracked source of truth for targets, settings, and schemes.
+      - name: Generate ASFW.xcodeproj from project.yml (XcodeGen)
         run: |
           brew install xcodegen
           xcodegen --version
           xcodegen generate --quiet
-          # Diff only the pbxproj: scheme files are cosmetically rewritten by
-          # any open Xcode (version attr, BuildableName flavor, empty blocks),
-          # so they flip-flop between xcodegen and Xcode styles; their semantic
-          # content comes from project.yml either way.
-          if ! git diff --exit-code --stat -- ASFW.xcodeproj/project.pbxproj project.yml; then
-            echo "::error::ASFW.xcodeproj is out of sync with project.yml. Run 'xcodegen generate' locally and commit the regenerated project (see README → Building)."
-            exit 1
-          fi
 
       - name: Install the Apple certificate and provisioning profile
         env:
@@ -59,7 +49,7 @@ jobs:
           PP_PATH=$RUNNER_TEMP/build_pp.provisionprofile
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-          # import certificate and provisioning profile from secrets
+          # import certificate to keychain
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
           # echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
 

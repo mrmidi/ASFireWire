@@ -22,7 +22,7 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
     // We read isoRecvEvent to determine which contexts, clear it, then dispatch processing.
     if ((snap.intEvent & IntEventBits::kIsochRx) && snap.isoRecvEvent != 0) {
         // Clear the per-context event bits to acknowledge
-        hardware.Write(Register32::kIsoRecvIntEventClear, snap.isoRecvEvent);
+        hardware.ClearIsoRecvEvents(snap.isoRecvEvent);
 
         // One OHCI IR context backs each capture stream (contextIndex ==
         // streamIndex). A multi-stream DICE device (Venice F32 = 2×16) runs a
@@ -57,7 +57,7 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         }
 
         // Clear event bits to acknowledge
-        hardware.Write(Register32::kIsoXmitIntEventClear, snap.isoXmitEvent);
+        hardware.ClearIsoXmitEvents(snap.isoXmitEvent);
 
         // One OHCI IT context backs each playback stream (contextIndex ==
         // streamIndex). A multi-stream DICE device (Venice F32 = 2×16) runs a

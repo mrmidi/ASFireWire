@@ -84,6 +84,12 @@ add_async_test(ARStreamProcessorTests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
+# Synthetic bus-reset marker decoding (quadlet offset vs Linux/Apple)
+add_async_test(BusResetMarkerTests
+    BusResetMarkerTests.cpp
+    "${ASFW_DRIVER_DIR}/Async/Rx/ARPacketParser.cpp"
+)
+
 # Label Allocator Tests
 add_async_test(LabelAllocatorTests
     LabelAllocatorTests.cpp

@@ -46,8 +46,12 @@ extension ASFWMCPCore {
             return await nodeSummaryResult(toolName: name, decoder: decoder)
         case "asfw_explain_capability":
             return await explainCapabilityResult(toolName: name, decoder: decoder)
-        case "asfw_get_controller_state", "asfw_get_topology", "asfw_get_config_rom":
-            return notImplementedToolResult(name, reason: "Read-only \(name) dispatch is reserved for the live telemetry adapter.")
+        case "asfw_get_controller_state":
+            return await controllerStateResult(toolName: name)
+        case "asfw_get_topology":
+            return await topologyResult(toolName: name)
+        case "asfw_get_config_rom":
+            return await configRomResult(toolName: name, decoder: decoder)
         case "asfw_log_query":
             return await dispatchLogQuery(name, decoder: decoder)
         case "asfw_log_stats":
@@ -64,8 +68,10 @@ extension ASFWMCPCore {
             return await dispatchWriteBlock(name, decoder: decoder)
         case "asfw_compare_swap", "asfw_cas_quadlet":
             return await dispatchCompareSwap(name, decoder: decoder, protocolHint: nil)
-        case "asfw_read_device_register", "asfw_dice_read_register":
+        case "asfw_read_device_register":
             return await dispatchReadQuadlet(name, decoder: decoder)
+        case "asfw_dice_read_register":
+            return await dispatchDiceReadRegister(name, decoder: decoder)
         case "asfw_read_device_register_block", "asfw_dice_read_block", "asfw_tcat_read_application_block":
             return await dispatchReadBlock(name, decoder: decoder)
         case "asfw_write_device_register":
@@ -74,12 +80,14 @@ extension ASFWMCPCore {
             return await dispatchWriteBlock(name, decoder: decoder)
         case "asfw_write_ohci_register_dev":
             return await dispatchOhciWrite(name, decoder: decoder)
-        case "asfw_read_ohci_register", "asfw_snapshot_ohci_registers":
-            return notImplementedToolResult(name, reason: "OHCI read dispatch needs the live driver adapter from FW-94.")
+        case "asfw_read_ohci_register":
+            return await ohciRegisterReadResult(toolName: name, decoder: decoder)
+        case "asfw_snapshot_ohci_registers":
+            return await ohciSnapshotResult(toolName: name)
         case "asfw_irm_get_state", "asfw_irm_get_bandwidth", "asfw_irm_get_channels":
             return await dispatchIrmSnapshot(name, decoder: decoder)
         case "asfw_irm_list_allocations":
-            return notImplementedToolResult(name, reason: "IRM allocation ownership is not exposed by the live driver adapter yet.")
+            return await irmAllocationsResult(toolName: name)
         case "asfw_irm_allocate_channel", "asfw_irm_free_channel":
             return await dispatchIrmChannel(name, decoder: decoder, allocate: name == "asfw_irm_allocate_channel")
         case "asfw_irm_allocate_bandwidth", "asfw_irm_free_bandwidth":
@@ -88,8 +96,19 @@ extension ASFWMCPCore {
             return await avcUnitInventoryResult(toolName: name)
         case "asfw_avc_get_subunit_capabilities":
             return await avcSubunitCapabilitiesResult(toolName: name, decoder: decoder)
-        case "asfw_avc_get_subunit_descriptor", "asfw_fcp_get_recent_responses":
-            return notImplementedToolResult(name, reason: "Recent FCP command/response records are not exposed by the live adapter yet.")
+        case "asfw_fcp_get_recent_responses":
+            return await recentFcpResponsesResult(toolName: name, decoder: decoder)
+        case "asfw_avc_get_subunit_descriptor":
+            // Unlike the other read-only tools, this one is not a routing gap: AV/C
+            // descriptor access is a wire-observable OPEN/READ/CLOSE DESCRIPTOR
+            // sequence that has to be written against the AV/C descriptor mechanism
+            // and cross-checked with references/IOFireWireAVC before it may issue FCP
+            // to a real device. Left explicitly unimplemented rather than synthesized.
+            return notImplementedToolResult(
+                name,
+                reason: "AV/C READ DESCRIPTOR is not implemented. It requires the OPEN/READ/CLOSE "
+                    + "descriptor sequence validated against a reference stack, not a routing change."
+            )
         case "asfw_fcp_send_command":
             return await dispatchFcpReadCommand(name, decoder: decoder)
         case "asfw_apogee_duet_apply_format_dev":
@@ -110,8 +129,10 @@ extension ASFWMCPCore {
             return await dispatchSbp2Login(name, decoder: decoder)
         case "asfw_sbp2_submit_orb_dev":
             return await dispatchSbp2Orb(name, decoder: decoder)
+        case "asfw_get_audio_stream_health":
+            return await dispatchAudioStreamHealth(name)
         case "asfw_dice_decode_status":
-            return notImplementedToolResult(name, reason: "DICE decode dispatch needs a concrete decoder surface.")
+            return await dispatchDiceDecodeStatus(name, decoder: decoder)
         case "asfw_dice_write_register":
             return await dispatchWriteQuadlet(name, decoder: decoder, protocolHint: "dice_tcat")
         case "asfw_tcat_write_application_block":
@@ -138,6 +159,148 @@ extension ASFWMCPCore {
         do {
             let request = ASFWMCPReadQuadletRequest(address: try decoder.address())
             return transactionToolResult(name, await driver.executeReadQuadlet(request))
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    /// `asfw_dice_read_register` with a symbolic `register` instead of a raw
+    /// address. Resolves against the device's own section table, so no section
+    /// base is ever assumed. Falls back to the raw-address path when `register`
+    /// is absent, keeping the previous contract intact.
+    private func dispatchDiceReadRegister(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        guard let registerName = try? decoder.string("register"), !registerName.isEmpty else {
+            return await dispatchReadQuadlet(name, decoder: decoder)
+        }
+        do {
+            guard let register = ASFWMCPDiceRegisterMap.register(named: registerName) else {
+                let known = ASFWMCPDiceRegisterMap.all.map(\.name).joined(separator: ", ")
+                return malformedToolResult(name, reason: "unknown register '\(registerName)'. Known: \(known).")
+            }
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let streamIndex = (try? decoder.uint32("streamIndex")) ?? 0
+            let decode = try decoder.bool("decode", default: false)
+
+            func address(_ low: UInt32) -> ASFWMCPAddress {
+                ASFWMCPAddress(nodeId: nodeId,
+                               generation: generation,
+                               addressHigh: ASFWMCPDiceSpace.baseAddressHigh,
+                               addressLow: low)
+            }
+
+            // 1. The device's section table: five (offset, size) quadlet pairs.
+            let tableResult = await driver.executeReadBlock(
+                ASFWMCPReadBlockRequest(address: address(ASFWMCPDiceSpace.baseAddressLow),
+                                        length: ASFWMCPDiceSpace.sectionTableBytes)
+            )
+            guard tableResult.ok, let tableBytes = tableResult.payload,
+                  let table = ASFWMCPDiceSectionTable.decode(tableBytes),
+                  let sectionEntry = table.entry(for: register.section) else {
+                return ASFWMCPToolCallResult(
+                    toolName: name,
+                    ok: false,
+                    data: .object([
+                        "stage": .string("sectionTable"),
+                        "register": .string(register.name)
+                    ]),
+                    errors: [ASFWMCPResourceError(
+                        code: .capabilityUnavailable,
+                        reason: "Could not read or decode the DICE section table; the node may not be a DICE device, or the generation is stale."
+                    )]
+                )
+            }
+
+            // 2. Per-stream registers need the section's own stream config size;
+            //    it is a device value, never assumed.
+            var streamConfigSizeBytes: UInt32 = 0
+            if register.perStream {
+                let sizeOffset = register.section == .txStreamFormat ? UInt32(0x04) : UInt32(0x04)
+                let sizeAddress = ASFWMCPDiceSpace.baseAddressLow &+ sectionEntry.offsetBytes &+ sizeOffset
+                let sizeResult = await driver.executeReadQuadlet(
+                    ASFWMCPReadQuadletRequest(address: address(sizeAddress))
+                )
+                guard sizeResult.ok,
+                      let sizeQuadlets = sizeResult.payload?.readBigEndianUInt32(at: 0),
+                      sizeQuadlets > 0 else {
+                    return ASFWMCPToolCallResult(
+                        toolName: name,
+                        ok: false,
+                        data: .object([
+                            "stage": .string("streamConfigSize"),
+                            "register": .string(register.name)
+                        ]),
+                        errors: [ASFWMCPResourceError(
+                            code: .capabilityUnavailable,
+                            reason: "Could not read the section's SIZE register, so a per-stream address cannot be derived."
+                        )]
+                    )
+                }
+                streamConfigSizeBytes = sizeQuadlets &* 4
+            }
+
+            guard let low = ASFWMCPDiceRegisterMap.addressLow(
+                for: register,
+                sectionOffsetBytes: sectionEntry.offsetBytes,
+                streamIndex: streamIndex,
+                streamConfigSizeBytes: streamConfigSizeBytes
+            ) else {
+                return malformedToolResult(
+                    name,
+                    reason: register.perStream
+                        ? "streamIndex \(streamIndex) does not resolve to a valid address."
+                        : "\(register.name) is section-scalar; streamIndex must be 0."
+                )
+            }
+
+            // 3. The register itself.
+            let result = await driver.executeReadQuadlet(
+                ASFWMCPReadQuadletRequest(address: address(low))
+            )
+            var data: [String: ASFWMCPValue] = [
+                "register": .string(register.name),
+                "section": .string(register.section.rawValue),
+                "summary": .string(register.summary),
+                "perStream": .bool(register.perStream),
+                "streamIndex": .int(Int(streamIndex)),
+                "resolvedAddress": .string(String(format: "0x%04X%08X",
+                                                  ASFWMCPDiceSpace.baseAddressHigh, low)),
+                "sectionOffsetBytes": .int(Int(sectionEntry.offsetBytes)),
+                "ok": .bool(result.ok)
+            ]
+            if register.perStream {
+                data["streamConfigSizeBytes"] = .int(Int(streamConfigSizeBytes))
+            }
+            if let value = result.payload?.readBigEndianUInt32(at: 0) {
+                data["value"] = .uint64(UInt64(value))
+                data["valueHex"] = .string(String(format: "0x%08X", value))
+                if decode, let decoded = ASFWMCPDiceDecoder.decode(registerName: register.name, value: value) {
+                    data["decoded"] = decoded
+                }
+            }
+            return ASFWMCPToolCallResult(toolName: name, ok: result.ok, data: .object(data), errors: [])
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
+    }
+
+    /// Decode a supplied DICE register value without touching the bus.
+    private func dispatchDiceDecodeStatus(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let registerName = try decoder.string("register", default: "GLOBAL_STATUS")
+            let value = try decoder.uint32("value")
+            guard let decoded = ASFWMCPDiceDecoder.decode(registerName: registerName, value: value) else {
+                return malformedToolResult(
+                    name,
+                    reason: "no decoder for '\(registerName)'. Decodable: GLOBAL_STATUS, GLOBAL_EXTENDED_STATUS, GLOBAL_CLOCK_SELECT."
+                )
+            }
+            return ASFWMCPToolCallResult(
+                toolName: name,
+                ok: true,
+                data: .object(["register": .string(registerName.uppercased()), "decoded": decoded]),
+                errors: []
+            )
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }
@@ -349,6 +512,21 @@ extension ASFWMCPCore {
         } catch {
             return malformedToolResult(name, reason: error.localizedDescription)
         }
+    }
+
+    /// Read-only projection of driver-held RX counters. Issues no transaction,
+    /// so it is safe to call while audio is running.
+    private func dispatchAudioStreamHealth(_ name: String) async -> ASFWMCPToolCallResult {
+        let endpoints = await driver.fetchAudioStreamHealth()
+        return ASFWMCPToolCallResult(
+            toolName: name,
+            ok: true,
+            data: .object([
+                "endpointCount": .int(endpoints.count),
+                "endpoints": .array(endpoints.map { $0.mcpValue() })
+            ]),
+            errors: []
+        )
     }
 
     private func dispatchIrmSnapshot(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
@@ -1401,6 +1579,156 @@ private extension ASFWMCPCore {
         } catch {
             return malformedToolResult(toolName, reason: error.localizedDescription)
         }
+    }
+
+    /// Mirrors the field set of the `asfw://telemetry/snapshot` controller section
+    /// so the tool and the resource cannot drift into disagreeing about state.
+    func controllerStateResult(toolName: String) async -> ASFWMCPToolCallResult {
+        let snapshot = await driver.fetchTelemetrySnapshot(configuration: configuration)
+        guard snapshot.driverConnected else {
+            return .failure(
+                toolName: toolName,
+                code: .driverNotConnected,
+                reason: "The driver is not connected; controller state cannot be read."
+            )
+        }
+        let controller = snapshot.controller
+        var fields: [String: ASFWMCPValue] = [
+            "driverConnected": .bool(snapshot.driverConnected),
+            "generation": .int(Int(snapshot.generation)),
+            "state": .string(controller.state),
+            "linkActive": .bool(controller.linkActive),
+            "isIRM": .bool(controller.isIRM),
+            "isCycleMaster": .bool(controller.isCycleMaster)
+        ]
+        fields["localNodeId"] = controller.localNodeId.map { .int(Int($0)) } ?? .null
+        fields["rootNodeId"] = controller.rootNodeId.map { .int(Int($0)) } ?? .null
+        fields["irmNodeId"] = controller.irmNodeId.map { .int(Int($0)) } ?? .null
+        fields["nodeCount"] = .int(Int(snapshot.bus.nodeCount))
+        fields["gapCount"] = .int(Int(snapshot.bus.gapCount))
+        fields["topologyValid"] = .bool(snapshot.bus.topologyValid)
+        return .success(toolName: toolName, data: .object(fields))
+    }
+
+    func topologyResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let topology = await driver.fetchTopology() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "No valid topology snapshot is available; the driver reports the topology invalid or is not connected."
+            )
+        }
+        return .success(toolName: toolName, data: topology.mcpValue)
+    }
+
+    func configRomResult(toolName: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            let nodeId = try decoder.uint32("nodeId")
+            let generation = try decoder.uint32("generation")
+            let viewName = try decoder.string("view", default: ASFWMCPConfigRomView.summary.rawValue)
+            guard let view = ASFWMCPConfigRomView(rawValue: viewName) else {
+                throw ASFWMCPToolArgumentError.malformed("view must be one of: summary, bib, tree, raw")
+            }
+            let startQuadlet = try decoder.int("startQuadlet", default: 0, range: 0...Int.max)
+            let maxQuadlets = try decoder.int("maxQuadlets", default: 32, range: 1...64)
+            let maxTreeEntries = try decoder.int("maxTreeEntries", default: 64, range: 1...128)
+            guard let summary = await driver.fetchConfigROM(nodeId: nodeId, generation: generation) else {
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "No Config ROM is cached for node \(nodeId) in generation \(generation)."
+                )
+            }
+            return .success(
+                toolName: toolName,
+                data: summary.mcpValue(
+                    view: view,
+                    startQuadlet: startQuadlet,
+                    maxQuadlets: maxQuadlets,
+                    maxTreeEntries: maxTreeEntries
+                )
+            )
+        } catch {
+            return .failure(toolName: toolName, code: .malformedRequest, reason: error.localizedDescription)
+        }
+    }
+
+    func recentFcpResponsesResult(toolName: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        let limit = (try? decoder.int("limit", default: 20, range: 1...64)) ?? 20
+        let records = await driver.recentFcpRecords(limit: limit)
+        return .success(
+            toolName: toolName,
+            data: .object([
+                // Absence here does not mean no FCP occurred: driver-originated FCP is
+                // not captured. The driver log ring's FCP category has that chronology.
+                "scope": .string("mcpIssued"),
+                "limit": .int(limit),
+                "recordCount": .int(records.count),
+                "records": .array(records.map(\.mcpValue))
+            ])
+        )
+    }
+
+    func irmAllocationsResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let report = await driver.fetchIrmAllocations() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "IRM resource state is unavailable; the driver is not connected or no local IRM snapshot exists."
+            )
+        }
+        return .success(toolName: toolName, data: report.mcpValue)
+    }
+
+    func ohciSnapshotResult(toolName: String) async -> ASFWMCPToolCallResult {
+        guard let snapshot = await driver.fetchOhciSnapshot() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "The OHCI diagnostics snapshot is unavailable; the driver is not connected or returned no diagnostics."
+            )
+        }
+        return .success(toolName: toolName, data: snapshot.mcpValue)
+    }
+
+    /// Snapshot-backed single-register read. Accepts either a canonical `name` or an
+    /// `offset`, and refuses offsets outside the covered set rather than implying a
+    /// read that did not happen.
+    func ohciRegisterReadResult(toolName: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        let requestedName = try? decoder.string("name")
+        let requestedOffset = try? decoder.uint32("offset")
+        guard requestedName != nil || requestedOffset != nil else {
+            return malformedToolResult(toolName, reason: "Provide either 'name' or 'offset'.")
+        }
+        guard let snapshot = await driver.fetchOhciSnapshot() else {
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "The OHCI diagnostics snapshot is unavailable; the driver is not connected or returned no diagnostics."
+            )
+        }
+        let match = snapshot.registers.first {
+            if let requestedName { return $0.name.caseInsensitiveCompare(requestedName) == .orderedSame }
+            return $0.offset == requestedOffset
+        }
+        guard let register = match else {
+            let requested = requestedName ?? String(format: "0x%03X", requestedOffset ?? 0)
+            return .failure(
+                toolName: toolName,
+                code: .capabilityUnavailable,
+                reason: "Register \(requested) is not in the diagnostics snapshot. "
+                    + "This tool reads only the snapshot-covered registers (\(ASFWMCPOhciRegisterMap.coveredOffsetList)); "
+                    + "arbitrary MMIO offset reads are not exposed."
+            )
+        }
+        return .success(
+            toolName: toolName,
+            data: .object([
+                "generation": .int(Int(snapshot.generation)),
+                "source": .string("diagnosticsSnapshot"),
+                "register": register.mcpValue
+            ])
+        )
     }
 
     func avcUnitInventoryResult(toolName: String) async -> ASFWMCPToolCallResult {

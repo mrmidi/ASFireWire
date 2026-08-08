@@ -22,6 +22,7 @@
 #include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
+#include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
 #include "AVCUnitPlugInfoCommand.hpp" // Added include here
 
@@ -68,6 +69,7 @@ class AVCUnit : public std::enable_shared_from_this<AVCUnit>, public IAVCCommand
 public:
     AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
             std::shared_ptr<Discovery::FWUnit> unit,
+            Discovery::DeviceRegistry& routeRegistry,
             Protocols::Ports::FireWireBusOps& busOps,
             Protocols::Ports::FireWireBusInfo& busInfo,
             Scheduling::ITimerScheduler& timerScheduler);
@@ -102,7 +104,7 @@ public:
     std::shared_ptr<FCPTransport> GetFCPTransportShared() const { return fcpTransport_; }
 
     void OnBusReset(uint32_t newGeneration);
-    void OnRouteRevalidated(uint32_t generation);
+    void OnRouteRevalidated();
 
     /// Stop the unit's FCP transport before the async bus is torn down.
     void Shutdown();
@@ -135,6 +137,7 @@ private:
 
     std::weak_ptr<Discovery::FWDevice> device_;
     std::weak_ptr<Discovery::FWUnit> unit_;
+    Discovery::DeviceRegistry& routeRegistry_;
 
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;

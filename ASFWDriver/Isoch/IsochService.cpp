@@ -27,6 +27,7 @@ IsochService::StartReceive(uint8_t channel, HardwareInterface& hardware,
 kern_return_t
 IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
                              ASFW::Isoch::IsochReceiveCallback packetCallback) {
+    hardware_ = &hardware;
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -75,6 +76,7 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
 kern_return_t IsochService::PrepareReceiveStream(
     uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
     uint32_t channelOffset, uint32_t streamChannels) {
+    hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareReceive() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -138,10 +140,12 @@ kern_return_t IsochService::StartPreparedReceive() {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
                 ASFW_LOG(Isoch, "IsochService: secondary IR start failed: 0x%08x", skr);
+                UpdateStreamingActiveState();
                 return skr;
             }
         }
     }
+    UpdateStreamingActiveState();
     return kIOReturnSuccess;
 }
 
@@ -221,6 +225,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel, HardwareInterface& ha
 
 kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& hardware,
                                             uint8_t sid) {
+    hardware_ = &hardware;
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
@@ -270,6 +275,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
 
 kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                                   HardwareInterface& hardware, uint8_t sid) {
+    hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareTransmit() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
@@ -363,10 +369,12 @@ kern_return_t IsochService::StartPreparedTransmit() {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
                 ASFW_LOG(Isoch, "IsochService: secondary IT start failed: 0x%08x", skr);
+                UpdateStreamingActiveState();
                 return skr;
             }
         }
     }
+    UpdateStreamingActiveState();
     return kIOReturnSuccess;
 }
 
@@ -384,6 +392,7 @@ kern_return_t IsochService::StopTransmit() {
             }
         }
     }
+    UpdateStreamingActiveState();
     return result;
 }
 
@@ -423,6 +432,18 @@ kern_return_t IsochService::StopAll() {
     const kern_return_t transmitStatus = StopTransmit();
     if (receiveStatus != kIOReturnSuccess || transmitStatus != kIOReturnSuccess) {
         const kern_return_t failure = receiveStatus != kIOReturnSuccess ? receiveStatus : transmitStatus;
+        if (hardware_ && hardware_->HardwareGone()) {
+            // A revoked provider cannot DMA. This is the inverse of the live-
+            // hardware timeout rule above: release rather than retain every
+            // software-owned reservation and mapping.
+            reserved_.Reset();
+            activeGuid_ = 0;
+            ASFW_LOG(Isoch,
+                     "[Lifecycle] IsochService StopAll hardware-gone action=release "
+                     "receive=0x%08x transmit=0x%08x",
+                     receiveStatus, transmitStatus);
+            return kIOReturnSuccess;
+        }
         ASFW_LOG_ERROR(Isoch,
                        "IsochService: StopAll did not quiesce every context kr=0x%08x; retaining reservations and DMA mappings",
                        failure);
@@ -430,7 +451,16 @@ kern_return_t IsochService::StopAll() {
     }
     reserved_.Reset();
     activeGuid_ = 0;
+    if (hardware_ && hardware_->HardwareGone()) {
+        ASFW_LOG(Isoch,
+                 "[Lifecycle] IsochService StopAll hardware-gone action=release receive=0x%08x transmit=0x%08x",
+                 receiveStatus, transmitStatus);
+    }
     return kIOReturnSuccess;
+}
+
+bool IsochService::HardwareGone() const noexcept {
+    return hardware_ && hardware_->HardwareGone();
 }
 
 void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
@@ -532,8 +562,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         ASFW_LOG(Isoch, "IsochService: Failed to allocate payload slab: 0x%08x", kr);
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txPayloadSlab_[streamIndex] =
-        OSSharedPtr<IOBufferMemoryDescriptor>(payloadDescriptor, OSNoRetain);
+    txPayloadSlab_[streamIndex] = Common::AdoptRetained(payloadDescriptor);
 
     // 2. Allocate metadata ring (cacheline aligned)
     const size_t metadataRingBytes =
@@ -546,8 +575,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         txPayloadSlab_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txMetadataRing_[streamIndex] =
-        OSSharedPtr<IOBufferMemoryDescriptor>(metadataDescriptor, OSNoRetain);
+    txMetadataRing_[streamIndex] = Common::AdoptRetained(metadataDescriptor);
 
     // 3. Allocate control block (cacheline aligned)
     const size_t controlBlockBytes = sizeof(ASFW::Isoch::IsochTxQueueControl);
@@ -560,8 +588,7 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         txMetadataRing_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
-    txControlBlock_[streamIndex] =
-        OSSharedPtr<IOBufferMemoryDescriptor>(controlDescriptor, OSNoRetain);
+    txControlBlock_[streamIndex] = Common::AdoptRetained(controlDescriptor);
 
     // Return the descriptors to the caller with retained references
     *outPayloadSlab = txPayloadSlab_[streamIndex].get();
@@ -596,12 +623,38 @@ kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t*
         return kIOReturnBadArgument;
     }
 
-    const uint32_t cycleTimer = hardware.Read(static_cast<Register32>(Register32::kCycleTimer));
+    auto access = hardware.TryBeginAccess();
+    if (!access) return kIOReturnNotReady;
+    const uint32_t cycleTimer = access.Read(static_cast<Register32>(Register32::kCycleTimer));
     const uint64_t hostTime = mach_absolute_time();
 
     *outHostTimeMid = hostTime;
     *outCycleTimer = cycleTimer;
     return kIOReturnSuccess;
+}
+
+void IsochService::UpdateStreamingActiveState() noexcept {
+    if (!hardware_) {
+        return;
+    }
+    bool active = false;
+    if (isochReceiveContext_ && isochReceiveContext_->GetState() == IRPolicy::State::Running) {
+        active = true;
+    }
+    for (auto& ctx : secondaryReceiveContexts_) {
+        if (ctx && ctx->GetState() == IRPolicy::State::Running) {
+            active = true;
+        }
+    }
+    if (isochTransmitContext_ && isochTransmitContext_->GetState() == ITState::Running) {
+        active = true;
+    }
+    for (auto& ctx : secondaryTransmitContexts_) {
+        if (ctx && ctx->GetState() == ITState::Running) {
+            active = true;
+        }
+    }
+    hardware_->SetIsochStreamingActive(active);
 }
 
 } // namespace ASFW::Driver

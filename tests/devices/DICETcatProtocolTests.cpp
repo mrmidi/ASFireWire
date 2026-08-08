@@ -3,6 +3,7 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Common/WireFormat.hpp"
+#include "Discovery/DeviceRegistry.hpp"
 #include "Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
@@ -53,10 +54,25 @@ using ASFW::Audio::DICE::DiceClockConfiguration;
 using ASFW::Audio::DICE::Focusrite::SPro24DspProtocol;
 using ASFW::Audio::DICE::Focusrite::kEffectGeneralOffset;
 using ASFW::Audio::DICE::TCAT::DICETcatProtocol;
+using ASFW::Audio::DICE::TCAT::DICETcatRuntimePolicy;
 using ASFW::FW::FwSpeed;
 using ASFW::FW::Generation;
 using ASFW::FW::LockOp;
 using ASFW::FW::NodeId;
+
+struct RouteState {
+    ASFW::Discovery::DeviceRegistry registry;
+    ASFW::Discovery::DeviceRouteToken route{};
+
+    RouteState() {
+        ASFW::Discovery::ConfigROM rom{};
+        rom.bib.guid = 0xD1CE000000000002ULL;
+        rom.gen = Generation{1};
+        rom.nodeId = 2;
+        (void)registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        route = *registry.CurrentRoute(rom.bib.guid);
+    }
+};
 
 constexpr uint32_t kExtensionBaseLo = static_cast<uint32_t>(
     ASFW::Audio::DICE::DICEAbsoluteAddress(ASFW::Audio::DICE::kDICEExtensionOffset) & 0xFFFFFFFFULL);
@@ -249,7 +265,8 @@ private:
 
 TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     CountingFireWireBus bus;
-    DICETcatProtocol protocol(bus, bus, 2, nullptr);
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
 
     EXPECT_EQ(protocol.Initialize(), kIOReturnSuccess);
 
@@ -284,7 +301,8 @@ TEST(DICETcatProtocolTests, NeutralClockRequestMapsToDiceClockSelectInsideAdapte
 
 TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     CountingFireWireBus bus;
-    DICETcatProtocol protocol(bus, bus, 2, nullptr);
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
 
     ASFW::Audio::DICE::GlobalState global{};
     global.sampleRate = 48000;
@@ -318,9 +336,55 @@ TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     EXPECT_EQ(caps.hostToDeviceIsoChannel, 0U);
 }
 
+TEST(DICETcatProtocolTests, RuntimePolicyHidesCoreAudioInputWithoutChangingWireGeometry) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus,
+                              bus,
+                              routeState.registry,
+                              routeState.route,
+                              nullptr,
+                              nullptr,
+                              DICETcatRuntimePolicy{.exposeDeviceToHostToCoreAudio = false});
+
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+    ASFW::Audio::DICE::StreamConfig tx{};
+    tx.numStreams = 1;
+    tx.streams[0].isoChannel = 0;
+    tx.streams[0].pcmChannels = 2;
+    strlcpy(tx.streams[0].labels, "Return L\\Return R\\\\", sizeof(tx.streams[0].labels));
+    ASFW::Audio::DICE::StreamConfig rx{};
+    rx.numStreams = 1;
+    rx.streams[0].isoChannel = 1;
+    rx.streams[0].pcmChannels = 2;
+    strlcpy(rx.streams[0].labels, "Out L\\Out R\\\\", sizeof(rx.streams[0].labels));
+
+    ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
+
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 0U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 2U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 2U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 2U);
+    ASSERT_EQ(caps.deviceToHostStreamCount, 1U);
+    ASSERT_EQ(caps.hostToDeviceStreamCount, 1U);
+    EXPECT_EQ(caps.deviceToHostStreams[0].pcmChannels, 2U);
+    EXPECT_EQ(caps.hostToDeviceStreams[0].pcmChannels, 2U);
+
+    std::vector<std::string> inNames;
+    std::vector<std::string> outNames;
+    ASSERT_TRUE(protocol.GetChannelLabels(inNames, outNames));
+    EXPECT_TRUE(inNames.empty());
+    ASSERT_EQ(outNames.size(), 2U);
+    EXPECT_EQ(outNames[0], "Out L");
+}
+
 TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
     CountingFireWireBus bus;
-    DICETcatProtocol protocol(bus, bus, 2, nullptr);
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
 
     // No labels before caps are cached.
     std::vector<std::string> inNames;
@@ -356,7 +420,8 @@ TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
 
 TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
     CountingFireWireBus bus;
-    DICETcatProtocol protocol(bus, bus, 2, nullptr);
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
 
     ASFW::Audio::DICE::GlobalState global{};
@@ -402,7 +467,8 @@ TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
 
 TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     CountingFireWireBus bus;
-    SPro24DspProtocol protocol(bus, bus, 2, nullptr);
+    RouteState routeState;
+    SPro24DspProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr);
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
     EXPECT_EQ(bus.extensionReadCount, 0);
 

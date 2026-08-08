@@ -519,6 +519,16 @@ kern_return_t ATContextBase<Derived, Tag>::Stop() noexcept {
         return kIOReturnNotReady;
     }
 
+    if (hw_->HardwareGone()) {
+        // A revoked provider cannot fetch another descriptor. Do not turn the
+        // live-hardware ACTIVE-clear proof into a timeout when PCI has already
+        // removed the OHCI function.
+        contextRunning_ = false;
+        ASFW_LOG(Async, "[Lifecycle] AT stop context=%{public}s hardware-gone action=release",
+                 this->ContextNameCString());
+        return kIOReturnSuccess;
+    }
+
     // Step 1: Clear ContextControl.run bit (bit 15 = 0x8000)
     // This tells hardware to stop fetching new descriptors
     this->WriteControlClear(kContextControlRunBit);

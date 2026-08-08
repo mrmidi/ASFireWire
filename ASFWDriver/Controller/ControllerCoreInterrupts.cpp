@@ -42,8 +42,11 @@
 namespace ASFW::Driver {
 
 void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
-    if (!running_ || !deps_.hardware) {
-        ASFW_LOG(Controller, "HandleInterrupt early return (running=%d hw=%p)", running_,
+    const auto state = StateMachine().CurrentState();
+    const bool admitted = state == ControllerState::kStarting || state == ControllerState::kRunning;
+    if (!admitted || !deps_.hardware) {
+        ASFW_LOG(Controller, "HandleInterrupt early return (state=%{public}s hw=%p)",
+                 ToString(state).data(),
                  deps_.hardware.get());
         return;
     }
@@ -58,21 +61,26 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     HandleFaultInterrupts(events);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
-        const uint32_t generation = hw.Read(Register32::kSelfIDGeneration);
+        auto access = hw.TryBeginAccess();
+        if (!access) return;
+        const uint32_t generation = access.Read(Register32::kSelfIDGeneration);
         // A reset edge is a hard liveness boundary: no higher layer may retain
         // the old (generation,node) address while Self-ID and ROM discovery are
         // in flight. This matches the legacy IOFireWireFamily policy of
         // invalidating all node IDs before resuming children
         // (IOFireWireController.cpp:1983-2019). GUID identity is retained and
         // rebound by the ensuing discovery scan.
-        // FCP must observe the reset before DeviceManager clears its routes.
-        // Idempotent commands remain pending only until the later discovery
-        // resume supplies a fresh `(node, generation)` route.
-        if (deps_.avcDiscovery) {
-            deps_.avcDiscovery->OnBusReset(generation);
-        }
+        // Invalidate every remote route before notifying protocol producers.
+        // A later discovery pass supplies a new token for the rebound
+        // `(device incarnation, route epoch, generation, node)` mapping.
         if (deps_.deviceRegistry) {
             deps_.deviceRegistry->InvalidateLiveMappingsForBusReset();
+        }
+        if (deps_.cmpClient) {
+            deps_.cmpClient->InvalidateAllLeasesForBusReset();
+        }
+        if (deps_.avcDiscovery) {
+            deps_.avcDiscovery->OnBusReset(generation);
         }
         if (deps_.deviceManager) {
             deps_.deviceManager->SuspendAllForBusReset();

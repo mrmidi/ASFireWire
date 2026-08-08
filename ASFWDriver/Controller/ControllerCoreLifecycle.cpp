@@ -224,21 +224,25 @@ void FinalizePhyLinkConfiguration(ASFW::Driver::HardwareInterface& hw,
 
 void ConfigureAtRetries(ASFW::Driver::HardwareInterface& hw) {
     const uint32_t atRetriesVal = ASFW::Driver::kDefaultATRetries;
-    hw.WriteAndFlush(ASFW::Driver::Register32::kATRetries, atRetriesVal);
-    const uint32_t atRetriesReadback = hw.Read(ASFW::Driver::Register32::kATRetries);
+    auto access = hw.TryBeginAccess();
+    if (!access) return;
+    access.WriteAndFlush(ASFW::Driver::Register32::kATRetries, atRetriesVal);
+    const uint32_t atRetriesReadback = access.Read(ASFW::Driver::Register32::kATRetries);
     ASFW_LOG(Hardware, "ATRetries configured: maxReq=15 maxResp=2 maxPhys=8 cycleLimit=200");
     ASFW_LOG(Hardware, "ATRetries write/readback: 0x%08x / 0x%08x", atRetriesVal,
              atRetriesReadback);
 }
 
 void ClearIsoReceiveMultiChannelMode(ASFW::Driver::HardwareInterface& hw) {
-    const uint32_t irContextSupport = hw.Read(ASFW::Driver::Register32::kIsoRecvIntMaskSet);
+    auto access = hw.TryBeginAccess();
+    if (!access) return;
+    const uint32_t irContextSupport = access.Read(ASFW::Driver::Register32::kIsoRecvIntMaskSet);
     uint32_t irContextsCleared = 0;
     for (uint32_t i = 0; i < 32; ++i) {
         if ((irContextSupport & (1U << i)) != 0U) {
             const uint32_t ctrlClearReg = DMAContextHelpers::IsoRcvContextControlClear(i);
-            hw.WriteAndFlush(ASFW::Driver::Register32FromOffsetUnchecked(ctrlClearReg),
-                             DMAContextHelpers::kIRContextMultiChannelMode);
+            access.WriteAndFlush(ASFW::Driver::Register32FromOffsetUnchecked(ctrlClearReg),
+                                 DMAContextHelpers::kIRContextMultiChannelMode);
             ++irContextsCleared;
         }
     }
@@ -277,18 +281,31 @@ kern_return_t PrepareSelfIdBuffer(const std::shared_ptr<ASFW::Driver::SelfIDCapt
 
 void SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
                               ASFW::Driver::InterruptManager* interrupts) {
-    hw.Write(ASFW::Driver::Register32::kIntMaskClear, 0xFFFFFFFFU);
-    hw.Write(ASFW::Driver::Register32::kIntEventClear, 0xFFFFFFFFU);
+    auto access = hw.TryBeginAccess();
+    if (!access) return;
+    access.Write(ASFW::Driver::Register32::kIntMaskClear, 0xFFFFFFFFU);
+    access.Write(ASFW::Driver::Register32::kIntEventClear, 0xFFFFFFFFU);
 
     const uint32_t initialMask =
         ASFW::Driver::kBaseIntMask | ASFW::Driver::IntMaskBits::kMasterIntEnable;
-    hw.Write(ASFW::Driver::Register32::kIntMaskSet, initialMask);
+    access.Write(ASFW::Driver::Register32::kIntMaskSet, initialMask);
     if (interrupts) {
         interrupts->EnableInterrupts(initialMask);
     }
     ASFW_LOG(Hardware, "IntMask seeded: base|master=0x%08x", initialMask);
 }
 
+// The one sanctioned direct InitiateBusReset in the driver.
+//
+// Every other software reset goes through BusResetCoordinator, which owns the §8.2.1
+// holdoff and the PHY-config pairing. This one cannot: it runs during bring-up, before
+// any Self-ID has completed and before the coordinator is wired to hardware. There is
+// nothing to hold off from (the holdoff is armed at Self-ID completion, so it reads 0)
+// and no accepted topology whose gap count could be preserved, so routing it would add
+// a dependency without changing a single bus-visible byte.
+//
+// If you are adding a new software reset, it does NOT belong here — see
+// BusResetCoordinator::RequestConfigRomRestageReset for the pattern to copy.
 void MaybeForceInitialBusReset(ASFW::Driver::HardwareInterface& hw,
                                bool phyProgramSupported,
                                bool phyConfigOk) {
@@ -325,7 +342,8 @@ void LogInitSummary(ASFW::Driver::HardwareInterface& hw,
                     const std::shared_ptr<ASFW::Driver::SelfIDCapture>& selfId,
                     const std::shared_ptr<ASFW::Async::IAsyncControllerPort>& asyncController) {
     const bool linkEnabled = (hw.ReadHCControl() & ASFW::Driver::HCControlBits::kLinkEnable) != 0;
-    const uint32_t configRomMap = hw.Read(ASFW::Driver::Register32::kConfigROMMap);
+    auto access = hw.TryBeginAccess();
+    const uint32_t configRomMap = access ? access.Read(ASFW::Driver::Register32::kConfigROMMap) : 0;
     const char* selfIdState = selfId ? "armed" : "missing";
     const char* asyncState = asyncController ? "armed" : "missing";
 
@@ -451,13 +469,12 @@ kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
 }
 
 kern_return_t ControllerCore::Start(IOService* provider) {
+    if (!deps_.stateMachine) {
+        ASFW_LOG(Controller, "ControllerCore::Start requires the shared runtime state machine");
+        return kIOReturnNotReady;
+    }
     if (running_) {
         return kIOReturnSuccess;
-    }
-
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kStarting, "ControllerCore::Start",
-                                         mach_absolute_time());
     }
 
     LogBuildBanner();
@@ -478,21 +495,11 @@ kern_return_t ControllerCore::Start(IOService* provider) {
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Controller, "❌ Hardware initialization failed: 0x%08x", kr);
         hardwareAttached_ = false;
-        if (deps_.stateMachine) {
-            deps_.stateMachine->TransitionTo(ControllerState::kFailed,
-                                             "ControllerCore::Start hardware init failed",
-                                             mach_absolute_time());
-        }
         return kr;
     }
 
     if (!deps_.interrupts) {
         ASFW_LOG_V0(Controller, "❌ CRITICAL: No InterruptManager - cannot enable interrupts!");
-        if (deps_.stateMachine) {
-            deps_.stateMachine->TransitionTo(ControllerState::kFailed,
-                                             "ControllerCore::Start missing InterruptManager",
-                                             mach_absolute_time());
-        }
         return kIOReturnNoResources;
     }
 
@@ -511,11 +518,6 @@ kern_return_t ControllerCore::Start(IOService* provider) {
         deps_.interrupts->Disable();
         running_ = false;
         hardwareAttached_ = false;
-        if (deps_.stateMachine) {
-            deps_.stateMachine->TransitionTo(ControllerState::kFailed,
-                                             "ControllerCore::Start enable failed",
-                                             mach_absolute_time());
-        }
         return kr;
     }
 
@@ -527,10 +529,6 @@ kern_return_t ControllerCore::Start(IOService* provider) {
         }
     }
 
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kRunning,
-                                         "ControllerCore::Start complete", mach_absolute_time());
-    }
     return kIOReturnSuccess;
 }
 
@@ -541,19 +539,8 @@ void ControllerCore::Stop() {
 
     ASFW_LOG(Controller, "ControllerCore::Stop - beginning shutdown sequence");
 
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kQuiescing, "ControllerCore::Stop",
-                                         mach_absolute_time());
-    }
-
-    // Disable interrupts FIRST to prevent new events during shutdown
-    if (deps_.interrupts) {
-        ASFW_LOG(Controller, "Disabling IOInterruptDispatchSource...");
-        deps_.interrupts->Disable();
-        ASFW_LOG(Controller, "✓ Interrupts disabled");
-    }
-
-    // Mark as not running to prevent HandleInterrupt from processing events
+    // Root lifecycle admission and interrupt-source shutdown are owned by
+    // RuntimeLifecycleCoordinator. ControllerCore only tears down resources it owns.
     running_ = false;
 
     if (deps_.topologyMapService) {
@@ -564,22 +551,11 @@ void ControllerCore::Stop() {
         deps_.busManagerElectionDriver->Stop();
     }
 
-    if (hardwareAttached_ && deps_.hardware) {
-        if (deps_.configRomStager) {
-            deps_.configRomStager->Teardown(*deps_.hardware);
-        }
-        deps_.hardware->Detach();
-        hardwareAttached_ = false;
-    }
+    hardwareAttached_ = false;
 
     hardwareInitialised_ = false;
     phyProgramSupported_ = false;
     phyConfigOk_ = false;
-
-    if (deps_.stateMachine) {
-        deps_.stateMachine->TransitionTo(ControllerState::kStopped, "ControllerCore::Stop complete",
-                                         mach_absolute_time());
-    }
 
     ASFW_LOG(Controller, "✓ ControllerCore::Stop complete");
 }
@@ -662,7 +638,12 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     }
 
     // Step 3: Detect OHCI version
-    const uint32_t version = hw.Read(Register32::kVersion);
+    uint32_t version = 0;
+    {
+        auto versionAccess = hw.TryBeginAccess();
+        if (!versionAccess) return kIOReturnNotReady;
+        version = versionAccess.Read(Register32::kVersion);
+    }
     ohciVersion_ = version & 0x00FF00FF; // Store for feature detection
     const bool isOHCI_1_1_OrLater = (ohciVersion_ >= ASFW::Driver::kOHCI_1_1);
 
@@ -725,9 +706,16 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // Step 6: Stage Config ROM BEFORE enabling link (OHCI §5.5.6 compliance)
     // This ensures the shadow register (ConfigROMmapNext) is loaded before
     // the auto bus reset from linkEnable activation occurs.
-    const uint32_t busOptions = hw.Read(Register32::kBusOptions);
-    const uint32_t guidHi = hw.Read(Register32::kGUIDHi);
-    const uint32_t guidLo = hw.Read(Register32::kGUIDLo);
+    uint32_t busOptions = 0;
+    uint32_t guidHi = 0;
+    uint32_t guidLo = 0;
+    {
+        auto romAccess = hw.TryBeginAccess();
+        if (!romAccess) return kIOReturnNotReady;
+        busOptions = romAccess.Read(Register32::kBusOptions);
+        guidHi = romAccess.Read(Register32::kGUIDHi);
+        guidLo = romAccess.Read(Register32::kGUIDLo);
+    }
 
     const kern_return_t configRomStatus = StageConfigROM(busOptions, guidHi, guidLo);
     if (configRomStatus != kIOReturnSuccess) {
@@ -743,7 +731,11 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     ASFW_LOG(Hardware,
              "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable "
              "(cycleMaster is role-policy controlled)");
-    hw.WriteAndFlush(Register32::kAsReqFilterHiSet, ASFW::Driver::kAsReqAcceptAllMask);
+    if (auto access = hw.TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kAsReqFilterHiSet, ASFW::Driver::kAsReqAcceptAllMask);
+    } else {
+        return kIOReturnNotReady;
+    }
 
     ConfigureAtRetries(hw);
 
@@ -839,24 +831,42 @@ kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
     // Before the link is up there is nothing to re-advertise — Start() stages the
     // Config ROM from rolePolicy_ during bring-up. Once running, re-stage the BIB
     // capabilities and force a long bus reset so peers re-read the local ROM.
-    if (!running_ || !deps_.hardware) {
+    if (StateMachine().CurrentState() != ControllerState::kRunning || !deps_.hardware) {
         return kIOReturnSuccess;
     }
 
     auto& hw = *deps_.hardware;
-    const uint32_t busOptions = hw.Read(Register32::kBusOptions);
-    const uint32_t guidHi = hw.Read(Register32::kGUIDHi);
-    const uint32_t guidLo = hw.Read(Register32::kGUIDLo);
+    uint32_t busOptions = 0;
+    uint32_t guidHi = 0;
+    uint32_t guidLo = 0;
+    {
+        auto access = hw.TryBeginAccess();
+        if (!access) return kIOReturnNotReady;
+        busOptions = access.Read(Register32::kBusOptions);
+        guidHi = access.Read(Register32::kGUIDHi);
+        guidLo = access.Read(Register32::kGUIDLo);
+    }
     const kern_return_t kr = StageConfigROM(busOptions, guidHi, guidLo);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Controller, "ApplyRolePolicy: Config ROM re-stage failed: 0x%08x", kr);
         return kr;
     }
     ASFW_LOG(Controller,
-             "ApplyRolePolicy: roleMode=%u activity=%u — re-staged BIB, forcing bus reset",
+             "ApplyRolePolicy: roleMode=%u activity=%u — re-staged BIB, requesting bus reset",
              static_cast<unsigned>(rolePolicy_.roleMode),
              static_cast<unsigned>(rolePolicy_.fullBMActivityLevel));
-    hw.InitiateBusReset(/*shortReset=*/false);
+
+    // Route through the coordinator rather than hitting the PHY directly: it owns the
+    // IEEE 1394-2008 §8.2.1 repeated-reset holdoff, the gap-count-preserving PHY config
+    // that must precede a software reset, and the reset-origin attribution that makes
+    // reset storms diagnosable. A direct InitiateBusReset here bypassed all three.
+    if (auto* coordinator = GetBusResetCoordinator(); coordinator != nullptr) {
+        coordinator->RequestConfigRomRestageReset("Role policy BIB re-stage");
+    } else {
+        ASFW_LOG(Controller,
+                 "ApplyRolePolicy: no bus reset coordinator — BIB re-staged but peers will "
+                 "not re-read the ROM until the next reset");
+    }
     return kIOReturnSuccess;
 }
 
@@ -884,7 +894,9 @@ void ControllerCore::DiagnoseUnrecoverableError() const {
 
     bool anyDead = false;
     for (const auto& ctx : contexts) {
-        const uint32_t control = hw.Read(Register32FromOffsetUnchecked(ctx.controlSetReg));
+        auto access = hw.TryBeginAccess();
+        if (!access) return;
+        const uint32_t control = access.Read(Register32FromOffsetUnchecked(ctx.controlSetReg));
         const bool dead = (control & kContextControlDeadBit) != 0;
         const uint8_t eventCode = static_cast<uint8_t>(control & kContextControlEventMask);
 
@@ -911,11 +923,18 @@ void ControllerCore::DiagnoseUnrecoverableError() const {
         contextSummary.append(" all-ok");
     }
 
-    const uint32_t hcControl = hw.Read(Register32::kHCControl);
+    uint32_t hcControl = 0;
+    uint32_t selfIDBufferReg = 0;
+    uint32_t selfIDCountReg = 0;
+    {
+        auto access = hw.TryBeginAccess();
+        if (!access) return;
+        hcControl = access.Read(Register32::kHCControl);
+        selfIDBufferReg = access.Read(Register32::kSelfIDBuffer);
+        selfIDCountReg = access.Read(Register32::kSelfIDCount);
+    }
     const bool bibValid = (hcControl & HCControlBits::kBibImageValid) != 0;
     const bool linkEnable = (hcControl & HCControlBits::kLinkEnable) != 0;
-    const uint32_t selfIDBufferReg = hw.Read(Register32::kSelfIDBuffer);
-    const uint32_t selfIDCountReg = hw.Read(Register32::kSelfIDCount);
 
     ASFW_LOG(Controller,
              "UnrecoverableError contexts: %{public}s HCControl=0x%08x(BIB=%d link=%d) "

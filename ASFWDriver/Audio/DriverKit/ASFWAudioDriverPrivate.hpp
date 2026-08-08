@@ -45,9 +45,6 @@ struct AudioDriverDeviceState {
     // sync), pending until PerformDeviceConfigurationChange commits it.
     std::atomic<uint32_t> pendingExternalRateHz{0};
     uint32_t streamModeRaw{0};
-    bool hasPhantomOverride{false};
-    uint32_t phantomSupportedMask{0};
-    uint32_t phantomInitialMask{0};
     uint32_t boolControlCount{0};
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
 
@@ -278,9 +275,19 @@ struct AudioGraphStartState {
 
 namespace ASFW::Audio::DriverKit {
 
+// Physical direct-memory geometry may be wider than the CoreAudio-visible
+// topology. DICE devices can require a hidden return stream for clock/control
+// purposes even when their user-facing device has no input stream.
+struct DirectAudioMemoryGeometry final {
+    uint32_t inputChannels{0};
+    uint32_t outputChannels{0};
+};
+
 [[nodiscard]] uint32_t FrameCapacityFromSegment(const IOAddressSegment& segment,
                                                 uint32_t channels) noexcept;
-[[nodiscard]] bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
+[[nodiscard]] bool BindDirectAudioSkeleton(
+    ASFWAudioDriver_IVars& ivars,
+    DirectAudioMemoryGeometry physicalGeometry) noexcept;
 void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
 
 namespace DirectDiagnostics {

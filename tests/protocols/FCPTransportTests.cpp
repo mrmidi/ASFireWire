@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Discovery/FWDevice.hpp"
 #include "ASFWDriver/Protocols/AVC/FCPTransport.hpp"
 #include "DeferredFireWireBus.hpp"
@@ -11,6 +12,7 @@ using ASFW::Async::AsyncStatus;
 using ASFW::Async::Testing::DeferredFireWireBus;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceRecord;
+using ASFW::Discovery::DeviceRegistry;
 using ASFW::Discovery::FWDevice;
 using ASFW::FW::Generation;
 using ASFW::Protocols::AVC::FCPCompletion;
@@ -21,6 +23,7 @@ using ASFW::Protocols::AVC::FCPTransportConfig;
 using ASFW::Testing::FakeSessionScheduler;
 
 constexpr uint64_t kMillisecondNs = 1'000'000ULL;
+constexpr uint64_t kGuid = 0x0001020304050607ULL;
 
 FCPFrame MakeUnitInfoCommand() {
     FCPFrame command{};
@@ -37,19 +40,33 @@ std::array<uint8_t, 3> MakeAcceptedUnitInfoResponse() {
 
 class FCPTransportTests : public ::testing::Test {
 protected:
+    [[nodiscard]] static ConfigROM MakeROM(Generation generation, uint16_t nodeId) {
+        ConfigROM rom{};
+        rom.bib.guid = kGuid;
+        rom.gen = generation;
+        rom.nodeId = nodeId;
+        return rom;
+    }
+
+    void RebindRoute(Generation generation, uint16_t nodeId) {
+        routes_.InvalidateLiveMappingsForBusReset();
+        (void)routes_.UpsertFromROM(MakeROM(generation, nodeId), {});
+    }
+
     void SetUp() override {
         DeviceRecord record{};
-        record.guid = 0x0001020304050607ULL;
+        record.guid = kGuid;
         record.nodeId = 2;
         record.gen = Generation{1};
         device_ = FWDevice::Create(record, ConfigROM{});
         ASSERT_NE(device_, nullptr);
+        (void)routes_.UpsertFromROM(MakeROM(record.gen, record.nodeId), {});
 
         config_.timeoutMs = 10;
         config_.interimTimeoutMs = 25;
         config_.maxRetries = 0;
         transport_ = std::make_shared<FCPTransport>();
-        ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), scheduler_, config_));
+        ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), routes_, scheduler_, config_));
     }
 
     void TearDown() override {
@@ -60,12 +77,13 @@ protected:
 
     DeferredFireWireBus bus_;
     FakeSessionScheduler scheduler_;
+    DeviceRegistry routes_;
     std::shared_ptr<FWDevice> device_;
     std::shared_ptr<FCPTransport> transport_;
     FCPTransportConfig config_{};
 };
 
-TEST_F(FCPTransportTests, IgnoresResponseUntilCommandWriteCompletes) {
+TEST_F(FCPTransportTests, AcceptsResponseBeforeCommandWriteCompletion) {
     int completionCount = 0;
     FCPStatus completionStatus = FCPStatus::kTransportError;
     const auto command = MakeUnitInfoCommand();
@@ -80,11 +98,12 @@ TEST_F(FCPTransportTests, IgnoresResponseUntilCommandWriteCompletes) {
     ASSERT_EQ(bus_.PendingWriteCount(), 1U);
 
     transport_->OnFCPResponse(2, 1, response);
-    EXPECT_EQ(completionCount, 0);
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(completionStatus, FCPStatus::kOk);
 
+    // AR Request is drained before AR Response. Once the target's FCP write
+    // proves delivery, the queued local write acknowledgement is stale.
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
-    transport_->OnFCPResponse(2, 1, response);
-
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(completionStatus, FCPStatus::kOk);
 }
@@ -105,7 +124,7 @@ TEST_F(FCPTransportTests, IgnoresResponseFromDifferentGeneration) {
     EXPECT_EQ(completionCount, 1);
 }
 
-TEST_F(FCPTransportTests, MatchesResponseAgainstNodeCapturedForWriteAttempt) {
+TEST_F(FCPTransportTests, RejectsResponseForInvalidatedRouteAfterRebind) {
     int completionCount = 0;
     ASSERT_TRUE(transport_->SubmitCommand(
                              MakeUnitInfoCommand(),
@@ -115,21 +134,19 @@ TEST_F(FCPTransportTests, MatchesResponseAgainstNodeCapturedForWriteAttempt) {
     EXPECT_EQ(bus_.WriteAt(0).nodeId.value, 2U);
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
 
-    // A discovery rebind must not retroactively change the route expected by
-    // the in-flight FCP request.
-    device_->Publish();
-    device_->Suspend();
-    device_->Resume(Generation{2}, 3, {});
+    // A rebind invalidates the old token. No callback from the prior route may
+    // complete the logical operation, even if its node/generation are retained.
+    RebindRoute(Generation{2}, 3);
 
     const auto response = MakeAcceptedUnitInfoResponse();
     transport_->OnFCPResponse(3, 1, response);
     EXPECT_EQ(completionCount, 0);
 
     transport_->OnFCPResponse(2, 1, response);
-    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(completionCount, 0);
 }
 
-TEST_F(FCPTransportTests, CapturesSuccessfulWriteRouteBeforeMutableDeviceRebind) {
+TEST_F(FCPTransportTests, RejectsWriteCompletionFromInvalidatedRoute) {
     int completionCount = 0;
     ASSERT_TRUE(transport_->SubmitCommand(
                              MakeUnitInfoCommand(),
@@ -139,12 +156,9 @@ TEST_F(FCPTransportTests, CapturesSuccessfulWriteRouteBeforeMutableDeviceRebind)
     EXPECT_EQ(bus_.WriteAt(0).nodeId.value, 2U);
     EXPECT_EQ(bus_.WriteAt(0).generation.value, 1U);
 
-    // The write has already been addressed to node 2/generation 1. Discovery
-    // can rebind the device before the async completion runs; response routing
-    // must retain the issued route rather than sample this mutable device later.
-    device_->Publish();
-    device_->Suspend();
-    device_->Resume(Generation{2}, 3, {});
+    // The write was issued against the old token. A rebind before completion
+    // makes both that completion and its later response stale.
+    RebindRoute(Generation{2}, 3);
 
     ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
     const auto response = MakeAcceptedUnitInfoResponse();
@@ -152,7 +166,7 @@ TEST_F(FCPTransportTests, CapturesSuccessfulWriteRouteBeforeMutableDeviceRebind)
     EXPECT_EQ(completionCount, 0);
 
     transport_->OnFCPResponse(2, 1, response);
-    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(completionCount, 0);
 }
 
 TEST_F(FCPTransportTests, StartsTimeoutOnlyAfterCommandWriteCompletes) {
@@ -257,7 +271,7 @@ TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) 
     config_.maxRetries = 1;
     transport_->Shutdown();
     transport_ = std::make_shared<FCPTransport>();
-    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), scheduler_, config_));
+    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), routes_, scheduler_, config_));
 
     ASFW::Protocols::AVC::FCPCommandPolicy policy{};
     policy.retryClass = ASFW::Protocols::AVC::FCPRetryClass::kIdempotent;
@@ -270,6 +284,7 @@ TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) 
     ASSERT_EQ(bus_.PendingWriteCount(), 1U);
 
     bus_.SetGeneration(Generation{2});
+    routes_.InvalidateLiveMappingsForBusReset();
     transport_->OnBusReset(2);
 
     EXPECT_EQ(bus_.WriteCount(), 1U);
@@ -278,10 +293,10 @@ TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) 
 
     // A reset makes the prior route invalid. Rebinding the GUID to node 3 in
     // generation 2 is the only event allowed to replay this idempotent query.
-    device_->Publish();
-    device_->Suspend();
-    device_->Resume(Generation{2}, 3, {});
-    transport_->OnRouteRevalidated(2);
+    (void)routes_.UpsertFromROM(MakeROM(Generation{2}, 3), {});
+    const auto route = routes_.CurrentRoute(kGuid);
+    ASSERT_TRUE(route.has_value());
+    transport_->OnRouteRevalidated(*route);
 
     EXPECT_EQ(bus_.WriteCount(), 2U);
     EXPECT_EQ(bus_.WriteAt(1).nodeId.value, 3U);
@@ -336,7 +351,7 @@ TEST_F(FCPTransportTests, ControlCommandDoesNotRetryAfterTimeout) {
     config_.maxRetries = 1;
     transport_->Shutdown();
     transport_ = std::make_shared<FCPTransport>();
-    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), scheduler_, config_));
+    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), routes_, scheduler_, config_));
 
     FCPStatus completionStatus = FCPStatus::kOk;
     ASSERT_TRUE(transport_->SubmitCommand(
@@ -356,7 +371,7 @@ TEST_F(FCPTransportTests, IdempotentCommandRetriesAfterTimeout) {
     config_.maxRetries = 1;
     transport_->Shutdown();
     transport_ = std::make_shared<FCPTransport>();
-    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), scheduler_, config_));
+    ASSERT_TRUE(transport_->init(&bus_, &bus_, device_.get(), routes_, scheduler_, config_));
 
     ASFW::Protocols::AVC::FCPCommandPolicy policy{};
     policy.retryClass = ASFW::Protocols::AVC::FCPRetryClass::kIdempotent;
