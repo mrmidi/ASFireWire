@@ -65,6 +65,7 @@ build-codex/
 node_modules/
 
 # Xcode generated projects
+/ASFW.xcodeproj/
 ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
 
 # In-tree reference stacks (third-party, local only — wire-compat doctrine refs)
