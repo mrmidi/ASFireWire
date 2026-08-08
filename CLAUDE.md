@@ -21,6 +21,10 @@ project to commit alongside it. XcodeGen is a build prerequisite for every
 checkout, including CI. (`ADKVirtualAudioLab/` has its own separate
 `project.yml`.)
 
+Because the pbxproj is no longer committed, **every build setting must live in
+`project.yml`** — anything set only in the generated project is lost on the next
+regeneration.
+
 **Primary build (Xcode — required for signing and producing `.dext`):**
 ```bash
 ./build.sh                        # Quiet build (errors/warnings only)
