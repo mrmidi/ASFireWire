@@ -207,7 +207,7 @@ private actor ASFWMCPHTTPAdapter {
 
         Task {
             await handle(connection)
-            await remove(connection)
+            remove(connection)
         }
     }
 

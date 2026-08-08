@@ -4,6 +4,7 @@
 #include "../../../Async/Interfaces/IFireWireBusOps.hpp"
 #include "../../../Bus/IRM/IRMTypes.hpp"
 #include "../../../Discovery/DeviceRegistry.hpp"
+#include "PCRCodec.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -24,40 +25,6 @@ constexpr uint32_t kPCRStride = 4;
 inline constexpr uint32_t GetOPCRAddress(uint8_t plug) { return kOPCRBase + plug * kPCRStride; }
 inline constexpr uint32_t GetIPCRAddress(uint8_t plug) { return kIPCRBase + plug * kPCRStride; }
 } // namespace PCRRegisters
-
-namespace PCRBits {
-constexpr uint32_t kOnlineMask = 0x80000000;
-constexpr uint32_t kBcastMask = 0x40000000;
-constexpr uint32_t kP2PMask = 0x3F000000;
-constexpr uint8_t kP2PShift = 24;
-constexpr uint32_t kChannelMask = 0x003F0000;
-constexpr uint8_t kChannelShift = 16;
-constexpr uint32_t kDataRateMask = 0x0000C000; // oPCR only
-constexpr uint8_t kDataRateShift = 14;
-constexpr uint32_t kOverheadIdMask = 0x00003C00; // oPCR only
-constexpr uint8_t kOverheadIdShift = 10;
-
-inline constexpr uint8_t GetP2P(uint32_t pcr) { return (pcr & kP2PMask) >> kP2PShift; }
-inline constexpr uint32_t SetP2P(uint32_t pcr, uint8_t p2p) {
-    return (pcr & ~kP2PMask) | ((static_cast<uint32_t>(p2p) & 0x3F) << kP2PShift);
-}
-inline constexpr uint8_t GetChannel(uint32_t pcr) { return (pcr & kChannelMask) >> kChannelShift; }
-inline constexpr uint32_t SetChannel(uint32_t pcr, uint8_t channel) {
-    return (pcr & ~kChannelMask) | ((static_cast<uint32_t>(channel) & 0x3F) << kChannelShift);
-}
-inline constexpr uint32_t SetDataRate(uint32_t pcr, FW::FwSpeed speed) {
-    return (pcr & ~kDataRateMask) |
-           ((static_cast<uint32_t>(speed) & 0x03) << kDataRateShift);
-}
-inline constexpr uint32_t SetOverheadId(uint32_t pcr, uint8_t overheadId) {
-    return (pcr & ~kOverheadIdMask) |
-           ((static_cast<uint32_t>(overheadId) & 0x0F) << kOverheadIdShift);
-}
-inline constexpr bool IsOnline(uint32_t pcr) { return (pcr & kOnlineMask) != 0; }
-inline constexpr bool IsInUse(uint32_t pcr) {
-    return (pcr & (kBcastMask | kP2PMask)) != 0;
-}
-} // namespace PCRBits
 
 enum class PCRDirection : uint8_t { kOutput, kInput };
 
@@ -84,6 +51,7 @@ public:
     CMPClient(const CMPClient&) = delete;
     CMPClient& operator=(const CMPClient&) = delete;
 
+    void ReadOMPR(const CMPDevice& device, PCRReadCallback callback);
     void ReadOPCR(const CMPDevice& device, uint8_t plugNum, PCRReadCallback callback);
     void ConnectOPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel, CMPCallback callback);
     void DisconnectOPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback);

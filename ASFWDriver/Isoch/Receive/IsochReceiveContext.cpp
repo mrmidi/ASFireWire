@@ -143,16 +143,23 @@ kern_return_t IsochReceiveContext::Stop() {
     // the host when OHCI completes a late DMA write.
     ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
 
+    // Two complementary guards, both required: the revocable access scope keeps
+    // us from issuing MMIO after Detach, and the all-ones sentinel catches a
+    // physically removed device, which still reads 0xFFFFFFFF through a live scope.
     const auto readControl = [this] {
         auto access = hardware_->TryBeginAccess();
         return access ? access.Read(registers_.ContextControlSet) : 0U;
     };
-    if ((readControl() & Driver::ContextControl::kActive) != 0) {
+    const uint32_t initialControl = readControl();
+    if (initialControl != 0xFFFFFFFFu &&
+        (initialControl & Driver::ContextControl::kActive) != 0) {
         IODelay(5);
         constexpr uint32_t kMaxIterations = 250;
         constexpr uint32_t kBaseDelayMicros = 6;
         for (uint32_t iteration = 0; iteration < kMaxIterations; ++iteration) {
-            if ((readControl() & Driver::ContextControl::kActive) == 0) {
+            const uint32_t polledControl = readControl();
+            if (polledControl == 0xFFFFFFFFu ||
+                (polledControl & Driver::ContextControl::kActive) == 0) {
                 break;
             }
             IODelay(kBaseDelayMicros + iteration);
@@ -160,7 +167,8 @@ kern_return_t IsochReceiveContext::Stop() {
     }
 
     const uint32_t control = readControl();
-    if ((control & Driver::ContextControl::kActive) != 0) {
+    if (control != 0xFFFFFFFFu &&
+        (control & Driver::ContextControl::kActive) != 0) {
         const kern_return_t failure = (control & Driver::ContextControl::kDead) != 0
             ? kIOReturnDMAError
             : kIOReturnTimeout;

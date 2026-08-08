@@ -14,7 +14,6 @@
 
 #include "../Common/DriverKitOwnership.hpp"
 #include "IsochReceiveContext.hpp"
-#include "Receive/DVCaptureSink.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 
 namespace ASFW::IRM {
@@ -53,18 +52,20 @@ class IsochService {
         uint32_t channelOffset, uint32_t streamChannels);
     kern_return_t StartPreparedReceive();
 
+    // Starts stream 0 with a caller-owned, content-side packet consumer. The
+    // transport remains payload-opaque; the consumer must stay alive until
+    // StopPacketReceive() succeeds.
+    kern_return_t StartPacketReceive(
+        uint8_t channel, HardwareInterface& hardware,
+        ASFW::Isoch::IIsochReceiveConsumer* consumer);
+    [[nodiscard]] kern_return_t StopPacketReceive(
+        ASFW::Isoch::IIsochReceiveConsumer* consumer);
+
     kern_return_t StopReceive();
 
     [[nodiscard]] uint32_t CaptureStreamChannelOffset(uint32_t streamIndex) const noexcept {
         return (streamIndex < kMaxStreamsPerDirection) ? captureChannelOffset_[streamIndex] : 0;
     }
-
-    // Minimal DV (IEC 61883-2) capture tap: starts IR on the given channel with
-    // no audio binding and streams raw DIF chunks into a shared ring the app
-    // maps via CopyClientMemoryForType(type=1).
-    kern_return_t StartDVCapture(uint8_t channel, HardwareInterface& hardware);
-    kern_return_t StopDVCapture();
-    kern_return_t CopyDVCaptureMemory(uint64_t* options, IOMemoryDescriptor** memory) const;
 
     kern_return_t StartTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
     kern_return_t PrepareTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
@@ -174,28 +175,6 @@ class IsochService {
     uint32_t captureChannelOffset_[kMaxStreamsPerDirection]{0, 0, 0, 0};
     ASFW::Isoch::IIsochReceiveConsumer*
         receiveConsumers_[kMaxStreamsPerDirection]{nullptr, nullptr, nullptr, nullptr};
-
-    // DV capture shared ring (see Receive/DVCaptureSink.hpp)
-    struct DVRingMapping {
-        OSSharedPtr<IOBufferMemoryDescriptor> memory{};
-        OSSharedPtr<IOMemoryMap> map{};
-        uint64_t bytes{0};
-
-        void Reset() noexcept {
-            map.reset();
-            memory.reset();
-            bytes = 0;
-        }
-
-        [[nodiscard]] void* BaseAddress() const noexcept {
-            return map ? reinterpret_cast<void*>(static_cast<uintptr_t>(map->GetAddress()))
-                       : nullptr;
-        }
-    };
-
-    DVRingMapping dvRing_{};
-    ASFW::Isoch::Rx::DVCaptureSink dvSink_{};
-    bool dvCaptureActive_{false};
 
     // Per-stream TX shared resources. Index 0 == master; 1.. are secondary
     // playback streams (multi-stream DICE, e.g. Venice F32 = 2×16). Each IT

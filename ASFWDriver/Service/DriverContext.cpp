@@ -122,6 +122,7 @@ void ServiceContext::Reset(ResetMode mode) {
         deps.deviceManager.reset();
         deps.deviceRegistry.reset();
     }
+    deps.busResetStartedCallback = {};
     deps.cycleInconsistentCallback = {};
     statusPublisher.Reset();
     watchdog.Reset();
@@ -232,6 +233,10 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     } else {
         d.cycleInconsistentCallback = {};
     }
+
+    d.busResetStartedCallback = [&ctx] {
+        ctx.dvCapture.HandleBusReset(ctx.isoch);
+    };
 
     // AV/C discovery wiring is done after ControllerCore is created so it can
     // depend only on IFireWireBus ports (ControllerCore::Bus()).

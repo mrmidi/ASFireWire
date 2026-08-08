@@ -26,6 +26,9 @@ struct ExpandedReceiveTimestamp final {
     std::memcpy(&timestampQuadletLE, packet, sizeof(timestampQuadletLE));
     const uint32_t timestampQuadlet =
         OSSwapLittleToHostInt32(timestampQuadletLE);
+    // OHCI IR header mode stores the 16-bit [sec:3][cycle:13] timestamp in
+    // the low half of the first little-endian quadlet. Cross-validated with
+    // Linux firewire/ohci.c:2765 and Apple's packetReceiveTime().
     const uint16_t timestamp =
         static_cast<uint16_t>(timestampQuadlet & 0xFFFFu);
     if ((timestamp & 0x1FFFu) >= ASFW::Timing::kCyclesPerSecond) {

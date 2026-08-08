@@ -41,7 +41,7 @@ struct OverviewView: View {
                     
                     HStack {
                         statusIndicator
-                        Text(viewModel.activationStatus)
+                        Text(viewModel.displayedStatus)
                             .font(.system(.body, design: .monospaced))
                         Spacer()
                     }
@@ -97,8 +97,8 @@ struct OverviewView: View {
     
     @ViewBuilder
     private var statusIndicator: some View {
-        let isActive = viewModel.activationStatus.contains("result: 0")
-        let isError = viewModel.activationStatus.contains("Error")
+        let isActive = viewModel.isDriverConnected
+        let isError = !isActive && viewModel.activationStatus.contains("Error")
         
         Circle()
             .fill(viewModel.isBusy ? Color.orange : (isError ? Color.red : (isActive ? Color.green : Color.gray)))
