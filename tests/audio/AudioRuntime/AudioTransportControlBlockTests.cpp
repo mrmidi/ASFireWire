@@ -99,6 +99,69 @@ TEST(AudioTransportControlBlockTests, TelemetrySnapshotCopiesOnlyCompletedInterv
     EXPECT_NE(snapshot.flags & ASFW::Audio::Runtime::kAudioTelemetryHasCompletedInterval, 0U);
 }
 
+TEST(AudioTransportControlBlockTests,
+     TelemetrySnapshotCopiesValueOwnedTxContentAndFirstFaultState) {
+    AudioTransportControlBlock control{};
+    control.playbackRingWriteFrame.store(14'096, std::memory_order_relaxed);
+    control.playbackRingOldestValidFrame.store(12'560,
+                                               std::memory_order_relaxed);
+    control.txContentFinalizedFrameEnd.store(13'984,
+                                             std::memory_order_relaxed);
+    control.txPcmStagingTelemetry.oldestValidFrame.store(
+        10'000, std::memory_order_relaxed);
+    control.txPcmStagingTelemetry.writtenEndFrame.store(
+        14'096, std::memory_order_release);
+    control.txPcmStagingTelemetry.readsReady.store(
+        1'748, std::memory_order_relaxed);
+    control.txPcmStagingTelemetry.readsNotYetWritten.store(
+        3, std::memory_order_relaxed);
+    control.txTransportCompletionCursor.store(8'000,
+                                              std::memory_order_relaxed);
+    control.txTransportCommittedEnd.store(8'678,
+                                          std::memory_order_relaxed);
+    control.txTransportStatus.store(1, std::memory_order_relaxed);
+    control.txContentDeferrals.store(3, std::memory_order_relaxed);
+    control.txContentDeadlineNoData.store(1, std::memory_order_relaxed);
+    control.txContentFaultEvents.store(1, std::memory_order_relaxed);
+    control.txContentFirstFaultPacket.store(8'679,
+                                            std::memory_order_relaxed);
+    control.txContentFirstFaultAudioFrame.store(13'984,
+                                                std::memory_order_relaxed);
+    control.txContentFirstFaultOldestFrame.store(10'000,
+                                                 std::memory_order_relaxed);
+    control.txContentFirstFaultWrittenEndFrame.store(
+        13'984, std::memory_order_relaxed);
+    control.txContentFirstFaultCompletionCursor.store(
+        8'000, std::memory_order_relaxed);
+    control.txContentFirstFaultCommittedEnd.store(
+        8'678, std::memory_order_relaxed);
+    control.txContentFirstFaultReason.store(
+        static_cast<uint32_t>(
+            ASFW::Audio::Runtime::TxContentFaultReason::
+                kNotYetWrittenAtDeadline),
+        std::memory_order_release);
+    control.rxEmptyCompletions.store(2, std::memory_order_relaxed);
+
+    AudioTelemetryEndpointSnapshot snapshot{};
+    ASFW::Audio::Runtime::CopyAudioTelemetrySnapshot(control, snapshot);
+
+    EXPECT_EQ(snapshot.txPlaybackWriteFrame, 14'096U);
+    EXPECT_EQ(snapshot.txPlaybackOldestValidFrame, 12'560U);
+    EXPECT_EQ(snapshot.txContentFinalizedFrameEnd, 13'984U);
+    EXPECT_EQ(snapshot.txStagingOldestValidFrame, 10'000U);
+    EXPECT_EQ(snapshot.txStagingWrittenEndFrame, 14'096U);
+    EXPECT_EQ(snapshot.txStagingReadsReady, 1'748U);
+    EXPECT_EQ(snapshot.txStagingReadsNotYetWritten, 3U);
+    EXPECT_EQ(snapshot.txTransportCompletionCursor, 8'000U);
+    EXPECT_EQ(snapshot.txTransportCommittedEnd, 8'678U);
+    EXPECT_EQ(snapshot.txTransportStatus, 1U);
+    EXPECT_EQ(snapshot.txContentDeferrals, 3U);
+    EXPECT_EQ(snapshot.txContentDeadlineNoData, 1U);
+    EXPECT_EQ(snapshot.txContentFirstFaultPacket, 8'679U);
+    EXPECT_EQ(snapshot.txContentFirstFaultReason, 1U);
+    EXPECT_EQ(snapshot.rxEmptyCompletions, 2U);
+}
+
 TEST(AudioTransportControlBlockTests, RxCaptureTelemetryCapturesIntervalWatermarks) {
     AudioTransportControlBlock control{};
     auto& telemetry = control.rxCaptureBufferTelemetry;

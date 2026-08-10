@@ -66,7 +66,7 @@ TEST(IsochTransmitContext, ConfigureSucceedsWithQueueChannelMetadata) {
 }
 
 TEST(TxSharedQueueSPSC, SupportsMaxPcmChannels) {
-    constexpr uint32_t kQueueChannels = ASFW::Isoch::Config::kMaxPcmChannels;
+    constexpr uint32_t kQueueChannels = ASFW::Audio::Config::kMaxPcmChannels;
     constexpr uint32_t kCapacityFrames = 256;
     const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
     std::vector<uint8_t> storage(bytes);

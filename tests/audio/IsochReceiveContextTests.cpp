@@ -2,7 +2,7 @@
 #include <gmock/gmock.h>
 
 #include "Isoch/IsochReceiveContext.hpp"
-#include "Isoch/Receive/ZtsTelemetry.hpp"
+#include "Audio/Runtime/ZtsTelemetry.hpp"
 #include "Isoch/Memory/IsochDMAMemoryManager.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/OHCIConstants.hpp"
@@ -100,22 +100,22 @@ TEST(ZtsTelemetryLogGateTests,
      EmitsSeedThenEveryFourSecondsAndRearmsOnGridReset) {
     constexpr uint32_t kRate = 48000;
     constexpr uint64_t kStartFrame = 1536;
-    ASFW::Isoch::Rx::ZtsTelemetryLogGate gate;
-    ASFW::Isoch::Rx::ZtsTelemetryRecord record{};
+    ASFW::Audio::Runtime::ZtsTelemetryLogGate gate;
+    ASFW::Audio::Runtime::ZtsTelemetryRecord record{};
 
-    record.kind = static_cast<uint8_t>(ASFW::Isoch::Rx::ZtsEventKind::kSeed);
+    record.kind = static_cast<uint8_t>(ASFW::Audio::Runtime::ZtsEventKind::kSeed);
     record.sampleFrame = kStartFrame;
     EXPECT_TRUE(gate.ShouldEmit(record, kRate));
 
-    record.kind = static_cast<uint8_t>(ASFW::Isoch::Rx::ZtsEventKind::kUpdate);
+    record.kind = static_cast<uint8_t>(ASFW::Audio::Runtime::ZtsEventKind::kUpdate);
     record.sampleFrame =
         kStartFrame + kRate *
-            ASFW::Isoch::Rx::ZtsTelemetryLogGate::kIntervalSeconds - 1;
+            ASFW::Audio::Runtime::ZtsTelemetryLogGate::kIntervalSeconds - 1;
     EXPECT_FALSE(gate.ShouldEmit(record, kRate));
 
     record.sampleFrame =
         kStartFrame + kRate *
-            ASFW::Isoch::Rx::ZtsTelemetryLogGate::kIntervalSeconds;
+            ASFW::Audio::Runtime::ZtsTelemetryLogGate::kIntervalSeconds;
     EXPECT_TRUE(gate.ShouldEmit(record, kRate));
 
     ++record.sampleFrame;

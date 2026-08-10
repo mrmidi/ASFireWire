@@ -24,6 +24,28 @@ TEST(AudioEndpointRuntime, MissingConfigDoesNotPublishBinding) {
     ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
     EXPECT_FALSE(runtime.CopyDirectAudioBinding(snapshot));
     EXPECT_FALSE(snapshot.valid);
+
+    ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot telemetry{};
+    ASSERT_TRUE(runtime.CopyAudioTelemetrySnapshot(telemetry));
+    EXPECT_EQ(telemetry.guid, 0x1020304050607080ULL);
+    EXPECT_EQ(telemetry.flags &
+                  ASFW::Audio::Runtime::kAudioTelemetryBindingReady,
+              0U);
+}
+
+TEST(AudioEndpointRuntime, TelemetryKeepsConfiguredUnboundEndpointVisible) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    runtime.UpdateConfig(MakeDeviceConfig());
+
+    ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot telemetry{};
+    ASSERT_TRUE(runtime.CopyAudioTelemetrySnapshot(telemetry));
+    EXPECT_EQ(telemetry.guid, 0x1020304050607080ULL);
+    EXPECT_EQ(telemetry.sampleRateHz, 48'000U);
+    EXPECT_EQ(telemetry.outputChannels, 4U);
+    EXPECT_EQ(telemetry.inputChannels, 6U);
+    EXPECT_EQ(telemetry.flags &
+                  ASFW::Audio::Runtime::kAudioTelemetryBindingReady,
+              0U);
 }
 
 TEST(AudioEndpointRuntime, BadCopyArgsZeroOutputs) {
@@ -88,8 +110,8 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
     ASSERT_NE(outputMemory, nullptr);
     ASSERT_NE(inputMemory, nullptr);
     ASSERT_NE(controlMemory, nullptr);
-    EXPECT_EQ(outputFrames, ASFW::Isoch::Config::kAudioOutputRingFrames);
-    EXPECT_EQ(inputFrames, ASFW::Isoch::Config::kAudioRingBufferFrames);
+    EXPECT_EQ(outputFrames, ASFW::Audio::Config::kAudioOutputRingFrames);
+    EXPECT_EQ(inputFrames, ASFW::Audio::Config::kAudioRingBufferFrames);
     EXPECT_EQ(outputChannels, 4u);
     EXPECT_EQ(inputChannels, 6u);
     EXPECT_EQ(sampleRateHz, 48000u);

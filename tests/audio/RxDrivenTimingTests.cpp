@@ -1,6 +1,7 @@
 #include "Audio/Config/InputSafetyPolicy.hpp"
+#include "Audio/Shared/AudioTimingGeometry.hpp"
 #include "Audio/Wire/AMDTP/RxSequenceReplay.hpp"
-#include "Shared/Isoch/AudioTimingGeometry.hpp"
+#include "Isoch/Core/IsochDmaGeometry.hpp"
 
 #include <gtest/gtest.h>
 
@@ -15,7 +16,7 @@ using ASFW::Audio::Runtime::RxSequenceReplayReader;
 using ASFW::Audio::Runtime::RxSequenceReplayReadDiagnostic;
 using ASFW::Audio::Runtime::RxSequenceReplayReadFailure;
 using ASFW::Audio::Runtime::RxSequenceReplayState;
-using ASFW::IsochTransport::AudioTimingGeometry;
+using ASFW::Audio::Shared::AudioTimingGeometry;
 
 TEST(RxDrivenTimingTests, SixCycleBlockingGroupsCoverEveryCadencePhase) {
     constexpr std::array<uint32_t, 4> cadence{8, 8, 8, 0};
@@ -46,16 +47,16 @@ TEST(RxDrivenTimingTests, RxRingWrapPreservesCadenceAndFramePhase) {
     uint64_t absoluteFrame = 0;
 
     for (uint32_t cycle = 0;
-         cycle < AudioTimingGeometry::kRxDescriptorPackets;
+         cycle < ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets;
          ++cycle) {
         absoluteFrame += cadence[cycle % cadence.size()];
     }
 
     EXPECT_EQ(
-        AudioTimingGeometry::kRxDescriptorPackets % cadence.size(), 0U);
+        ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets % cadence.size(), 0U);
     EXPECT_EQ(absoluteFrame, 3024U);
     EXPECT_EQ(
-        cadence[AudioTimingGeometry::kRxDescriptorPackets %
+        cadence[ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets %
                 cadence.size()],
         cadence[0]);
     EXPECT_EQ(absoluteFrame % 192U, 144U);
@@ -229,9 +230,9 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kMaximumNominalFramesPerInterrupt, 40U);
     EXPECT_EQ(
         AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
-        ASFW::IsochTransport::kActiveAudioHalBufferProfile
+        ASFW::Audio::Shared::kActiveAudioHalBufferProfile
             .zeroTimestampPeriodFrames);
-    EXPECT_EQ(AudioTimingGeometry::kRxDescriptorPackets, 504U);
+    EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);

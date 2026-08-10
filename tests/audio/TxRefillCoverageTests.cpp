@@ -21,7 +21,7 @@
 //     <= lead - ringAhead. A coalesced IT completion larger than that overruns
 //     the committed region regardless of latency.
 
-#include "Shared/Isoch/AudioTimingGeometry.hpp"
+#include "Audio/Shared/AudioTimingGeometry.hpp"
 #include "Isoch/Core/IsochTxQueue.hpp"
 
 #include <gtest/gtest.h>
@@ -31,7 +31,7 @@
 
 namespace {
 
-using ASFW::IsochTransport::AudioTimingGeometry;
+using ASFW::Audio::Shared::AudioTimingGeometry;
 using ASFW::Isoch::ExpectedTxCommitGeneration;
 
 constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 912

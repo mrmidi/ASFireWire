@@ -107,6 +107,7 @@ add_audio_test(IsochTxDescriptorSlabTests
 # Isoch TX DMA Ring Tests
 add_audio_test(IsochTxDmaRingTests
     IsochTxDmaRingTests.cpp
+    IsochProgressMonitorTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
@@ -138,10 +139,11 @@ add_audio_test(IsochServiceTxPreparationTests
 
 add_audio_test(AmdtpDirectTxTests
     AmdtpDirectTxTests.cpp
+    TxPcmStagingRingTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Runtime/TxPcmStagingRing.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"

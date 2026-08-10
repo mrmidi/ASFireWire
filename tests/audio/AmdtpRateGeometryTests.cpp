@@ -1,5 +1,6 @@
 #include "Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
-#include "Shared/Isoch/AudioTimingGeometry.hpp"
+#include "Audio/Shared/AudioTimingGeometry.hpp"
+#include "Isoch/Core/IsochDmaGeometry.hpp"
 
 #include <gtest/gtest.h>
 
@@ -35,9 +36,9 @@ TEST(AmdtpRateGeometryTests, StandardRatesKeepNominalAndSytIntervalDistinct) {
 
 TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     using Geometry =
-        ASFW::IsochTransport::AudioTimingGeometry;
+        ASFW::Audio::Shared::AudioTimingGeometry;
     const auto profile =
-        ASFW::IsochTransport::kActiveAudioHalBufferProfile;
+        ASFW::Audio::Shared::kActiveAudioHalBufferProfile;
     EXPECT_EQ(Geometry::kFrameRingFrames, profile.frameRingFrames);
     EXPECT_EQ(Geometry::kHalIoPeriodFrames, profile.clientIoBudgetFrames);
     EXPECT_EQ(
@@ -50,7 +51,7 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 40U);
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
     EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 104U);
-    EXPECT_EQ(Geometry::kRxDescriptorPackets, 504U);
+    EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
     // TX budgets are sized for the worst-case (44.1k) average cadence of
     // 441 frames / 80 packets, exposure lead rounded to a whole interrupt
     // Apple-comparable 400-cycle content horizon: ceil(2400 / 5.5125) =
@@ -79,16 +80,16 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
                   Geometry::kHalZeroTimestampPeriodFrames, 0U);
     EXPECT_EQ(Geometry::kFrameRingFrames %
                   Geometry::kHalIoPeriodFrames, 0U);
-    EXPECT_EQ(Geometry::kRxDescriptorPackets %
+    EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets %
                   Geometry::kTimingGroupPackets, 0U);
-    EXPECT_EQ(Geometry::kRxDescriptorPackets %
+    EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets %
                   Geometry::kCadenceBlockPackets, 0U);
     EXPECT_GE(Geometry::kTxPreparationSlackPackets,
               2U * Geometry::kTxPacketsPerGroup);
 }
 
 TEST(AudioTimingGeometryTests, HalBufferProfilesPreserveKnownGeometries) {
-    using namespace ASFW::IsochTransport;
+    using namespace ASFW::Audio::Shared;
 
     EXPECT_EQ(kAudioHalBufferProfileAligned512.frameRingFrames, 512U);
     EXPECT_EQ(kAudioHalBufferProfileAligned512.clientIoBudgetFrames, 512U);
