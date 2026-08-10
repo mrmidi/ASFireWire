@@ -708,7 +708,7 @@ options, in order of preference:
 
 #### Guardrails now in place
 
-`ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp` now **names** the previously
+`ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp` now **names** the previously
 implicit quantity (`kTxExposureLeadFrames`) and adds the compile-time invariant
 whose absence hid this defect:
 
@@ -1301,7 +1301,7 @@ current ASFW constants below.
 ## 13. Current Adopted Geometry
 
 This section is the authority for current ASFW timing geometry. The constants
-live in `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp`.
+live in `ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp`.
 
 ### A. Authoritative Values
 

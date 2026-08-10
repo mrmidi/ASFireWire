@@ -77,36 +77,36 @@ Linux treats AMDTP direction state as independent:
 
 - A blocking stream includes empty/NODATA packets; a non-blocking stream has a
   variable number of events per packet
-  ([`amdtp-stream.c:213-240`](references/linux-sound-firewire-stack/amdtp-stream.c#L213-L240)).
+  ([`amdtp-stream.c:213-240`](../references/linux-sound-firewire-stack/firewire/amdtp-stream.c#L213-L240)).
   At 48 kHz, blocking packets are aligned to the 8-frame SYT interval, not to
   “one audio packet every cycle”
-  ([`amdtp-stream.c:236-240`](references/linux-sound-firewire-stack/amdtp-stream.c#L236-L240)).
+  ([`amdtp-stream.c:236-240`](../references/linux-sound-firewire-stack/firewire/amdtp-stream.c#L236-L240)).
 - It gives a blocking direction an *additional direction-local transfer
   delay* to accommodate no-data packets
-  ([`amdtp-stream.c:271-296`](references/linux-sound-firewire-stack/amdtp-stream.c#L271-L296)).
+  ([`amdtp-stream.c:271-296`](../references/linux-sound-firewire-stack/firewire/amdtp-stream.c#L271-L296)).
   This alone makes raw RX/TX SYT equality an invalid invariant.
 - On receive it checks DBC continuity and separately extracts SYT
-  ([`amdtp-stream.c:772-810`](references/linux-sound-firewire-stack/amdtp-stream.c#L772-L810));
+  ([`amdtp-stream.c:772-810`](../references/linux-sound-firewire-stack/firewire/amdtp-stream.c#L772-L810));
   it rejects discontinuous cycle sequences rather than treating a different
   opposite-direction SYT as an error
-  ([`amdtp-stream.c:935-1001`](references/linux-sound-firewire-stack/amdtp-stream.c#L935-L1001)).
+  ([`amdtp-stream.c:935-1001`](../references/linux-sound-firewire-stack/firewire/amdtp-stream.c#L935-L1001)).
 - On transmit it computes each direction's SYT from that packet's output cycle
   plus a per-stream sequence offset and transfer delay
-  ([`amdtp-stream.c:1004-1057`](references/linux-sound-firewire-stack/amdtp-stream.c#L1004-L1057)).
+  ([`amdtp-stream.c:1004-1057`](../references/linux-sound-firewire-stack/firewire/amdtp-stream.c#L1004-L1057)).
   It resets its packet/DBC/sequence state when creating the stream, before it
-  is armed ([`amdtp-stream.c:1666-1773`](references/linux-sound-firewire-stack/amdtp-stream.c#L1666-L1773)).
+  is armed ([`amdtp-stream.c:1666-1773`](../references/linux-sound-firewire-stack/firewire/amdtp-stream.c#L1666-L1773)).
 
 The device-family drivers reinforce that this is device policy, not a universal
 SYT-equality rule:
 
 - BeBoB starts both prepared streams, allows initial NODATA packets, and waits
   for valid SYT-bearing traffic before declaring the domain ready
-  ([`bebob_stream.c:620-665`](references/linux-sound-firewire-stack/bebob/bebob_stream.c#L620-L665)).
+  ([`bebob_stream.c:620-665`](../references/linux-sound-firewire-stack/firewire/bebob/bebob_stream.c#L620-L665)).
 - OXFW explicitly has models which ignore playback SYT; for those models the
   data-block sequence is the media-clock signal
-  ([`oxfw-stream.c:360-390`](references/linux-sound-firewire-stack/oxfw/oxfw-stream.c#L360-L390)).
+  ([`oxfw-stream.c:360-390`](../references/linux-sound-firewire-stack/firewire/oxfw/oxfw-stream.c#L360-L390)).
   Its quirk selection can mark a stream SYT-unaware
-  ([`oxfw-stream.c:151-180`](references/linux-sound-firewire-stack/oxfw/oxfw-stream.c#L151-L180)).
+  ([`oxfw-stream.c:151-180`](../references/linux-sound-firewire-stack/firewire/oxfw/oxfw-stream.c#L151-L180)).
 
 The Duet is AV/C/CMP, not evidence that it uses an OXFW controller.  The OXFW
 lesson is narrower: an AV/C backend must make device-specific timestamp policy
@@ -119,24 +119,24 @@ FFADO likewise keeps a full direction-local timeline:
 
 - Its receive processor accepts only a valid CIP/SYT packet and converts SYT
   plus the packet cycle timer into full ticks
-  ([`AmdtpReceiveStreamProcessor.cpp:97-123`](references/libffado-2.5.0/src/libstreaming/amdtp/AmdtpReceiveStreamProcessor.cpp#L97-L123)).
+  ([`AmdtpReceiveStreamProcessor.cpp:97-123`](../references/libffado-2.5.0/src/libstreaming/amdtp/AmdtpReceiveStreamProcessor.cpp#L97-L123)).
 - Its transmit processor starts from the presentation timestamp of the next
   audio block, subtracts its own transmit transfer delay, and schedules the
   packet in a send window
-  ([`AmdtpTransmitStreamProcessor.cpp:100-128`](references/libffado-2.5.0/src/libstreaming/amdtp/AmdtpTransmitStreamProcessor.cpp#L100-L128),
-  [`:184-238`](references/libffado-2.5.0/src/libstreaming/amdtp/AmdtpTransmitStreamProcessor.cpp#L184-L238)).
+  ([`AmdtpTransmitStreamProcessor.cpp:100-128`](../references/libffado-2.5.0/src/libstreaming/amdtp/AmdtpTransmitStreamProcessor.cpp#L100-L128),
+  [`:184-238`](../references/libffado-2.5.0/src/libstreaming/amdtp/AmdtpTransmitStreamProcessor.cpp#L184-L238)).
 - Its diagnostics validate the delta between *successive timestamps of one
   processor* against nominal rate; they do not compare RX and TX raw SYTs
-  ([`StreamProcessor.cpp:463-490`](references/libffado-2.5.0/src/libstreaming/generic/StreamProcessor.cpp#L463-L490)).
+  ([`StreamProcessor.cpp:463-490`](../references/libffado-2.5.0/src/libstreaming/generic/StreamProcessor.cpp#L463-L490)).
 - It initializes a transmit tail timestamp from the transfer time and
   prebuffer, then separately aligns received streams
-  ([`StreamProcessorManager.cpp:840-879`](references/libffado-2.5.0/src/libstreaming/StreamProcessorManager.cpp#L840-L879)).
+  ([`StreamProcessorManager.cpp:840-879`](../references/libffado-2.5.0/src/libstreaming/StreamProcessorManager.cpp#L840-L879)).
 
 For a bus reset, FFADO locks out the manager's wait loop before the per-stream
-handler runs ([`StreamProcessor.cpp:153-168`](references/libffado-2.5.0/src/libstreaming/generic/StreamProcessor.cpp#L153-L168)).
+handler runs ([`StreamProcessor.cpp:153-168`](../references/libffado-2.5.0/src/libstreaming/generic/StreamProcessor.cpp#L153-L168)).
 Its default handler declares an xrun/error, rather than pretending an existing
 running producer queue can simply be re-armed
-([`StreamProcessor.cpp:141-149`](references/libffado-2.5.0/src/libstreaming/generic/StreamProcessor.cpp#L141-L149)).
+([`StreamProcessor.cpp:141-149`](../references/libffado-2.5.0/src/libstreaming/generic/StreamProcessor.cpp#L141-L149)).
 
 ## Correct ASFW duplex timing model
 
@@ -144,16 +144,16 @@ ASFW already has the right *building blocks*, but they must remain distinct:
 
 - RX consumes a valid CIP/SYT packet, observes cadence, stores its
   source-cycle/SYT/DBC sequence, and resets the replay epoch on a discontinuity
-  ([`DirectAudioReceiveConsumer.cpp:206-236`](ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L206-L236),
-  [`:297-310`](ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L297-L310)).
+  ([`DirectAudioReceiveConsumer.cpp:206-236`](../ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L206-L236),
+  [`:297-310`](../ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L297-L310)).
 - `ComputeReplaySytOffset()` turns the RX 16-bit SYT into a delay-free offset
   relative to the received packet; `ComputeReplaySyt()` applies an output
   packet cycle and a TX transfer delay
-  ([`RxSequenceReplay.hpp:26-92`](ASFWDriver/Audio/Wire/AMDTP/RxSequenceReplay.hpp#L26-L92)).
+  ([`RxSequenceReplay.hpp:26-92`](../ASFWDriver/Audio/Wire/AMDTP/RxSequenceReplay.hpp#L26-L92)).
 - The timing helpers correctly describe the 16-cycle SYT field and provide a
   full-cycle expansion which preserves seconds and handles a cycle-second
-  boundary ([`TimingUtils.hpp:55-93`](ASFWDriver/Audio/Wire/AMDTP/TimingUtils.hpp#L55-L93),
-  [`:178-200`](ASFWDriver/Audio/Wire/AMDTP/TimingUtils.hpp#L178-L200)).
+  boundary ([`TimingUtils.hpp:55-93`](../ASFWDriver/Audio/Wire/AMDTP/TimingUtils.hpp#L55-L93),
+  [`:178-200`](../ASFWDriver/Audio/Wire/AMDTP/TimingUtils.hpp#L178-L200)).
 
 The required algorithm is:
 
@@ -191,18 +191,18 @@ This makes an explicit policy decision possible:
 1. Normal `StartIO` explicitly runs the producer-owned
    `ResetProducerForStart()` before prefill and then validates that prefill
    exposed exactly `numSlots`
-   ([`ASFWAudioDevice.cpp:221-245`](ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp#L221-L245),
-   [`:341-360`](ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp#L341-L360)).
+   ([`ASFWAudioDevice.cpp:221-245`](../ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp#L221-L245),
+   [`:341-360`](../ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp#L341-L360)).
 2. `committedEnd` is producer-to-consumer, while
    `ResetConsumerForArm()` intentionally does not alter that producer cursor
-   ([`IsochTxQueue.hpp:132-155`](ASFWDriver/Isoch/Core/IsochTxQueue.hpp#L132-L155)).
+   ([`IsochTxQueue.hpp:132-155`](../ASFWDriver/Isoch/Core/IsochTxQueue.hpp#L132-L155)).
 3. IT `Start()` reads `committedEnd` and passes it as `preFillCount` to DMA
-   prime ([`IsochTransmitContext.cpp:286-296`](ASFWDriver/Isoch/Transmit/IsochTransmitContext.cpp#L286-L296)).
+   prime ([`IsochTransmitContext.cpp:286-296`](../ASFWDriver/Isoch/Transmit/IsochTransmitContext.cpp#L286-L296)).
 4. Prime accepts only `48 <= preFillCount <= numSlots`; the live Duet incident
    supplied `13,626,402` for a 408-slot queue
-   ([`IsochTxDmaRing.cpp:133-179`](ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp#L133-L179)).
+   ([`IsochTxDmaRing.cpp:133-179`](../ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp#L133-L179)).
 5. AV/C recovery calls `duplexCoordinator_.RecoverStreaming()` after RX replay
-   has not recovered ([`AVCAudioBackend.cpp:231-288`](ASFWDriver/Audio/Protocols/Backends/AVCAudioBackend.cpp#L231-L288)).
+   has not recovered ([`AVCAudioBackend.cpp:231-288`](../ASFWDriver/Audio/Protocols/Backends/AVCAudioBackend.cpp#L231-L288)).
    It does not pass through the normal audio producer reset+prefill sequence.
 
 **Root cause:** recovery has consumer/transport authority but tries to restart
@@ -241,8 +241,8 @@ Linux and FFADO, without copying their mechanisms.
 | `AVC-RECOVERY-001` | **Confirmed** | Stale `committedEnd` makes IT prime reject timing-loss recovery. | Implement the producer-owned recovery epoch above, then test a forced RX-cadence loss. |
 | `AUDIO-RECOVERY-ROUTING-001` | **Confirmed critical defect** | FW-64 / merge `e9ea6ce` added a second registration to `IsochService`'s single `timingLossCallback_`. `AudioCoordinator` constructs `dice_` before `avc_`; AV/C therefore overwrites DICE's callback. A DICE/Focusrite replay reset is routed to AV/C, whose `activeGuid_` does not match and which drops the event. | Replace the single backend-owned callback with one AudioCoordinator-owned router which selects the backend by GUID. Carry the fault reason and session epoch; do not register directly from either backend. |
 | `AVC-RECOVERY-002` | **Confirmed critical defect** | FW-64 treats every *established* replay reset as an eventual destructive `RecoverStreaming()`. A reset can mean a malformed RX packet, one cycle gap, rejected cadence, or rejected clock anchor—not necessarily a device outage. The coordinator stops/restarts transport while CoreAudio remains running with its old TX producer state. | Disable AV/C automatic transport restart until recovery atomically quiesces/resets/re-primes the audio producer and transport under one recovery epoch. Report the fault and request an audio-side xrun/controlled restart instead. |
-| `AVC-PROPERTY-001` | **Fixed; requires hardware confirmation** | `AudioNubPublisher` sets stream mode on the nub, but `ASFWAudioDevice::PopulateNubProperties()` did not publish `ASFWStreamMode`; the driver parser consequently defaulted to non-blocking.  The model default is also non-blocking ([`ASFWAudioDevice.hpp:52-60`](ASFWDriver/Audio/Model/ASFWAudioDevice.hpp#L52-L60)); parsing only changes it if the property exists ([`AudioDriverConfig.cpp:67-84`](ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp#L67-L84)).  The matching dictionary now publishes the selected mode. | On the next Duet/BeBoB start, confirm the AudioDriver reports `Stream mode from nub: blocking`; the property path is shared by all published audio nubs. |
-| `AVC-TX-EXPOSURE-001` | **Confirmed audio-path defect; root scheduling cause open** | The payload writer skips CoreAudio frames which arrive beyond `Timeline().ExposedFrameEnd()` (`framesWithoutPacket`); `TxAlign` later repositions the producer cursor to close the deficit.  This can produce audible corruption while DMA/CMP and the TX descriptor lead remain healthy, then self-heal without a stream restart ([`AmdtpPayloadWriter.cpp:90-126`](ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126), [`ASFWAudioDriverZts.cpp:360-389`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)). | Retain pending host frames until slots exist and maintain a data-bearing packet horizon beyond the maximum IO callback plus measured scheduling jitter; never discard a running stream's host frames because their packet is not yet exposed. |
+| `AVC-PROPERTY-001` | **Fixed; requires hardware confirmation** | `AudioNubPublisher` sets stream mode on the nub, but `ASFWAudioDevice::PopulateNubProperties()` did not publish `ASFWStreamMode`; the driver parser consequently defaulted to non-blocking.  The model default is also non-blocking ([`ASFWAudioDevice.hpp:52-60`](../ASFWDriver/Audio/Model/ASFWAudioDevice.hpp#L52-L60)); parsing only changes it if the property exists ([`AudioDriverConfig.cpp:67-84`](../ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp#L67-L84)).  The matching dictionary now publishes the selected mode. | On the next Duet/BeBoB start, confirm the AudioDriver reports `Stream mode from nub: blocking`; the property path is shared by all published audio nubs. |
+| `AVC-TX-EXPOSURE-001` | **Confirmed audio-path defect; root scheduling cause open** | The payload writer skips CoreAudio frames which arrive beyond `Timeline().ExposedFrameEnd()` (`framesWithoutPacket`); `TxAlign` later repositions the producer cursor to close the deficit.  This can produce audible corruption while DMA/CMP and the TX descriptor lead remain healthy, then self-heal without a stream restart ([`AmdtpPayloadWriter.cpp:90-126`](../ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126), [`ASFWAudioDriverZts.cpp:360-389`](../ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)). | Retain pending host frames until slots exist and maintain a data-bearing packet horizon beyond the maximum IO callback plus measured scheduling jitter; never discard a running stream's host frames because their packet is not yet exposed. |
 | `TX-LAPLOSS-001` | **Withdrawn — the fix was the regression** | The timestamp-based lap-loss detector double-counted a stale completion baseline under coalesced interrupts and phantom-killed a healthy Saffire stream (all mod-48 deltas were < 48; FireBug showed 2.24 M continuous packets). It also treated a symptom of `TX-IRQ-001` and violated the transport boundary. To be reverted. | Revert the reconciliation; keep the watchdog-silence fatal + `ctrl`/`intEvent` snapshot. See "backend boundary leakage" below. |
 | `AUDIO-BACKEND-BOUNDARY-001` | **Confirmed (Linux + Focusrite validated)** | AV/C resync machinery leaks into DICE: a single shared `IsochService::timingLossCallback_` (AV/C overwrites DICE) and cross-backend `RecoverStreaming`. Reference stacks keep recovery strictly per-family; the shared core is family-blind. | Sever the shared callback slot; make transport report-only state; re-home DICE recovery onto DICE notifications. |
 | `TX-IRQ-001` | **Open** | The IT interrupt path went permanently silent ~10 minutes into the 2026-07-19 session; the refill watchdog carried the stream. Cause unknown (mask write, storm mitigation, dispatch loss). | Reproduce with the new watchdog-engagement log; correlate with `IsoXmitIntMask` writes. The 16-kick fatal now bounds the damage. |
@@ -277,11 +277,11 @@ without any `[RxReplayReset]`; both failures must be fixed.
 The AV/C path is unsafe in the opposite direction. An established replay reset
 is raised for packet-processor failure, invalid RX timestamp, receive-cycle
 gap, rejected SYT cadence, or rejected clock anchor
-([`DirectAudioReceiveConsumer.cpp:178-336`](ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L178-L336)).
+([`DirectAudioReceiveConsumer.cpp:178-336`](../ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L178-L336)).
 FW-64 waits 256 ms and, if the same replay has not re-established, calls
-`RecoverStreaming()` ([`AVCAudioBackend.cpp:213-288`](ASFWDriver/Audio/Protocols/Backends/AVCAudioBackend.cpp#L213-L288)).
+`RecoverStreaming()` ([`AVCAudioBackend.cpp:213-288`](../ASFWDriver/Audio/Protocols/Backends/AVCAudioBackend.cpp#L213-L288)).
 That operation stops and starts the duplex transport
-([`AudioDuplexCoordinator.cpp:560-635`](ASFWDriver/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp#L560-L635)),
+([`AudioDuplexCoordinator.cpp:560-635`](../ASFWDriver/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp#L560-L635)),
 but does not run the CoreAudio `StopIO`/`StartIO` producer reset and prefill
 protocol. It can therefore turn a local timing anomaly into a stale-cursor,
 half-running stream.
@@ -306,7 +306,7 @@ The driver log ring is the source of truth for this fault.  It retained all
 13,480 records from the observed run with zero drops, but it previously did not
 identify *which* RX validation path reset an established replay epoch.  That
 gap is now closed by `[RxReplayReset]` in
-[`DirectAudioReceiveConsumer.cpp:175-395`](ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L175-L395).
+[`DirectAudioReceiveConsumer.cpp:175-395`](../ASFWDriver/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp#L175-L395).
 
 The record is emitted exactly once per established replay epoch, immediately
 before the timing-loss callback.  It is anomaly-only; a normal stream produces
@@ -415,9 +415,9 @@ ring, while preserving the audio-side ownership boundary.
 `AmdtpPayloadWriter::WriteFloat32Interleaved()` only writes a host frame when
 `SnapshotSlotForAudioFrame()` finds an already-exposed packet.  If not, it
 increments `framesWithoutPacket` and permanently skips that frame
-([`AmdtpPayloadWriter.cpp:90-126`](ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126)).
+([`AmdtpPayloadWriter.cpp:90-126`](../ASFWDriver/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp#L90-L126)).
 When TX preparation later resumes, the RX-derived `TxAlign` path can reposition
-the frame cursor to the current timeline ([`ASFWAudioDriverZts.cpp:360-389`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)).
+the frame cursor to the current timeline ([`ASFWAudioDriverZts.cpp:360-389`](../ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp#L360-L389)).
 That is the observed “self-heal”: future samples become writable again; the
 discarded samples are never recovered, so a click/gap is unavoidable.
 

@@ -607,7 +607,7 @@ needed to establish what remains before changing the sample format.
 - `ASFWDriver/Audio/DriverKit/ASFWAudioDriverGraph.cpp:83-96, 261-262, 460-507` — stream format, offsets
 - `ASFWDriver/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp:69-107` — §6.6 values
 - `ASFWDriver/Audio/DriverKit/ASFWAudioDriverPrivate.hpp:55-95` — `DextTxExecutionTimeline::AnchorForPacket`
-- `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp` — 2026-06-12 geometry + static_asserts
+- `ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp` — 2026-06-12 geometry + static_asserts
 - `ADKVirtualAudioLab/Driver/VirtualAudioDevice.cpp:272-307` — the Float32 format block to lift
 - `ADKVirtualAudioLab/Protocols/Audio/AMDTP/AmdtpPayloadWriter.cpp` — float writer (target shape)
 

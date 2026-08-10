@@ -237,7 +237,7 @@ In rough dependency order:
    nominal (44.1: 4458 exact; the Saffire kext used 4456 as its bootstrap —
    `44100.md` §9 — exactness is better and free).
 4. **`AudioTimingGeometry`**
-   (`Shared/Isoch/AudioTimingGeometry.hpp:29-47`): `kSampleRateHz = 48000`,
+   (`Audio/Shared/AudioTimingGeometry.hpp:29-47`): `kSampleRateHz = 48000`,
    `kCadenceBlockPackets/Frames` (4/24) and every packet↔frame conversion
    assume 6 frames/cycle; 44.1 averages 5.5125 (441/80) and needs the rational
    form. Convenient accident: a 6-packet interrupt group still carries 32 or
@@ -420,7 +420,7 @@ and both copies plus their pinning tests go away with the rational form.)
   only the existing 48 kHz cadence classes, so none of this enables 44.1 kHz
   or chooses a wire-visible startup seed.
 - **Phase 3 — 88.2/176.4 kHz.** Same engine with `sytInterval` 16/32. The
-  geometry ladder (`Shared/Isoch/AudioGeometryPolicy.hpp`) already branches on
+  geometry ladder (`Audio/Shared/AudioGeometryPolicy.hpp`) already branches on
   `rate > 48000/96000`, but `ValidAtRate(88200/176400)` static asserts and the
   2x/4x frames-per-interrupt-group bounds need adding; DBC advances by 16/32;
   packet sizes and isoch bandwidth need re-validation at high channel counts.
