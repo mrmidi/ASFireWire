@@ -23,6 +23,7 @@ protocol ASFWDriverControlling {
     func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
     func logRingStats() async -> ASFWLogRingStats?
     func fetchAudioStreamHealth() async -> [ASFWMCPAudioStreamHealth]
+    func fetchAudioCursors() async -> [ASFWMCPAudioCursorSnapshot]
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -591,6 +592,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         // replay ring is being fed.
         [ASFWMCPAudioStreamHealth(
             guid: 0x0011_2233_4455_6677,
+            bindingReady: true,
             streaming: true,
             sampleRateHz: 48_000,
             inputChannels: 14,
@@ -598,12 +600,50 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             packetsSeen: 8_000,
             dataPackets: 7_936,
             noDataPackets: 64,
+            emptyCompletions: 0,
             shortPackets: 0,
             invalidCipHeaders: 0,
             zeroDataBlockSize: 0,
             geometryMismatch: 0,
             replayEntries: 7_936,
             replayEpochResets: 1
+        )]
+    }
+
+    func fetchAudioCursors() async -> [ASFWMCPAudioCursorSnapshot] {
+        [ASFWMCPAudioCursorSnapshot(
+            guid: 0x0011_2233_4455_6677,
+            bindingReady: true,
+            streaming: true,
+            sampleRateHz: 48_000,
+            outputChannels: 2,
+            stagedOldestFrame: 10_000,
+            stagedWrittenEndFrame: 14_096,
+            finalizedFrameEnd: 13_984,
+            completionPacket: 8_000,
+            committedPacketEnd: 8_678,
+            transportStatus: 1,
+            stagingWrites: 11,
+            stagingFrames: 5_632,
+            stagingDiscontinuities: 0,
+            stagingOverwrittenFrames: 0,
+            readsReady: 1_748,
+            readsNotYetWritten: 3,
+            readsStaleOverwritten: 0,
+            readsSnapshotBusy: 0,
+            readsInvalid: 0,
+            deferrals: 3,
+            deadlineNoData: 0,
+            staleXruns: 0,
+            rebases: 0,
+            faultEvents: 0,
+            firstFaultReason: 0,
+            firstFaultPacket: 0,
+            firstFaultAudioFrame: 0,
+            firstFaultOldestFrame: 0,
+            firstFaultWrittenEndFrame: 0,
+            firstFaultCompletionPacket: 0,
+            firstFaultCommittedPacketEnd: 0
         )]
     }
 

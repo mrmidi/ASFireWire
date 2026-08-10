@@ -131,6 +131,8 @@ extension ASFWMCPCore {
             return await dispatchSbp2Orb(name, decoder: decoder)
         case "asfw_get_audio_stream_health":
             return await dispatchAudioStreamHealth(name)
+        case "asfw_get_audio_cursors":
+            return await dispatchAudioCursors(name)
         case "asfw_dice_decode_status":
             return await dispatchDiceDecodeStatus(name, decoder: decoder)
         case "asfw_dice_write_register":
@@ -518,6 +520,22 @@ extension ASFWMCPCore {
     /// so it is safe to call while audio is running.
     private func dispatchAudioStreamHealth(_ name: String) async -> ASFWMCPToolCallResult {
         let endpoints = await driver.fetchAudioStreamHealth()
+        return ASFWMCPToolCallResult(
+            toolName: name,
+            ok: true,
+            data: .object([
+                "endpointCount": .int(endpoints.count),
+                "endpoints": .array(endpoints.map { $0.mcpValue() })
+            ]),
+            errors: []
+        )
+    }
+
+    /// Read-only, value-owned projection. The driver copies these fields while
+    /// the endpoint binding is alive; MCP never obtains the audio or queue
+    /// mappings themselves.
+    private func dispatchAudioCursors(_ name: String) async -> ASFWMCPToolCallResult {
+        let endpoints = await driver.fetchAudioCursors()
         return ASFWMCPToolCallResult(
             toolName: name,
             ok: true,

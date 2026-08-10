@@ -53,11 +53,12 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let rxTotalStarvedFrames: UInt64
     let rxCompletedOccupancyHistogram: [UInt64]
     let inputFrameCapacityFrames: UInt32
-    // Wire v3 bring-up attribution. Read as a combination: all-zero means no
+    // Wire v3/v4 bring-up attribution. Read as a combination: all-zero means no
     // packet reached the consumer at all; packetsSeen == noDataPackets means the
     // device really is sending only CIP NO-DATA; a non-zero reject counter means
     // ASFW rejected packets the device did send (geometryMismatch in particular
-    // means our profile and the device disagree on channels/DBS).
+    // means our profile and the device disagree on channels/DBS). Wire v4 adds
+    // explicit status-only/zero-length completion attribution at the tail.
     let rxPacketsSeen: UInt64
     let rxDataPackets: UInt64
     let rxNoDataPackets: UInt64
@@ -65,8 +66,41 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let rxInvalidCipHeaders: UInt64
     let rxZeroDataBlockSize: UInt64
     let rxGeometryMismatch: UInt64
+    // Wire v4 TX content ownership. All values are copied by the driver while
+    // the endpoint owns its binding; no MCP caller receives a buffer pointer.
+    let txPlaybackWriteFrame: UInt64
+    let txPlaybackOldestValidFrame: UInt64
+    let txContentFinalizedFrameEnd: UInt64
+    let txStagingOldestValidFrame: UInt64
+    let txStagingWrittenEndFrame: UInt64
+    let txTransportCompletionCursor: UInt64
+    let txTransportCommittedEnd: UInt64
+    let txStagingWrites: UInt64
+    let txStagingFrames: UInt64
+    let txStagingDiscontinuities: UInt64
+    let txStagingOverwrittenFrames: UInt64
+    let txStagingReadsReady: UInt64
+    let txStagingReadsNotYetWritten: UInt64
+    let txStagingReadsStaleOverwritten: UInt64
+    let txStagingReadsSnapshotBusy: UInt64
+    let txStagingReadsInvalid: UInt64
+    let txContentDeferrals: UInt64
+    let txContentDeadlineNoData: UInt64
+    let txContentStaleXruns: UInt64
+    let txContentRebases: UInt64
+    let txContentFaultEvents: UInt64
+    let txContentFirstFaultPacket: UInt64
+    let txContentFirstFaultAudioFrame: UInt64
+    let txContentFirstFaultOldestFrame: UInt64
+    let txContentFirstFaultWrittenEndFrame: UInt64
+    let txContentFirstFaultCompletionCursor: UInt64
+    let txContentFirstFaultCommittedEnd: UInt64
+    let txContentFirstFaultReason: UInt32
+    let txTransportStatus: UInt32
+    let rxEmptyCompletions: UInt64
 
     var id: UInt64 { guid }
+    var isBindingReady: Bool { (flags & (1 << 0)) != 0 }
     var isStreaming: Bool { (flags & (1 << 1)) != 0 }
     var hasCompletedInterval: Bool { (flags & (1 << 2)) != 0 }
     var hasCompletedRxInterval: Bool { (flags & (1 << 3)) != 0 }
@@ -92,7 +126,7 @@ struct AudioTelemetrySnapshot {
 extension ASFWDriverConnector {
     func getAudioTelemetry() -> AudioTelemetrySnapshot? {
         guard isConnected, connection != 0,
-              let data = callStruct(.getAudioTelemetry, initialCap: 4096) else {
+              let data = callStruct(.getAudioTelemetry, initialCap: 8192) else {
             return nil
         }
         return AudioTelemetryWireDecoder.decode(data)
@@ -100,9 +134,9 @@ extension ASFWDriverConnector {
 }
 
 private enum AudioTelemetryWireDecoder {
-    private static let version = 3
+    private static let version = 4
     private static let headerBytes = 8
-    private static let endpointBytes = 432
+    private static let endpointBytes = 664
     private static let maximumEndpoints = 8
 
     static func decode(_ data: Data) -> AudioTelemetrySnapshot? {
@@ -167,7 +201,37 @@ private enum AudioTelemetryWireDecoder {
               let rxShortPackets = u64(400),
               let rxInvalidCipHeaders = u64(408),
               let rxZeroDataBlockSize = u64(416),
-              let rxGeometryMismatch = u64(424) else {
+              let rxGeometryMismatch = u64(424),
+              let txPlaybackWriteFrame = u64(432),
+              let txPlaybackOldestValidFrame = u64(440),
+              let txContentFinalizedFrameEnd = u64(448),
+              let txStagingOldestValidFrame = u64(456),
+              let txStagingWrittenEndFrame = u64(464),
+              let txTransportCompletionCursor = u64(472),
+              let txTransportCommittedEnd = u64(480),
+              let txStagingWrites = u64(488),
+              let txStagingFrames = u64(496),
+              let txStagingDiscontinuities = u64(504),
+              let txStagingOverwrittenFrames = u64(512),
+              let txStagingReadsReady = u64(520),
+              let txStagingReadsNotYetWritten = u64(528),
+              let txStagingReadsStaleOverwritten = u64(536),
+              let txStagingReadsSnapshotBusy = u64(544),
+              let txStagingReadsInvalid = u64(552),
+              let txContentDeferrals = u64(560),
+              let txContentDeadlineNoData = u64(568),
+              let txContentStaleXruns = u64(576),
+              let txContentRebases = u64(584),
+              let txContentFaultEvents = u64(592),
+              let txContentFirstFaultPacket = u64(600),
+              let txContentFirstFaultAudioFrame = u64(608),
+              let txContentFirstFaultOldestFrame = u64(616),
+              let txContentFirstFaultWrittenEndFrame = u64(624),
+              let txContentFirstFaultCompletionCursor = u64(632),
+              let txContentFirstFaultCommittedEnd = u64(640),
+              let txContentFirstFaultReason = u32(648),
+              let txTransportStatus = u32(652),
+              let rxEmptyCompletions = u64(656) else {
             return nil
         }
         let latencyHistogram = (0..<6).compactMap { u64(96 + $0 * 8) }
@@ -222,7 +286,37 @@ private enum AudioTelemetryWireDecoder {
             rxShortPackets: rxShortPackets,
             rxInvalidCipHeaders: rxInvalidCipHeaders,
             rxZeroDataBlockSize: rxZeroDataBlockSize,
-            rxGeometryMismatch: rxGeometryMismatch
+            rxGeometryMismatch: rxGeometryMismatch,
+            txPlaybackWriteFrame: txPlaybackWriteFrame,
+            txPlaybackOldestValidFrame: txPlaybackOldestValidFrame,
+            txContentFinalizedFrameEnd: txContentFinalizedFrameEnd,
+            txStagingOldestValidFrame: txStagingOldestValidFrame,
+            txStagingWrittenEndFrame: txStagingWrittenEndFrame,
+            txTransportCompletionCursor: txTransportCompletionCursor,
+            txTransportCommittedEnd: txTransportCommittedEnd,
+            txStagingWrites: txStagingWrites,
+            txStagingFrames: txStagingFrames,
+            txStagingDiscontinuities: txStagingDiscontinuities,
+            txStagingOverwrittenFrames: txStagingOverwrittenFrames,
+            txStagingReadsReady: txStagingReadsReady,
+            txStagingReadsNotYetWritten: txStagingReadsNotYetWritten,
+            txStagingReadsStaleOverwritten: txStagingReadsStaleOverwritten,
+            txStagingReadsSnapshotBusy: txStagingReadsSnapshotBusy,
+            txStagingReadsInvalid: txStagingReadsInvalid,
+            txContentDeferrals: txContentDeferrals,
+            txContentDeadlineNoData: txContentDeadlineNoData,
+            txContentStaleXruns: txContentStaleXruns,
+            txContentRebases: txContentRebases,
+            txContentFaultEvents: txContentFaultEvents,
+            txContentFirstFaultPacket: txContentFirstFaultPacket,
+            txContentFirstFaultAudioFrame: txContentFirstFaultAudioFrame,
+            txContentFirstFaultOldestFrame: txContentFirstFaultOldestFrame,
+            txContentFirstFaultWrittenEndFrame: txContentFirstFaultWrittenEndFrame,
+            txContentFirstFaultCompletionCursor: txContentFirstFaultCompletionCursor,
+            txContentFirstFaultCommittedEnd: txContentFirstFaultCommittedEnd,
+            txContentFirstFaultReason: txContentFirstFaultReason,
+            txTransportStatus: txTransportStatus,
+            rxEmptyCompletions: rxEmptyCompletions
         )
     }
 }
