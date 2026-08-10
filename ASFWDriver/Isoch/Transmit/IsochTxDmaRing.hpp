@@ -1,5 +1,5 @@
 // IsochTxDmaRing.hpp
-// ASFW - Low-level OHCI IT DMA ring engine (generic, no audio semantics).
+// ASFW - Low-level OHCI IT DMA ring engine (generic, payload opaque).
 
 #pragma once
 
@@ -14,6 +14,7 @@
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/BarrierUtils.hpp"
+#include "../../Shared/Isoch/TxPayloadSeal.hpp"
 
 #include <atomic>
 #include <array>
@@ -42,6 +43,7 @@ public:
         std::atomic<uint64_t> packetsRefilled{0};
         std::atomic<uint64_t> fatalPacketSize{0};
         std::atomic<uint64_t> fatalPayloadMapping{0};
+        std::atomic<uint64_t> fatalPayloadSealMismatch{0};
         std::atomic<uint64_t> fatalDescriptorBounds{0};
         std::atomic<uint64_t> txUnderruns{0};
 
@@ -69,6 +71,7 @@ public:
         UncommittedSlot,
         InvalidPacketSize,
         PayloadMapping,
+        PayloadSealMismatch,
     };
 
     [[nodiscard]] static const char* RefillFailureReasonName(
@@ -88,6 +91,8 @@ public:
         uint64_t failurePacketAbs{0};
         uint32_t failureSlot{0};
         uint32_t failurePayloadLength{0};
+        uint64_t failureExpectedPayloadSeal{0};
+        uint64_t failureObservedPayloadSeal{0};
         uint16_t hwTimestamp{0};
         uint32_t completedPacketIndex{0};
         uint32_t completedPacketCount{0};
@@ -128,7 +133,13 @@ public:
                                        uint8_t* payloadBase,
                                        const TxPayloadDmaMap& payloadDmaMap) noexcept;
 
-    void WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept;
+    [[nodiscard]] bool WakeHardwareIfIdle(Driver::HardwareInterface& hw,
+                                          uint8_t contextIndex) noexcept;
+
+    // Anomaly-only diagnostic read of the OUTPUT_LAST immediately preceding
+    // CommandPtr. The returned word is opaque transport completion state.
+    [[nodiscard]] uint32_t CompletionStatusBefore(
+        uint32_t hwPacketIndex) noexcept;
 
     // Debug helpers (delegated by IsochTransmitContext)
     void DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t contextIndex) const noexcept;
@@ -137,7 +148,7 @@ public:
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
     [[nodiscard]] uint32_t LastHwTimestamp() const noexcept { return lastHwTimestamp_; }
 
-    // Expose slab for audio injection.
+    // Expose the slab for host tests and bounded transport diagnostics.
     [[nodiscard]] IsochTxDescriptorSlab& Slab() noexcept { return slab_; }
     [[nodiscard]] const IsochTxDescriptorSlab& Slab() const noexcept { return slab_; }
 

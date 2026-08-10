@@ -16,40 +16,30 @@
 #include "IsochReceiveContext.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 
-namespace ASFW::IRM {
-class IRMClient;
-}
-
 namespace ASFW::Driver {
 
 class HardwareInterface;
 
 class IsochService {
   public:
-    using TimingLossCallback = std::function<void(uint64_t guid)>;
     using TxPreparationCallback = std::function<void(uint64_t generation)>;
-    using ZtsAnchorReadyCallback = std::function<void(uint64_t generation)>;
 
     IsochService() = default;
     ~IsochService() = default;
 
-    // Maximum isochronous streams per direction. Stream 0 is the "master"
-    // (owns the clock/ZTS/replay role); streams 1+ are secondary slices used by
-    // multi-stream DICE devices (e.g. Venice F32 = 2×16 channels). A single OHCI
-    // IR/IT hardware context backs each stream (contextIndex == streamIndex).
+    // Maximum isochronous contexts per direction. Context 0 is primary;
+    // contexts 1+ are independent packet streams. One OHCI IR/IT hardware
+    // context backs each index.
     static constexpr uint32_t kMaxStreamsPerDirection = 4;
 
     kern_return_t StartReceive(uint8_t channel, HardwareInterface& hardware,
                                ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
     kern_return_t PrepareReceive(uint8_t channel, HardwareInterface& hardware,
                                  ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
-    // Prepare a secondary capture stream (streamIndex >= 1) on its own OHCI IR
-    // context. channelOffset is the first host input channel this stream writes
-    // (e.g. 16 for the second 16-ch slice of a 32-ch device); it is recorded for
-    // the audio-engine de-interleave pass and not yet applied to the decoder.
+    // Prepare an additional receive stream on its own OHCI IR context. Content
+    // layout and destination offsets belong to the caller-owned consumer.
     kern_return_t PrepareReceiveStream(
-        uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
-        uint32_t channelOffset, uint32_t streamChannels);
+        uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware);
     kern_return_t StartPreparedReceive();
 
     // Starts stream 0 with a caller-owned, content-side packet consumer. The
@@ -63,30 +53,18 @@ class IsochService {
 
     kern_return_t StopReceive();
 
-    [[nodiscard]] uint32_t CaptureStreamChannelOffset(uint32_t streamIndex) const noexcept {
-        return (streamIndex < kMaxStreamsPerDirection) ? captureChannelOffset_[streamIndex] : 0;
-    }
-
     kern_return_t StartTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
     kern_return_t PrepareTransmit(uint8_t channel, HardwareInterface& hardware, uint8_t sid);
-    // Prepare a secondary playback stream (streamIndex >= 1) on its own OHCI IT
-    // context. The shared payload slab for the secondary stream is wired by the
-    // audio-engine pass via SetSecondaryTransmitSharedMemory(); this only
-    // creates and configures the hardware context.
+    // Prepare an additional transmit stream on its own OHCI IT context. The
+    // caller supplies an opaque shared packet queue separately.
     kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
                                         HardwareInterface& hardware, uint8_t sid);
     kern_return_t StartPreparedTransmit();
 
     kern_return_t StopTransmit();
 
-    kern_return_t BeginSplitDuplex(uint64_t guid);
-    kern_return_t ReservePlaybackResources(uint64_t guid, IRM::IRMClient& irmClient,
-                                           uint8_t channel, uint32_t bandwidthUnits);
-    kern_return_t ReserveCaptureResources(uint64_t guid, IRM::IRMClient& irmClient, uint8_t channel,
-                                          uint32_t bandwidthUnits);
-
-    // Do not tear down a DirectAudio binding after a failed stop: an ACTIVE
-    // OHCI context may still DMA into that mapping.
+    // Do not tear down a producer/consumer binding after a failed stop: an
+    // ACTIVE OHCI context may still DMA into that mapping.
     [[nodiscard]] kern_return_t StopAll();
     [[nodiscard]] bool HardwareGone() const noexcept;
     // The caller owns the consumer and must detach it only after StopReceive()
@@ -94,13 +72,7 @@ class IsochService {
     // secondary hardware contexts.
     void SetReceiveConsumer(uint32_t streamIndex,
                             ASFW::Isoch::IIsochReceiveConsumer* consumer) noexcept;
-    void NotifyReceiveTimingLoss() noexcept;
-    void NotifyReceiveReplayEstablished() noexcept;
-    void NotifyReceiveZtsAnchor(uint64_t generation) noexcept;
-    void SetTimingLossCallback(TimingLossCallback callback) noexcept;
-
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
-    void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
 
     /**
      * @brief Allocates the shared payload slab, metadata ring, and control block.
@@ -153,13 +125,8 @@ class IsochService {
     }
 
   private:
-    kern_return_t ClaimDuplexGuid(uint64_t guid);
-    void OnReceiveTimingLossDetected() noexcept;
-    void StartDeferredTransmitIfReady() noexcept;
-
-    // Stream 0 (master) capture/playback contexts — own the clock/ZTS/replay
-    // role. Their lifecycle and callbacks are unchanged from the single-stream
-    // design; secondary streams layer on top without touching them.
+    // Primary receive/transmit contexts. Content-side policy may assign a
+    // special role to index 0, but transport does not know that policy.
     std::unique_ptr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
 
@@ -170,44 +137,17 @@ class IsochService {
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext>
         secondaryTransmitContexts_[kMaxStreamsPerDirection - 1];
 
-    // First host input channel each capture stream writes (de-interleave offset);
-    // recorded here for the audio-engine pass. Index 0 == master (offset 0).
-    uint32_t captureChannelOffset_[kMaxStreamsPerDirection]{0, 0, 0, 0};
     ASFW::Isoch::IIsochReceiveConsumer*
         receiveConsumers_[kMaxStreamsPerDirection]{nullptr, nullptr, nullptr, nullptr};
 
-    // Per-stream TX shared resources. Index 0 == master; 1.. are secondary
-    // playback streams (multi-stream DICE, e.g. Venice F32 = 2×16). Each IT
-    // context DMAs its own slab; the audio engine maps each and writes its
-    // de-interleaved 16-ch slice into it.
+    // Per-stream opaque TX shared resources. Each IT context DMAs its own slab;
+    // transport neither produces nor interprets the bytes.
     OSSharedPtr<IOBufferMemoryDescriptor> txPayloadSlab_[kMaxStreamsPerDirection]{};
     OSSharedPtr<IOBufferMemoryDescriptor> txMetadataRing_[kMaxStreamsPerDirection]{};
     OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_[kMaxStreamsPerDirection]{};
 
-    uint64_t activeGuid_{0};
-    TimingLossCallback timingLossCallback_{};
     TxPreparationCallback txPreparationCallback_{};
-    ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
-    bool txStartPending_{false};
     uint32_t interruptInterval_{8};
-
-    struct ReservedDuplexResources {
-        bool playbackActive{false};
-        uint8_t playbackChannel{0xFF};
-        uint32_t playbackBandwidthUnits{0};
-        bool captureActive{false};
-        uint8_t captureChannel{0xFF};
-        uint32_t captureBandwidthUnits{0};
-
-        void Reset() noexcept {
-            playbackActive = false;
-            playbackChannel = 0xFF;
-            playbackBandwidthUnits = 0;
-            captureActive = false;
-            captureChannel = 0xFF;
-            captureBandwidthUnits = 0;
-        }
-    } reserved_{};
 
     HardwareInterface* hardware_{nullptr};
     void UpdateStreamingActiveState() noexcept;

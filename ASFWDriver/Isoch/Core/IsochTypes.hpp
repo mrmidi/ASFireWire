@@ -32,6 +32,14 @@ struct IsochReceivePacket final {
     std::span<const uint8_t> payload{};
 };
 
+// Generic off-hot-path maintenance classes. The transport schedules these
+// without knowing what a content consumer records or emits.
+enum class IsochConsumerMaintenanceKind : uint8_t {
+    kTelemetryDrain = 0,
+    kDiagnosticsDrain = 1,
+    kTraceSnapshot = 2,
+};
+
 // Content consumers live outside transport. The receive context invokes these
 // methods synchronously on its polling path and never reads or writes
 // consumer-owned state itself.
@@ -49,11 +57,9 @@ class IIsochReceiveConsumer {
     virtual void ConsumePacket(const IsochReceiveBatch& batch,
                                const IsochReceivePacket& packet) noexcept = 0;
 
-    // Off-hot-path observability hooks.  They are optional because content
-    // formats decide which timing and payload facts are meaningful.
-    virtual void DrainReceiveTelemetry(uint32_t) {}
-    virtual void DrainPayloadTelemetry() {}
-    virtual void LogTransmitTimingTrace() {}
+    // Optional off-hot-path maintenance. Content consumers decide what each
+    // class means; transport passes only a bounded work budget.
+    virtual void PerformMaintenance(IsochConsumerMaintenanceKind, uint32_t) {}
 };
 
 // Callback for received packets (Raw transport level)

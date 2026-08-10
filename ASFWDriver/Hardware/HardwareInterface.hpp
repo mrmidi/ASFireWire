@@ -122,7 +122,7 @@ class HardwareInterface {
     /// A PHY register access serialises on `phyLock_` and blocks until the OHCI
     /// rdDone handshake or a timeout. A single timeout was measured at 115 ms,
     /// which exceeds the ~78 ms producer-stall budget that keeps an audio
-    /// stream's exposure frontier ahead of CoreAudio -- so a *diagnostic* PHY
+    /// stream's prepared-packet frontier ahead of OHCI -- so a *diagnostic* PHY
     /// dump can silently kill a healthy stream (2026-07-19; see
     /// captures/2026-07-19-duet-avc-recovery-001.md).
     ///

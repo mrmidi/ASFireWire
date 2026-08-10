@@ -13,20 +13,12 @@
 
 namespace ASFW::Driver {
 namespace {
-// ZTS telemetry drain cadence. The watchdog ticks every 1 ms; draining every
-// 100 ticks (~100 ms) keeps the ring drained well below its capacity. The
-// receive context always logs the seed, then gates steady-state snapshots to
-// one per ~4 seconds while retaining the multi-second clock-drift measurement.
-constexpr uint32_t kZtsDrainIntervalTicks = 100;
-constexpr uint32_t kZtsRecordsPerDrain = 8;
-// Audio payload writer decisions arrive ~100/s. Drain every 100 ticks
-// (~100 ms) off the audio callback path; the receiver emits one aggregate
-// line only when counters advance anomalously.
-constexpr uint32_t kPayloadWriterDrainIntervalTicks = 100;
-// TX SYT decisions arrive ~6000/s; the trace is a single latest-value mailbox,
-// so log the most recent decision once per ~1 s (1000 ticks). The line carries
-// the total decision count so collapsed updates are still visible.
-constexpr uint32_t kTxSytTraceIntervalTicks = 1000;
+// Content-neutral maintenance cadence for an installed receive consumer. The
+// watchdog selects only bounded work classes; the consumer owns their meaning.
+constexpr uint32_t kReceiveTelemetryIntervalTicks = 100;
+constexpr uint32_t kReceiveTelemetryRecordsPerDrain = 8;
+constexpr uint32_t kReceiveDiagnosticsIntervalTicks = 100;
+constexpr uint32_t kReceiveTraceIntervalTicks = 1000;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -113,10 +105,11 @@ void WatchdogCoordinator::Reset() {
         action_.reset();
     }
     isochLogDivider_ = 0;
+    receiveProgressLogDivider_ = 0;
     itLogDivider_ = 0;
-    ztsLogDivider_ = 0;
-    payloadWriterLogDivider_ = 0;
-    txSytTraceDivider_ = 0;
+    receiveTelemetryDivider_ = 0;
+    receiveDiagnosticsDivider_ = 0;
+    receiveTraceDivider_ = 0;
     lastDrainEligible_ = true;
 }
 
@@ -167,18 +160,8 @@ void WatchdogCoordinator::TickIsochReceive(
         isochReceiveContext->Poll();
     }
 
-    // ZTS clock telemetry is captured lock-free inside Poll() (which runs in
-    // the interrupt hot path); format it here, off the hot path, on a ~100 ms
-    // cadence (tick = 1 ms). Gated by the DirectAudio verbosity so it shares
-    // the direct-audio diagnostics kill switch (default on). Draining remains
-    // frequent; the receive-side log gate controls the much lower print rate.
-    // 951abcc7 made all three drains conditional on IsochReceiveContext's
-    // receiveConsumer_ (they used to drain a context-owned ring
-    // unconditionally). Zts, TxSyt and [PayloadWriter] have been silent for a
-    // whole hardware session since - and LogTransmitTimingTrace has no anomaly
-    // gate, so its silence cannot be explained by a healthy stream. Report the
-    // two preconditions once per transition so the dead precondition is named
-    // rather than inferred.
+    // Run bounded consumer maintenance off the receive polling hot path. The
+    // transport/scheduler never interprets consumer telemetry or trace data.
     const bool drainEligible =
         isRunning && ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1;
     if (drainEligible != lastDrainEligible_) {
@@ -188,17 +171,30 @@ void WatchdogCoordinator::TickIsochReceive(
     }
 
     if (drainEligible) {
-        if (++ztsLogDivider_ >= kZtsDrainIntervalTicks) {
-            ztsLogDivider_ = 0;
-            isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);
+        if (++receiveTelemetryDivider_ >= kReceiveTelemetryIntervalTicks) {
+            receiveTelemetryDivider_ = 0;
+            isochReceiveContext->RunConsumerMaintenance(
+                ASFW::Isoch::IsochConsumerMaintenanceKind::kTelemetryDrain,
+                kReceiveTelemetryRecordsPerDrain);
         }
-        if (++payloadWriterLogDivider_ >= kPayloadWriterDrainIntervalTicks) {
-            payloadWriterLogDivider_ = 0;
-            isochReceiveContext->DrainPayloadWriterTelemetry();
+        if (++receiveDiagnosticsDivider_ >= kReceiveDiagnosticsIntervalTicks) {
+            receiveDiagnosticsDivider_ = 0;
+            isochReceiveContext->RunConsumerMaintenance(
+                ASFW::Isoch::IsochConsumerMaintenanceKind::kDiagnosticsDrain,
+                1);
         }
-        if (++txSytTraceDivider_ >= kTxSytTraceIntervalTicks) {
-            txSytTraceDivider_ = 0;
-            isochReceiveContext->LogTxSytTrace();
+        if (++receiveTraceDivider_ >= kReceiveTraceIntervalTicks) {
+            receiveTraceDivider_ = 0;
+            isochReceiveContext->RunConsumerMaintenance(
+                ASFW::Isoch::IsochConsumerMaintenanceKind::kTraceSnapshot,
+                1);
+        }
+    }
+
+    if (++receiveProgressLogDivider_ >= 1000) {
+        receiveProgressLogDivider_ = 0;
+        if (isRunning) {
+            isochReceiveContext->LogProgressStatistics();
         }
     }
 

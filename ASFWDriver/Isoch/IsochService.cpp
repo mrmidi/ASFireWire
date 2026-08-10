@@ -55,9 +55,8 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
 
     isochReceiveContext_->SetReceiveConsumer(receiveConsumers_[0]);
 
-    // Master stream: contextIndex 0, channelOffset 0, isSecondary false.
-    // streamChannels 0 == full binding width (single-stream back-compat);
-    // multi-stream devices pass their first slice's PCM count.
+    // Primary stream uses hardware context index 0. Payload interpretation is
+    // delegated to the installed consumer.
     const kern_return_t kr =
         isochReceiveContext_->Configure(channel, 0);
     if (kr != kIOReturnSuccess) {
@@ -69,13 +68,12 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
     // races a std::function assignment.
     isochReceiveContext_->SetCallback(std::move(packetCallback));
 
-    ASFW_LOG(Isoch, "IsochService: Prepared IR on channel %u (Direct-Only)", channel);
+    ASFW_LOG(Isoch, "IsochService: Prepared IR on channel %u", channel);
     return kIOReturnSuccess;
 }
 
 kern_return_t IsochService::PrepareReceiveStream(
-    uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware,
-    uint32_t channelOffset, uint32_t streamChannels) {
+    uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware) {
     hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareReceive() for it.
     if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
@@ -103,14 +101,11 @@ kern_return_t IsochService::PrepareReceiveStream(
                      streamIndex);
             return kIOReturnNoMemory;
         }
-        // Secondary streams do NOT own the clock/ZTS/replay role — those stay on
-        // the master context, so no ZTS/replay/timing-loss callbacks here.
     }
 
     slot->SetReceiveConsumer(receiveConsumers_[streamIndex]);
 
     // contextIndex == streamIndex routes this stream to its own OHCI IR context.
-    // isSecondary=true makes it write PCM only (no clock/replay/ZTS).
     const kern_return_t kr =
         slot->Configure(channel, static_cast<uint8_t>(streamIndex));
     if (kr != kIOReturnSuccess) {
@@ -119,10 +114,8 @@ kern_return_t IsochService::PrepareReceiveStream(
         return kr;
     }
 
-    captureChannelOffset_[streamIndex] = channelOffset;
-    ASFW_LOG(Isoch,
-             "IsochService: Prepared secondary IR stream %u on channel %u (offset %u, %u ch)",
-             streamIndex, channel, channelOffset, streamChannels);
+    ASFW_LOG(Isoch, "IsochService: Prepared secondary IR stream %u on channel %u",
+             streamIndex, channel);
     return kIOReturnSuccess;
 }
 
@@ -130,7 +123,7 @@ kern_return_t IsochService::StartPreparedReceive() {
     if (!isochReceiveContext_) {
         return kIOReturnNotReady;
     }
-    ASFW_LOG(Isoch, "IsochService: Starting prepared IR (Direct-Only)");
+    ASFW_LOG(Isoch, "IsochService: Starting prepared IR");
     const kern_return_t kr = isochReceiveContext_->Start();
     if (kr != kIOReturnSuccess) {
         return kr;
@@ -269,7 +262,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
         }
     }
 
-    ASFW_LOG(Isoch, "IsochService: Prepared IT on channel %u (Direct-Only)", channel);
+    ASFW_LOG(Isoch, "IsochService: Prepared IT on channel %u", channel);
     return kIOReturnSuccess;
 }
 
@@ -316,9 +309,8 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
                  streamIndex, kr);
         return kr;
     }
-    // Wire this stream's own shared payload slab (allocated via
-    // AllocateTxIsochResources(streamIndex)) so the context can DMA it. The
-    // audio engine maps the same descriptors and writes the de-interleaved slice.
+    // Wire this stream's own opaque payload slab and queue metadata so the
+    // context can DMA packets prepared by any content producer.
     if (txPayloadSlab_[streamIndex] && txMetadataRing_[streamIndex] &&
         txControlBlock_[streamIndex]) {
         const kern_return_t memKr = slot->SetSharedMemoryDescriptors(
@@ -345,21 +337,10 @@ kern_return_t IsochService::StartPreparedTransmit() {
     if (!isochTransmitContext_) {
         return kIOReturnNotReady;
     }
-    // Start IT immediately — do NOT defer on IR cadence/replay. The TX producer
-    // already gates *data* packets on replay establishment (sending NO-DATA CIP
-    // until the device clock is recovered), so an early start only emits the
-    // NO-DATA "dry-run" packets that bootstrap the device's stream — matching
-    // FFADO's DICE streaming engine, which runs the transmit processor to drive
-    // the device rather than waiting on receive sync.
-    //
-    // FW: the old deferral deadlocked devices (e.g. Midas Venice F32) that won't
-    // transmit their capture stream until they see an active host playback
-    // stream: IT waited for IR cadence, IR cadence waited for device TX, device
-    // TX waited for host IT. Focusrite happens to transmit unconditionally so it
-    // never hit this, but the deferral was an ASFW-specific deviation from the
-    // reference and is removed.
-    txStartPending_ = false;
-    ASFW_LOG(Isoch, "IsochService: Starting prepared IT (Direct-Only)");
+    // Transport starts immediately when requested. A content producer may
+    // choose DATA, NO-DATA, empty, or another fully-framed packet form without
+    // transport inspecting that choice.
+    ASFW_LOG(Isoch, "IsochService: Starting prepared IT");
     const kern_return_t kr = isochTransmitContext_->Start();
     if (kr != kIOReturnSuccess) {
         return kr;
@@ -379,7 +360,6 @@ kern_return_t IsochService::StartPreparedTransmit() {
 }
 
 kern_return_t IsochService::StopTransmit() {
-    txStartPending_ = false;
     kern_return_t result = kIOReturnSuccess;
     if (isochTransmitContext_) {
         result = isochTransmitContext_->Stop();
@@ -396,37 +376,6 @@ kern_return_t IsochService::StopTransmit() {
     return result;
 }
 
-kern_return_t IsochService::BeginSplitDuplex(uint64_t guid) {
-    const kern_return_t kr = ClaimDuplexGuid(guid);
-    if (kr != kIOReturnSuccess)
-        return kr;
-
-    reserved_.Reset();
-    return kIOReturnSuccess;
-}
-
-kern_return_t IsochService::ReservePlaybackResources(uint64_t guid, IRM::IRMClient& irmClient,
-                                                     uint8_t channel, uint32_t bandwidthUnits) {
-    if (activeGuid_ != guid)
-        return kIOReturnNotPrivileged;
-
-    reserved_.playbackActive = true;
-    reserved_.playbackChannel = channel;
-    reserved_.playbackBandwidthUnits = bandwidthUnits;
-    return kIOReturnSuccess;
-}
-
-kern_return_t IsochService::ReserveCaptureResources(uint64_t guid, IRM::IRMClient& irmClient,
-                                                    uint8_t channel, uint32_t bandwidthUnits) {
-    if (activeGuid_ != guid)
-        return kIOReturnNotPrivileged;
-
-    reserved_.captureActive = true;
-    reserved_.captureChannel = channel;
-    reserved_.captureBandwidthUnits = bandwidthUnits;
-    return kIOReturnSuccess;
-}
-
 kern_return_t IsochService::StopAll() {
     const kern_return_t receiveStatus = StopReceive();
     const kern_return_t transmitStatus = StopTransmit();
@@ -435,9 +384,7 @@ kern_return_t IsochService::StopAll() {
         if (hardware_ && hardware_->HardwareGone()) {
             // A revoked provider cannot DMA. This is the inverse of the live-
             // hardware timeout rule above: release rather than retain every
-            // software-owned reservation and mapping.
-            reserved_.Reset();
-            activeGuid_ = 0;
+            // software-owned DMA mapping.
             ASFW_LOG(Isoch,
                      "[Lifecycle] IsochService StopAll hardware-gone action=release "
                      "receive=0x%08x transmit=0x%08x",
@@ -445,12 +392,10 @@ kern_return_t IsochService::StopAll() {
             return kIOReturnSuccess;
         }
         ASFW_LOG_ERROR(Isoch,
-                       "IsochService: StopAll did not quiesce every context kr=0x%08x; retaining reservations and DMA mappings",
+                       "IsochService: StopAll did not quiesce every context kr=0x%08x; retaining DMA mappings",
                        failure);
         return failure;
     }
-    reserved_.Reset();
-    activeGuid_ = 0;
     if (hardware_ && hardware_->HardwareGone()) {
         ASFW_LOG(Isoch,
                  "[Lifecycle] IsochService StopAll hardware-gone action=release receive=0x%08x transmit=0x%08x",
@@ -461,10 +406,6 @@ kern_return_t IsochService::StopAll() {
 
 bool IsochService::HardwareGone() const noexcept {
     return hardware_ && hardware_->HardwareGone();
-}
-
-void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
-    timingLossCallback_ = std::move(callback);
 }
 
 void IsochService::SetReceiveConsumer(
@@ -478,57 +419,10 @@ void IsochService::SetReceiveConsumer(
     }
 }
 
-void IsochService::NotifyReceiveTimingLoss() noexcept {
-    OnReceiveTimingLossDetected();
-}
-
-void IsochService::NotifyReceiveReplayEstablished() noexcept {
-    StartDeferredTransmitIfReady();
-}
-
-void IsochService::NotifyReceiveZtsAnchor(uint64_t generation) noexcept {
-    if (ztsAnchorReadyCallback_) {
-        ztsAnchorReadyCallback_(generation);
-    }
-}
-
 void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noexcept {
     txPreparationCallback_ = std::move(callback);
     if (isochTransmitContext_) {
         isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
-    }
-}
-
-void IsochService::SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept {
-    ztsAnchorReadyCallback_ = std::move(callback);
-}
-
-kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
-    if (activeGuid_ != 0 && activeGuid_ != guid) {
-        ASFW_LOG(Isoch, "IsochService: GUID conflict 0x%llx (active: 0x%llx)", guid, activeGuid_);
-        return kIOReturnBusy;
-    }
-    activeGuid_ = guid;
-    return kIOReturnSuccess;
-}
-
-void IsochService::OnReceiveTimingLossDetected() noexcept {
-    if (timingLossCallback_ && activeGuid_ != 0) {
-        timingLossCallback_(activeGuid_);
-    }
-}
-
-void IsochService::StartDeferredTransmitIfReady() noexcept {
-    if (!txStartPending_ || !isochTransmitContext_ || !isochReceiveContext_) {
-        return;
-    }
-
-    txStartPending_ = false;
-    ASFW_LOG(Isoch, "IsochService: IR replay established; starting deferred IT");
-    const kern_return_t status = isochTransmitContext_->Start();
-    if (status != kIOReturnSuccess) {
-        ASFW_LOG(Isoch, "IsochService: deferred IT start failed: 0x%08x", status);
-        OnReceiveTimingLossDetected();
     }
 }
 

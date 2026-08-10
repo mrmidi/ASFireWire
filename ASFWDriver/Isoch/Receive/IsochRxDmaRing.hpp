@@ -1,5 +1,5 @@
 // IsochRxDmaRing.hpp
-// ASFW - Low-level OHCI IR DMA ring engine (generic, no audio semantics).
+// ASFW - Low-level OHCI IR DMA ring engine (generic, payload opaque).
 
 #pragma once
 

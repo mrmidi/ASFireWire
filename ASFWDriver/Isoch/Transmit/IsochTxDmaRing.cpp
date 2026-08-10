@@ -315,6 +315,8 @@ const char* IsochTxDmaRing::RefillFailureReasonName(
             return "invalid-packet-size";
         case RefillFailureReason::PayloadMapping:
             return "payload-mapping";
+        case RefillFailureReason::PayloadSealMismatch:
+            return "payload-seal-mismatch";
     }
     return "unknown";
 }
@@ -359,7 +361,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         cmdPtr = access.Read(cmdPtrReg);
     }
 
-    // Clock-smoothing / filtering is handled natively by AudioDriverKit's clock algorithms.
+    // Publish the raw controller/host pair. Any smoothing or projection belongs
+    // to the content producer's clock domain.
     {
         const uint64_t hostTime = mach_absolute_time();
 
@@ -407,6 +410,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     out.cmdAddr = cmdPtr & 0xFFFFFFF0u;
 
     const uint32_t deltaConsumed = ComputeDeltaConsumed(hwPacketIndex);
+    out.completedPacketCount = deltaConsumed;
     const uint32_t gap = ringPacketsAhead_;
     UpdateGapCounters(gap);
     ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
@@ -439,6 +443,60 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     for (uint32_t i = 0; i < deltaConsumed; ++i) {
         const uint64_t currentAbsIdx = completedAbsIdx + i;
         const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
+
+        // The producer cannot reuse this shared slot until completionCursor is
+        // published below. Verify the opaque payload still matches its release-
+        // commit seal before returning ownership. This catches the exact class
+        // of any producer that mutates a payload after release commit.
+        const uint32_t producerSlot =
+            static_cast<uint32_t>(currentAbsIdx % numSlots);
+        const auto& completedMeta = metadataRing[producerSlot];
+        const uint32_t completedLength = completedMeta.payloadLength;
+        if (completedLength > controlBlock->maxPacketBytes) {
+            counters_.fatalPacketSize.fetch_add(
+                1, std::memory_order_relaxed);
+            controlBlock->statusWord.store(
+                IsochTxQueueStatus::kProducerFault,
+                std::memory_order_release);
+            out.failureReason = RefillFailureReason::InvalidPacketSize;
+            out.failurePacketAbs = currentAbsIdx;
+            out.failureSlot = producerSlot;
+            out.failurePayloadLength = completedLength;
+            return out;
+        }
+        const uint8_t* completedPayload =
+            payloadBase + static_cast<uint64_t>(producerSlot) *
+                              controlBlock->slotStrideBytes;
+        const uint64_t observedSeal =
+            ASFW::Shared::Isoch::SealTxPayload(
+                completedPayload, completedLength);
+        if (observedSeal != completedMeta.payloadSeal) {
+            counters_.fatalPayloadSealMismatch.fetch_add(
+                1, std::memory_order_relaxed);
+            controlBlock->statusWord.store(
+                IsochTxQueueStatus::kProducerFault,
+                std::memory_order_release);
+            controlBlock->streamGeneration.fetch_add(
+                1, std::memory_order_release);
+            out.failureReason =
+                RefillFailureReason::PayloadSealMismatch;
+            out.failurePacketAbs = currentAbsIdx;
+            out.failureSlot = producerSlot;
+            out.failurePayloadLength = completedLength;
+            out.failureExpectedPayloadSeal = completedMeta.payloadSeal;
+            out.failureObservedPayloadSeal = observedSeal;
+            ASFW_LOG_ERROR(
+                Isoch,
+                "[TxPayloadSeal] FATAL packet=%llu slot=%u len=%u expected=0x%016llx observed=0x%016llx committed=%llu completion=%llu",
+                currentAbsIdx,
+                producerSlot,
+                completedLength,
+                completedMeta.payloadSeal,
+                observedSeal,
+                controlBlock->committedEnd.load(std::memory_order_acquire),
+                completedAbsIdx);
+            return out;
+        }
 
         auto* desc2 = slab_.GetDescriptorPtr(
             completedPktSlot * Layout::kBlocksPerPacket +
@@ -680,10 +738,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     return out;
 }
 
-void IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept {
+bool IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw,
+                                       uint8_t contextIndex) noexcept {
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     auto access = hw.TryBeginAccess();
-    if (!access) return;
+    if (!access) return false;
     const uint32_t ctrl = access.Read(ctrlReg);
 
     const bool run = (ctrl & Driver::ContextControl::kRun) != 0;
@@ -692,8 +751,34 @@ void IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t c
 
     if (run && !dead && !active) {
         Register32 ctrlSetReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex));
-        access.Write(ctrlSetReg, Driver::ContextControl::kWake);
+        // Cross-validated with Linux context queue/flush behavior:
+        // firewire/ohci.c:1520-1525,3586-3592. Flush this anomaly-path write
+        // so the single bounded recovery attempt is observable immediately.
+        access.WriteAndFlush(ctrlSetReg, Driver::ContextControl::kWake);
+        return true;
     }
+    return false;
+}
+
+uint32_t IsochTxDmaRing::CompletionStatusBefore(
+    const uint32_t hwPacketIndex) noexcept {
+    if (!slab_.IsValid() || hwPacketIndex >= Layout::kNumPackets) {
+        return 0;
+    }
+    const uint32_t completedPacket =
+        (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
+    auto* descriptor = slab_.GetDescriptorPtr(
+        completedPacket * Layout::kBlocksPerPacket +
+        Layout::kCompletionBlock);
+    if (!descriptor) {
+        return 0;
+    }
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(
+            reinterpret_cast<const std::byte*>(descriptor),
+            sizeof(*descriptor));
+    }
+    return descriptor->statusWord;
 }
 
 void IsochTxDmaRing::DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t contextIndex) const noexcept {

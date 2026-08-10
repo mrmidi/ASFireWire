@@ -11,6 +11,7 @@
 #include "IsochTxDmaRing.hpp"
 #include "IsochTxLayout.hpp"
 
+#include "../Core/IsochProgressMonitor.hpp"
 #include "../Core/IsochTxQueue.hpp"
 #include "../Memory/IIsochDMAMemory.hpp"
 #include "../../Hardware/RegisterMap.hpp"
@@ -100,10 +101,19 @@ public:
     void LogStatistics() const noexcept;
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
+#ifdef ASFW_HOST_TEST
+    void SetProgressThresholdsForTesting(
+        Core::IsochProgressThresholds thresholds) noexcept;
+#endif
+
 private:
     void WakeHardware() noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
-    void StopImmediatelyForTxFault() noexcept;
+    void ObserveTransportProgress(
+        const Tx::IsochTxDmaRing::RefillOutcome& outcome,
+        uint64_t eventHostTicks) noexcept;
+    void StopImmediatelyForTxFault(
+        IsochTxQueueStatus status = IsochTxQueueStatus::kDeadContext) noexcept;
 
     // ==========================================================================
     // Member variables
@@ -133,6 +143,18 @@ private:
     // is a dead interrupt path and the context must stop honestly.
     static constexpr uint32_t kIrqSilentKickFatalThreshold = 16;
     uint32_t irqSilentKickStreak_{0};
+
+    // A callback is not DMA progress. This independent cursor monitor catches
+    // stale/repeated IT events and watchdog refills whose CommandPtr retires no
+    // packet. Thresholds are wall-clock durations converted once at Start().
+    static constexpr uint64_t kProgressWakeAfterNanos = 4'000'000;
+    static constexpr uint64_t kProgressSnapshotAfterNanos = 20'000'000;
+    static constexpr uint64_t kProgressFatalAfterNanos = 100'000'000;
+    Core::IsochProgressMonitor progressMonitor_{};
+    std::atomic<uint64_t> progressSnapshots_{0};
+    std::atomic<uint64_t> progressWakeAttempts_{0};
+    std::atomic<uint64_t> progressWakeSuccesses_{0};
+    std::atomic<uint64_t> progressFatalStops_{0};
 
     // Refill Latency Histogram (buckets: <50us, 50-200us, 200-500us, >500us)
     std::atomic<uint64_t> latencyBucket0_{0};

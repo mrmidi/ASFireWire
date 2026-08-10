@@ -34,6 +34,17 @@ const char* TxStateName(ITState state) noexcept {
     return "unknown";
 }
 
+uint64_t HostTicksForDuration(const uint64_t nanos) noexcept {
+    if (ASFW::Timing::initializeHostTimebase()) {
+        const uint64_t ticks = ASFW::Timing::nanosToHostTicks(nanos);
+        return ticks != 0 ? ticks : 1;
+    }
+    // mach_absolute_time is nanosecond-scaled on the supported host-test
+    // environment. Production initializes the real timebase during bring-up;
+    // retain a bounded fail-safe if that initialization unexpectedly fails.
+    return nanos;
+}
+
 } // namespace
 
 std::unique_ptr<IsochTransmitContext> IsochTransmitContext::Create(
@@ -278,6 +289,20 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     irqSilentKickStreak_ = 0;
     refillInProgress_.clear(std::memory_order_release);
 
+    progressMonitor_.Configure(Core::IsochProgressThresholds{
+        .wakeAfterTicks = HostTicksForDuration(kProgressWakeAfterNanos),
+        .snapshotAfterTicks =
+            HostTicksForDuration(kProgressSnapshotAfterNanos),
+        .fatalAfterTicks = HostTicksForDuration(kProgressFatalAfterNanos),
+    });
+    progressMonitor_.Reset(
+        mach_absolute_time(),
+        controlBlock_->completionCursor.load(std::memory_order_acquire));
+    progressSnapshots_.store(0, std::memory_order_relaxed);
+    progressWakeAttempts_.store(0, std::memory_order_relaxed);
+    progressWakeSuccesses_.store(0, std::memory_order_relaxed);
+    progressFatalStops_.store(0, std::memory_order_relaxed);
+
     latencyBucket0_.store(0, std::memory_order_relaxed);
     latencyBucket1_.store(0, std::memory_order_relaxed);
     latencyBucket2_.store(0, std::memory_order_relaxed);
@@ -288,7 +313,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     ring_.ResetForStart();
     ring_.SeedCycleTracking(*hardware_);
 
-    ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
+    ASFW_LOG(Isoch, "IT: Starting transmit context");
 
     const uint64_t preFillCount = controlBlock_->committedEnd.load(std::memory_order_relaxed);
     const auto primeStats =
@@ -352,7 +377,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 kern_return_t IsochTransmitContext::Stop() noexcept {
     if (state_ == State::Running && hardware_) {
         // This gate also covers watchdog Poll().  Acquire it before clearing
-        // RUN so an already-dispatched refill cannot retain a direct-audio
+        // RUN so an already-dispatched refill cannot retain a producer
         // mapping past the point this function reports quiesced.
         while (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
             IODelay(5);
@@ -444,6 +469,7 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
 
 void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
                                         bool publishTimingEvent) noexcept {
+    (void)publishTimingEvent;
     if (!hardware_ || state_ != State::Running) {
         return;
     }
@@ -469,7 +495,8 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
             "IT: Refill failed reason=%{public}s ctrl=0x%08x streamStatus=%u "
             "cmdPtr=0x%08x cmdAddr=0x%08x hwPacket=%u "
             "fatalAbs=%llu fatalSlot=%u payloadLen=%u "
-            "exitDead=%llu exitDecode=%llu fatalSize=%llu fatalMap=%llu "
+            "sealExpected=0x%016llx sealObserved=0x%016llx "
+            "exitDead=%llu exitDecode=%llu fatalSize=%llu fatalMap=%llu fatalSeal=%llu "
             "underruns=%llu - stopping immediately",
             Tx::IsochTxDmaRing::RefillFailureReasonName(
                 outcome.failureReason),
@@ -481,16 +508,24 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
             outcome.failurePacketAbs,
             outcome.failureSlot,
             outcome.failurePayloadLength,
+            outcome.failureExpectedPayloadSeal,
+            outcome.failureObservedPayloadSeal,
             counters.exitDead.load(std::memory_order_relaxed),
             counters.exitDecodeFail.load(std::memory_order_relaxed),
             counters.fatalPacketSize.load(std::memory_order_relaxed),
             counters.fatalPayloadMapping.load(std::memory_order_relaxed),
+            counters.fatalPayloadSealMismatch.load(
+                std::memory_order_relaxed),
             counters.txUnderruns.load(std::memory_order_relaxed));
         StopImmediatelyForTxFault();
     } else {
+        ObserveTransportProgress(outcome, eventHostTicks);
+        if (state_ != State::Running) {
+            return;
+        }
         packetsAssembled_ += outcome.packetsFilled;
         if (outcome.packetsFilled > 0) {
-            ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+            (void)ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
         }
         if (outcome.refillRequestGeneration != 0 &&
             txPreparationCallback_) {
@@ -499,12 +534,136 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
     }
 }
 
+void IsochTransmitContext::ObserveTransportProgress(
+    const Tx::IsochTxDmaRing::RefillOutcome& outcome,
+    const uint64_t eventHostTicks) noexcept {
+    if (!controlBlock_ || !hardware_) {
+        return;
+    }
+
+    const uint64_t completionCursor =
+        controlBlock_->completionCursor.load(std::memory_order_acquire);
+    const uint32_t observedControl = outcome.contextControl;
+    const auto decision = progressMonitor_.Observe(
+        Core::IsochProgressObservation{
+            .nowTicks = eventHostTicks,
+            .retiredCursor = completionCursor,
+            .run = (observedControl & Driver::ContextControl::kRun) != 0,
+            .active =
+                (observedControl & Driver::ContextControl::kActive) != 0,
+            .dead = (observedControl & Driver::ContextControl::kDead) != 0,
+        });
+    if (decision.progressed) {
+        return;
+    }
+
+    bool wakeSucceeded = false;
+    if (decision.requestWake) {
+        progressWakeAttempts_.fetch_add(1, std::memory_order_relaxed);
+        wakeSucceeded = ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+        if (wakeSucceeded) {
+            progressWakeSuccesses_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    if (decision.snapshot || decision.fatal) {
+        progressSnapshots_.fetch_add(1, std::memory_order_relaxed);
+
+        uint32_t contextControl = outcome.contextControl;
+        uint32_t commandPtr = outcome.cmdPtr;
+        uint32_t globalEvents = 0;
+        uint32_t txEvents = 0;
+        uint32_t rxEvents = 0;
+        uint32_t cycleTimer = 0;
+        if (auto access = hardware_->TryBeginAccess()) {
+            contextControl = access.Read(static_cast<Register32>(
+                DMAContextHelpers::IsoXmitContextControl(contextIndex_)));
+            commandPtr = access.Read(static_cast<Register32>(
+                DMAContextHelpers::IsoXmitCommandPtr(contextIndex_)));
+            globalEvents = access.Read(Register32::kIntEvent);
+            txEvents = access.Read(Register32::kIsoXmitEvent);
+            rxEvents = access.Read(Register32::kIsoRecvEvent);
+            cycleTimer = access.Read(Register32::kCycleTimer);
+        }
+        const uint32_t descriptorStatus =
+            ring_.CompletionStatusBefore(outcome.hwPacketIndex);
+        const uint64_t committedEnd =
+            controlBlock_->committedEnd.load(std::memory_order_acquire);
+        const uint64_t stallUsec =
+            ASFW::Timing::hostTicksToNanos(decision.stalledTicks) / 1000;
+        const char* action = decision.fatal
+            ? "fatal"
+            : (decision.requestWake ? "wake" : "snapshot");
+
+        if (decision.fatal) {
+            ASFW_LOG_ERROR(
+                Isoch,
+                "[IsochProgress] direction=tx action=%{public}s context=%u stallUs=%llu ret=%llu committed=%llu irq=%llu poll=%llu cmd=0x%08x hwPacket=%u ctrl=0x%08x intEvent=0x%08x txEvent=0x%08x rxEvent=0x%08x cycle=0x%08x descStatus=0x%08x wake=%u",
+                action,
+                contextIndex_,
+                stallUsec,
+                completionCursor,
+                committedEnd,
+                interruptCount_.load(std::memory_order_relaxed),
+                tickCount_,
+                commandPtr,
+                outcome.hwPacketIndex,
+                contextControl,
+                globalEvents,
+                txEvents,
+                rxEvents,
+                cycleTimer,
+                descriptorStatus,
+                wakeSucceeded ? 1u : 0u);
+        } else {
+            ASFW_LOG_WARNING(
+                Isoch,
+                "[IsochProgress] direction=tx action=%{public}s context=%u stallUs=%llu ret=%llu committed=%llu irq=%llu poll=%llu cmd=0x%08x hwPacket=%u ctrl=0x%08x intEvent=0x%08x txEvent=0x%08x rxEvent=0x%08x cycle=0x%08x descStatus=0x%08x wake=%u",
+                action,
+                contextIndex_,
+                stallUsec,
+                completionCursor,
+                committedEnd,
+                interruptCount_.load(std::memory_order_relaxed),
+                tickCount_,
+                commandPtr,
+                outcome.hwPacketIndex,
+                contextControl,
+                globalEvents,
+                txEvents,
+                rxEvents,
+                cycleTimer,
+                descriptorStatus,
+                wakeSucceeded ? 1u : 0u);
+        }
+    }
+
+    if (decision.fatal) {
+        progressFatalStops_.fetch_add(1, std::memory_order_relaxed);
+        StopImmediatelyForTxFault(
+            IsochTxQueueStatus::kTransportProgressStall);
+    }
+}
+
 void IsochTransmitContext::SetTxPreparationCallback(
     TxPreparationCallback callback) noexcept {
     txPreparationCallback_ = std::move(callback);
 }
 
-void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
+#ifdef ASFW_HOST_TEST
+void IsochTransmitContext::SetProgressThresholdsForTesting(
+    const Core::IsochProgressThresholds thresholds) noexcept {
+    progressMonitor_.Configure(thresholds);
+    progressMonitor_.Reset(
+        /*nowTicks=*/0,
+        controlBlock_
+            ? controlBlock_->completionCursor.load(std::memory_order_acquire)
+            : 0);
+}
+#endif
+
+void IsochTransmitContext::StopImmediatelyForTxFault(
+    const IsochTxQueueStatus status) noexcept {
     if (state_ == State::Stopped) {
         return;
     }
@@ -513,14 +672,34 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
             static_cast<Register32>(
                 DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
         if (auto access = hardware_->TryBeginAccess()) {
-            access.Write(ctrlClrReg, Driver::ContextControl::kRun);
             access.Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+            // This is the terminal anomaly path: do not leave RUN clear in a
+            // posted-write queue while the controller can keep replaying the
+            // stale descriptor region. Stop() uses the same flush discipline
+            // before it waits for ACTIVE to clear.
+            access.WriteAndFlush(ctrlClrReg, Driver::ContextControl::kRun);
         }
     }
     if (controlBlock_) {
-        const auto currentStatus = controlBlock_->statusWord.load(std::memory_order_acquire);
-        if (currentStatus != IsochTxQueueStatus::kProducerFault) {
-            controlBlock_->statusWord.store(IsochTxQueueStatus::kDeadContext, std::memory_order_release);
+        auto currentStatus =
+            controlBlock_->statusWord.load(std::memory_order_acquire);
+        while (currentStatus != IsochTxQueueStatus::kProducerFault &&
+               currentStatus != status) {
+            if (controlBlock_->statusWord.compare_exchange_weak(
+                    currentStatus,
+                    status,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire)) {
+                // Generation is a neutral terminal-state notification across
+                // the seam. Ring failures that already published their own
+                // status/generation arrive here non-running and are not
+                // counted twice.
+                if (currentStatus == IsochTxQueueStatus::kRunning) {
+                    controlBlock_->streamGeneration.fetch_add(
+                        1, std::memory_order_release);
+                }
+                break;
+            }
         }
     }
     state_ = State::Stopped;
@@ -541,9 +720,8 @@ void IsochTransmitContext::Poll() noexcept {
             // Snapshot context + latched interrupt state on the anomaly path
             // only. kIntEvent latches raised events even when masked, so a
             // cycleInconsistent/cycleTooLong the dispatcher never serviced is
-            // still visible here (first-fault evidence for the 2026-07-19
-            // Saffire dual-context freeze, whose trigger left no interrupt
-            // record).
+            // still visible here as first-fault evidence when an interrupt
+            // path stalls without producing a dispatcher record.
             if (irqSilentKickStreak_ == 1 && hardware_) {
                 auto access = hardware_->TryBeginAccess();
                 const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
@@ -557,11 +735,9 @@ void IsochTransmitContext::Poll() noexcept {
                          latchedIntEvents);
             }
             if (irqSilentKickStreak_ >= kIrqSilentKickFatalThreshold) {
-                // Watchdog-carried streaming re-transmits stale descriptor
-                // laps between kicks (observed Duet zombie, 2026-07-19: the
-                // interrupt path died mid-session and the watchdog fed the
-                // wire for 35 minutes of corrupt audio). Sustained interrupt
-                // silence is a transport fault, not jitter.
+                // Watchdog-carried streaming can re-transmit stale descriptor
+                // laps between kicks when the interrupt path dies. Sustained
+                // interrupt silence is a transport fault, not jitter.
                 auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
                 const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
                     DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
@@ -632,10 +808,32 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
 
 void IsochTransmitContext::WakeHardware() noexcept {
     if (!hardware_) return;
-    ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+    (void)ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
 }
 
 void IsochTransmitContext::LogStatistics() const noexcept {
+    if (!controlBlock_) {
+        return;
+    }
+    const uint64_t now = mach_absolute_time();
+    const uint64_t lastProgress = progressMonitor_.LastProgressTicks();
+    const uint64_t ageUsec = now >= lastProgress
+        ? ASFW::Timing::hostTicksToNanos(now - lastProgress) / 1000
+        : 0;
+    ASFW_LOG_RING_ONLY(
+        Isoch,
+        ::ASFW::Logging::LogLevel::Notice,
+        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu",
+        contextIndex_,
+        tickCount_,
+        interruptCount_.load(std::memory_order_relaxed),
+        controlBlock_->completionCursor.load(std::memory_order_acquire),
+        controlBlock_->committedEnd.load(std::memory_order_acquire),
+        ageUsec,
+        progressSnapshots_.load(std::memory_order_relaxed),
+        progressWakeSuccesses_.load(std::memory_order_relaxed),
+        progressWakeAttempts_.load(std::memory_order_relaxed),
+        progressFatalStops_.load(std::memory_order_relaxed));
 }
 
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {

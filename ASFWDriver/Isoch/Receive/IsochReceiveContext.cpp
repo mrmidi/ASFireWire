@@ -3,6 +3,7 @@
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Diagnostics/Signposts.hpp"
+#include "../../Common/TimingUtils.hpp"
 
 #include <utility>
 
@@ -98,6 +99,11 @@ kern_return_t IsochReceiveContext::Start() {
 
     Transition(IRPolicy::State::Running, 0, "Start");
     rxRing_.ResetForStart();
+    pollCount_.store(0, std::memory_order_relaxed);
+    pollBusyCount_.store(0, std::memory_order_relaxed);
+    packetsProcessed_.store(0, std::memory_order_relaxed);
+    lastProgressHostTicks_.store(mach_absolute_time(),
+                                 std::memory_order_relaxed);
 
     if (receiveConsumer_) {
         receiveConsumer_->OnReceiveActivated();
@@ -138,7 +144,7 @@ kern_return_t IsochReceiveContext::Stop() {
         return kIOReturnNotReady;
     }
     // Flush RUN-clear and wait for ACTIVE to fall before dropping the direct
-    // audio binding.  See Linux firewire/ohci.c:1361-1378 for the same
+    // caller-owned consumer. See Linux firewire/ohci.c:1361-1378 for the same
     // teardown ordering; freeing this mapping while ACTIVE is set can fault
     // the host when OHCI completes a late DMA write.
     ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
@@ -191,6 +197,7 @@ kern_return_t IsochReceiveContext::Stop() {
 
 uint32_t IsochReceiveContext::Poll() {
     if (rxLock_.test_and_set(std::memory_order_acquire)) {
+        pollBusyCount_.fetch_add(1, std::memory_order_relaxed);
         return 0;
     }
 
@@ -198,6 +205,7 @@ uint32_t IsochReceiveContext::Poll() {
         rxLock_.clear(std::memory_order_release);
         return 0;
     }
+    pollCount_.fetch_add(1, std::memory_order_relaxed);
 
     const auto cycleHostPair =
         hardware_
@@ -238,6 +246,12 @@ uint32_t IsochReceiveContext::Poll() {
         }
     });
 
+    if (processed != 0) {
+        packetsProcessed_.fetch_add(processed, std::memory_order_relaxed);
+        lastProgressHostTicks_.store(drainHostTicks,
+                                     std::memory_order_release);
+    }
+
     rxLock_.clear(std::memory_order_release);
     return processed;
 }
@@ -254,16 +268,54 @@ void IsochReceiveContext::SetReceiveConsumer(
 void IsochReceiveContext::LogHardwareState() {
 }
 
-void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
-    if (receiveConsumer_) receiveConsumer_->DrainReceiveTelemetry(maxRecords);
+void IsochReceiveContext::LogProgressStatistics() {
+    if (!hardware_) {
+        return;
+    }
+
+    uint32_t control = 0;
+    uint32_t commandPtr = 0;
+    uint32_t globalEvents = 0;
+    uint32_t txEvents = 0;
+    uint32_t rxEvents = 0;
+    uint32_t cycleTimer = 0;
+    if (auto access = hardware_->TryBeginAccess()) {
+        control = access.Read(registers_.ContextControlSet);
+        commandPtr = access.Read(registers_.CommandPtr);
+        globalEvents = access.Read(Driver::Register32::kIntEvent);
+        txEvents = access.Read(Driver::Register32::kIsoXmitEvent);
+        rxEvents = access.Read(Driver::Register32::kIsoRecvEvent);
+        cycleTimer = access.Read(Driver::Register32::kCycleTimer);
+    }
+
+    const uint64_t now = mach_absolute_time();
+    const uint64_t lastProgress =
+        lastProgressHostTicks_.load(std::memory_order_acquire);
+    const uint64_t ageUsec = now >= lastProgress
+        ? ASFW::Timing::hostTicksToNanos(now - lastProgress) / 1000
+        : 0;
+    ASFW_LOG_RING_ONLY(
+        Isoch,
+        ::ASFW::Logging::LogLevel::Notice,
+        "[IsochWatchdog] direction=rx context=%u poll=%llu busy=%llu packets=%llu progressAgeUs=%llu cmd=0x%08x ctrl=0x%08x intEvent=0x%08x txEvent=0x%08x rxEvent=0x%08x cycle=0x%08x",
+        contextIndex_,
+        pollCount_.load(std::memory_order_relaxed),
+        pollBusyCount_.load(std::memory_order_relaxed),
+        packetsProcessed_.load(std::memory_order_relaxed),
+        ageUsec,
+        commandPtr,
+        control,
+        globalEvents,
+        txEvents,
+        rxEvents,
+        cycleTimer);
 }
 
-void IsochReceiveContext::DrainPayloadWriterTelemetry() {
-    if (receiveConsumer_) receiveConsumer_->DrainPayloadTelemetry();
-}
-
-void IsochReceiveContext::LogTxSytTrace() {
-    if (receiveConsumer_) receiveConsumer_->LogTransmitTimingTrace();
+void IsochReceiveContext::RunConsumerMaintenance(
+    IsochConsumerMaintenanceKind kind, uint32_t budget) {
+    if (receiveConsumer_) {
+        receiveConsumer_->PerformMaintenance(kind, budget);
+    }
 }
 
 } // namespace ASFW::Isoch

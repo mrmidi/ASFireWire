@@ -87,10 +87,10 @@ class IsochReceiveContext final
     void SetReceiveConsumer(IIsochReceiveConsumer* consumer) noexcept;
 
     void LogHardwareState();
+    void LogProgressStatistics();
 
-    void DrainZtsTelemetry(uint32_t maxRecords);
-    void DrainPayloadWriterTelemetry();
-    void LogTxSytTrace();
+    void RunConsumerMaintenance(IsochConsumerMaintenanceKind kind,
+                                uint32_t budget);
 
   private:
     struct Registers {
@@ -114,6 +114,10 @@ class IsochReceiveContext final
     IsochReceiveCallback callback_{nullptr};
     IIsochReceiveConsumer* receiveConsumer_{nullptr};
     std::atomic_flag rxLock_ = ATOMIC_FLAG_INIT;
+    std::atomic<uint64_t> pollCount_{0};
+    std::atomic<uint64_t> pollBusyCount_{0};
+    std::atomic<uint64_t> packetsProcessed_{0};
+    std::atomic<uint64_t> lastProgressHostTicks_{0};
 
     Registers GetRegisters(uint8_t index) const;
 };

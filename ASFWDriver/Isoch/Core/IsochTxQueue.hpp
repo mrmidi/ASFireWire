@@ -2,7 +2,7 @@
 // ASFW - Payload-opaque shared queue contract for OHCI isochronous transmit.
 //
 // This is the only shared ABI between an IT packet producer and the OHCI
-// transport consumer.  It deliberately contains no content-format, audio-clock,
+// transport consumer. It deliberately contains no content-format or content-clock
 // or producer-policy concepts: the immediate header and payload bytes are
 // opaque to transport.  Bump kTxQueueAbiVersion for every layout change.
 
@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 5;
+inline constexpr uint32_t kTxQueueAbiVersion = 6;
 
 /// Producer fills the plain fields, then release-stores commitGeneration.
 /// Consumer acquire-loads it and accepts only ExpectedTxCommitGeneration().
@@ -24,7 +24,8 @@ struct alignas(64) IsochTxPacketMeta final {
     uint32_t reserved0;
     uint64_t packetIndex;         ///< Absolute packet index.
     std::atomic<uint64_t> commitGeneration{0};
-    uint8_t reserved1[64 - 32];
+    uint64_t payloadSeal;         ///< Hash of opaque payload at release commit.
+    uint8_t reserved1[64 - 40];
 };
 
 static_assert(sizeof(IsochTxPacketMeta) == 64);
@@ -33,6 +34,7 @@ static_assert(offsetof(IsochTxPacketMeta, immediateHeader) == 0);
 static_assert(offsetof(IsochTxPacketMeta, payloadLength) == 8);
 static_assert(offsetof(IsochTxPacketMeta, packetIndex) == 16);
 static_assert(offsetof(IsochTxPacketMeta, commitGeneration) == 24);
+static_assert(offsetof(IsochTxPacketMeta, payloadSeal) == 32);
 static_assert(std::atomic<uint64_t>::is_always_lock_free);
 
 [[nodiscard]] constexpr uint32_t TxQueueSlotIndexFor(
@@ -43,6 +45,27 @@ static_assert(std::atomic<uint64_t>::is_always_lock_free);
 [[nodiscard]] constexpr uint64_t ExpectedTxCommitGeneration(
     uint64_t packetIndex, uint32_t numSlots) noexcept {
     return packetIndex / numSlots + 1;
+}
+
+// The producer is append-only. Its first physical lap is prefilled while OHCI
+// is quiesced, before the transport resets its consumer cursor; after that it
+// may reuse a slot only when completionCursor has returned ownership. Keeping
+// this in the neutral queue contract prevents any content producer from
+// mutating a committed/DMA-owned payload without making a producer reset transport
+// state during startup.
+[[nodiscard]] constexpr bool CanAcquireTxProducerSlot(
+    uint64_t packetIndex,
+    uint64_t committedEnd,
+    uint64_t completionCursor,
+    uint32_t numSlots) noexcept {
+    if (numSlots == 0 || packetIndex != committedEnd) {
+        return false;
+    }
+    if (committedEnd < numSlots) {
+        return true;
+    }
+    return packetIndex >= completionCursor &&
+           packetIndex - completionCursor < numSlots;
 }
 
 /// Raw host/cycle anchor sampled by the IT consumer.  Interpretation belongs
@@ -98,6 +121,7 @@ enum class IsochTxQueueStatus : uint32_t {
     kRunning = 1,
     kProducerFault = 2,
     kDeadContext = 3,
+    kTransportProgressStall = 4,
 };
 
 /// Fixed, neutral third shared descriptor of the three-descriptor TX RPC.
