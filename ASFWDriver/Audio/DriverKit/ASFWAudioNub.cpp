@@ -298,14 +298,9 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioNub: Stop()");
     if (ivars) {
-        ASFWDriver* parent = GetParentASFWDriver(ivars);
-        auto* ctx =
-            parent
-                ? static_cast<ServiceContext*>(parent->GetServiceContext())
-                : nullptr;
-        if (ctx) {
-            ctx->isoch.SetTxPreparationCallback({});
-            ctx->isoch.SetZtsAnchorReadyCallback({});
+        if (auto* coordinator = GetAudioCoordinator(ivars)) {
+            coordinator->SetTxPreparationCallback({});
+            coordinator->SetClockAnchorReadyCallback({});
         }
         if (ivars->txPreparationAction) {
             ivars->txPreparationAction->release();
@@ -353,11 +348,8 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
         return kIOReturnNotReady;
     }
 
-    ASFWDriver* parent = GetParentASFWDriver(ivars);
-    auto* ctx =
-        parent ? static_cast<ServiceContext*>(parent->GetServiceContext())
-               : nullptr;
-    if (!ctx) {
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
         return kIOReturnNotReady;
     }
 
@@ -368,7 +360,7 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
     ivars->txPreparationAction = action;
 
     if (action) {
-        ctx->isoch.SetTxPreparationCallback(
+        coordinator->SetTxPreparationCallback(
             [this](uint64_t generation) {
                 if (ivars && ivars->txPreparationAction) {
                     TxPreparationReady(
@@ -376,7 +368,7 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
                 }
             });
     } else {
-        ctx->isoch.SetTxPreparationCallback({});
+        coordinator->SetTxPreparationCallback({});
     }
 
     if (oldAction) {
@@ -406,11 +398,8 @@ kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)
         return kIOReturnNotReady;
     }
 
-    ASFWDriver* parent = GetParentASFWDriver(ivars);
-    auto* ctx =
-        parent ? static_cast<ServiceContext*>(parent->GetServiceContext())
-               : nullptr;
-    if (!ctx) {
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
         return kIOReturnNotReady;
     }
 
@@ -421,7 +410,7 @@ kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)
     ivars->ztsAnchorAction = action;
 
     if (action) {
-        ctx->isoch.SetZtsAnchorReadyCallback(
+        coordinator->SetClockAnchorReadyCallback(
             [this](uint64_t generation) {
                 if (ivars && ivars->ztsAnchorAction) {
                     ZtsAnchorReady(
@@ -429,7 +418,7 @@ kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)
                 }
             });
     } else {
-        ctx->isoch.SetZtsAnchorReadyCallback({});
+        coordinator->SetClockAnchorReadyCallback({});
     }
 
     if (oldAction) {

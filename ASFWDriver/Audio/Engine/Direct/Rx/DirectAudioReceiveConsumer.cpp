@@ -5,7 +5,7 @@
 
 #include "../../../../Common/TimingUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
-#include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../../../Shared/AudioTimingGeometry.hpp"
 
 #include <utility>
 
@@ -14,6 +14,8 @@ namespace ASFW::AudioEngine::Direct::Rx {
 const char* DirectAudioReceiveConsumer::ReplayResetReasonName(
     ReplayResetReason reason) noexcept {
     switch (reason) {
+        case ReplayResetReason::kEmptyCompletion:
+            return "empty-completion";
         case ReplayResetReason::kPacketProcessorStatus:
             return "packet-status";
         case ReplayResetReason::kInvalidReceiveTimestamp:
@@ -51,11 +53,6 @@ void DirectAudioReceiveConsumer::SetZtsAnchorReadyCallback(
     ztsAnchorReadyCallback_ = std::move(callback);
 }
 
-void DirectAudioReceiveConsumer::SetReplayReadyCallback(
-    ReplayReadyCallback callback) noexcept {
-    replayReadyCallback_ = std::move(callback);
-}
-
 void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     secondaryAnchored_ = false;
     secondaryAnchorEpoch_ = 0;
@@ -67,7 +64,6 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     timestampValidCount_ = 0;
     timestampInvalidCount_ = 0;
     cadenceEstablishedLogged_ = false;
-    replayReadyNotified_ = false;
     replayResetForStart_ = false;
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
@@ -149,6 +145,26 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     const ::ASFW::Isoch::IsochReceiveBatch& batch,
     const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept {
     if (packet.payload.empty()) {
+        // A completed OHCI descriptor is one receive-cycle outcome even when
+        // it contains no packet image. Silently dropping it hides the cycle
+        // loss from replay and was one candidate trigger for the DICE TX
+        // cursor jump. Attribute it once and invalidate recovered timing; a
+        // secondary stream never mutates the master's replay state.
+        if (!configuration_.isSecondary && inputView_.control) {
+            inputView_.control->rxPacketsSeen.fetch_add(
+                1, std::memory_order_relaxed);
+            inputView_.control->rxEmptyCompletions.fetch_add(
+                1, std::memory_order_relaxed);
+            ResetReplayEpochForDiscontinuity(
+                ReplayResetReason::kEmptyCompletion,
+                {
+                    .descriptorIndex = packet.descriptorIndex,
+                    .payloadBytes = 0,
+                    .drainCycleTimer = batch.drainCycleTimer,
+                    .packetStatus = packet.transferStatus,
+                    .sampleFrame = absoluteFrameCursor_,
+                });
+        }
         return;
     }
 
@@ -318,10 +334,6 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         if (!inputView_.control->rxSequenceReplay.IsEstablished()) {
             (void)inputView_.control->rxSequenceReplay.MarkEstablished();
         }
-        if (!replayReadyNotified_ && replayReadyCallback_) {
-            replayReadyNotified_ = true;
-            replayReadyCallback_();
-        }
     }
 
     uint64_t packetHostTicks = batch.drainHostTicks;
@@ -345,7 +357,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
 
     const uint64_t packetFirstFrame = absoluteFrameCursor_ - result.framesDecoded;
     constexpr uint64_t kZtsPeriodFrames =
-        ::ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+        ::ASFW::Audio::Shared::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
     const uint32_t nanosPerSampleQ8 = inputView_.sampleRateHz == 0 ? 0 :
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
     if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
@@ -370,7 +382,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             if (publish.notifyConsumer && ztsAnchorReadyCallback_) {
                 ztsAnchorReadyCallback_(publish.notificationGeneration);
             }
-            ::ASFW::Isoch::Rx::ZtsTelemetryRecord record{};
+            ::ASFW::Audio::Runtime::ZtsTelemetryRecord record{};
             record.publishCount = ztsPublishCount_;
             record.sampleFrame = packetFirstFrame;
             record.hostTicks = packetHostTicks;
@@ -385,8 +397,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             record.rawRxTs = result.receiveCycleTimestamp;
             record.syt = result.syt;
             record.kind = static_cast<uint8_t>(ztsPublishCount_ == 1
-                ? ::ASFW::Isoch::Rx::ZtsEventKind::kSeed
-                : ::ASFW::Isoch::Rx::ZtsEventKind::kUpdate);
+                ? ::ASFW::Audio::Runtime::ZtsEventKind::kSeed
+                : ::ASFW::Audio::Runtime::ZtsEventKind::kUpdate);
             ztsTelemetry_.Record(record);
         }
     }
@@ -405,7 +417,6 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     control->rxSequenceReplay.Reset();
     const uint64_t resetEpoch =
         control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed) + 1;
-    replayReadyNotified_ = false;
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
     dbcInitialized_ = false;
@@ -442,10 +453,26 @@ bool DirectAudioReceiveConsumer::IsReplayEstablished() const noexcept {
     return control && control->rxSequenceReplay.IsEstablished();
 }
 
+void DirectAudioReceiveConsumer::PerformMaintenance(
+    ::ASFW::Isoch::IsochConsumerMaintenanceKind kind,
+    uint32_t budget) {
+    switch (kind) {
+        case ::ASFW::Isoch::IsochConsumerMaintenanceKind::kTelemetryDrain:
+            DrainReceiveTelemetry(budget);
+            break;
+        case ::ASFW::Isoch::IsochConsumerMaintenanceKind::kDiagnosticsDrain:
+            DrainPayloadTelemetry();
+            break;
+        case ::ASFW::Isoch::IsochConsumerMaintenanceKind::kTraceSnapshot:
+            LogTransmitTimingTrace();
+            break;
+    }
+}
+
 void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
     const uint32_t rate = inputView_.sampleRateHz;
     const uint64_t dropped = ztsTelemetry_.Drain(
-        maxRecords, [this, rate](const ::ASFW::Isoch::Rx::ZtsTelemetryRecord& record) {
+        maxRecords, [this, rate](const ::ASFW::Audio::Runtime::ZtsTelemetryRecord& record) {
             if (!ztsTelemetryLogGate_.ShouldEmit(record, rate)) {
                 return;
             }
@@ -453,7 +480,7 @@ void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
                      "%{public}s count=%llu frame=%llu host=%llu drainHost=%llu "
                      "drainCycle=0x%08x rxCycle=0x%08x age=%lld rawRxTs=0x%04x "
                      "syt=0x%04x desc=%u dec=%u rate=%u rateQ8=%u",
-                     record.kind == static_cast<uint8_t>(::ASFW::Isoch::Rx::ZtsEventKind::kSeed)
+                     record.kind == static_cast<uint8_t>(::ASFW::Audio::Runtime::ZtsEventKind::kSeed)
                          ? "SEED" : "UPD",
                      record.publishCount, record.sampleFrame, record.hostTicks,
                      record.drainHostTicks, record.drainCycleTimer, record.rxCycleTimer,
@@ -462,7 +489,7 @@ void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
         });
     if (dropped != 0) {
         ASFW_LOG(Zts, "drain overflow: dropped=%llu (capacity=%u)", dropped,
-                 ::ASFW::Isoch::Rx::ZtsTelemetryRing::kCapacity);
+                 ::ASFW::Audio::Runtime::ZtsTelemetryRing::kCapacity);
     }
 }
 

@@ -33,10 +33,17 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     if (!consumer) {
         return kIOReturnNoMemory;
     }
-    consumer->SetTimingLossCallback([this] { isoch_.NotifyReceiveTimingLoss(); });
-    consumer->SetReplayReadyCallback([this] { isoch_.NotifyReceiveReplayEstablished(); });
+    consumer->SetTimingLossCallback([this] {
+        if (timingLossCallback_ && activeGuid_ != 0) {
+            timingLossCallback_(activeGuid_);
+        }
+    });
     consumer->SetZtsAnchorReadyCallback(
-        [this](uint64_t generation) { isoch_.NotifyReceiveZtsAnchor(generation); });
+        [this](uint64_t generation) {
+            if (clockAnchorReadyCallback_) {
+                clockAnchorReadyCallback_(generation);
+            }
+        });
     receiveConsumers_[streamIndex] = std::move(consumer);
     isoch_.SetReceiveConsumer(streamIndex, receiveConsumers_[streamIndex].get());
     return kIOReturnSuccess;
@@ -51,13 +58,27 @@ void IsochDuplexHostTransport::DetachReceiveConsumers() noexcept {
 }
 
 void IsochDuplexHostTransport::SetTimingLossCallback(
-    Driver::IsochService::TimingLossCallback callback) noexcept {
-    isoch_.SetTimingLossCallback(std::move(callback));
+    TimingLossCallback callback) noexcept {
+    timingLossCallback_ = std::move(callback);
+}
+
+void IsochDuplexHostTransport::SetTxPreparationCallback(
+    Driver::IsochService::TxPreparationCallback callback) noexcept {
+    isoch_.SetTxPreparationCallback(std::move(callback));
+}
+
+void IsochDuplexHostTransport::SetClockAnchorReadyCallback(
+    ClockAnchorReadyCallback callback) noexcept {
+    clockAnchorReadyCallback_ = std::move(callback);
 }
 
 kern_return_t IsochDuplexHostTransport::BeginSplitDuplex(uint64_t guid) noexcept {
+    if (activeGuid_ != 0 && activeGuid_ != guid) {
+        return kIOReturnBusy;
+    }
     reservations_.ReleaseAll();
-    return isoch_.BeginSplitDuplex(guid);
+    activeGuid_ = guid;
+    return kIOReturnSuccess;
 }
 
 kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(uint64_t guid,
@@ -65,6 +86,9 @@ kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(uint64_t guid,
                                                                uint64_t allowedChannels,
                                                                uint32_t bandwidthUnits,
                                                                uint8_t& outChannel) noexcept {
+    if (activeGuid_ != guid) {
+        return kIOReturnNotPrivileged;
+    }
     // The IRM, not the device profile, chooses the live channel. A one-bit
     // mask preserves DICE's device-assigned channels; OXFW supplies all usable
     // channels and consumes the returned value for CMP + OHCI programming.
@@ -74,12 +98,7 @@ kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(uint64_t guid,
         return reservation.status;
     }
     outChannel = reservation.channel;
-    const kern_return_t bookkeeping =
-        isoch_.ReservePlaybackResources(guid, irmClient, outChannel, bandwidthUnits);
-    if (bookkeeping != kIOReturnSuccess) {
-        reservations_.ReleaseAll();
-    }
-    return bookkeeping;
+    return kIOReturnSuccess;
 }
 
 kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(uint64_t guid,
@@ -87,18 +106,16 @@ kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(uint64_t guid,
                                                               uint64_t allowedChannels,
                                                               uint32_t bandwidthUnits,
                                                               uint8_t& outChannel) noexcept {
+    if (activeGuid_ != guid) {
+        return kIOReturnNotPrivileged;
+    }
     const Backends::IRMReservationResult reservation =
         reservations_.ReserveAnyCapture(irmClient, allowedChannels, bandwidthUnits);
     if (reservation.status != kIOReturnSuccess) {
         return reservation.status;
     }
     outChannel = reservation.channel;
-    const kern_return_t bookkeeping =
-        isoch_.ReserveCaptureResources(guid, irmClient, outChannel, bandwidthUnits);
-    if (bookkeeping != kIOReturnSuccess) {
-        reservations_.ReleaseAll();
-    }
-    return bookkeeping;
+    return kIOReturnSuccess;
 }
 
 kern_return_t IsochDuplexHostTransport::PrepareReceive(
@@ -134,8 +151,8 @@ kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     if (attached != kIOReturnSuccess) {
         return attached;
     }
-    const kern_return_t status = isoch_.PrepareReceiveStream(
-        streamIndex, channel, hardware, channelOffset, streamChannels);
+    const kern_return_t status =
+        isoch_.PrepareReceiveStream(streamIndex, channel, hardware);
     if (status != kIOReturnSuccess) {
         isoch_.SetReceiveConsumer(streamIndex, nullptr);
         receiveConsumers_[streamIndex].reset();
@@ -185,6 +202,7 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
     } else {
         reservations_.ReleaseAll();
     }
+    activeGuid_ = 0;
     return kIOReturnSuccess;
 }
 
@@ -199,6 +217,7 @@ kern_return_t IsochDuplexHostTransport::StopAllAfterBusReset() noexcept {
     // and do not attempt an IRM release in the new generation. Cross-validated
     // with IOFireWireFamily/IOFWIsochChannel.cpp:1243-1269.
     reservations_.InvalidateAfterGenerationChange();
+    activeGuid_ = 0;
     ASFW_LOG(Isoch,
              "[Lifecycle] IsochDuplexHostTransport StopAll generation-invalidated "
              "action=invalidate-irm-reservations");

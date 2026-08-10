@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 
 #include <cstdint>
 
-namespace ASFW::Isoch::Config {
+namespace ASFW::Audio::Config {
 
 /// Maximum AM824 slots per isochronous data block (CIP DBS).
 /// Wire-level container size: PCM audio + MIDI + control slots combined.
@@ -24,13 +24,13 @@ inline constexpr uint32_t kRxQueueCapacityFrames = 4096;
 // (asserted in AudioTimingGeometry.hpp) so anchor grid, IO chunks, and ring
 // wrap can never drift out of phase.
 inline constexpr uint32_t kAudioRingBufferFrames =
-    ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
+    ::ASFW::Audio::Shared::AudioTimingGeometry::kFrameRingFrames;
 inline constexpr uint32_t kAudioIoPeriodFrames =
-    ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames;
+    ::ASFW::Audio::Shared::AudioTimingGeometry::kHalIoPeriodFrames;
 
 // Output (TX/playback) shared ring depth — same geometry as the input ring.
 inline constexpr uint32_t kAudioOutputRingFrames =
-    ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
+    ::ASFW::Audio::Shared::AudioTimingGeometry::kFrameRingFrames;
 
 // Target gap (writtenEnd - consumer cursor) the isoch TX consumer maintains.
 inline constexpr uint32_t kOutputConsumerLeadFrames = 384; // ~0.75 period (~8ms @48k)
@@ -53,7 +53,7 @@ static_assert(kAudioRingBufferFrames == kAudioOutputRingFrames,
 static_assert((kAudioRingBufferFrames % kAudioIoPeriodFrames) == 0,
               "Frame ring must be an integer number of IO periods");
 static_assert((kAudioRingBufferFrames %
-               ASFW::IsochTransport::AudioTimingGeometry::kFrameAlignment) == 0,
+               ::ASFW::Audio::Shared::AudioTimingGeometry::kFrameAlignment) == 0,
               "Frame ring must be divisible by 32 frames");
 
 static_assert(kOutputConsumerLeadFrames < kAudioOutputRingFrames,
@@ -61,4 +61,4 @@ static_assert(kOutputConsumerLeadFrames < kAudioOutputRingFrames,
 static_assert(kOutputConsumerLeadFrames + kOutputCursorResyncDeadbandFrames < kAudioOutputRingFrames,
               "Lead plus deadband must stay within the output ring");
 
-} // namespace ASFW::Isoch::Config
+} // namespace ASFW::Audio::Config

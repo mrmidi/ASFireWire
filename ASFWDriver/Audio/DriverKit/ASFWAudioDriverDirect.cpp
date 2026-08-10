@@ -33,7 +33,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         runtime.directAudioGraph,
         bound,
         0,
-        ASFW::Isoch::Config::kAudioIoPeriodFrames,
+        ASFW::Audio::Config::kAudioIoPeriodFrames,
         0,
         0,
         0,
@@ -173,19 +173,33 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         snapshot.txPreparationAtLeast1500Us,
         snapshot.txMinimumCommittedMarginPackets);
 
-    const auto& pw = runtime.txStreamEngine.PayloadWriterCounters();
-    ASFW_LOG(
-        DirectAudio,
-        "ADK writer/visited=%llu written=%llu withoutPkt=%llu outsidePkt=%llu racedReuse=%llu wroteIntoTx=%llu nonZero=%llu slotsNZ=%llu maxAbs=%u",
-        pw.framesVisited.load(std::memory_order_relaxed),
-        pw.framesWritten.load(std::memory_order_relaxed),
-        pw.framesWithoutPacket.load(std::memory_order_relaxed),
-        pw.framesOutsidePacket.load(std::memory_order_relaxed),
-        pw.framesRacedReuse.load(std::memory_order_relaxed),
-        pw.framesWroteIntoTransmitted.load(std::memory_order_relaxed),
-        pw.framesNonZero.load(std::memory_order_relaxed),
-        pw.slotsNonZero.load(std::memory_order_relaxed),
-        pw.maxAbsSampleBits.load(std::memory_order_relaxed));
+    if (directControl) {
+        const auto& staging = directControl->txPcmStagingTelemetry;
+        ASFW_LOG(
+            DirectAudio,
+            "ADK tx-content staged=[%llu,%llu) finalized=%llu writes=%llu frames=%llu reads=%llu/%llu/%llu/%llu defers=%llu deadlineNoData=%llu staleXrun=%llu rebases=%llu firstFault=%u packet=%llu frame=%llu",
+            staging.oldestValidFrame.load(std::memory_order_relaxed),
+            staging.writtenEndFrame.load(std::memory_order_relaxed),
+            directControl->txContentFinalizedFrameEnd.load(
+                std::memory_order_relaxed),
+            staging.writes.load(std::memory_order_relaxed),
+            staging.framesStaged.load(std::memory_order_relaxed),
+            staging.readsReady.load(std::memory_order_relaxed),
+            staging.readsNotYetWritten.load(std::memory_order_relaxed),
+            staging.readsStaleOverwritten.load(std::memory_order_relaxed),
+            staging.readsSnapshotBusy.load(std::memory_order_relaxed),
+            directControl->txContentDeferrals.load(std::memory_order_relaxed),
+            directControl->txContentDeadlineNoData.load(
+                std::memory_order_relaxed),
+            directControl->txContentStaleXruns.load(std::memory_order_relaxed),
+            directControl->txContentRebases.load(std::memory_order_relaxed),
+            directControl->txContentFirstFaultReason.load(
+                std::memory_order_acquire),
+            directControl->txContentFirstFaultPacket.load(
+                std::memory_order_relaxed),
+            directControl->txContentFirstFaultAudioFrame.load(
+                std::memory_order_relaxed));
+    }
 }
 
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept {
@@ -194,7 +208,7 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
         runtime.directAudioGraph,
         bound,
         0,
-        ASFW::Isoch::Config::kAudioIoPeriodFrames,
+        ASFW::Audio::Config::kAudioIoPeriodFrames,
         0,
         0,
         0,

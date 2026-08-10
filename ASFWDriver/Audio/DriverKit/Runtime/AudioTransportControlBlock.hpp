@@ -7,9 +7,10 @@
 #include "PayloadWriterTelemetry.hpp"
 #include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
+#include "../../Runtime/TxPcmStagingRing.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
-#include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../../Shared/AudioTimingGeometry.hpp"
 
 #include <atomic>
 #include <algorithm>
@@ -71,6 +72,32 @@ enum class TxProducerFaultReason : uint32_t {
     kSlotPublishFailed,
 };
 
+enum class TxContentFaultReason : uint32_t {
+    kNone = 0,
+    kNotYetWrittenAtDeadline,
+    kStaleOverwritten,
+    kSnapshotBusyAtDeadline,
+    kInvalidSource,
+    kSecondaryStreamFailure,
+};
+
+[[nodiscard]] inline const char* TxContentFaultReasonName(
+    TxContentFaultReason reason) noexcept {
+    switch (reason) {
+        case TxContentFaultReason::kNone: return "none";
+        case TxContentFaultReason::kNotYetWrittenAtDeadline:
+            return "not-yet-written-at-deadline";
+        case TxContentFaultReason::kStaleOverwritten:
+            return "stale-overwritten";
+        case TxContentFaultReason::kSnapshotBusyAtDeadline:
+            return "snapshot-busy-at-deadline";
+        case TxContentFaultReason::kInvalidSource: return "invalid-source";
+        case TxContentFaultReason::kSecondaryStreamFailure:
+            return "secondary-stream-failure";
+    }
+    return "unknown";
+}
+
 [[nodiscard]] inline const char* TxProducerFaultReasonName(
     TxProducerFaultReason reason) noexcept {
     switch (reason) {
@@ -85,24 +112,19 @@ enum class TxProducerFaultReason : uint32_t {
     return "unknown";
 }
 
-/// Why the CoreAudio write frontier (W) has overtaken the exposure frontier (E).
-///
-/// W > E means the payload writer found no packet for a host frame and dropped
-/// it: audible silence with transport still perfectly healthy. Three mechanisms
-/// produce it, and they are distinguishable only by how the deficit MOVES --
-/// see tools/asfw_sim/FINDINGS.md F2/F6/F9, where each was reproduced.
+/// Legacy classification from the removed post-commit payload-writer design.
+/// Numeric values and fields remain for old debug-snapshot decoders. In the
+/// current design E is populated with immutable finalized content F and this
+/// reason stays Healthy; TxContentFaultReason is authoritative.
 enum class TxExposureReason : uint32_t {
     kUnknown = 0,
-    /// E leads W by about the content horizon: the intended state.
+    /// Legacy healthy classification. E now mirrors finalized content F.
     kHealthy,
-    /// One step, then flat. A producer-wake stall past the exposure budget
-    /// (the observable signature of a dead IT interrupt path, TX-IRQ-001).
+    /// Legacy producer-stall classification.
     kStall,
-    /// Ramping, and the replay-miss count accounts for the lost frames. Every
-    /// miss ships NODATA, which never advances E, and alignment is one-shot.
+    /// Legacy replay-miss classification.
     kReplayMiss,
-    /// Ramping, and the replay-miss count CANNOT account for the lost frames:
-    /// E is advancing at a slower rate than W (TX cadence under-production).
+    /// Legacy cadence-underproduction classification.
     kRateMismatch,
 };
 
@@ -206,7 +228,7 @@ struct TxProducerFaultSnapshot final {
 // the same absolute frame frontiers, so the watermarks identify the buffer
 // slack that can be reduced when tuning round-trip latency.
 struct RxCaptureBufferTelemetry final {
-    using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+    using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
 
     std::atomic<uint64_t> currentAvailableFrames{0};
     std::atomic<uint64_t> intervalMinimumAvailableFrames{UINT64_MAX};
@@ -488,6 +510,7 @@ struct AudioTransportControlBlock final {
     // TX control block members
     PayloadWriterTelemetryRing payloadWriterTelemetry{};
     TxWirePayloadTelemetry txWirePayloadTelemetry{};
+    TxPcmStagingTelemetry txPcmStagingTelemetry{};
 
     // Latest-value trace of the live replay TX SYT decision (diagnostics).
     TxSytTraceLatest txSytTrace{};
@@ -506,6 +529,28 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingOverruns{0};
     std::atomic<uint64_t> txScheduledSampleFrame{0};
     std::atomic<uint64_t> txCompletedSampleFrame{0};
+    std::atomic<uint64_t> txContentFinalizedFrameEnd{0};
+    std::atomic<uint64_t> txContentDeferrals{0};
+    std::atomic<uint64_t> txContentDeadlineNoData{0};
+    std::atomic<uint64_t> txContentStaleXruns{0};
+    std::atomic<uint64_t> txContentRebases{0};
+    // Value-owned mirrors of the neutral transport queue. The preparation
+    // queue refreshes these while the direct binding is alive so diagnostics
+    // never need to retain or dereference the transport-owned queue mapping.
+    std::atomic<uint64_t> txTransportCompletionCursor{0};
+    std::atomic<uint64_t> txTransportCommittedEnd{0};
+    std::atomic<uint32_t> txTransportStatus{0};
+    // First content failure is latched for post-mortem attribution. A separate
+    // counter records later events without erasing the causal snapshot.
+    std::atomic<uint64_t> txContentFaultEvents{0};
+    std::atomic<uint32_t> txContentFirstFaultReason{
+        static_cast<uint32_t>(TxContentFaultReason::kNone)};
+    std::atomic<uint64_t> txContentFirstFaultPacket{0};
+    std::atomic<uint64_t> txContentFirstFaultAudioFrame{0};
+    std::atomic<uint64_t> txContentFirstFaultOldestFrame{0};
+    std::atomic<uint64_t> txContentFirstFaultWrittenEndFrame{0};
+    std::atomic<uint64_t> txContentFirstFaultCompletionCursor{0};
+    std::atomic<uint64_t> txContentFirstFaultCommittedEnd{0};
     std::atomic<uint32_t> txCurrentCommittedMarginPackets{0};
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
     std::atomic<uint32_t> txMinimumCommittedMarginPackets{UINT32_MAX};
@@ -521,11 +566,11 @@ struct AudioTransportControlBlock final {
     std::atomic<uint32_t> txIntervalCommittedMarginMaxPackets{0};
     std::atomic<uint64_t> txIntervalPreparationLatencyMaxTicks{0};
     std::array<std::atomic<uint64_t>,
-               ASFW::IsochTransport::AudioTimingGeometry::
+               ASFW::Audio::Shared::AudioTimingGeometry::
                    kTxPreparationLatencyHistogramBuckets>
         txIntervalPreparationLatencyHistogram{};
     std::array<std::atomic<uint64_t>,
-               ASFW::IsochTransport::AudioTimingGeometry::
+               ASFW::Audio::Shared::AudioTimingGeometry::
                    kTxCommittedMarginHistogramBuckets>
         txIntervalCommittedMarginHistogram{};
     // Last complete interval, copied by the control plane.  The audio thread
@@ -536,11 +581,11 @@ struct AudioTransportControlBlock final {
     std::atomic<uint32_t> txCompletedIntervalMarginMaxPackets{0};
     std::atomic<uint64_t> txCompletedIntervalPreparationLatencyMaxTicks{0};
     std::array<std::atomic<uint64_t>,
-               ASFW::IsochTransport::AudioTimingGeometry::
+               ASFW::Audio::Shared::AudioTimingGeometry::
                    kTxPreparationLatencyHistogramBuckets>
         txCompletedIntervalPreparationLatencyHistogram{};
     std::array<std::atomic<uint64_t>,
-               ASFW::IsochTransport::AudioTimingGeometry::
+               ASFW::Audio::Shared::AudioTimingGeometry::
                    kTxCommittedMarginHistogramBuckets>
         txCompletedIntervalCommittedMarginHistogram{};
     /// Host-tick stamp of the last emitted [TxPrep] line. The heartbeat is
@@ -552,20 +597,10 @@ struct AudioTransportControlBlock final {
     std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
     std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
 
-    // --- TX exposure attribution (W > E) -----------------------------------
-    // W = CoreAudio write frontier, E = exposed frame end. A PCM frame survives
-    // iff it is written before its packet is exposed, so W > E is silence.
-    // Three distinct mechanisms produce it and they are separable only by
-    // *rate*, not by any single counter (tools/asfw_sim FINDINGS F2/F6/F9):
-    //
-    //   stall         W-E steps once, then holds flat
-    //   replay-miss   W-E ramps, and the miss count can PAY for the lost
-    //                 frames at ~kFramesPerDataPacket each
-    //   rate-mismatch W-E ramps, and the miss count cannot -- E is simply
-    //                 advancing slower than W
-    //
-    // These carry the previous sample so the driver can compute the ramp and
-    // attribute it, instead of leaving it to post-hoc log arithmetic.
+    // --- Legacy TX exposure snapshot ---------------------------------------
+    // Retained for debug-snapshot wire compatibility. `ExposedFrame` now means
+    // finalized immutable content F. W-F is ordinary pending work; the staging
+    // read outcomes and TxContent first-fault tuple above identify real loss.
     std::atomic<uint64_t> txExposureSampleHostTicks{0};
     std::atomic<uint64_t> txExposureSampleWriteFrame{0};
     std::atomic<uint64_t> txExposureSampleExposedFrame{0};
@@ -576,7 +611,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> txExposureDebtUnexplainedFrames{0};
     //! Last classified TxExposureReason; 0 until the first classification.
     std::atomic<uint32_t> txExposureReason{0};
-    //! Measured (W rate - E rate) in ppm; positive means E is falling behind.
+    //! Legacy field; zero in the finalized-content design.
     std::atomic<int32_t> txExposurePpm{0};
 
     // RX control block members
@@ -608,6 +643,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> rxPacketsSeen{0};
     std::atomic<uint64_t> rxDataPackets{0};
     std::atomic<uint64_t> rxNoDataPackets{0};
+    std::atomic<uint64_t> rxEmptyCompletions{0};
     std::atomic<uint64_t> rxShortPackets{0};
     std::atomic<uint64_t> rxInvalidCipHeaders{0};
     std::atomic<uint64_t> rxZeroDataBlockSize{0};
@@ -666,6 +702,7 @@ struct AudioTransportControlBlock final {
         // Reset TX members
         payloadWriterTelemetry.Reset();
         txWirePayloadTelemetry.Reset();
+        txPcmStagingTelemetry.Reset();
         txSytTrace.Reset();
         txPreparationRequests.Reset();
         txFatalSnapshot.Reset();
@@ -682,6 +719,24 @@ struct AudioTransportControlBlock final {
         playbackRingOverruns.store(0, std::memory_order_relaxed);
         txScheduledSampleFrame.store(0, std::memory_order_relaxed);
         txCompletedSampleFrame.store(0, std::memory_order_relaxed);
+        txContentFinalizedFrameEnd.store(0, std::memory_order_relaxed);
+        txContentDeferrals.store(0, std::memory_order_relaxed);
+        txContentDeadlineNoData.store(0, std::memory_order_relaxed);
+        txContentStaleXruns.store(0, std::memory_order_relaxed);
+        txContentRebases.store(0, std::memory_order_relaxed);
+        txTransportCompletionCursor.store(0, std::memory_order_relaxed);
+        txTransportCommittedEnd.store(0, std::memory_order_relaxed);
+        txTransportStatus.store(0, std::memory_order_relaxed);
+        txContentFaultEvents.store(0, std::memory_order_relaxed);
+        txContentFirstFaultReason.store(
+            static_cast<uint32_t>(TxContentFaultReason::kNone),
+            std::memory_order_relaxed);
+        txContentFirstFaultPacket.store(0, std::memory_order_relaxed);
+        txContentFirstFaultAudioFrame.store(0, std::memory_order_relaxed);
+        txContentFirstFaultOldestFrame.store(0, std::memory_order_relaxed);
+        txContentFirstFaultWrittenEndFrame.store(0, std::memory_order_relaxed);
+        txContentFirstFaultCompletionCursor.store(0, std::memory_order_relaxed);
+        txContentFirstFaultCommittedEnd.store(0, std::memory_order_relaxed);
         txCurrentCommittedMarginPackets.store(0, std::memory_order_relaxed);
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_relaxed);
         txMinimumCommittedMarginPackets.store(
@@ -727,6 +782,7 @@ struct AudioTransportControlBlock final {
         rxPacketsSeen.store(0, std::memory_order_relaxed);
         rxDataPackets.store(0, std::memory_order_relaxed);
         rxNoDataPackets.store(0, std::memory_order_relaxed);
+        rxEmptyCompletions.store(0, std::memory_order_relaxed);
         rxShortPackets.store(0, std::memory_order_relaxed);
         rxInvalidCipHeaders.store(0, std::memory_order_relaxed);
         rxZeroDataBlockSize.store(0, std::memory_order_relaxed);

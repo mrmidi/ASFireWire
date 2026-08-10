@@ -14,6 +14,7 @@
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/OSSharedPtr.h>
+#include <functional>
 #include <memory>
 
 
@@ -80,9 +81,15 @@ class IIsochDuplexHostTransport {
 
 class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
   public:
+    using TimingLossCallback = std::function<void(uint64_t guid)>;
+    using ClockAnchorReadyCallback = std::function<void(uint64_t generation)>;
+
     explicit IsochDuplexHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
 
-    void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
+    void SetTimingLossCallback(TimingLossCallback callback) noexcept;
+    void SetTxPreparationCallback(
+        Driver::IsochService::TxPreparationCallback callback) noexcept;
+    void SetClockAnchorReadyCallback(ClockAnchorReadyCallback callback) noexcept;
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
     [[nodiscard]] kern_return_t ReservePlaybackResources(uint64_t guid,
@@ -132,6 +139,9 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     std::unique_ptr<ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer>
         receiveConsumers_[Driver::IsochService::kMaxStreamsPerDirection]{};
     Backends::DuplexIRMReservationPair reservations_{};
+    uint64_t activeGuid_{0};
+    TimingLossCallback timingLossCallback_{};
+    ClockAnchorReadyCallback clockAnchorReadyCallback_{};
 };
 
 } // namespace ASFW::Audio

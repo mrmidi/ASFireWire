@@ -5,7 +5,7 @@
 
 #include "../../../../Isoch/Core/IsochTypes.hpp"
 #include "../../../../Isoch/Receive/IsochRxTiming.hpp"
-#include "../../../../Isoch/Receive/ZtsTelemetry.hpp"
+#include "../../../Runtime/ZtsTelemetry.hpp"
 #include "../../../DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "../../../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../AudioClockPublisher.hpp"
@@ -32,7 +32,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
 
     using TimingLossCallback = std::function<void()>;
     using ZtsAnchorReadyCallback = std::function<void(uint64_t)>;
-    using ReplayReadyCallback = std::function<void()>;
 
     DirectAudioReceiveConsumer(
         ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
@@ -42,7 +41,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
-    void SetReplayReadyCallback(ReplayReadyCallback callback) noexcept;
     [[nodiscard]] bool IsReplayEstablished() const noexcept;
 
     void OnReceiveActivated() noexcept override;
@@ -51,12 +49,13 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void ConsumePacket(const ::ASFW::Isoch::IsochReceiveBatch& batch,
                        const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept override;
 
-    void DrainReceiveTelemetry(uint32_t maxRecords) override;
-    void DrainPayloadTelemetry() override;
-    void LogTransmitTimingTrace() override;
+    void PerformMaintenance(
+        ::ASFW::Isoch::IsochConsumerMaintenanceKind kind,
+        uint32_t budget) override;
 
   private:
     enum class ReplayResetReason : uint8_t {
+        kEmptyCompletion,
         kPacketProcessorStatus,
         kInvalidReceiveTimestamp,
         kReceiveCycleGap,
@@ -79,6 +78,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     [[nodiscard]] static const char* ReplayResetReasonName(ReplayResetReason reason) noexcept;
     void ResetReplayEpochForDiscontinuity(ReplayResetReason reason,
                                           const ReplayResetContext& context) noexcept;
+    void DrainReceiveTelemetry(uint32_t maxRecords);
+    void DrainPayloadTelemetry();
+    void LogTransmitTimingTrace();
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};
@@ -98,11 +100,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint64_t negativeAgeCount_{0};
     uint64_t largeNegativeAgeCount_{0};
     bool cadenceEstablishedLogged_{false};
-    ::ASFW::Isoch::Rx::ZtsTelemetryRing ztsTelemetry_{};
+    ::ASFW::Audio::Runtime::ZtsTelemetryRing ztsTelemetry_{};
     TimingLossCallback timingLossCallback_{};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
-    ReplayReadyCallback replayReadyCallback_{};
-    bool replayReadyNotified_{false};
     bool replayResetForStart_{false};
     // Bounded [RxReplayReset] records for a stream that has not established yet.
     // Re-armed at each bring-up; without a budget a permanently-rejected stream
@@ -115,7 +115,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         payloadWriterTelemetryAggregator_{};
     uint8_t lastDbc_{0};
     bool dbcInitialized_{false};
-    ::ASFW::Isoch::Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
+    ::ASFW::Audio::Runtime::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
     uint64_t prevLoggedAnchorFrame_{0};
     uint64_t prevLoggedAnchorHostTicks_{0};
     uint32_t prevLoggedAnchorRate_{0};

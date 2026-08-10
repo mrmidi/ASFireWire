@@ -13,7 +13,7 @@
 #include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
-#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -273,8 +273,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // The init argument is the declared zero-timestamp period. Shared stream
     // memory is sized separately by the selected HAL buffer profile.
     constexpr auto bufferProfile =
-        ASFW::IsochTransport::kActiveAudioHalBufferProfile;
-    const uint32_t target_period = ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+        ASFW::Audio::Shared::kActiveAudioHalBufferProfile;
+    const uint32_t target_period =
+        ASFW::Audio::Shared::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
     ASFW_LOG(
         Audio,
         "ASFWAudioDriver: HAL buffer profile=%{public}s ring=%u ioBudget=%u zts=%u",
@@ -717,7 +718,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     const uint32_t requiredInputSafety =
         ASFW::Audio::RequiredInputSafetyFrames(
             inSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
+            ASFW::Audio::Shared::AudioTimingGeometry::
                 kMaximumNominalFramesPerInterrupt,
             kSchedulingJitterFrames);
     if (inSafety != requiredInputSafety) {
@@ -726,7 +727,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             "ASFWAudioDriver: input safety %u -> %u (maxIRQFrames=%u jitter=%u)",
             inSafety,
             requiredInputSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
+            ASFW::Audio::Shared::AudioTimingGeometry::
                 kMaximumNominalFramesPerInterrupt,
             kSchedulingJitterFrames);
         inSafety = requiredInputSafety;

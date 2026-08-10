@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 
 #include <cstdint>
 
@@ -51,7 +51,7 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t FramesPerPacketMax() const noexcept {
-        return ASFW::IsochTransport::AudioTimingGeometry::kFramesPerDataPacket;
+        return ASFW::Audio::Shared::AudioTimingGeometry::kFramesPerDataPacket;
     }
 
     [[nodiscard]] constexpr uint32_t RxAuthorityUpdatePeriodFrames() const noexcept {
@@ -59,11 +59,11 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t HalIoPeriodFrames() const noexcept {
-        return ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames;
+        return ASFW::Audio::Shared::AudioTimingGeometry::kHalIoPeriodFrames;
     }
 
     [[nodiscard]] constexpr uint32_t HalZeroTimestampPeriodFrames() const noexcept {
-        return ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+        return ASFW::Audio::Shared::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
     }
 
     [[nodiscard]] constexpr uint32_t CursorOffsetFrames(AudioDirection direction) const noexcept {
@@ -96,7 +96,7 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t ZtsPeriodFrames() const noexcept {
-        return ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+        return ASFW::Audio::Shared::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
     }
 
     [[nodiscard]] constexpr uint64_t HardwareOutputFrameToReportedFrame(uint64_t hardwareFrame) const noexcept {

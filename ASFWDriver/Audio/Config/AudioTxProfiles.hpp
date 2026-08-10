@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace ASFW::Isoch::Config {
+namespace ASFW::Audio::Config {
 
 /// Profile identifiers. Override build-time default with -DASFW_TX_TUNING_PROFILE=1 (B) or =2 (C).
 enum class TxProfileId : uint8_t { A = 0, B = 1, C = 2 };
@@ -96,4 +96,4 @@ inline void SetActiveTxProfile(TxProfileId id) noexcept {
     }
 }
 
-}  // namespace ASFW::Isoch::Config
+}  // namespace ASFW::Audio::Config

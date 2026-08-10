@@ -45,6 +45,10 @@ public:
     AudioCoordinator& operator=(const AudioCoordinator&) = delete;
 
     void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept;
+    void SetTxPreparationCallback(
+        Driver::IsochService::TxPreparationCallback callback) noexcept;
+    void SetClockAnchorReadyCallback(
+        IsochDuplexHostTransport::ClockAnchorReadyCallback callback) noexcept;
 
     // IDeviceObserver
     void OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) override;

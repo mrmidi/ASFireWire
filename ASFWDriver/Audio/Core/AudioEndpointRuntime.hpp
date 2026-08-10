@@ -296,25 +296,37 @@ public:
         }
 
         IOLockLock(lock_);
-        if (!HasCompleteDirectAudioMemoryLocked()) {
-            IOLockUnlock(lock_);
-            return false;
-        }
         out.guid = guid_;
         out.endpointGeneration = directGeneration_;
-        out.flags = Runtime::kAudioTelemetryBindingReady;
         if (streaming_.load(std::memory_order_acquire)) {
             out.flags |= Runtime::kAudioTelemetryStreaming;
         }
-        out.sampleRateHz = directSampleRateHz_;
-        out.outputChannels = directOutputChannels_;
-        out.inputChannels = directInputChannels_;
-        out.inputFrameCapacityFrames = directInputCapacityFrames_;
         out.preparationLeadPackets =
-            IsochTransport::AudioTimingGeometry::kTxPreparationLeadPackets;
+            Shared::AudioTimingGeometry::kTxPreparationLeadPackets;
         out.hardwareFloorPackets =
-            IsochTransport::AudioTimingGeometry::kTxHardwareRingPackets;
-        Runtime::CopyAudioTelemetrySnapshot(*directControl_, out);
+            Shared::AudioTimingGeometry::kTxHardwareRingPackets;
+
+        if (HasCompleteDirectAudioMemoryLocked()) {
+            out.flags |= Runtime::kAudioTelemetryBindingReady;
+            out.sampleRateHz = directSampleRateHz_;
+            out.outputChannels = directOutputChannels_;
+            out.inputChannels = directInputChannels_;
+            out.inputFrameCapacityFrames = directInputCapacityFrames_;
+            Runtime::CopyAudioTelemetrySnapshot(*directControl_, out);
+        } else if (configValid_.load(std::memory_order_acquire)) {
+            // Keep a registered endpoint visible to diagnostics even before a
+            // complete mapping exists (or after one was lost). Previously it
+            // disappeared from the registry snapshot, making MCP's
+            // endpointCount=0 indistinguishable from decoder/user-client
+            // failure. No pointer escapes; only stable config values are used.
+            out.sampleRateHz = config_.currentSampleRate;
+            out.outputChannels = ClampAudioChannels(
+                config_.outputChannelCount ? config_.outputChannelCount
+                                           : config_.channelCount);
+            out.inputChannels = ClampAudioChannels(
+                config_.inputChannelCount ? config_.inputChannelCount
+                                          : config_.channelCount);
+        }
         IOLockUnlock(lock_);
         return true;
     }
@@ -469,8 +481,8 @@ private:
         const uint32_t inputChannels = ClampAudioChannels(
             config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
-        const uint32_t outputFrames = Isoch::Config::kAudioRingBufferFrames;
-        const uint32_t inputFrames = Isoch::Config::kAudioRingBufferFrames;
+        const uint32_t outputFrames = Config::kAudioRingBufferFrames;
+        const uint32_t inputFrames = Config::kAudioRingBufferFrames;
 
         if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0) {
             ASFW_LOG(DirectAudio,

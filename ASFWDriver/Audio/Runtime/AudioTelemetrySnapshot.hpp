@@ -8,7 +8,7 @@
 #pragma once
 
 #include "../DriverKit/Runtime/AudioTransportControlBlock.hpp"
-#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 
 #include <array>
 #include <cstddef>
@@ -17,7 +17,7 @@
 
 namespace ASFW::Audio::Runtime {
 
-constexpr uint32_t kAudioTelemetryWireVersion = 3;
+constexpr uint32_t kAudioTelemetryWireVersion = 4;
 constexpr uint32_t kAudioTelemetryMaxEndpoints = 8;
 
 enum AudioTelemetryFlags : uint32_t {
@@ -44,11 +44,11 @@ struct AudioTelemetryEndpointSnapshot final {
     uint64_t rxReplayEntries{0};
     uint64_t rxReplayEpochResets{0};
     std::array<uint64_t,
-               IsochTransport::AudioTimingGeometry::
+               Shared::AudioTimingGeometry::
                    kTxPreparationLatencyHistogramBuckets>
         completedLatencyHistogram{};
     std::array<uint64_t,
-               IsochTransport::AudioTimingGeometry::
+               Shared::AudioTimingGeometry::
                    kTxCommittedMarginHistogramBuckets>
         completedMarginHistogram{};
     uint32_t flags{0};
@@ -75,7 +75,7 @@ struct AudioTelemetryEndpointSnapshot final {
     uint64_t rxTotalOverwrittenFrames{0};
     uint64_t rxTotalStarvedFrames{0};
     std::array<uint64_t,
-               IsochTransport::AudioTimingGeometry::
+               Shared::AudioTimingGeometry::
                    kRxCaptureOccupancyHistogramBuckets>
         rxCompletedOccupancyHistogram{};
     uint32_t inputFrameCapacityFrames{0};
@@ -95,9 +95,55 @@ struct AudioTelemetryEndpointSnapshot final {
     uint64_t rxInvalidCipHeaders{0};
     uint64_t rxZeroDataBlockSize{0};
     uint64_t rxGeometryMismatch{0};
+
+    // Wire v4 TX content-ownership attribution. These are copied values, never
+    // cross-service views: W is the latest staged CoreAudio frame, F is the
+    // immutable content frontier, and [completion, committed) is the neutral
+    // transport-owned packet range. The first-fault tuple is latched so a
+    // transient Heisenbug remains diagnosable after the live cursors move on.
+    uint64_t txPlaybackWriteFrame{0};
+    uint64_t txPlaybackOldestValidFrame{0};
+    uint64_t txContentFinalizedFrameEnd{0};
+    uint64_t txStagingOldestValidFrame{0};
+    uint64_t txStagingWrittenEndFrame{0};
+    uint64_t txTransportCompletionCursor{0};
+    uint64_t txTransportCommittedEnd{0};
+    uint64_t txStagingWrites{0};
+    uint64_t txStagingFrames{0};
+    uint64_t txStagingDiscontinuities{0};
+    uint64_t txStagingOverwrittenFrames{0};
+    uint64_t txStagingReadsReady{0};
+    uint64_t txStagingReadsNotYetWritten{0};
+    uint64_t txStagingReadsStaleOverwritten{0};
+    uint64_t txStagingReadsSnapshotBusy{0};
+    uint64_t txStagingReadsInvalid{0};
+    uint64_t txContentDeferrals{0};
+    uint64_t txContentDeadlineNoData{0};
+    uint64_t txContentStaleXruns{0};
+    uint64_t txContentRebases{0};
+    uint64_t txContentFaultEvents{0};
+    uint64_t txContentFirstFaultPacket{0};
+    uint64_t txContentFirstFaultAudioFrame{0};
+    uint64_t txContentFirstFaultOldestFrame{0};
+    uint64_t txContentFirstFaultWrittenEndFrame{0};
+    uint64_t txContentFirstFaultCompletionCursor{0};
+    uint64_t txContentFirstFaultCommittedEnd{0};
+    uint32_t txContentFirstFaultReason{0};
+    uint32_t txTransportStatus{0};
+    uint64_t rxEmptyCompletions{0};
 };
 
-static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 432);
+static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 664);
+// Swift decodes this ABI by fixed offsets. Lock both the v3 prefix and the v4
+// tail so a harmless-looking field insertion fails the driver build instead of
+// silently relabelling MCP diagnostics.
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, rxPacketsSeen) == 376);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, txPlaybackWriteFrame) ==
+              432);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot,
+                       txContentFirstFaultReason) == 648);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, rxEmptyCompletions) ==
+              656);
 
 struct AudioTelemetrySnapshot final {
     uint32_t version{kAudioTelemetryWireVersion};
@@ -105,7 +151,8 @@ struct AudioTelemetrySnapshot final {
     std::array<AudioTelemetryEndpointSnapshot, kAudioTelemetryMaxEndpoints> endpoints{};
 };
 
-static_assert(sizeof(AudioTelemetrySnapshot) == 3464);
+static_assert(sizeof(AudioTelemetrySnapshot) == 5320);
+static_assert(offsetof(AudioTelemetrySnapshot, endpoints) == 8);
 
 inline void CopyAudioTelemetrySnapshot(
     const AudioTransportControlBlock& control,
@@ -128,6 +175,63 @@ inline void CopyAudioTelemetrySnapshot(
     out.rxInvalidCipHeaders = control.rxInvalidCipHeaders.load(memoryOrder);
     out.rxZeroDataBlockSize = control.rxZeroDataBlockSize.load(memoryOrder);
     out.rxGeometryMismatch = control.rxGeometryMismatch.load(memoryOrder);
+    out.txPlaybackWriteFrame =
+        control.playbackRingWriteFrame.load(memoryOrder);
+    out.txPlaybackOldestValidFrame =
+        control.playbackRingOldestValidFrame.load(memoryOrder);
+    out.txContentFinalizedFrameEnd =
+        control.txContentFinalizedFrameEnd.load(memoryOrder);
+    // writtenEndFrame is the release publication for the paired staging range.
+    out.txStagingWrittenEndFrame =
+        control.txPcmStagingTelemetry.writtenEndFrame.load(
+            std::memory_order_acquire);
+    out.txStagingOldestValidFrame =
+        control.txPcmStagingTelemetry.oldestValidFrame.load(memoryOrder);
+    out.txTransportCompletionCursor =
+        control.txTransportCompletionCursor.load(memoryOrder);
+    out.txTransportCommittedEnd =
+        control.txTransportCommittedEnd.load(memoryOrder);
+    out.txTransportStatus = control.txTransportStatus.load(memoryOrder);
+    out.txStagingWrites =
+        control.txPcmStagingTelemetry.writes.load(memoryOrder);
+    out.txStagingFrames =
+        control.txPcmStagingTelemetry.framesStaged.load(memoryOrder);
+    out.txStagingDiscontinuities =
+        control.txPcmStagingTelemetry.discontinuities.load(memoryOrder);
+    out.txStagingOverwrittenFrames =
+        control.txPcmStagingTelemetry.overwrittenFrames.load(memoryOrder);
+    out.txStagingReadsReady =
+        control.txPcmStagingTelemetry.readsReady.load(memoryOrder);
+    out.txStagingReadsNotYetWritten =
+        control.txPcmStagingTelemetry.readsNotYetWritten.load(memoryOrder);
+    out.txStagingReadsStaleOverwritten =
+        control.txPcmStagingTelemetry.readsStaleOverwritten.load(memoryOrder);
+    out.txStagingReadsSnapshotBusy =
+        control.txPcmStagingTelemetry.readsSnapshotBusy.load(memoryOrder);
+    out.txStagingReadsInvalid =
+        control.txPcmStagingTelemetry.readsInvalid.load(memoryOrder);
+    out.txContentDeferrals = control.txContentDeferrals.load(memoryOrder);
+    out.txContentDeadlineNoData =
+        control.txContentDeadlineNoData.load(memoryOrder);
+    out.txContentStaleXruns = control.txContentStaleXruns.load(memoryOrder);
+    out.txContentRebases = control.txContentRebases.load(memoryOrder);
+    out.txContentFaultEvents = control.txContentFaultEvents.load(memoryOrder);
+    out.txContentFirstFaultPacket =
+        control.txContentFirstFaultPacket.load(memoryOrder);
+    out.txContentFirstFaultAudioFrame =
+        control.txContentFirstFaultAudioFrame.load(memoryOrder);
+    out.txContentFirstFaultOldestFrame =
+        control.txContentFirstFaultOldestFrame.load(memoryOrder);
+    out.txContentFirstFaultWrittenEndFrame =
+        control.txContentFirstFaultWrittenEndFrame.load(memoryOrder);
+    out.txContentFirstFaultCompletionCursor =
+        control.txContentFirstFaultCompletionCursor.load(memoryOrder);
+    out.txContentFirstFaultCommittedEnd =
+        control.txContentFirstFaultCommittedEnd.load(memoryOrder);
+    // Reason is the release-published latch for the tuple above; load it last.
+    out.txContentFirstFaultReason =
+        control.txContentFirstFaultReason.load(std::memory_order_acquire);
+    out.rxEmptyCompletions = control.rxEmptyCompletions.load(memoryOrder);
     out.currentCommittedMarginPackets =
         control.txCurrentCommittedMarginPackets.load(memoryOrder);
     out.minimumCommittedMarginPackets =

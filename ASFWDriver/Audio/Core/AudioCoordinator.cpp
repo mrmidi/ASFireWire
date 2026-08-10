@@ -7,6 +7,8 @@
 #include "AudioRuntimeRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
 
+#include <utility>
+
 namespace ASFW::Audio {
 
 AudioCoordinator::AudioCoordinator(IOService* driver,
@@ -40,6 +42,8 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
 AudioCoordinator::~AudioCoordinator() noexcept {
     deviceManager_.UnregisterDeviceObserver(this);
     hostTransport_.SetTimingLossCallback({});
+    hostTransport_.SetTxPreparationCallback({});
+    hostTransport_.SetClockAnchorReadyCallback({});
 
     if (lock_) {
         IOLockFree(lock_);
@@ -49,6 +53,16 @@ AudioCoordinator::~AudioCoordinator() noexcept {
 
 void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
     runtime_.SetCMPClient(client);
+}
+
+void AudioCoordinator::SetTxPreparationCallback(
+    Driver::IsochService::TxPreparationCallback callback) noexcept {
+    hostTransport_.SetTxPreparationCallback(std::move(callback));
+}
+
+void AudioCoordinator::SetClockAnchorReadyCallback(
+    IsochDuplexHostTransport::ClockAnchorReadyCallback callback) noexcept {
+    hostTransport_.SetClockAnchorReadyCallback(std::move(callback));
 }
 
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
@@ -416,6 +430,8 @@ void AudioCoordinator::BeginTeardown() noexcept {
     // Block new backend recovery callbacks before draining either backend
     // queue. The coordinator owns this one subscription for every family.
     hostTransport_.SetTimingLossCallback({});
+    hostTransport_.SetTxPreparationCallback({});
+    hostTransport_.SetClockAnchorReadyCallback({});
     dice_.BeginTeardown();
     avc_.BeginTeardown();
     const kern_return_t hostStatus = StopHostTransport("service-teardown");

@@ -10,7 +10,9 @@
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
+#include "../Runtime/TxPcmStagingRing.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
+#include "../../Shared/Isoch/TxPayloadSeal.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/TimingUtils.hpp"
 
@@ -28,7 +30,7 @@ class ASFWAudioDevice;
 
 static constexpr uint32_t kReportedDeviceLatencyFrames = 24;
 static constexpr uint32_t kReportedSafetyOffsetFrames =
-    ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
+    ASFW::Audio::Config::kTxBufferProfile.safetyOffsetFrames;
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};
@@ -109,7 +111,23 @@ public:
         uint32_t packetIndex,
         ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot)
         noexcept override {
-        if (!payloadBase || numSlots == 0 || slotStrideBytes == 0) {
+        if (!payloadBase || !queueControl || numSlots == 0 ||
+            slotStrideBytes == 0) {
+            return false;
+        }
+        const uint64_t committedEnd =
+            queueControl->committedEnd.load(std::memory_order_acquire);
+        const uint64_t completionCursor =
+            queueControl->completionCursor.load(std::memory_order_acquire);
+        if (!ASFW::Isoch::CanAcquireTxProducerSlot(
+                packetIndex, committedEnd, completionCursor, numSlots)) {
+            ASFW_LOG_ERROR(
+                DirectAudio,
+                "[TxOwnership] reject acquire packet=%u committed=%llu completion=%llu slots=%u",
+                packetIndex,
+                committedEnd,
+                completionCursor,
+                numSlots);
             return false;
         }
         const uint32_t slotIdx = packetIndex % numSlots;
@@ -123,6 +141,14 @@ public:
         const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet)
         noexcept override {
         if (!metadataRing || !queueControl || numSlots == 0) {
+            return false;
+        }
+        if (packet.isData && !packet.pcmFinalized) {
+            ASFW_LOG_ERROR(
+                DirectAudio,
+                "[TxContent] rejected unfinalized DATA packet=%u frames=%u",
+                packet.packetIndex,
+                packet.framesInPacket);
             return false;
         }
         const uint32_t slotIdx = packet.packetIndex % numSlots;
@@ -153,13 +179,15 @@ public:
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
+        const uint8_t* const payload =
+            payloadBase + static_cast<uint64_t>(slotIdx) * slotStrideBytes;
+
         // Content inspection belongs to Audio and runs immediately before the
         // release commit. Transport receives only opaque bytes and metadata.
         if (audioControl) {
-            const uint32_t slotIndex = packet.packetIndex % numSlots;
             const auto observation = audioControl->txWirePayloadTelemetry.Observe(
                 packet.packetIndex,
-                payloadBase + static_cast<uint64_t>(slotIndex) * slotStrideBytes,
+                payload,
                 packet.byteCount);
             if (observation.firstInfo || observation.dropout) {
                 ASFW_LOG_RING_ONLY_RL(
@@ -176,6 +204,13 @@ public:
                     observation.lastInfoQuad);
             }
         }
+
+        // Seal opaque bytes immediately before the release commit. Transport
+        // re-hashes the same slot at completion, before publishing ownership
+        // back to the producer. Any post-commit writer is therefore named
+        // instead of presenting as unexplained all-zero PCM.
+        meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
+            payload, packet.byteCount);
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =
@@ -212,6 +247,11 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
     std::atomic<bool> txActive{false};
+
+    // Audio-owned retention between the CoreAudio WriteEnd producer and the
+    // independent TX preparation consumer. Both DICE streams read the same
+    // immutable snapshots with different channel offsets.
+    ASFW::Audio::Runtime::TxPcmStagingRing txPcmStagingRing;
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
@@ -321,7 +361,7 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
 // Prepares transmit slots from startPacketIndex until both producer invariants
 // are true or limitPacketIndex is reached:
 //   * requiredPacketIndex covers the core refill / commit-generation invariant.
-//   * targetFrameEnd covers the AMDTP frame-exposure invariant for WriteEnd.
+//   * targetFrameEnd covers immutable AMDTP DATA through the staged WriteEnd.
 // Returns the number of slots prepared. With an unseeded transmit clock the
 // normal AMDTP cadence is preserved but every packet carries NO_INFO
 // (SYT=0xffff), matching the reference Saffire seed behavior. Set

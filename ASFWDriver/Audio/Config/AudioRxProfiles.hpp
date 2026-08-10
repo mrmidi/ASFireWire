@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ASFW::Isoch::Config {
+namespace ASFW::Audio::Config {
 
 /// Profile identifiers. Override build-time default with -DASFW_RX_TUNING_PROFILE=0 (A), =1 (B), or =2 (C).
 enum class RxProfileId : uint8_t { A = 0, B = 1, C = 2 };
@@ -89,4 +89,4 @@ inline void SetActiveRxProfile(RxProfileId id) noexcept {
     }
 }
 
-}  // namespace ASFW::Isoch::Config
+}  // namespace ASFW::Audio::Config
