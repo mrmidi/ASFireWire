@@ -48,7 +48,7 @@ Net: PUSH dropout rises once a stall exceeds the lead margin (lead - safety);
 PULL dropout stays ~0 provided safety_offset >= lead (so data is present at
 commit), bounded below by hardware_ring. The sim quantifies both.
 
-Constants default to ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp.
+Constants default to ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp.
 
 Usage:
     python3 tx_payload_ownership_sim.py run                # current geometry, both models
@@ -66,7 +66,7 @@ from dataclasses import dataclass, field, replace
 from typing import List, Tuple
 
 # -----------------------------------------------------------------------------
-# Geometry constants (ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp)
+# Geometry constants (ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp)
 # -----------------------------------------------------------------------------
 CADENCE: Tuple[int, ...] = (8, 8, 8, 0)        # blocking 48 kHz: D,D,D,N
 AVG_FRAMES_PER_PKT = sum(CADENCE) / len(CADENCE)  # 6.0

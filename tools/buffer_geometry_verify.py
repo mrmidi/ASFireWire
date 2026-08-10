@@ -7,7 +7,7 @@ PURPOSE
 Before changing the 400-cycle TX content horizon, packet backing, advertised
 CoreAudio buffer size, or HAL safety offsets, the proposed numbers must satisfy
 EVERY compile-time invariant baked into
-ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp as a static_assert. A bump that
+ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp as a static_assert. A bump that
 "looks fine" routinely breaks one of:
 
   * cadence alignment   (kTxSharedSlotPackets % {4,6} == 0)

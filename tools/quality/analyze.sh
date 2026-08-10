@@ -11,6 +11,8 @@ fi
 
 DERIVED_DATA_PATH="${ROOT}/build/DerivedData"
 mkdir -p "${DERIVED_DATA_PATH}"
+LOG_PATH="${ROOT}/tmp/analyze.log"
+mkdir -p "${ROOT}/tmp"
 
 set -o pipefail
 if command -v xcpretty >/dev/null 2>&1; then
@@ -20,7 +22,7 @@ if command -v xcpretty >/dev/null 2>&1; then
     -configuration Debug \
     -derivedDataPath "${DERIVED_DATA_PATH}" \
     analyze \
-    | tee analyze.log \
+    | tee "${LOG_PATH}" \
     | xcpretty
 else
   xcodebuild \
@@ -29,5 +31,5 @@ else
     -configuration Debug \
     -derivedDataPath "${DERIVED_DATA_PATH}" \
     analyze \
-    | tee analyze.log
+    | tee "${LOG_PATH}"
 fi

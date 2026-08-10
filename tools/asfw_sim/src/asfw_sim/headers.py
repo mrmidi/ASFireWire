@@ -10,8 +10,9 @@ this module reads the numbers from the headers themselves and
 
 Scope: the ``static constexpr uint32_t`` integer constants in
 
-* ``ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp``
-* ``ASFWDriver/Shared/Isoch/AudioHalBufferProfiles.hpp``
+* ``ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp``
+* ``ASFWDriver/Audio/Shared/AudioHalBufferProfiles.hpp``
+* ``ASFWDriver/Shared/Isoch/IsochQueueGeometry.hpp``
 * ``ASFWDriver/Audio/Wire/AMDTP/RxSequenceReplay.hpp``
 
 This is deliberately NOT a C++ parser.  It evaluates the restricted expression
@@ -91,6 +92,9 @@ def _eval_cpp_int(expr: str, names: dict[str, int]) -> int:
     cleaned = " ".join(expr.split())
     cleaned = cleaned.replace("'", "")  # C++14 digit separators: 24'576'000
     cleaned = re.sub(r"\bstatic_cast<\s*\w+\s*>\s*", "", cleaned)
+    # Qualified constants imported from the neutral Shared/Isoch seam are
+    # seeded by name below. Strip C++ namespaces before Python AST parsing.
+    cleaned = re.sub(r"(?:::)?(?:[A-Za-z_]\w*::)+([A-Za-z_]\w*)", r"\1", cleaned)
     cleaned = cleaned.replace(".", "__")  # profile.field -> profile__field
     cleaned = re.sub(r"\b(\d+)[uU][lL]{0,2}\b", r"\1", cleaned)  # 8000u -> 8000
 
@@ -156,6 +160,7 @@ class DriverHeaders:
     """The full geometry as the driver actually defines it."""
 
     timing: HeaderConstants
+    queue: HeaderConstants
     replay: HeaderConstants
     profile_name: str
 
@@ -308,24 +313,30 @@ def _scrape_uint_constants(text: str, seed: dict[str, int]) -> dict[str, int]:
 def load_driver_headers(root: Path | None = None) -> DriverHeaders:
     """Read the live geometry out of the driver headers."""
     repo = root or find_driver_root()
-    shared = repo / "ASFWDriver" / "Shared" / "Isoch"
-    timing_path = shared / "AudioTimingGeometry.hpp"
-    profiles_path = shared / "AudioHalBufferProfiles.hpp"
+    audio_shared = repo / "ASFWDriver" / "Audio" / "Shared"
+    shared_isoch = repo / "ASFWDriver" / "Shared" / "Isoch"
+    timing_path = audio_shared / "AudioTimingGeometry.hpp"
+    profiles_path = audio_shared / "AudioHalBufferProfiles.hpp"
+    queue_path = shared_isoch / "IsochQueueGeometry.hpp"
     replay_path = (
         repo / "ASFWDriver" / "Audio" / "Wire" / "AMDTP" / "RxSequenceReplay.hpp"
     )
 
-    for path in (timing_path, profiles_path, replay_path):
+    for path in (timing_path, profiles_path, queue_path, replay_path):
         if not path.is_file():
             raise CppEvalError(f"expected driver header not found: {path}")
 
     profile_name, profile_fields = _parse_active_profile(
         _strip_comments(profiles_path.read_text(encoding="utf-8"))
     )
+    queue = _scrape_uint_constants(
+        _strip_comments(queue_path.read_text(encoding="utf-8")), {}
+    )
     seed = {
         f"kActiveAudioHalBufferProfile__{field}": value
         for field, value in profile_fields.items()
     }
+    seed.update(queue)
 
     timing = _scrape_uint_constants(
         _strip_comments(timing_path.read_text(encoding="utf-8")), seed
@@ -336,6 +347,7 @@ def load_driver_headers(root: Path | None = None) -> DriverHeaders:
 
     return DriverHeaders(
         timing=HeaderConstants(timing_path, timing),
+        queue=HeaderConstants(queue_path, queue),
         replay=HeaderConstants(replay_path, replay),
         profile_name=profile_name,
     )
