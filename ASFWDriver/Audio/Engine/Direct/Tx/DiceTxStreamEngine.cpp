@@ -46,13 +46,15 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile
     if (!packetizer_.Configure(amdtpConfig, policy)) {
         return false;
     }
-    payloadWriter_.Configure(packetizer_.StreamConfig(), policy);
-    payloadWriter_.BindTimeline(&timeline_);
-
     profile_ = &profile;
     streamConfig_ = txConfig;
     txPolicy_ = txPolicy;
     return true;
+}
+
+void DiceTxStreamEngine::BindPcmSource(
+    ASFW::Audio::Ports::ITxPcmSource* pcmSource) noexcept {
+    pcmSource_ = pcmSource;
 }
 
 void DiceTxStreamEngine::BindSlotProvider(
@@ -84,6 +86,63 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
         return TxSlotPrepareResult::kSlotProviderUnavailable;
     }
 
+    AMDTP::AmdtpNextPacketPlan plan{};
+    if (!packetizer_.PreviewNextPacket(timing, plan)) {
+        return TxSlotPrepareResult::kPacketizerRejected;
+    }
+
+    AMDTP::TxPcmSnapshotView pcm{};
+    if (plan.isData) {
+        if (!pcmSource_) {
+            return TxSlotPrepareResult::kPcmSourceUnavailable;
+        }
+        const uint64_t sampleCount =
+            static_cast<uint64_t>(plan.framesInPacket) *
+            packetizer_.StreamConfig().pcmChannels;
+        if (sampleCount > pcmScratch_.size()) {
+            counters_.pcmReadsInvalid.fetch_add(
+                1, std::memory_order_relaxed);
+            return TxSlotPrepareResult::kPcmInvalidRequest;
+        }
+        const auto sourceResult = pcmSource_->ReadFloat32Interleaved(
+            {
+                .firstFrame = plan.firstAudioFrame,
+                .frameCount = plan.framesInPacket,
+                .sourceChannelOffset =
+                    packetizer_.StreamConfig().sourceChannelOffset,
+                .channelCount = packetizer_.StreamConfig().pcmChannels,
+            },
+            pcmScratch_.data(),
+            static_cast<uint32_t>(pcmScratch_.size()));
+        switch (sourceResult) {
+            case ASFW::Audio::Ports::TxPcmReadResult::kReady:
+                counters_.pcmReadsReady.fetch_add(
+                    1, std::memory_order_relaxed);
+                break;
+            case ASFW::Audio::Ports::TxPcmReadResult::kNotYetWritten:
+                counters_.pcmReadsNotYetWritten.fetch_add(
+                    1, std::memory_order_relaxed);
+                return TxSlotPrepareResult::kPcmNotYetWritten;
+            case ASFW::Audio::Ports::TxPcmReadResult::kStaleOverwritten:
+                counters_.pcmReadsStaleOverwritten.fetch_add(
+                    1, std::memory_order_relaxed);
+                return TxSlotPrepareResult::kPcmStaleOverwritten;
+            case ASFW::Audio::Ports::TxPcmReadResult::kSnapshotBusy:
+                counters_.pcmReadsSnapshotBusy.fetch_add(
+                    1, std::memory_order_relaxed);
+                return TxSlotPrepareResult::kPcmSnapshotBusy;
+            case ASFW::Audio::Ports::TxPcmReadResult::kInvalidRequest:
+                counters_.pcmReadsInvalid.fetch_add(
+                    1, std::memory_order_relaxed);
+                return TxSlotPrepareResult::kPcmInvalidRequest;
+        }
+        pcm = {
+            .interleavedFloat32 = pcmScratch_.data(),
+            .frameCount = plan.framesInPacket,
+            .channels = packetizer_.StreamConfig().pcmChannels,
+        };
+    }
+
     AMDTP::TxPacketSlotView slot{};
     if (!slotProvider_->AcquireWritableSlot(packetIndex, slot)) {
         counters_.slotAcquireFailures.fetch_add(1, std::memory_order_relaxed);
@@ -91,13 +150,14 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
     }
 
     AMDTP::PreparedTxPacket packet{};
-    if (!packetizer_.PrepareNextPacket(slot, timing, packet)) {
+    if (!packetizer_.PrepareNextPacket(slot, timing, pcm, packet)) {
         return TxSlotPrepareResult::kPacketizerRejected;
     }
 
     if (!slotProvider_->PublishSlot(packet)) {
         return TxSlotPrepareResult::kSlotPublishFailed;
     }
+    timeline_.MarkPublished(packet.packetIndex);
 
     counters_.packetsPrepared.fetch_add(1, std::memory_order_relaxed);
     if (packet.isData) {
@@ -110,12 +170,6 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
 
 bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {
     return packetizer_.NextPacketWouldCarryData();
-}
-
-void DiceTxStreamEngine::WriteHostOutputFloat32(
-    const AMDTP::HostAudioBufferView& hostBuffer,
-    uint64_t completionCursor) noexcept {
-    payloadWriter_.WriteFloat32Interleaved(hostBuffer, completionCursor);
 }
 
 AMDTP::AmdtpPacketTimeline& DiceTxStreamEngine::Timeline() noexcept {
@@ -139,11 +193,6 @@ const DiceTxEngineCounters& DiceTxStreamEngine::Counters() const noexcept {
     return counters_;
 }
 
-const AMDTP::AmdtpPayloadWriterCounters&
-DiceTxStreamEngine::PayloadWriterCounters() const noexcept {
-    return payloadWriter_.Counters();
-}
-
 AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     const ASFW::Isoch::Audio::AudioStreamTxPolicy& streamPolicy) const noexcept {
     AMDTP::AmdtpTxPolicy policy{};
@@ -157,7 +206,6 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.initializeNonAudioSlots = streamPolicy.initializeNonAudioSlots;
     policy.preserveFdfInNoDataPackets = streamPolicy.preserveFdfInNoDataPackets;
     policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
-    policy.clearPayloadBeforeExposure = true;
     return policy;
 }
 

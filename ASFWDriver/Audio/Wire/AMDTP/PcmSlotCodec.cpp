@@ -99,8 +99,8 @@ void PcmSlotCodec::EncodeInterleavedFloat32Frame(const float* sourceFrame,
         const float sample = (slot < sourceChannels) ? sourceFrame[slot] : 0.0f;
         destinationSlots[slot] = EncodeFloat32(sample, encoding);
     }
-    // Non-PCM slots (MIDI etc.) are owned by the payload writer's policy, not
-    // the codec; they are left untouched here.
+    // Non-PCM slots (MIDI etc.) are owned by the packetizer's framing policy,
+    // not the PCM codec; they are left untouched here.
 }
 
 } // namespace ASFW::Protocols::Audio::AMDTP

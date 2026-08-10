@@ -292,7 +292,7 @@ public:
         return true;
     }
 
-    [[nodiscard]] bool TryRead(
+    [[nodiscard]] bool TryPeek(
         const RxSequenceReplayState& replay,
         RxSequenceEntry& out,
         RxSequenceReplayReadDiagnostic* diagnostic = nullptr) noexcept {
@@ -326,7 +326,26 @@ public:
         if (!replay.Read(nextCursor_, epoch_, out, observed)) {
             return false;
         }
-        ++nextCursor_;
+        return true;
+    }
+
+    // Advance only after the output packet corresponding to the peeked entry
+    // has actually been committed. A PCM-not-ready deferral therefore retries
+    // the same timing decision instead of silently consuming one RX cycle.
+    void Advance() noexcept {
+        if (active_) {
+            ++nextCursor_;
+        }
+    }
+
+    [[nodiscard]] bool TryRead(
+        const RxSequenceReplayState& replay,
+        RxSequenceEntry& out,
+        RxSequenceReplayReadDiagnostic* diagnostic = nullptr) noexcept {
+        if (!TryPeek(replay, out, diagnostic)) {
+            return false;
+        }
+        Advance();
         return true;
     }
 

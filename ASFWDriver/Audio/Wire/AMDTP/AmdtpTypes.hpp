@@ -58,18 +58,17 @@ struct AmdtpTxPolicy final {
     DbsPolicy dbsPolicy{DbsPolicy::Constant};
 
     uint32_t defaultNonAudioSlotWord{0x80000000};
-    bool clearPayloadBeforeExposure{true};
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
 };
 
-struct HostAudioBufferView final {
+// Value-owned PCM snapshot supplied to the packetizer. The bytes referenced by
+// this view live in the TX engine's private scratch storage, never in the HAL
+// ring and never in an already-committed transport slot.
+struct TxPcmSnapshotView final {
     const float* interleavedFloat32{nullptr};
-
-    uint64_t firstFrame{0};
     uint32_t frameCount{0};
-    uint32_t frameCapacity{0};
     uint32_t channels{0};
 };
 
@@ -90,6 +89,10 @@ struct PreparedTxPacket final {
     uint64_t firstAudioFrame{0};
     uint32_t framesInPacket{0};
     uint32_t dbs{0};
+
+    // Load-bearing publication invariant. Every DATA packet must have copied a
+    // complete, stable PCM snapshot before IAmdtpTxSlotProvider::PublishSlot.
+    bool pcmFinalized{false};
 };
 
 enum class AmdtpPacketDisposition : uint8_t {

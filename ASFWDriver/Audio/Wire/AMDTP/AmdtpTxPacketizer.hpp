@@ -25,6 +25,13 @@ struct AmdtpTxPacketizerTelemetrySnapshot final {
     bool hasLastDataPacket{false};
 };
 
+struct AmdtpNextPacketPlan final {
+    bool isData{false};
+    uint8_t framesInPacket{0};
+    uint32_t byteCount{0};
+    uint64_t firstAudioFrame{0};
+};
+
 class AmdtpTxPacketizer final {
 public:
     AmdtpTxPacketizer() noexcept = default;
@@ -48,16 +55,30 @@ public:
     // frozen at its pre-stall frame while CoreAudio's write cursor advances,
     // and once it falls more than a playback ring behind, TX transmits the
     // overwritten (silent) region forever. Re-arming lets the first DATA packet
-    // after replay recovers re-project the cursor to the live frame. Only fires
-    // on genuine replay stalls, so a healthy (e.g. direct-bound) stream that
-    // never stalls is unaffected.
+    // after replay recovers re-project the cursor to the live frame. It may
+    // also follow an unrecoverably stale PCM range. A future/busy PCM snapshot
+    // is recoverable and must never re-arm this cursor: doing so creates an
+    // align/miss/re-arm feedback loop.
     void ReArmFrameCursorAlignment() noexcept;
 
     [[nodiscard]] bool IsFrameCursorAligned() const noexcept { return frameCursorAligned_; }
 
+    [[nodiscard]] bool PreviewNextPacket(
+        const AmdtpTimingState& timing,
+        AmdtpNextPacketPlan& outPlan) const noexcept;
+
     bool PrepareNextPacket(TxPacketSlotView slot,
                            const AmdtpTimingState& timing,
+                           const TxPcmSnapshotView& pcm,
                            PreparedTxPacket& outPacket) noexcept;
+
+    // Convenience for a packet known to carry no DATA (startup/recovery
+    // NO-DATA). If the current decision requires PCM this overload rejects it.
+    bool PrepareNextPacket(TxPacketSlotView slot,
+                           const AmdtpTimingState& timing,
+                           PreparedTxPacket& outPacket) noexcept {
+        return PrepareNextPacket(slot, timing, {}, outPacket);
+    }
 
     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
@@ -72,6 +93,10 @@ private:
     void WriteDataPacketDefaults(uint8_t* packetBytes,
                                  uint32_t packetCapacityBytes,
                                  uint32_t payloadBytes) noexcept;
+
+    void WritePcmSnapshot(uint8_t* packetBytes,
+                          const PreparedTxPacket& packet,
+                          const TxPcmSnapshotView& pcm) noexcept;
 
     void WriteCipHeader(uint8_t* packetBytes,
                         const IEC61883::CipHeaderWords& header) noexcept;
