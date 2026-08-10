@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ASFW::IsochTransport {
+namespace ASFW::Audio::Shared {
 
 enum class AudioHalBufferProfileId : uint8_t {
     Aligned512 = 0,
@@ -100,4 +100,4 @@ inline constexpr AudioHalBufferProfileId kActiveAudioHalBufferProfileId =
 inline constexpr AudioHalBufferProfile kActiveAudioHalBufferProfile =
     SelectAudioHalBufferProfile(kActiveAudioHalBufferProfileId);
 
-} // namespace ASFW::IsochTransport
+} // namespace ASFW::Audio::Shared

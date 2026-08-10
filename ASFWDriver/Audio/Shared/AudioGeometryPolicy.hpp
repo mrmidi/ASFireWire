@@ -20,7 +20,7 @@
 
 #include <cstdint>
 
-namespace ASFW::IsochTransport {
+namespace ASFW::Audio::Shared {
 
 struct AudioGeometryPolicy final {
     // Rate ladder. frames-per-packet doubles each 2x step; a rate addend pads
@@ -56,10 +56,9 @@ struct AudioGeometryPolicy final {
         return 29u;
     }
 
-    // TX exposure cushion -- the symmetric partner of RequiredInputSafetyFrames.
-    // The producer must keep E ahead of W by at least one IO window + jitter.
-    // Rate-aware view of AudioTimingGeometry::kTxExposureLeadFrames; the
-    // producer path is what must ENFORCE the returned value.
+    // Minimum TX retention/catch-up span: one client IO window plus scheduling
+    // jitter. The producer still finalizes only through W; this value sizes how
+    // much already-written work must remain recoverable.
     static constexpr uint32_t RequiredOutputExposureFrames(
         uint32_t maxClientIoFrames, uint32_t jitterFrames) {
         return maxClientIoFrames + jitterFrames;
@@ -94,7 +93,7 @@ constexpr bool ValidAtRate(double rate) {
     if (rxSafety >= AudioTimingGeometry::kFrameRingFrames) {
         return false;
     }
-    // The TX exposure cushion must be honourable within the ring.
+    // One callback plus jitter must be retainable within the host ring.
     const uint32_t exposure = AudioGeometryPolicy::RequiredOutputExposureFrames(
         AudioTimingGeometry::kHalIoPeriodFrames,
         AudioTimingGeometry::kSchedulingJitterFrames);
@@ -118,7 +117,7 @@ static_assert(AudioGeometryPolicy::RxSafetyOffsetFrames(48000.0) == 128,
 static_assert(AudioGeometryPolicy::ReportedLatencyFrames(48000.0) == 29,
               "48k reported latency must be 29 frames");
 
-} // namespace ASFW::IsochTransport
+} // namespace ASFW::Audio::Shared
 
 // -----------------------------------------------------------------------------
 // RX input-safety cushion. Kept in namespace ASFW::Audio (unchanged signature)
@@ -149,7 +148,7 @@ namespace ASFW::Audio {
     const uint32_t raw =
         profileInputSafety > interruptBatch ? profileInputSafety : interruptBatch;
     constexpr uint32_t kAlign =
-        ASFW::IsochTransport::AudioTimingGeometry::kFrameAlignment;
+        ASFW::Audio::Shared::AudioTimingGeometry::kFrameAlignment;
     return ((raw + kAlign - 1) / kAlign) * kAlign;
 }
 

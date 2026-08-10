@@ -4,7 +4,7 @@
 #include <atomic>
 #include <cstdint>
 
-namespace ASFW::Isoch::Rx {
+namespace ASFW::Audio::Runtime {
 
 // ZTS (zero-timestamp) clock telemetry.
 //
@@ -19,10 +19,11 @@ namespace ASFW::Isoch::Rx {
 //   - sample-frame domain: `sampleFrame`,
 // plus the recovered device-SYT cadence and the per-packet SYT/lead.
 //
-// Capture happens in IsochReceiveContext::Poll(), which runs in the interrupt
-// hot path. Logging there would perturb the very timing we are measuring, so the
-// hot path only writes a fixed POD record into the ring below (O(1), no IO, no
-// allocation). The watchdog drains and formats the records off the hot path.
+// Capture happens in DirectAudioReceiveConsumer::ConsumePacket(), reached from
+// the receive polling hot path. Logging there would perturb the very timing we
+// are measuring, so the hot path only writes a fixed POD record into the ring
+// below (O(1), no IO, no allocation). Maintenance drains and formats records
+// off the hot path.
 
 enum class ZtsEventKind : uint8_t {
     kUpdate = 0,
@@ -107,8 +108,8 @@ private:
 
 // Single-producer / single-consumer overwriting ring.
 //
-// In this dext the producer (IsochReceiveContext::Poll, reached from the
-// interrupt or the watchdog) and the consumer (the watchdog drain) are
+// In this dext the producer (DirectAudioReceiveConsumer, reached from receive
+// polling) and the consumer (the maintenance drain) are
 // serialized on the single Default dispatch queue, so they never actually run
 // concurrently. The release/acquire on the write sequence still makes the
 // hand-off well defined and keeps the producer side a plain O(1) store.
@@ -172,4 +173,4 @@ private:
     uint64_t readSeq_{0};  // consumer-only
 };
 
-} // namespace ASFW::Isoch::Rx
+} // namespace ASFW::Audio::Runtime

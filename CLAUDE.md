@@ -105,6 +105,7 @@ CoreAudio / HAL
 |-----------|---------------|
 | `Audio/DriverKit/` | `ASFWAudioDriver.iig` + `ASFWAudioNub.iig` — CoreAudio HAL side |
 | `Audio/Wire/` | Content framing: `IEC61883`, `CIP`, `AMDTP`, `AM824`, `RawPcm24In32`. Builds the CIP-headered stream handed to transport. CIP spans DV/MPEG/audio — **provisional home, not transport** |
+| `Audio/Shared/` | Audio-only contracts shared across audio sublayers: timing geometry, HAL buffer profiles, and audio geometry policy |
 | `Audio/Runtime/` | Timing/buffer geometry: `HostClockAnchor`, `PlaybackRingRange` |
 | `Audio/Ports/` | Seam interfaces: `IAmdtpTxSlotProvider`, `ICycleTimeline`, `IDiagSink` |
 | `Audio/Engine/`, `Audio/Core/`, `Audio/Model/`, `Audio/Config/`, `Audio/Protocols/` | Engine wiring, runtime model, config |
