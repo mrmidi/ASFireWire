@@ -33,7 +33,7 @@ namespace ASFW::Discovery { class DeviceRegistry; struct DeviceRecord; }
 namespace ASFW::Audio::Model { struct ASFWAudioDevice; }
 namespace ASFW::Audio::Oxford::Apogee { class ApogeeDuetProtocol; }
 namespace ASFW::Protocols::AVC::Music { class MusicSubunit; }
-namespace ASFW::Audio::BeBoB { struct DeviceModel; }
+namespace ASFW::Protocols::AVC::Probe { struct DeviceModel; }
 
 namespace ASFW::Protocols::AVC {
 
@@ -121,7 +121,7 @@ private:
                                   uint32_t vendorId,
                                   uint32_t modelId,
                                   const std::string& deviceName,
-                                  const ::ASFW::Audio::BeBoB::DeviceModel& inventory);
+                                  const ::ASFW::Protocols::AVC::Probe::DeviceModel& inventory);
     [[nodiscard]] Music::MusicSubunit* FindAudioMusicSubunit(const AVCUnit& avcUnit) const;
     void PopulateMusicSubunitCapabilities(uint64_t guid,
                                           const Discovery::FWDevice& device,

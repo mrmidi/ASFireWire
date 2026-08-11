@@ -63,6 +63,15 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
               AudioIntegrationMode::kHardcodedNub);
 }
 
+// Device identity lives with the profile tables, not with the AV/C probe: the
+// plug-0 probe is generic TA 1394 AV/C and is shared across families.
+TEST(AudioProfileRegistryTests, MatchesOnlyExactBeBoBIdentities) {
+    using ASFW::DeviceProfiles::Audio::BeBoB::IsBeBoBDevice;
+    EXPECT_TRUE(IsBeBoBDevice(0x000aac, 0x000003));   // TerraTec PHASE 88 Rack FW
+    EXPECT_FALSE(IsBeBoBDevice(0x000aac, 0x000004));  // sibling model
+    EXPECT_FALSE(IsBeBoBDevice(0x000a92, 0x000003));  // same model id, other vendor
+}
+
 TEST(AudioProfileRegistryTests, RejectsUnknownDevices) {
     EXPECT_FALSE(
         AudioProfileRegistry::LookupIdentity(ByVendorModel(0x00ABCDEF, 0x00001234)).has_value());

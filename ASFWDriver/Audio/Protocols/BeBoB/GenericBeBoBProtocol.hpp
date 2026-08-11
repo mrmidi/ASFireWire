@@ -4,7 +4,7 @@
 // GenericBeBoBProtocol.hpp — Concrete BeBoB fallback for known-but-untested devices.
 //
 // Inherits the general BeBoB/CMP lifecycle from BeBoBProtocol. Derives stream
-// geometry from discovery data (BeBoBPlug0StreamDiscovery::DeviceModel) rather
+// geometry from generic AV/C discovery data (AVCPlug0StreamDiscovery) rather
 // than hardcoding Phase88's 10+1@48k. Provides conservative defaults: plug-0,
 // CMP-based, no mixer programming, PCR-connectivity health.
 //
@@ -14,11 +14,15 @@
 #pragma once
 
 #include "BeBoBProtocol.hpp"
-#include "BeBoBPlug0StreamDiscovery.hpp"
+#include "../../../Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp"
 
 #include <vector>
 
 namespace ASFW::Audio::BeBoB {
+
+// Plug/stream-format discovery is generic TA 1394 AV/C, not BridgeCo; BeBoB is
+// one consumer of it. See Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp.
+using ::ASFW::Protocols::AVC::Probe::DeviceModel;
 
 class GenericBeBoBProtocol final : public BeBoBProtocol {
 public:

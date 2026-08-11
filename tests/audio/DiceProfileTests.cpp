@@ -18,7 +18,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
-#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp"
 
 namespace {
 
@@ -325,9 +325,9 @@ TEST(DiceProfileTests, GenericDiceDefaultOffsetsAndLatencies) {
 }
 
 // Discovery-derived geometry for a BeBoB device without a curated profile.
-ASFW::Audio::BeBoB::DeviceModel MakeStereoBeBoBDiscoveryModel() {
-    ASFW::Audio::BeBoB::DeviceModel model{};
-    ASFW::Audio::BeBoB::StreamFormation formation{};
+ASFW::Protocols::AVC::Probe::DeviceModel MakeStereoBeBoBDiscoveryModel() {
+    ASFW::Protocols::AVC::Probe::DeviceModel model{};
+    ASFW::Protocols::AVC::Probe::StreamFormation formation{};
     formation.pcmChannels = 2;
     formation.midiSlots = 0;
     formation.rateCode = 0x02; // 48 kHz

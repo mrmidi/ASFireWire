@@ -132,7 +132,7 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
                  vendorId, modelId, nodeId);
         return std::make_unique<BeBoB::GenericBeBoBProtocol>(
             busOps, busInfo, route, irmClient, cmpClient, timerScheduler,
-            BeBoB::DeviceModel{});
+            ::ASFW::Protocols::AVC::Probe::DeviceModel{});
     }
 
     // Unknown device

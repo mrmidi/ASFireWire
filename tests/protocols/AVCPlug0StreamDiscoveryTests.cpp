@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp"
 
 #include <optional>
 #include <utility>
@@ -10,15 +10,14 @@
 
 namespace {
 
-using ASFW::DeviceProfiles::Audio::BeBoB::IsBeBoBDevice;
-using ASFW::Audio::BeBoB::ParseStreamFormation;
-using ASFW::Audio::BeBoB::ParseExtendedStreamFormatListResponse;
-using ASFW::Audio::BeBoB::ParseExtendedStreamFormatSingleResponse;
-using ASFW::Audio::BeBoB::ParseChannelPositionSections;
-using ASFW::Audio::BeBoB::BuildReadOnlyProbeCommand;
-using ASFW::Audio::BeBoB::PlugDirection;
-using ASFW::Audio::BeBoB::ReadOnlyProbeCommand;
-using ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery;
+using ASFW::Protocols::AVC::Probe::ParseStreamFormation;
+using ASFW::Protocols::AVC::Probe::ParseExtendedStreamFormatListResponse;
+using ASFW::Protocols::AVC::Probe::ParseExtendedStreamFormatSingleResponse;
+using ASFW::Protocols::AVC::Probe::ParseChannelPositionSections;
+using ASFW::Protocols::AVC::Probe::BuildReadOnlyProbeCommand;
+using ASFW::Protocols::AVC::Probe::PlugDirection;
+using ASFW::Protocols::AVC::Probe::ReadOnlyProbeCommand;
+using ASFW::Protocols::AVC::Probe::StartAVCPlug0Discovery;
 using ASFW::Protocols::AVC::AVCCdb;
 using ASFW::Protocols::AVC::AVCCompletion;
 using ASFW::Protocols::AVC::AVCResult;
@@ -62,13 +61,7 @@ private:
     size_t next_{0};
 };
 
-TEST(BridgeCoReadOnlyProbeTests, MatchesOnlyExactPhase88Identity) {
-    EXPECT_TRUE(IsBeBoBDevice(0x000aac, 0x000003));
-    EXPECT_FALSE(IsBeBoBDevice(0x000aac, 0x000004));
-    EXPECT_FALSE(IsBeBoBDevice(0x000a92, 0x000003));
-}
-
-TEST(BridgeCoReadOnlyProbeTests, BuildsLinuxGenericUnitPlugInfoBeforeBridgeCoExtensions) {
+TEST(AVCPlug0StreamDiscoveryTests, BuildsUnitPlugInfoBeforeExtendedPlugInfo) {
     const auto cdb = BuildReadOnlyProbeCommand(ReadOnlyProbeCommand::kUnitPlugCounts);
     EXPECT_EQ(cdb.ctype, 0x01);
     EXPECT_EQ(cdb.subunit, 0xff);
@@ -79,7 +72,7 @@ TEST(BridgeCoReadOnlyProbeTests, BuildsLinuxGenericUnitPlugInfoBeforeBridgeCoExt
     EXPECT_EQ(cdb.operands[4], 0x00);
 }
 
-TEST(BridgeCoReadOnlyProbeTests, BuildsBridgeCoFormatListWithSupportStatusBeforeIndex) {
+TEST(AVCPlug0StreamDiscoveryTests, BuildsExtendedFormatListWithSupportStatusBeforeIndex) {
     const auto cdb = BuildReadOnlyProbeCommand(ReadOnlyProbeCommand::kStreamFormatList,
                                                 PlugDirection::kOutput, 3);
     EXPECT_EQ(cdb.ctype, 0x01);
@@ -96,7 +89,7 @@ TEST(BridgeCoReadOnlyProbeTests, BuildsBridgeCoFormatListWithSupportStatusBefore
     EXPECT_EQ(cdb.operands[7], 0x03);
 }
 
-TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChoreography) {
+TEST(AVCPlug0StreamDiscoveryTests, FollowsPlugInfoThenExtendedFormatListChoreography) {
     // The command/response offsets follow the ALSA BeBoB BridgeCo codec:
     // bridgeco.rs:1003-1043 (extended plug info), 1600-1626 (format common
     // fields), and 1743-1764 (list index and formation). No reference code is
@@ -106,7 +99,7 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
         {MakeCdb(0x01, 0x02, {0x00, 0x00, 0x00, 0x00, 0x00}),
          AVCResult::kImplementedStable,
          MakeCdb(0x0c, 0x02, {0x00, 0x01, 0x01, 0x00, 0x00})},
-        // BridgeCo ISO input plug type.
+        // ISO input plug type.
         {MakeCdb(0x01, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00}),
          AVCResult::kImplementedStable,
          MakeCdb(0x0c, 0x02, {0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
@@ -115,7 +108,7 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
          AVCResult::kImplementedStable,
          MakeCdb(0x0c, 0x2f, {0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
                                0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d})},
-        // BridgeCo ISO output plug type.
+        // ISO output plug type.
         {MakeCdb(0x01, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00}),
          AVCResult::kImplementedStable,
          MakeCdb(0x0c, 0x02, {0xc0, 0x01, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00})},
@@ -131,8 +124,8 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
          AVCResult::kNotImplemented, {}},
     });
 
-    std::optional<ASFW::Audio::BeBoB::DeviceModel> model;
-    StartBeBoBPlug0Discovery(submitter, 0x000aac0300b1d1f7ULL,
+    std::optional<ASFW::Protocols::AVC::Probe::DeviceModel> model;
+    StartAVCPlug0Discovery(submitter, 0x000aac0300b1d1f7ULL,
                               [&model](const auto& discovered) { model = discovered; });
 
     ASSERT_TRUE(submitter.Finished());
@@ -151,8 +144,8 @@ TEST(BridgeCoReadOnlyProbeTests, FollowsLinuxPlugInfoThenBridgeCoFormatListChore
     EXPECT_FALSE(model->SupportsDuplexFormation(10, 2));
 }
 
-TEST(BridgeCoReadOnlyProbeTests, ParsesPcmAndMidiSlotsWithoutGuessingPorts) {
-    // AM824 compound, BridgeCo 48k rate code, 10 PCM slots and one MIDI slot.
+TEST(AVCPlug0StreamDiscoveryTests, ParsesPcmAndMidiSlotsWithoutGuessingPorts) {
+    // AM824 compound, 48k rate code, 10 PCM slots and one MIDI slot.
     const uint8_t payload[]{0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06, 0x01, 0x0d};
     const auto formation = ParseStreamFormation(payload);
     ASSERT_TRUE(formation.has_value());
@@ -161,14 +154,14 @@ TEST(BridgeCoReadOnlyProbeTests, ParsesPcmAndMidiSlotsWithoutGuessingPorts) {
     EXPECT_EQ(formation->midiSlots, 1);
 }
 
-TEST(BridgeCoReadOnlyProbeTests, RejectsTruncatedAndUnsupportedFormations) {
+TEST(AVCPlug0StreamDiscoveryTests, RejectsTruncatedAndUnsupportedFormations) {
     const uint8_t truncated[]{0x90, 0x40, 0x04, 0x00, 0x02, 0x0a, 0x06};
     const uint8_t unsupported[]{0x90, 0x40, 0x04, 0x00, 0x01, 0x02, 0x40};
     EXPECT_FALSE(ParseStreamFormation(truncated).has_value());
     EXPECT_FALSE(ParseStreamFormation(unsupported).has_value());
 }
 
-TEST(BridgeCoReadOnlyProbeTests, ParsesFormatListAtTheBridgeCoResponseOffset) {
+TEST(AVCPlug0StreamDiscoveryTests, ParsesFormatListAtTheExtendedResponseOffset) {
     // The returned list index is operand 7, with the compound formation at 8.
     // This shape is a clean-room fixture derived from the ALSA BeBoB codec tests.
     const uint8_t operands[]{0xc1, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x03,
@@ -181,7 +174,7 @@ TEST(BridgeCoReadOnlyProbeTests, ParsesFormatListAtTheBridgeCoResponseOffset) {
     EXPECT_FALSE(ParseExtendedStreamFormatListResponse(2, operands).has_value());
 }
 
-TEST(BridgeCoReadOnlyProbeTests, ParsesCurrentFormationAndRejectsUnknownSupportState) {
+TEST(AVCPlug0StreamDiscoveryTests, ParsesCurrentFormationAndRejectsUnknownSupportState) {
     const uint8_t active[]{0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00,
                            0x90, 0x40, 0x04, 0x00, 0x01, 0x0a, 0x06};
     const auto current = ParseExtendedStreamFormatSingleResponse(active);
@@ -193,7 +186,7 @@ TEST(BridgeCoReadOnlyProbeTests, ParsesCurrentFormationAndRejectsUnknownSupportS
     EXPECT_FALSE(ParseExtendedStreamFormatSingleResponse(invalid).has_value());
 }
 
-TEST(BridgeCoReadOnlyProbeTests, ParsesOneBasedSectionPositionsWithoutGuessingMidi) {
+TEST(AVCPlug0StreamDiscoveryTests, ParsesOneBasedSectionPositionsWithoutGuessingMidi) {
     const uint8_t payload[]{0x02,
                             0x02, 0x01, 0x01, 0x02, 0x02,
                             0x01, 0x03, 0x01};

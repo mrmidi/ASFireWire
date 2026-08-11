@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// BeBoBPlug0StreamDiscovery.hpp — Bounded, observational BeBoB discovery.
+// AVCPlug0StreamDiscovery.hpp — Bounded, observational AV/C plug discovery.
 //
-// STATUS-only inventory of a BeBoB device's isochronous plug 0 pair: unit plug
+// STATUS-only inventory of an AV/C unit's isochronous plug 0 pair: unit plug
 // counts, ISO plug type, stream formations, channel positions, and section types.
 // Never changes device clock, rate, routing, CMP, PCR, or stream state.
 //
+// Every command here is TA 1394 AV/C, not a vendor protocol: PLUG_INFO is AV/C
+// General, and the plug-type / channel-position / cluster-info queries are
+// standard extended plug info info-types. FFADO draws the same seam — these
+// live in libavc/general + libavc/streamformat and are used by its *generic*
+// AV/C device (genericavc/avc_avdevice.cpp), from which bebob::Device,
+// fireworks::Device and oxford::Device all derive. So this is shared across
+// AV/C families; BridgeCo/BeBoB is one consumer, not the owner.
+//
 // Scope: plug-0 + one-CMP-connection. Name is deliberate — this does NOT iterate
-// all advertised plugs. Generalize to BeBoBStreamDiscovery when multi-plug BeBoB
-// devices need discovery.
+// all advertised plugs. Generalize when multi-plug devices need discovery.
 //
 // Wire behavior cross-validated with Linux sound/firewire/bebob/
 // bebob_command.c:91-107, 289-328 and bebob_stream.c:254-370, 705-820.
@@ -17,15 +24,7 @@
 
 #pragma once
 
-#include "../../../Protocols/AVC/IAVCCommandSubmitter.hpp"
-#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
-
-using ::ASFW::Protocols::AVC::IAVCCommandSubmitter;
-using ::ASFW::Protocols::AVC::AVCCdb;
-using ::ASFW::Protocols::AVC::AVCResult;
-using ::ASFW::Protocols::AVC::AVCCompletion;
-using ::ASFW::Protocols::AVC::kAVCSubunitUnit;
-using ::ASFW::Protocols::AVC::AVCCommandType;
+#include "../IAVCCommandSubmitter.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -33,7 +32,7 @@ using ::ASFW::Protocols::AVC::AVCCommandType;
 #include <span>
 #include <vector>
 
-namespace ASFW::Audio::BeBoB {
+namespace ASFW::Protocols::AVC::Probe {
 
 struct StreamFormation {
     uint8_t rateCode{0};
@@ -44,9 +43,9 @@ struct StreamFormation {
 enum class PlugDirection : uint8_t { kInput = 0x00, kOutput = 0x01 };
 enum class StreamFormatState : uint8_t { kActive = 0x00, kInactive = 0x01, kNoStreamFormat = 0x02 };
 
-// Linux BeBoB discovery starts with generic unit PLUG_INFO, then asks the
-// BridgeCo extension about ISO plug 0 in each direction. Keep these commands
-// explicit and testable so their CDB operand offsets cannot drift.
+// Discovery starts with generic unit PLUG_INFO, then asks extended plug info
+// about ISO plug 0 in each direction. Keep these commands explicit and testable
+// so their CDB operand offsets cannot drift.
 enum class ReadOnlyProbeCommand : uint8_t {
     kUnitPlugCounts,
     kIsochPlugType,
@@ -124,7 +123,10 @@ ParseStreamFormation(std::span<const uint8_t> formation) noexcept;
 
 /// Sends STATUS queries only. Never changes device clock, rate, routing, CMP,
 /// PCR, or stream state. Scopes to the ISO plug-0 pair.
-void StartBeBoBPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
+///
+/// Callers are responsible for probe safety: some firmware hangs permanently on
+/// AV/C commands it does not implement (see AVCDiscovery's probe gate).
+void StartAVCPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
                               ReadOnlyProbeCompletion completion = {});
 
-} // namespace ASFW::Audio::BeBoB
+} // namespace ASFW::Protocols::AVC::Probe

@@ -11,7 +11,7 @@
 #pragma once
 
 #include "../AudioStreamProfile.hpp"
-#include "../../../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../../../Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp"
 
 #include <vector>
 
@@ -19,7 +19,7 @@ namespace ASFW::Isoch::Audio::AVC::Profiles {
 
 class BeBoBProfile final : public IAudioStreamProfile {
 public:
-    explicit BeBoBProfile(const ::ASFW::Audio::BeBoB::DeviceModel& discoveryModel);
+    explicit BeBoBProfile(const ::ASFW::Protocols::AVC::Probe::DeviceModel& discoveryModel);
 
     [[nodiscard]] const char* Name() const noexcept override { return "BeBoB Device"; }
 

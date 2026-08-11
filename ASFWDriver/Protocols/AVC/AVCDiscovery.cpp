@@ -15,7 +15,8 @@
 #include "../../Audio/Protocols/DeviceStreamModeQuirks.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "Music/MusicSubunit.hpp"
-#include "../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "Probe/AVCPlug0StreamDiscovery.hpp"
+#include "../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 #include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
@@ -113,6 +114,18 @@ struct PlugChannelSummary {
         }
     }
     return summary;
+}
+
+/// Whether this identity is inventoried by going straight to unit PLUG_INFO and
+/// extended plug info, instead of generic UNIT_INFO/SUBUNIT_INFO discovery.
+///
+/// The probe it selects is generic TA 1394 AV/C (Protocols/AVC/Probe), shared
+/// across families the same way FFADO shares libavc under GenericAVC::Device.
+/// What is family-specific is only the *routing*: BeBoB units answer plug-0
+/// queries directly and Linux does not send UNIT_INFO/SUBUNIT_INFO to them
+/// first (firewire/bebob/bebob.c:184-260).
+[[nodiscard]] bool UsesPlug0Inventory(uint32_t vendorId, uint32_t modelId) noexcept {
+    return ASFW::DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(vendorId, modelId);
 }
 
 } // namespace
@@ -274,15 +287,22 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     units_[guid] = avcUnit;
     IOLockUnlock(lock_);
 
-    // The PHASE 88 is a BeBoB unit matched by stable Config ROM identity.
-    // Linux BeBoB starts directly with unit PLUG_INFO and BridgeCo commands;
-    // it does not require generic UNIT_INFO or SUBUNIT_INFO first. Keep that
-    // wire ordering instead of letting generic AV/C discovery consume or race
-    // its FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
+    // Some AV/C families are inventoried by going straight to unit PLUG_INFO
+    // and extended plug info, without generic UNIT_INFO or SUBUNIT_INFO first.
+    // BeBoB is the family that needs it today (Linux does the same and does not
+    // require UNIT_INFO/SUBUNIT_INFO), but the probe itself is generic AV/C --
+    // see Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp. Keep that wire
+    // ordering instead of letting generic AV/C discovery consume or race its
+    // FCP route. Cross-validated: firewire/bebob/bebob.c:184-260 and
     // firewire/bebob/bebob_stream.c:908-940.
-    if (DeviceProfiles::Audio::BeBoB::IsBeBoBDevice(device->GetVendorID(), device->GetModelID())) {
+    //
+    // SAFETY: before adding a family whose firmware hangs on unimplemented AV/C
+    // commands (M-Audio special firmware -- FireWire 1814 / ProjectMix I/O, see
+    // bebob_maudio.c:30-34), this routing needs a probe gate that suppresses the
+    // inventory entirely. Today no such device is in the table.
+    if (UsesPlug0Inventory(device->GetVendorID(), device->GetModelID())) {
         ASFW_LOG(AVC,
-                 "AVCDiscovery: BeBoB device matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
+                 "AVCDiscovery: plug-0 inventory family matched; bypassing generic UNIT_INFO/SUBUNIT_INFO GUID=0x%016llx",
                  guid);
         // BeBoB intentionally bypasses generic AV/C discovery, so it must
         // publish its profile-owned configuration here. Otherwise it never
@@ -294,9 +314,9 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
         const uint32_t vendorId = device->GetVendorID();
         const uint32_t modelId = device->GetModelID();
         const std::string deviceName{device->GetModelName()};
-        ::ASFW::Audio::BeBoB::StartBeBoBPlug0Discovery(
+        ::ASFW::Protocols::AVC::Probe::StartAVCPlug0Discovery(
             *avcUnit, guid,
-            [weakSelf, guid, vendorId, modelId, deviceName](const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
+            [weakSelf, guid, vendorId, modelId, deviceName](const ::ASFW::Protocols::AVC::Probe::DeviceModel& inventory) {
                 const auto self = weakSelf.lock();
                 if (!self || self->shuttingDown_.load(std::memory_order_acquire)) {
                     return;
@@ -400,7 +420,7 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
                                              uint32_t vendorId,
                                              uint32_t modelId,
                                              const std::string& deviceName,
-                                             const ::ASFW::Audio::BeBoB::DeviceModel& inventory) {
+                                             const ::ASFW::Protocols::AVC::Probe::DeviceModel& inventory) {
     // Register a per-GUID BeBoB profile from discovery data. For Phase88 this
     // is superseded by the static Phase88Profile in the registry; for generic
     // BeBoB devices it provides discovery-derived geometry.

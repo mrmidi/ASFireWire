@@ -9,7 +9,7 @@
 #include "AVC/BeBoBProfile.hpp"
 #include "AVC/Phase88Profile.hpp"
 #include "DICE/DiceProfileRegistry.hpp"
-#include "../../../Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
+#include "../../../Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp"
 
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
@@ -74,7 +74,7 @@ const IAudioDeviceProfile* AudioProfileRegistry::RegisterBeBoBProfile(
     if (guid == 0 || discoveryModel == nullptr) return nullptr;
     auto& dynamic = DynamicProfiles();
     if (dynamic.find(guid) != dynamic.end()) return dynamic[guid].get();
-    const auto* model = static_cast<const ::ASFW::Audio::BeBoB::DeviceModel*>(discoveryModel);
+    const auto* model = static_cast<const ::ASFW::Protocols::AVC::Probe::DeviceModel*>(discoveryModel);
     dynamic[guid] = std::make_unique<AVC::Profiles::BeBoBProfile>(*model);
     return dynamic[guid].get();
 }

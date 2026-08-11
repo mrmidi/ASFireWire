@@ -198,8 +198,23 @@ bool FCPTransport::StartPendingWrite() {
     }
 
     IOLockLock(lock_);
-    if (shuttingDown_ || !pending_ || !routeRegistry_) {
+    if (!pending_) {
         IOLockUnlock(lock_);
+        return false;  // nothing was admitted, so no completion is owed
+    }
+
+    const bool shuttingDown = shuttingDown_;
+    const bool hasRouteRegistry = routeRegistry_ != nullptr;
+    if (shuttingDown || !hasRouteRegistry) {
+        IOLockUnlock(lock_);
+        // A command that reached pending_ must always reach its completion.
+        // Returning silently here strands it: the response deadline is armed
+        // from write completion, so an unstarted write leaves no timer at all
+        // and the single command slot never frees.
+        ASFW_LOG_V1(FCP,
+                    "FCPTransport: Cannot start write (shuttingDown=%d hasRouteRegistry=%d)",
+                    shuttingDown ? 1 : 0, hasRouteRegistry ? 1 : 0);
+        CompleteCommand(FCPStatus::kTransportError, {});
         return false;
     }
 

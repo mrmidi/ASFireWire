@@ -1,27 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// BeBoBPlug0StreamDiscovery.cpp — Bounded, observational BeBoB discovery.
+// AVCPlug0StreamDiscovery.cpp — Bounded, observational AV/C plug discovery.
 //
-// STATUS-only inventory of a BeBoB device's isochronous plug 0 pair.
+// STATUS-only inventory of an AV/C unit's isochronous plug 0 pair. Shared
+// across AV/C families; see the header for the layering rationale.
 // Wire behavior cross-validated with Linux sound/firewire/bebob/
 // bebob_command.c:91-107, 289-328 and bebob_stream.c:254-370, 705-820.
 // Fresh implementation; no reference source is copied.
 
-#include "BeBoBPlug0StreamDiscovery.hpp"
+#include "AVCPlug0StreamDiscovery.hpp"
 
 #include "../../../Logging/Logging.hpp"
-
-using ::ASFW::Protocols::AVC::IAVCCommandSubmitter;
-using ::ASFW::Protocols::AVC::AVCCdb;
-using ::ASFW::Protocols::AVC::AVCResult;
-using ::ASFW::Protocols::AVC::AVCCompletion;
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-namespace ASFW::Audio::BeBoB {
+namespace ASFW::Protocols::AVC::Probe {
 namespace {
 
 constexpr uint8_t kOpcodePlugInfo = 0x02;
@@ -55,14 +51,14 @@ class Probe final : public std::enable_shared_from_this<Probe> {
 public:
     Probe(IAVCCommandSubmitter& submitter, uint64_t guid, ReadOnlyProbeCompletion completion)
         : submitter_(submitter), guid_(guid), completion_(std::move(completion)) {
-        // Linux BeBoB begins with generic unit PLUG_INFO, without UNIT_INFO or
+        // Linux BeBoB begins with unit PLUG_INFO, without UNIT_INFO or
         // SUBUNIT_INFO. Cross-validated: bebob_stream.c:908-940.
         queue_.push_back({ReadOnlyProbeCommand::kUnitPlugCounts, PlugDirection::kInput});
     }
 
     void Start() {
         ASFW_LOG(AVC,
-                 "BeBoBProbe: BeBoB device matched; starting STATUS-only BridgeCo inventory GUID=0x%016llx",
+                 "AVCProbe: starting STATUS-only plug-0 inventory GUID=0x%016llx",
                  guid_);
         SubmitNext();
     }
@@ -70,7 +66,7 @@ public:
 private:
     void SubmitNext() {
         if (next_ == queue_.size()) {
-            ASFW_LOG(AVC, "BeBoBProbe: inventory complete GUID=0x%016llx", guid_);
+            ASFW_LOG(AVC, "AVCProbe: inventory complete GUID=0x%016llx", guid_);
             if (completion_) completion_(model_);
             return;
         }
@@ -92,12 +88,12 @@ private:
 
     void HandleResponse(const Request& request, AVCResult result, const AVCCdb& response) {
         if (!IsSuccess(result)) {
-            ASFW_LOG(AVC, "BeBoBProbe: %{public}s %{public}s unavailable result=%u GUID=0x%016llx",
+            ASFW_LOG(AVC, "AVCProbe: %{public}s %{public}s unavailable result=%u GUID=0x%016llx",
                      RequestName(request.command), DirectionName(request.direction),
                      static_cast<unsigned>(result), guid_);
             if (!unitPlugCountsComplete_) {
                 ASFW_LOG(AVC,
-                         "BeBoBProbe: generic PLUG_INFO unavailable; stopping inventory GUID=0x%016llx",
+                         "AVCProbe: generic PLUG_INFO unavailable; stopping inventory GUID=0x%016llx",
                          guid_);
                 queue_.clear();
                 next_ = 0;
@@ -113,7 +109,7 @@ private:
             return;
         }
         if (response.operandLength < 8) {
-            ASFW_LOG(AVC, "BeBoBProbe: short %{public}s response (%zu operands) GUID=0x%016llx",
+            ASFW_LOG(AVC, "AVCProbe: short %{public}s response (%zu operands) GUID=0x%016llx",
                      RequestName(request.command), response.operandLength, guid_);
             return;
         }
@@ -121,7 +117,7 @@ private:
         switch (request.command) {
             case ReadOnlyProbeCommand::kIsochPlugType:
                 Plug(request.direction).plugType = value;
-                ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s plug 0 type=0x%02x GUID=0x%016llx",
+                ASFW_LOG(AVC, "AVCProbe: ISO %{public}s plug 0 type=0x%02x GUID=0x%016llx",
                          DirectionName(request.direction), value, guid_);
                 break;
             case ReadOnlyProbeCommand::kChannelPositions: HandlePositions(request, response); break;
@@ -129,7 +125,7 @@ private:
                 if (request.index < Plug(request.direction).channelSections.size()) {
                     Plug(request.direction).channelSections[request.index].type = value;
                 }
-                ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s section %u type=0x%02x GUID=0x%016llx",
+                ASFW_LOG(AVC, "AVCProbe: ISO %{public}s section %u type=0x%02x GUID=0x%016llx",
                          DirectionName(request.direction), static_cast<unsigned>(request.index), value, guid_);
                 break;
             case ReadOnlyProbeCommand::kUnitPlugCounts:
@@ -141,7 +137,7 @@ private:
         // Standard unit PLUG_INFO is an 8-byte CDB. Its four result bytes are
         // operands 1..4: ISO input/output, external input/output.
         if (response.operandLength < 5) {
-            ASFW_LOG(AVC, "BeBoBProbe: short generic PLUG_INFO response (%zu operands) GUID=0x%016llx",
+            ASFW_LOG(AVC, "AVCProbe: short generic PLUG_INFO response (%zu operands) GUID=0x%016llx",
                      response.operandLength, guid_);
             return;
         }
@@ -154,13 +150,13 @@ private:
         unitPlugCountsComplete_ = true;
         const auto& counts = *model_.unitPlugCounts;
         ASFW_LOG(AVC,
-                 "BeBoBProbe: generic PLUG_INFO ISO in=%u out=%u ext in=%u out=%u GUID=0x%016llx",
+                 "AVCProbe: generic PLUG_INFO ISO in=%u out=%u ext in=%u out=%u GUID=0x%016llx",
                  static_cast<unsigned>(counts.isochronousInputs),
                  static_cast<unsigned>(counts.isochronousOutputs),
                  static_cast<unsigned>(counts.externalInputs),
                  static_cast<unsigned>(counts.externalOutputs), guid_);
         if (counts.isochronousInputs == 0 || counts.isochronousOutputs == 0) {
-            ASFW_LOG(AVC, "BeBoBProbe: no duplex ISO plug pair; stopping inventory GUID=0x%016llx", guid_);
+            ASFW_LOG(AVC, "AVCProbe: no duplex ISO plug pair; stopping inventory GUID=0x%016llx", guid_);
             return;
         }
         AddFullInventory();
@@ -168,19 +164,19 @@ private:
 
     void HandleFormation(const Request& request, const AVCCdb& response) {
         if (response.operandLength < 9 || response.operands[7] != request.index) {
-            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s stream-format list ended at entry %u GUID=0x%016llx",
+            ASFW_LOG(AVC, "AVCProbe: ISO %{public}s stream-format list ended at entry %u GUID=0x%016llx",
                      DirectionName(request.direction), static_cast<unsigned>(request.index), guid_);
             return;
         }
         const auto formation = ParseExtendedStreamFormatListResponse(
             request.index, std::span<const uint8_t>{response.operands.data(), response.operandLength});
         if (!formation.has_value()) {
-            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s stream-format entry %u malformed/unsupported GUID=0x%016llx",
+            ASFW_LOG(AVC, "AVCProbe: ISO %{public}s stream-format entry %u malformed/unsupported GUID=0x%016llx",
                      DirectionName(request.direction), static_cast<unsigned>(request.index), guid_);
             return;
         }
         ASFW_LOG(AVC,
-                 "BeBoBProbe: ISO %{public}s format[%u] rateCode=0x%02x pcm=%u midiSlots=%u dbs=%u GUID=0x%016llx",
+                 "AVCProbe: ISO %{public}s format[%u] rateCode=0x%02x pcm=%u midiSlots=%u dbs=%u GUID=0x%016llx",
                  DirectionName(request.direction), static_cast<unsigned>(request.index), formation->rateCode,
                  static_cast<unsigned>(formation->pcmChannels), static_cast<unsigned>(formation->midiSlots),
                  static_cast<unsigned>(formation->pcmChannels + formation->midiSlots), guid_);
@@ -196,11 +192,11 @@ private:
                                                 response.operandLength - 7};
         const auto sections = ParseChannelPositionSections(payload);
         if (!sections.has_value()) {
-            ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s channel-map malformed GUID=0x%016llx",
+            ASFW_LOG(AVC, "AVCProbe: ISO %{public}s channel-map malformed GUID=0x%016llx",
                      DirectionName(request.direction), guid_);
             return;
         }
-        ASFW_LOG(AVC, "BeBoBProbe: ISO %{public}s channel-map sections=%u bytes=%zu GUID=0x%016llx",
+        ASFW_LOG(AVC, "AVCProbe: ISO %{public}s channel-map sections=%u bytes=%zu GUID=0x%016llx",
                  DirectionName(request.direction), static_cast<unsigned>(sections->size()), payload.size(), guid_);
         if (sections->size() > kMaxSections) return;
         Plug(request.direction).channelSections = std::move(*sections);
@@ -370,9 +366,9 @@ bool DeviceModel::SupportsDuplexFormation(uint8_t pcmChannels,
     return supports(input) && supports(output);
 }
 
-void StartBeBoBPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
+void StartAVCPlug0Discovery(IAVCCommandSubmitter& submitter, uint64_t guid,
                               ReadOnlyProbeCompletion completion) {
     std::make_shared<Probe>(submitter, guid, std::move(completion))->Start();
 }
 
-} // namespace ASFW::Audio::BeBoB
+} // namespace ASFW::Protocols::AVC::Probe
