@@ -15,6 +15,7 @@ struct ModernContentView: View {
     @StateObject private var romExplorerVM: RomExplorerViewModel
     @StateObject private var diagnosticsStore: DiagnosticsStore
     @StateObject private var diceReportStore: DiceReportStore
+    @StateObject private var avcReportStore: AVCReportStore
     @StateObject private var mcpVM: ASFWMCPControlViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
@@ -34,6 +35,7 @@ struct ModernContentView: View {
         ))
         _diagnosticsStore = StateObject(wrappedValue: DiagnosticsStore(connector: debugViewModel.connector))
         _diceReportStore = StateObject(wrappedValue: DiceReportStore(connector: debugViewModel.connector))
+        _avcReportStore = StateObject(wrappedValue: AVCReportStore(connector: debugViewModel.connector))
         _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
     }
 
@@ -58,6 +60,7 @@ struct ModernContentView: View {
         case duet = "Duet"
         case diagnostics = "1394 Diagnostics"
         case diceReport = "DICE Report"
+        case avcReport = "AV/C Device Report"
 
         var id: String { rawValue }
 
@@ -83,6 +86,7 @@ struct ModernContentView: View {
             case .duet: return "slider.horizontal.below.square.filled.and.square"
             case .diagnostics: return "heart.text.square"
             case .diceReport: return "doc.text.magnifyingglass"
+            case .avcReport: return "doc.text.magnifyingglass"
             }
         }
 
@@ -144,6 +148,8 @@ struct ModernContentView: View {
                     DiagnosticsView(store: diagnosticsStore)
                 case .diceReport:
                     DiceReportView(store: diceReportStore)
+                case .avcReport:
+                    AVCReportView(store: avcReportStore)
                 case .none:
                     Text("Select a section")
                         .foregroundStyle(.secondary)
