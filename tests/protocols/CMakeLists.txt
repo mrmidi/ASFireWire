@@ -280,3 +280,9 @@ add_protocols_test(SBP2HandlerTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
 )
+
+# The one AV/C exchange that is safe on M-Audio "special" BeBoB firmware, which
+# hangs on UNIT_INFO / SUBUNIT_INFO / PLUG_INFO. Header-only: frame + decode.
+add_protocols_test(AVCSignalFormatProbeTests
+    AVCSignalFormatProbeTests.cpp
+)
