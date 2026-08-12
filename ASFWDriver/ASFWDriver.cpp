@@ -488,11 +488,16 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ctx.deps.deviceManager && ctx.deps.deviceRegistry &&
         ctx.deps.avcDiscovery && ctx.deps.irmClient && ctx.deps.cmpClient &&
         ctx.deps.sbp2SessionScheduler) {
+        auto& bus = ctx.controller->Bus();
+        // The last two arguments exist only for bootloader preparation, which is
+        // gated on a catalog cue policy no shipping audio device carries. See
+        // documentation/MAUDIO_BOOTLOADER_CUE_DESIGN.md.
         auto manager = std::make_shared<
             ASFW::Audio::Devices::AudioDeviceSessionManager>(
                 *ctx.deps.deviceManager, *ctx.deps.deviceRegistry,
-                *ctx.audioCoordinator);
-        auto& bus = ctx.controller->Bus();
+                *ctx.audioCoordinator,
+                ASFW::Audio::Devices::AudioDeviceSessionManager::CatalogResolver{},
+                &bus, ctx.deps.sbp2SessionScheduler.get());
         ASFW::Audio::Families::ExistingFamilyProviderDependencies providers{
             bus, bus, *ctx.deps.deviceRegistry, *ctx.deps.avcDiscovery,
             ctx.deps.irmClient.get(), ctx.deps.cmpClient.get(),

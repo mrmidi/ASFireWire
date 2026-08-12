@@ -6,7 +6,9 @@
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Logging/Logging.hpp"
 
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace ASFW::Audio::Devices {
 
@@ -24,9 +26,12 @@ AudioDeviceSessionManager::AudioDeviceSessionManager(
     Discovery::IDeviceManager& devices,
     Discovery::DeviceRegistry& routes,
     IAudioSessionSink& sink,
-    CatalogResolver catalogResolver) noexcept
+    CatalogResolver catalogResolver,
+    Async::IFireWireBusOps* busOps,
+    Scheduling::ITimerScheduler* scheduler) noexcept
     : devices_(devices), routes_(routes), sink_(sink), lock_(IOLockAlloc()),
-      catalogResolver_(std::move(catalogResolver)) {
+      catalogResolver_(std::move(catalogResolver)), busOps_(busOps),
+      scheduler_(scheduler) {
     if (!catalogResolver_) {
         catalogResolver_ = [](const Discovery::DeviceRecord& record,
                               const Discovery::UnitIdentityEvidence& unit) {
@@ -242,6 +247,43 @@ void AudioDeviceSessionManager::ReconcileDevice(
             endpointByUnit_[unitId] = endpointId;
             continue;
         }
+        // Firmware preparation is decided before audio support, because the
+        // persona that gets cued is deliberately RecognizedUnsupported: it is a
+        // bootloader, not an audio endpoint, and the early-out below would
+        // otherwise skip it. Nothing here creates an adapter or sends FCP.
+        if (plan->bootloaderCue !=
+            DeviceProfiles::Audio::BootloaderCuePolicy::None) {
+            const auto route = routes_.CurrentRoute(record->instanceId);
+            AudioEndpointId endpointId{};
+            bool start = false;
+            {
+                Lock guard(lock_);
+                if (endpointByUnit_.contains(unitId)) continue;
+                endpointId = AllocateEndpointIdLocked();
+                Session session{};
+                session.endpointId = endpointId;
+                session.unitId = unitId;
+                session.staticPlan = *plan;
+                session.state = AudioSessionState::Preparing;
+                sessions_.emplace(endpointId, std::move(session));
+                endpointByUnit_[unitId] = endpointId;
+                // Without transport the session is recorded and left in
+                // Preparing rather than partially driven. There is no second,
+                // degraded firmware path to fall into.
+                start = busOps_ != nullptr && scheduler_ != nullptr &&
+                        route.has_value();
+            }
+            if (start) {
+                BeginPreparation(endpointId, *route);
+            } else {
+                ASFW_LOG(Firmware,
+                         "[Bootloader] endpoint=%llu preparation not started "
+                         "(busOps=%d scheduler=%d route=%d)",
+                         endpointId.value, busOps_ != nullptr,
+                         scheduler_ != nullptr, route.has_value());
+            }
+            continue;
+        }
         if (plan->support != DeviceProfiles::Audio::SupportDisposition::Supported &&
             plan->support != DeviceProfiles::Audio::SupportDisposition::GenericFallback) {
             continue;
@@ -277,6 +319,110 @@ void AudioDeviceSessionManager::ReconcileDevice(
         }
         BeginProbe(endpointId, *record);
     }
+}
+
+void AudioDeviceSessionManager::BeginPreparation(
+    AudioEndpointId endpointId, Discovery::DeviceRouteToken route) noexcept {
+    namespace Boot = Families::BeBoB::Bootloader;
+    uint64_t epoch = 0;
+    Boot::PreparationStep step{};
+    {
+        Lock guard(lock_);
+        auto* session = FindLocked(endpointId);
+        if (!session || session->state != AudioSessionState::Preparing) return;
+        session->bootloaderClient = std::make_shared<Boot::BeBoBBootloaderClient>(
+            *busOps_, *scheduler_, route);
+        step = Boot::BeginPreparation();
+        session->preparationState = step.state;
+        // Shared with the probe path deliberately: a generation change bumps it
+        // and every in-flight preparation callback is then ignored.
+        epoch = ++session->probeEpoch;
+    }
+    // This path is cold and rare, so every transition is logged rather than
+    // anomalies only. See MAUDIO_BOOTLOADER_CUE_DESIGN.md §7.
+    ASFW_LOG(Firmware, "[Bootloader] endpoint=%llu preparation begin",
+             endpointId.value);
+    DrivePreparation(endpointId, epoch, std::move(step));
+}
+
+void AudioDeviceSessionManager::DrivePreparation(
+    AudioEndpointId endpointId, uint64_t preparationEpoch,
+    Families::BeBoB::Bootloader::PreparationStep step) noexcept {
+    namespace Boot = Families::BeBoB::Bootloader;
+
+    std::shared_ptr<Boot::BeBoBBootloaderClient> client;
+    {
+        Lock guard(lock_);
+        auto* session = FindLocked(endpointId);
+        if (!session || session->probeEpoch != preparationEpoch ||
+            session->state != AudioSessionState::Preparing) {
+            return;
+        }
+        session->preparationState = step.state;
+        client = session->bootloaderClient;
+    }
+    if (!client) return;
+
+    if (const auto* retired = std::get_if<Boot::Retired>(&step.state)) {
+        ASFW_LOG(Firmware, "[Bootloader] endpoint=%llu retired reason=%{public}s",
+                 endpointId.value, Boot::RetireReasonName(retired->reason));
+        client->Cancel();
+        // Dropped directly rather than through RetireSession: this session never
+        // published an endpoint, so there is nothing for the sink to quiesce,
+        // invalidate or terminate. A cued device comes back in a later
+        // generation under a different identity and is resolved from scratch,
+        // which is what makes re-running the machine idempotent (§6).
+        Lock guard(lock_);
+        if (const auto it = sessions_.find(endpointId); it != sessions_.end()) {
+            TransitionLocked(it->second, AudioSessionState::Retired,
+                             "bootloader-preparation-complete");
+            endpointByUnit_.erase(it->second.unitId);
+            sessions_.erase(it);
+        }
+        return;
+    }
+
+    std::weak_ptr<int> alive = lifetime_;
+    auto onEvent = [this, alive, endpointId, preparationEpoch](
+                       Boot::PreparationEvent event) mutable {
+        if (alive.expired()) return;
+        Boot::PreparationState current{};
+        {
+            Lock guard(lock_);
+            const auto* session = FindLocked(endpointId);
+            if (!session || session->probeEpoch != preparationEpoch) return;
+            current = session->preparationState;
+        }
+        DrivePreparation(endpointId, preparationEpoch,
+                         Boot::AdvancePreparation(current, event));
+    };
+
+    std::visit(
+        [&](const auto& action) {
+            using Action = std::decay_t<decltype(action)>;
+            if constexpr (std::is_same_v<Action, Boot::ReadInfoBlock>) {
+                ASFW_LOG(Firmware, "[Bootloader] endpoint=%llu action=read-info",
+                         endpointId.value);
+                client->ReadInfo(std::move(onEvent));
+            } else if constexpr (std::is_same_v<Action, Boot::WriteCue>) {
+                // The only cue write in the driver. IsPermittedBootloaderWrite
+                // gates the bytes and the address inside the client regardless
+                // of what reaches here.
+                ASFW_LOG(Firmware,
+                         "[Bootloader] endpoint=%llu action=send-cue "
+                         "protocolVersion=%u",
+                         endpointId.value, action.cue.ProtocolVersion());
+                client->SendCue(action.cue, std::move(onEvent));
+            } else if constexpr (std::is_same_v<Action, Boot::ReadResponse>) {
+                ASFW_LOG(Firmware,
+                         "[Bootloader] endpoint=%llu action=read-response "
+                         "delayMs=%u",
+                         endpointId.value, action.delayMs);
+                client->ReadResponse(action.delayMs, std::move(onEvent));
+            }
+            // Done carries no transport work; the Retired branch above owns it.
+        },
+        step.action);
 }
 
 void AudioDeviceSessionManager::BeginProbe(AudioEndpointId endpointId,

@@ -174,6 +174,11 @@ add_audio_test(AudioDeviceSessionManagerTests
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/BeBoBProfileBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/DICE/DiceProfileBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/OXFW/OxfwProfileBuilder.cpp"
+    # Bootloader preparation is a session lifecycle stage, so the session
+    # manager links the cue machine and its transport.
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderCue.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderPreparation.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderClient.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"

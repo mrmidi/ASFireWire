@@ -6,6 +6,7 @@
 #include "AudioFamilyProvider.hpp"
 #include "ResolvedProfileBuilder.hpp"
 #include "../../Discovery/IDeviceManager.hpp"
+#include "../Families/BeBoB/Bootloader/BeBoBBootloaderClient.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -24,6 +25,12 @@ namespace ASFW::Audio::Devices {
 
 enum class AudioSessionState : uint8_t {
     Observed,
+    /// Firmware preparation, ahead of any audio resolution. Only devices whose
+    /// catalog plan carries a bootloader cue policy enter here, and the state is
+    /// terminal by design: a prepared device resets, re-enumerates under a
+    /// different identity, and is resolved from scratch. Preparation never
+    /// becomes an audio endpoint. See MAUDIO_BOOTLOADER_CUE_DESIGN.md §5.
+    Preparing,
     StaticResolved,
     Probing,
     Ready,
@@ -65,10 +72,15 @@ public:
             const Discovery::DeviceRecord&,
             const Discovery::UnitIdentityEvidence&)>;
 
+    /// `busOps` and `scheduler` are optional and used only for bootloader
+    /// preparation. Without both, a device carrying a cue policy is recorded and
+    /// left alone rather than half-prepared — no partial firmware path exists.
     AudioDeviceSessionManager(Discovery::IDeviceManager& devices,
                               Discovery::DeviceRegistry& routes,
                               IAudioSessionSink& sink,
-                              CatalogResolver catalogResolver = {}) noexcept;
+                              CatalogResolver catalogResolver = {},
+                              Async::IFireWireBusOps* busOps = nullptr,
+                              Scheduling::ITimerScheduler* scheduler = nullptr) noexcept;
     ~AudioDeviceSessionManager() override;
 
     AudioDeviceSessionManager(const AudioDeviceSessionManager&) = delete;
@@ -106,9 +118,24 @@ private:
         uint64_t probeEpoch{0};
         std::unique_ptr<IAudioDeviceAdapter> adapter;
         std::shared_ptr<const ResolvedAudioEndpointProfile> profile;
+        /// Set only for sessions in Preparing. The client owns transport; the
+        /// state machine below owns every ordering rule.
+        std::shared_ptr<Families::BeBoB::Bootloader::BeBoBBootloaderClient>
+            bootloaderClient;
+        Families::BeBoB::Bootloader::PreparationState preparationState{
+            Families::BeBoB::Bootloader::ReadingInfo{}};
     };
 
     void ReconcileDevice(const std::shared_ptr<Discovery::FWDevice>& device);
+    /// Starts the cue state machine for a device whose plan carries a cue policy.
+    /// Creates the session in Preparing; no adapter and no probe are involved.
+    void BeginPreparation(AudioEndpointId endpointId,
+                          Discovery::DeviceRouteToken route) noexcept;
+    /// Performs one action from the machine and feeds the outcome back as an
+    /// event. The only place a cue write is issued.
+    void DrivePreparation(
+        AudioEndpointId endpointId, uint64_t preparationEpoch,
+        Families::BeBoB::Bootloader::PreparationStep step) noexcept;
     void BeginProbe(AudioEndpointId endpointId,
                     const Discovery::DeviceRecord& record) noexcept;
     void CompleteProbe(AudioEndpointId endpointId, uint64_t probeEpoch,
@@ -133,6 +160,8 @@ private:
     std::map<AudioEndpointId, Session> sessions_;
     std::map<Discovery::UnitInstanceId, AudioEndpointId> endpointByUnit_;
     CatalogResolver catalogResolver_;
+    Async::IFireWireBusOps* busOps_{nullptr};
+    Scheduling::ITimerScheduler* scheduler_{nullptr};
     std::shared_ptr<int> lifetime_{std::make_shared<int>(0)};
 };
 

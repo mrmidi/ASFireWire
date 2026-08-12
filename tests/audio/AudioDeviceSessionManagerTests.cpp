@@ -4,12 +4,15 @@
 #include "ASFWDriver/Discovery/DeviceManager.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Testing/Audio/FakeExistingFamilyDevice.hpp"
+#include "FakeTimerScheduler.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
 #include <algorithm>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -448,6 +451,154 @@ TEST(ResolvedProfileBuilder, SafeProbeGeometryNarrowsEquivalenceOrUsesCommonSubs
     }));
     EXPECT_FALSE(profile->exactVariantId.has_value());
     EXPECT_EQ(profile->definitionId, DeviceDefinitionId::Unknown);
+}
+
+// --- Bootloader preparation wiring -------------------------------------------
+//
+// The cue machine and its transport are covered in BeBoBBootloaderCueTests.
+// What is asserted here is only the wiring: that a plan carrying a cue policy
+// reaches the machine at all, and that it does so without an adapter, a probe or
+// a published endpoint. The persona is RecognizedUnsupported, so before this
+// wiring existed the session manager skipped it entirely and the cue was inert.
+
+namespace Boot = ASFW::Audio::Families::BeBoB::Bootloader;
+
+/// Answers the bootloader register window and records what reached the bus.
+class BootloaderBus final : public ASFW::Async::IFireWireBusOps {
+public:
+    std::vector<std::pair<uint32_t, std::vector<uint8_t>>> writes;
+    std::vector<uint32_t> reads;
+    std::vector<uint8_t> infoBlock =
+        std::vector<uint8_t>(Boot::kInfoBlockBytes, 0);
+
+    ASFW::Async::AsyncHandle ReadBlock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress address,
+        uint32_t, ASFW::FW::FwSpeed,
+        ASFW::Async::InterfaceCompletionCallback callback) override {
+        reads.push_back(address.addressLo);
+        callback(ASFW::Async::AsyncStatus::kSuccess, infoBlock);
+        return ASFW::Async::AsyncHandle{1};
+    }
+
+    ASFW::Async::AsyncHandle WriteBlock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress address,
+        std::span<const uint8_t> data, ASFW::FW::FwSpeed,
+        ASFW::Async::InterfaceCompletionCallback callback) override {
+        writes.emplace_back(address.addressLo,
+                            std::vector<uint8_t>(data.begin(), data.end()));
+        callback(ASFW::Async::AsyncStatus::kSuccess, std::span<const uint8_t>{});
+        return ASFW::Async::AsyncHandle{1};
+    }
+
+    ASFW::Async::AsyncHandle Lock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress,
+        ASFW::FW::LockOp, std::span<const uint8_t>, uint32_t, ASFW::FW::FwSpeed,
+        ASFW::Async::InterfaceCompletionCallback callback) override {
+        callback(ASFW::Async::AsyncStatus::kSuccess, std::span<const uint8_t>{});
+        return ASFW::Async::AsyncHandle{1};
+    }
+
+    bool Cancel(ASFW::Async::AsyncHandle) override { return true; }
+};
+
+/// A plan shaped like the 1814's bootloader persona: no family, no probe, not an
+/// audio endpoint, carrying only the cue policy.
+[[nodiscard]] AudioDeviceSessionManager::CatalogResolver BootloaderCatalog() {
+    return [](const Discovery::DeviceRecord& device,
+              const Discovery::UnitIdentityEvidence& unit)
+               -> std::expected<DeviceProfiles::Audio::StaticAudioEndpointPlan,
+                                DeviceProfiles::Audio::CatalogResolutionError> {
+        DeviceProfiles::Audio::StaticAudioEndpointPlan plan{};
+        plan.unit = Discovery::UnitInstanceId{device.instanceId,
+                                              unit.unitDirectoryOffset};
+        plan.family = DeviceProfiles::Audio::AudioFamilyProviderId::None;
+        plan.probePolicy = DeviceProfiles::Audio::ProbePolicyId::NoAutomaticTraffic;
+        plan.support =
+            DeviceProfiles::Audio::SupportDisposition::RecognizedUnsupported;
+        plan.bootloaderCue =
+            DeviceProfiles::Audio::BootloaderCuePolicy::BeBoBStartFirmware;
+        return plan;
+    };
+}
+
+TEST(AudioDeviceSessionManagerBootloader, ActiveBootloaderIsCuedExactlyOnce) {
+    Fixture fixture;
+    RecordingSink sink;
+    BootloaderBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    // Non-zero bootloader "version" is the state flag meaning the bootloader is
+    // the running image, so the cue is warranted.
+    bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 1;
+    bus.infoBlock[Boot::kInfoOffsetProtocolVersion] = 1;
+
+    AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
+                                      BootloaderCatalog(), &bus, &timers);
+    manager.Start();
+
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].first, Boot::kRequestAddressLo);
+    EXPECT_TRUE(Boot::IsPermittedBootloaderWrite(
+        Boot::kBootloaderAddressHi, bus.writes[0].first, bus.writes[0].second));
+    // Preparation is terminal and never publishes an endpoint.
+    EXPECT_TRUE(sink.events.empty());
+    EXPECT_EQ(sink.profile, nullptr);
+}
+
+TEST(AudioDeviceSessionManagerBootloader, InactiveBootloaderPutsNoWriteOnTheBus) {
+    Fixture fixture;
+    RecordingSink sink;
+    BootloaderBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    // Zero means the device is already running application firmware.
+    bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 0;
+
+    AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
+                                      BootloaderCatalog(), &bus, &timers);
+    manager.Start();
+
+    EXPECT_FALSE(bus.reads.empty());
+    EXPECT_TRUE(bus.writes.empty());
+    EXPECT_TRUE(sink.events.empty());
+}
+
+TEST(AudioDeviceSessionManagerBootloader, WithoutTransportNothingIsPrepared) {
+    Fixture fixture;
+    RecordingSink sink;
+    // No bus and no scheduler: the session is recorded and left alone rather
+    // than driven down a second, degraded firmware path.
+    AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
+                                      BootloaderCatalog());
+    manager.Start();
+
+    const auto sessions = manager.SnapshotAll();
+    ASSERT_EQ(sessions.size(), 1U);
+    EXPECT_EQ(sessions[0].state, AudioSessionState::Preparing);
+    EXPECT_TRUE(sink.events.empty());
+}
+
+TEST(AudioDeviceSessionManagerBootloader, CuePolicyNeverCreatesAnAdapterOrProbes) {
+    Fixture fixture;
+    RecordingSink sink;
+    BootloaderBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 1;
+
+    auto harness = std::make_shared<Template::ProbeHarness>();
+    AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
+                                      BootloaderCatalog(), &bus, &timers);
+    ASSERT_TRUE(manager.RegisterProvider(std::make_unique<Template::Provider>(harness)));
+    manager.Start();
+
+    // Assert the session was actually taken through preparation first. Without
+    // this the probe-count check below passes vacuously: an unwired build skips
+    // a RecognizedUnsupported plan entirely, so it also probes nothing, and the
+    // test would report success for the opposite reason.
+    ASSERT_FALSE(bus.reads.empty());
+    ASSERT_EQ(bus.writes.size(), 1U);
+
+    // A registered provider must not be consulted for a preparation session: the
+    // hazard this whole subsystem exists to avoid is FCP reaching the device.
+    EXPECT_EQ(harness->acceptedProbeCount, 0U);
 }
 
 } // namespace
