@@ -6,6 +6,7 @@
 //
 
 #include "TransactionHandler.hpp"
+#include "../../Audio/Families/BeBoB/Bootloader/BeBoBBootloaderCue.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
@@ -24,6 +25,38 @@
 namespace ASFW::UserClient {
 
 namespace {
+
+/// Refuses any user-client write into the BridgeCo bootloader register window.
+///
+/// That window is where a 12-byte write starts the application firmware — and
+/// where the *same* write with one byte changed permanently reprograms device
+/// identity in flash: 0x0a rewrites the EUI-64 GUID, 0x10 the hardware ID, and
+/// 0x04-0x06 the firmware image. None of that is recoverable.
+///
+/// The driver's own cue path is separately interlocked (a closed value type with
+/// no opcode parameter, plus IsPermittedBootloaderWrite at the transmit point),
+/// but every one of those interlocks lives *inside* the bootloader client. This
+/// path does not go through it: AsyncWrite/AsyncBlockWrite/AsyncCompareSwap take
+/// an arbitrary caller-supplied address, so the MCP write tools and any other
+/// user-client caller could otherwise reach that window directly.
+///
+/// The rule here is deliberately stricter than the client's: no user-client
+/// write to this window is permitted at all, not even a well-formed cue. The
+/// driver owns firmware preparation and decides it from catalog policy; there is
+/// no legitimate external reason to write here.
+[[nodiscard]] bool RefusesBootloaderWindow(uint16_t addressHi, uint32_t addressLo,
+                                           const char* operation) {
+    namespace Boot = ASFW::Audio::Families::BeBoB::Bootloader;
+    if (!Boot::IsBootloaderWindow(addressHi, addressLo)) {
+        return false;
+    }
+    ASFW_LOG_ERROR(UserClient,
+                   "%{public}s: refused write to the BeBoB bootloader window "
+                   "0x%04x:%08x - this range permanently reprograms device "
+                   "identity in flash and is driver-owned",
+                   operation, addressHi, addressLo);
+    return true;
+}
 
 std::optional<ASFW::Discovery::DeviceRouteToken>
 ResolveDeviceRoute(ASFWDriver* driver, uint64_t rawInstanceId, const char* operation) {
@@ -197,6 +230,10 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
+    if (RefusesBootloaderWindow(addressHi, addressLo, "AsyncWrite")) {
+        return kIOReturnNotPermitted;
+    }
+
     if (length != actualPayloadSize) {
         ASFW_LOG(UserClient, "AsyncWrite: Length mismatch (specified=%u actual=%u)", length,
                  actualPayloadSize);
@@ -345,6 +382,10 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
+
+    if (RefusesBootloaderWindow(addressHi, addressLo, "AsyncBlockWrite")) {
+        return kIOReturnNotPermitted;
+    }
 
     if (length != actualPayloadSize) {
         ASFW_LOG(UserClient, "AsyncBlockWrite: Length mismatch (specified=%u actual=%u)", length,
@@ -515,6 +556,10 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint8_t size = static_cast<uint8_t>(args->scalarInput[3] & 0xFF); // 4 or 8 bytes
+
+    if (RefusesBootloaderWindow(addressHi, addressLo, "AsyncCompareSwap")) {
+        return kIOReturnNotPermitted;
+    }
 
     // Validate size (32-bit = 4 bytes, 64-bit = 8 bytes)
     if (size != 4 && size != 8) {

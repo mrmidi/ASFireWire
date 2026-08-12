@@ -98,6 +98,37 @@ TEST(BeBoBBootloaderCueTests, ChokePointRejectsEveryOtherAddressInTheWindow) {
     EXPECT_FALSE(IsPermittedBootloaderWrite(0xFFFEU, kRequestAddressLo, bytes));
 }
 
+// IsBootloaderWindow is what the user-client write handlers use to refuse
+// AsyncWrite / AsyncBlockWrite / AsyncCompareSwap into this range. Those paths
+// take a caller-supplied address and never go through the cue client, so this
+// predicate is the whole of that protection: if it under-matches, an MCP write
+// tool can reach ProgramGUID directly.
+TEST(BeBoBBootloaderCueTests, WindowPredicateCoversEveryBootloaderRegister) {
+    EXPECT_TRUE(IsBootloaderWindow(kBootloaderAddressHi, kInfoAddressLo));
+    EXPECT_TRUE(IsBootloaderWindow(kBootloaderAddressHi, kRequestAddressLo));
+    EXPECT_TRUE(IsBootloaderWindow(kBootloaderAddressHi, kResponseAddressLo));
+    // The destructive commands share the request register, so blocking the
+    // register blocks all of them regardless of payload.
+    EXPECT_TRUE(IsBootloaderWindow(kBootloaderAddressHi, kRequestAddressLo + 4));
+    EXPECT_TRUE(IsBootloaderWindow(kBootloaderAddressHi, 0xC802'FFFCU));
+}
+
+// The same guard must not over-block: it sits on the generic write path that
+// every other device shares, so a false positive here breaks unrelated hardware.
+TEST(BeBoBBootloaderCueTests, WindowPredicateLeavesOrdinaryDeviceRegistersAlone) {
+    // CSR core registers and the FCP command/response frames.
+    EXPECT_FALSE(IsBootloaderWindow(0xFFFFU, 0xF000'0000U));
+    EXPECT_FALSE(IsBootloaderWindow(0xFFFFU, 0xF000'0B00U));
+    EXPECT_FALSE(IsBootloaderWindow(0xFFFFU, 0xF000'0D00U));
+    // DICE/TCAT private space.
+    EXPECT_FALSE(IsBootloaderWindow(0xFFFFU, 0xE000'0000U));
+    // Immediately adjacent BridgeCo ranges are outside the bootloader window.
+    EXPECT_FALSE(IsBootloaderWindow(0xFFFFU, 0xC801'FFFFU));
+    EXPECT_FALSE(IsBootloaderWindow(0xFFFFU, 0xC803'0000U));
+    // Right address, wrong node-address half.
+    EXPECT_FALSE(IsBootloaderWindow(0xFFFEU, kRequestAddressLo));
+}
+
 TEST(BeBoBBootloaderCueTests, ChokePointRejectsEveryDestructiveCommandCode) {
     // The whole point of the guard: 0x0a rewrites the GUID, 0x10 the hardware
     // ID, 0x04-0x06 the firmware image, 0x0d the persistent config. Each is one
