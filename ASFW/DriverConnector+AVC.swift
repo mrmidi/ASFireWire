@@ -12,11 +12,17 @@ extension ASFWDriverConnector {
             log("getAVCUnits: Not connected", level: .warning)
             return nil
         }
-        guard let data = callStruct(.getAVCUnits, initialCap: 16 * 1024) else {
+        guard let data = callStruct(.getAVCUnits,
+                                    initialCap: DriverConnectorTransport.maxInlineStructOutputBytes) else {
             log("getAVCUnits: callStruct failed", level: .error)
             return nil
         }
-        return Self.parseAVCUnitsWire(data)
+        guard let units = Self.parseAVCUnitsWire(data) else {
+            log("getAVCUnits: could not parse \(data.count) bytes of AV/C unit v2; "
+                + "reporting no units", level: .error)
+            return nil
+        }
+        return units
     }
 
     static func parseAVCUnitsWire(_ data: Data) -> [AVCUnitInfo]? {

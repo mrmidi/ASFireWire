@@ -128,7 +128,8 @@ struct AudioTelemetrySnapshot {
 extension ASFWDriverConnector {
     func getAudioTelemetry() -> AudioTelemetrySnapshot? {
         guard isConnected, connection != 0,
-              let data = callStruct(.getAudioTelemetry, initialCap: 8192) else {
+              let data = callStruct(.getAudioTelemetry,
+                                    initialCap: DriverConnectorTransport.maxInlineStructOutputBytes) else {
             return nil
         }
         return AudioTelemetryWireDecoder.decode(data)

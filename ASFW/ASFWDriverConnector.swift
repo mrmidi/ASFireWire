@@ -177,7 +177,8 @@ final class ASFWDriverConnector: ObservableObject {
 
     // MARK: - Struct Method Helper (handles variable-size returns and kIOReturnNoSpace retry)
 
-    func callStruct(_ selector: Method, input: Data? = nil, initialCap: Int = 64 * 1024) -> Data? {
+    func callStruct(_ selector: Method, input: Data? = nil,
+                    initialCap: Int = DriverConnectorTransport.maxInlineStructOutputBytes) -> Data? {
         transport.callStruct(selector: selector.rawValue, input: input, initialCap: initialCap)
     }
 

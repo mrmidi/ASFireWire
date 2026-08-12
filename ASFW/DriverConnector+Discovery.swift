@@ -11,12 +11,21 @@ extension ASFWDriverConnector {
             log("getDiscoveredDevices: Not connected", level: .warning)
             return nil
         }
-        guard let wireData = callStruct(.getDiscoveredDevices, initialCap: 16 * 1024) else {
+        guard let wireData = callStruct(.getDiscoveredDevices,
+                                        initialCap: DriverConnectorTransport.maxInlineStructOutputBytes) else {
             log("getDiscoveredDevices: callStruct failed", level: .error)
             return nil
         }
         guard !wireData.isEmpty else { return [] }
-        guard let devices = Self.parseDeviceDiscoveryWire(wireData) else { return nil }
+        guard let devices = Self.parseDeviceDiscoveryWire(wireData) else {
+            // Failing closed here is right — a half-decoded device list is worse
+            // than none — but it must not fail silently. Reporting nothing while
+            // the driver logs a correct payload is indistinguishable from an
+            // empty bus, and reads as a driver fault that it isn't.
+            log("getDiscoveredDevices: could not parse \(wireData.count) bytes of "
+                + "discovery v2; reporting no devices", level: .error)
+            return nil
+        }
         var routes: [DeviceInstanceID: UInt32] = [:]
         for device in devices {
             routes[device.id] = device.generation
