@@ -43,6 +43,7 @@ enum class DeviceDefinitionId : uint32_t {
     PreSonusStudioLive1642,
     PreSonusStudioLive2442,
     PreSonusStudioLive3242,
+    MAudioFireWire1814Bootloader,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -60,6 +61,16 @@ enum class ProbePolicyId : uint8_t {
     BeBoBPlug0,
     DiceTcat,
     OxfwAvc,
+};
+
+/// Device preparation that must run before an identity can become anything
+/// else. Only the BeBoB bootloader persona carries one; see
+/// documentation/MAUDIO_BOOTLOADER_CUE_DESIGN.md.
+enum class BootloaderCuePolicy : uint8_t {
+    None = 0,
+    /// Write the frozen BeBoB "start application firmware" cue. This is the
+    /// only bootloader command the driver can express.
+    BeBoBStartFirmware,
 };
 
 enum class ProfileBuilderId : uint16_t {
@@ -130,6 +141,7 @@ struct AudioDeviceDefinition final {
     PersistentKeyRecipeId persistentKeyRecipe{
         PersistentKeyRecipeId::ReliableObservedEui64};
     SafeProbeConstraint probeConstraint{};
+    BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     const char* vendorName{nullptr};
     const char* modelName{nullptr};
 };
@@ -169,6 +181,7 @@ struct StaticAudioEndpointPlan final {
     std::vector<MatchProvenance> provenance;
     ProfileBuilderId profileBuilder{ProfileBuilderId::None};
     ProfileBuilderId commonEquivalenceProfileBuilder{ProfileBuilderId::None};
+    BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     std::string vendorName;
     std::string modelName;
 };

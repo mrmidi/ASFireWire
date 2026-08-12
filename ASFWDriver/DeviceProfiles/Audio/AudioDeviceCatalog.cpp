@@ -34,7 +34,8 @@ constexpr AudioDeviceDefinition Definition(
     DeviceDefinitionId id, uint32_t vendor, uint32_t model,
     AudioFamilyProviderId family, ProbePolicyId probe, ProfileBuilderId builder,
     SupportDisposition support, const char* vendorName, const char* modelName,
-    std::optional<uint32_t> guidModel = std::nullopt) {
+    std::optional<uint32_t> guidModel = std::nullopt,
+    BootloaderCuePolicy bootloaderCue = BootloaderCuePolicy::None) {
     auto rootClause = Root(vendor, model);
     auto guidClause = IdentityMatchClause{};
 
@@ -74,6 +75,7 @@ constexpr AudioDeviceDefinition Definition(
         .profileBuilder = builder,
         .support = support,
         .guidReliability = GuidReliability::ReliableWhenUnique,
+        .bootloaderCue = bootloaderCue,
         .vendorName = vendorName,
         .modelName = modelName,
     };
@@ -85,6 +87,9 @@ constexpr AudioDeviceDefinition Definition(
     }
     return result;
 }
+
+constexpr uint32_t kMAudioVendorId = 0x000D6C;
+constexpr uint32_t kMAudioFireWire1814BootloaderModelId = 0x00010070;
 
 constexpr std::array kDefinitions{
     Definition(DeviceDefinitionId::FocusriteSPro14, kFocusriteVendorId, kSPro14ModelId,
@@ -194,11 +199,26 @@ constexpr std::array kDefinitions{
                ProbePolicyId::None, ProfileBuilderId::None,
                SupportDisposition::RecognizedUnsupported, kPreSonusVendorName,
                kStudioLive3242ModelName),
+    // The 1814 in its bootloader persona. It is not an audio endpoint and never
+    // becomes one: RecognizedUnsupported makes the session manager skip it
+    // entirely, and AudioFamilyProviderId::None matches no registered provider,
+    // so no adapter, no probe and no FCP can result. The entry exists solely to
+    // carry the cue policy to the preparation path.
+    Definition(DeviceDefinitionId::MAudioFireWire1814Bootloader, kMAudioVendorId,
+               kMAudioFireWire1814BootloaderModelId, AudioFamilyProviderId::None,
+               ProbePolicyId::NoAutomaticTraffic, ProfileBuilderId::None,
+               SupportDisposition::RecognizedUnsupported, "M-Audio",
+               "FireWire 1814 (bootloader)", std::nullopt,
+               BootloaderCuePolicy::BeBoBStartFirmware),
 };
 
-constexpr uint32_t kMAudioVendorId = 0x000D6C;
-constexpr std::array<uint32_t, 3> kHazardousMAudioModels{
-    0x00010070, // FireWire 1814 bootloader
+// The bootloader persona (0x00010070) is deliberately NOT here. H1 concerns
+// AV/C commands reaching operational firmware; a bootloader is not running that
+// firmware and has no AV/C surface to freeze, and both Linux and FFADO write the
+// cue to it as the normal path. It gets its own definition below carrying a cue
+// policy, no family and no audio support, so it produces no session, no adapter
+// and no FCP. The two operational personas remain hazardous.
+constexpr std::array<uint32_t, 2> kHazardousMAudioModels{
     0x00010071, // FireWire 1814 operational firmware
     0x00010091, // ProjectMix I/O
 };
@@ -229,9 +249,8 @@ constexpr AudioSafetyRule HazardRule(uint32_t model, const char* name) {
 }
 
 constexpr std::array kSafetyRules{
-    HazardRule(kHazardousMAudioModels[0], "M-Audio FireWire 1814 bootloader"),
-    HazardRule(kHazardousMAudioModels[1], "M-Audio FireWire 1814"),
-    HazardRule(kHazardousMAudioModels[2], "M-Audio ProjectMix I/O"),
+    HazardRule(kHazardousMAudioModels[0], "M-Audio FireWire 1814"),
+    HazardRule(kHazardousMAudioModels[1], "M-Audio ProjectMix I/O"),
 };
 
 [[nodiscard]] const Discovery::UnitIdentityEvidence*
@@ -490,6 +509,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                               ? first.commonEquivalenceProfileBuilder
                               : first.profileBuilder,
         .commonEquivalenceProfileBuilder = first.commonEquivalenceProfileBuilder,
+        .bootloaderCue = first.bootloaderCue,
         .vendorName = first.vendorName != nullptr ? first.vendorName : "",
         .modelName = first.modelName != nullptr ? first.modelName : "",
     };

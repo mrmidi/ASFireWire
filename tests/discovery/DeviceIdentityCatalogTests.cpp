@@ -150,7 +150,9 @@ TEST(DeviceRuntimeIdentityTests, CollisionGroupsAreRecreatedOnEveryGeneration) {
 }
 
 TEST(AudioDeviceCatalogTests, HazardousMAudioPersonasFailBeforeGenericAvcFallback) {
-    for (const uint32_t model : {0x00010070U, 0x00010071U, 0x00010091U}) {
+    // The two OPERATIONAL personas stay hazardous: H1 is about AV/C reaching
+    // running firmware. The bootloader persona is covered separately below.
+    for (const uint32_t model : {0x00010071U, 0x00010091U}) {
         DeviceRegistry registry;
         const auto rom = MakeRom(0x000D6C0000000001ULL, 1, 2, 0x000D6C, model);
         const auto record = registry.UpsertFromROM(rom, {});
@@ -158,6 +160,48 @@ TEST(AudioDeviceCatalogTests, HazardousMAudioPersonasFailBeforeGenericAvcFallbac
         ASSERT_FALSE(result.has_value());
         EXPECT_EQ(result.error(), CatalogResolutionError::HazardousIdentity);
         EXPECT_TRUE(AudioDeviceCatalog::MatchAnySafetyRule(record.identity).has_value());
+    }
+}
+
+TEST(AudioDeviceCatalogTests, MAudioBootloaderPersonaCarriesACuePolicyAndNoAudio) {
+    // A bootloader is not running the firmware H1 warns about and has no AV/C
+    // surface to freeze; Linux and FFADO both cue it as the normal path. It
+    // must resolve so the cue policy is reachable, while remaining incapable of
+    // producing audio: no family provider matches None, and a support
+    // disposition below Supported makes the session manager skip it entirely.
+    DeviceRegistry registry;
+    auto rom = MakeRom(0x000D6C0000000001ULL, 1, 2, 0x000D6C, 0x00010070U);
+    // MakeRom derives unit.modelId as rootModel + 1, which for the bootloader
+    // persona synthesises 0x00010071 — the operational-firmware hazard ID. A
+    // real bootloader does not advertise the operational model, so pin the unit
+    // model explicitly; leaving the fixture default would make this test pass
+    // for entirely the wrong reason.
+    rom.unitDirectories.front().modelId = 0x00010070U;
+    const auto record = registry.UpsertFromROM(rom, {});
+
+    EXPECT_FALSE(AudioDeviceCatalog::MatchAnySafetyRule(record.identity).has_value());
+
+    const auto result = AudioDeviceCatalog::Resolve(record, OnlyUnit(record));
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->bootloaderCue, BootloaderCuePolicy::BeBoBStartFirmware);
+    EXPECT_EQ(result->family, AudioFamilyProviderId::None);
+    EXPECT_EQ(result->probePolicy, ProbePolicyId::NoAutomaticTraffic);
+    EXPECT_EQ(result->profileBuilder, ProfileBuilderId::None);
+    EXPECT_NE(result->support, SupportDisposition::Supported);
+    EXPECT_NE(result->support, SupportDisposition::GenericFallback);
+}
+
+TEST(AudioDeviceCatalogTests, OnlyTheBootloaderPersonaCarriesACuePolicy) {
+    // Nothing else in the catalog may acquire one by accident.
+    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
+        if (definition.id == DeviceDefinitionId::MAudioFireWire1814Bootloader) {
+            EXPECT_EQ(definition.bootloaderCue,
+                      BootloaderCuePolicy::BeBoBStartFirmware);
+        } else {
+            EXPECT_EQ(definition.bootloaderCue, BootloaderCuePolicy::None)
+                << "definition " << static_cast<unsigned>(definition.id)
+                << " must not carry a bootloader cue policy";
+        }
     }
 }
 
