@@ -25,7 +25,8 @@ struct MCPSbp2ToolsTests {
     }
 
     private func unitAddress() -> ASFWMCPAddress {
-        ASFWMCPAddress(nodeId: 2, generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000800)
+        ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(3), nodeId: 2,
+                       generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000800)
     }
 
     private func toolNames(_ cfg: ASFWMCPRuntimeConfiguration) async -> Set<String> {

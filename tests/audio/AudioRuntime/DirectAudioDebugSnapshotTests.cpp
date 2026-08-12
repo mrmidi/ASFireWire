@@ -30,7 +30,7 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     std::array<float, 16> output{};
 
     const AudioGraphBinding binding{
-        .guid = 0x1122334455667788ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{1},
         .sampleRateHz = 48000,
         .memory = AudioStreamMemory{
             .inputBase = input.data(),

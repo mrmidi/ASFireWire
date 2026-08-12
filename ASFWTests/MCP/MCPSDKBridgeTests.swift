@@ -45,6 +45,7 @@ struct MCPSDKBridgeTests {
             CallTool.Parameters(
                 name: "asfw_read_quadlet",
                 arguments: [
+                    "deviceInstanceId": .int(2),
                     "nodeId": .int(1),
                     "generation": .int(17),
                     "addressHigh": .int(0xFFFF),
@@ -69,6 +70,7 @@ struct MCPSDKBridgeTests {
             CallTool.Parameters(
                 name: "asfw_write_quadlet",
                 arguments: [
+                    "deviceInstanceId": .int(2),
                     "nodeId": .int(1),
                     "generation": .int(17),
                     "addressHigh": .int(0xFFFF),

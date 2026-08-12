@@ -7,11 +7,14 @@ struct MCPTransactionSchemaTests {
         low: UInt32 = 0xF0000800,
         generation: UInt32 = 17
     ) -> ASFWMCPAddress {
-        ASFWMCPAddress(nodeId: 2, generation: generation, addressHigh: high, addressLow: low)
+        ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(3), nodeId: 2,
+                       generation: generation, addressHigh: high, addressLow: low)
     }
 
     @Test func addressComposes48BitOffset() {
-        let addr = ASFWMCPAddress(nodeId: 2, generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000400)
+        let addr = ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(3), nodeId: 2,
+                                  generation: 17, addressHigh: 0xFFFF,
+                                  addressLow: 0xF0000400)
         #expect(addr.offset48 == 0xFFFFF0000400)
     }
 
@@ -87,12 +90,15 @@ struct MCPTransactionSchemaTests {
 
     @Test func addressClassificationMapsKnownBlocks() {
         func addr(_ low: UInt32) -> ASFWMCPAddress {
-            ASFWMCPAddress(nodeId: 2, generation: 17, addressHigh: 0xFFFF, addressLow: low)
+            ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(3), nodeId: 2,
+                           generation: 17, addressHigh: 0xFFFF, addressLow: low)
         }
         #expect(ASFWMCPAddressSpace.classify(addr(0xF0000000)) == .csrCore)
         #expect(ASFWMCPAddressSpace.classify(addr(0xF0000400)) == .configRom)
         #expect(ASFWMCPAddressSpace.classify(addr(0xF0000800)) == .unitsSpace)
-        #expect(ASFWMCPAddressSpace.classify(ASFWMCPAddress(nodeId: 2, generation: 17, addressHigh: 0, addressLow: 0x1000)) == .physicalMemory)
+        #expect(ASFWMCPAddressSpace.classify(ASFWMCPAddress(
+            deviceInstanceId: DeviceInstanceID(3), nodeId: 2, generation: 17,
+            addressHigh: 0, addressLow: 0x1000)) == .physicalMemory)
     }
 
     @Test func transactionKindMapsToOperationType() {
@@ -102,7 +108,9 @@ struct MCPTransactionSchemaTests {
     }
 
     @Test func transactionRequestBuilderClassifiesAndPinsGeneration() {
-        let addr = ASFWMCPAddress(nodeId: 2, generation: 16, addressHigh: 0xFFFF, addressLow: 0xF0000800)
+        let addr = ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(3), nodeId: 2,
+                                  generation: 16, addressHigh: 0xFFFF,
+                                  addressLow: 0xF0000800)
         let req = ASFWMCPPolicyRequest.forTransaction(kind: .writeQuadlet, address: addr, currentGeneration: 17)
         #expect(req.addressSpace == .unitsSpace)
         #expect(req.operationType == .write)

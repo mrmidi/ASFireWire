@@ -54,13 +54,9 @@ protected:
     }
 
     void SetUp() override {
-        DeviceRecord record{};
-        record.guid = kGuid;
-        record.nodeId = 2;
-        record.gen = Generation{1};
+        const auto record = routes_.UpsertFromROM(MakeROM(Generation{1}, 2), {});
         device_ = FWDevice::Create(record, ConfigROM{});
         ASSERT_NE(device_, nullptr);
-        (void)routes_.UpsertFromROM(MakeROM(record.gen, record.nodeId), {});
 
         config_.timeoutMs = 10;
         config_.interimTimeoutMs = 25;
@@ -294,7 +290,7 @@ TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) 
     // A reset makes the prior route invalid. Rebinding the GUID to node 3 in
     // generation 2 is the only event allowed to replay this idempotent query.
     (void)routes_.UpsertFromROM(MakeROM(Generation{2}, 3), {});
-    const auto route = routes_.CurrentRoute(kGuid);
+    const auto route = routes_.CurrentRoute(device_->GetInstanceId());
     ASSERT_TRUE(route.has_value());
     transport_->OnRouteRevalidated(*route);
 

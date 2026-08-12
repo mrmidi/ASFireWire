@@ -20,7 +20,7 @@ AudioGraphBinding MakeBinding(AudioTransportControlBlock* control,
                               float* input,
                               const float* output) {
     return AudioGraphBinding{
-        .guid = 0x1122334455667788ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{1},
         .sampleRateHz = 48000,
         .memory = AudioStreamMemory{
             .inputBase = input,
@@ -45,7 +45,7 @@ TEST(AudioGraphBindingTests, InvalidWithoutGuid) {
     std::array<float, 16> input{};
 
     auto binding = MakeBinding(&control, &audioDevice, input.data(), nullptr);
-    binding.guid = 0;
+    binding.endpointId = {};
 
     EXPECT_FALSE(binding.IsValid());
 }

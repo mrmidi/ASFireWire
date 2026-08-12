@@ -21,7 +21,8 @@ struct MCPRegisterToolsTests {
     }
 
     private func deviceAddress(low: UInt32 = 0xF0000800) -> ASFWMCPAddress {
-        ASFWMCPAddress(nodeId: 2, generation: 17, addressHigh: 0xFFFF, addressLow: low)
+        ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(3), nodeId: 2,
+                       generation: 17, addressHigh: 0xFFFF, addressLow: low)
     }
 
     private func toolNames(_ cfg: ASFWMCPRuntimeConfiguration) async -> Set<String> {

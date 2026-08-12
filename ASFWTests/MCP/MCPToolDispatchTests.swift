@@ -12,12 +12,14 @@ struct MCPToolDispatchTests {
     }
 
     private func addressArgs(
+        deviceInstanceId: UInt64 = 2,
         nodeId: UInt32 = 1,
         generation: UInt32 = 17,
         addressHigh: UInt32 = 0xFFFF,
         addressLow: UInt32 = 0xF0000400
     ) -> [String: ASFWMCPValue] {
         [
+            "deviceInstanceId": .uint64(deviceInstanceId),
             "nodeId": .int(Int(nodeId)),
             "generation": .int(Int(generation)),
             "addressHigh": .int(Int(addressHigh)),
@@ -61,7 +63,7 @@ struct MCPToolDispatchTests {
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
 
         let result = await transport.callTool("asfw_get_config_rom", arguments: .object([
-            "nodeId": .int(0), "generation": .int(17)
+            "deviceInstanceId": .uint64(1), "generation": .int(17)
         ]))
         let data = try object(result)
 
@@ -77,7 +79,8 @@ struct MCPToolDispatchTests {
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
 
         let result = await transport.callTool("asfw_get_config_rom", arguments: .object([
-            "nodeId": .int(0), "generation": .int(17), "view": .string("everything")
+            "deviceInstanceId": .uint64(1), "generation": .int(17),
+            "view": .string("everything")
         ]))
 
         #expect(result.ok == false)
@@ -136,8 +139,9 @@ struct MCPToolDispatchTests {
     @Test func developerFcpCommandReturnsRouteBoundReceipt() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
-        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
-        args["targetGuid"] = .uint64(0x0011223344556677)
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
         args["intent"] = .string("control")
         args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x19)])
 
@@ -147,7 +151,8 @@ struct MCPToolDispatchTests {
         #expect(result.ok)
         #expect(data["kind"] == .string("fcpCommand"))
         #expect(data["status"] == .string("ok"))
-        #expect(data["targetGuid"] == .string("0x0011223344556677"))
+        #expect(data["deviceInstanceId"] == .uint64(1))
+        #expect(data["unitDirectoryOffset"] == .uint64(0x28))
         #expect(data["expectedNodeId"] == .int(0))
         #expect(data["expectedGeneration"] == .int(17))
         #expect(data["observedNodeId"] == .int(0))
@@ -157,8 +162,9 @@ struct MCPToolDispatchTests {
     @Test func guardedDuetFormatTransitionPreflightsAppliesAndVerifies() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
-        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
-        args["targetGuid"] = .uint64(0x0011223344556677)
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
         args["sampleRateHz"] = .int(44100)
         args["acknowledgeInterruption"] = .bool(true)
 
@@ -176,8 +182,9 @@ struct MCPToolDispatchTests {
     @Test func guardedDuetFormatTransitionDoesNotReachDriverWhenPolicyIsClosed() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
-        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
-        args["targetGuid"] = .uint64(0x0011223344556677)
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
         args["sampleRateHz"] = .int(44100)
         args["acknowledgeInterruption"] = .bool(true)
 
@@ -192,8 +199,9 @@ struct MCPToolDispatchTests {
     @Test func readOnlyFcpStatusCommandRoutesThroughDriver() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
-        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
-        args["targetGuid"] = .uint64(0x0011223344556677)
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
         args["intent"] = .string("status")
         // UNIT_INFO status, padded to one quadlet as ASFW's AVCUnit emits it.
         args["payload"] = .array([.int(0x01), .int(0xFF), .int(0x30), .int(0x00)])
@@ -219,7 +227,10 @@ struct MCPToolDispatchTests {
         #expect(result.ok)
         #expect(data["kind"] == .string("avcUnitInventory"))
         #expect(data["units"] == .array([.object([
-            "guid": .string("0x0011223344556677"),
+            "deviceInstanceId": .uint64(1),
+            "unitDirectoryOffset": .uint64(0x28),
+            "observedGuid": .string("0x0011223344556677"),
+            "generation": .int(17),
             "nodeId": .int(0),
             "vendorId": .string("0x0003DB"),
             "modelId": .string("0x01DDDD"),
@@ -235,11 +246,12 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
-    @Test func avcCapabilitiesRequireDiscoveredGuidAndSubunit() async throws {
+    @Test func avcCapabilitiesRequireDiscoveredUnitAndSubunit() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
         let args: ASFWMCPValue = .object([
-            "targetGuid": .uint64(0x0011223344556677),
+            "deviceInstanceId": .uint64(1),
+            "unitDirectoryOffset": .uint64(0x28),
             "subunitType": .int(0x0C),
             "subunitId": .int(0),
         ])
@@ -249,7 +261,8 @@ struct MCPToolDispatchTests {
 
         #expect(result.ok)
         #expect(data["kind"] == .string("avcSubunitCapabilities"))
-        #expect(data["targetGuid"] == .string("0x0011223344556677"))
+        #expect(data["deviceInstanceId"] == .uint64(1))
+        #expect(data["unitDirectoryOffset"] == .uint64(0x28))
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
@@ -257,7 +270,8 @@ struct MCPToolDispatchTests {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
         let args: ASFWMCPValue = .object([
-            "targetGuid": .uint64(0xDEAD_BEEF_0000_0001),
+            "deviceInstanceId": .uint64(0xDEAD_BEEF),
+            "unitDirectoryOffset": .uint64(0x28),
             "subunitType": .int(0x0C),
             "subunitId": .int(0),
         ])
@@ -272,8 +286,9 @@ struct MCPToolDispatchTests {
     @Test func readOnlyFcpRejectsControlFrameClaimedAsStatus() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
-        var args = addressArgs(nodeId: 0, addressLow: 0xF0000B00)
-        args["targetGuid"] = .uint64(0x0011223344556677)
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
         args["intent"] = .string("status")
         args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x30), .int(0x00)])
 
@@ -287,8 +302,10 @@ struct MCPToolDispatchTests {
     @Test func developerFcpCommandRefusesStaleGenerationBeforeDriverAccess() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: gateOpen, driver: driver))
-        var args = addressArgs(nodeId: 0, generation: 16, addressLow: 0xF0000B00)
-        args["targetGuid"] = .uint64(0x0011223344556677)
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0,
+                               generation: 16, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
         args["intent"] = .string("control")
         args["payload"] = .array([.int(0x00), .int(0xFF), .int(0x19)])
 

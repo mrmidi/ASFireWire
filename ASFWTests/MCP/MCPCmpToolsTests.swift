@@ -20,7 +20,8 @@ struct MCPCmpToolsTests {
     }
 
     private func pcrAddress() -> ASFWMCPAddress {
-        ASFWMCPAddress(nodeId: 0, generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000904)
+        ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(1), nodeId: 0,
+                       generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000904)
     }
 
     private func toolNames(_ cfg: ASFWMCPRuntimeConfiguration, nodes: [ASFWMCPNodeSummary]) async -> Set<String> {
@@ -80,6 +81,7 @@ struct MCPCmpToolsTests {
     @Test func livePcrReadDecodesOutputCmpFields() async {
         let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: MockASFWDriverControl())
         let result = await core.callTool(name: "asfw_cmp_read_pcr", arguments: .object([
+            "deviceInstanceId": .uint64(1),
             "nodeId": .int(0),
             "generation": .int(17),
             "direction": .string("output"),
@@ -100,9 +102,32 @@ struct MCPCmpToolsTests {
         #expect(pcr["overheadId"] == .int(3))
     }
 
+    @Test func pcrReadRequiresStrongDeviceTarget() async {
+        let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: MockASFWDriverControl())
+        let missing = await core.callTool(name: "asfw_cmp_read_pcr", arguments: .object([
+            "nodeId": .int(0),
+            "generation": .int(17),
+            "direction": .string("output"),
+            "plug": .int(0),
+        ]))
+        #expect(missing.ok == false)
+        #expect(missing.errors.first?.code == .malformedRequest)
+
+        let mismatched = await core.callTool(name: "asfw_cmp_read_pcr", arguments: .object([
+            "deviceInstanceId": .uint64(2),
+            "nodeId": .int(0),
+            "generation": .int(17),
+            "direction": .string("output"),
+            "plug": .int(0),
+        ]))
+        #expect(mismatched.ok == false)
+        #expect(mismatched.errors.first?.code == .capabilityUnavailable)
+    }
+
     @Test func cmpPlugInventoryReadsMprsAndBothDirections() async {
         let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: MockASFWDriverControl())
         let result = await core.callTool(name: "asfw_cmp_list_plugs", arguments: .object([
+            "deviceInstanceId": .uint64(1),
             "nodeId": .int(0),
             "generation": .int(17),
         ]))

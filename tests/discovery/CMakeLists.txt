@@ -85,6 +85,12 @@ add_discovery_test(DiscoveryConvergenceTests
     DiscoveryConvergenceTests.cpp
 )
 
+add_discovery_test(DeviceIdentityCatalogTests
+    DeviceIdentityCatalogTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+)
+
 # ROMScan Node State Machine Tests
 add_discovery_test(ROMScanNodeStateMachineTests
     ROMScanNodeStateMachineTests.cpp

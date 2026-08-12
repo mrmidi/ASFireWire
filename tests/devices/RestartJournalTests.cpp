@@ -12,11 +12,11 @@
 
 #include <optional>
 
-#include "Audio/Protocols/Backends/RestartJournal.hpp"
+#include "Audio/Duplex/RestartJournal.hpp"
 
 namespace {
 
-using namespace ASFW::Audio::Backends;
+using namespace ASFW::Audio::Duplex;
 
 // The 10 progress flags ClearRestartProgress (and thus ApplyTerminalPhase) must reset.
 void SetAllProgressFlags(DuplexRestartSession& s) {

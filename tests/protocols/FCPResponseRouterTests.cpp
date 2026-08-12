@@ -34,19 +34,25 @@ public:
         : transport_(std::move(transport)) {}
 
     std::vector<AVCUnit*> GetAllAVCUnits() override { return {}; }
+    std::shared_ptr<ASFW::Protocols::AVC::RemoteAvcSession>
+    AcquireRemoteSession(ASFW::Discovery::UnitInstanceId) override {
+        return nullptr;
+    }
     void ReScanAllUnits() override {}
-    FCPTransport* GetFCPTransportForNodeID(uint16_t) override { return nullptr; }
-
-    std::shared_ptr<FCPTransport> AcquireFCPTransportForNodeID(uint16_t nodeID) override {
-        acquiredNodeID_ = nodeID;
+    std::shared_ptr<FCPTransport> AcquireFCPTransportForIngress(
+        ASFW::Discovery::Generation generation, uint16_t sourceID) override {
+        acquiredGeneration_ = generation.value;
+        acquiredSourceID_ = sourceID;
         return std::move(transport_);
     }
 
-    [[nodiscard]] uint16_t AcquiredNodeID() const noexcept { return acquiredNodeID_; }
+    [[nodiscard]] uint16_t AcquiredSourceID() const noexcept { return acquiredSourceID_; }
+    [[nodiscard]] uint32_t AcquiredGeneration() const noexcept { return acquiredGeneration_; }
 
 private:
     std::shared_ptr<FCPTransport> transport_;
-    uint16_t acquiredNodeID_{0};
+    uint16_t acquiredSourceID_{0};
+    uint32_t acquiredGeneration_{0};
 };
 
 FCPFrame MakeUnitInfoCommand() {
@@ -61,17 +67,13 @@ FCPFrame MakeUnitInfoCommand() {
 class FCPResponseRouterTests : public ::testing::Test {
 protected:
     std::shared_ptr<FCPTransport> MakeTransport() {
-        DeviceRecord record{};
-        record.guid = 0x0001020304050607ULL;
-        record.nodeId = 2;
-        record.gen = Generation{1};
+        ConfigROM rom{};
+        rom.bib.guid = 0x0001020304050607ULL;
+        rom.gen = Generation{1};
+        rom.nodeId = 2;
+        const auto record = routes_.UpsertFromROM(rom, {});
         device_ = FWDevice::Create(record, ConfigROM{});
         EXPECT_NE(device_, nullptr);
-        ConfigROM rom{};
-        rom.bib.guid = record.guid;
-        rom.gen = record.gen;
-        rom.nodeId = record.nodeId;
-        (void)routes_.UpsertFromROM(rom, {});
 
         auto transport = std::make_shared<FCPTransport>();
         FCPTransportConfig config{};
@@ -112,7 +114,8 @@ TEST_F(FCPResponseRouterTests, RoutesResponseFromWithinRegisteredResponseSpace) 
     };
 
     EXPECT_EQ(router.RouteBlockWrite(request), BlockWriteDisposition::kComplete);
-    EXPECT_EQ(discovery.AcquiredNodeID(), 2);
+    EXPECT_EQ(discovery.AcquiredSourceID(), 2);
+    EXPECT_EQ(discovery.AcquiredGeneration(), 1U);
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(completionStatus, FCPStatus::kOk);
     EXPECT_TRUE(weakTransport.expired());
@@ -186,7 +189,8 @@ TEST_F(FCPResponseRouterTests, DoesNotRouteResponseWithoutCapturedGeneration) {
 
     EXPECT_EQ(router.RouteBlockWrite(request), BlockWriteDisposition::kComplete);
     EXPECT_EQ(completionCount, 0);
-    EXPECT_EQ(discovery.AcquiredNodeID(), 0);
+    EXPECT_EQ(discovery.AcquiredSourceID(), 0);
+    EXPECT_EQ(discovery.AcquiredGeneration(), 0U);
 
     const BlockWriteRequestView taggedRequest{
         .sourceID = 2,
@@ -196,7 +200,8 @@ TEST_F(FCPResponseRouterTests, DoesNotRouteResponseWithoutCapturedGeneration) {
     };
     EXPECT_EQ(router.RouteBlockWrite(taggedRequest), BlockWriteDisposition::kComplete);
     EXPECT_EQ(completionCount, 1);
-    EXPECT_EQ(discovery.AcquiredNodeID(), 2);
+    EXPECT_EQ(discovery.AcquiredSourceID(), 2);
+    EXPECT_EQ(discovery.AcquiredGeneration(), 1U);
 }
 
 } // namespace

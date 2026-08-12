@@ -20,7 +20,7 @@ using Probe = TargetReadinessGate::Probe;
 
 namespace {
 
-constexpr uint64_t kGuid = 0x0090B54003FFFFFFull;
+constexpr ASFW::Discovery::DeviceInstanceId kInstance{42};
 constexpr uint64_t kSecondNs = 1'000'000'000ull;
 
 CommandResult MakeResult(int transport, bool statusValid, uint8_t status,
@@ -47,14 +47,16 @@ CommandResult PowerOnUA() { return MakeResult(0, true, 0x02, 0x06, 0x29, 0x00); 
 struct GateRig {
     FakeTimerScheduler scheduler;
     std::vector<std::function<void(const CommandResult&)>> probes;
-    std::vector<std::pair<uint64_t, bool>> notified;
+    std::vector<std::pair<ASFW::Discovery::DeviceInstanceId, bool>> notified;
     TargetReadinessGate gate{
         scheduler,
         [this](CommandRequest request, std::function<void(const CommandResult&)> cb) {
             lastCdb = request.cdb;
             probes.push_back(std::move(cb));
         },
-        [this](uint64_t guid, bool up) { notified.emplace_back(guid, up); }};
+        [this](ASFW::Discovery::DeviceInstanceId instanceId, bool up) {
+            notified.emplace_back(instanceId, up);
+        }};
     std::vector<uint8_t> lastCdb;
 
     // Completes the most recent probe.
@@ -97,7 +99,7 @@ TEST(TargetReadinessGateTests, ClassifyTable) {
 
 TEST(TargetReadinessGateTests, ReadyDeviceAnnouncesOnFirstProbe) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     ASSERT_EQ(rig.probes.size(), 1u);
     ASSERT_FALSE(rig.lastCdb.empty());
     EXPECT_EQ(rig.lastCdb[0], 0x00); // TEST UNIT READY
@@ -105,13 +107,13 @@ TEST(TargetReadinessGateTests, ReadyDeviceAnnouncesOnFirstProbe) {
 
     rig.CompleteProbe(Good());
     ASSERT_EQ(rig.notified.size(), 1u);
-    EXPECT_EQ(rig.notified[0], std::make_pair(kGuid, true));
+    EXPECT_EQ(rig.notified[0], std::make_pair(kInstance, true));
     EXPECT_EQ(rig.scheduler.PendingCount(), 0u);
 }
 
 TEST(TargetReadinessGateTests, WarmupDelaysAnnouncementUntilReady) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     rig.CompleteProbe(Warming205());
     EXPECT_TRUE(rig.notified.empty());
     EXPECT_EQ(rig.scheduler.PendingCount(), 1u);
@@ -124,12 +126,12 @@ TEST(TargetReadinessGateTests, WarmupDelaysAnnouncementUntilReady) {
 
     rig.CompleteProbe(Good());
     ASSERT_EQ(rig.notified.size(), 1u);
-    EXPECT_EQ(rig.notified[0], std::make_pair(kGuid, true));
+    EXPECT_EQ(rig.notified[0], std::make_pair(kInstance, true));
 }
 
 TEST(TargetReadinessGateTests, UnitAttentionReprobesImmediately) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     rig.CompleteProbe(PowerOnUA());
     // No timer: the UA was consumed and the follow-up probe is already out.
     EXPECT_EQ(rig.scheduler.PendingCount(), 0u);
@@ -141,12 +143,12 @@ TEST(TargetReadinessGateTests, UnitAttentionReprobesImmediately) {
 
 TEST(TargetReadinessGateTests, DownEdgeCancelsGateAndSuppressesLateProbe) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     ASSERT_EQ(rig.probes.size(), 1u);
 
-    rig.gate.OnEdge(kGuid, false);
+    rig.gate.OnEdge(kInstance, false);
     ASSERT_EQ(rig.notified.size(), 1u);
-    EXPECT_EQ(rig.notified[0], std::make_pair(kGuid, false));
+    EXPECT_EQ(rig.notified[0], std::make_pair(kInstance, false));
 
     // The outstanding probe completes after the down edge: stale epoch, no-op.
     rig.CompleteProbe(Good());
@@ -155,11 +157,11 @@ TEST(TargetReadinessGateTests, DownEdgeCancelsGateAndSuppressesLateProbe) {
 
 TEST(TargetReadinessGateTests, DownEdgeDuringDelayedRetryCancelsTimer) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     rig.CompleteProbe(Warming205());
     EXPECT_EQ(rig.scheduler.PendingCount(), 1u);
 
-    rig.gate.OnEdge(kGuid, false);
+    rig.gate.OnEdge(kInstance, false);
     EXPECT_EQ(rig.scheduler.PendingCount(), 0u);
     rig.scheduler.Advance(10 * kSecondNs);
     EXPECT_EQ(rig.probes.size(), 1u); // no further probes
@@ -167,13 +169,13 @@ TEST(TargetReadinessGateTests, DownEdgeDuringDelayedRetryCancelsTimer) {
 
 TEST(TargetReadinessGateTests, ReassertAfterAnnouncementPassesThroughWithoutProbe) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     rig.CompleteProbe(Good());
     ASSERT_EQ(rig.notified.size(), 1u);
 
     // Reconnect re-assert: login continuous — no probe TURs near a running
     // initiator, immediate pass-through.
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     EXPECT_EQ(rig.probes.size(), 1u);
     ASSERT_EQ(rig.notified.size(), 2u);
     EXPECT_TRUE(rig.notified[1].second);
@@ -181,20 +183,20 @@ TEST(TargetReadinessGateTests, ReassertAfterAnnouncementPassesThroughWithoutProb
 
 TEST(TargetReadinessGateTests, DuplicateUpEdgeWhileProbingStartsNoSecondGate) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
+    rig.gate.OnEdge(kInstance, true);
     EXPECT_EQ(rig.probes.size(), 1u);
     EXPECT_TRUE(rig.notified.empty());
 }
 
 TEST(TargetReadinessGateTests, FreshUpAfterDownRunsANewGate) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     rig.CompleteProbe(Good());
-    rig.gate.OnEdge(kGuid, false);
+    rig.gate.OnEdge(kInstance, false);
     ASSERT_EQ(rig.notified.size(), 2u);
 
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     EXPECT_EQ(rig.probes.size(), 2u); // gated again, not passed through
     rig.CompleteProbe(Good());
     ASSERT_EQ(rig.notified.size(), 3u);
@@ -203,7 +205,7 @@ TEST(TargetReadinessGateTests, FreshUpAfterDownRunsANewGate) {
 
 TEST(TargetReadinessGateTests, NeverReadyFailsOpenAtProbeBudget) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     for (uint32_t i = 0; i < TargetReadinessGate::kProbeBudget - 1; ++i) {
         rig.CompleteProbe(Warming205());
         rig.scheduler.Advance(kSecondNs);
@@ -219,7 +221,7 @@ TEST(TargetReadinessGateTests, NeverReadyFailsOpenAtProbeBudget) {
 
 TEST(TargetReadinessGateTests, CancelSuppressesEverything) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     rig.CompleteProbe(Warming205());
     EXPECT_EQ(rig.scheduler.PendingCount(), 1u);
 
@@ -232,7 +234,7 @@ TEST(TargetReadinessGateTests, CancelSuppressesEverything) {
 
 TEST(TargetReadinessGateTests, TransportErrorRetriesPacedThenAnnouncesWhenReady) {
     GateRig rig;
-    rig.gate.OnEdge(kGuid, true);
+    rig.gate.OnEdge(kInstance, true);
     // Bus-reset suspension window: the probe fails at the transport level.
     rig.CompleteProbe(MakeResult(-536870165, false, 0x00));
     EXPECT_TRUE(rig.notified.empty());

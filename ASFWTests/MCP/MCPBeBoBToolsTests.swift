@@ -64,7 +64,8 @@ struct MCPBeBoBToolsTests {
         let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)
 
         let result = await core.callTool(name: "asfw_bebob_get_unit_plug_info", arguments: .object([
-            "targetGuid": .uint64(0x000A_AC03_00B1_D1F7),
+            "deviceInstanceId": .uint64(4),
+            "unitDirectoryOffset": .uint64(0x28),
             "nodeId": .int(3),
             "generation": .int(17),
         ]))
@@ -89,7 +90,8 @@ struct MCPBeBoBToolsTests {
         let core = ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver)
 
         let result = await core.callTool(name: "asfw_bebob_get_clock_topology", arguments: .object([
-            "targetGuid": .uint64(0x000A_AC03_00B1_D1F7),
+            "deviceInstanceId": .uint64(4),
+            "unitDirectoryOffset": .uint64(0x28),
             "nodeId": .int(3),
             "generation": .int(17),
         ]))
@@ -112,8 +114,7 @@ struct MCPBeBoBToolsTests {
         let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
         let core = ASFWMCPCore(configuration: unrestrictedWrite, driver: driver)
         let arguments: ASFWMCPValue = .object([
-            "targetGuid": .uint64(0x000A_AC03_00B1_D1F7),
-            "nodeId": .int(3),
+            "endpointId": .uint64(401),
             "generation": .int(17),
         ])
 
@@ -132,12 +133,11 @@ struct MCPBeBoBToolsTests {
         #expect(choreography.last == .string("verify_remote_pcrs"))
     }
 
-    @Test func phase88LifecycleAcceptsCanonicalHexGuid() async {
+    @Test func phase88LifecycleAcceptsEndpointIdentity() async {
         let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
         let core = ASFWMCPCore(configuration: unrestrictedWrite, driver: driver)
         let result = await core.callTool(name: "asfw_phase88_start_48k", arguments: .object([
-            "targetGuid": .string("0x000AAC0300B1D1F7"),
-            "nodeId": .int(3),
+            "endpointId": .uint64(401),
             "generation": .int(17),
         ]))
 
@@ -145,12 +145,11 @@ struct MCPBeBoBToolsTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 1)
     }
 
-    @Test func phase88LifecycleRejectsMalformedHexGuid() async {
+    @Test func phase88LifecycleRejectsZeroEndpointIdentity() async {
         let driver = MockASFWDriverControl(nodes: [MockASFWDriverControl.bebobNode])
         let core = ASFWMCPCore(configuration: unrestrictedWrite, driver: driver)
         let result = await core.callTool(name: "asfw_phase88_start_48k", arguments: .object([
-            "targetGuid": .string("0xnot-a-guid"),
-            "nodeId": .int(3),
+            "endpointId": .uint64(0),
             "generation": .int(17),
         ]))
 

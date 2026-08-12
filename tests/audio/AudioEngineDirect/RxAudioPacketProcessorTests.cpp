@@ -72,7 +72,7 @@ struct Fixture {
 
     Fixture() {
         binding = AudioGraphBinding{
-            .guid = 0x0011223344556677ULL,
+            .endpointId = ASFW::Audio::Devices::AudioEndpointId{1},
             .sampleRateHz = 48000,
             .memory =
                 AudioStreamMemory{

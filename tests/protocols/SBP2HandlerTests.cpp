@@ -34,6 +34,7 @@ namespace {
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceKind;
+using ASFW::Discovery::DeviceInstanceId;
 using ASFW::Discovery::DeviceManager;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Discovery::DeviceRegistry;
@@ -41,6 +42,8 @@ using ASFW::Discovery::Generation;
 using ASFW::Discovery::LifeState;
 using ASFW::Discovery::LinkPolicy;
 using ASFW::Discovery::RomEntry;
+using ASFW::Discovery::UnitDirectory;
+using ASFW::Discovery::UnitInstanceId;
 using ASFW::Protocols::SBP2::AddressSpaceManager;
 using ASFW::Protocols::SBP2::SessionRegistry;
 using ASFW::Testing::FakeSessionScheduler;
@@ -128,37 +131,28 @@ public:
     }
 
     void UpsertDevice() {
-        DeviceRecord record{};
-        record.guid = kGuid;
-        record.vendorId = 0x001122;
-        record.modelId = 0x334455;
-        record.kind = DeviceKind::Unknown;
-        record.vendorName = "Scanner Vendor";
-        record.modelName = "Scanner Model";
-        record.gen = Generation{1};
-        record.nodeId = 0x32;
-        record.link = LinkPolicy{};
-        record.state = LifeState::Ready;
-
         ConfigROM rom{};
-        rom.bib.guid = record.guid;
+        rom.bib.guid = kGuid;
         rom.gen = Generation{1};
-        rom.nodeId = record.nodeId;
-        rom.vendorName = record.vendorName;
-        rom.modelName = record.modelName;
-        rom.rootDirMinimal = {
-            RomEntry{CfgKey::Unit_Spec_Id, kSBP2UnitSpecId, 0, 0},
-            RomEntry{CfgKey::Unit_Sw_Version, kSBP2UnitSwVersion, 0, 0},
-            RomEntry{CfgKey::Logical_Unit_Number, 0x000002, 0, 0},
-            RomEntry{CfgKey::Management_Agent_Offset, 0x000080, 1, 0},
-            RomEntry{CfgKey::Unit_Characteristics, 0x080400, 0, 0},
-        };
-        (void)deviceRegistry.UpsertFromROM(rom, record.link);
+        rom.nodeId = 0x32;
+        rom.vendorName = "Scanner Vendor";
+        rom.modelName = "Scanner Model";
+        UnitDirectory unit{};
+        unit.offsetQuadlets = 0;
+        unit.unitSpecId = kSBP2UnitSpecId;
+        unit.unitSwVersion = kSBP2UnitSwVersion;
+        unit.logicalUnitNumber = 0x000002;
+        unit.managementAgentOffset = 0x000080;
+        unit.unitCharacteristics = 0x080400;
+        rom.unitDirectories.push_back(unit);
+        const auto record = deviceRegistry.UpsertFromROM(rom, LinkPolicy{});
+        instanceId = record.instanceId;
         ASSERT_NE(nullptr, deviceManager.UpsertDevice(record, rom));
     }
 
     uint64_t CreateSession() {
-        auto result = registry.CreateSession(Owner(), kGuid, 0);
+        auto result = registry.CreateSession(
+            Owner(), UnitInstanceId{.device = instanceId, .unitDirectoryOffset = 0});
         EXPECT_TRUE(result.has_value());
         return result.value_or(0);
     }
@@ -208,6 +202,7 @@ public:
     DeviceManager deviceManager;
     IODispatchQueue queue;
     SessionRegistry registry;
+    DeviceInstanceId instanceId{};
     uint64_t sessionStatusAddress{0};
 };
 

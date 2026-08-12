@@ -29,7 +29,7 @@ AudioGraphBinding MakeOutputBinding(AudioTransportControlBlock& control,
                                     uint32_t frameCapacity,
                                     uint32_t channels) {
     return AudioGraphBinding{
-        .guid = 0x1122334455667788ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{1},
         .sampleRateHz = 48000,
         .memory = AudioStreamMemory{
             .outputBase = output,

@@ -45,9 +45,9 @@ struct MCPLiveDriverControlTests {
     @Test func nodeDiscoveryMapsProtocolHints() async {
         let backend = FakeLiveDriverBackend()
         backend.devices = [
-            FWDeviceInfo(
-                id: 0x0011_2233_4455_6677,
-                guid: 0x0011_2233_4455_6677,
+            device(
+                id: 1,
+                observedGuid: 0x0011_2233_4455_6677,
                 vendorId: 0x0003DB,
                 modelId: 0x000001,
                 vendorName: "Apogee",
@@ -58,9 +58,9 @@ struct MCPLiveDriverControlTests {
                 units: [],
                 deviceKind: 0
             ),
-            FWDeviceInfo(
-                id: 0x00AA_BBCC_DDEE_FF00,
-                guid: 0x00AA_BBCC_DDEE_FF00,
+            device(
+                id: 2,
+                observedGuid: 0x00AA_BBCC_DDEE_FF00,
                 vendorId: 0x00130E,
                 modelId: 0x000002,
                 vendorName: "TCAT",
@@ -73,8 +73,9 @@ struct MCPLiveDriverControlTests {
             )
         ]
         backend.avcUnits = [
-            AVCUnitInfo(
-                guid: 0x0011_2233_4455_6677,
+            avcUnit(
+                deviceID: DeviceInstanceID(1),
+                observedGuid: 0x0011_2233_4455_6677,
                 nodeID: 0,
                 vendorID: 0x0003DB,
                 modelID: 0x000001,
@@ -96,13 +97,27 @@ struct MCPLiveDriverControlTests {
 
     @Test func configRomProjectsAnnotatedBIBTreeAndBoundedRawCache() async throws {
         let backend = FakeLiveDriverBackend()
+        backend.devices = [device(
+            id: 1,
+            observedGuid: 0x0013_0E04_0200_4713,
+            vendorId: 0x00130E,
+            modelId: 0x000008,
+            vendorName: "Focusrite",
+            modelName: "Saffire",
+            nodeId: 0,
+            generation: 17,
+            state: .ready,
+            units: [],
+            deviceKind: 0
+        )]
         backend.configROM = ASFWDriverConnector.ConfigROMFetchResult(
             data: configRomFixture(),
             requestedGeneration: 17,
             resolvedGeneration: 17
         )
 
-        let report = try #require(await LiveASFWDriverControl(backend: backend).fetchConfigROM(nodeId: 0, generation: 17))
+        let report = try #require(await LiveASFWDriverControl(backend: backend).fetchConfigROM(
+            deviceID: DeviceInstanceID(1), generation: 17))
 
         #expect(report.parsed)
         #expect(report.rootDirectoryStartQuadlet == 5)
@@ -121,8 +136,9 @@ struct MCPLiveDriverControlTests {
     @Test func avcInspectionMapsDriverEvidenceWithoutFcpTraffic() async throws {
         let backend = FakeLiveDriverBackend()
         backend.avcUnits = [
-            AVCUnitInfo(
-                guid: 0x0011_2233_4455_6677,
+            avcUnit(
+                deviceID: DeviceInstanceID(1),
+                observedGuid: 0x0011_2233_4455_6677,
                 nodeID: 0xFFC2,
                 vendorID: 0x0003DB,
                 modelID: 0x01DDDD,
@@ -138,7 +154,7 @@ struct MCPLiveDriverControlTests {
 
         let units = await control.listAVCUnits()
         let capabilities = await control.avcSubunitCapabilities(
-            guid: 0x0011_2233_4455_6677,
+            unitID: UnitInstanceID(device: DeviceInstanceID(1), unitDirectoryOffset: 0x28),
             type: 0x0C,
             id: 0
         )
@@ -162,12 +178,12 @@ struct MCPLiveDriverControlTests {
         #expect(backend.fcpCommands == 0)
     }
 
-    @Test func fcpCommandUsesGuidBoundRouteAndReturnsResponseReceipt() async {
+    @Test func fcpCommandUsesUnitInstanceBoundRouteAndReturnsResponseReceipt() async {
         let backend = FakeLiveDriverBackend()
         backend.devices = [
-            FWDeviceInfo(
-                id: 0x0011_2233_4455_6677,
-                guid: 0x0011_2233_4455_6677,
+            device(
+                id: 1,
+                observedGuid: 0x0011_2233_4455_6677,
                 vendorId: 0x0003DB,
                 modelId: 0x000001,
                 vendorName: "Apogee",
@@ -180,14 +196,23 @@ struct MCPLiveDriverControlTests {
             )
         ]
         backend.avcUnits = [
-            AVCUnitInfo(guid: 0x0011_2233_4455_6677, nodeID: 0, vendorID: 0x0003DB,
-                        modelID: 1, subunits: [], isoInputPlugs: 1, isoOutputPlugs: 1,
-                        extInputPlugs: 1, extOutputPlugs: 1)
+            avcUnit(deviceID: DeviceInstanceID(1),
+                    observedGuid: 0x0011_2233_4455_6677,
+                    nodeID: 0,
+                    vendorID: 0x0003DB,
+                    modelID: 1,
+                    subunits: [],
+                    isoInputPlugs: 1,
+                    isoOutputPlugs: 1,
+                    extInputPlugs: 1,
+                    extOutputPlugs: 1)
         ]
         backend.fcpResponse = Data([0x0C, 0xFF, 0x19])
         let request = ASFWMCPFcpCommandRequest(
-            targetGUID: 0x0011_2233_4455_6677,
-            address: ASFWMCPAddress(nodeId: 0, generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000B00),
+            targetUnitID: UnitInstanceID(device: DeviceInstanceID(1), unitDirectoryOffset: 0x28),
+            address: ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(1), nodeId: 0,
+                                    generation: 17, addressHigh: 0xFFFF,
+                                    addressLow: 0xF0000B00),
             intent: .control,
             payload: [0x00, 0xFF, 0x19]
         )
@@ -227,20 +252,20 @@ struct MCPLiveDriverControlTests {
         let control = LiveASFWDriverControl(backend: backend)
 
         let start = await control.executePhase88Streaming(
-            targetGuid: 0x000A_AC03_00B1_D1F7,
+            endpointID: AudioEndpointID(401),
             start: true
         )
         let stop = await control.executePhase88Streaming(
-            targetGuid: 0x000A_AC03_00B1_D1F7,
+            endpointID: AudioEndpointID(401),
             start: false
         )
 
         #expect(start.ok)
         #expect(stop.ok)
         #expect(backend.audioStreamingRequests.count == 2)
-        #expect(backend.audioStreamingRequests[0].0 == 0x000A_AC03_00B1_D1F7)
+        #expect(backend.audioStreamingRequests[0].0 == AudioEndpointID(401))
         #expect(backend.audioStreamingRequests[0].1)
-        #expect(backend.audioStreamingRequests[1].0 == 0x000A_AC03_00B1_D1F7)
+        #expect(backend.audioStreamingRequests[1].0 == AudioEndpointID(401))
         #expect(backend.audioStreamingRequests[1].1 == false)
     }
 
@@ -295,6 +320,7 @@ struct MCPLiveDriverControlTests {
 
     private func address(generation: UInt32) -> ASFWMCPAddress {
         ASFWMCPAddress(
+            deviceInstanceId: DeviceInstanceID(1),
             nodeId: 0xFFC1,
             generation: generation,
             addressHigh: 0xFFFF,
@@ -321,10 +347,76 @@ struct MCPLiveDriverControlTests {
         })
     }
 
+    private func device(
+        id: UInt64,
+        observedGuid: UInt64,
+        vendorId: UInt32,
+        modelId: UInt32,
+        vendorName: String,
+        modelName: String,
+        nodeId: UInt16,
+        generation: UInt32,
+        state: DriverConnectorFWDeviceState,
+        units: [FWUnitInfo],
+        deviceKind: UInt8
+    ) -> FWDeviceInfo {
+        FWDeviceInfo(
+            id: DeviceInstanceID(id),
+            observedGuid: observedGuid,
+            nodeVendorOui: vendorId,
+            rootVendorId: vendorId,
+            rootModelId: modelId,
+            vendorName: vendorName,
+            modelName: modelName,
+            nodeId: nodeId,
+            generation: generation,
+            state: state,
+            quarantineReason: .none,
+            rawBusInfoQuadlets: [],
+            units: units,
+            deviceKind: deviceKind
+        )
+    }
+
+    private func avcUnit(
+        deviceID: DeviceInstanceID,
+        observedGuid: UInt64,
+        nodeID: UInt16,
+        vendorID: UInt32,
+        modelID: UInt32,
+        subunits: [AVCSubunitInfo],
+        isoInputPlugs: UInt8,
+        isoOutputPlugs: UInt8,
+        extInputPlugs: UInt8,
+        extOutputPlugs: UInt8
+    ) -> AVCUnitInfo {
+        AVCUnitInfo(
+            id: UnitInstanceID(device: deviceID, unitDirectoryOffset: 0x28),
+            observedGuid: observedGuid,
+            generation: 17,
+            nodeID: nodeID,
+            isInitialized: true,
+            rootVendorID: vendorID,
+            rootModelID: modelID,
+            unitVendorID: vendorID,
+            unitModelID: modelID,
+            specifierID: 0x00A02D,
+            unitVersion: 0x000101,
+            subunits: subunits,
+            isoInputPlugs: isoInputPlugs,
+            isoOutputPlugs: isoOutputPlugs,
+            extInputPlugs: extInputPlugs,
+            extOutputPlugs: extOutputPlugs
+        )
+    }
+
     private func sbp2Unit() -> FWUnitInfo {
         FWUnitInfo(
+            id: UnitInstanceID(device: DeviceInstanceID(2), unitDirectoryOffset: 0x30),
             specId: 0x00609E,
             swVersion: 0x010483,
+            vendorId: nil,
+            modelId: nil,
             state: .ready,
             romOffset: 0,
             managementAgentOffset: 0x100,
@@ -381,7 +473,7 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var resultPolls = 0
     var fcpCommands = 0
     var fcpResponse: Data?
-    var audioStreamingRequests: [(UInt64, Bool)] = []
+    var audioStreamingRequests: [(AudioEndpointID, Bool)] = []
     var busResetRequests = 0
     var resetGenerationOnRequest = false
     var localIrmResourceSnapshot: ASFWMCPLocalIrmResourceSnapshot?
@@ -396,35 +488,36 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     }
     func mcpDiscoveredDevices() -> [FWDeviceInfo]? { devices }
     func mcpTopologySnapshot() -> TopologySnapshot? { topologySnapshot }
-    func mcpConfigROM(nodeId: UInt8, generation: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult? {
+    func mcpConfigROM(deviceID: DeviceInstanceID,
+                      expectedGeneration: UInt16) -> ASFWDriverConnector.ConfigROMFetchResult? {
         configROM
     }
     func mcpAVCUnits() -> [AVCUnitInfo]? { avcUnits }
-    func mcpAVCSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
+    func mcpAVCSubunitCapabilities(unitID: UnitInstanceID, type: UInt8, id: UInt8) -> AVCMusicCapabilities? {
         avcSubunitCapabilities
     }
 
-    func mcpAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
+    func mcpAsyncRead(deviceID: DeviceInstanceID, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
         reads += 1
         return nextHandle
     }
 
-    func mcpAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16? {
+    func mcpAsyncWrite(deviceID: DeviceInstanceID, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16? {
         writes += 1
         return nextHandle
     }
 
-    func mcpAsyncBlockRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
+    func mcpAsyncBlockRead(deviceID: DeviceInstanceID, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> UInt16? {
         blockReads += 1
         return nextHandle
     }
 
-    func mcpAsyncBlockWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16? {
+    func mcpAsyncBlockWrite(deviceID: DeviceInstanceID, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> UInt16? {
         blockWrites += 1
         return nextHandle
     }
 
-    func mcpAsyncCompareSwap(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16? {
+    func mcpAsyncCompareSwap(deviceID: DeviceInstanceID, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16? {
         compareSwaps += 1
         return nextHandle
     }
@@ -434,13 +527,13 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
         return results[handle]
     }
 
-    func mcpSendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32) -> Data? {
+    func mcpSendRawFCPCommand(unitID: UnitInstanceID, frame: Data, timeoutMs: UInt32) -> Data? {
         fcpCommands += 1
         return fcpResponse
     }
 
-    func mcpSetAudioStreaming(guid: UInt64, enabled: Bool) -> Int32 {
-        audioStreamingRequests.append((guid, enabled))
+    func mcpSetAudioStreaming(endpointID: AudioEndpointID, enabled: Bool) -> Int32 {
+        audioStreamingRequests.append((endpointID, enabled))
         return 0
     }
 

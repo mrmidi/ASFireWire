@@ -2,54 +2,7 @@ import Foundation
 import Testing
 @testable import ASFW
 
-/// The probe-restriction tests are the safety-critical ones: choosing
-/// `.avcStatus` for M-Audio special firmware hangs the device until it is
-/// power cycled. See AVCReportModels.swift for the reference citations.
 struct AVCProbePolicyTests {
-
-    @Test func restrictedDevicesAreNeverAvcProbed() {
-        for entry in AVCProbeRestrictions.entries {
-            let policy = AVCProbeRestrictions.policy(vendorId: entry.vendorId,
-                                                     modelId: entry.modelId)
-            #expect(policy.tier == .memoryOnly, "\(entry.name) must never be AV/C probed")
-            #expect(policy.rationale == entry.reason)
-        }
-    }
-
-    @Test func specialFirmwareContributesRestrictions() {
-        for special in BridgeCoKnownDevice.specialFirmware {
-            #expect(AVCProbeRestrictions.entry(vendorId: special.vendorId,
-                                               modelId: special.modelId) != nil,
-                    "\(special.name) must appear in the deny-list")
-        }
-    }
-
-    @Test func fireWire1814AndProjectMixAreBothCovered() {
-        // Config ROM identities from linux bebob.c:63-64, 464-467.
-        #expect(AVCProbeRestrictions.policy(vendorId: 0x00_0D6C, modelId: 0x0001_0071).tier
-                == .memoryOnly)
-        #expect(AVCProbeRestrictions.policy(vendorId: 0x00_0D6C, modelId: 0x0001_0091).tier
-                == .memoryOnly)
-    }
-
-    @Test func bootloaderStateIsNotAvcProbed() {
-        for boot in BridgeCoKnownDevice.bootloaders {
-            let policy = AVCProbeRestrictions.policy(vendorId: boot.vendorId,
-                                                     modelId: boot.bootloaderModelId)
-            #expect(policy.tier == .memoryOnly,
-                    "\(boot.name) in bootloader state must not be AV/C probed")
-        }
-    }
-
-    /// The deny-list must stay a deny-list: an unknown device still gets the
-    /// full STATUS probe, or the report cannot describe new hardware.
-    @Test func unknownDevicesAreStillProbed() {
-        #expect(AVCProbeRestrictions.policy(vendorId: 0x00_0AAC, modelId: 0x0000_0003).tier
-                == .avcStatus)  // TerraTec PHASE 88 Rack FW, HW-verified
-        #expect(AVCProbeRestrictions.policy(vendorId: 0xAB_CDEF, modelId: 0x123456).tier
-                == .avcStatus)  // never-seen device
-    }
-
     @Test func bootedSpecialModelIsNotMistakenForBootloader() {
         // 0x00010071 is the booted 1814; only 0x00010070 is the bootloader.
         #expect(BridgeCoKnownDevice.bootloader(vendorId: 0x00_0D6C, modelId: 0x0001_0071) == nil)
@@ -167,9 +120,9 @@ struct BridgeCoReferenceGeometryTests {
     /// Reference geometry only exists for devices that cannot be queried.
     @Test func referenceGeometryIsOnlyForUnprobableDevices() {
         for geo in BridgeCoKnownDevice.referenceGeometry {
-            let policy = AVCProbeRestrictions.policy(vendorId: geo.vendorId, modelId: geo.modelId)
-            #expect(policy.tier == .memoryOnly,
-                    "reference geometry implies the device cannot be probed")
+            #expect(BridgeCoKnownDevice.specialFirmware.contains {
+                $0.vendorId == geo.vendorId && $0.modelId == geo.modelId
+            }, "reference geometry is only documented for special firmware")
         }
     }
 }
@@ -184,7 +137,14 @@ struct AVCReportTextFormatterTests {
         snap.modelId = modelId
         snap.vendorName = "M-Audio"
         snap.modelName = "FireWire 1814"
-        snap.policy = AVCProbeRestrictions.policy(vendorId: vendorId, modelId: modelId)
+        let restricted = BridgeCoKnownDevice.specialFirmware.contains {
+            $0.vendorId == vendorId && $0.modelId == modelId
+        } || BridgeCoKnownDevice.bootloaders.contains {
+            $0.vendorId == vendorId && $0.bootloaderModelId == modelId
+        }
+        snap.policy = restricted
+            ? AVCProbePolicy(tier: .memoryOnly, rationale: "Quarantined by runtime catalog.")
+            : AVCProbePolicy(tier: .avcStatus, rationale: "Runtime catalog permits STATUS probes.")
         if withBridgeCo {
             var section = BridgeCoSection()
             section.vendorId = vendorId

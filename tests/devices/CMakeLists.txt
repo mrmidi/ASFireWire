@@ -51,7 +51,7 @@ add_device_test(DICERestartSessionTests
 # DICE duplex restart coordinator FSM tests
 add_device_test(AudioDuplexCoordinatorTests
     AudioDuplexCoordinatorTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AudioDuplexCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Duplex/AudioDuplexCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
@@ -70,10 +70,6 @@ add_device_test(BeBoBProtocolTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
-)
-
-add_device_test(DiceRuntimeDeviceConfigTests
-    DiceRuntimeDeviceConfigTests.cpp
 )
 
 # FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
@@ -200,6 +196,23 @@ add_device_test(ApogeeDuetVendorCmdTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
+# Apogee Duet runtime stream caps: aggregate vs per-stream wire view
+add_device_test(ApogeeDuetStreamCapsTests
+    ApogeeDuetStreamCapsTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 # Apogee Duet clock transition tests
 add_device_test(ApogeeDuetClockTransitionTests
     ApogeeDuetClockTransitionTests.cpp
@@ -215,8 +228,4 @@ add_device_test(ApogeeDuetClockTransitionTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
-)
-
-add_device_test(AVCStartReadinessTests
-    AVCStartReadinessTests.cpp
 )

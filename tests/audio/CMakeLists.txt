@@ -160,6 +160,27 @@ add_audio_test(TimingCursorPolicyTests
     TimingCursorPolicyTests.cpp
 )
 
+add_audio_test(ResolvedAudioEndpointProfileTests
+    ResolvedAudioEndpointProfileTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Devices/AudioEndpointProfileWire.cpp"
+)
+
+add_audio_test(AudioDeviceSessionManagerTests
+    AudioDeviceSessionManagerTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Devices/AudioDeviceSessionManager.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Devices/ResolvedProfileBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/Common/CommonProfileBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/AVC/GenericAvcProfileBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/BeBoBProfileBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/DICE/DiceProfileBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/OXFW/OxfwProfileBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 add_audio_test(RxDrivenTimingTests
     RxDrivenTimingTests.cpp
 )
@@ -175,27 +196,6 @@ add_audio_test(AudioEndpointRuntimeTests
 )
 
 
-
-# Audio Profile Registry Tests
-add_audio_test(AudioProfileRegistryTests
-    AudioProfileRegistryTests.cpp
-)
-
-# DICE Profile Registry and Quirks Tests
-add_audio_test(DiceProfileTests
-    DiceProfileTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/BeBoBProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/Phase88Profile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfileRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MidasVeniceProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/AlesisMultiMixProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.cpp"
-)
 
 # IT Descriptor Layout Tests
 add_audio_test(ITDescriptorLayoutTests

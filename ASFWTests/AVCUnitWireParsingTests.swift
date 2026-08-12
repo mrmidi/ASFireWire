@@ -5,44 +5,63 @@ import Testing
 struct AVCUnitWireParsingTests {
     private func appendLE<T: FixedWidthInteger>(_ value: T, to data: inout Data) {
         var raw = value.littleEndian
-        withUnsafeBytes(of: &raw) { bytes in
-            data.append(contentsOf: bytes)
-        }
+        withUnsafeBytes(of: &raw) { data.append(contentsOf: $0) }
     }
 
-    @Test func parses32BitVendorAndModelIDs() {
+    private func fixture(version: UInt16 = 2) -> Data {
+        let headerBytes: UInt16 = 16
+        let recordBytes: UInt16 = 68
         var wire = Data()
 
-        appendLE(UInt32(1), to: &wire) // unit count
+        appendLE(version, to: &wire)
+        appendLE(headerBytes, to: &wire)
+        appendLE(UInt32(headerBytes + recordBytes), to: &wire)
+        appendLE(UInt32(1), to: &wire)
+        appendLE(UInt32(0), to: &wire)
 
-        let guid: UInt64 = 0x0003_DB00_01DD_DD11
-        appendLE(guid, to: &wire)
+        appendLE(version, to: &wire)
+        appendLE(recordBytes, to: &wire)
+        appendLE(UInt64(73), to: &wire)
+        appendLE(UInt32(0x28), to: &wire)
+        appendLE(UInt32(19), to: &wire)
+        appendLE(UInt64(0x0003_DB00_01DD_DD11), to: &wire)
         appendLE(UInt16(0xFFC2), to: &wire)
-        appendLE(UInt32(0x0003DB), to: &wire)
-        appendLE(UInt32(0x01DDDD), to: &wire)
+        wire.append(1) // initialized
+        wire.append(1) // subunit count
+        appendLE(UInt32(0x0003DB), to: &wire) // root vendor
+        appendLE(UInt32(0x001000), to: &wire) // root model
+        appendLE(UInt32(0x00A02D), to: &wire) // selected-unit vendor
+        appendLE(UInt32(0x01DDDD), to: &wire) // selected-unit model
+        appendLE(UInt32(0x00A02D), to: &wire) // specifier
+        appendLE(UInt32(0x000101), to: &wire) // version
+        wire.append(contentsOf: [2, 2, 0, 0])
 
-        wire.append(1)  // subunitCount
-        wire.append(2)  // isoInputPlugs
-        wire.append(2)  // isoOutputPlugs
-        wire.append(0)  // extInputPlugs
-        wire.append(0)  // extOutputPlugs
-        wire.append(0)  // reserved
+        appendLE(version, to: &wire)
+        appendLE(UInt16(8), to: &wire)
+        wire.append(contentsOf: [0x0C, 0x00, 0x02, 0x02])
+        return wire
+    }
 
-        wire.append(0x0C) // music subunit type
-        wire.append(0x00) // subunit id
-        wire.append(0x02) // num src plugs
-        wire.append(0x02) // num dest plugs
+    @Test func parsesStrongUnitIdentityAndIndependentEvidence() throws {
+        let units = try #require(ASFWDriverConnector.parseAVCUnitsWire(fixture()))
+        let unit = try #require(units.first)
 
-        let units = ASFWDriverConnector.parseAVCUnitsWire(wire)
         #expect(units.count == 1)
-
-        guard let unit = units.first else { return }
-        #expect(unit.guid == guid)
+        #expect(unit.id == UnitInstanceID(device: DeviceInstanceID(73), unitDirectoryOffset: 0x28))
+        #expect(unit.observedGuid == 0x0003_DB00_01DD_DD11)
+        #expect(unit.generation == 19)
         #expect(unit.nodeID == 0xFFC2)
-        #expect(unit.vendorID == 0x0003DB)
-        #expect(unit.modelID == 0x01DDDD)
-        #expect(unit.isoInputPlugs == 2)
-        #expect(unit.isoOutputPlugs == 2)
+        #expect(unit.rootVendorID == 0x0003DB)
+        #expect(unit.rootModelID == 0x001000)
+        #expect(unit.unitVendorID == 0x00A02D)
+        #expect(unit.unitModelID == 0x01DDDD)
+        #expect(unit.specifierID == 0x00A02D)
+        #expect(unit.unitVersion == 0x000101)
         #expect(unit.subunits.count == 1)
+    }
+
+    @Test func rejectsUnknownVersionAndTruncation() {
+        #expect(ASFWDriverConnector.parseAVCUnitsWire(fixture(version: 3)) == nil)
+        #expect(ASFWDriverConnector.parseAVCUnitsWire(fixture().dropLast()) == nil)
     }
 }

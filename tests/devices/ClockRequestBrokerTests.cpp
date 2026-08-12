@@ -9,18 +9,19 @@
 
 #include <DriverKit/IOLib.h>
 
-#include "Audio/Protocols/Backends/ClockRequestBroker.hpp"
+#include "Audio/Duplex/ClockRequestBroker.hpp"
 
 namespace {
 
-using ASFW::Audio::Backends::ClockRequestBroker;
-using ASFW::Audio::Backends::RestartSessionStore;
-using ASFW::Audio::DICE::DiceClockRequestCompletion;
-using ASFW::Audio::DICE::DiceClockRequestOutcome;
-using ASFW::Audio::DICE::DiceRestartReason;
-using ASFW::Audio::DICE::DiceRestartSession;
+using ASFW::Audio::Duplex::ClockRequestBroker;
+using ASFW::Audio::Duplex::RestartSessionStore;
+using DiceClockRequestCompletion = ASFW::Audio::DuplexClockRequestCompletion;
+using DiceClockRequestOutcome = ASFW::Audio::DuplexClockRequestOutcome;
+using DiceRestartReason = ASFW::Audio::DuplexRestartReason;
+using DiceRestartSession = ASFW::Audio::DuplexRestartSession;
+using ASFW::Audio::Devices::AudioEndpointId;
 
-constexpr uint64_t kGuid = 0x0011223344556677ULL;
+constexpr AudioEndpointId kEndpoint{17};
 
 class ClockRequestBrokerTest : public ::testing::Test {
 protected:
@@ -40,7 +41,7 @@ protected:
             .reason = reason,
             .token = broker_.AllocateTokenLocked(),
         };
-        EXPECT_FALSE(broker_.QueuePendingLocked(kGuid, request).has_value());
+        EXPECT_FALSE(broker_.QueuePendingLocked(kEndpoint, request).has_value());
         IOLockUnlock(lock_);
         return request;
     }
@@ -62,7 +63,7 @@ TEST_F(ClockRequestBrokerTest, TokenAllocationStartsAtOneAndIsMonotonic) {
 // The broker must preserve that atomic latest-wins update, including its session mirror.
 TEST_F(ClockRequestBrokerTest, QueuePendingLatestWinsAndMirrorsRestartSession) {
     DiceRestartSession session{};
-    session.guid = kGuid;
+    session.endpointId = kEndpoint;
     store_.StoreSession(session);
 
     IOLockLock(lock_);
@@ -71,44 +72,44 @@ TEST_F(ClockRequestBrokerTest, QueuePendingLatestWinsAndMirrorsRestartSession) {
         .reason = DiceRestartReason::kSampleRateChange,
         .token = broker_.AllocateTokenLocked(),
     };
-    EXPECT_FALSE(broker_.QueuePendingLocked(kGuid, first).has_value());
+    EXPECT_FALSE(broker_.QueuePendingLocked(kEndpoint, first).has_value());
 
     const ClockRequestBroker::PendingClockRequest replacement{
         .desiredClock = {.sampleRateHz = 48000},
         .reason = DiceRestartReason::kClockSourceChange,
         .token = broker_.AllocateTokenLocked(),
     };
-    const auto superseded = broker_.QueuePendingLocked(kGuid, replacement);
+    const auto superseded = broker_.QueuePendingLocked(kEndpoint, replacement);
     ASSERT_TRUE(superseded.has_value());
     EXPECT_EQ(superseded->token, first.token);
     EXPECT_EQ(superseded->desiredClock.sampleRateHz, 44100u);
     IOLockUnlock(lock_);
 
-    const auto mirrored = store_.GetSession(kGuid);
+    const auto mirrored = store_.GetSession(kEndpoint);
     ASSERT_TRUE(mirrored.has_value());
     EXPECT_TRUE(mirrored->hasPendingClockRequest);
     EXPECT_EQ(mirrored->pendingClock.sampleRateHz, 48000u);
     EXPECT_EQ(mirrored->pendingReason, DiceRestartReason::kClockSourceChange);
 
     ClockRequestBroker::PendingClockRequest consumed{};
-    ASSERT_TRUE(broker_.TryConsumePending(kGuid, consumed));
+    ASSERT_TRUE(broker_.TryConsumePending(kEndpoint, consumed));
     EXPECT_EQ(consumed.token, replacement.token);
     EXPECT_EQ(consumed.desiredClock.sampleRateHz, 48000u);
 }
 
 TEST_F(ClockRequestBrokerTest, ConsumeClearsPendingMirrorAndOnlyConsumesOnce) {
     DiceRestartSession session{};
-    session.guid = kGuid;
+    session.endpointId = kEndpoint;
     store_.StoreSession(session);
     const auto request = QueueLocked(48000);
 
     ClockRequestBroker::PendingClockRequest consumed{};
-    ASSERT_TRUE(broker_.TryConsumePending(kGuid, consumed));
+    ASSERT_TRUE(broker_.TryConsumePending(kEndpoint, consumed));
     EXPECT_EQ(consumed.token, request.token);
     EXPECT_EQ(consumed.desiredClock.sampleRateHz, request.desiredClock.sampleRateHz);
-    EXPECT_FALSE(broker_.TryConsumePending(kGuid, consumed));
+    EXPECT_FALSE(broker_.TryConsumePending(kEndpoint, consumed));
 
-    const auto mirrored = store_.GetSession(kGuid);
+    const auto mirrored = store_.GetSession(kEndpoint);
     ASSERT_TRUE(mirrored.has_value());
     EXPECT_FALSE(mirrored->hasPendingClockRequest);
     EXPECT_EQ(mirrored->pendingClock.sampleRateHz, 0u);
@@ -117,7 +118,7 @@ TEST_F(ClockRequestBrokerTest, ConsumeClearsPendingMirrorAndOnlyConsumesOnce) {
 
 TEST_F(ClockRequestBrokerTest, CompleteDeliversOnceAndUpdatesLastClockCompletion) {
     DiceRestartSession session{};
-    session.guid = kGuid;
+    session.endpointId = kEndpoint;
     store_.StoreSession(session);
 
     const DiceClockRequestCompletion completion{
@@ -129,33 +130,33 @@ TEST_F(ClockRequestBrokerTest, CompleteDeliversOnceAndUpdatesLastClockCompletion
         .restartId = 9,
         .generation = ASFW::FW::Generation{3},
     };
-    broker_.Complete(completion, kGuid);
+    broker_.Complete(completion, kEndpoint);
 
-    const auto afterComplete = store_.GetSession(kGuid);
+    const auto afterComplete = store_.GetSession(kEndpoint);
     ASSERT_TRUE(afterComplete.has_value());
     ASSERT_TRUE(afterComplete->lastClockCompletion.has_value());
     EXPECT_EQ(afterComplete->lastClockCompletion->token, completion.token);
     EXPECT_EQ(afterComplete->lastClockCompletion->outcome, DiceClockRequestOutcome::kApplied);
 
     DiceClockRequestCompletion taken{};
-    ASSERT_TRUE(broker_.TryTakeCompleted(kGuid, completion.token, taken));
+    ASSERT_TRUE(broker_.TryTakeCompleted(kEndpoint, completion.token, taken));
     EXPECT_EQ(taken.token, completion.token);
     EXPECT_EQ(taken.status, kIOReturnSuccess);
-    EXPECT_FALSE(broker_.TryTakeCompleted(kGuid, completion.token, taken));
+    EXPECT_FALSE(broker_.TryTakeCompleted(kEndpoint, completion.token, taken));
 }
 
 TEST_F(ClockRequestBrokerTest, FailPendingPublishesFailureWithCurrentSessionEpoch) {
     DiceRestartSession session{};
-    session.guid = kGuid;
+    session.endpointId = kEndpoint;
     session.restartId = 11;
     session.topologyGeneration = ASFW::FW::Generation{7};
     store_.StoreSession(session);
     const auto request = QueueLocked(88200, DiceRestartReason::kClockSourceChange);
 
-    broker_.FailPending(kGuid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
+    broker_.FailPending(kEndpoint, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
 
     DiceClockRequestCompletion completion{};
-    ASSERT_TRUE(broker_.TryTakeCompleted(kGuid, request.token, completion));
+    ASSERT_TRUE(broker_.TryTakeCompleted(kEndpoint, request.token, completion));
     EXPECT_EQ(completion.desiredClock.sampleRateHz, 88200u);
     EXPECT_EQ(completion.reason, DiceRestartReason::kClockSourceChange);
     EXPECT_EQ(completion.outcome, DiceClockRequestOutcome::kAbortedByStop);
@@ -168,29 +169,29 @@ TEST_F(ClockRequestBrokerTest, FailPendingPublishesFailureWithCurrentSessionEpoc
 // waiter that never returns allowing an unbounded per-device accumulation.
 TEST_F(ClockRequestBrokerTest, CompletionMailboxEvictsOldestAfterThirtyTwoTokens) {
     for (uint64_t token = 1; token <= 33; ++token) {
-        broker_.Complete(DiceClockRequestCompletion{.token = token}, kGuid);
+        broker_.Complete(DiceClockRequestCompletion{.token = token}, kEndpoint);
     }
 
     DiceClockRequestCompletion completion{};
-    EXPECT_FALSE(broker_.TryTakeCompleted(kGuid, 1, completion));
-    ASSERT_TRUE(broker_.TryTakeCompleted(kGuid, 2, completion));
+    EXPECT_FALSE(broker_.TryTakeCompleted(kEndpoint, 1, completion));
+    ASSERT_TRUE(broker_.TryTakeCompleted(kEndpoint, 2, completion));
     EXPECT_EQ(completion.token, 2u);
-    ASSERT_TRUE(broker_.TryTakeCompleted(kGuid, 33, completion));
+    ASSERT_TRUE(broker_.TryTakeCompleted(kEndpoint, 33, completion));
     EXPECT_EQ(completion.token, 33u);
 }
 
 TEST_F(ClockRequestBrokerTest, ClearLockedDropsPendingAndCompletedRequests) {
     const auto request = QueueLocked(48000);
-    broker_.Complete(DiceClockRequestCompletion{.token = 44}, kGuid);
+    broker_.Complete(DiceClockRequestCompletion{.token = 44}, kEndpoint);
 
     IOLockLock(lock_);
-    broker_.ClearLocked(kGuid);
+    broker_.ClearLocked(kEndpoint);
     IOLockUnlock(lock_);
 
     ClockRequestBroker::PendingClockRequest pending{};
     DiceClockRequestCompletion completion{};
-    EXPECT_FALSE(broker_.TryConsumePending(kGuid, pending));
-    EXPECT_FALSE(broker_.TryTakeCompleted(kGuid, 44, completion));
+    EXPECT_FALSE(broker_.TryConsumePending(kEndpoint, pending));
+    EXPECT_FALSE(broker_.TryTakeCompleted(kEndpoint, 44, completion));
     EXPECT_NE(request.token, 0u);
 }
 
@@ -203,11 +204,11 @@ TEST(ClockRequestBrokerNullLock, SelfLockingOperationsShortCircuitWithoutBorrowe
     ClockRequestBroker::PendingClockRequest pending{};
     DiceClockRequestCompletion completion{};
 
-    EXPECT_FALSE(broker.TryConsumePending(kGuid, pending));
-    EXPECT_FALSE(broker.TryTakeCompleted(kGuid, 1, completion));
-    broker.Complete(DiceClockRequestCompletion{.token = 1}, kGuid);
-    broker.FailPending(kGuid, DiceClockRequestOutcome::kFailed, kIOReturnError);
-    EXPECT_FALSE(broker.TryTakeCompleted(kGuid, 1, completion));
+    EXPECT_FALSE(broker.TryConsumePending(kEndpoint, pending));
+    EXPECT_FALSE(broker.TryTakeCompleted(kEndpoint, 1, completion));
+    broker.Complete(DiceClockRequestCompletion{.token = 1}, kEndpoint);
+    broker.FailPending(kEndpoint, DiceClockRequestOutcome::kFailed, kIOReturnError);
+    EXPECT_FALSE(broker.TryTakeCompleted(kEndpoint, 1, completion));
 }
 
 } // namespace

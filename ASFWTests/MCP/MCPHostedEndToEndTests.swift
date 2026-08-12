@@ -24,6 +24,7 @@ struct MCPHostedEndToEndTests {
             let readResult = try await client.callTool(
                 name: "asfw_read_quadlet",
                 arguments: [
+                    "deviceInstanceId": .int(2),
                     "nodeId": .int(1),
                     "generation": .int(17),
                     "addressHigh": .int(0xFFFF),

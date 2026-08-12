@@ -26,9 +26,11 @@ using namespace testing;
 class MockAVCDiscovery : public IAVCDiscovery {
 public:
     MOCK_METHOD(std::vector<AVCUnit*>, GetAllAVCUnits, (), (override));
+    MOCK_METHOD(std::shared_ptr<RemoteAvcSession>, AcquireRemoteSession,
+                (Discovery::UnitInstanceId unitId), (override));
     MOCK_METHOD(void, ReScanAllUnits, (), (override));
-    MOCK_METHOD(FCPTransport*, GetFCPTransportForNodeID, (uint16_t nodeID), (override));
-    MOCK_METHOD(std::shared_ptr<FCPTransport>, AcquireFCPTransportForNodeID, (uint16_t nodeID), (override));
+    MOCK_METHOD(std::shared_ptr<FCPTransport>, AcquireFCPTransportForIngress,
+                (Discovery::Generation generation, uint16_t sourceID), (override));
 };
 
 // Test Fixture
@@ -64,11 +66,16 @@ TEST_F(AVCHandlerTests, GetAVCUnits_NoUnits) {
     EXPECT_EQ(ret, kIOReturnSuccess);
     ASSERT_NE(args.structureOutput, nullptr);
     
-    // Verify data: should contain just the count (0)
-    EXPECT_EQ(args.structureOutput->getLength(), sizeof(uint32_t));
-    
-    const uint32_t* countPtr = static_cast<const uint32_t*>(args.structureOutput->getBytesNoCopy());
-    EXPECT_EQ(*countPtr, 0);
+    ASSERT_EQ(args.structureOutput->getLength(), sizeof(AVCUnitsWireV2));
+
+    const auto* header = static_cast<const AVCUnitsWireV2*>(
+        args.structureOutput->getBytesNoCopy());
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(header->version, kAVCUnitsWireVersion);
+    EXPECT_EQ(header->headerSize, sizeof(AVCUnitsWireV2));
+    EXPECT_EQ(header->byteSize, sizeof(AVCUnitsWireV2));
+    EXPECT_EQ(header->unitCount, 0U);
+    EXPECT_EQ(header->_reserved, 0U);
 }
 
 // Test: GetAVCUnits with one unit and one subunit

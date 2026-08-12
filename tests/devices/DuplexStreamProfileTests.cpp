@@ -1,30 +1,21 @@
 #include <gtest/gtest.h>
 
-#include "Audio/Protocols/Backends/DuplexStreamProfile.hpp"
+#include "Audio/Duplex/DuplexStreamPlanner.hpp"
 
 namespace {
 
 using ASFW::Audio::AudioStreamRuntimeCaps;
-using ASFW::Audio::Backends::DuplexHostDirection;
-using ASFW::Audio::Backends::DuplexStreamProfile;
-using ASFW::Audio::Backends::DuplexStreamProfileResolver;
-using ASFW::DeviceProfiles::Audio::kAlesisVendorId;
-using ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
-using ASFW::DeviceProfiles::Audio::kApogeeVendorId;
-using ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
-using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
-using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
-using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
-using ASFW::DeviceProfiles::Audio::kWeissInt202ModelId;
-using ASFW::DeviceProfiles::Audio::kWeissInt203ModelId;
-using ASFW::DeviceProfiles::Audio::kWeissVendorId;
-using ASFW::Discovery::DeviceRecord;
+using ASFW::Audio::Devices::ResolvedAudioEndpointProfile;
+using ASFW::Audio::Duplex::HostDirection;
+using ASFW::Audio::Duplex::IsoChannelPolicy;
+using ASFW::Audio::Duplex::StreamPlan;
+using ASFW::Audio::Duplex::StreamPlanner;
 using ASFW::Encoding::AudioWireFormat;
+using ASFW::FW::FwSpeed;
 
-TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe) {
-    DeviceRecord record{};
-    record.link.localToNode = ASFW::FW::FwSpeed::S400;
-    AudioStreamRuntimeCaps caps{
+ResolvedAudioEndpointProfile MakeProfile() {
+    ResolvedAudioEndpointProfile profile{};
+    profile.runtimeCaps = AudioStreamRuntimeCaps{
         .hostInputPcmChannels = 16,
         .hostOutputPcmChannels = 16,
         .deviceToHostAm824Slots = 17,
@@ -35,164 +26,88 @@ TEST(DuplexStreamProfileTests, OrdinaryDiceKeepsLegacyChannelsGeometryAndRecipe)
         .deviceToHostStreamCount = 1,
         .hostToDeviceStreamCount = 1,
     };
-
-    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
-
-    EXPECT_EQ(profile.channels.captureStreamCount, 1U);
-    EXPECT_EQ(profile.channels.playbackStreamCount, 1U);
-    EXPECT_EQ(profile.channels.deviceToHostIsoChannel, 1U);
-    EXPECT_EQ(profile.channels.hostToDeviceIsoChannel, 0U);
-    EXPECT_EQ(profile.captureStreams[0].pcmChannels, 0U);
-    EXPECT_EQ(profile.captureStreams[0].am824Slots, 17U);
-    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kAM824);
-    EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kAM824);
-    EXPECT_EQ(profile.playbackStreams[0].bandwidthUnits, 1076U);
-    EXPECT_EQ(profile.captureStreams[0].bandwidthUnits, 1076U);
-    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, uint64_t{1} << 0U);
-    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, uint64_t{1} << 1U);
-    EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 2U);
-    EXPECT_FALSE(profile.startOrder.startReceiveBeforeDeviceRx);
-    EXPECT_FALSE(profile.startOrder.startTransmitBeforeDeviceTx);
-    EXPECT_EQ(profile.startOrder.prepareOrder[0], DuplexHostDirection::kReceive);
-    EXPECT_EQ(profile.startOrder.prepareOrder[1], DuplexHostDirection::kTransmit);
-    EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
-    EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
+    return profile;
 }
 
-TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeometryMatches) {
-    DeviceRecord record{
-        .vendorId = kFocusriteVendorId,
-        .modelId = kSPro24DspModelId,
-    };
-    AudioStreamRuntimeCaps caps{
-        .hostInputPcmChannels = 8,
-        .hostOutputPcmChannels = 8,
-        .deviceToHostAm824Slots = 9,
-        .hostToDeviceAm824Slots = 9,
-    };
+TEST(DuplexStreamProfileTests, PlansResolvedGeometryWithoutIdentityInputs) {
+    const ResolvedAudioEndpointProfile resolved = MakeProfile();
 
-    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+    const StreamPlan plan = StreamPlanner::Resolve(resolved, FwSpeed::S400);
 
-    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile.captureStreams[0].am824Slots, 9U);
+    EXPECT_EQ(plan.channels.captureStreamCount, 1U);
+    EXPECT_EQ(plan.channels.playbackStreamCount, 1U);
+    EXPECT_EQ(plan.channels.deviceToHostIsoChannel, 1U);
+    EXPECT_EQ(plan.channels.hostToDeviceIsoChannel, 0U);
+    EXPECT_EQ(plan.captureStreams[0].pcmChannels, 0U);
+    EXPECT_EQ(plan.captureStreams[0].am824Slots, 17U);
+    EXPECT_EQ(plan.playbackStreams[0].pcmChannels, 16U);
+    EXPECT_EQ(plan.captureStreams[0].bandwidthUnits, 1076U);
+    EXPECT_EQ(plan.playbackStreams[0].bandwidthUnits, 1076U);
+    EXPECT_EQ(plan.captureStreams[0].allowedIsoChannels, uint64_t{1} << 1U);
+    EXPECT_EQ(plan.playbackStreams[0].allowedIsoChannels, uint64_t{1} << 0U);
 }
 
-TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInterleave) {
-    DeviceRecord record{
-        .vendorId = kApogeeVendorId,
-        .modelId = kApogeeDuetModelId,
-    };
-    record.link.localToNode = ASFW::FW::FwSpeed::S400;
-    AudioStreamRuntimeCaps caps{
-        .hostInputPcmChannels = 2,
-        .hostOutputPcmChannels = 2,
-        .deviceToHostAm824Slots = 2,
-        .hostToDeviceAm824Slots = 2,
-        .sampleRateHz = 48000,
-    };
+TEST(DuplexStreamProfileTests, CarriesResolvedWireAndLifecyclePoliciesVerbatim) {
+    ResolvedAudioEndpointProfile resolved = MakeProfile();
+    resolved.captureWireFormat = AudioWireFormat::kRawPcm24In32;
+    resolved.playbackWireFormat = AudioWireFormat::kRawPcm24In32;
+    resolved.captureIsoChannelPolicy = IsoChannelPolicy::IRMSelectable;
+    resolved.playbackIsoChannelPolicy = IsoChannelPolicy::IRMSelectable;
+    resolved.startPolicy.startReceiveBeforeDeviceRx = true;
+    resolved.startPolicy.startTransmitBeforeDeviceTx = true;
+    resolved.startPolicy.requiresPreStreamClockLock = false;
+    resolved.startPolicy.startOrder = {HostDirection::kTransmit, HostDirection::kReceive};
+    resolved.startPolicy.postDeviceEnableDelayMs = 0;
+    resolved.stopPolicy
+        .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
 
-    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+    const StreamPlan plan = StreamPlanner::Resolve(resolved, FwSpeed::S400);
 
-    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
-    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
-    EXPECT_EQ(profile.captureStreams[0].bandwidthUnits, 596U);
-    EXPECT_EQ(profile.playbackStreams[0].bandwidthUnits, 596U);
-    EXPECT_TRUE(profile.startOrder.startReceiveBeforeDeviceRx);
-    EXPECT_TRUE(profile.startOrder.startTransmitBeforeDeviceTx);
-    EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
-    EXPECT_TRUE(profile.stopOrder
+    EXPECT_EQ(plan.captureWireFormat, AudioWireFormat::kRawPcm24In32);
+    EXPECT_EQ(plan.playbackWireFormat, AudioWireFormat::kRawPcm24In32);
+    EXPECT_EQ(plan.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(plan.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_TRUE(plan.startOrder.startReceiveBeforeDeviceRx);
+    EXPECT_TRUE(plan.startOrder.startTransmitBeforeDeviceTx);
+    EXPECT_FALSE(plan.startOrder.requiresPreStreamClockLock);
+    EXPECT_EQ(plan.startOrder.startOrder[0], HostDirection::kTransmit);
+    EXPECT_EQ(plan.startOrder.startOrder[1], HostDirection::kReceive);
+    EXPECT_EQ(plan.startOrder.postDeviceEnableDelayMs, 0U);
+    EXPECT_TRUE(plan.stopOrder
                     .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive);
 }
 
-TEST(DuplexStreamProfileTests, Phase88PreservesLinuxBeBoBCmpBeforeHostStartOrdering) {
-    DeviceRecord record{
-        .vendorId = kTerraTecVendorId,
-        .modelId = kPhase88RackFwModelId,
+TEST(DuplexStreamProfileTests, UsesExplicitlyAssignedChannelsWithoutReResolvingIdentity) {
+    ResolvedAudioEndpointProfile resolved = MakeProfile();
+    resolved.runtimeCaps.hostInputPcmChannels = 18;
+    resolved.runtimeCaps.deviceToHostAm824Slots = 20;
+    resolved.runtimeCaps.deviceToHostStreamCount = 2;
+    resolved.runtimeCaps.deviceToHostStreams[0] = {
+        .pcmChannels = 8,
+        .am824Slots = 9,
     };
-    record.link.localToNode = ASFW::FW::FwSpeed::S400;
-    AudioStreamRuntimeCaps caps{
-        .hostInputPcmChannels = 10,
-        .hostOutputPcmChannels = 10,
-        .deviceToHostAm824Slots = 11,
-        .hostToDeviceAm824Slots = 11,
-        .sampleRateHz = 48000,
-        .deviceToHostStreamCount = 1,
-        .hostToDeviceStreamCount = 1,
+    resolved.runtimeCaps.deviceToHostStreams[1] = {
+        .pcmChannels = 10,
+        .am824Slots = 11,
     };
 
-    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
-
-    // Linux establishes iPCR then oPCR before amdtp_domain_start(), which
-    // starts the device-to-host RX path before host-to-device TX.
-    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
-    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
-    EXPECT_EQ(profile.captureStreams[0].am824Slots, 11U);
-    EXPECT_EQ(profile.playbackStreams[0].am824Slots, 11U);
-    EXPECT_FALSE(profile.startOrder.startReceiveBeforeDeviceRx);
-    EXPECT_FALSE(profile.startOrder.startTransmitBeforeDeviceTx);
-    EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock);
-    EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
-    EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
-    EXPECT_EQ(profile.startOrder.postDeviceEnableDelayMs, 0U);
-}
-
-TEST(DuplexStreamProfileTests, WeissIntStartsHostTransmitFirstWithoutPreEnableSourceLock) {
-    AudioStreamRuntimeCaps caps{
-        // CoreAudio presentation is output-only, but the DICE wire topology is
-        // still two PCM channels in both directions.
-        .hostInputPcmChannels = 0,
-        .hostOutputPcmChannels = 2,
-        .deviceToHostAm824Slots = 2,
-        .hostToDeviceAm824Slots = 2,
-        .sampleRateHz = 48000,
-        .deviceToHostStreamCount = 1,
-        .hostToDeviceStreamCount = 1,
+    ASFW::Audio::AudioDuplexChannels assigned{
+        .deviceToHostIsoChannel = 7,
+        .hostToDeviceIsoChannel = 9,
+        .captureStreamCount = 2,
+        .playbackStreamCount = 1,
     };
+    assigned.captureIsoChannels[1] = 12;
 
-    for (const uint32_t modelId : {kWeissInt202ModelId, kWeissInt203ModelId}) {
-        DeviceRecord record{
-            .vendorId = kWeissVendorId,
-            .modelId = modelId,
-        };
-        const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+    const StreamPlan plan = StreamPlanner::Resolve(resolved, FwSpeed::S400, assigned);
 
-        EXPECT_FALSE(profile.startOrder.requiresPreStreamClockLock) << modelId;
-        EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kTransmit) << modelId;
-        EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kReceive) << modelId;
-        EXPECT_EQ(profile.channels.captureStreamCount, 1U) << modelId;
-        EXPECT_EQ(profile.channels.playbackStreamCount, 1U) << modelId;
-    }
-}
-
-TEST(DuplexStreamProfileTests, AlesisModelsClampAdvertisedCaptureStreamsToOne) {
-    AudioStreamRuntimeCaps caps{
-        .hostInputPcmChannels = 32,
-        .hostOutputPcmChannels = 32,
-        .deviceToHostAm824Slots = 34,
-        .hostToDeviceAm824Slots = 34,
-        .deviceToHostIsoChannel = 5,
-        .hostToDeviceIsoChannel = 8,
-        .deviceToHostStreamCount = 2,
-        .hostToDeviceStreamCount = 2,
-    };
-    caps.deviceToHostStreams[0] = {.isoChannel = 5, .pcmChannels = 16, .am824Slots = 17};
-    caps.deviceToHostStreams[1] = {.isoChannel = 6, .pcmChannels = 16, .am824Slots = 17};
-
-    for (const uint32_t modelId : {0x000000U, 0x000001U}) {
-        DeviceRecord record{
-            .vendorId = kAlesisVendorId,
-            .modelId = modelId,
-        };
-        const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
-
-        EXPECT_EQ(profile.channels.captureStreamCount, 1U) << modelId;
-        EXPECT_EQ(profile.channels.playbackStreamCount, 2U) << modelId;
-        EXPECT_EQ(profile.captureStreams[0].isoChannel, 5U) << modelId;
-        EXPECT_EQ(profile.captureStreams[0].pcmChannels, 0U) << modelId;
-        EXPECT_EQ(profile.captureStreams[0].am824Slots, 34U) << modelId;
-        EXPECT_EQ(profile.channels.PlaybackChannel(1), 0U) << modelId;
-    }
+    EXPECT_EQ(plan.captureStreams[0].isoChannel, 7U);
+    EXPECT_EQ(plan.captureStreams[1].isoChannel, 12U);
+    EXPECT_EQ(plan.captureStreams[0].pcmChannelOffset, 0U);
+    EXPECT_EQ(plan.captureStreams[1].pcmChannelOffset, 8U);
+    EXPECT_EQ(plan.captureStreams[0].pcmChannels, 8U);
+    EXPECT_EQ(plan.captureStreams[1].pcmChannels, 10U);
+    EXPECT_EQ(plan.playbackStreams[0].isoChannel, 9U);
 }
 
 } // namespace

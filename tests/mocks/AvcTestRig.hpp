@@ -84,9 +84,12 @@ public:
     [[nodiscard]] FakeTimerScheduler& Timers() noexcept { return timers_; }
     [[nodiscard]] AvcTargetResponder& Target() noexcept { return *target_; }
     [[nodiscard]] Protocols::AVC::FCPTransport* Transport() noexcept { return transport_.get(); }
+    [[nodiscard]] uint64_t ObservedGuid() const noexcept { return options_.guid; }
 
     [[nodiscard]] Discovery::DeviceRouteToken Route() const {
-        const auto route = routes_.CurrentRoute(options_.guid);
+        const auto route = device_
+                               ? routes_.CurrentRoute(device_->GetInstanceId())
+                               : std::nullopt;
         return route.value_or(Discovery::DeviceRouteToken{});
     }
 

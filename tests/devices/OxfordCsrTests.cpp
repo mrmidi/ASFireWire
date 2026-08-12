@@ -75,7 +75,9 @@ protected:
 
     /// Resolves through the registry on every call, the way the driver does.
     [[nodiscard]] Oxford::RouteProvider LiveRoute() {
-        return [this, guid = rig.Route().guid] { return rig.Routes().CurrentRoute(guid); };
+        return [this, instanceId = rig.Route().deviceInstanceId] {
+            return rig.Routes().CurrentRoute(instanceId);
+        };
     }
     [[nodiscard]] static Oxford::RouteProvider NoRoute() {
         return [] { return std::optional<ASFW::Discovery::DeviceRouteToken>{}; };
@@ -197,7 +199,7 @@ TEST_F(OxfordCsrReadTests, RouteReboundBeforeTheReadIsResolvedFreshNotFromASnaps
     ASSERT_TRUE(static_cast<bool>(snapshot));
 
     ASFW::Discovery::ConfigROM rom{};
-    rom.bib.guid = snapshot.guid;
+    rom.bib.guid = rig.ObservedGuid();
     rom.gen = snapshot.generation;
     rom.nodeId = static_cast<uint8_t>(snapshot.nodeId);
     rig.Routes().InvalidateLiveMappingsForBusReset();

@@ -12,18 +12,26 @@
 
 #include <gtest/gtest.h>
 
-#include "Audio/Protocols/Backends/DiceRecoveryPolicy.hpp"
+#include "Audio/Duplex/RecoveryPolicy.hpp"
 
 namespace {
 
-using namespace ASFW::Audio::Backends;
+using namespace ASFW::Audio;
+using namespace ASFW::Audio::Duplex;
+
+using DiceRestartState = DuplexRestartState;
+using DiceRestartReason = DuplexRestartReason;
+using DiceRestartFailureCause = DuplexRestartFailureCause;
+using DiceRecoveryContext = RecoveryContext;
+using DiceRecoveryDisposition = RecoveryDisposition;
+using DiceRecoveryPolicyReason = RecoveryPolicyReason;
 
 // A context with dependencies satisfied (record + protocol present) and neither stop nor
 // idle-apply, so the state/footprint branches are reached. Individual tests tweak fields.
 constexpr DiceRecoveryContext WithDeps(DiceRestartState state) noexcept {
     DiceRecoveryContext c{};
     c.state = state;
-    c.hasDiceRecord = true;
+    c.hasDeviceRecord = true;
     c.hasProtocol = true;
     return c;
 }
@@ -147,7 +155,7 @@ TEST(DiceRecoveryPolicyTests, ApplyingIdleClockIsInvalidated) {
 TEST(DiceRecoveryPolicyTests, MissingDependencyWithActiveSessionFails) {
     DiceRecoveryContext c{};
     c.state = DiceRestartState::kRunning;
-    c.hasDiceRecord = false;
+    c.hasDeviceRecord = false;
     c.hasProtocol = true;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kFailSession);
@@ -158,7 +166,7 @@ TEST(DiceRecoveryPolicyTests, MissingDependencyWithActiveSessionFails) {
 TEST(DiceRecoveryPolicyTests, MissingDependencyWhileIdleIsIgnored) {
     DiceRecoveryContext c{};
     c.state = DiceRestartState::kIdle;
-    c.hasDiceRecord = true;
+    c.hasDeviceRecord = true;
     c.hasProtocol = false;
     const auto d = EvaluateRecoveryPolicy(c);
     EXPECT_EQ(d.disposition, DiceRecoveryDisposition::kIgnore);

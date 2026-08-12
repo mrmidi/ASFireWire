@@ -32,17 +32,17 @@ TEST(DICERestartSessionTests, ClassifyRestartReasonReturnsInitialStartWithoutPri
     DiceRestartSession emptySession{};
     EXPECT_EQ(ClassifyRestartReason(&emptySession, k48kInternal), DiceRestartReason::kInitialStart);
 
-    DiceRestartSession guidOnlySession{
-        .guid = 0x130e0402004713ULL,
+    DiceRestartSession endpointOnlySession{
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{41},
         .channels = AudioDuplexChannels{.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
         .phase = DiceRestartPhase::kIdle,
     };
-    EXPECT_EQ(ClassifyRestartReason(&guidOnlySession, k48kInternal), DiceRestartReason::kInitialStart);
+    EXPECT_EQ(ClassifyRestartReason(&endpointOnlySession, k48kInternal), DiceRestartReason::kInitialStart);
 }
 
 TEST(DICERestartSessionTests, ClassifyRestartReasonDetectsRateChangesBeforeRecovery) {
     DiceRestartSession prior{
-        .guid = 0x130e0402004713ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{41},
         .channels = AudioDuplexChannels{.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
         .reason = DiceRestartReason::kInitialStart,
         .desiredClock = k48kInternal,
@@ -54,7 +54,7 @@ TEST(DICERestartSessionTests, ClassifyRestartReasonDetectsRateChangesBeforeRecov
 
 TEST(DICERestartSessionTests, ClassifyRestartReasonReturnsRecoveryForFailedSameConfigRestart) {
     DiceRestartSession prior{
-        .guid = 0x130e0402004713ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{41},
         .channels = AudioDuplexChannels{.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
         .reason = DiceRestartReason::kInitialStart,
         .desiredClock = k48kInternal,
@@ -67,7 +67,7 @@ TEST(DICERestartSessionTests, ClassifyRestartReasonReturnsRecoveryForFailedSameC
 
 TEST(DICERestartSessionTests, ClearRestartProgressPreservesIntentButClearsExecutionState) {
     DiceRestartSession session{
-        .guid = 0x130e0402004713ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{41},
         .channels = AudioDuplexChannels{.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
         .reason = DiceRestartReason::kManualReconfigure,
         .desiredClock = k48kInternal,
@@ -119,7 +119,7 @@ TEST(DICERestartSessionTests, ClearRestartProgressPreservesIntentButClearsExecut
 
     ClearRestartProgress(session, DiceRestartPhase::kIdle);
 
-    EXPECT_EQ(session.guid, 0x130e0402004713ULL);
+    EXPECT_EQ(session.endpointId, ASFW::Audio::Devices::AudioEndpointId{41});
     EXPECT_EQ(session.reason, DiceRestartReason::kManualReconfigure);
     EXPECT_EQ(session.desiredClock.sampleRateHz, k48kInternal.sampleRateHz);
     EXPECT_EQ(session.phase, DiceRestartPhase::kIdle);

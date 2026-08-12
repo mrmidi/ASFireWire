@@ -86,11 +86,6 @@ target_link_libraries(DiagnosticsServiceTests PRIVATE
 target_include_directories(DiagnosticsServiceTests PRIVATE "${ASFW_DRIVER_DIR}/Shared")
 gtest_discover_tests(DiagnosticsServiceTests)
 
-# Device Protocol Factory Routing Tests
-add_common_test(DeviceProtocolFactoryTests
-    DeviceProtocolFactoryTests.cpp
-)
-
 # Speed Map Service Tests
 add_common_test(SpeedMapServiceTests
     SpeedMapServiceTests.cpp

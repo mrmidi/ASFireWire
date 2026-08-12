@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-#include "Audio/Protocols/Backends/SyncAsyncBridge.hpp"
+#include "Audio/Duplex/SyncAsyncBridge.hpp"
 
 #include <atomic>
 #include <chrono>

@@ -142,8 +142,9 @@ protected:
         rom.bib.guid = kGuid;
         rom.gen = Generation{1};
         rom.nodeId = kNode;
-        (void)routes_.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
-        route_ = *routes_.CurrentRoute(kGuid);
+        const auto record =
+            routes_.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        route_ = *routes_.CurrentRoute(record.instanceId);
     }
 
     BeBoBBus bus_;

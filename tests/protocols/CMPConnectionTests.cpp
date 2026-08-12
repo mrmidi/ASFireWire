@@ -94,8 +94,8 @@ CMPDevice Device(ASFW::Discovery::DeviceRegistry& routes, uint64_t guid, uint8_t
     rom.bib.guid = guid;
     rom.gen = Generation{generation};
     rom.nodeId = node;
-    (void)routes.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
-    return CMPDevice{.route = *routes.CurrentRoute(guid)};
+    const auto record = routes.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+    return CMPDevice{.route = *routes.CurrentRoute(record.instanceId)};
 }
 
 TEST(CMPConnectionTests, LeasesAreIndependentForDifferentDeviceGuids) {

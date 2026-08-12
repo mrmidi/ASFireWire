@@ -24,7 +24,7 @@ AudioGraphBinding MakeDuplexBinding(AudioTransportControlBlock& control,
                                     float* input,
                                     const float* output) {
     return AudioGraphBinding{
-        .guid = 0x1122334455667788ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{1},
         .sampleRateHz = 48000,
         .memory = AudioStreamMemory{
             .inputBase = input,
@@ -80,7 +80,7 @@ TEST(DirectAudioEngineTests, BindInvalidGraphClearsState) {
     ASSERT_TRUE(engine.Bind(valid));
 
     AudioGraphBinding invalid = valid;
-    invalid.guid = 0;
+    invalid.endpointId = {};
 
     EXPECT_FALSE(engine.Bind(invalid));
     EXPECT_FALSE(engine.IsBound());

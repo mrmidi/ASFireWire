@@ -51,6 +51,14 @@ endif()
 
 include(GoogleTest)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(
+  NAME ArchitectureBoundaries
+  COMMAND "${Python3_EXECUTABLE}"
+          "${ASFW_TESTS_DIR}/architecture/check_boundaries.py"
+          "${ASFW_ROOT_DIR}"
+)
+
 # Define common test settings interface library
 add_library(asfw_test_common_interface INTERFACE)
 target_include_directories(asfw_test_common_interface INTERFACE ${ASFW_COMMON_INCLUDES})

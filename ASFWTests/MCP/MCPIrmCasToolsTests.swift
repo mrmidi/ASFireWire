@@ -69,7 +69,9 @@ struct MCPIrmCasToolsTests {
 
     @Test func casQuadletReusesTransactionPolicyBridge() {
         let cas = ASFWMCPCompareSwapRequest(
-            address: ASFWMCPAddress(nodeId: 2, generation: 17, addressHigh: 0xFFFF, addressLow: 0xF0000220),
+            address: ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(3), nodeId: 2,
+                                    generation: 17, addressHigh: 0xFFFF,
+                                    addressLow: 0xF0000220),
             expected: 0,
             swap: 1
         )

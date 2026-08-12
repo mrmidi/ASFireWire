@@ -10,7 +10,7 @@
 #include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
 #include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
 #include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
-#include "Audio/Protocols/Backends/DuplexIRMReservations.hpp"
+#include "Audio/Duplex/DuplexIRMReservations.hpp"
 #include "Protocols/Ports/ProtocolRegisterIO.hpp"
 
 #include <algorithm>
@@ -66,8 +66,9 @@ struct RouteState {
         rom.bib.guid = 0xD1CE000000000002ULL;
         rom.gen = Generation{1};
         rom.nodeId = 0x02;
-        (void)registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
-        route = *registry.CurrentRoute(rom.bib.guid);
+        const auto record =
+            registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        route = *registry.CurrentRoute(record.instanceId);
     }
 };
 namespace StatusBits = ASFW::Audio::DICE::StatusBits;
@@ -1698,7 +1699,7 @@ TEST(DICEDuplexBringupControllerTests,
     bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
-    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+    ASFW::Audio::Duplex::DuplexIRMReservations reservations;
 
     ASSERT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnSuccess);
     ASSERT_EQ(reservations.Reserve(irm, 1, 576U), kIOReturnSuccess);
@@ -1718,7 +1719,7 @@ TEST(DICEDuplexBringupControllerTests,
     bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
-    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+    ASFW::Audio::Duplex::DuplexIRMReservations reservations;
 
     ASSERT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnSuccess);
     ASSERT_EQ(reservations.Reserve(irm, 1, 576U), kIOReturnSuccess);
@@ -1745,7 +1746,7 @@ TEST(DICEDuplexBringupControllerTests,
     bus.SetIRMResourceState(4915U, 0x7FFFFFFFU, 0xFFFFFFFFU);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
-    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+    ASFW::Audio::Duplex::DuplexIRMReservations reservations;
 
     const auto result = reservations.ReserveAny(
         irm, (uint64_t{1} << 0U) | (uint64_t{1} << 1U), 596U);
@@ -1763,7 +1764,7 @@ TEST(DICEDuplexBringupControllerTests,
     bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
-    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+    ASFW::Audio::Duplex::DuplexIRMReservations reservations;
 
     for (uint8_t channel = 0; channel < 4; ++channel) {
         ASSERT_EQ(reservations.Reserve(irm, channel, 100U), kIOReturnSuccess);
@@ -1784,7 +1785,7 @@ TEST(DICEDuplexBringupControllerTests,
     bus.SetIRMResourceState(500U, 0xFFFFFFFFU, 0xFFFFFFFFU);
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
-    ASFW::Audio::Backends::DuplexIRMReservationPair reservations;
+    ASFW::Audio::Duplex::DuplexIRMReservationPair reservations;
 
     ASSERT_EQ(reservations.ReservePlayback(irm, 0, 320U), kIOReturnSuccess);
     EXPECT_EQ(reservations.ReserveCapture(irm, 1, 320U), kIOReturnNoResources);
@@ -1802,7 +1803,7 @@ TEST(DICEDuplexBringupControllerTests,
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
     bus.SetGeneration(Generation{2});
-    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+    ASFW::Audio::Duplex::DuplexIRMReservations reservations;
 
     EXPECT_EQ(reservations.Reserve(irm, 0, 320U), kIOReturnOffline);
     EXPECT_EQ(reservations.Count(), 0U);

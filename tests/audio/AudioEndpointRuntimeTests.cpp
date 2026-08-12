@@ -6,20 +6,30 @@
 
 namespace {
 
-ASFW::Audio::Model::ASFWAudioDevice MakeDeviceConfig() {
-    ASFW::Audio::Model::ASFWAudioDevice config{};
-    config.guid = 0x1020304050607080ULL;
-    config.channelCount = 8;
-    config.inputChannelCount = 6;
-    config.outputChannelCount = 4;
-    config.currentSampleRate = 48000;
-    return config;
+ASFW::Audio::Devices::ResolvedAudioEndpointProfile MakeProfile() {
+    ASFW::Audio::Devices::ResolvedAudioEndpointProfile profile{};
+    profile.endpointId = ASFW::Audio::Devices::AudioEndpointId{41};
+    profile.deviceInstanceId = ASFW::Discovery::DeviceInstanceId{17};
+    profile.observedGuid = 0x1020304050607080ULL;
+    profile.currentSampleRateHz = 48000;
+    profile.runtimeCaps.sampleRateHz = 48000;
+    profile.runtimeCaps.hostInputPcmChannels = 6;
+    profile.runtimeCaps.hostOutputPcmChannels = 4;
+    profile.runtimeCaps.deviceToHostAm824Slots = 6;
+    profile.runtimeCaps.hostToDeviceAm824Slots = 4;
+    profile.runtimeCaps.deviceToHostStreamCount = 1;
+    profile.runtimeCaps.hostToDeviceStreamCount = 1;
+    profile.runtimeCaps.deviceToHostStreams[0] = {.pcmChannels = 6,
+                                                  .am824Slots = 6};
+    profile.runtimeCaps.hostToDeviceStreams[0] = {.pcmChannels = 4,
+                                                  .am824Slots = 4};
+    return profile;
 }
 
 } // namespace
 
-TEST(AudioEndpointRuntime, MissingConfigDoesNotPublishBinding) {
-    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+TEST(AudioEndpointRuntime, ResolvedEndpointDoesNotPublishBindingBeforeMemoryCopy) {
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
 
     ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
     EXPECT_FALSE(runtime.CopyDirectAudioBinding(snapshot));
@@ -27,19 +37,20 @@ TEST(AudioEndpointRuntime, MissingConfigDoesNotPublishBinding) {
 
     ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot telemetry{};
     ASSERT_TRUE(runtime.CopyAudioTelemetrySnapshot(telemetry));
-    EXPECT_EQ(telemetry.guid, 0x1020304050607080ULL);
+    EXPECT_EQ(telemetry.endpointId, 41U);
+    EXPECT_EQ(telemetry.deviceInstanceId, 17U);
+    EXPECT_EQ(telemetry.observedGuid, 0x1020304050607080ULL);
     EXPECT_EQ(telemetry.flags &
                   ASFW::Audio::Runtime::kAudioTelemetryBindingReady,
               0U);
 }
 
 TEST(AudioEndpointRuntime, TelemetryKeepsConfiguredUnboundEndpointVisible) {
-    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
-    runtime.UpdateConfig(MakeDeviceConfig());
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
 
     ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot telemetry{};
     ASSERT_TRUE(runtime.CopyAudioTelemetrySnapshot(telemetry));
-    EXPECT_EQ(telemetry.guid, 0x1020304050607080ULL);
+    EXPECT_EQ(telemetry.observedGuid, 0x1020304050607080ULL);
     EXPECT_EQ(telemetry.sampleRateHz, 48'000U);
     EXPECT_EQ(telemetry.outputChannels, 4U);
     EXPECT_EQ(telemetry.inputChannels, 6U);
@@ -49,8 +60,7 @@ TEST(AudioEndpointRuntime, TelemetryKeepsConfiguredUnboundEndpointVisible) {
 }
 
 TEST(AudioEndpointRuntime, BadCopyArgsZeroOutputs) {
-    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
-    runtime.UpdateConfig(MakeDeviceConfig());
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
 
     IOMemoryDescriptor* inputMemory = reinterpret_cast<IOMemoryDescriptor*>(0x1);
     IOMemoryDescriptor* controlMemory = reinterpret_cast<IOMemoryDescriptor*>(0x2);
@@ -83,8 +93,7 @@ TEST(AudioEndpointRuntime, BadCopyArgsZeroOutputs) {
 }
 
 TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) {
-    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
-    runtime.UpdateConfig(MakeDeviceConfig());
+    ASFW::Audio::AudioEndpointRuntime runtime(MakeProfile());
 
     IOMemoryDescriptor* outputMemory = nullptr;
     IOMemoryDescriptor* inputMemory = nullptr;
@@ -133,12 +142,16 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
 }
 
 TEST(AudioEndpointRuntime, PlaybackOnlyPresentationKeepsPhysicalReturnRingForDuplexTransport) {
-    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
-    auto config = MakeDeviceConfig();
-    config.channelCount = 2;
-    config.inputChannelCount = 0;  // CoreAudio-visible topology.
-    config.outputChannelCount = 2;
-    runtime.UpdateConfig(config);
+    auto profile = MakeProfile();
+    profile.runtimeCaps.hostInputPcmChannels = 0; // CoreAudio-visible topology.
+    profile.runtimeCaps.hostOutputPcmChannels = 2;
+    profile.runtimeCaps.deviceToHostAm824Slots = 2;
+    profile.runtimeCaps.hostToDeviceAm824Slots = 2;
+    profile.runtimeCaps.deviceToHostStreams[0] = {.pcmChannels = 2,
+                                                  .am824Slots = 2};
+    profile.runtimeCaps.hostToDeviceStreams[0] = {.pcmChannels = 2,
+                                                  .am824Slots = 2};
+    ASFW::Audio::AudioEndpointRuntime runtime(profile);
 
     IOMemoryDescriptor* outputMemory = nullptr;
     IOMemoryDescriptor* inputMemory = nullptr;

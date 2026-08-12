@@ -20,7 +20,8 @@ struct MCPDiceTcatToolsTests {
     }
 
     private func diceAddress(low: UInt32 = 0xF0001000) -> ASFWMCPAddress {
-        ASFWMCPAddress(nodeId: 1, generation: 17, addressHigh: 0xFFFF, addressLow: low)
+        ASFWMCPAddress(deviceInstanceId: DeviceInstanceID(2), nodeId: 1,
+                       generation: 17, addressHigh: 0xFFFF, addressLow: low)
     }
 
     private func toolNames(_ cfg: ASFWMCPRuntimeConfiguration, nodes: [ASFWMCPNodeSummary]) async -> Set<String> {

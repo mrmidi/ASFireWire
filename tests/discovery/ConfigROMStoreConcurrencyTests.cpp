@@ -57,7 +57,7 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
 
                 (void)store.FindByNode(gen, nodeId);
                 (void)store.FindLatestForNode(nodeId);
-                EXPECT_NE(store.FindByGuid(guid), nullptr);
+                (void)store.FindByObservedGuid(guid);
             }
         });
     }
@@ -69,7 +69,7 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
     }
 }
 
-TEST(ConfigROMStoreConcurrencyTests, SameGenerationInsertRefreshesGuidCache) {
+TEST(ConfigROMStoreConcurrencyTests, SameGenerationInsertRefreshesRouteCache) {
     ASFW::Discovery::ConfigROMStore store;
 
     constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
@@ -82,10 +82,10 @@ TEST(ConfigROMStoreConcurrencyTests, SameGenerationInsertRefreshesGuidCache) {
     complete.rawQuadlets.push_back(0x00000000u);
     store.Insert(complete);
 
-    const auto* byGuid = store.FindByGuid(kGuid);
-    ASSERT_NE(byGuid, nullptr);
-    EXPECT_EQ(byGuid->gen.value, 2u);
-    EXPECT_EQ(byGuid->rawQuadlets.size(), 6u);
+    const auto byNode = store.FindByNode(ASFW::Discovery::Generation{2}, 2);
+    ASSERT_TRUE(byNode.has_value());
+    EXPECT_EQ(byNode->gen.value, 2u);
+    EXPECT_EQ(byNode->rawQuadlets.size(), 6u);
 }
 
 TEST(ConfigROMStoreConcurrencyTests, SameGenerationShorterInsertDoesNotRegressNodeCache) {
@@ -102,31 +102,29 @@ TEST(ConfigROMStoreConcurrencyTests, SameGenerationShorterInsertDoesNotRegressNo
     partialRetry.rawQuadlets.resize(19);
     store.Insert(partialRetry);
 
-    const auto* byNode = store.FindByNode(kGeneration, kNodeId);
-    ASSERT_NE(byNode, nullptr);
+    const auto byNode = store.FindByNode(kGeneration, kNodeId);
+    ASSERT_TRUE(byNode.has_value());
     EXPECT_EQ(byNode->rawQuadlets.size(), 31u);
 
-    const auto* byGuid = store.FindByGuid(kGuid);
-    ASSERT_NE(byGuid, nullptr);
-    EXPECT_EQ(byGuid->rawQuadlets.size(), 31u);
+    const auto matches = store.FindByObservedGuid(kGuid);
+    ASSERT_EQ(matches.size(), 1u);
+    EXPECT_EQ(matches.front().rawQuadlets.size(), 31u);
 }
 
-TEST(ConfigROMStoreConcurrencyTests, LatestLookupPrefersPreviousProfileOverNewerPartialROM) {
+TEST(ConfigROMStoreConcurrencyTests, LatestLookupNeverSubstitutesOlderGuidMatch) {
     ASFW::Discovery::ConfigROMStore store;
     constexpr ASFW::Discovery::Guid64 kGuid = 0x0090b54001ffffffULL;
 
     store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kGuid));
     store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kGuid));
 
-    const auto* latest = store.FindLatestForNode(0);
-    ASSERT_NE(latest, nullptr);
-    EXPECT_EQ(latest->gen.value, 2u);
-    EXPECT_EQ(latest->unitDirectories.size(), 1u);
+    const auto latest = store.FindLatestForNode(0);
+    ASSERT_TRUE(latest.has_value());
+    EXPECT_EQ(latest->gen.value, 3u);
+    EXPECT_TRUE(latest->unitDirectories.empty());
 
-    const auto* byGuid = store.FindByGuid(kGuid);
-    ASSERT_NE(byGuid, nullptr);
-    EXPECT_EQ(byGuid->gen.value, 2u);
-    EXPECT_EQ(byGuid->unitDirectories.size(), 1u);
+    const auto matches = store.FindByObservedGuid(kGuid);
+    ASSERT_EQ(matches.size(), 2u);
 }
 
 TEST(ConfigROMStoreConcurrencyTests, InvalidateRemovesGenerationNodeReachability) {
@@ -135,14 +133,18 @@ TEST(ConfigROMStoreConcurrencyTests, InvalidateRemovesGenerationNodeReachability
     constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
     store.Insert(MakeROM(ASFW::Discovery::Generation{2}, 2, kGuid));
 
-    ASSERT_NE(store.FindByNode(ASFW::Discovery::Generation{2}, 2), nullptr);
-    ASSERT_NE(store.FindByGuid(kGuid), nullptr);
+    ASSERT_TRUE(store.FindByNode(ASFW::Discovery::Generation{2}, 2).has_value());
+    ASSERT_EQ(store.FindByObservedGuid(kGuid).size(), 1u);
 
-    store.InvalidateROM(kGuid);
+    store.InvalidateNode(ASFW::Discovery::Generation{2}, 2);
 
-    EXPECT_EQ(store.FindByNode(ASFW::Discovery::Generation{2}, 2), nullptr);
-    ASSERT_NE(store.FindByGuid(kGuid), nullptr);
-    EXPECT_EQ(store.FindByGuid(kGuid)->state, ASFW::Discovery::ROMState::Invalid);
+    const auto invalid = store.FindByNode(ASFW::Discovery::Generation{2}, 2);
+    ASSERT_TRUE(invalid.has_value());
+    EXPECT_EQ(invalid->state, ASFW::Discovery::ROMState::Invalid);
+
+    store.PruneInvalid();
+    EXPECT_FALSE(store.FindByNode(ASFW::Discovery::Generation{2}, 2).has_value());
+    EXPECT_TRUE(store.FindByObservedGuid(kGuid).empty());
 }
 
 TEST(ConfigROMStoreConcurrencyTests, LatestLookupDoesNotReuseProfileAcrossDifferentGuid) {
@@ -153,8 +155,8 @@ TEST(ConfigROMStoreConcurrencyTests, LatestLookupDoesNotReuseProfileAcrossDiffer
     store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kOldGuid));
     store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kNewGuid));
 
-    const auto* latest = store.FindLatestForNode(0);
-    ASSERT_NE(latest, nullptr);
+    const auto latest = store.FindLatestForNode(0);
+    ASSERT_TRUE(latest.has_value());
     EXPECT_EQ(latest->gen.value, 3u);
     EXPECT_EQ(latest->bib.guid, kNewGuid);
     EXPECT_TRUE(latest->unitDirectories.empty());
@@ -168,11 +170,27 @@ TEST(ConfigROMStoreConcurrencyTests, LatestLookupUsesNewerProfileWhenItCompletes
     store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kGuid));
     store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{4}, 0, kGuid));
 
-    const auto* latest = store.FindLatestForNode(0);
-    ASSERT_NE(latest, nullptr);
+    const auto latest = store.FindLatestForNode(0);
+    ASSERT_TRUE(latest.has_value());
     EXPECT_EQ(latest->gen.value, 4u);
 
-    const auto* byGuid = store.FindByGuid(kGuid);
-    ASSERT_NE(byGuid, nullptr);
-    EXPECT_EQ(byGuid->gen.value, 4u);
+    const auto matches = store.FindByObservedGuid(kGuid);
+    ASSERT_EQ(matches.size(), 3u);
+    EXPECT_EQ(matches.back().gen.value, 4u);
+}
+
+TEST(ConfigROMStoreConcurrencyTests, DuplicateAndZeroObservedGuidsRemainDistinctRoutes) {
+    ASFW::Discovery::ConfigROMStore store;
+    constexpr ASFW::Discovery::Guid64 kDuplicateGuid = 0x000d6c0404000002ULL;
+    const ASFW::Discovery::Generation generation{8};
+
+    store.Insert(MakeROM(generation, 1, kDuplicateGuid));
+    store.Insert(MakeROM(generation, 2, kDuplicateGuid));
+    store.Insert(MakeROM(generation, 3, 0));
+
+    EXPECT_TRUE(store.FindByNode(generation, 1).has_value());
+    EXPECT_TRUE(store.FindByNode(generation, 2).has_value());
+    EXPECT_TRUE(store.FindByNode(generation, 3).has_value());
+    EXPECT_EQ(store.FindByObservedGuid(kDuplicateGuid).size(), 2u);
+    EXPECT_EQ(store.FindByObservedGuid(0).size(), 1u);
 }

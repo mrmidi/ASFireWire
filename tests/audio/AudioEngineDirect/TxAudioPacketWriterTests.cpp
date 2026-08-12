@@ -38,7 +38,7 @@ AudioGraphBinding MakeWriterOutputBinding(AudioTransportControlBlock& control,
                                           uint32_t am824Slots = 0) {
     const uint32_t slots = am824Slots == 0 ? channels : am824Slots;
     return AudioGraphBinding{
-        .guid = 0x1122334455667788ULL,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{1},
         .sampleRateHz = 48000,
         .memory = AudioStreamMemory{
             .outputBase = output,

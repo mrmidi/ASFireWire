@@ -69,8 +69,9 @@ struct RouteState {
         rom.bib.guid = 0xD1CE000000000002ULL;
         rom.gen = Generation{1};
         rom.nodeId = 2;
-        (void)registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
-        route = *registry.CurrentRoute(rom.bib.guid);
+        const auto record =
+            registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+        route = *registry.CurrentRoute(record.instanceId);
     }
 };
 

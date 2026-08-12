@@ -11,11 +11,22 @@
 
 #include <DriverKit/IOLib.h>
 
-#include "Audio/Protocols/Backends/RestartSessionStore.hpp"
+#include "Audio/Duplex/RestartSessionStore.hpp"
 
 namespace {
 
-using namespace ASFW::Audio::Backends;
+using namespace ASFW::Audio::Duplex;
+using ASFW::Audio::Devices::AudioEndpointId;
+using ASFW::Audio::DuplexRestartSession;
+
+constexpr AudioEndpointId kEndpoint11{0x11};
+constexpr AudioEndpointId kEndpoint22{0x22};
+constexpr AudioEndpointId kEndpoint33{0x33};
+constexpr AudioEndpointId kEndpoint44{0x44};
+constexpr AudioEndpointId kEndpoint55{0x55};
+constexpr AudioEndpointId kEndpoint66{0x66};
+constexpr AudioEndpointId kEndpoint77{0x77};
+constexpr AudioEndpointId kNoEndpoint{};
 
 class RestartSessionStoreTest : public ::testing::Test {
 protected:
@@ -30,39 +41,39 @@ protected:
     RestartSessionStore store_{&lock_};
 };
 
-// LoadSession returns a default session stamped with the guid on a miss (former member behaviour).
-TEST_F(RestartSessionStoreTest, LoadMissReturnsDefaultWithGuid) {
-    const auto s = store_.LoadSession(0x11);
-    EXPECT_EQ(s.guid, 0x11u);
+// LoadSession returns a default session stamped with the endpoint on a miss.
+TEST_F(RestartSessionStoreTest, LoadMissReturnsDefaultWithEndpoint) {
+    const auto s = store_.LoadSession(kEndpoint11);
+    EXPECT_EQ(s.endpointId, kEndpoint11);
     EXPECT_EQ(s.restartId, 0u);
 }
 
 TEST_F(RestartSessionStoreTest, StoreThenLoadAndGetRoundTrip) {
     DuplexRestartSession s{};
-    s.guid = 0x22;
+    s.endpointId = kEndpoint22;
     s.restartId = 9;
     store_.StoreSession(s);
 
-    const auto loaded = store_.LoadSession(0x22);
-    EXPECT_EQ(loaded.guid, 0x22u);
+    const auto loaded = store_.LoadSession(kEndpoint22);
+    EXPECT_EQ(loaded.endpointId, kEndpoint22);
     EXPECT_EQ(loaded.restartId, 9u);
 
-    const auto got = store_.GetSession(0x22);
+    const auto got = store_.GetSession(kEndpoint22);
     ASSERT_TRUE(got.has_value());
     EXPECT_EQ(got->restartId, 9u);
 }
 
 TEST_F(RestartSessionStoreTest, GetMissIsNullopt) {
-    EXPECT_FALSE(store_.GetSession(0x33).has_value());
+    EXPECT_FALSE(store_.GetSession(kEndpoint33).has_value());
 }
 
-// guid==0 guards on Load/Store/Get match the former members (Load returns default, Store no-ops).
-TEST_F(RestartSessionStoreTest, ZeroGuidGuardsMatchOriginals) {
-    DuplexRestartSession s{};  // guid == 0
+// An empty endpoint is never a valid store key.
+TEST_F(RestartSessionStoreTest, EmptyEndpointGuardsStorage) {
+    DuplexRestartSession s{};
     s.restartId = 7;
     store_.StoreSession(s);                       // guarded no-op
-    EXPECT_FALSE(store_.GetSession(0).has_value());
-    EXPECT_EQ(store_.LoadSession(0).guid, 0u);    // default{.guid=0}
+    EXPECT_FALSE(store_.GetSession(kNoEndpoint).has_value());
+    EXPECT_EQ(store_.LoadSession(kNoEndpoint).endpointId, kNoEndpoint);
 }
 
 TEST_F(RestartSessionStoreTest, AllocateRestartIdMonotonicFromOne) {
@@ -76,19 +87,19 @@ TEST_F(RestartSessionStoreTest, AllocateRestartIdMonotonicFromOne) {
 TEST(RestartSessionStoreNullLock, NoLockShortCircuitsSelfLockingApi) {
     IOLock* lock = nullptr;
     RestartSessionStore store{&lock};
-    EXPECT_EQ(store.LoadSession(0x11).guid, 0x11u);  // default (no lock)
+    EXPECT_EQ(store.LoadSession(kEndpoint11).endpointId, kEndpoint11);
     EXPECT_EQ(store.AllocateRestartId(), 0u);        // 0 on no lock
-    EXPECT_FALSE(store.GetSession(0x11).has_value());
+    EXPECT_FALSE(store.GetSession(kEndpoint11).has_value());
     DuplexRestartSession s{};
-    s.guid = 0x11;
+    s.endpointId = kEndpoint11;
     s.restartId = 5;
     store.StoreSession(s);                           // no-op, must not deref null lock
-    EXPECT_FALSE(store.GetSession(0x11).has_value());
+    EXPECT_FALSE(store.GetSession(kEndpoint11).has_value());
 
     lock = IOLockAlloc();
     ASSERT_NE(lock, nullptr);
     store.StoreSession(s);
-    EXPECT_EQ(store.LoadSession(0x11).restartId, 5u);
+    EXPECT_EQ(store.LoadSession(kEndpoint11).restartId, 5u);
     IOLockFree(lock);
 }
 
@@ -97,44 +108,44 @@ TEST(RestartSessionStoreNullLock, NoLockShortCircuitsSelfLockingApi) {
 // multi-domain holds rely on.
 TEST_F(RestartSessionStoreTest, FindSessionLockedMutatesInPlace) {
     DuplexRestartSession s{};
-    s.guid = 0x44;
+    s.endpointId = kEndpoint44;
     store_.StoreSession(s);
 
-    auto* p = store_.FindSessionLocked(0x44);
+    auto* p = store_.FindSessionLocked(kEndpoint44);
     ASSERT_NE(p, nullptr);
     p->restartId = 12;
     p->hasPendingClockRequest = true;
 
-    const auto got = store_.GetSession(0x44);
+    const auto got = store_.GetSession(kEndpoint44);
     ASSERT_TRUE(got.has_value());
     EXPECT_EQ(got->restartId, 12u);
     EXPECT_TRUE(got->hasPendingClockRequest);
 }
 
 TEST_F(RestartSessionStoreTest, FindMissIsNullptrAndEraseRemoves) {
-    EXPECT_EQ(store_.FindSessionLocked(0x55), nullptr);
+    EXPECT_EQ(store_.FindSessionLocked(kEndpoint55), nullptr);
     DuplexRestartSession s{};
-    s.guid = 0x55;
+    s.endpointId = kEndpoint55;
     store_.StoreSession(s);
-    EXPECT_NE(store_.FindSessionLocked(0x55), nullptr);
-    store_.EraseSessionLocked(0x55);
-    EXPECT_EQ(store_.FindSessionLocked(0x55), nullptr);
-    EXPECT_FALSE(store_.GetSession(0x55).has_value());
+    EXPECT_NE(store_.FindSessionLocked(kEndpoint55), nullptr);
+    store_.EraseSessionLocked(kEndpoint55);
+    EXPECT_EQ(store_.FindSessionLocked(kEndpoint55), nullptr);
+    EXPECT_FALSE(store_.GetSession(kEndpoint55).has_value());
 }
 
 // The const FindSessionLocked overload is callable on a const store (used by the const
 // IsRestartEpochCurrent path).
 TEST_F(RestartSessionStoreTest, ConstFindSessionLockedReads) {
     DuplexRestartSession s{};
-    s.guid = 0x66;
+    s.endpointId = kEndpoint66;
     s.restartId = 3;
     store_.StoreSession(s);
 
     const RestartSessionStore& c = store_;
-    const auto* p = c.FindSessionLocked(0x66);
+    const auto* p = c.FindSessionLocked(kEndpoint66);
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->restartId, 3u);
-    EXPECT_EQ(c.FindSessionLocked(0x77), nullptr);
+    EXPECT_EQ(c.FindSessionLocked(kEndpoint77), nullptr);
 }
 
 }  // namespace

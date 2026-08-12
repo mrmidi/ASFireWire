@@ -21,7 +21,9 @@ struct MCPAudioStreamToolsTests {
         transportStatus: UInt32 = 1
     ) -> ASFWMCPAudioCursorSnapshot {
         ASFWMCPAudioCursorSnapshot(
-            guid: 0x0011_2233_4455_6677,
+            endpointId: AudioEndpointID(101),
+            deviceInstanceId: DeviceInstanceID(1),
+            observedGuid: 0x0011_2233_4455_6677,
             bindingReady: true,
             streaming: streaming,
             sampleRateHz: 48_000,
@@ -104,7 +106,9 @@ struct MCPAudioStreamToolsTests {
 
     @Test func emptyReceiveCompletionIsAnExplicitRejectedCycle() {
         let health = ASFWMCPAudioStreamHealth(
-            guid: 0x0011_2233_4455_6677,
+            endpointId: AudioEndpointID(101),
+            deviceInstanceId: DeviceInstanceID(1),
+            observedGuid: 0x0011_2233_4455_6677,
             bindingReady: true,
             streaming: true,
             sampleRateHz: 48_000,
@@ -131,7 +135,9 @@ struct MCPAudioStreamToolsTests {
 
     @Test func incompleteBindingIsVisibleAndNamed() {
         let health = ASFWMCPAudioStreamHealth(
-            guid: 0x0011_2233_4455_6677,
+            endpointId: AudioEndpointID(101),
+            deviceInstanceId: DeviceInstanceID(1),
+            observedGuid: 0x0011_2233_4455_6677,
             bindingReady: false,
             streaming: false,
             sampleRateHz: 48_000,

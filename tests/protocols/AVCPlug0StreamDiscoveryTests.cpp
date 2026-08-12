@@ -4,6 +4,7 @@
 
 #include "Protocols/AVC/Probe/AVCPlug0StreamDiscovery.hpp"
 
+#include <array>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -15,9 +16,12 @@ using ASFW::Protocols::AVC::Probe::ParseExtendedStreamFormatListResponse;
 using ASFW::Protocols::AVC::Probe::ParseExtendedStreamFormatSingleResponse;
 using ASFW::Protocols::AVC::Probe::ParseChannelPositionSections;
 using ASFW::Protocols::AVC::Probe::BuildReadOnlyProbeCommand;
+using ASFW::Protocols::AVC::Probe::DeviceModel;
 using ASFW::Protocols::AVC::Probe::PlugDirection;
+using ASFW::Protocols::AVC::Probe::RateCodeToHz;
 using ASFW::Protocols::AVC::Probe::ReadOnlyProbeCommand;
 using ASFW::Protocols::AVC::Probe::StartAVCPlug0Discovery;
+using ASFW::Protocols::AVC::Probe::StreamFormation;
 using ASFW::Protocols::AVC::AVCCdb;
 using ASFW::Protocols::AVC::AVCCompletion;
 using ASFW::Protocols::AVC::AVCResult;
@@ -60,6 +64,57 @@ private:
     std::vector<Step> steps_{};
     size_t next_{0};
 };
+
+TEST(AVCPlug0StreamDiscoveryTests, DecodesExtendedStreamFormatRatesNotMusicSubunitOrdinals) {
+    // Linux BeBoB bridgeco_freq_table + snd_bebob_rate_table and Linux OXFW's
+    // avc_stream_rate_table define this exact mapping. In particular, 0x03 is
+    // 44.1 kHz and 0x04 is 48 kHz; treating them as ordinal/FDF codes caused
+    // both existing-family probes to reject otherwise valid devices.
+    constexpr std::array expected{
+        std::pair{uint8_t{0x00}, uint32_t{22050}},
+        std::pair{uint8_t{0x01}, uint32_t{24000}},
+        std::pair{uint8_t{0x02}, uint32_t{32000}},
+        std::pair{uint8_t{0x03}, uint32_t{44100}},
+        std::pair{uint8_t{0x04}, uint32_t{48000}},
+        std::pair{uint8_t{0x0A}, uint32_t{88200}},
+        std::pair{uint8_t{0x05}, uint32_t{96000}},
+        std::pair{uint8_t{0x06}, uint32_t{176400}},
+        std::pair{uint8_t{0x07}, uint32_t{192000}},
+    };
+    for (const auto& [code, hz] : expected) {
+        EXPECT_EQ(RateCodeToHz(code), hz) << "rate code 0x" << std::hex
+                                           << static_cast<unsigned>(code);
+    }
+    EXPECT_EQ(RateCodeToHz(0x08), 0U);
+    EXPECT_EQ(RateCodeToHz(0x0F), 0U);
+}
+
+TEST(AVCPlug0StreamDiscoveryTests, DerivesDuplexRatesForOxfwDuetAndBeBoBFromOneTable) {
+    DeviceModel duet{};
+    duet.input.supportedFormations = {
+        StreamFormation{0x03, 2, 0}, StreamFormation{0x04, 2, 0},
+        StreamFormation{0x0A, 2, 0}, StreamFormation{0x05, 2, 0}};
+    duet.output.supportedFormations = duet.input.supportedFormations;
+    EXPECT_EQ(duet.CommonDuplexRatesHz(),
+              (std::vector<uint32_t>{44100, 48000, 88200, 96000}));
+
+    DeviceModel bebob{};
+    bebob.input.supportedFormations = {
+        StreamFormation{0x02, 10, 1}, StreamFormation{0x03, 10, 1},
+        StreamFormation{0x04, 10, 1}, StreamFormation{0x0A, 8, 1},
+        StreamFormation{0x05, 8, 1}, StreamFormation{0x06, 4, 1},
+        StreamFormation{0x07, 4, 1}};
+    bebob.output.supportedFormations = bebob.input.supportedFormations;
+    EXPECT_EQ(bebob.CommonDuplexRatesHz(),
+              (std::vector<uint32_t>{32000, 44100, 48000, 88200, 96000,
+                                     176400, 192000}));
+
+    // A rate advertised in only one direction is not a usable duplex rate.
+    bebob.output.supportedFormations.pop_back();
+    EXPECT_EQ(bebob.CommonDuplexRatesHz(),
+              (std::vector<uint32_t>{32000, 44100, 48000, 88200, 96000,
+                                     176400}));
+}
 
 TEST(AVCPlug0StreamDiscoveryTests, BuildsUnitPlugInfoBeforeExtendedPlugInfo) {
     const auto cdb = BuildReadOnlyProbeCommand(ReadOnlyProbeCommand::kUnitPlugCounts);

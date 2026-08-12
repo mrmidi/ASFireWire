@@ -30,7 +30,9 @@ namespace Apogee = ASFW::Audio::Oxford::Apogee;
 
 /// Resolves through the rig's registry on every call, the way the driver does.
 [[nodiscard]] Apogee::RouteProvider LiveRoute(AvcTestRig& rig) {
-    return [&rig, guid = rig.Route().guid] { return rig.Routes().CurrentRoute(guid); };
+    return [&rig, instanceId = rig.Route().deviceInstanceId] {
+        return rig.Routes().CurrentRoute(instanceId);
+    };
 }
 
 [[nodiscard]] Apogee::RouteProvider NoRoute() {
@@ -142,7 +144,7 @@ TEST(ApogeeMeterRegisters, RouteReboundBeforeTheReadIsResolvedFreshNotFromASnaps
 
     // Same node, same generation, new routeEpoch.
     ASFW::Discovery::ConfigROM rom{};
-    rom.bib.guid = snapshot.guid;
+    rom.bib.guid = rig.ObservedGuid();
     rom.gen = snapshot.generation;
     rom.nodeId = static_cast<uint8_t>(snapshot.nodeId);
     rig.Routes().InvalidateLiveMappingsForBusReset();

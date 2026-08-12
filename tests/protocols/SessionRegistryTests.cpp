@@ -33,6 +33,7 @@ using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceKind;
 using ASFW::Discovery::DeviceManager;
+using ASFW::Discovery::DeviceInstanceId;
 using ASFW::Discovery::DeviceRecord;
 using ASFW::Discovery::DeviceRegistry;
 using ASFW::Discovery::Generation;
@@ -40,6 +41,8 @@ using ASFW::Discovery::kInvalidNodeId;
 using ASFW::Discovery::LifeState;
 using ASFW::Discovery::LinkPolicy;
 using ASFW::Discovery::RomEntry;
+using ASFW::Discovery::UnitDirectory;
+using ASFW::Discovery::UnitInstanceId;
 using ASFW::Protocols::SBP2::AddressSpaceManager;
 using ASFW::Protocols::SBP2::LoginSession;
 using ASFW::Protocols::SBP2::SBP2ManagementORB;
@@ -144,33 +147,27 @@ public:
     }
 
     void UpsertDevice(Generation generation, uint8_t nodeId, uint32_t unitCharacteristics = 0x080400) {
-        DeviceRecord record{};
-        record.guid = kGuid;
-        record.vendorId = 0x001122;
-        record.modelId = 0x334455;
-        record.kind = DeviceKind::Unknown;
-        record.vendorName = "Scanner Vendor";
-        record.modelName = "Scanner Model";
-        record.gen = generation;
-        record.nodeId = nodeId;
-        record.link = LinkPolicy{};
-        record.state = LifeState::Ready;
-
         ConfigROM rom{};
         rom.bib.guid = kGuid;
         rom.gen = generation;
-        rom.nodeId = record.nodeId;
-        rom.vendorName = record.vendorName;
-        rom.modelName = record.modelName;
-        rom.rootDirMinimal = {
-            RomEntry{CfgKey::Unit_Spec_Id, kSBP2UnitSpecId, 0, 0},
-            RomEntry{CfgKey::Unit_Sw_Version, kSBP2UnitSwVersion, 0, 0},
-            RomEntry{CfgKey::Logical_Unit_Number, 0x000002, 0, 0},
-            RomEntry{CfgKey::Management_Agent_Offset, 0x000080, 1, 0},
-            RomEntry{CfgKey::Unit_Characteristics, unitCharacteristics, 0, 0},
-        };
+        rom.nodeId = nodeId;
+        rom.vendorName = "Scanner Vendor";
+        rom.modelName = "Scanner Model";
+        UnitDirectory unit{};
+        unit.offsetQuadlets = 0;
+        unit.unitSpecId = kSBP2UnitSpecId;
+        unit.unitSwVersion = kSBP2UnitSwVersion;
+        unit.logicalUnitNumber = 0x000002;
+        unit.managementAgentOffset = 0x000080;
+        unit.unitCharacteristics = unitCharacteristics;
+        rom.unitDirectories.push_back(unit);
 
-        (void)deviceRegistry.UpsertFromROM(rom, record.link);
+        const auto record = deviceRegistry.UpsertFromROM(rom, LinkPolicy{});
+        if (!instanceId) {
+            instanceId = record.instanceId;
+        } else {
+            EXPECT_EQ(instanceId, record.instanceId);
+        }
 
         auto device = deviceManager.UpsertDevice(record, rom);
         EXPECT_NE(nullptr, device);
@@ -188,9 +185,13 @@ public:
     }
 
     uint64_t CreateSession() {
-        auto result = registry.CreateSession(Owner(), kGuid, 0);
+        auto result = registry.CreateSession(Owner(), UnitId());
         EXPECT_TRUE(result.has_value());
         return result.value_or(0);
+    }
+
+    UnitInstanceId UnitId() const {
+        return UnitInstanceId{.device = instanceId, .unitDirectoryOffset = 0};
     }
 
     void LoginSuccessfully(uint64_t handle,
@@ -242,6 +243,7 @@ public:
     IODispatchQueue queue;
     SessionRegistry registry;
     uint64_t nowNs{0};
+    DeviceInstanceId instanceId{};
     uint64_t sessionStatusAddress{0};
 };
 
@@ -555,8 +557,8 @@ TEST(SessionRegistryTests, MissingDiscoverySuspendsDeviceAndReconnectWaitsForRes
     ASSERT_TRUE(suspendedState.has_value());
     EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::Suspended, suspendedState->loginState);
 
-    rig.deviceManager.MarkDeviceLost(SessionRegistryRig::kGuid);
-    const auto suspendedDevice = rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid);
+    rig.deviceManager.MarkDeviceLost(rig.instanceId);
+    const auto suspendedDevice = rig.deviceManager.GetDevice(rig.instanceId);
     ASSERT_NE(nullptr, suspendedDevice);
     EXPECT_TRUE(suspendedDevice->IsSuspended());
 
@@ -566,7 +568,7 @@ TEST(SessionRegistryTests, MissingDiscoverySuspendsDeviceAndReconnectWaitsForRes
 
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.UpsertDevice(Generation{2}, 0x33);
-    const auto resumedDevice = rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid);
+    const auto resumedDevice = rig.deviceManager.GetDevice(rig.instanceId);
     ASSERT_NE(nullptr, resumedDevice);
     EXPECT_TRUE(resumedDevice->IsReady());
     EXPECT_EQ(0x33u, resumedDevice->GetNodeID());
@@ -611,13 +613,13 @@ TEST(SessionRegistryTests, RepeatedMissingDiscoveryTerminatesSuspendedSBP2Device
     rig.LoginSuccessfully(handle);
 
     rig.registry.OnBusReset(2);
-    rig.deviceManager.MarkDeviceLost(SessionRegistryRig::kGuid);
-    const auto suspendedDevice = rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid);
+    rig.deviceManager.MarkDeviceLost(rig.instanceId);
+    const auto suspendedDevice = rig.deviceManager.GetDevice(rig.instanceId);
     ASSERT_NE(nullptr, suspendedDevice);
     ASSERT_TRUE(suspendedDevice->IsSuspended());
 
-    rig.deviceManager.MarkDeviceLost(SessionRegistryRig::kGuid);
-    EXPECT_EQ(nullptr, rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid));
+    rig.deviceManager.MarkDeviceLost(rig.instanceId);
+    EXPECT_EQ(nullptr, rig.deviceManager.GetDevice(rig.instanceId));
 
     const size_t writesBeforeRefresh = rig.bus.WriteCount();
     rig.registry.RefreshTargets(Generation{2});
@@ -740,7 +742,7 @@ TEST(SessionRegistryTests, CreateSessionRejectsDuplicateTargetAcrossOwners) {
     ASSERT_NE(0u, handle);
 
     auto duplicate = rig.registry.CreateSession(SessionRegistryRig::OtherOwner(),
-                                                SessionRegistryRig::kGuid, 0);
+                                                rig.UnitId());
     ASSERT_FALSE(duplicate.has_value());
     EXPECT_EQ(kIOReturnExclusiveAccess, duplicate.error());
 }
@@ -754,7 +756,7 @@ TEST(SessionRegistryTests, CreateSessionRejectsDuplicateTargetUntilLogoutComplet
     rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
 
     auto duplicateWhileLoggingOut = rig.registry.CreateSession(SessionRegistryRig::OtherOwner(),
-                                                               SessionRegistryRig::kGuid, 0);
+                                                               rig.UnitId());
     ASSERT_FALSE(duplicateWhileLoggingOut.has_value());
     EXPECT_EQ(kIOReturnExclusiveAccess, duplicateWhileLoggingOut.error());
 
@@ -769,7 +771,7 @@ TEST(SessionRegistryTests, CreateSessionRejectsDuplicateTargetUntilLogoutComplet
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
 
     auto replacement = rig.registry.CreateSession(SessionRegistryRig::OtherOwner(),
-                                                  SessionRegistryRig::kGuid, 0);
+                                                  rig.UnitId());
     ASSERT_TRUE(replacement.has_value());
 }
 
@@ -777,33 +779,36 @@ TEST(SessionRegistryTests, MissingDiscoveryStillTerminatesNonSBP2Device) {
     DeviceManager deviceManager;
 
     DeviceRecord record{};
-    record.guid = SessionRegistryRig::kGuid + 2U;
-    record.vendorId = 0x001122;
-    record.modelId = 0x334455;
+    record.instanceId = DeviceInstanceId{77};
+    record.identity.observedGuid = SessionRegistryRig::kGuid + 2U;
+    record.identity.rootVendorId = 0x001122;
+    record.identity.rootModelId = 0x334455;
     record.kind = DeviceKind::Unknown;
-    record.vendorName = "Other Vendor";
-    record.modelName = "Other Device";
+    record.identity.rootVendorName = "Other Vendor";
+    record.identity.rootModelName = "Other Device";
     record.gen = Generation{1};
     record.nodeId = 0x10;
     record.link = LinkPolicy{};
     record.state = LifeState::Ready;
 
     ConfigROM rom{};
+    rom.bib.guid = record.ObservedGuid();
     rom.gen = Generation{1};
     rom.nodeId = record.nodeId;
-    rom.rootDirMinimal = {
-        RomEntry{CfgKey::Unit_Spec_Id, 0x00A02D, 0, 0},
-        RomEntry{CfgKey::Unit_Sw_Version, 0x010001, 0, 0},
-    };
+    rom.unitDirectories.push_back(UnitDirectory{
+        .offsetQuadlets = 0,
+        .unitSpecId = 0x00A02D,
+        .unitSwVersion = 0x010001,
+    });
 
     ASSERT_NE(nullptr, deviceManager.UpsertDevice(record, rom));
-    deviceManager.MarkDeviceLost(record.guid);
-    EXPECT_EQ(nullptr, deviceManager.GetDeviceByGUID(record.guid));
+    deviceManager.MarkDeviceLost(record.instanceId);
+    EXPECT_EQ(nullptr, deviceManager.GetDevice(record.instanceId));
 }
 
 TEST(SessionRegistryTests, BusResetInvalidatesDeviceMappingsBeforeDiscoveryRebinds) {
     SessionRegistryRig rig;
-    const auto original = rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid);
+    const auto original = rig.deviceManager.GetDevice(rig.instanceId);
     ASSERT_NE(nullptr, original);
     ASSERT_TRUE(original->IsReady());
     ASSERT_NE(nullptr, rig.deviceManager.GetDeviceByNode(Generation{1}, 0x32));
@@ -816,7 +821,7 @@ TEST(SessionRegistryTests, BusResetInvalidatesDeviceMappingsBeforeDiscoveryRebin
     EXPECT_EQ(nullptr, rig.deviceManager.GetDeviceByNode(Generation{1}, 0x32));
 
     rig.UpsertDevice(Generation{2}, 0x21);
-    const auto rebound = rig.deviceManager.GetDeviceByGUID(SessionRegistryRig::kGuid);
+    const auto rebound = rig.deviceManager.GetDevice(rig.instanceId);
     ASSERT_NE(nullptr, rebound);
     EXPECT_EQ(original.get(), rebound.get());
     EXPECT_TRUE(rebound->IsReady());
@@ -835,15 +840,16 @@ TEST(SessionRegistryTests, BusResetInvalidatesRegistryMappingUntilNewRom) {
     const auto record = registry.UpsertFromROM(rom, LinkPolicy{});
     const auto byNode = registry.SnapshotByNode(Generation{1}, 0x32);
     ASSERT_TRUE(byNode.has_value());
-    EXPECT_EQ(record.guid, byNode->guid);
+    EXPECT_EQ(record.instanceId, byNode->instanceId);
+    EXPECT_EQ(record.ObservedGuid(), byNode->ObservedGuid());
     ASSERT_EQ(1u, registry.LiveDevices(Generation{1}).size());
 
     registry.InvalidateLiveMappingsForBusReset();
 
     EXPECT_FALSE(registry.SnapshotByNode(Generation{1}, 0x32).has_value());
-    const auto byGuid = registry.SnapshotByGuid(SessionRegistryRig::kGuid);
-    ASSERT_TRUE(byGuid.has_value());
-    EXPECT_EQ(kInvalidNodeId, byGuid->nodeId);
+    const auto byGuid = registry.FindInstancesByObservedGuid(SessionRegistryRig::kGuid);
+    ASSERT_EQ(byGuid.size(), 1u);
+    EXPECT_EQ(kInvalidNodeId, byGuid.front().nodeId);
     EXPECT_TRUE(registry.LiveDevices(Generation{1}).empty());
 }
 
@@ -855,7 +861,7 @@ TEST(SessionRegistryTests, RouteTokensRejectResetAndSameGuidReplugCallbacks) {
     rom.nodeId = 0x32;
 
     const auto firstRecord = registry.UpsertFromROM(rom, LinkPolicy{});
-    const auto firstRoute = registry.CurrentRoute(rom.bib.guid);
+    const auto firstRoute = registry.CurrentRoute(firstRecord.instanceId);
     ASSERT_TRUE(firstRoute.has_value());
     EXPECT_TRUE(registry.IsCurrent(*firstRoute));
 
@@ -865,22 +871,22 @@ TEST(SessionRegistryTests, RouteTokensRejectResetAndSameGuidReplugCallbacks) {
     rom.gen = Generation{2};
     rom.nodeId = 0x21;
     const auto reboundRecord = registry.UpsertFromROM(rom, LinkPolicy{});
-    const auto reboundRoute = registry.CurrentRoute(rom.bib.guid);
+    const auto reboundRoute = registry.CurrentRoute(reboundRecord.instanceId);
     ASSERT_TRUE(reboundRoute.has_value());
     EXPECT_TRUE(registry.IsCurrent(*reboundRoute));
-    EXPECT_EQ(firstRecord.deviceIncarnation, reboundRecord.deviceIncarnation);
+    EXPECT_EQ(firstRecord.instanceId, reboundRecord.instanceId);
     EXPECT_NE(firstRoute->routeEpoch, reboundRoute->routeEpoch);
 
-    registry.RetireDevice(rom.bib.guid);
+    registry.RetireDevice(reboundRecord.instanceId);
     EXPECT_FALSE(registry.IsCurrent(*reboundRoute));
 
     rom.gen = Generation{3};
     rom.nodeId = 0x12;
     const auto replugRecord = registry.UpsertFromROM(rom, LinkPolicy{});
-    const auto replugRoute = registry.CurrentRoute(rom.bib.guid);
+    const auto replugRoute = registry.CurrentRoute(replugRecord.instanceId);
     ASSERT_TRUE(replugRoute.has_value());
     EXPECT_TRUE(registry.IsCurrent(*replugRoute));
-    EXPECT_GT(replugRecord.deviceIncarnation, reboundRecord.deviceIncarnation);
+    EXPECT_NE(replugRecord.instanceId, reboundRecord.instanceId);
     EXPECT_NE(replugRoute->routeEpoch, reboundRoute->routeEpoch);
 }
 
@@ -911,7 +917,7 @@ TEST(SessionRegistryTests, SubmitCommandRejectsCDBLargerThanORBPayloadBudget) {
 TEST(SessionRegistryTests, CreateSessionAcceptsRealSBP2SpecAndVersion) {
     SessionRegistryRig rig;
     auto result = rig.registry.CreateSession(SessionRegistryRig::Owner(),
-                                             SessionRegistryRig::kGuid, 0);
+                                             rig.UnitId());
     ASSERT_TRUE(result.has_value());
 }
 
@@ -947,12 +953,13 @@ TEST(SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey)
     DeviceManager deviceManager;
 
     DeviceRecord record{};
-    record.guid = SessionRegistryRig::kGuid + 1U;
-    record.vendorId = 0x0090B5;
-    record.modelId = 0x004001;
+    record.instanceId = DeviceInstanceId{88};
+    record.identity.observedGuid = SessionRegistryRig::kGuid + 1U;
+    record.identity.rootVendorId = 0x0090B5;
+    record.identity.rootModelId = 0x004001;
     record.kind = DeviceKind::Unknown;
-    record.vendorName = "Nikon";
-    record.modelName = "LS-4000 ED";
+    record.identity.rootVendorName = "Nikon";
+    record.identity.rootModelName = "LS-4000 ED";
     record.gen = Generation{1};
     record.nodeId = 0x00;
     record.link = LinkPolicy{};
@@ -961,6 +968,7 @@ TEST(SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey)
     ConfigROM rom{};
     rom.gen = Generation{1};
     rom.nodeId = record.nodeId;
+    rom.bib.guid = record.ObservedGuid();
     rom.bib.busInfoLength = 4;
     rom.rootDirMinimal = {
         RomEntry{CfgKey::Unit_Directory, 0x000001, 3, 1},
@@ -978,6 +986,13 @@ TEST(SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey)
         OSSwapHostToBigInt32(0x5400C000u),
         OSSwapHostToBigInt32(0x14060000u),
     };
+    UnitDirectory parsedUnit{};
+    parsedUnit.offsetQuadlets = 1;
+    parsedUnit.unitSpecId = kSBP2UnitSpecId;
+    parsedUnit.unitSwVersion = kSBP2UnitSwVersion;
+    parsedUnit.managementAgentOffset = 0x00C000u;
+    parsedUnit.logicalUnitNumber = 0x060000u;
+    rom.unitDirectories.push_back(parsedUnit);
 
     auto device = deviceManager.UpsertDevice(record, rom);
     ASSERT_NE(device, nullptr);
@@ -1150,24 +1165,28 @@ TEST(SessionRegistryTests, SynchronousWriteFailureDoesNotDoubleCompleteTask) {
 
 TEST(SessionRegistryTests, LoginStateObserverFiresUpOnSuccessfulLogin) {
     SessionRegistryRig rig;
-    std::vector<std::pair<uint64_t, bool>> events;
+    std::vector<std::pair<DeviceInstanceId, bool>> events;
     rig.registry.SetLoginStateObserver(
-        [&events](uint64_t guid, bool loggedIn) { events.push_back({guid, loggedIn}); });
+        [&events](DeviceInstanceId instanceId, bool loggedIn) {
+            events.push_back({instanceId, loggedIn});
+        });
 
     const uint64_t handle = rig.CreateSession();
     rig.LoginSuccessfully(handle);
     rig.AdvanceMs(0);  // drain the dispatched observer call
 
     ASSERT_EQ(1u, events.size());
-    EXPECT_EQ(SessionRegistryRig::kGuid, events[0].first);
+    EXPECT_EQ(rig.instanceId, events[0].first);
     EXPECT_TRUE(events[0].second);
 }
 
 TEST(SessionRegistryTests, LoginStateObserverFiresDownOnLogout) {
     SessionRegistryRig rig;
-    std::vector<std::pair<uint64_t, bool>> events;
+    std::vector<std::pair<DeviceInstanceId, bool>> events;
     rig.registry.SetLoginStateObserver(
-        [&events](uint64_t guid, bool loggedIn) { events.push_back({guid, loggedIn}); });
+        [&events](DeviceInstanceId instanceId, bool loggedIn) {
+            events.push_back({instanceId, loggedIn});
+        });
 
     const uint64_t handle = rig.CreateSession();
     rig.LoginSuccessfully(handle);
@@ -1188,15 +1207,17 @@ TEST(SessionRegistryTests, LoginStateObserverFiresDownOnLogout) {
     rig.AdvanceMs(0);  // drain the dispatched observer call
 
     ASSERT_EQ(1u, events.size());
-    EXPECT_EQ(SessionRegistryRig::kGuid, events[0].first);
+    EXPECT_EQ(rig.instanceId, events[0].first);
     EXPECT_FALSE(events[0].second);
 }
 
 TEST(SessionRegistryTests, LoginStateObserverStaysSilentOnBusResetSuspend) {
     SessionRegistryRig rig;
-    std::vector<std::pair<uint64_t, bool>> events;
+    std::vector<std::pair<DeviceInstanceId, bool>> events;
     rig.registry.SetLoginStateObserver(
-        [&events](uint64_t guid, bool loggedIn) { events.push_back({guid, loggedIn}); });
+        [&events](DeviceInstanceId instanceId, bool loggedIn) {
+            events.push_back({instanceId, loggedIn});
+        });
 
     const uint64_t handle = rig.CreateSession();
     rig.LoginSuccessfully(handle);
