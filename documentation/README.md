@@ -8,7 +8,8 @@ entry points.
 
 - [Audio backend controls](AUDIO_BACKENDS_CONTROLS.md)
 - [Audio TX code-review guide](AUDIO_TX_CODE_REVIEW_GUIDE.md)
-- [BeBoB refactoring plan](BeBoB_REFACTOR.md)
+- [BeBoB refactoring plan (historical)](BeBoB_REFACTOR.md)
+- [Existing-family audio device template](../ASFWDriver/Testing/Audio/README.md)
 - [Clean-code refactor ledger](CLEAN_CODE.md)
 - [Isoch/audio cleanup preparation](ISOCH_AUDIO_CLEANUP_PREP.md)
 - [Volume control TODO](VOLUME_TODO.md)

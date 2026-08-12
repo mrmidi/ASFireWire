@@ -38,8 +38,9 @@ Implement **two** of the three candidate models from `44100.md`, in this order:
    and future AVC/Oxford paths.
 
 3. **Do not implement the legacy 5/6-frame non-blocking model (44100.md §4)
-   now.** Every current target is blocking
-   (`ASFWDriver/Audio/Protocols/DeviceStreamModeQuirks.cpp:33,43,47`; Linux
+   now.** Every current target is blocking (declared independently by the
+   BeBoB, DICE, and OXFW resolved-profile builders under
+   `ASFWDriver/Audio/Families/`; Linux
    DICE is `CIP_BLOCKING`, `dice/dice-stream.c:508`). Design the rational
    engine so non-blocking is the same accumulator with unit = frame instead of
    unit = SYT event (in Linux the difference is ~10 lines on shared state);

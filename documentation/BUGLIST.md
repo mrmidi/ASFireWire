@@ -1,5 +1,10 @@
 # BUGLIST — 2026-07-17 investigation (right-only playback, PHASE 88 streaming, device name)
 
+> **Historical incident record.** File names and registry behavior in this
+> report describe the pre-normalization audio architecture. They remain useful
+> as evidence, but are not current implementation guidance; GUID-keyed audio
+> profile registries have been removed.
+
 Evidence sources: FireBug captures `!right-only.txt` (Saffire, 22:15) and `!duet-right.txt`
 (Duet, 22:20), unified-log excerpts for the PHASE 88 start failure (22:33, branch), the
 22:56 branch DICE failure, and the 23:02–23:09 session on **main (405cb99)**. All three

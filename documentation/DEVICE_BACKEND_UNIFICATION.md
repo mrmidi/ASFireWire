@@ -1,6 +1,13 @@
 # Design Note: Unified Device-Backend Interface
 
-**Status:** design note / proposal (2026-07-11). Not an accepted decision like
+**Status:** historical design note / proposal (2026-07-11), superseded by the
+runtime-instance, per-unit catalog, family-provider, and resolved-endpoint
+architecture. Names such as GUID-keyed backends, `DeviceProtocolFactory`, and
+global profile registries below describe the pre-cutover tree and must not be
+used as extension points. The host-only current template is
+`ASFWDriver/Testing/Audio/README.md`.
+
+This was not an accepted decision like
 [`SAMPLE_RATE_EXPANSION.md`](SAMPLE_RATE_EXPANSION.md); it records a direction
 and the decisions it forces. No code implied by this note.
 

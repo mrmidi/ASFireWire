@@ -1,5 +1,12 @@
 # BeBoB Backend Refactoring Plan
 
+> **Historical plan, superseded.** This document records the 2026-07 BeBoB
+> refactor and intentionally retains names from that implementation. The
+> current extension surface is the runtime-instance/resolved-endpoint pipeline;
+> use `ASFWDriver/Testing/Audio/README.md` and the family provider under
+> `ASFWDriver/Audio/Families/` for new device work. Removed registries,
+> GUID-keyed profiles, and `DeviceProtocolFactory` below are not current APIs.
+
 ## Goal
 
 Separate the current `Phase88Protocol` monolith (556 lines) into:
