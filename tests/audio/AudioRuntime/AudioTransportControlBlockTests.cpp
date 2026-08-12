@@ -260,6 +260,10 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
         64, std::memory_order_relaxed);
     control.txIntervalCommittedMarginMaxPackets.store(
         512, std::memory_order_relaxed);
+    control.txIntervalProducerHeadroomMinFrames.store(
+        48, std::memory_order_relaxed);
+    control.txMinimumProducerHeadroomFrames.store(
+        16, std::memory_order_relaxed);
     control.txIntervalPreparationLatencyMaxTicks.store(
         31, std::memory_order_relaxed);
     for (auto& bucket : control.txIntervalPreparationLatencyHistogram) {
@@ -342,6 +346,15 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.txIntervalCommittedMarginMaxPackets.load(
                   std::memory_order_acquire),
               0U);
+    // Both producer-headroom watermarks must return to the "no sample"
+    // sentinel, not to 0. Resetting a minimum to 0 would read as "the writer
+    // was fully starved" on the first heartbeat of every stream start.
+    EXPECT_EQ(control.txIntervalProducerHeadroomMinFrames.load(
+                  std::memory_order_acquire),
+              UINT32_MAX);
+    EXPECT_EQ(control.txMinimumProducerHeadroomFrames.load(
+                  std::memory_order_acquire),
+              UINT32_MAX);
     EXPECT_EQ(control.txIntervalPreparationLatencyMaxTicks.load(
                   std::memory_order_acquire),
               0U);

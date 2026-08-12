@@ -758,6 +758,56 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             break;
         }
 
+        // Producer runway sample, taken only on a prepared packet.
+        //
+        // The committed-margin telemetry says how early we are against our own
+        // transmit deadline; it has no term for the writer, so it reads healthy
+        // straight through a deadline xrun. This is the term that actually
+        // reaches zero when the host callback is late: a
+        // kNotYetWrittenAtDeadline fault is by definition the frame we need
+        // landing exactly at WrittenEndFrame(). Two relaxed loads and a CAS, no
+        // IO and no log line — the heartbeat reports the interval minimum.
+        if (directControl) {
+            const uint64_t producerWrittenEndFrame =
+                ivars.runtime.txPcmStagingRing.WrittenEndFrame();
+            const uint64_t nextFrameToConsume =
+                ivars.runtime.txStreamEngine.PacketizerTelemetrySnapshot()
+                    .nextAudioFrame;
+            const uint64_t producerHeadroomRaw =
+                producerWrittenEndFrame > nextFrameToConsume
+                    ? producerWrittenEndFrame - nextFrameToConsume
+                    : 0ULL;
+            // Saturate below UINT32_MAX: that value is the "no sample this
+            // interval" sentinel, so a clamped real measurement must not be
+            // able to impersonate it.
+            const uint32_t producerHeadroomFrames =
+                producerHeadroomRaw >= UINT32_MAX
+                    ? UINT32_MAX - 1U
+                    : static_cast<uint32_t>(producerHeadroomRaw);
+            uint32_t previousRunHeadroomMin =
+                directControl->txMinimumProducerHeadroomFrames.load(
+                    std::memory_order_relaxed);
+            while (producerHeadroomFrames < previousRunHeadroomMin &&
+                   !directControl->txMinimumProducerHeadroomFrames
+                        .compare_exchange_weak(
+                            previousRunHeadroomMin,
+                            producerHeadroomFrames,
+                            std::memory_order_relaxed,
+                            std::memory_order_relaxed)) {
+            }
+            uint32_t previousIntervalHeadroomMin =
+                directControl->txIntervalProducerHeadroomMinFrames.load(
+                    std::memory_order_relaxed);
+            while (producerHeadroomFrames < previousIntervalHeadroomMin &&
+                   !directControl->txIntervalProducerHeadroomMinFrames
+                        .compare_exchange_weak(
+                            previousIntervalHeadroomMin,
+                            producerHeadroomFrames,
+                            std::memory_order_relaxed,
+                            std::memory_order_relaxed)) {
+            }
+        }
+
         // Shadow the master's per-packet timing on the secondary stream so both
         // device RX streams advance in lockstep (same packetIndex/DBC/SYT/
         // disposition), differing only in payload (channels 17–32). A failure
@@ -1256,6 +1306,12 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             const uint32_t intervalMarginMax =
                 directControl->txIntervalCommittedMarginMaxPackets.exchange(
                     0, std::memory_order_relaxed);
+            const uint32_t intervalProducerHeadroomMin =
+                directControl->txIntervalProducerHeadroomMinFrames.exchange(
+                    UINT32_MAX, std::memory_order_relaxed);
+            const uint32_t runProducerHeadroomMin =
+                directControl->txMinimumProducerHeadroomFrames.load(
+                    std::memory_order_relaxed);
             const uint64_t intervalLatencyMaxNanos =
                 ASFW::Timing::hostTicksToNanos(
                     directControl->txIntervalPreparationLatencyMaxTicks.exchange(
@@ -1330,7 +1386,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 now, std::memory_order_relaxed);
             ASFW_LOG(
                 DirectAudio,
-                "[TxPrep] margin=%u iMin=%u iMax=%u min=%u lead=%u "
+                "[TxPrep] margin=%u iMin=%u iMax=%u min=%u "
+                "prodMin=%u prodRunMin=%u lead=%u "
                 "lastLatUs=%llu iMaxLatUs=%llu maxLatUs=%llu "
                 "latHist=%llu/%llu/%llu/%llu/%llu/%llu "
                 "marginHist=%llu/%llu/%llu/%llu/%llu fast750=%llu "
@@ -1340,6 +1397,10 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 intervalMarginMin,
                 intervalMarginMax,
                 minCommittedMargin,
+                // UINT32_MAX means no packet was prepared in this interval, the
+                // same sentinel convention the margin minimum above uses.
+                intervalProducerHeadroomMin,
+                runProducerHeadroomMin,
                 ASFW::Audio::Shared::AudioTimingGeometry::
                     kTxPreparationLeadPackets,
                 latencyNanos / 1000,

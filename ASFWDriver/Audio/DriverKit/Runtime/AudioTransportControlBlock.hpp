@@ -564,6 +564,18 @@ struct AudioTransportControlBlock final {
     // watermarks/counters for long-run fault evidence.
     std::atomic<uint32_t> txIntervalCommittedMarginMinPackets{UINT32_MAX};
     std::atomic<uint32_t> txIntervalCommittedMarginMaxPackets{0};
+    /// Producer runway: frames the CoreAudio writer has staged beyond the next
+    /// frame packetization will consume, sampled after each prepared packet.
+    ///
+    /// The committed-margin fields above measure *our* headroom against *our*
+    /// transmit deadline; they have no term for how far ahead the writer is.
+    /// That is why a deadline xrun can occur while margin reads healthy: the
+    /// two are independent, and only this one can go to zero when the host
+    /// callback is late. A `kNotYetWrittenAtDeadline` fault is by definition
+    /// this value reaching 0, so its interval minimum is the leading
+    /// indicator for that fault.
+    std::atomic<uint32_t> txIntervalProducerHeadroomMinFrames{UINT32_MAX};
+    std::atomic<uint32_t> txMinimumProducerHeadroomFrames{UINT32_MAX};
     std::atomic<uint64_t> txIntervalPreparationLatencyMaxTicks{0};
     std::array<std::atomic<uint64_t>,
                ASFW::Audio::Shared::AudioTimingGeometry::
@@ -749,6 +761,10 @@ struct AudioTransportControlBlock final {
         txIntervalCommittedMarginMinPackets.store(
             UINT32_MAX, std::memory_order_relaxed);
         txIntervalCommittedMarginMaxPackets.store(0, std::memory_order_relaxed);
+        txIntervalProducerHeadroomMinFrames.store(
+            UINT32_MAX, std::memory_order_relaxed);
+        txMinimumProducerHeadroomFrames.store(
+            UINT32_MAX, std::memory_order_relaxed);
         txIntervalPreparationLatencyMaxTicks.store(
             0, std::memory_order_relaxed);
         for (auto& bucket : txIntervalPreparationLatencyHistogram) {
