@@ -54,8 +54,10 @@ Pass `--endpoint` or set `ASFW_MCP_ENDPOINT` when the server uses a non-default 
 
 `asfw_get_config_rom` is a **read-only projection of the driver's discovery
 cache**. It never starts a ROM fetch and never issues a FireWire transaction.
-First obtain the current `nodeId` and generation from `summary`; after any bus
-reset, refresh them before asking for another view.
+First obtain the current `deviceInstanceId` and generation from `summary`; after
+any bus reset, refresh them before asking for another view. The tool keys on the
+runtime **device instance**, not the physical node id — node ids are reused
+across generations and instance ids are not.
 
 The default `summary` view is deliberately compact: cache/generation status,
 GUID, vendor/model/unit identity, parser diagnostics, and two reminders that
@@ -64,16 +66,16 @@ views:
 
 ```bash
 # Compact normal entry point: summary is default.
-python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 1 17
 
 # BIB bitfields, each with bit position, decoded value, and a short meaning.
-python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view bib
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 1 17 --view bib
 
 # Parsed IEEE 1212 directory tree (default 64 entries; raw leaf bytes omitted).
-python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view tree
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 1 17 --view tree
 
 # Big-endian cached quadlets; bounded to 64 per response and page by index.
-python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 0 17 --view raw --start-quadlet 0 --max-quadlets 32
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py rom 1 17 --view raw --start-quadlet 0 --max-quadlets 32
 ```
 
 Equivalent direct calls are useful when another MCP client does not use the
@@ -81,7 +83,7 @@ bundled script:
 
 ```bash
 python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_config_rom \
-  '{"nodeId":0,"generation":17,"view":"bib"}'
+  '{"deviceInstanceId":1,"generation":17,"view":"bib"}'
 ```
 
 Interpret the annotated BIB carefully:

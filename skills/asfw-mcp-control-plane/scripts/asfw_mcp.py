@@ -350,7 +350,10 @@ def build_parser() -> argparse.ArgumentParser:
         "rom",
         help="Read a cached Config-ROM view without expanding the MCP result envelope.",
     )
-    rom.add_argument("node_id", type=int)
+    # The tool keys on the runtime device instance, not the physical node id: node
+    # ids are reused across generations, instance ids are not. Take it from the
+    # `deviceInstanceId` field of `summary`/`asfw_list_nodes`.
+    rom.add_argument("device_instance_id", type=int)
     rom.add_argument("generation", type=int)
     rom.add_argument("--view", choices=("summary", "bib", "tree", "raw"), default="summary")
     rom.add_argument("--start-quadlet", type=int, default=0)
@@ -391,7 +394,7 @@ def main() -> int:
             output = compact_call(client.request("tools/call", {
                 "name": "asfw_get_config_rom",
                 "arguments": {
-                    "nodeId": args.node_id,
+                    "deviceInstanceId": args.device_instance_id,
                     "generation": args.generation,
                     "view": args.view,
                     "startQuadlet": args.start_quadlet,
