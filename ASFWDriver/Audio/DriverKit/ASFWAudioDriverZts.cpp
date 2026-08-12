@@ -1386,13 +1386,20 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 now, std::memory_order_relaxed);
             ASFW_LOG(
                 DirectAudio,
-                "[TxPrep] margin=%u iMin=%u iMax=%u min=%u "
+                // The DANGER marker leads the line. The log ring truncates a
+                // record at 231 chars and this line already overruns that, so a
+                // trailing marker is the first thing lost — exactly the field
+                // that flags the fault. Anything appended past coverageLead is
+                // not retained; put new fields ahead of it, not after.
+                "[TxPrep]%{public}s margin=%u iMin=%u iMax=%u min=%u "
                 "prodMin=%u prodRunMin=%u lead=%u "
                 "lastLatUs=%llu iMaxLatUs=%llu maxLatUs=%llu "
                 "latHist=%llu/%llu/%llu/%llu/%llu/%llu "
                 "marginHist=%llu/%llu/%llu/%llu/%llu fast750=%llu "
                 "late1500=%llu wakes=%llu "
-                "retentionHorizonFrames=%u coverageLead=%u%{public}s",
+                "retentionHorizonFrames=%u coverageLead=%u",
+                boundedMargin <= kCommittedMarginDangerPackets ? " DANGER"
+                                                               : "",
                 boundedMargin,
                 intervalMarginMin,
                 intervalMarginMax,
@@ -1424,9 +1431,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 wakeSamples,
                 dataHorizonFrames,
                 ASFW::Audio::Shared::AudioTimingGeometry::
-                    kTxCoverageLeadPackets,
-                boundedMargin <= kCommittedMarginDangerPackets ? " DANGER"
-                                                               : "");
+                    kTxCoverageLeadPackets);
         }
 
         directControl->counters.txPreparationWakeRequests.store(
