@@ -196,6 +196,13 @@ add_device_test(ApogeeDuetVendorCmdTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
+# M-Audio bootloader cue: frozen bytes, write choke point, single-shot machine
+add_device_test(BeBoBBootloaderCueTests
+    BeBoBBootloaderCueTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderCue.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderPreparation.cpp"
+)
+
 # Apogee Duet runtime stream caps: aggregate vs per-stream wire view
 add_device_test(ApogeeDuetStreamCapsTests
     ApogeeDuetStreamCapsTests.cpp
