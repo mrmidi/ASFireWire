@@ -19,6 +19,10 @@ namespace ASFW::IRM {
 class IRMClient;
 }
 
+namespace ASFW::Scheduling {
+class ITimerScheduler;
+}
+
 namespace ASFW::Audio::DICE::Focusrite {
 
 // ============================================================================
@@ -54,7 +58,8 @@ public:
                       Protocols::Ports::FireWireBusInfo& busInfo,
                       Discovery::DeviceRegistry& routeRegistry,
                       const Discovery::DeviceRouteToken& route,
-                      ::ASFW::IRM::IRMClient* irmClient = nullptr);
+                      ::ASFW::IRM::IRMClient* irmClient = nullptr,
+                      ::ASFW::Scheduling::ITimerScheduler* timerScheduler = nullptr);
     
     /// Initialize protocol (generic DICE init is delegated to the TCAT core)
     IOReturn Initialize() override;
@@ -75,6 +80,16 @@ public:
     bool HasDsp() const override { return true; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    bool GetSupportedSampleRates(std::vector<uint32_t>& outRates) const override {
+        return tcat_.GetSupportedSampleRates(outRates);
+    }
+    bool GetClockCapabilities(uint32_t& outCapabilities) const override {
+        return tcat_.GetClockCapabilities(outCapabilities);
+    }
+    bool GetChannelLabels(std::vector<std::string>& inNames,
+                          std::vector<std::string>& outNames) const override {
+        return tcat_.GetChannelLabels(inNames, outNames);
+    }
     
     /// Configure device for 48kHz duplex streaming (TX ch0 / RX ch1).
     void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;

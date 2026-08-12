@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../Devices/ResolvedAudioEndpointProfile.hpp"
+
 #include <cstdint>
 
 // Forward declarations to avoid pulling in DriverKit headers
@@ -38,11 +40,14 @@ struct BoolControlDescriptor {
 };
 
 struct ParsedAudioDriverConfig {
-    uint64_t guid{0};
-    uint32_t vendorId{0};
-    uint32_t modelId{0};
+    uint64_t endpointId{0};
+    uint64_t deviceInstanceId{0};
+    uint64_t observedGuid{0};
+    ASFW::Audio::Devices::ResolvedAudioEndpointProfile resolvedProfile{};
 
     char deviceName[128]{};
+    char vendorName[128]{};
+    char coreAudioUid[192]{};
     uint32_t channelCount{kDefaultChannelCount};
     uint32_t inputChannelCount{kDefaultChannelCount};
     uint32_t outputChannelCount{kDefaultChannelCount};
@@ -72,8 +77,11 @@ struct ParsedAudioDriverConfig {
 
 void InitializeAudioDriverConfigDefaults(ParsedAudioDriverConfig& outConfig);
 
-void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
-                                          ParsedAudioDriverConfig& inOutConfig);
+// Hard-cutover parser: the bounded V1 profile OSData is mandatory. Human
+// presentation strings are copied from independent nub properties.
+[[nodiscard]] bool ParseAudioDriverConfigFromProperties(
+    OSDictionary* properties,
+    ParsedAudioDriverConfig& inOutConfig);
 
 // Fill inputChannelNames/outputChannelNames for the current channel counts,
 // preferring per-channel device labels (deviceInput/OutputChannelNames) and

@@ -418,8 +418,11 @@ void BeBoBProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
                     callback(kIOReturnNotResponding, {});
                     return;
                 }
-                ASFW_LOG(Audio, "[BeBoB] CMP verified iPCR=0x%08x oPCR=0x%08x GUID=0x%016llx",
-                         inputPCR, outputPCR, route_.guid);
+                ASFW_LOG(Audio,
+                         "[BeBoB] CMP verified iPCR=0x%08x oPCR=0x%08x instance=%llu",
+                         inputPCR,
+                         outputPCR,
+                         static_cast<unsigned long long>(route_.deviceInstanceId.value));
                 callback(kIOReturnSuccess,
                          DuplexConfirmResult{.generation = busInfo_.GetGeneration(),
                                              .channels = channels,

@@ -9,7 +9,6 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
-#include "Config/AudioProfileRegistry.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -272,8 +271,8 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
                              DirectAudioMemoryGeometry physicalGeometry) noexcept {
     if (!ivars.audioDevice) {
         ASFW_LOG(DirectAudio,
-                 "ADK FATAL BIND skeleton failed null_audioDevice guid=0x%016llx",
-                 ivars.device.guid);
+                 "ADK FATAL BIND skeleton failed null_audioDevice endpoint=%llu",
+                 ivars.device.endpointId);
         return false;
     }
     if (!ivars.inputMap || !ivars.outputMap || !ivars.controlMap) {
@@ -305,19 +304,15 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
     const uint32_t outputFrameCapacity =
         FrameCapacityFromSegment(outputSegment, physicalGeometry.outputChannels);
 
-    // Resolve the device profile to determine the host-to-device wire format.
-    // Standard DICE fallback profiles use AM824 sub-frame formatting, while
-    // Focusrite Saffire playback uses sign-extended 24-in-32 big-endian formatting.
+    // The copied endpoint snapshot is the sole wire-format source on the ADK side.
     ASFW::Audio::Runtime::AudioWireFormat wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
-    if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-            ivars.device.vendorId, ivars.device.modelId, ivars.device.guid)) {
-        if (profile->TxWireFormat() == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
-            wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24In32;
-        }
+    if (ivars.resolvedProfile.TxWireFormat() ==
+        ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+        wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24In32;
     }
 
     ivars.runtime.directAudioGraph = ASFW::Audio::Runtime::AudioGraphBinding{
-        .guid = ivars.device.guid,
+        .endpointId = ASFW::Audio::Devices::AudioEndpointId{ivars.device.endpointId},
         .sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate),
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
             .inputBase = reinterpret_cast<float*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),

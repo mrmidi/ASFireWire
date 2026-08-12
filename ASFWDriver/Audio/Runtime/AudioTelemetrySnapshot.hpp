@@ -17,8 +17,10 @@
 
 namespace ASFW::Audio::Runtime {
 
-constexpr uint32_t kAudioTelemetryWireVersion = 4;
+constexpr uint32_t kAudioTelemetryWireVersion = 5;
 constexpr uint32_t kAudioTelemetryMaxEndpoints = 8;
+constexpr uint16_t kAudioTelemetryHeaderBytes = 16;
+constexpr uint16_t kAudioTelemetryEndpointBytes = 688;
 
 enum AudioTelemetryFlags : uint32_t {
     kAudioTelemetryBindingReady = 1U << 0,
@@ -31,7 +33,12 @@ enum AudioTelemetryFlags : uint32_t {
 };
 
 struct AudioTelemetryEndpointSnapshot final {
-    uint64_t guid{0};
+    uint16_t version{kAudioTelemetryWireVersion};
+    uint16_t byteSize{kAudioTelemetryEndpointBytes};
+    uint32_t _reserved{0};
+    uint64_t endpointId{0};
+    uint64_t deviceInstanceId{0};
+    uint64_t observedGuid{0}; // diagnostics only
     uint64_t endpointGeneration{0};
     uint64_t controlGeneration{0};
     uint64_t completedIntervalSequence{0};
@@ -133,26 +140,35 @@ struct AudioTelemetryEndpointSnapshot final {
     uint64_t rxEmptyCompletions{0};
 };
 
-static_assert(sizeof(AudioTelemetryEndpointSnapshot) == 664);
-// Swift decodes this ABI by fixed offsets. Lock both the v3 prefix and the v4
-// tail so a harmless-looking field insertion fails the driver build instead of
-// silently relabelling MCP diagnostics.
-static_assert(offsetof(AudioTelemetryEndpointSnapshot, rxPacketsSeen) == 376);
+static_assert(sizeof(AudioTelemetryEndpointSnapshot) == kAudioTelemetryEndpointBytes);
+// Swift decodes this ABI by fixed offsets. Lock the v5 strong-identity prefix
+// and the existing diagnostic tails so a harmless-looking insertion fails the
+// driver build instead of silently relabelling MCP diagnostics.
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, endpointId) == 8);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, deviceInstanceId) == 16);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, observedGuid) == 24);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, rxPacketsSeen) == 400);
 static_assert(offsetof(AudioTelemetryEndpointSnapshot, txPlaybackWriteFrame) ==
-              432);
+              456);
 static_assert(offsetof(AudioTelemetryEndpointSnapshot,
-                       txContentFirstFaultReason) == 648);
+                       txContentFirstFaultReason) == 672);
 static_assert(offsetof(AudioTelemetryEndpointSnapshot, rxEmptyCompletions) ==
-              656);
+              680);
 
 struct AudioTelemetrySnapshot final {
-    uint32_t version{kAudioTelemetryWireVersion};
+    uint16_t version{kAudioTelemetryWireVersion};
+    uint16_t headerSize{kAudioTelemetryHeaderBytes};
+    uint32_t byteSize{kAudioTelemetryHeaderBytes +
+                      kAudioTelemetryMaxEndpoints * kAudioTelemetryEndpointBytes};
     uint32_t endpointCount{0};
+    uint32_t endpointRecordSize{kAudioTelemetryEndpointBytes};
     std::array<AudioTelemetryEndpointSnapshot, kAudioTelemetryMaxEndpoints> endpoints{};
 };
 
-static_assert(sizeof(AudioTelemetrySnapshot) == 5320);
-static_assert(offsetof(AudioTelemetrySnapshot, endpoints) == 8);
+static_assert(sizeof(AudioTelemetrySnapshot) ==
+              kAudioTelemetryHeaderBytes +
+                  kAudioTelemetryMaxEndpoints * kAudioTelemetryEndpointBytes);
+static_assert(offsetof(AudioTelemetrySnapshot, endpoints) == kAudioTelemetryHeaderBytes);
 
 inline void CopyAudioTelemetrySnapshot(
     const AudioTransportControlBlock& control,

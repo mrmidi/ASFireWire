@@ -2,6 +2,7 @@
 
 #include "AudioStreamMemory.hpp"
 #include "AudioTransportControlBlock.hpp"
+#include "../../Devices/AudioIdentity.hpp"
 
 #include <cstdint>
 
@@ -22,7 +23,7 @@ enum class AudioWireFormat : uint32_t {
 };
 
 struct AudioGraphBinding final {
-    uint64_t guid{0};
+    Devices::AudioEndpointId endpointId{};
 
     uint32_t sampleRateHz{0};
 
@@ -46,7 +47,7 @@ struct AudioGraphBinding final {
     }
 
     [[nodiscard]] bool IsValid() const noexcept {
-        return guid != 0 &&
+        return static_cast<bool>(endpointId) &&
                sampleRateHz > 0 &&
                control != nullptr &&
                audioDevice != nullptr &&

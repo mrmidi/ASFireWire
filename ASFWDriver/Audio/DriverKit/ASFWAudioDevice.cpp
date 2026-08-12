@@ -10,7 +10,6 @@
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Config/TimingCursorPolicy.hpp"
-#include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 
@@ -152,14 +151,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // --- Allocate and map shared TX isoch resources ---
         uint32_t initialClockAnchorTimeoutMs = 500;
         {
-            const auto* baseProfile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-                ivars.device.vendorId,
-                ivars.device.modelId,
-                ivars.device.guid
-            );
-            const auto* profile = static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(baseProfile);
-            if (!profile) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - profile not found");
+            const auto* profile = &ivars.resolvedProfile;
+            if (!profile->IsValid()) {
+                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - resolved profile invalid");
                 kr = failStart(kIOReturnError, "ResolveProfile");
                 return;
             }
@@ -486,8 +480,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         ASFW_LOG(DirectAudio,
                  "ADK DBG StartIO transport and hardware clock ready");
         ASFW_LOG(DirectAudio,
-                 "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d audioDevice=%p",
-                 ivars.device.guid,
+                 "ADK DBG DUPLEX ready endpoint=%llu rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d audioDevice=%p",
+                 ivars.device.endpointId,
                  ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
                  ivars.runtime.directAudioGraph.HasInput(),
                  ivars.runtime.directAudioGraph.HasOutput(),
@@ -589,8 +583,8 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         if (ivars.runtime.directAudioGraph.control) {
             const auto* control = ivars.runtime.directAudioGraph.control;
             ASFW_LOG(DirectAudio,
-                     "ADK DBG STOPIO guid=0x%016llx callbacks=%llu outsideRun=%llu zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu txPackets=%llu txSilence=%llu txUnderruns=%llu",
-                     ivars.device.guid,
+                     "ADK DBG STOPIO endpoint=%llu callbacks=%llu outsideRun=%llu zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu txPackets=%llu txSilence=%llu txUnderruns=%llu",
+                     ivars.device.endpointId,
                      ivars.runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
                      ivars.runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
                      control->counters.ztsPublished.load(std::memory_order_relaxed),

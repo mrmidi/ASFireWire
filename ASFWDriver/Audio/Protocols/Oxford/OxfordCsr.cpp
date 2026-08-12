@@ -65,10 +65,10 @@ void ReadIdRegister(Async::IFireWireBusOps& busOps,
                 // match, so logging only those cannot explain the failure.
                 ASFW_LOG_ERROR(Oxfw,
                                "CSR %{public}s: route retired during read "
-                               "(issued epoch=%llu incarnation=%llu, now epoch=%llu)",
+                               "(issued epoch=%llu instance=%llu, now epoch=%llu)",
                                registerName,
                                static_cast<unsigned long long>(issued.routeEpoch),
-                               static_cast<unsigned long long>(issued.deviceIncarnation),
+                               static_cast<unsigned long long>(issued.deviceInstanceId.value),
                                static_cast<unsigned long long>(
                                    now.has_value() ? now->routeEpoch : 0ULL));
                 Common::InvokeSharedCallback(callbackState, kIOReturnError, 0U);

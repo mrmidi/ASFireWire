@@ -160,6 +160,13 @@ bool ApogeeDuetDuplex::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
         .deviceToHostStreamCount = 1,
         .hostToDeviceStreamCount = 1,
     };
+    // The aggregate (HAL) view above and the per-stream (wire) view below
+    // describe the same single duplex stream pair and must agree: the audio
+    // stack builds its stream config from the per-stream entries, so leaving
+    // them zeroed publishes a 2-in/2-out device that then fails StartIO.
+    // Plug-0 inventory observes pcm=2 midiSlots=0 dbs=2 in both directions.
+    outCaps.deviceToHostStreams[0] = {.pcmChannels = 2, .am824Slots = 2};
+    outCaps.hostToDeviceStreams[0] = {.pcmChannels = 2, .am824Slots = 2};
     return true;
 }
 

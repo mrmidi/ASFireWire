@@ -1,159 +1,164 @@
 #include "AudioDriverConfig.hpp"
 
+#include "../../Devices/AudioEndpointProfileWire.hpp"
 #include "../../Model/AudioPropertyKeys.hpp"
 
 #include <DriverKit/OSArray.h>
-#include <DriverKit/OSBoolean.h>
+#include <DriverKit/OSData.h>
 #include <DriverKit/OSDictionary.h>
-#include <DriverKit/OSNumber.h>
 #include <DriverKit/OSString.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <span>
 
 namespace ASFW::Isoch::Audio {
 namespace {
 
 namespace Keys = ASFW::Audio::Model::PropertyKeys;
 
-void ParseIdentityProperties(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
-    if (auto* guid = OSDynamicCast(OSNumber, properties->getObject(Keys::kGuid))) {
-        inOutConfig.guid = guid->unsigned64BitValue();
+[[nodiscard]] bool CopyRequiredString(OSDictionary* properties,
+                                      const char* key,
+                                      char* destination,
+                                      size_t capacity) noexcept {
+    auto* value = OSDynamicCast(OSString, properties->getObject(key));
+    if (!value || !value->getCStringNoCopy() || value->getLength() == 0) {
+        return false;
     }
-    if (auto* vendor = OSDynamicCast(OSNumber, properties->getObject(Keys::kVendorId))) {
-        inOutConfig.vendorId = vendor->unsigned32BitValue();
-    }
-    if (auto* model = OSDynamicCast(OSNumber, properties->getObject(Keys::kModelId))) {
-        inOutConfig.modelId = model->unsigned32BitValue();
-    }
-    if (auto* inputChannels = OSDynamicCast(OSNumber, properties->getObject(Keys::kInputChannelCount))) {
-        inOutConfig.inputChannelCount = inputChannels->unsigned32BitValue();
-        inOutConfig.hasExplicitInputChannelCount = true;
-    }
-    if (auto* outputChannels = OSDynamicCast(OSNumber, properties->getObject(Keys::kOutputChannelCount))) {
-        inOutConfig.outputChannelCount = outputChannels->unsigned32BitValue();
-        inOutConfig.hasExplicitOutputChannelCount = true;
+    strlcpy(destination, value->getCStringNoCopy(), capacity);
+    return true;
+}
+
+void CopyOptionalString(OSDictionary* properties,
+                        const char* key,
+                        char* destination,
+                        size_t capacity) noexcept {
+    if (auto* value = OSDynamicCast(OSString, properties->getObject(key));
+        value && value->getCStringNoCopy()) {
+        strlcpy(destination, value->getCStringNoCopy(), capacity);
     }
 }
 
-void ParseDevicePresentationProperties(OSDictionary* properties,
-                                       ParsedAudioDriverConfig& inOutConfig) {
-    if (auto* name = OSDynamicCast(OSString, properties->getObject(Keys::kDeviceName))) {
-        strlcpy(inOutConfig.deviceName, name->getCStringNoCopy(), sizeof(inOutConfig.deviceName));
-    }
-    if (auto* count = OSDynamicCast(OSNumber, properties->getObject(Keys::kChannelCount))) {
-        inOutConfig.channelCount = count->unsigned32BitValue();
-    }
-    if (auto* rate = OSDynamicCast(OSNumber, properties->getObject(Keys::kCurrentSampleRate))) {
-        inOutConfig.currentSampleRate = static_cast<double>(rate->unsigned32BitValue());
-    }
-    if (auto* mode = OSDynamicCast(OSNumber, properties->getObject(Keys::kStreamMode))) {
-        inOutConfig.streamMode = (mode->unsigned32BitValue() ==
-                                  static_cast<uint32_t>(StreamMode::kBlocking))
-            ? StreamMode::kBlocking
-            : StreamMode::kNonBlocking;
-    }
+void ParsePlugNames(OSDictionary* properties,
+                    ParsedAudioDriverConfig& config) noexcept {
+    CopyOptionalString(properties, Keys::kInputPlugName,
+                       config.inputPlugName, sizeof(config.inputPlugName));
+    CopyOptionalString(properties, Keys::kOutputPlugName,
+                       config.outputPlugName, sizeof(config.outputPlugName));
 }
 
-void ParseSampleRates(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
-    auto* rates = OSDynamicCast(OSArray, properties->getObject(Keys::kSampleRates));
-    if (rates == nullptr) {
-        return;
-    }
-
-    inOutConfig.sampleRateCount = 0;
-    const uint32_t cappedCount = std::min(rates->getCount(), kMaxSampleRates);
-    for (uint32_t i = 0; i < cappedCount; ++i) {
-        auto* rate = OSDynamicCast(OSNumber, rates->getObject(i));
-        if (rate == nullptr) {
-            continue;
-        }
-        inOutConfig.sampleRates[inOutConfig.sampleRateCount++] =
-            static_cast<double>(rate->unsigned32BitValue());
-    }
-}
-
-void ParsePlugNames(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
-    if (auto* inputName = OSDynamicCast(OSString, properties->getObject(Keys::kInputPlugName))) {
-        strlcpy(inOutConfig.inputPlugName, inputName->getCStringNoCopy(), sizeof(inOutConfig.inputPlugName));
-    }
-    if (auto* outputName = OSDynamicCast(OSString, properties->getObject(Keys::kOutputPlugName))) {
-        strlcpy(inOutConfig.outputPlugName, outputName->getCStringNoCopy(), sizeof(inOutConfig.outputPlugName));
-    }
-}
-
-// Read an optional OSArray of OSString device labels into a fixed [N][64] array.
-// Indices align with the channel index; missing/empty entries stay empty so
-// BuildChannelNamesFromPlugs synthesizes a name for that slot.
 void ParseChannelNameArray(OSDictionary* properties,
                            const char* key,
-                           char (*dst)[64]) {
+                           char (*destination)[64]) noexcept {
     auto* array = OSDynamicCast(OSArray, properties->getObject(key));
-    if (array == nullptr) {
-        return;
-    }
+    if (!array) return;
     const uint32_t count = std::min(array->getCount(), kMaxNamedChannels);
     for (uint32_t i = 0; i < count; ++i) {
-        if (auto* name = OSDynamicCast(OSString, array->getObject(i))) {
-            strlcpy(dst[i], name->getCStringNoCopy(), 64);
+        if (auto* name = OSDynamicCast(OSString, array->getObject(i));
+            name && name->getCStringNoCopy()) {
+            strlcpy(destination[i], name->getCStringNoCopy(), 64);
         }
     }
 }
 
-void ParseChannelNames(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
-    ParseChannelNameArray(properties, Keys::kInputChannelNames, inOutConfig.deviceInputChannelNames);
-    ParseChannelNameArray(properties, Keys::kOutputChannelNames, inOutConfig.deviceOutputChannelNames);
+void ParseChannelNames(OSDictionary* properties,
+                       ParsedAudioDriverConfig& config) noexcept {
+    ParseChannelNameArray(properties, Keys::kInputChannelNames,
+                          config.deviceInputChannelNames);
+    ParseChannelNameArray(properties, Keys::kOutputChannelNames,
+                          config.deviceOutputChannelNames);
 }
 
 } // namespace
 
-// Fill each element name, preferring a per-channel device label when present
-// and falling back to the synthesized "<plug> N". Centralizes the rule so both
-// the initial parse and the post-profile regeneration in BuildAudioGraph agree.
-void BuildChannelNamesFromPlugs(ParsedAudioDriverConfig& inOutConfig) {
-    const uint32_t maxInputChannels = std::min(inOutConfig.inputChannelCount, kMaxNamedChannels);
-    const uint32_t maxOutputChannels = std::min(inOutConfig.outputChannelCount, kMaxNamedChannels);
-    for (uint32_t index = 0; index < maxInputChannels; ++index) {
-        if (inOutConfig.deviceInputChannelNames[index][0] != '\0') {
-            strlcpy(inOutConfig.inputChannelNames[index],
-                    inOutConfig.deviceInputChannelNames[index],
-                    sizeof(inOutConfig.inputChannelNames[index]));
-            continue;
+void BuildChannelNamesFromPlugs(ParsedAudioDriverConfig& config) {
+    const uint32_t maxInput = std::min(config.inputChannelCount,
+                                       kMaxNamedChannels);
+    const uint32_t maxOutput = std::min(config.outputChannelCount,
+                                        kMaxNamedChannels);
+    for (uint32_t index = 0; index < maxInput; ++index) {
+        if (config.deviceInputChannelNames[index][0] != '\0') {
+            strlcpy(config.inputChannelNames[index],
+                    config.deviceInputChannelNames[index],
+                    sizeof(config.inputChannelNames[index]));
+        } else {
+            snprintf(config.inputChannelNames[index],
+                     sizeof(config.inputChannelNames[index]),
+                     "%s %u", config.inputPlugName, index + 1);
         }
-        snprintf(inOutConfig.inputChannelNames[index],
-                 sizeof(inOutConfig.inputChannelNames[index]),
-                 "%s %u",
-                 inOutConfig.inputPlugName,
-                 index + 1);
     }
-    for (uint32_t index = 0; index < maxOutputChannels; ++index) {
-        if (inOutConfig.deviceOutputChannelNames[index][0] != '\0') {
-            strlcpy(inOutConfig.outputChannelNames[index],
-                    inOutConfig.deviceOutputChannelNames[index],
-                    sizeof(inOutConfig.outputChannelNames[index]));
-            continue;
+    for (uint32_t index = 0; index < maxOutput; ++index) {
+        if (config.deviceOutputChannelNames[index][0] != '\0') {
+            strlcpy(config.outputChannelNames[index],
+                    config.deviceOutputChannelNames[index],
+                    sizeof(config.outputChannelNames[index]));
+        } else {
+            snprintf(config.outputChannelNames[index],
+                     sizeof(config.outputChannelNames[index]),
+                     "%s %u", config.outputPlugName, index + 1);
         }
-        snprintf(inOutConfig.outputChannelNames[index],
-                 sizeof(inOutConfig.outputChannelNames[index]),
-                 "%s %u",
-                 inOutConfig.outputPlugName,
-                 index + 1);
     }
 }
 
-void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
-                                          ParsedAudioDriverConfig& inOutConfig) {
-    if (!properties) {
-        return;
+bool ParseAudioDriverConfigFromProperties(
+    OSDictionary* properties,
+    ParsedAudioDriverConfig& config) {
+    if (!properties) return false;
+
+    auto* profileData = OSDynamicCast(
+        OSData, properties->getObject(Keys::kEndpointProfile));
+    if (!profileData || !profileData->getBytesNoCopy() ||
+        profileData->getLength() == 0 ||
+        profileData->getLength() >
+            ASFW::Audio::Devices::Wire::kAudioEndpointProfileWireMaxBytes) {
+        return false;
+    }
+    const auto parsed = ASFW::Audio::Devices::Wire::Parse(
+        std::span<const uint8_t>{
+            static_cast<const uint8_t*>(profileData->getBytesNoCopy()),
+            profileData->getLength()});
+    if (!parsed || !parsed->endpointId || !parsed->deviceInstanceId ||
+        parsed->supportedRateCount == 0) {
+        return false;
     }
 
-    ParseIdentityProperties(properties, inOutConfig);
-    ParseDevicePresentationProperties(properties, inOutConfig);
-    ParseSampleRates(properties, inOutConfig);
-    ParsePlugNames(properties, inOutConfig);
-    ParseChannelNames(properties, inOutConfig);
-    BuildChannelNamesFromPlugs(inOutConfig);
+    config.resolvedProfile = *parsed;
+    config.endpointId = parsed->endpointId.value;
+    config.deviceInstanceId = parsed->deviceInstanceId.value;
+    config.observedGuid = parsed->observedGuid;
+    config.inputChannelCount = parsed->runtimeCaps.hostInputPcmChannels;
+    config.outputChannelCount = parsed->runtimeCaps.hostOutputPcmChannels;
+    config.hasExplicitInputChannelCount = true;
+    config.hasExplicitOutputChannelCount = true;
+    config.channelCount = std::max(config.inputChannelCount,
+                                   config.outputChannelCount);
+    config.currentSampleRate = parsed->currentSampleRateHz;
+    config.sampleRateCount = parsed->supportedRateCount;
+    for (uint8_t i = 0; i < parsed->supportedRateCount; ++i) {
+        config.sampleRates[i] = parsed->supportedRates[i];
+    }
+    config.streamMode = parsed->streamMode ==
+            ASFW::Audio::Devices::StreamModePolicy::Blocking
+        ? StreamMode::kBlocking
+        : StreamMode::kNonBlocking;
+
+    if (!CopyRequiredString(properties, Keys::kDeviceName,
+                            config.deviceName, sizeof(config.deviceName)) ||
+        !CopyRequiredString(properties, Keys::kCoreAudioUid,
+                            config.coreAudioUid, sizeof(config.coreAudioUid))) {
+        return false;
+    }
+    CopyOptionalString(properties, Keys::kVendorName,
+                       config.vendorName, sizeof(config.vendorName));
+    config.resolvedProfile.deviceName = config.deviceName;
+    config.resolvedProfile.vendorName = config.vendorName;
+    config.resolvedProfile.coreAudioUid = config.coreAudioUid;
+
+    ParsePlugNames(properties, config);
+    ParseChannelNames(properties, config);
+    BuildChannelNamesFromPlugs(config);
+    return true;
 }
 
 } // namespace ASFW::Isoch::Audio

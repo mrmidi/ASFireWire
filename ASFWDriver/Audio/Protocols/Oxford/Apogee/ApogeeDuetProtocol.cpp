@@ -229,7 +229,7 @@ void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback)
 // client that may not exist. FCPTransport re-resolves the same way per
 // submission (FCPTransport.cpp:206), which is why vendor commands never failed.
 //
-// The lambda captures the registry pointer and GUID by value rather than `this`,
+// The lambda captures the registry pointer and runtime instance by value rather than `this`,
 // so an in-flight read cannot outlive the protocol and dereference it.
 Oxford::RouteProvider ApogeeDuetProtocol::MakeRouteProvider() const {
     if (runtime_.routeRegistry == nullptr) {
@@ -238,8 +238,9 @@ Oxford::RouteProvider ApogeeDuetProtocol::MakeRouteProvider() const {
         return {};
     }
     return [registry = runtime_.routeRegistry,
-            guid = runtime_.route.guid]() -> std::optional<Discovery::DeviceRouteToken> {
-        return registry->CurrentRoute(guid);
+            instanceId = runtime_.route.deviceInstanceId]()
+               -> std::optional<Discovery::DeviceRouteToken> {
+        return registry->CurrentRoute(instanceId);
     };
 }
 

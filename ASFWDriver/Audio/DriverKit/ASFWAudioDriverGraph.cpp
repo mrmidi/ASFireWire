@@ -9,7 +9,6 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../Config/InputSafetyPolicy.hpp"
-#include "Config/AudioProfileRegistry.hpp"
 #include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
@@ -32,13 +31,16 @@ namespace {
 
 void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverConfig& parsedConfig,
                                    AudioDriverDeviceState& device) noexcept {
-    device.guid = parsedConfig.guid;
-    device.vendorId = parsedConfig.vendorId;
-    device.modelId = parsedConfig.modelId;
+    device.endpointId = parsedConfig.endpointId;
+    device.deviceInstanceId = parsedConfig.deviceInstanceId;
+    device.observedGuid = parsedConfig.observedGuid;
     device.channelCount = parsedConfig.channelCount;
     device.inputChannelCount = parsedConfig.inputChannelCount;
     device.outputChannelCount = parsedConfig.outputChannelCount;
     strlcpy(device.deviceName, parsedConfig.deviceName, sizeof(device.deviceName));
+    strlcpy(device.vendorName, parsedConfig.vendorName, sizeof(device.vendorName));
+    strlcpy(device.coreAudioUid, parsedConfig.coreAudioUid,
+            sizeof(device.coreAudioUid));
     strlcpy(device.inputPlugName, parsedConfig.inputPlugName, sizeof(device.inputPlugName));
     strlcpy(device.outputPlugName, parsedConfig.outputPlugName, sizeof(device.outputPlugName));
     device.sampleRateCount = parsedConfig.sampleRateCount;
@@ -66,13 +68,14 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
 }
 
 [[nodiscard]] kern_return_t ValidateDeviceStateForGraph(const AudioDriverDeviceState& device) noexcept {
-    if (device.guid == 0 ||
+    if (device.endpointId == 0 || device.deviceInstanceId == 0 ||
         (device.inputChannelCount == 0 && device.outputChannelCount == 0) ||
         device.sampleRateCount == 0 ||
         device.currentSampleRate <= 0.0) {
         ASFW_LOG(Audio,
-                 "ASFWAudioDriver: invalid audio config guid=0x%016llx in=%u out=%u rates=%u currentRate=%.0f",
-                 device.guid,
+                 "ASFWAudioDriver: invalid audio config endpoint=%llu instance=%llu in=%u out=%u rates=%u currentRate=%.0f",
+                 device.endpointId,
+                 device.deviceInstanceId,
                  device.inputChannelCount,
                  device.outputChannelCount,
                  device.sampleRateCount,
@@ -134,64 +137,23 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     OSDictionary* propsRaw = nullptr;
     if (provider->CopyProperties(&propsRaw) == kIOReturnSuccess && propsRaw) {
         OSSharedPtr<OSDictionary> props(propsRaw, OSNoRetain);
-        ASFW::Isoch::Audio::ParseAudioDriverConfigFromProperties(props.get(), parsedConfig);
-    } else {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Using default device configuration (no nub properties)");
-    }
-
-    // Set once a resolved profile supplies its advertised sample-rate set, so the
-    // bring-up single-format policy below is skipped for profiled devices.
-    bool profileProvidedSampleRates = false;
-
-    // Resolve audio profile registry on startup
-    if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-            parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid)) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Resolved profile '%{public}s'", profile->Name());
-        strlcpy(parsedConfig.deviceName, profile->Name(), sizeof(parsedConfig.deviceName));
-
-        const uint32_t rxChannels = profile->RxChannelCount();
-        const uint32_t txChannels = profile->TxChannelCount();
-        ASFW::Isoch::Audio::ApplyProfileChannelCountFallback(parsedConfig,
-                                                            rxChannels,
-                                                            txChannels);
-
-        // Sample rates come from the profile (same authoritative source as the
-        // channel counts above), so CoreAudio advertises the full set even if the
-        // nub property dict did not carry kSampleRates. The HAL builds one stream
-        // format per rate (see SetAvailableSampleRates below).
-        const auto profileRates = profile->SupportedSampleRates();
-        if (!profileRates.empty()) {
-            parsedConfig.sampleRateCount = 0;
-            bool currentRateInSet = false;
-            for (uint32_t hz : profileRates) {
-                if (parsedConfig.sampleRateCount >= ASFW::Isoch::Audio::kMaxSampleRates) {
-                    break;
-                }
-                parsedConfig.sampleRates[parsedConfig.sampleRateCount++] =
-                    static_cast<double>(hz);
-                if (static_cast<double>(hz) == parsedConfig.currentSampleRate) {
-                    currentRateInSet = true;
-                }
-            }
-            if (!currentRateInSet) {
-                parsedConfig.currentSampleRate = parsedConfig.sampleRates[0];
-            }
-            profileProvidedSampleRates = true;
+        if (!ASFW::Isoch::Audio::ParseAudioDriverConfigFromProperties(
+                props.get(), parsedConfig)) {
+            ASFW_LOG_ERROR(Audio,
+                           "ASFWAudioDriver: rejected missing or invalid resolved endpoint profile property");
+            return kIOReturnBadArgument;
         }
-
-        // Regenerate channel names for the updated channel counts. Prefers the
-        // device's per-channel labels (published by the core side) and falls
-        // back to synthesized "<plug> N" for any slot without a real label.
-        ASFW::Isoch::Audio::BuildChannelNamesFromPlugs(parsedConfig);
-    }
-
-    // Profiled devices advertise their own validated rate set (DICE: 44.1/48 kHz);
-    // only fall back to the single-format bring-up policy for unprofiled devices
-    // whose multi-rate path is not yet validated end-to-end.
-    if (!profileProvidedSampleRates) {
-        ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
+    } else {
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioDriver: missing nub properties; no default identity/profile fallback exists");
+        return kIOReturnNotReady;
     }
     ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxPcmChannels);
+    ivars.resolvedProfile.Load(parsedConfig.resolvedProfile);
+    if (!ivars.resolvedProfile.IsValid()) {
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: resolved endpoint profile has invalid stream geometry");
+        return kIOReturnBadArgument;
+    }
     CopyParsedConfigToDeviceState(parsedConfig, ivars.device);
 
     kern_return_t error = ValidateDeviceStateForGraph(ivars.device);
@@ -222,10 +184,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     };
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Device GUID=0x%016llx vendor=0x%06x model=0x%06x boolControls=%u",
-             ivars.device.guid,
-             ivars.device.vendorId,
-             ivars.device.modelId,
+             "ASFWAudioDriver: endpoint=%llu instance=%llu observedGUID=0x%016llx boolControls=%u",
+             ivars.device.endpointId,
+             ivars.device.deviceInstanceId,
+             ivars.device.observedGuid,
              ivars.device.boolControlCount);
     ASFW_LOG(Audio, "ASFWAudioDriver: Read device name from nub: %{public}s", ivars.device.deviceName);
     ASFW_LOG(Audio,
@@ -255,10 +217,8 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // preferred stereo pair, volumes) keyed by this UID. A shared constant UID
     // let one device's stereo-pair setting silently remap the output channels
     // of every ASFW device (BUGLIST.md Bug 1: "right channel only").
-    char deviceUidString[32] = {};
-    std::snprintf(deviceUidString, sizeof(deviceUidString), "ASFW-%016llX",
-                  static_cast<unsigned long long>(ivars.device.guid));
-    auto deviceUID = OSSharedPtr(OSString::withCString(deviceUidString), OSNoRetain);
+    auto deviceUID = OSSharedPtr(
+        OSString::withCString(ivars.device.coreAudioUid), OSNoRetain);
     auto modelUID = OSSharedPtr(OSString::withCString(ivars.device.deviceName), OSNoRetain);
     auto manufacturerUID = OSSharedPtr(OSString::withCString("ASFireWire"), OSNoRetain);
     if (!deviceUID || !modelUID || !manufacturerUID) {
@@ -373,9 +333,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     uint64_t directGeneration = 0;
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG MEM request provider=%p guid=0x%016llx expectedInCh=%u expectedOutCh=%u rate=%.0f",
+             "ADK DBG MEM request provider=%p endpoint=%llu expectedInCh=%u expectedOutCh=%u rate=%.0f",
              static_cast<void*>(provider),
-             ivars.device.guid,
+             ivars.device.endpointId,
              ivars.device.inputChannelCount,
              ivars.device.outputChannelCount,
              ivars.device.currentSampleRate);
@@ -691,25 +651,17 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     const double currentSampleRate = ivars.device.currentSampleRate;
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
         static_cast<uint32_t>(currentSampleRate));
-    const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
-        ivars.device.vendorId, ivars.device.modelId, ivars.device.guid);
+    const auto* profile = &ivars.resolvedProfile;
 
     uint32_t outLatency = 0;
     uint32_t inLatency = 0;
     uint32_t outSafety = 0;
     uint32_t inSafety = 0;
 
-    if (profile) {
-        outLatency = profile->TxReportedLatencyFrames(currentSampleRate);
-        inLatency = profile->RxReportedLatencyFrames(currentSampleRate);
-        outSafety = profile->TxSafetyOffsetFrames(currentSampleRate);
-        inSafety = profile->RxSafetyOffsetFrames(currentSampleRate);
-    } else {
-        outLatency = policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Output);
-        inLatency = policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input);
-        outSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output);
-        inSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input);
-    }
+    outLatency = profile->TxReportedLatencyFrames(currentSampleRate);
+    inLatency = profile->RxReportedLatencyFrames(currentSampleRate);
+    outSafety = profile->TxSafetyOffsetFrames(currentSampleRate);
+    inSafety = profile->RxSafetyOffsetFrames(currentSampleRate);
 
     constexpr uint32_t kSchedulingJitterFrames = 64;
     // Data-visibility margin only; the IO buffer size is NOT folded in (see

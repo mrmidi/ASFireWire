@@ -8,36 +8,20 @@
 
 #include "GenericBeBoBProtocol.hpp"
 
-#include "../../../DeviceProfiles/Audio/Vendors/BeBoBDeviceProfiles.hpp"
 #include "../../../Logging/Logging.hpp"
+
+#include <algorithm>
 
 namespace ASFW::Audio::BeBoB {
 namespace {
 
-// BridgeCo rate codes → Hz. Cross-validated with Linux
-// sound/firewire/bebob/bebob_stream.c:24-30 (snd_bebob_rate_table).
-uint32_t RateCodeToHz(uint8_t code) noexcept {
-    switch (code) {
-        case 0x00: return 32000U;
-        case 0x01: return 44100U;
-        case 0x02: return 48000U;
-        case 0x03: return 88200U;
-        case 0x04: return 96000U;
-        case 0x05: return 176400U;
-        case 0x06: return 192000U;
-        case 0x0A: return 88200U;  // Some devices use 0x0A for 88.2k.
-        default: return 0U;
-    }
-}
-
-template<typename F>
-void ForEachFormationRate(const DeviceModel& model, F&& fn) noexcept {
-    for (const auto& formation : model.input.supportedFormations) {
-        fn(formation.rateCode);
-    }
-    for (const auto& formation : model.output.supportedFormations) {
-        fn(formation.rateCode);
-    }
+[[nodiscard]] const Protocols::AVC::Probe::StreamFormation*
+FindFormation(const Protocols::AVC::Probe::IsochronousPlugModel& plug,
+              uint8_t rateCode) noexcept {
+    const auto it = std::find_if(
+        plug.supportedFormations.begin(), plug.supportedFormations.end(),
+        [rateCode](const auto& formation) { return formation.rateCode == rateCode; });
+    return it != plug.supportedFormations.end() ? &*it : nullptr;
 }
 
 } // namespace
@@ -54,41 +38,47 @@ GenericBeBoBProtocol::GenericBeBoBProtocol(Protocols::Ports::FireWireBusOps& bus
 
     deviceName_ = "Unknown BeBoB Device";
 
-    // Conservative single-stream geometry from the first duplex formation.
-    uint16_t pcmChannels = 0;
-    uint16_t midiSlots = 0;
-    if (!discoveryModel.input.supportedFormations.empty()) {
-        pcmChannels = discoveryModel.input.supportedFormations[0].pcmChannels;
-        midiSlots = discoveryModel.input.supportedFormations[0].midiSlots;
+    // Keep both directions independent. AV/C input is host->device playback;
+    // AV/C output is device->host capture. A common rate is selected, but
+    // channel/slot geometry is never copied from one direction to the other.
+    uint8_t selectedRateCode = discoveryModel.CurrentRateCode().value_or(0xFFU);
+    if (FindFormation(discoveryModel.input, selectedRateCode) == nullptr ||
+        FindFormation(discoveryModel.output, selectedRateCode) == nullptr) {
+        selectedRateCode = 0xFFU;
+        for (const auto& input : discoveryModel.input.supportedFormations) {
+            if (FindFormation(discoveryModel.output, input.rateCode) != nullptr) {
+                selectedRateCode = input.rateCode;
+                break;
+            }
+        }
     }
+    const auto* playback = FindFormation(discoveryModel.input, selectedRateCode);
+    const auto* capture = FindFormation(discoveryModel.output, selectedRateCode);
+    const uint16_t capturePcm = capture ? capture->pcmChannels : 0;
+    const uint16_t captureMidi = capture ? capture->midiSlots : 0;
+    const uint16_t playbackPcm = playback ? playback->pcmChannels : 0;
+    const uint16_t playbackMidi = playback ? playback->midiSlots : 0;
 
-    caps_.hostInputPcmChannels = pcmChannels;
-    caps_.hostOutputPcmChannels = pcmChannels;
-    caps_.deviceToHostAm824Slots = pcmChannels + midiSlots;
-    caps_.hostToDeviceAm824Slots = pcmChannels + midiSlots;
-    caps_.sampleRateHz = supportedRates_.empty() ? 48000U : supportedRates_[0];
+    caps_.hostInputPcmChannels = capturePcm;
+    caps_.hostOutputPcmChannels = playbackPcm;
+    caps_.deviceToHostAm824Slots = capturePcm + captureMidi;
+    caps_.hostToDeviceAm824Slots = playbackPcm + playbackMidi;
+    caps_.sampleRateHz = Protocols::AVC::Probe::RateCodeToHz(selectedRateCode);
     caps_.deviceToHostIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
     caps_.hostToDeviceIsoChannel = AudioStreamRuntimeCaps::kInvalidIsoChannel;
-    caps_.deviceToHostStreamCount = 1;
-    caps_.hostToDeviceStreamCount = 1;
-    caps_.deviceToHostStreams[0] = {.pcmChannels = pcmChannels,
-                                    .am824Slots = static_cast<uint16_t>(pcmChannels + midiSlots)};
-    caps_.hostToDeviceStreams[0] = {.pcmChannels = pcmChannels,
-                                    .am824Slots = static_cast<uint16_t>(pcmChannels + midiSlots)};
+    caps_.deviceToHostStreamCount = capture ? 1U : 0U;
+    caps_.hostToDeviceStreamCount = playback ? 1U : 0U;
+    caps_.deviceToHostStreams[0] = {
+        .pcmChannels = capturePcm,
+        .am824Slots = static_cast<uint16_t>(capturePcm + captureMidi)};
+    caps_.hostToDeviceStreams[0] = {
+        .pcmChannels = playbackPcm,
+        .am824Slots = static_cast<uint16_t>(playbackPcm + playbackMidi)};
 }
 
 std::vector<uint32_t>
 GenericBeBoBProtocol::MakeSupportedRates(const DeviceModel& model) noexcept {
-    bool seen[128] = {};
-    std::vector<uint32_t> rates;
-    ForEachFormationRate(model, [&seen, &rates](uint8_t code) {
-        const uint32_t hz = RateCodeToHz(code);
-        if (hz > 0 && !seen[code]) {
-            seen[code] = true;
-            rates.push_back(hz);
-        }
-    });
-    return rates;
+    return model.CommonDuplexRatesHz();
 }
 
 void GenericBeBoBProtocol::ReadClockHealth(HealthCallback callback) {

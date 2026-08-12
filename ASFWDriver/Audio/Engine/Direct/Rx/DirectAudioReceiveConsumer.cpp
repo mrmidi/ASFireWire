@@ -107,7 +107,7 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
 
     payloadWriterTelemetryAggregator_.Reset();
     if (snapshot.valid && snapshot.HasInput()) {
-        inputView_.guid = 0;
+        inputView_.endpointId = snapshot.endpointId;
         inputView_.sampleRateHz = snapshot.sampleRateHz;
         inputView_.memory.inputBase = snapshot.inputBase;
         inputView_.memory.inputFrameCapacity = snapshot.inputFrames;

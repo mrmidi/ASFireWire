@@ -2,11 +2,12 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioNubPublisher.hpp
-// Centralized creation/lookup/termination of ASFWAudioNub instances (per GUID).
+// Centralized creation/lookup/termination of ASFWAudioNub instances. Runtime
+// endpoint IDs are the only keys; an observed EUI-64 is diagnostics metadata.
 
 #pragma once
 
-#include "../Model/ASFWAudioDevice.hpp"
+#include "../Devices/ResolvedAudioEndpointProfile.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <cstdint>
@@ -27,27 +28,29 @@ public:
     AudioNubPublisher(const AudioNubPublisher&) = delete;
     AudioNubPublisher& operator=(const AudioNubPublisher&) = delete;
 
-    /// Create an ASFWAudioNub for `guid` if missing, and populate its properties from `config`.
+    /// Create an ASFWAudioNub for `profile.endpointId` if missing and publish a
+    /// value-only, versioned profile snapshot before the nub starts.
     /// Returns true on success or if already present.
-    [[nodiscard]] bool EnsureNub(uint64_t guid,
-                                 const Model::ASFWAudioDevice& config,
+    [[nodiscard]] bool EnsureNub(const Devices::ResolvedAudioEndpointProfile& profile,
                                  const char* sourceTag) noexcept;
 
     /// Return the nub pointer if present (not retained). Valid only while published.
-    [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept;
+    [[nodiscard]] ASFWAudioNub* GetNub(Devices::AudioEndpointId endpointId) const noexcept;
 
-    /// Return the GUID if exactly one nub is published (debug/bring-up helper).
-    [[nodiscard]] std::optional<uint64_t> GetSingleGuid() const noexcept;
+    /// Return the endpoint if exactly one nub is published (debug helper).
+    [[nodiscard]] std::optional<Devices::AudioEndpointId> GetSingleEndpointId() const noexcept;
 
     /// Terminate and forget a nub if present.
-    void TerminateNub(uint64_t guid, const char* reasonTag) noexcept;
+    void TerminateNub(Devices::AudioEndpointId endpointId,
+                      const char* reasonTag) noexcept;
 
 private:
-    [[nodiscard]] bool ReserveGuidLocked(uint64_t guid) noexcept;
+    [[nodiscard]] bool ReserveEndpointLocked(Devices::AudioEndpointId endpointId) noexcept;
 
     IOService* driver_{nullptr};
     IOLock* lock_{nullptr};
-    std::unordered_map<uint64_t, ASFWAudioNub*> nubsByGuid_{};
+    std::unordered_map<Devices::AudioEndpointId, ASFWAudioNub*,
+                       Devices::AudioEndpointIdHash> nubsByEndpoint_{};
 };
 
 } // namespace ASFW::Audio

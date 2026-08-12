@@ -30,9 +30,9 @@ namespace ASFW::Audio {
 
 /// Interface for device-specific protocol handlers
 ///
-/// Device protocols are instantiated by DeviceProtocolFactory when a
-/// known device is detected during discovery. Each protocol handler
-/// encapsulates vendor-specific control logic (DSP, routing, etc.).
+/// Device protocols are instantiated by their explicitly registered audio
+/// family provider after unit-scoped catalog resolution. Each handler
+/// encapsulates family/device-specific control logic (DSP, routing, etc.).
 class IDeviceProtocol {
 public:
     virtual ~IDeviceProtocol() = default;
@@ -58,6 +58,26 @@ public:
     /// Returns true when the protocol has authoritative stream caps (e.g. DICE TX/RX stream formats).
     virtual bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
         (void)outCaps;
+        return false;
+    }
+
+    /// Rates proven by the family probe and safe for this protocol instance.
+    /// The default exposes only the current authoritative rate; family
+    /// protocols with capability evidence override it.
+    virtual bool GetSupportedSampleRates(std::vector<uint32_t>& outRates) const {
+        AudioStreamRuntimeCaps caps{};
+        if (!GetRuntimeAudioStreamCaps(caps) || caps.sampleRateHz == 0) {
+            outRates.clear();
+            return false;
+        }
+        outRates = {caps.sampleRateHz};
+        return true;
+    }
+
+    /// Optional family-native clock-capability bits retained as typed probe
+    /// evidence. Consumers must not interpret these outside the family.
+    virtual bool GetClockCapabilities(uint32_t& outCapabilities) const {
+        outCapabilities = 0;
         return false;
     }
 

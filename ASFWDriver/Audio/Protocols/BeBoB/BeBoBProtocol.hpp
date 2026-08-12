@@ -54,6 +54,15 @@ public:
     const IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               Protocols::AVC::FCPTransport* transport) override;
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override {
+        outCaps = DeviceCaps();
+        return outCaps.deviceToHostStreamCount != 0 &&
+               outCaps.hostToDeviceStreamCount != 0;
+    }
+    bool GetSupportedSampleRates(std::vector<uint32_t>& outRates) const override {
+        outRates = SupportedRates();
+        return !outRates.empty();
+    }
 
     // IAVCCommandSubmitter
     void SubmitCommand(const Protocols::AVC::AVCCdb& cdb, Protocols::AVC::AVCCompletion completion) override;

@@ -72,8 +72,8 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
     if (firstPublication) {
         ASFW_LOG(
             DirectAudio,
-            "Core audio hardware ZTS ready guid=0x%016llx sampleFrame=%llu hostTicks=%llu",
-            ivars.device.guid,
+            "Core audio hardware ZTS ready endpoint=%llu sampleFrame=%llu hostTicks=%llu",
+            ivars.device.endpointId,
             anchor.sampleFrame,
             anchor.hostTicks);
     }

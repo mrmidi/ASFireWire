@@ -6,7 +6,7 @@
 // ASFWAudioDriver (IOUserAudioDriver) matches on this nub.
 //
 // Cross-process communication:
-//   ASFWAudioNub forwards RPCs to the GUID-keyed AudioEndpointRuntime. The
+//   ASFWAudioNub forwards RPCs to the endpoint-keyed AudioEndpointRuntime. The
 //   endpoint runtime owns shared direct audio memory/control state.
 //
 
@@ -29,7 +29,8 @@ class ASFWDriver;
 //   - ASFWDeviceName (OSString): Device name from config ROM
 //   - ASFWChannelCount (OSNumber): Number of audio channels
 //   - ASFWSampleRates (OSArray of OSNumber): Supported sample rates
-//   - ASFWGUID (OSNumber): Device GUID for identification
+//   - ASFWAudioEndpointProfileV1 (OSData): immutable bounded numeric profile
+//   - ASFWAudioEndpointID (OSNumber): runtime routing identity
 
 class ASFWAudioNub: public IOService
 {
@@ -120,8 +121,13 @@ public:
     // detect device-initiated clock moves.
     uint32_t GetCurrentSampleRateHz() const LOCALONLY;
 
-    // Set channel count directly (called by AVCDiscovery after Create())
+    // Set scalar geometry directly before publication. No profile pointer may
+    // cross the service boundary.
     void SetChannelCount(uint32_t channels) LOCALONLY;
+    void SetAudioGeometry(uint32_t inputChannels,
+                          uint32_t outputChannels,
+                          uint32_t sampleRateHz,
+                          uint32_t streamModeRaw) LOCALONLY;
     uint32_t GetChannelCount() const LOCALONLY;
     uint32_t GetInputChannelCount() const LOCALONLY;
     uint32_t GetOutputChannelCount() const LOCALONLY;
@@ -131,9 +137,10 @@ public:
     void SetStreamMode(uint32_t modeRaw) LOCALONLY;
     uint32_t GetStreamMode() const LOCALONLY;
 
-    // Device identity for protocol bridge routing
-    void SetGuid(uint64_t guid) LOCALONLY;
-    uint64_t GetGuid() const LOCALONLY;
+    // Runtime endpoint identity for service routing. This is never a persistent
+    // CoreAudio UID and is unrelated to the observed Config-ROM EUI-64.
+    void SetEndpointId(uint64_t endpointId) LOCALONLY;
+    uint64_t GetEndpointId() const LOCALONLY;
 
     // Request a device sample-rate change (CoreAudio HandleChangeSampleRate ->
     // DICE CLOCK_SELECT + duplex reconfigure). This is IIG dispatch between two
@@ -166,7 +173,7 @@ struct ASFWAudioNub_IVars {
     IOService* parentDriver;              // ASFWDriver instance (not retained, provider lifetime)
 
     // Audio channel counts (read from ASFWDriver properties; may be refined from protocol runtime caps)
-    uint64_t guid{0};
+    uint64_t endpointId{0};
     uint32_t channelCount{2};
     uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
     uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)

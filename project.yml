@@ -1,6 +1,6 @@
 # XcodeGen spec for ASFW.xcodeproj — the pbxproj is GENERATED from this file.
 # Edit this spec (never the pbxproj), then run `xcodegen generate` (build.sh
-# does it automatically) and commit the regenerated project alongside it.
+# does it automatically). The generated project is gitignored and never committed.
 #
 # Fidelity notes (mirrors the hand-maintained project this replaced):
 # - The app has no Info.plist file on purpose (GENERATE_INFOPLIST_FILE=YES);
@@ -97,6 +97,8 @@ targets:
     type: com.apple.product-type.driver-extension
     platform: macOS
     sources:
+      # Recursive inclusion intentionally covers the normalized Audio/Devices,
+      # Audio/Duplex, Audio/Families, and Protocols/AVC source trees.
       - path: ASFWDriver
         excludes:
           - "Info.plist"

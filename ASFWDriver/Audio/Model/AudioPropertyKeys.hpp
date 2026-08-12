@@ -6,9 +6,15 @@
 namespace ASFW::Audio::Model::PropertyKeys {
 
 inline constexpr const char* kDeviceName = "ASFWDeviceName";
+inline constexpr const char* kVendorName = "ASFWVendorName";
+inline constexpr const char* kCoreAudioUid = "ASFWCoreAudioUID";
+inline constexpr const char* kEndpointProfile = "ASFWAudioEndpointProfileV1";
+inline constexpr const char* kEndpointId = "ASFWAudioEndpointID";
+inline constexpr const char* kDeviceInstanceId = "ASFWDeviceInstanceID";
+inline constexpr const char* kObservedGuid = "ASFWObservedGUID";
+inline constexpr const char* kPersistentIdentityStatus = "ASFWPersistentIdentityStatus";
 inline constexpr const char* kChannelCount = "ASFWChannelCount";
 inline constexpr const char* kSampleRates = "ASFWSampleRates";
-inline constexpr const char* kGuid = "ASFWGUID";
 inline constexpr const char* kVendorId = "ASFWVendorID";
 inline constexpr const char* kModelId = "ASFWModelID";
 inline constexpr const char* kInputChannelCount = "ASFWInputChannelCount";

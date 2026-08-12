@@ -5,54 +5,43 @@
 
 #include "AudioEndpointRuntime.hpp"
 #include "AudioRuntimeRegistry.hpp"
-#include "../../Discovery/FWDevice.hpp"
+#include "../../Logging/Logging.hpp"
 
 #include <utility>
 
 namespace ASFW::Audio {
 
 AudioCoordinator::AudioCoordinator(IOService* driver,
-                                   Discovery::IDeviceManager& deviceManager,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                    Driver::IsochService& isoch,
-                                    Driver::HardwareInterface& hardware) noexcept
+                                   Driver::IsochService& isoch,
+                                   Driver::HardwareInterface& hardware) noexcept
     : publisher_(driver)
-    , deviceManager_(deviceManager)
-    , registry_(registry)
     , runtime_(runtime)
     , hostTransport_(isoch)
-    , duplexCoordinator_(registry_, runtime_, hostTransport_, hardware, &teardownRequested_,
-                         [this](uint64_t guid) -> Runtime::IDirectAudioBindingSource* {
-                             auto endpoint = runtime_.FindEndpointRuntime(guid);
-                             return endpoint ? endpoint.get() : nullptr;
-                         })
-    , dice_(publisher_, registry_, runtime_, duplexCoordinator_, hardware)
-    , avc_(publisher_, registry_, runtime_, hostTransport_, duplexCoordinator_, hardware) {
+    , duplexCoordinator_(
+          registry, runtime_, hostTransport_, hardware, &teardownRequested_,
+          [this](EndpointId endpointId)
+              -> Runtime::IDirectAudioBindingSource* {
+              auto endpoint = runtime_.FindEndpointRuntime(endpointId);
+              return endpoint ? endpoint.get() : nullptr;
+          }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
-        ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
+        ASFW_LOG_ERROR(Audio, "AudioCoordinator: lock allocation failed");
     }
-
-    deviceManager_.RegisterDeviceObserver(this);
-    hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
-    ASFW_LOG(Audio, "AudioCoordinator: Registered device observer");
+    hostTransport_.SetTimingLossCallback(
+        [this](EndpointId endpointId) {
+            HandleHostTimingLoss(endpointId);
+        });
 }
 
 AudioCoordinator::~AudioCoordinator() noexcept {
-    deviceManager_.UnregisterDeviceObserver(this);
-    hostTransport_.SetTimingLossCallback({});
-    hostTransport_.SetTxPreparationCallback({});
-    hostTransport_.SetClockAnchorReadyCallback({});
-
+    BeginTeardown();
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
     }
-}
-
-void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
-    runtime_.SetCMPClient(client);
 }
 
 void AudioCoordinator::SetTxPreparationCallback(
@@ -65,421 +54,265 @@ void AudioCoordinator::SetClockAnchorReadyCallback(
     hostTransport_.SetClockAnchorReadyCallback(std::move(callback));
 }
 
-void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
-    if (!device) return;
-    const uint64_t guid = device->GetGUID();
-    duplexCoordinator_.AcknowledgeDevicePresent(guid);
-    if (lock_) {
-        IOLockLock(lock_);
-        remoteLostGuids_.erase(guid);
-        IOLockUnlock(lock_);
-    }
-    if (BackendForGuid(guid) == &dice_) {
-        dice_.OnDeviceRecordUpdated(guid);
-    }
+void AudioCoordinator::SetSessionStreamingCallback(
+    SessionStreamingCallback callback) noexcept {
+    if (!lock_) return;
+    IOLockLock(lock_);
+    sessionStreamingCallback_ = std::move(callback);
+    IOLockUnlock(lock_);
 }
 
-void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
-    if (!device) return;
-    const uint64_t guid = device->GetGUID();
-    duplexCoordinator_.AcknowledgeDevicePresent(guid);
-    if (lock_) {
-        IOLockLock(lock_);
-        remoteLostGuids_.erase(guid);
-        IOLockUnlock(lock_);
-    }
-    auto* backend = BackendForGuid(guid);
-    if (backend == &dice_) {
-        dice_.OnDeviceRecordUpdated(guid);
-    }
+void AudioCoordinator::EndpointReady(
+    std::shared_ptr<const Devices::ResolvedAudioEndpointProfile> profile,
+    std::shared_ptr<IDeviceProtocol> protocolHold) noexcept {
+    if (!profile || !profile->endpointId || teardownRequested_.load()) return;
 
-    bool recoverActiveStream = false;
-    if (lock_) {
-        IOLockLock(lock_);
-        recoverActiveStream = (activeGuid_ == guid);
-        IOLockUnlock(lock_);
-    }
-
-    if (!recoverActiveStream) {
+    auto runtime = runtime_.InsertResolved(profile, std::move(protocolHold));
+    if (!runtime) {
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioSession] endpoint=%llu runtime installation failed",
+                       profile->endpointId.value);
         return;
     }
-
-    if (backend == &dice_) {
-        ASFW_LOG(Audio,
-                 "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
-                 guid);
-        dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
-    } else if (backend == &avc_) {
-        avc_.OnDeviceResumed(guid);
-    }
-}
-
-void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
-    if (!device) {
-        return;
-    }
-
-    const uint64_t guid = device->GetGUID();
-    bool suspendedActiveStream = false;
+    duplexCoordinator_.AcknowledgeDevicePresent(profile->endpointId);
     if (lock_) {
         IOLockLock(lock_);
-        suspendedActiveStream = (activeGuid_ == guid);
+        invalidatedEndpoints_.erase(profile->endpointId);
         IOLockUnlock(lock_);
     }
 
-    if (!suspendedActiveStream) {
+    if (!publisher_.EnsureNub(*profile, "resolved-endpoint")) {
+        runtime_.Remove(profile->endpointId);
+        duplexCoordinator_.CancelRemoteDevice(profile->endpointId);
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioSession] endpoint=%llu nub publication failed",
+                       profile->endpointId.value);
         return;
     }
-
-    ASFW_LOG_WARNING(Audio,
-                     "AudioCoordinator: Active device suspended; waiting for resume to recover GUID=0x%016llx",
-                     guid);
-}
-
-void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
-    if (guid == 0) {
-        return;
-    }
-
-    bool wasActive = false;
-    bool firstRemoval = true;
-    if (lock_) {
-        IOLockLock(lock_);
-        firstRemoval = remoteLostGuids_.insert(guid).second;
-        wasActive = (activeGuid_ == guid);
-        if (wasActive) {
-            activeGuid_ = 0;
-        }
-        IOLockUnlock(lock_);
-    }
-    if (!firstRemoval) {
-        return;
-    }
-
-    // Discovery has completed a new-generation scan and confirmed this GUID is
-    // absent. Latch before touching backend work: delayed recovery and StopIO
-    // callbacks must not recreate a session for the old route.
-    duplexCoordinator_.CancelRemoteDevice(guid);
-    auto* backend = BackendForGuid(guid);
-    if (backend == &dice_) {
-        dice_.CancelRemoteDeviceWork(guid);
-    } else if (backend == &avc_) {
-        avc_.CancelRemoteDeviceWork(guid);
-    } else {
-        ASFW_LOG_WARNING(Audio,
-                         "AudioCoordinator: remote-device-lost has no backend GUID=0x%016llx",
-                         guid);
-    }
-
-    kern_return_t hostStatus = kIOReturnSuccess;
-    if (wasActive) {
-        // Do not release IRM resources after the reset that proved the remote
-        // device absent: that allocation is already invalid in this generation.
-        hostStatus = StopHostTransport("remote-device-lost", true);
-        if (hostStatus != kIOReturnSuccess) {
-            ASFW_LOG_ERROR(Audio,
-                           "AudioCoordinator: remote-device host teardown incomplete "
-                           "GUID=0x%016llx kr=0x%08x; completing removal",
-                           guid, hostStatus);
-        }
-    }
-
-    // Drop cross-seam transport views before unpublishing CoreAudio. Runtime
-    // shared_ptr copies keep an already executing control operation alive, but
-    // the terminal latch prevents it from starting a new duplex session.
-    runtime_.Remove(guid);
-    publisher_.TerminateNub(guid, "remote-device-lost");
-    duplexCoordinator_.ClearSession(guid);
     ASFW_LOG(Audio,
-             "[Lifecycle] AudioCoordinator remote-device-lost owner GUID=0x%016llx "
-             "active=%u host=0x%08x",
-             guid, wasActive ? 1U : 0U, hostStatus);
+             "[AudioSession] endpoint=%llu provider=%u published instance=%llu observedGUID=%llx",
+             profile->endpointId.value,
+             static_cast<unsigned>(profile->familyProvider),
+             profile->deviceInstanceId.value,
+             profile->observedGuid);
 }
 
-void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
-                                                   const Model::ASFWAudioDevice& config) noexcept {
-    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
-        endpoint->UpdateConfig(config);
-    }
-    avc_.OnAudioConfigurationReady(guid, config);
-}
-
-void AudioCoordinator::HandleCycleInconsistent() noexcept {
-    uint64_t guid = 0;
+void AudioCoordinator::QuiesceEndpoint(EndpointId endpointId) noexcept {
+    if (!endpointId) return;
+    bool wasActive = false;
     if (lock_) {
         IOLockLock(lock_);
-        guid = activeGuid_;
+        wasActive = activeEndpoint_ == endpointId;
+        if (wasActive) activeEndpoint_ = {};
         IOLockUnlock(lock_);
     }
-
-    if (guid == 0) {
-        if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-            ASFW_LOG(Audio, "AudioCoordinator: Ignoring cycleInconsistent with no active audio GUID");
+    if (wasActive) {
+        const IOReturn status = duplexCoordinator_.StopStreaming(endpointId);
+        if (status != kIOReturnSuccess && status != kIOReturnNoDevice &&
+            status != kIOReturnNotReady) {
+            ASFW_LOG_WARNING(Audio,
+                             "[AudioSession] endpoint=%llu quiesce status=0x%x",
+                             endpointId.value, status);
         }
-        return;
+        (void)StopHostTransport("endpoint-quiesce", true);
     }
-
-    if (BackendForGuid(guid) != &dice_) {
-        if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-            ASFW_LOG(Audio,
-                     "AudioCoordinator: Ignoring cycleInconsistent for non-DICE active GUID=0x%016llx",
-                     guid);
-        }
-        return;
+    if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+        endpoint->MarkStreaming(false);
     }
-
-    ASFW_LOG_WARNING(Audio,
-                     "AudioCoordinator: cycleInconsistent observed; scheduling DICE recovery GUID=0x%016llx",
-                     guid);
-    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterCycleInconsistent);
+    (void)NotifySessionStreaming(endpointId, false);
 }
 
-IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
-    if (guid == 0) return nullptr;
-
-    const auto record = registry_.SnapshotByGuid(guid);
-    if (!record.has_value()) {
-        return &avc_;
-    }
-
-    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
-    if (integration == DeviceIntegrationMode::kHardcodedNub) {
-        return &dice_;
-    }
-
-    return &avc_;
-}
-
-IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
-    if (guid == 0) return kIOReturnBadArgument;
-
-    bool setActive = false;
+void AudioCoordinator::InvalidateEndpointBindings(EndpointId endpointId) noexcept {
+    if (!endpointId) return;
+    duplexCoordinator_.CancelRemoteDevice(endpointId);
+    runtime_.Remove(endpointId);
     if (lock_) {
         IOLockLock(lock_);
-        if (remoteLostGuids_.contains(guid)) {
+        invalidatedEndpoints_.insert(endpointId);
+        IOLockUnlock(lock_);
+    }
+}
+
+void AudioCoordinator::TerminateEndpoint(EndpointId endpointId) noexcept {
+    publisher_.TerminateNub(endpointId, "session-retired");
+    duplexCoordinator_.ClearSession(endpointId);
+}
+
+IOReturn AudioCoordinator::StartStreaming(EndpointId endpointId) noexcept {
+    if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) {
+        return kIOReturnNotReady;
+    }
+    if (!runtime_.FindProfile(endpointId)) return kIOReturnNoDevice;
+
+    bool alreadyActive = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        if (invalidatedEndpoints_.contains(endpointId)) {
             IOLockUnlock(lock_);
             return kIOReturnNoDevice;
         }
-        if (activeGuid_ == 0) {
-            activeGuid_ = guid;
-            setActive = true;
-        } else if (activeGuid_ == guid) {
-            IOLockUnlock(lock_);
-            // Idempotent start: avoid reconfiguring already-running IR/IT contexts.
-            return kIOReturnSuccess;
+        if (!activeEndpoint_) {
+            activeEndpoint_ = endpointId;
+        } else if (activeEndpoint_ == endpointId) {
+            alreadyActive = true;
         } else {
-            const uint64_t active = activeGuid_;
             IOLockUnlock(lock_);
-
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: StartStreaming busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            // TODO(ASFW-MULTIDEVICE): Multi-device streaming is not implemented.
-            // This is the explicit v1 multi-device boundary: multiple GUIDs may
-            // publish nubs/runtimes, but only one GUID may own isoch transport.
-            // Simultaneous streaming starts here and requires per-GUID IR/IT
-            // contexts, timing bridge, IRM/channel allocation, and backend sessions.
             return kIOReturnBusy;
         }
         IOLockUnlock(lock_);
     }
 
-    auto* backend = BackendForGuid(guid);
-    if (!backend) {
-        if (setActive && lock_) {
-            IOLockLock(lock_);
-            if (activeGuid_ == guid) activeGuid_ = 0;
-            IOLockUnlock(lock_);
-        }
-        return kIOReturnNotReady;
+    if (alreadyActive) {
+        return NotifySessionStreaming(endpointId, true)
+            ? kIOReturnSuccess
+            : kIOReturnNoDevice;
     }
 
-    const IOReturn kr = backend->StartStreaming(guid);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: StartStreaming failed backend=%{public}s GUID=0x%016llx kr=0x%x",
-                       backend->Name(),
-                       guid,
-                       kr);
-        if (setActive && lock_) {
+    const IOReturn status = duplexCoordinator_.StartStreaming(endpointId);
+    if (status != kIOReturnSuccess) {
+        if (lock_) {
             IOLockLock(lock_);
-            if (activeGuid_ == guid) activeGuid_ = 0;
+            if (activeEndpoint_ == endpointId) activeEndpoint_ = {};
             IOLockUnlock(lock_);
         }
-        return kr;
+        return status;
     }
-
-    ASFW_LOG(Audio,
-             "AudioCoordinator: StartStreaming ok backend=%{public}s GUID=0x%016llx",
-             backend->Name(),
-             guid);
+    if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+        endpoint->MarkStreaming(true);
+    }
+    if (!NotifySessionStreaming(endpointId, true)) {
+        (void)duplexCoordinator_.StopStreaming(endpointId);
+        if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+            endpoint->MarkStreaming(false);
+        }
+        if (lock_) {
+            IOLockLock(lock_);
+            if (activeEndpoint_ == endpointId) activeEndpoint_ = {};
+            IOLockUnlock(lock_);
+        }
+        return kIOReturnNoDevice;
+    }
     return kIOReturnSuccess;
 }
 
-IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
-    if (guid == 0) return kIOReturnBadArgument;
-
+IOReturn AudioCoordinator::StopStreaming(EndpointId endpointId) noexcept {
+    if (!endpointId) return kIOReturnBadArgument;
     if (lock_) {
         IOLockLock(lock_);
-        if (remoteLostGuids_.contains(guid)) {
+        if (invalidatedEndpoints_.contains(endpointId)) {
             IOLockUnlock(lock_);
             return kIOReturnSuccess;
         }
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
+        if (activeEndpoint_ && activeEndpoint_ != endpointId) {
             IOLockUnlock(lock_);
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: StopStreaming busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
             return kIOReturnBusy;
         }
         IOLockUnlock(lock_);
     }
-
-    auto* backend = BackendForGuid(guid);
-    if (!backend) return kIOReturnNotReady;
-
-    const IOReturn kr = backend->StopStreaming(guid);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: StopStreaming failed backend=%{public}s GUID=0x%016llx kr=0x%x",
-                       backend->Name(),
-                       guid,
-                       kr);
-        return kr;
-    }
-
-    if (lock_) {
+    const IOReturn status = duplexCoordinator_.StopStreaming(endpointId);
+    if (status == kIOReturnSuccess && lock_) {
         IOLockLock(lock_);
-        if (activeGuid_ == guid) activeGuid_ = 0;
+        if (activeEndpoint_ == endpointId) activeEndpoint_ = {};
         IOLockUnlock(lock_);
     }
-
-    ASFW_LOG(Audio,
-             "AudioCoordinator: StopStreaming ok backend=%{public}s GUID=0x%016llx",
-             backend->Name(),
-             guid);
-    return kIOReturnSuccess;
-}
-
-IOReturn AudioCoordinator::RequestClockConfig(
-    uint64_t guid,
-    const AudioClockConfig& desiredClock,
-    DuplexRestartReason reason) noexcept {
-    if (guid == 0) {
-        return kIOReturnBadArgument;
-    }
-
-    if (lock_) {
-        IOLockLock(lock_);
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: RequestClockConfig busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            return kIOReturnBusy;
+    if (status == kIOReturnSuccess) {
+        if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+            endpoint->MarkStreaming(false);
         }
-        IOLockUnlock(lock_);
+        (void)NotifySessionStreaming(endpointId, false);
     }
-
-    const auto record = registry_.SnapshotByGuid(guid);
-    if (!record.has_value()) {
-        ASFW_LOG_WARNING(Audio,
-                         "AudioCoordinator: RequestDiceClockConfig no registry record for GUID=0x%016llx (device not registered yet?)",
-                         guid);
-        return kIOReturnNotReady;
-    }
-
-    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
-    if (integration != DeviceIntegrationMode::kHardcodedNub) {
-        return kIOReturnUnsupported;
-    }
-
-    const IOReturn kr = dice_.RequestClockConfig(guid, desiredClock, reason);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: RequestClockConfig failed GUID=0x%016llx kr=0x%x",
-                       guid,
-                       kr);
-        return kr;
-    }
-
-    // Keep the endpoint's clock in step with the new device rate so the next
-    // StartIO seeds the direct-binding/ZTS clock at the live rate. Without this
-    // the binding stays at the publish-time rate (48 kHz) while the device runs
-    // 44.1 kHz, and CoreAudio churns StartIO/StopIO on the clock mismatch.
-    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
-        endpoint->SetCurrentSampleRate(desiredClock.sampleRateHz);
-    }
-
-    ASFW_LOG(Audio,
-             "AudioCoordinator: RequestClockConfig ok GUID=0x%016llx rate=%uHz reason=%u",
-             guid,
-             desiredClock.sampleRateHz,
-             static_cast<unsigned>(reason));
-    return kIOReturnSuccess;
-}
-
-void AudioCoordinator::BeginTeardown() noexcept {
-    ASFW_LOG(Audio, "AudioCoordinator: BeginTeardown");
-    teardownRequested_.store(true, std::memory_order_release);
-    // Block new backend recovery callbacks before draining either backend
-    // queue. The coordinator owns this one subscription for every family.
-    hostTransport_.SetTimingLossCallback({});
-    hostTransport_.SetTxPreparationCallback({});
-    hostTransport_.SetClockAnchorReadyCallback({});
-    dice_.BeginTeardown();
-    avc_.BeginTeardown();
-    const kern_return_t hostStatus = StopHostTransport("service-teardown");
-    if (hostStatus != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: host isoch teardown incomplete kr=0x%08x",
-                       hostStatus);
-    }
-
-    if (lock_) {
-        IOLockLock(lock_);
-        activeGuid_ = 0;
-        IOLockUnlock(lock_);
-    }
-}
-
-kern_return_t AudioCoordinator::StopHostTransport(const char* reason,
-                                                   bool generationInvalidated) noexcept {
-    const kern_return_t status = generationInvalidated
-                                     ? hostTransport_.StopAllAfterBusReset()
-                                     : hostTransport_.StopAll();
-    ASFW_LOG(Audio,
-             "[Lifecycle] AudioCoordinator host-isoch teardown owner reason=%{public}s "
-             "generation-invalidated=%u kr=0x%08x",
-             reason, generationInvalidated ? 1U : 0U, status);
     return status;
 }
 
-void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {
-    if (lock_) {
-        IOLockLock(lock_);
-        const bool remoteLost = remoteLostGuids_.contains(guid);
-        IOLockUnlock(lock_);
-        if (remoteLost) {
-            return;
+IOReturn AudioCoordinator::RequestClockConfig(
+    EndpointId endpointId,
+    const AudioClockConfig& desiredClock,
+    DuplexRestartReason reason) noexcept {
+    if (!endpointId) return kIOReturnBadArgument;
+    const auto profile = runtime_.FindProfile(endpointId);
+    if (!profile) return kIOReturnNoDevice;
+    bool supported = false;
+    for (uint8_t i = 0; i < profile->supportedRateCount; ++i) {
+        supported |= profile->supportedRates[i] == desiredClock.sampleRateHz;
+    }
+    if (!supported) return kIOReturnUnsupported;
+
+    const IOReturn status = duplexCoordinator_.RequestClockConfig(
+        endpointId, desiredClock, reason);
+    if (status == kIOReturnSuccess) {
+        if (auto endpoint = runtime_.FindEndpointRuntime(endpointId)) {
+            endpoint->SetCurrentSampleRate(desiredClock.sampleRateHz);
         }
     }
-    if (auto* backend = BackendForGuid(guid); backend == &dice_) {
-        dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
-    } else if (backend == &avc_) {
-        avc_.HandleTimingLoss(guid);
+    return status;
+}
+
+void AudioCoordinator::HandleCycleInconsistent() noexcept {
+    EndpointId endpointId{};
+    if (lock_) {
+        IOLockLock(lock_);
+        endpointId = activeEndpoint_;
+        IOLockUnlock(lock_);
+    }
+    if (endpointId) {
+        (void)duplexCoordinator_.RecoverStreaming(
+            endpointId, DuplexRestartReason::kRecoverAfterCycleInconsistent);
     }
 }
 
-std::optional<uint64_t> AudioCoordinator::GetSinglePublishedGuid() const noexcept {
-    // AudioNubPublisher is the source of truth for published audio endpoints.
-    // This is intentionally used only for debug paths that still lack GUID selection.
-    return publisher_.GetSingleGuid();
+void AudioCoordinator::HandleHostTimingLoss(EndpointId endpointId) noexcept {
+    if (!endpointId) return;
+    if (lock_) {
+        IOLockLock(lock_);
+        const bool invalidated = invalidatedEndpoints_.contains(endpointId);
+        IOLockUnlock(lock_);
+        if (invalidated) return;
+    }
+    (void)duplexCoordinator_.RecoverStreaming(
+        endpointId, DuplexRestartReason::kRecoverAfterTimingLoss);
+}
+
+void AudioCoordinator::BeginTeardown() noexcept {
+    if (teardownRequested_.exchange(true, std::memory_order_acq_rel)) return;
+    hostTransport_.SetTimingLossCallback({});
+    hostTransport_.SetTxPreparationCallback({});
+    hostTransport_.SetClockAnchorReadyCallback({});
+    (void)StopHostTransport("service-teardown", false);
+    if (lock_) {
+        IOLockLock(lock_);
+        activeEndpoint_ = {};
+        IOLockUnlock(lock_);
+    }
+}
+
+bool AudioCoordinator::NotifySessionStreaming(EndpointId endpointId,
+                                              bool streaming) noexcept {
+    SessionStreamingCallback callback;
+    if (lock_) {
+        IOLockLock(lock_);
+        callback = sessionStreamingCallback_;
+        IOLockUnlock(lock_);
+    }
+    // Endpoint publication is session-manager owned. Absence of the callback
+    // therefore means there is no authoritative live session to transition.
+    return callback && callback(endpointId, streaming);
+}
+
+kern_return_t AudioCoordinator::StopHostTransport(
+    const char* reason, bool generationInvalidated) noexcept {
+    const kern_return_t status = generationInvalidated
+        ? hostTransport_.StopAllAfterBusReset()
+        : hostTransport_.StopAll();
+    ASFW_LOG(Audio,
+             "[Lifecycle] AudioCoordinator host teardown reason=%{public}s reset=%u kr=0x%08x",
+             reason ? reason : "unknown", generationInvalidated ? 1U : 0U,
+             status);
+    return status;
+}
+
+std::optional<AudioCoordinator::EndpointId>
+AudioCoordinator::GetSinglePublishedEndpointId() const noexcept {
+    return publisher_.GetSingleEndpointId();
 }
 
 } // namespace ASFW::Audio

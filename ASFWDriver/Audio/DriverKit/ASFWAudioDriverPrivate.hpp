@@ -3,6 +3,7 @@
 #include "ASFWAudioDriver.h"
 #include "ASFWAudioNub.h"
 #include "Config/AudioDriverConfig.hpp"
+#include "Config/ResolvedAudioStreamProfile.hpp"
 #include "Controls/AudioControlBuilder.hpp"
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
@@ -33,10 +34,12 @@ static constexpr uint32_t kReportedSafetyOffsetFrames =
     ASFW::Audio::Config::kTxBufferProfile.safetyOffsetFrames;
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
-    uint64_t guid{0};
-    uint32_t vendorId{0};
-    uint32_t modelId{0};
+    uint64_t endpointId{0};
+    uint64_t deviceInstanceId{0};
+    uint64_t observedGuid{0};
     char deviceName[128]{};
+    char vendorName[128]{};
+    char coreAudioUid[192]{};
     uint32_t channelCount{0};
     uint32_t inputChannelCount{0};
     uint32_t outputChannelCount{0};
@@ -304,6 +307,7 @@ struct ASFWAudioDriver_IVars {
 
 
     AudioDriverDeviceState device;
+    ASFW::Audio::DriverKit::ResolvedAudioStreamProfile resolvedProfile;
     AudioDriverRuntimeState runtime;
 };
 

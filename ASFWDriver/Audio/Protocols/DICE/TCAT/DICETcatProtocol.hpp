@@ -64,6 +64,8 @@ public:
     const Audio::IDuplexDeviceControl* AsDuplexDeviceControl() const noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    bool GetSupportedSampleRates(std::vector<uint32_t>& outRates) const override;
+    bool GetClockCapabilities(uint32_t& outCapabilities) const override;
     bool GetChannelLabels(std::vector<std::string>& inNames,
                           std::vector<std::string>& outNames) const override;
 
@@ -127,6 +129,7 @@ private:
     AudioClockConfig selectedClock_{};
 
     std::atomic<uint32_t> runtimeSampleRateHz_{0};
+    std::atomic<uint32_t> clockCapabilities_{0};
     std::atomic<uint32_t> hostInputPcmChannels_{0};
     std::atomic<uint32_t> hostOutputPcmChannels_{0};
     std::atomic<uint32_t> deviceToHostAm824Slots_{0};

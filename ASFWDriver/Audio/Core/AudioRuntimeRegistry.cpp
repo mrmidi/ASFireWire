@@ -1,235 +1,119 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 ASFireWire Project
 
 #include "AudioRuntimeRegistry.hpp"
 
 #include "AudioEndpointRuntime.hpp"
-#include "../../Logging/Logging.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
-#include "../../Discovery/DiscoveryTypes.hpp"
-#include "../../Discovery/DeviceRegistry.hpp"
+#include "../../Logging/Logging.hpp"
 
 #include <algorithm>
 #include <vector>
 
-#if !defined(ASFW_HOST_TEST)
-#include "../Protocols/DeviceProtocolFactory.hpp"
-#include "../../Protocols/Ports/FireWireBusPort.hpp"
-#endif
-
 namespace ASFW::Audio {
 
 AudioRuntimeRegistry::AudioRuntimeRegistry() noexcept : lock_(IOLockAlloc()) {
-    if (!lock_) {
-        ASFW_LOG_ERROR(Audio, "AudioRuntimeRegistry: Failed to allocate lock");
-    }
+    if (!lock_) ASFW_LOG_ERROR(Audio, "AudioRuntimeRegistry: lock allocation failed");
 }
 
 AudioRuntimeRegistry::~AudioRuntimeRegistry() noexcept {
     Clear();
-    if (lock_) {
-        IOLockFree(lock_);
-        lock_ = nullptr;
-    }
+    if (lock_) IOLockFree(lock_);
 }
 
-std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::FindShared(uint64_t guid) noexcept {
-    std::shared_ptr<IDeviceProtocol> result;
-    if (lock_) {
-        IOLockLock(lock_);
-        auto it = protocolsByGuid_.find(guid);
-        if (it != protocolsByGuid_.end()) {
-            result = it->second; // copy keeps the protocol alive past the lock
-        }
-        IOLockUnlock(lock_);
-    }
+std::shared_ptr<IDeviceProtocol>
+AudioRuntimeRegistry::FindShared(Devices::AudioEndpointId endpointId) noexcept {
+    if (!lock_ || !endpointId) return nullptr;
+    IOLockLock(lock_);
+    const auto it = endpoints_.find(endpointId);
+    auto result = it != endpoints_.end() ? it->second.protocol : nullptr;
+    IOLockUnlock(lock_);
     return result;
 }
 
-std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::FindEndpointRuntime(uint64_t guid) noexcept {
-    std::shared_ptr<AudioEndpointRuntime> result;
-    if (lock_) {
-        IOLockLock(lock_);
-        auto it = endpointsByGuid_.find(guid);
-        if (it != endpointsByGuid_.end()) {
-            result = it->second;
-        }
-        IOLockUnlock(lock_);
-    }
+std::shared_ptr<AudioEndpointRuntime>
+AudioRuntimeRegistry::FindEndpointRuntime(Devices::AudioEndpointId endpointId) noexcept {
+    if (!lock_ || !endpointId) return nullptr;
+    IOLockLock(lock_);
+    const auto it = endpoints_.find(endpointId);
+    auto result = it != endpoints_.end() ? it->second.runtime : nullptr;
+    IOLockUnlock(lock_);
     return result;
 }
 
-std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::EnsureEndpointRuntime(uint64_t guid) noexcept {
-    if (guid == 0 || !lock_) {
+std::shared_ptr<const Devices::ResolvedAudioEndpointProfile>
+AudioRuntimeRegistry::FindProfile(Devices::AudioEndpointId endpointId) noexcept {
+    if (!lock_ || !endpointId) return nullptr;
+    IOLockLock(lock_);
+    const auto it = endpoints_.find(endpointId);
+    auto result = it != endpoints_.end() ? it->second.profile : nullptr;
+    IOLockUnlock(lock_);
+    return result;
+}
+
+std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::InsertResolved(
+    std::shared_ptr<const Devices::ResolvedAudioEndpointProfile> profile,
+    std::shared_ptr<IDeviceProtocol> protocol) noexcept {
+    if (!lock_ || !profile || !profile->endpointId || !profile->deviceInstanceId) {
         return nullptr;
     }
 
+    auto runtime = std::make_shared<AudioEndpointRuntime>(*profile);
+    Entry replacement{std::move(protocol), runtime, std::move(profile)};
+    Entry previous{};
     IOLockLock(lock_);
-    auto it = endpointsByGuid_.find(guid);
-    if (it != endpointsByGuid_.end()) {
-        auto existing = it->second;
-        IOLockUnlock(lock_);
-        return existing;
+    if (auto it = endpoints_.find(replacement.profile->endpointId);
+        it != endpoints_.end()) {
+        previous = std::move(it->second);
+        it->second = std::move(replacement);
+    } else {
+        endpoints_.emplace(replacement.profile->endpointId, std::move(replacement));
     }
-
-    auto created = std::make_shared<AudioEndpointRuntime>(guid);
-    endpointsByGuid_.emplace(guid, created);
     IOLockUnlock(lock_);
-    return created;
+    return runtime;
 }
 
 uint32_t AudioRuntimeRegistry::CopyAudioTelemetrySnapshots(
     Runtime::AudioTelemetrySnapshot& out) noexcept {
     out = {};
     out.version = Runtime::kAudioTelemetryWireVersion;
-    if (!lock_) {
-        return 0;
-    }
+    if (!lock_) return 0;
 
-    std::vector<std::shared_ptr<AudioEndpointRuntime>> endpoints;
+    std::vector<std::shared_ptr<AudioEndpointRuntime>> runtimes;
     IOLockLock(lock_);
-    endpoints.reserve(std::min<size_t>(
-        endpointsByGuid_.size(), Runtime::kAudioTelemetryMaxEndpoints));
-    for (const auto& [guid, endpoint] : endpointsByGuid_) {
-        (void)guid;
-        if (endpoint) {
-            endpoints.push_back(endpoint);
-        }
-        if (endpoints.size() == Runtime::kAudioTelemetryMaxEndpoints) {
-            break;
-        }
+    runtimes.reserve(std::min<size_t>(endpoints_.size(),
+                                      Runtime::kAudioTelemetryMaxEndpoints));
+    for (const auto& [endpointId, entry] : endpoints_) {
+        (void)endpointId;
+        if (entry.runtime) runtimes.push_back(entry.runtime);
+        if (runtimes.size() == Runtime::kAudioTelemetryMaxEndpoints) break;
     }
     IOLockUnlock(lock_);
 
-    for (const auto& endpoint : endpoints) {
-        if (endpoint->CopyAudioTelemetrySnapshot(
-                out.endpoints[out.endpointCount])) {
+    for (const auto& runtime : runtimes) {
+        if (runtime->CopyAudioTelemetrySnapshot(out.endpoints[out.endpointCount])) {
             ++out.endpointCount;
         }
     }
     return out.endpointCount;
 }
 
-std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
-    const Discovery::DeviceRecord& record,
-    Async::IFireWireBusOps* busOps,
-    Async::IFireWireBusInfo* busInfo,
-    Discovery::DeviceRegistry& routeRegistry,
-    IRM::IRMClient* irmClient) noexcept {
-    const uint64_t guid = record.guid;
-    const auto route = routeRegistry.CurrentRoute(guid);
-    if (!route.has_value()) {
-        return nullptr;
+void AudioRuntimeRegistry::Remove(Devices::AudioEndpointId endpointId) noexcept {
+    Entry removed{};
+    if (!lock_ || !endpointId) return;
+    IOLockLock(lock_);
+    if (auto it = endpoints_.find(endpointId); it != endpoints_.end()) {
+        removed = std::move(it->second);
+        endpoints_.erase(it);
     }
-
-    // Creation is orchestrator-serialized: EnsureForDevice runs only on the single Default
-    // queue (the controller discovery path), so there is no concurrent create for the same
-    // GUID. The lock below still guards the map against off-queue FindShared/Remove callers.
-    // Idempotent: an existing instance short-circuits (e.g. re-scan on resume).
-    if (auto existing = FindShared(guid)) {
-        existing->UpdateRuntimeContext(*route, nullptr);
-        return existing;
-    }
-
-#if !defined(ASFW_HOST_TEST)
-    const auto operationalNodeId = Discovery::TryOperationalNodeId(record.nodeId);
-    if (!busOps || !busInfo || !operationalNodeId.has_value()) {
-        ASFW_LOG(Audio,
-                 "AudioRuntimeRegistry: cannot create protocol for GUID=0x%016llx node=%u - bus "
-                 "ports or operational node id unavailable",
-                 guid,
-                 record.nodeId);
-        return nullptr;
-    }
-
-    // Create() returns nullptr for everything but a recognized vendor/model, which
-    // is exactly the gate the former DeviceRegistry::MaybeCreateKnownProtocol path
-    // applied (recognized devices are precisely those with a non-None integration
-    // mode). No protocol is created, and nothing is logged, for unknown devices.
-    auto created = DeviceProtocolFactory::Create(
-        record.vendorId, record.modelId, *busOps, *busInfo, routeRegistry,
-        *route,
-        irmClient,
-        cmpClient_, timerScheduler_);
-    if (!created) {
-        return nullptr;
-    }
-
-    ASFW_LOG(Audio,
-             "AudioRuntimeRegistry: ✅ protocol created: %{public}s for GUID=0x%016llx node=%u",
-             created->GetName(),
-             guid,
-             record.nodeId);
-    const auto initKr = created->Initialize();
-    if (initKr != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio,
-                       "AudioRuntimeRegistry: protocol Initialize failed (0x%x) for GUID=0x%016llx",
-                       initKr,
-                       guid);
-        return nullptr;
-    }
-
-    std::shared_ptr<IDeviceProtocol> shared = std::move(created);
-    if (lock_) {
-        IOLockLock(lock_);
-        protocolsByGuid_[guid] = shared;
-        IOLockUnlock(lock_);
-    }
-    return shared;
-#else
-    (void)busOps;
-    (void)busInfo;
-    (void)routeRegistry;
-    (void)irmClient;
-    return nullptr;
-#endif
-}
-
-void AudioRuntimeRegistry::Insert(uint64_t guid,
-                                  std::shared_ptr<IDeviceProtocol> protocol) noexcept {
-    std::shared_ptr<IDeviceProtocol> previous; // destruct outside the lock
-    if (lock_) {
-        IOLockLock(lock_);
-        auto it = protocolsByGuid_.find(guid);
-        if (it != protocolsByGuid_.end()) {
-            previous = std::move(it->second);
-            it->second = std::move(protocol);
-        } else {
-            protocolsByGuid_.emplace(guid, std::move(protocol));
-        }
-        IOLockUnlock(lock_);
-    }
-}
-
-void AudioRuntimeRegistry::Remove(uint64_t guid) noexcept {
-    std::shared_ptr<IDeviceProtocol> removed; // destruct outside the lock
-    std::shared_ptr<AudioEndpointRuntime> removedEndpoint;
-    if (lock_) {
-        IOLockLock(lock_);
-        auto it = protocolsByGuid_.find(guid);
-        if (it != protocolsByGuid_.end()) {
-            removed = std::move(it->second);
-            protocolsByGuid_.erase(it);
-        }
-        auto endpointIt = endpointsByGuid_.find(guid);
-        if (endpointIt != endpointsByGuid_.end()) {
-            removedEndpoint = std::move(endpointIt->second);
-            endpointsByGuid_.erase(endpointIt);
-        }
-        IOLockUnlock(lock_);
-    }
+    IOLockUnlock(lock_);
 }
 
 void AudioRuntimeRegistry::Clear() noexcept {
-    std::unordered_map<uint64_t, std::shared_ptr<IDeviceProtocol>> drained;
-    std::unordered_map<uint64_t, std::shared_ptr<AudioEndpointRuntime>> drainedEndpoints;
-    if (lock_) {
-        IOLockLock(lock_);
-        drained.swap(protocolsByGuid_);
-        drainedEndpoints.swap(endpointsByGuid_);
-        IOLockUnlock(lock_);
-    }
-    // drained destructs here, outside the lock, releasing each protocol.
+    std::map<Devices::AudioEndpointId, Entry> drained;
+    if (!lock_) return;
+    IOLockLock(lock_);
+    drained.swap(endpoints_);
+    IOLockUnlock(lock_);
 }
 
 } // namespace ASFW::Audio

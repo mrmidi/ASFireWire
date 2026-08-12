@@ -1,12 +1,14 @@
 #pragma once
 
 #include "AudioTransportControlBlock.hpp"
+#include "../../Devices/AudioIdentity.hpp"
 
 #include <cstdint>
 
 namespace ASFW::Audio::Runtime {
 
 struct DirectAudioBindingSnapshot {
+    Devices::AudioEndpointId endpointId{};
     uint64_t generation{0};
 
     float* inputBase{nullptr};

@@ -4,8 +4,8 @@
 #pragma once
 
 #include "../DriverKit/Runtime/DirectAudioBindingSource.hpp"
+#include "../Devices/ResolvedAudioEndpointProfile.hpp"
 #include "../Runtime/AudioTelemetrySnapshot.hpp"
-#include "../Model/ASFWAudioDevice.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
@@ -21,6 +21,7 @@
 #endif
 
 #include <atomic>
+#include <algorithm>
 #include <cstring>
 #include <cstdint>
 #include <new>
@@ -29,7 +30,15 @@ namespace ASFW::Audio {
 
 class AudioEndpointRuntime final : public Runtime::IDirectAudioBindingSource {
 public:
-    explicit AudioEndpointRuntime(uint64_t guid) noexcept : guid_(guid), lock_(IOLockAlloc()) {}
+    explicit AudioEndpointRuntime(
+        const Devices::ResolvedAudioEndpointProfile& profile) noexcept
+        : endpointId_(profile.endpointId),
+          deviceInstanceId_(profile.deviceInstanceId),
+          observedGuid_(profile.observedGuid),
+          configuredOutputChannels_(PhysicalPlaybackChannels(profile.runtimeCaps)),
+          configuredInputChannels_(PhysicalCaptureChannels(profile.runtimeCaps)),
+          currentSampleRateHz_(profile.currentSampleRateHz),
+          lock_(IOLockAlloc()) {}
     ~AudioEndpointRuntime() noexcept {
         ReleaseDirectAudioMemory();
         if (lock_) {
@@ -41,18 +50,11 @@ public:
     AudioEndpointRuntime(const AudioEndpointRuntime&) = delete;
     AudioEndpointRuntime& operator=(const AudioEndpointRuntime&) = delete;
 
-    [[nodiscard]] uint64_t Guid() const noexcept { return guid_; }
-
-    void UpdateConfig(const Model::ASFWAudioDevice& config) noexcept {
-        if (lock_) {
-            IOLockLock(lock_);
-        }
-        config_ = config;
-        if (lock_) {
-            IOLockUnlock(lock_);
-        }
-        configValid_.store(true, std::memory_order_release);
+    [[nodiscard]] Devices::AudioEndpointId EndpointId() const noexcept { return endpointId_; }
+    [[nodiscard]] Discovery::DeviceInstanceId DeviceInstanceId() const noexcept {
+        return deviceInstanceId_;
     }
+    [[nodiscard]] uint64_t ObservedGuid() const noexcept { return observedGuid_; }
 
     // Update only the current sample rate. The DICE clock can change (Audio MIDI
     // Setup / Logic) without a full config rebuild; the next StartIO seeds the
@@ -61,11 +63,12 @@ public:
     // StartIO/StopIO.
     //
     // The binding the IR actually reads reports directSampleRateHz_, not
-    // config_.currentSampleRate. That field (and directGeneration_) is latched
+    // currentSampleRateHz_. That field (and directGeneration_) is latched
     // only when the direct-audio memory is allocated in
     // EnsureDirectAudioMemoryLocked, which does not re-run on an idle rate change
     // because the ring buffers are rate-independent (fixed kAudioRingBufferFrames)
-    // and are allocated once at bring-up then reused. So updating config_ alone
+    // and are allocated once at bring-up then reused. So updating the numeric
+    // endpoint geometry alone
     // leaves the binding (and the ZTS the HAL judges) stuck at the publish-time
     // 48 kHz. Refresh directSampleRateHz_ and bump the generation here so
     // CopyDirectAudioBinding reports the new rate and the IR re-arms the RX/ZTS
@@ -77,7 +80,7 @@ public:
         if (lock_) {
             IOLockLock(lock_);
         }
-        config_.currentSampleRate = sampleRateHz;
+        currentSampleRateHz_ = sampleRateHz;
         if (directSampleRateHz_ != 0 && directSampleRateHz_ != sampleRateHz) {
             directSampleRateHz_ = sampleRateHz;
             ++directGeneration_;
@@ -85,20 +88,6 @@ public:
         if (lock_) {
             IOLockUnlock(lock_);
         }
-    }
-
-    [[nodiscard]] bool CopyConfig(Model::ASFWAudioDevice& outConfig) const noexcept {
-        if (!configValid_.load(std::memory_order_acquire)) {
-            return false;
-        }
-        if (lock_) {
-            IOLockLock(lock_);
-        }
-        outConfig = config_;
-        if (lock_) {
-            IOLockUnlock(lock_);
-        }
-        return true;
     }
 
     [[nodiscard]] kern_return_t EnsureDirectAudioMemory() noexcept {
@@ -138,15 +127,15 @@ public:
             !outOutputFrames || !outOutputChannels || !outInputFrames || !outInputChannels ||
             !outSampleRateHz || !outGeneration) {
             ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy failed bad_args guid=0x%016llx",
-                     guid_);
+                     "ADK DBG MEM runtime copy failed bad_args observedGuid=0x%016llx",
+                     observedGuid_);
             return kIOReturnBadArgument;
         }
 
         if (!lock_) {
             ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy failed no_lock guid=0x%016llx",
-                     guid_);
+                     "ADK DBG MEM runtime copy failed no_lock observedGuid=0x%016llx",
+                     observedGuid_);
             return kIOReturnNotReady;
         }
 
@@ -157,8 +146,8 @@ public:
         kern_return_t kr = EnsureDirectAudioMemoryLocked();
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy ensure_failed guid=0x%016llx kr=0x%x",
-                     guid_,
+                     "ADK DBG MEM runtime copy ensure_failed observedGuid=0x%016llx kr=0x%x",
+                     observedGuid_,
                      kr);
             if (lock_) {
                 IOLockUnlock(lock_);
@@ -168,8 +157,8 @@ public:
 
         if (!HasCompleteDirectAudioMemoryLocked()) {
             ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy failed incomplete guid=0x%016llx gen=%llu outMem=%p inMem=%p ctlMem=%p outMap=%p inMap=%p ctlMap=%p control=%p rate=%u",
-                     guid_,
+                     "ADK DBG MEM runtime copy failed incomplete observedGuid=0x%016llx gen=%llu outMem=%p inMem=%p ctlMem=%p outMap=%p inMap=%p ctlMap=%p control=%p rate=%u",
+                     observedGuid_,
                      directGeneration_,
                      static_cast<void*>(directOutputMemory_),
                      static_cast<void*>(directInputMemory_),
@@ -200,8 +189,8 @@ public:
         *outGeneration = directGeneration_;
 
         ASFW_LOG(DirectAudio,
-                 "ADK DBG MEM runtime copy ok guid=0x%016llx gen=%llu outMem=%p outFrames=%u outCh=%u inMem=%p inFrames=%u inCh=%u controlMem=%p rate=%u",
-                 guid_,
+                 "ADK DBG MEM runtime copy ok observedGuid=0x%016llx gen=%llu outMem=%p outFrames=%u outCh=%u inMem=%p inFrames=%u inCh=%u controlMem=%p rate=%u",
+                 observedGuid_,
                  *outGeneration,
                  static_cast<void*>(*outOutputMemory),
                  *outOutputFrames,
@@ -248,8 +237,8 @@ public:
         if (!HasCompleteDirectAudioMemoryLocked()) {
             IOLockUnlock(lock_);
             ASFW_LOG_RL(DirectAudio, "endpoint_bind/not_ready", 1000, OS_LOG_TYPE_DEFAULT,
-                        "ADK DBG BIND runtime get refused not_ready guid=0x%016llx gen=%llu control=%p rate=%u outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u",
-                        guid_,
+                        "ADK DBG BIND runtime get refused not_ready observedGuid=0x%016llx gen=%llu control=%p rate=%u outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u",
+                        observedGuid_,
                         directGeneration_,
                         static_cast<void*>(directControl_),
                         directSampleRateHz_,
@@ -262,6 +251,7 @@ public:
             return false;
         }
 
+        out.endpointId = endpointId_;
         out.generation = directGeneration_;
         out.outputBase = directOutputBase_;
         out.outputBytes = directOutputBytes_;
@@ -296,7 +286,9 @@ public:
         }
 
         IOLockLock(lock_);
-        out.guid = guid_;
+        out.endpointId = endpointId_.value;
+        out.deviceInstanceId = deviceInstanceId_.value;
+        out.observedGuid = observedGuid_;
         out.endpointGeneration = directGeneration_;
         if (streaming_.load(std::memory_order_acquire)) {
             out.flags |= Runtime::kAudioTelemetryStreaming;
@@ -313,25 +305,51 @@ public:
             out.inputChannels = directInputChannels_;
             out.inputFrameCapacityFrames = directInputCapacityFrames_;
             Runtime::CopyAudioTelemetrySnapshot(*directControl_, out);
-        } else if (configValid_.load(std::memory_order_acquire)) {
+        } else {
             // Keep a registered endpoint visible to diagnostics even before a
             // complete mapping exists (or after one was lost). Previously it
             // disappeared from the registry snapshot, making MCP's
             // endpointCount=0 indistinguishable from decoder/user-client
             // failure. No pointer escapes; only stable config values are used.
-            out.sampleRateHz = config_.currentSampleRate;
-            out.outputChannels = ClampAudioChannels(
-                config_.outputChannelCount ? config_.outputChannelCount
-                                           : config_.channelCount);
-            out.inputChannels = ClampAudioChannels(
-                config_.inputChannelCount ? config_.inputChannelCount
-                                          : config_.channelCount);
+            out.sampleRateHz = currentSampleRateHz_;
+            out.outputChannels = configuredOutputChannels_;
+            out.inputChannels = configuredInputChannels_;
         }
         IOLockUnlock(lock_);
         return true;
     }
 
 private:
+    [[nodiscard]] static uint32_t SumPcmChannels(
+        const AudioStreamWireInfo* streams, uint32_t count) noexcept {
+        uint32_t total = 0;
+        const uint32_t bounded = count < kMaxAudioStreamsPerDirection
+                                     ? count
+                                     : kMaxAudioStreamsPerDirection;
+        for (uint32_t i = 0; i < bounded; ++i) {
+            total += streams[i].pcmChannels;
+        }
+        return total;
+    }
+
+    [[nodiscard]] static uint32_t PhysicalPlaybackChannels(
+        const AudioStreamRuntimeCaps& caps) noexcept {
+        const uint32_t fromStreams = SumPcmChannels(
+            caps.hostToDeviceStreams, caps.hostToDeviceStreamCount);
+        return ClampAudioChannels(fromStreams != 0
+                                      ? fromStreams
+                                      : caps.hostOutputPcmChannels);
+    }
+
+    [[nodiscard]] static uint32_t PhysicalCaptureChannels(
+        const AudioStreamRuntimeCaps& caps) noexcept {
+        const uint32_t fromStreams = SumPcmChannels(
+            caps.deviceToHostStreams, caps.deviceToHostStreamCount);
+        return ClampAudioChannels(fromStreams != 0
+                                      ? fromStreams
+                                      : caps.hostInputPcmChannels);
+    }
+
     [[nodiscard]] static uint32_t ClampAudioChannels(uint32_t channels) noexcept {
         if (channels == 0) {
             return 0;
@@ -409,8 +427,8 @@ private:
         ++directGeneration_;
 
         ASFW_LOG(DirectAudio,
-                 "ADK DBG BIND runtime local_memory_ready guid=0x%016llx gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u",
-                 guid_,
+                 "ADK DBG BIND runtime local_memory_ready observedGuid=0x%016llx gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u",
+                 observedGuid_,
                  directGeneration_,
                  static_cast<const void*>(directOutputBase_),
                  directOutputBytes_,
@@ -464,31 +482,22 @@ private:
     }
 
     [[nodiscard]] kern_return_t EnsureDirectAudioMemoryLocked() noexcept {
-        if (!configValid_.load(std::memory_order_acquire)) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime ensure failed no_config guid=0x%016llx",
-                     guid_);
-            return kIOReturnNotReady;
-        }
-
         // Direct memory serves the physical DICE transport, not only visible
         // CoreAudio streams. A playback-only device can retain an operational
         // device->host stream for its firmware/clock protocol while explicitly
         // publishing zero CoreAudio input channels. In that case the aggregate
         // count is the transport buffer's safe fallback geometry.
-        const uint32_t outputChannels = ClampAudioChannels(
-            config_.outputChannelCount ? config_.outputChannelCount : config_.channelCount);
-        const uint32_t inputChannels = ClampAudioChannels(
-            config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
-        const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
+        const uint32_t outputChannels = configuredOutputChannels_;
+        const uint32_t inputChannels = configuredInputChannels_;
+        const uint32_t sampleRateHz = currentSampleRateHz_;
         const uint32_t outputFrames = Config::kAudioRingBufferFrames;
         const uint32_t inputFrames = Config::kAudioRingBufferFrames;
 
         if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0) {
             ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime ensure failed bad_config guid=0x%016llx agg=%u in=%u out=%u rate=%u",
-                     guid_,
-                     config_.channelCount,
+                     "ADK DBG MEM runtime ensure failed bad_config observedGuid=0x%016llx agg=%u in=%u out=%u rate=%u",
+                     observedGuid_,
+                     std::max(inputChannels, outputChannels),
                      inputChannels,
                      outputChannels,
                      sampleRateHz);
@@ -502,8 +511,8 @@ private:
             directInputChannels_ == inputChannels &&
             directSampleRateHz_ == sampleRateHz) {
             ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime ensure reuse guid=0x%016llx gen=%llu outFrames=%u outCh=%u inFrames=%u inCh=%u rate=%u",
-                     guid_,
+                     "ADK DBG MEM runtime ensure reuse observedGuid=0x%016llx gen=%llu outFrames=%u outCh=%u inFrames=%u inCh=%u rate=%u",
+                     observedGuid_,
                      directGeneration_,
                      outputFrames,
                      outputChannels,
@@ -520,8 +529,8 @@ private:
         const uint64_t controlBytes = sizeof(Runtime::AudioTransportControlBlock);
 
         ASFW_LOG(DirectAudio,
-                 "ADK DBG MEM runtime allocate guid=0x%016llx outBytes=%llu outFrames=%u outCh=%u inBytes=%llu inFrames=%u inCh=%u controlBytes=%llu rate=%u",
-                 guid_,
+                 "ADK DBG MEM runtime allocate observedGuid=0x%016llx outBytes=%llu outFrames=%u outCh=%u inBytes=%llu inFrames=%u inCh=%u controlBytes=%llu rate=%u",
+                 observedGuid_,
                  outputBytes,
                  outputFrames,
                  outputChannels,
@@ -533,13 +542,13 @@ private:
 
         kern_return_t kr = CreateMappedDirectBuffer(outputBytes, 64, &directOutputMemory_, &directOutputMap_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate output failed guid=0x%016llx kr=0x%x", guid_, kr);
+            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate output failed observedGuid=0x%016llx kr=0x%x", observedGuid_, kr);
             ReleaseDirectAudioMemoryLocked();
             return kr;
         }
         kr = CreateMappedDirectBuffer(inputBytes, 64, &directInputMemory_, &directInputMap_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate input failed guid=0x%016llx kr=0x%x", guid_, kr);
+            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate input failed observedGuid=0x%016llx kr=0x%x", observedGuid_, kr);
             ReleaseDirectAudioMemoryLocked();
             return kr;
         }
@@ -548,7 +557,7 @@ private:
                                       &directControlMemory_,
                                       &directControlMap_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate control failed guid=0x%016llx kr=0x%x", guid_, kr);
+            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate control failed observedGuid=0x%016llx kr=0x%x", observedGuid_, kr);
             ReleaseDirectAudioMemoryLocked();
             return kr;
         }
@@ -574,10 +583,13 @@ private:
         return HasCompleteDirectAudioMemoryLocked() ? kIOReturnSuccess : kIOReturnNotReady;
     }
 
-    uint64_t guid_{0};
+    const Devices::AudioEndpointId endpointId_{};
+    const Discovery::DeviceInstanceId deviceInstanceId_{};
+    const uint64_t observedGuid_{0}; // Config-ROM evidence; diagnostics only
+    const uint32_t configuredOutputChannels_{0};
+    const uint32_t configuredInputChannels_{0};
+    uint32_t currentSampleRateHz_{0};
     mutable IOLock* lock_{nullptr};
-    Model::ASFWAudioDevice config_{};
-    std::atomic<bool> configValid_{false};
     std::atomic<bool> streaming_{false};
 
     uint64_t directGeneration_{0};

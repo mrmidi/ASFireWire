@@ -155,6 +155,44 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
     return true;
 }
 
+bool DICETcatProtocol::GetSupportedSampleRates(
+    std::vector<uint32_t>& outRates) const {
+    if (!runtimeCapsValid_.load(std::memory_order_acquire)) {
+        outRates.clear();
+        return false;
+    }
+    const uint32_t capabilities =
+        clockCapabilities_.load(std::memory_order_relaxed);
+    outRates.clear();
+    for (const auto& rate : kDiceRateTable) {
+        // Higher-rate stream geometry is intentionally not advertised until
+        // the existing DICE pipeline is hardware-validated for it. The mask
+        // itself remains available as typed family evidence below.
+        if (rate.hz <= kDiceMaxSupportedRateHz &&
+            (capabilities & rate.capsBit) != 0) {
+            outRates.push_back(rate.hz);
+        }
+    }
+    if (outRates.empty()) {
+        const uint32_t current =
+            runtimeSampleRateHz_.load(std::memory_order_relaxed);
+        if (current != 0 && current <= kDiceMaxSupportedRateHz) {
+            outRates.push_back(current);
+        }
+    }
+    return !outRates.empty();
+}
+
+bool DICETcatProtocol::GetClockCapabilities(
+    uint32_t& outCapabilities) const {
+    if (!runtimeCapsValid_.load(std::memory_order_acquire)) {
+        outCapabilities = 0;
+        return false;
+    }
+    outCapabilities = clockCapabilities_.load(std::memory_order_relaxed);
+    return true;
+}
+
 void DICETcatProtocol::EnsureRuntimeStreamGeometry(VoidCallback callback) {
     EnsureRuntimeCapsLoaded(std::move(callback));
 }
@@ -353,6 +391,13 @@ IOReturn DICETcatProtocol::StopDuplex() {
 void DICETcatProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                             Protocols::AVC::FCPTransport* transport) {
     (void)transport;
+    // Section offsets and cached geometry were observed through the previous
+    // generation-bound route. Re-read them after every route rebind; carrying
+    // either cache across a reset would make a new probe appear successful
+    // without touching the current device instance.
+    sections_ = {};
+    sectionsLoaded_ = false;
+    ResetRuntimeCaps();
     io_.UpdateRoute(route);
 }
 
@@ -471,6 +516,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
 void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
                                         const StreamConfig& tx,
                                         const StreamConfig& rx) noexcept {
+    clockCapabilities_.store(global.clockCaps, std::memory_order_relaxed);
     AudioStreamRuntimeCaps caps{
         .hostInputPcmChannels = tx.TotalPcmChannels(),
         .hostOutputPcmChannels = rx.TotalPcmChannels(),
@@ -586,6 +632,7 @@ void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noex
 void DICETcatProtocol::ResetRuntimeCaps() noexcept {
     runtimeCapsValid_.store(false, std::memory_order_release);
     runtimeSampleRateHz_.store(0, std::memory_order_relaxed);
+    clockCapabilities_.store(0, std::memory_order_relaxed);
     hostInputPcmChannels_.store(0, std::memory_order_relaxed);
     hostOutputPcmChannels_.store(0, std::memory_order_relaxed);
     deviceToHostAm824Slots_.store(0, std::memory_order_relaxed);

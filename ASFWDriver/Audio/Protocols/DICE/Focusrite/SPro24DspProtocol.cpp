@@ -29,10 +29,12 @@ SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      Protocols::Ports::FireWireBusInfo& busInfo,
                                      Discovery::DeviceRegistry& routeRegistry,
                                      const Discovery::DeviceRouteToken& route,
-                                     IRM::IRMClient* irmClient)
-    : tcat_(busOps, busInfo, routeRegistry, route, irmClient)
+                                     IRM::IRMClient* irmClient,
+                                     Scheduling::ITimerScheduler* timerScheduler)
+    : tcat_(busOps, busInfo, routeRegistry, route, irmClient, timerScheduler)
 {
-    ASFW_LOG(DICE, "SPro24DspProtocol created for GUID=0x%016llx node=0x%04x", route.guid,
+    ASFW_LOG(DICE, "SPro24DspProtocol created for instance=%llu node=0x%04x",
+             route.deviceInstanceId.value,
              route.nodeId);
 }
 

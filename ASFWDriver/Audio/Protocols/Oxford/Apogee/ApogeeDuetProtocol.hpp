@@ -94,6 +94,12 @@ public:
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override {
         return duplex_.GetRuntimeAudioStreamCaps(outCaps);
     }
+    bool GetSupportedSampleRates(std::vector<uint32_t>& outRates) const override {
+        // These are exactly the rates accepted by ApogeeDuetDuplex's existing
+        // AV/C signal-format operation policy.
+        outRates = {32000U, 44100U, 48000U};
+        return true;
+    }
     [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }
     [[nodiscard]] IRM::IRMClient* GetIRMClient() const override { return runtime_.irmClient; }
 

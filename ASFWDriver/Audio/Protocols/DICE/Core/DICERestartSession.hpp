@@ -1,264 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 ASFireWire Project
-//
-// DICERestartSession.hpp - Explicit restart/session state for DICE duplex control
-
 #pragma once
 
-#include "../../AudioTypes.hpp"
-#include "../../Duplex/AudioClockConfig.hpp"
-#include "../../../../Async/AsyncTypes.hpp"
-#include "../../../../Discovery/DeviceRouteToken.hpp"
-
-#include <DriverKit/IOReturn.h>
-
-#include <cstdint>
-#include <optional>
+#include "../../../Duplex/DuplexControlTypes.hpp"
 
 namespace ASFW::Audio::DICE {
 
-enum class DiceRestartReason : uint8_t {
-    kInitialStart,
-    kSampleRateChange,
-    kClockSourceChange,
-    kBusResetRebind,
-    kRecoverAfterTimingLoss,
-    kRecoverAfterCycleInconsistent,
-    kRecoverAfterLockLoss,
-    kRecoverAfterTxFault,
-    kManualReconfigure,
-};
+using DiceRestartReason = ::ASFW::Audio::DuplexRestartReason;
+using DiceRestartPhase = ::ASFW::Audio::DuplexRestartPhase;
+using DiceRestartState = ::ASFW::Audio::DuplexRestartState;
+using DiceClockRequestOutcome = ::ASFW::Audio::DuplexClockRequestOutcome;
+using DiceRestartErrorClass = ::ASFW::Audio::DuplexRestartErrorClass;
+using DiceRestartFailureCause = ::ASFW::Audio::DuplexRestartFailureCause;
+using DiceClockRequestCompletion = ::ASFW::Audio::DuplexClockRequestCompletion;
+using DiceRestartIssueInfo = ::ASFW::Audio::DuplexRestartIssueInfo;
+using DiceRestartSession = ::ASFW::Audio::DuplexRestartSession;
+using DiceDuplexPrepareResult = ::ASFW::Audio::DuplexPrepareResult;
+using DiceDuplexStageResult = ::ASFW::Audio::DuplexStageResult;
+using DiceDuplexConfirmResult = ::ASFW::Audio::DuplexConfirmResult;
+using DiceClockApplyResult = ::ASFW::Audio::ClockApplyResult;
+using DiceDuplexHealthResult = ::ASFW::Audio::DuplexHealthResult;
 
-enum class DiceRestartPhase : uint8_t {
-    kIdle,
-    kPreparingDevice,
-    kPrepared,
-    kReservingPlaybackResources,
-    kProgrammingDeviceRx,
-    kDeviceRxProgrammed,
-    kReservingCaptureResources,
-    kStartingHostReceive,
-    kProgrammingDeviceTx,
-    kDeviceTxArmed,
-    kWaitingGlobalClock,
-    kStartingHostTransmit,
-    kConfirmingDeviceStart,
-    kRunning,
-    kStopping,
-    kFailed,
-};
-
-enum class DiceRestartState : uint8_t {
-    kIdle,
-    kApplyingIdleClock,
-    kStarting,
-    kRunning,
-    kStopping,
-    kRecovering,
-    kFailed,
-};
-
-enum class DiceClockRequestOutcome : uint8_t {
-    kApplied,
-    kSuperseded,
-    kAbortedByStop,
-    kFailed,
-};
-
-enum class DiceRestartErrorClass : uint8_t {
-    kUnsupportedConfig,
-    kMissingDependency,
-    kStageFailure,
-    kEpochInvalidated,
-    kStopIntent,
-};
-
-enum class DiceRestartFailureCause : uint8_t {
-    kNone,
-    kPrepare,
-    kReservePlayback,
-    kProgramRx,
-    kReserveCapture,
-    kStartReceive,
-    kProgramTx,
-    kGlobalClockLock,
-    kStartTransmit,
-    kConfirmStart,
-    kIdleClockApply,
-    kStop,
-    kBusResetRebind,
-    kTimingLoss,
-    kCycleInconsistent,
-    kLockLoss,
-    kTxFault,
-};
-
-struct DiceClockRequestCompletion {
-    uint64_t token{0};
-    AudioClockConfig desiredClock{};
-    DiceRestartReason reason{DiceRestartReason::kManualReconfigure};
-    DiceClockRequestOutcome outcome{DiceClockRequestOutcome::kFailed};
-    IOReturn status{kIOReturnSuccess};
-    uint64_t restartId{0};
-    FW::Generation generation{0};
-};
-
-struct DiceRestartIssueInfo {
-    DiceRestartPhase failedPhase{DiceRestartPhase::kIdle};
-    DiceRestartErrorClass errorClass{DiceRestartErrorClass::kStageFailure};
-    DiceRestartFailureCause cause{DiceRestartFailureCause::kNone};
-    IOReturn status{kIOReturnSuccess};
-    bool retryable{false};
-    bool rollbackAttempted{false};
-    IOReturn rollbackStatus{kIOReturnSuccess};
-    bool hostStateKnown{true};
-    bool deviceStateKnown{true};
-    uint64_t restartId{0};
-    FW::Generation generation{0};
-};
-
-struct DiceDuplexPrepareResult {
-    FW::Generation generation{0};
-    AudioDuplexChannels channels{};
-    AudioClockConfig appliedClock{};
-    AudioStreamRuntimeCaps runtimeCaps{};
-};
-
-struct DiceDuplexStageResult {
-    FW::Generation generation{0};
-    AudioDuplexChannels channels{};
-    DiceRestartPhase phase{DiceRestartPhase::kIdle};
-    AudioStreamRuntimeCaps runtimeCaps{};
-};
-
-struct DiceDuplexConfirmResult {
-    FW::Generation generation{0};
-    AudioDuplexChannels channels{};
-    AudioClockConfig appliedClock{};
-    AudioStreamRuntimeCaps runtimeCaps{};
-    uint32_t notification{0};
-    uint32_t status{0};
-    uint32_t extStatus{0};
-};
-
-struct DiceClockApplyResult {
-    FW::Generation generation{0};
-    AudioClockConfig appliedClock{};
-    AudioStreamRuntimeCaps runtimeCaps{};
-};
-
-struct DiceDuplexHealthResult {
-    FW::Generation generation{0};
-    AudioClockConfig appliedClock{};
-    AudioStreamRuntimeCaps runtimeCaps{};
-    bool sourceLocked{false};
-    bool clockReferenceHealthy{true};
-    uint32_t nominalRateHz{0};
-    uint32_t notification{0};
-    uint32_t status{0};
-    uint32_t extStatus{0};
-};
-
-struct DiceRestartSession {
-    uint64_t guid{0};
-    uint64_t restartId{0};
-    Discovery::DeviceRouteToken route{};
-    FW::Generation generation{0};
-    FW::Generation topologyGeneration{0};
-    AudioDuplexChannels channels{};
-    DiceRestartReason reason{DiceRestartReason::kInitialStart};
-    AudioClockConfig desiredClock{};
-    AudioClockConfig appliedClock{};
-    AudioClockConfig pendingClock{};
-    DiceRestartReason pendingReason{DiceRestartReason::kInitialStart};
-    AudioStreamRuntimeCaps runtimeCaps{};
-    DiceRestartPhase phase{DiceRestartPhase::kIdle};
-    DiceRestartState state{DiceRestartState::kIdle};
-    IOReturn terminalError{kIOReturnSuccess};
-    std::optional<DiceRestartIssueInfo> lastFailure{};
-    std::optional<DiceRestartIssueInfo> lastInvalidation{};
-    std::optional<DiceClockRequestCompletion> lastClockCompletion{};
-
-    bool ownerClaimed{false};
-    bool devicePrepared{false};
-    bool deviceRxProgrammed{false};
-    bool deviceTxArmed{false};
-    bool deviceRunning{false};
-    bool hasPendingClockRequest{false};
-
-    bool hostDuplexClaimed{false};
-    bool hostPlaybackReserved{false};
-    bool hostCaptureReserved{false};
-    bool hostReceiveStarted{false};
-    bool hostTransmitStarted{false};
-};
-
-[[nodiscard]] constexpr bool HasRestartIntent(const DiceRestartSession& session) noexcept {
-    return session.desiredClock.sampleRateHz != 0 || session.hasPendingClockRequest;
-}
-
-[[nodiscard]] constexpr bool HasDeviceRestartState(const DiceRestartSession& session) noexcept {
-    return session.ownerClaimed ||
-           session.devicePrepared ||
-           session.deviceRxProgrammed ||
-           session.deviceTxArmed ||
-           session.deviceRunning;
-}
-
-[[nodiscard]] constexpr bool HasHostRestartState(const DiceRestartSession& session) noexcept {
-    return session.hostDuplexClaimed ||
-           session.hostPlaybackReserved ||
-           session.hostCaptureReserved ||
-           session.hostReceiveStarted ||
-           session.hostTransmitStarted;
-}
-
-[[nodiscard]] constexpr bool HasAnyRestartState(const DiceRestartSession& session) noexcept {
-    return HasDeviceRestartState(session) || HasHostRestartState(session);
-}
-
-constexpr void ClearRestartProgress(DiceRestartSession& session,
-                                    DiceRestartPhase terminalPhase = DiceRestartPhase::kIdle) noexcept {
-    session.phase = terminalPhase;
-    session.terminalError = (terminalPhase == DiceRestartPhase::kFailed)
-        ? session.terminalError
-        : kIOReturnSuccess;
-    if (terminalPhase == DiceRestartPhase::kIdle) {
-        session.state = DiceRestartState::kIdle;
-    } else if (terminalPhase == DiceRestartPhase::kFailed) {
-        session.state = DiceRestartState::kFailed;
-    }
-
-    session.ownerClaimed = false;
-    session.devicePrepared = false;
-    session.deviceRxProgrammed = false;
-    session.deviceTxArmed = false;
-    session.deviceRunning = false;
-
-    session.hostDuplexClaimed = false;
-    session.hostPlaybackReserved = false;
-    session.hostCaptureReserved = false;
-    session.hostReceiveStarted = false;
-    session.hostTransmitStarted = false;
-}
-
-[[nodiscard]] constexpr DiceRestartReason ClassifyRestartReason(
-    const DiceRestartSession* previousSession,
-    const AudioClockConfig& desiredClock) noexcept {
-    if (previousSession == nullptr || !HasRestartIntent(*previousSession)) {
-        return DiceRestartReason::kInitialStart;
-    }
-
-    if (previousSession->desiredClock.sampleRateHz != 0 &&
-        previousSession->desiredClock.sampleRateHz != desiredClock.sampleRateHz) {
-        return DiceRestartReason::kSampleRateChange;
-    }
-
-    if (previousSession->phase == DiceRestartPhase::kFailed) {
-        return DiceRestartReason::kRecoverAfterTimingLoss;
-    }
-
-    return DiceRestartReason::kManualReconfigure;
-}
+using ::ASFW::Audio::ClassifyRestartReason;
+using ::ASFW::Audio::ClearRestartProgress;
+using ::ASFW::Audio::HasAnyRestartState;
+using ::ASFW::Audio::HasDeviceRestartState;
+using ::ASFW::Audio::HasHostRestartState;
+using ::ASFW::Audio::HasRestartIntent;
 
 } // namespace ASFW::Audio::DICE

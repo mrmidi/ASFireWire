@@ -7,7 +7,6 @@
 #include "ASFWAudioDevice.h"
 #include "../../Logging/Logging.hpp"
 #include "../Config/TimingCursorPolicy.hpp"
-#include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include <DriverKit/DriverKit.h>
 
@@ -223,8 +222,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         !ivars->runtime.directAudioGraph.HasInput() ||
         !ivars->runtime.directAudioGraph.HasOutput()) {
         ASFW_LOG(DirectAudio,
-                 "ADK FATAL StartDevice direct graph not ready guid=0x%016llx skeleton=%d control=%p hasIn=%d hasOut=%d",
-                 ivars->device.guid,
+                 "ADK FATAL StartDevice direct graph not ready endpoint=%llu skeleton=%d control=%p hasIn=%d hasOut=%d",
+                 ivars->device.endpointId,
                  ivars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
                  static_cast<void*>(ivars->runtime.directAudioGraph.control),
                  ivars->runtime.directAudioGraph.HasInput(),
