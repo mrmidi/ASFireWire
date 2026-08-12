@@ -63,14 +63,14 @@ final class DiceReportStore: ObservableObject {
 
         var reports = [String]()
         var found = 0
-        var unstableGuids = [UInt64]()
+        var unstableDevices = [DeviceInstanceID]()
 
         for device in devices {
             guard !Task.isCancelled else {
                 isRefreshing = false
                 return
             }
-            switch connector.captureDiceSnapshot(guid: device.guid) {
+            switch connector.captureDiceSnapshot(deviceID: device.id) {
             case .captured(let snapshot):
                 // A device with no readable general section table is not DICE.
                 guard snapshot.generalSections != nil else { continue }
@@ -80,8 +80,8 @@ final class DiceReportStore: ObservableObject {
                     appVersion: Self.reportGeneratorVersion(),
                     driverVersion: driverVersion
                 ))
-            case .unstable(let guid):
-                unstableGuids.append(guid)
+            case .unstable(let deviceID):
+                unstableDevices.append(deviceID)
             case .unavailable:
                 continue
             }
@@ -107,8 +107,8 @@ final class DiceReportStore: ObservableObject {
                 .joined(separator: "\n\n")
         }
 
-        if !unstableGuids.isEmpty {
-            error = "Bus reset or node-ID change interrupted \(unstableGuids.count) DICE capture(s); retry once the bus is stable."
+        if !unstableDevices.isEmpty {
+            error = "Bus reset or route change interrupted \(unstableDevices.count) DICE capture(s); retry once the bus is stable."
         }
         reportText = text
         deviceCount = found

@@ -181,11 +181,13 @@ extension ASFWMCPCore {
             }
             let nodeId = try decoder.uint32("nodeId")
             let generation = try decoder.uint32("generation")
+            let deviceID = try decoder.deviceInstanceID()
             let streamIndex = (try? decoder.uint32("streamIndex")) ?? 0
             let decode = try decoder.bool("decode", default: false)
 
             func address(_ low: UInt32) -> ASFWMCPAddress {
-                ASFWMCPAddress(nodeId: nodeId,
+                ASFWMCPAddress(deviceInstanceId: deviceID,
+                               nodeId: nodeId,
                                generation: generation,
                                addressHigh: ASFWMCPDiceSpace.baseAddressHigh,
                                addressLow: low)
@@ -605,7 +607,7 @@ extension ASFWMCPCore {
         do {
             let intent = try decoder.intent()
             let request = ASFWMCPFcpCommandRequest(
-                targetGUID: try decoder.uint64("targetGuid"),
+                targetUnitID: try decoder.unitInstanceID(),
                 address: try decoder.address(),
                 intent: intent,
                 payload: try decoder.bytes("payload")
@@ -623,7 +625,7 @@ extension ASFWMCPCore {
             let policy = evaluateWritePolicy(policyRequest)
             guard policy.reachesDriverWritePath else {
                 let receipt = ASFWMCPFcpCommandReceipt(
-                    targetGUID: request.targetGUID,
+                    targetUnitID: request.targetUnitID,
                     expectedNodeId: request.address.nodeId,
                     expectedGeneration: request.address.generation,
                     observedNodeId: nil,
@@ -638,7 +640,7 @@ extension ASFWMCPCore {
             }
             var receipt = await driver.executeFCPCommand(request)
             receipt = ASFWMCPFcpCommandReceipt(
-                targetGUID: receipt.targetGUID,
+                targetUnitID: receipt.targetUnitID,
                 expectedNodeId: receipt.expectedNodeId,
                 expectedGeneration: receipt.expectedGeneration,
                 observedNodeId: receipt.observedNodeId,
@@ -663,11 +665,11 @@ extension ASFWMCPCore {
     // (references/linux-sound-firewire-stack/firewire/oxfw/oxfw-stream.c:41-54,
     // 93-100). The tool is developer-write gated and never used implicitly.
     private func dispatchApogeeDuetFormatTransition(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
-        let targetGUID: UInt64
+        let targetUnitID: UnitInstanceID
         let address: ASFWMCPAddress
         let sampleRateHz: UInt32
         do {
-            targetGUID = try decoder.uint64("targetGuid")
+            targetUnitID = try decoder.unitInstanceID()
             address = try decoder.address()
             sampleRateHz = try decoder.uint32("sampleRateHz")
         } catch {
@@ -698,13 +700,14 @@ extension ASFWMCPCore {
 
         let units = await driver.listAVCUnits()
         guard let unit = units.first(where: {
-            $0.guid == targetGUID && $0.nodeId == address.nodeId &&
+            $0.id == targetUnitID && $0.nodeId == address.nodeId &&
+            $0.generation == address.generation &&
             $0.vendorId == 0x0003DB && $0.modelId == 0x01DDDD &&
             $0.subunits.contains(where: { $0.type == 0x0C && $0.id == 0 })
         }) else {
             return .failure(toolName: name, code: .capabilityUnavailable, reason: "The requested target is not the discovered Apogee Duet Music subunit.")
         }
-        guard let capabilities = await driver.avcSubunitCapabilities(guid: unit.guid, type: 0x0C, id: 0),
+        guard let capabilities = await driver.avcSubunitCapabilities(unitID: unit.id, type: 0x0C, id: 0),
               capabilities.hasAudio,
               Self.duetCapabilitiesSupport(capabilities, discoveryRateCode: discoveryRate) else {
             return .failure(toolName: name, code: .capabilityUnavailable, reason: "The discovered Duet capabilities do not advertise the requested stereo AM824 format.")
@@ -713,7 +716,7 @@ extension ASFWMCPCore {
         func command(_ intent: ASFWMCPAvcCommandIntent, _ opcode: UInt8, _ formatFdf: UInt8? = nil) -> ASFWMCPFcpCommandRequest {
             let payload: [UInt8] = formatFdf.map { [0x00, 0xFF, opcode, 0x00, 0x90, $0, 0xFF, 0xFF] }
                 ?? [0x01, 0xFF, opcode, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]
-            return ASFWMCPFcpCommandRequest(targetGUID: targetGUID, address: address, intent: intent, payload: payload)
+            return ASFWMCPFcpCommandRequest(targetUnitID: targetUnitID, address: address, intent: intent, payload: payload)
         }
         func observedFdf(_ receipt: ASFWMCPFcpCommandReceipt, opcode: UInt8) -> UInt8? {
             guard receipt.ok, let response = receipt.response, response.count >= 6,
@@ -725,7 +728,8 @@ extension ASFWMCPCore {
             let data: ASFWMCPValue = .object([
                 "kind": .string("apogeeDuetFormatTransition"),
                 "status": .string(status),
-                "targetGuid": .string(String(format: "0x%016llX", targetGUID)),
+                "deviceInstanceId": .uint64(targetUnitID.device.rawValue),
+                "unitDirectoryOffset": .uint64(UInt64(targetUnitID.unitDirectoryOffset)),
                 "nodeId": .int(Int(address.nodeId)),
                 "generation": .int(Int(address.generation)),
                 "sampleRateHz": .int(Int(sampleRateHz)),
@@ -809,7 +813,7 @@ extension ASFWMCPCore {
     private func dispatchFcpReadCommand(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
         do {
             let request = ASFWMCPFcpCommandRequest(
-                targetGUID: try decoder.uint64("targetGuid"),
+                targetUnitID: try decoder.unitInstanceID(),
                 address: try decoder.address(),
                 intent: try decoder.intent(),
                 payload: try decoder.bytes("payload")
@@ -985,17 +989,19 @@ private extension ASFWMCPCore {
         start: Bool
     ) async -> ASFWMCPToolCallResult {
         do {
-            let targetGuid = try decoder.uint64("targetGuid")
-            let nodeId = try decoder.uint32("nodeId")
+            let endpointID = try decoder.audioEndpointID()
             let generation = try decoder.uint32("generation")
-            let targetGuidText = String(format: "0x%016llX", targetGuid)
-            guard await driver.listNodes().contains(where: {
-                $0.nodeId == nodeId && $0.guid == targetGuidText &&
+            let endpoint = await driver.fetchAudioStreamHealth().first {
+                $0.endpointId == endpointID
+            }
+            guard let endpoint,
+                  await driver.listNodes().contains(where: {
+                $0.deviceInstanceId == endpoint.deviceInstanceId &&
                 $0.vendorId == "0x000AAC" && $0.modelId == "0x000003" &&
                 $0.protocolHints.contains("bebob") && $0.protocolHints.contains("cmp")
             }) else {
                 return .failure(toolName: toolName, code: .capabilityUnavailable,
-                                reason: "targetGuid/nodeId must identify the TerraTec PHASE 88 Rack FW BeBoB/CMP backend.")
+                                reason: "endpointId must identify the ready TerraTec PHASE 88 Rack FW BeBoB/CMP endpoint.")
             }
             let policy = evaluateWritePolicy(ASFWMCPPolicyRequest(
                 operationType: .write,
@@ -1012,7 +1018,7 @@ private extension ASFWMCPCore {
                                 reason: policy.reason,
                                 data: .object(["policy": policy.mcpValue]))
             }
-            let receipt = await driver.executePhase88Streaming(targetGuid: targetGuid, start: start)
+            let receipt = await driver.executePhase88Streaming(endpointID: endpointID, start: start)
             return receipt.ok
                 ? .success(toolName: toolName, data: .object([
                     "kind": .string("phase88DuplexLifecycle"),
@@ -1048,6 +1054,7 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
+            let deviceID = try decoder.deviceInstanceID()
             let nodeId = try decoder.uint32("nodeId")
             let generation = try decoder.uint32("generation")
             let plug = try decoder.uint32("plug")
@@ -1055,14 +1062,16 @@ private extension ASFWMCPCore {
                   let addressLow = ASFWMCPCmpPcr.address(for: direction, plug: plug) else {
                 return malformedToolResult(toolName, reason: "direction must be input or output and plug must be in 0...30.")
             }
-            guard await driver.listNodes().contains(where: {
-                $0.nodeId == nodeId && $0.protocolHints.contains("cmp")
+            guard (await driver.listNodes()).contains(where: {
+                $0.deviceInstanceId == deviceID && $0.nodeId == nodeId &&
+                    $0.protocolHints.contains("cmp")
             }) else {
                 return .failure(toolName: toolName, code: .capabilityUnavailable,
-                                reason: "nodeId must identify a currently discovered CMP-capable node.")
+                                reason: "deviceInstanceId and route guards must identify a currently discovered CMP-capable node.")
             }
 
-            let address = ASFWMCPAddress(nodeId: nodeId, generation: generation,
+            let address = ASFWMCPAddress(deviceInstanceId: deviceID,
+                                         nodeId: nodeId, generation: generation,
                                          addressHigh: 0xffff, addressLow: addressLow)
             let transaction = await driver.executeReadQuadlet(ASFWMCPReadQuadletRequest(address: address))
             guard transaction.ok else { return transactionToolResult(toolName, transaction) }
@@ -1075,6 +1084,7 @@ private extension ASFWMCPCore {
             return .success(toolName: toolName, data: .object([
                 "kind": .string("cmpPcr"),
                 "target": .object([
+                    "deviceInstanceId": .uint64(deviceID.rawValue),
                     "nodeId": .int(Int(nodeId)),
                     "generation": .int(Int(generation)),
                     "address": .string(String(format: "0xFFFF%08X", addressLow)),
@@ -1092,18 +1102,21 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
+            let deviceID = try decoder.deviceInstanceID()
             let nodeId = try decoder.uint32("nodeId")
             let generation = try decoder.uint32("generation")
-            guard await driver.listNodes().contains(where: {
-                $0.nodeId == nodeId && $0.protocolHints.contains("cmp")
+            guard (await driver.listNodes()).contains(where: {
+                $0.deviceInstanceId == deviceID && $0.nodeId == nodeId &&
+                    $0.protocolHints.contains("cmp")
             }) else {
                 return .failure(toolName: toolName, code: .capabilityUnavailable,
-                                reason: "nodeId must identify a currently discovered CMP-capable node.")
+                                reason: "deviceInstanceId and route guards must identify a currently discovered CMP-capable node.")
             }
 
             func read(_ addressLow: UInt32) async -> ASFWMCPTransactionResult {
                 await driver.executeReadQuadlet(ASFWMCPReadQuadletRequest(address: .init(
-                    nodeId: nodeId, generation: generation, addressHigh: 0xffff, addressLow: addressLow
+                    deviceInstanceId: deviceID, nodeId: nodeId, generation: generation,
+                    addressHigh: 0xffff, addressLow: addressLow
                 )))
             }
             let outputMpr = await read(0xf000_0900)
@@ -1135,6 +1148,7 @@ private extension ASFWMCPCore {
             }
             return .success(toolName: toolName, data: .object([
                 "kind": .string("cmpPlugInventory"),
+                "deviceInstanceId": .uint64(deviceID.rawValue),
                 "nodeId": .int(Int(nodeId)),
                 "generation": .int(Int(generation)),
                 "outputPlugCount": .int(Int(outputCount)),
@@ -1163,22 +1177,29 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
-            let targetGUID = try decoder.uint64("targetGuid")
+            let targetUnitID = try decoder.unitInstanceID()
             let nodeId = try decoder.uint32("nodeId")
-            let targetGuidText = String(format: "0x%016llX", targetGUID)
-            guard await driver.listNodes().contains(where: {
-                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
-            }) else {
+            let generation = try decoder.uint32("generation")
+            let nodeMatches = await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId &&
+                    $0.deviceInstanceId == targetUnitID.device &&
+                    $0.protocolHints.contains("bebob")
+            })
+            let unitMatches = await driver.listAVCUnits().contains(where: {
+                $0.id == targetUnitID && $0.nodeId == nodeId && $0.generation == generation
+            })
+            guard nodeMatches && unitMatches else {
                 return .failure(
                     toolName: toolName,
                     code: .capabilityUnavailable,
-                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                    reason: "The unit instance and route generation must identify a currently discovered BeBoB unit."
                 )
             }
 
             let address = ASFWMCPAddress(
+                deviceInstanceId: targetUnitID.device,
                 nodeId: nodeId,
-                generation: try decoder.uint32("generation"),
+                generation: generation,
                 addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
                 addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
             )
@@ -1186,7 +1207,7 @@ private extension ASFWMCPCore {
             func send(_ payload: [UInt8]) async -> ASFWMCPFcpCommandReceipt {
                 let receipt = await driver.executeFCPCommand(
                     ASFWMCPFcpCommandRequest(
-                        targetGUID: targetGUID,
+                        targetUnitID: targetUnitID,
                         address: address,
                         intent: .status,
                         payload: payload
@@ -1304,27 +1325,34 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
-            let targetGUID = try decoder.uint64("targetGuid")
+            let targetUnitID = try decoder.unitInstanceID()
             let nodeId = try decoder.uint32("nodeId")
-            let targetGuidText = String(format: "0x%016llX", targetGUID)
-            guard await driver.listNodes().contains(where: {
-                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
-            }) else {
+            let generation = try decoder.uint32("generation")
+            let nodeMatches = await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId &&
+                    $0.deviceInstanceId == targetUnitID.device &&
+                    $0.protocolHints.contains("bebob")
+            })
+            let unitMatches = await driver.listAVCUnits().contains(where: {
+                $0.id == targetUnitID && $0.nodeId == nodeId && $0.generation == generation
+            })
+            guard nodeMatches && unitMatches else {
                 return .failure(
                     toolName: toolName,
                     code: .capabilityUnavailable,
-                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                    reason: "The unit instance and route generation must identify a currently discovered BeBoB unit."
                 )
             }
             let address = ASFWMCPAddress(
+                deviceInstanceId: targetUnitID.device,
                 nodeId: nodeId,
-                generation: try decoder.uint32("generation"),
+                generation: generation,
                 addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
                 addressLow: ASFWMCPBeBoBUnitPlugInformation.fcpAddressLow
             )
             let receipt = await driver.executeFCPCommand(
                 ASFWMCPFcpCommandRequest(
-                    targetGUID: targetGUID,
+                    targetUnitID: targetUnitID,
                     address: address,
                     intent: .status,
                     payload: ASFWMCPBeBoBUnitPlugInformation.statusCommand
@@ -1363,7 +1391,9 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
+            let deviceID = try decoder.deviceInstanceID()
             let address = ASFWMCPAddress(
+                deviceInstanceId: deviceID,
                 nodeId: try decoder.uint32("nodeId"),
                 generation: try decoder.uint32("generation"),
                 addressHigh: ASFWMCPBeBoBBootRomInformation.addressHigh,
@@ -1405,21 +1435,27 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
-            let targetGUID = try decoder.uint64("targetGuid")
+            let targetUnitID = try decoder.unitInstanceID()
             let nodeId = try decoder.uint32("nodeId")
             let generation = try decoder.uint32("generation")
-            let targetGuidText = String(format: "0x%016llX", targetGUID)
-            guard await driver.listNodes().contains(where: {
-                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
-            }) else {
+            let nodeMatches = await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId &&
+                    $0.deviceInstanceId == targetUnitID.device &&
+                    $0.protocolHints.contains("bebob")
+            })
+            let unitMatches = await driver.listAVCUnits().contains(where: {
+                $0.id == targetUnitID && $0.nodeId == nodeId && $0.generation == generation
+            })
+            guard nodeMatches && unitMatches else {
                 return .failure(
                     toolName: toolName,
                     code: .capabilityUnavailable,
-                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                    reason: "The unit instance and route generation must identify a currently discovered BeBoB unit."
                 )
             }
 
             let address = ASFWMCPAddress(
+                deviceInstanceId: targetUnitID.device,
                 nodeId: nodeId,
                 generation: generation,
                 addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
@@ -1454,7 +1490,7 @@ private extension ASFWMCPCore {
 
             let fb9Receipt = await driver.executeFCPCommand(
                 ASFWMCPFcpCommandRequest(
-                    targetGUID: targetGUID,
+                    targetUnitID: targetUnitID,
                     address: address,
                     intent: .status,
                     payload: fb9Cdb
@@ -1464,7 +1500,7 @@ private extension ASFWMCPCore {
 
             let fb8Receipt = await driver.executeFCPCommand(
                 ASFWMCPFcpCommandRequest(
-                    targetGUID: targetGUID,
+                    targetUnitID: targetUnitID,
                     address: address,
                     intent: .status,
                     payload: fb8Cdb
@@ -1519,21 +1555,27 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
-            let targetGUID = try decoder.uint64("targetGuid")
+            let targetUnitID = try decoder.unitInstanceID()
             let nodeId = try decoder.uint32("nodeId")
             let generation = try decoder.uint32("generation")
-            let targetGuidText = String(format: "0x%016llX", targetGUID)
-            guard await driver.listNodes().contains(where: {
-                $0.nodeId == nodeId && $0.guid == targetGuidText && $0.protocolHints.contains("bebob")
-            }) else {
+            let nodeMatches = await driver.listNodes().contains(where: {
+                $0.nodeId == nodeId &&
+                    $0.deviceInstanceId == targetUnitID.device &&
+                    $0.protocolHints.contains("bebob")
+            })
+            let unitMatches = await driver.listAVCUnits().contains(where: {
+                $0.id == targetUnitID && $0.nodeId == nodeId && $0.generation == generation
+            })
+            guard nodeMatches && unitMatches else {
                 return .failure(
                     toolName: toolName,
                     code: .capabilityUnavailable,
-                    reason: "targetGuid and nodeId must identify a currently discovered BeBoB node."
+                    reason: "The unit instance and route generation must identify a currently discovered BeBoB unit."
                 )
             }
 
             let address = ASFWMCPAddress(
+                deviceInstanceId: targetUnitID.device,
                 nodeId: nodeId,
                 generation: generation,
                 addressHigh: ASFWMCPBeBoBUnitPlugInformation.fcpAddressHigh,
@@ -1568,7 +1610,7 @@ private extension ASFWMCPCore {
 
             let fb9Receipt = await driver.executeFCPCommand(
                 ASFWMCPFcpCommandRequest(
-                    targetGUID: targetGUID,
+                    targetUnitID: targetUnitID,
                     address: address,
                     intent: .control,
                     payload: fb9Control
@@ -1578,7 +1620,7 @@ private extension ASFWMCPCore {
 
             let fb8Receipt = await driver.executeFCPCommand(
                 ASFWMCPFcpCommandRequest(
-                    targetGUID: targetGUID,
+                    targetUnitID: targetUnitID,
                     address: address,
                     intent: .control,
                     payload: fb8Control
@@ -1641,7 +1683,7 @@ private extension ASFWMCPCore {
 
     func configRomResult(toolName: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
         do {
-            let nodeId = try decoder.uint32("nodeId")
+            let deviceID = try decoder.deviceInstanceID()
             let generation = try decoder.uint32("generation")
             let viewName = try decoder.string("view", default: ASFWMCPConfigRomView.summary.rawValue)
             guard let view = ASFWMCPConfigRomView(rawValue: viewName) else {
@@ -1650,11 +1692,12 @@ private extension ASFWMCPCore {
             let startQuadlet = try decoder.int("startQuadlet", default: 0, range: 0...Int.max)
             let maxQuadlets = try decoder.int("maxQuadlets", default: 32, range: 1...64)
             let maxTreeEntries = try decoder.int("maxTreeEntries", default: 64, range: 1...128)
-            guard let summary = await driver.fetchConfigROM(nodeId: nodeId, generation: generation) else {
+            guard let summary = await driver.fetchConfigROM(deviceID: deviceID,
+                                                            generation: generation) else {
                 return .failure(
                     toolName: toolName,
                     code: .capabilityUnavailable,
-                    reason: "No Config ROM is cached for node \(nodeId) in generation \(generation)."
+                    reason: "No Config ROM is cached for device instance \(deviceID) in generation \(generation)."
                 )
             }
             return .success(
@@ -1765,14 +1808,15 @@ private extension ASFWMCPCore {
         decoder: ASFWMCPToolArgumentDecoder
     ) async -> ASFWMCPToolCallResult {
         do {
-            let guid = try decoder.uint64("targetGuid")
+            let unitID = try decoder.unitInstanceID()
             let type = try decoder.uint32("subunitType")
             let id = try decoder.uint32("subunitId")
             guard type <= UInt32(UInt8.max), id <= UInt32(UInt8.max) else {
                 return malformedToolResult(toolName, reason: "subunitType and subunitId must fit in one byte")
             }
 
-            let unit = await driver.listAVCUnits().first { $0.guid == guid }
+            let units = await driver.listAVCUnits()
+            let unit = units.first { $0.id == unitID }
             guard unit?.subunits.contains(where: { $0.type == UInt8(type) && $0.id == UInt8(id) }) == true else {
                 return .failure(
                     toolName: toolName,
@@ -1781,7 +1825,7 @@ private extension ASFWMCPCore {
                 )
             }
             guard let capabilities = await driver.avcSubunitCapabilities(
-                guid: guid, type: UInt8(type), id: UInt8(id)
+                unitID: unitID, type: UInt8(type), id: UInt8(id)
             ) else {
                 return .failure(
                     toolName: toolName,
@@ -1794,7 +1838,8 @@ private extension ASFWMCPCore {
                 toolName: toolName,
                 data: .object([
                     "kind": .string("avcSubunitCapabilities"),
-                    "targetGuid": .string(String(format: "0x%016llX", guid)),
+                    "deviceInstanceId": .uint64(unitID.device.rawValue),
+                    "unitDirectoryOffset": .uint64(UInt64(unitID.unitDirectoryOffset)),
                     "subunitType": .int(Int(type)),
                     "subunitId": .int(Int(id)),
                     "capabilities": capabilities.mcpValue,
@@ -1884,12 +1929,40 @@ private struct ASFWMCPToolArgumentDecoder {
     }
 
     func address() throws -> ASFWMCPAddress {
-        ASFWMCPAddress(
+        let rawDeviceID = try uint64("deviceInstanceId")
+        guard rawDeviceID != 0 else {
+            throw ASFWMCPToolArgumentError.malformed("deviceInstanceId must be non-zero")
+        }
+        return ASFWMCPAddress(
+            deviceInstanceId: DeviceInstanceID(rawDeviceID),
             nodeId: try uint32("nodeId"),
             generation: try uint32("generation"),
             addressHigh: UInt16(try boundedUInt64("addressHigh", max: UInt64(UInt16.max))),
             addressLow: try uint32("addressLow")
         )
+    }
+
+    func unitInstanceID() throws -> UnitInstanceID {
+        return UnitInstanceID(
+            device: try deviceInstanceID(),
+            unitDirectoryOffset: try uint32("unitDirectoryOffset")
+        )
+    }
+
+    func deviceInstanceID() throws -> DeviceInstanceID {
+        let rawDeviceID = try uint64("deviceInstanceId")
+        guard rawDeviceID != 0 else {
+            throw ASFWMCPToolArgumentError.malformed("deviceInstanceId must be non-zero")
+        }
+        return DeviceInstanceID(rawDeviceID)
+    }
+
+    func audioEndpointID() throws -> AudioEndpointID {
+        let rawEndpointID = try uint64("endpointId")
+        guard rawEndpointID != 0 else {
+            throw ASFWMCPToolArgumentError.malformed("endpointId must be non-zero")
+        }
+        return AudioEndpointID(rawEndpointID)
     }
 
     func uint32(_ key: String) throws -> UInt32 {
@@ -2056,9 +2129,10 @@ extension ASFWMCPPolicyDecision {
 extension ASFWMCPNodeSummary {
     var mcpValue: ASFWMCPValue {
         .object([
+            "deviceInstanceId": deviceInstanceId.map { .uint64($0.rawValue) } ?? .null,
             "nodeId": .int(Int(nodeId)),
             "address16": .string(address16),
-            "guid": guid.map { .string($0) } ?? .null,
+            "observedGuid": observedGuid.map { .string($0) } ?? .null,
             "vendorId": vendorId.map { .string($0) } ?? .null,
             "modelId": modelId.map { .string($0) } ?? .null,
             "vendorName": vendorName.map { .string($0) } ?? .null,

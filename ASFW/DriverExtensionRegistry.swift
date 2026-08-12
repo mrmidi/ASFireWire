@@ -80,8 +80,8 @@ struct DriverExtensionVersionPolicy {
 }
 
 enum DriverInstallSettings {
-    static let requireNewerBuildKey = "asfw.driver.require-newer-build"
-    static let defaultRequireNewerBuild = false
+    nonisolated static let requireNewerBuildKey = "asfw.driver.require-newer-build"
+    nonisolated static let defaultRequireNewerBuild = false
 }
 
 enum DriverExtensionRegistryInspector {

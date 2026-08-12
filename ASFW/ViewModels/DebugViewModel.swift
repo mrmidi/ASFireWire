@@ -80,7 +80,7 @@ class DebugViewModel: ObservableObject {
     }
     
     func connect() {
-        connector.connect(forceAttempt: false)
+        _ = connector.connect(forceAttempt: false)
     }
     
     func disconnect() {
@@ -157,12 +157,14 @@ class DebugViewModel: ObservableObject {
         }
     }
     
-    func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
-        return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
+    func getSubunitCapabilities(unitID: UnitInstanceID,
+                                type: UInt8,
+                                id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
+        self.connector.getSubunitCapabilities(unitID: unitID, type: type, id: id)
     }
 
 
-    func performAsyncRead(destinationID: UInt16,
+    func performAsyncRead(deviceID: DeviceInstanceID,
                           addressHigh: UInt16,
                           addressLow: UInt32,
                           length: UInt32) {
@@ -178,7 +180,7 @@ class DebugViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let handle = self.connector.asyncRead(destinationID: destinationID,
+            let handle = self.connector.asyncRead(deviceID: deviceID,
                                                   addressHigh: addressHigh,
                                                   addressLow: addressLow,
                                                   length: length)
@@ -199,7 +201,7 @@ class DebugViewModel: ObservableObject {
         }
     }
 
-    func performAsyncWrite(destinationID: UInt16,
+    func performAsyncWrite(deviceID: DeviceInstanceID,
                            addressHigh: UInt16,
                            addressLow: UInt32,
                            payload: Data) {
@@ -215,7 +217,7 @@ class DebugViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let handle = self.connector.asyncWrite(destinationID: destinationID,
+            let handle = self.connector.asyncWrite(deviceID: deviceID,
                                                    addressHigh: addressHigh,
                                                    addressLow: addressLow,
                                                    payload: payload)
@@ -236,7 +238,7 @@ class DebugViewModel: ObservableObject {
         }
     }
 
-    func performAsyncBlockRead(destinationID: UInt16,
+    func performAsyncBlockRead(deviceID: DeviceInstanceID,
                                addressHigh: UInt16,
                                addressLow: UInt32,
                                length: UInt32) {
@@ -252,7 +254,7 @@ class DebugViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let handle = self.connector.asyncBlockRead(destinationID: destinationID,
+            let handle = self.connector.asyncBlockRead(deviceID: deviceID,
                                                        addressHigh: addressHigh,
                                                        addressLow: addressLow,
                                                        length: length)
@@ -273,7 +275,7 @@ class DebugViewModel: ObservableObject {
         }
     }
 
-    func performAsyncBlockWrite(destinationID: UInt16,
+    func performAsyncBlockWrite(deviceID: DeviceInstanceID,
                                 addressHigh: UInt16,
                                 addressLow: UInt32,
                                 payload: Data) {
@@ -289,7 +291,7 @@ class DebugViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let handle = self.connector.asyncBlockWrite(destinationID: destinationID,
+            let handle = self.connector.asyncBlockWrite(deviceID: deviceID,
                                                         addressHigh: addressHigh,
                                                         addressLow: addressLow,
                                                         payload: payload)

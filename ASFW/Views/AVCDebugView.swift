@@ -52,7 +52,7 @@ struct AVCDebugView: View {
                 refreshAVCUnits()
             }
         }
-        .onChange(of: viewModel.isConnected) { connected in
+        .onChange(of: viewModel.isConnected) { _, connected in
             if connected {
                 refreshAVCUnits()
             }
@@ -248,7 +248,7 @@ struct AVCUnitCard: View {
             // Unit Header
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("GUID: \(unit.guidHex)")
+                    Text("Unit: \(unit.id.description)")
                         .font(.system(.body, design: .monospaced))
                         .fontWeight(.bold)
                     
@@ -408,7 +408,7 @@ struct SubunitRow: View {
     private func fetchCapabilities() async {
         isLoading = true
         capabilities = await viewModel.getSubunitCapabilities(
-            guid: unit.guid,
+            unitID: unit.id,
             type: subunit.type,
             id: subunit.subunitID
         )
@@ -553,7 +553,7 @@ struct SubunitCapabilitiesView: View {
         isExporting = true
         DispatchQueue.global(qos: .userInitiated).async {
             let data = viewModel.connector.getSubunitDescriptor(
-                guid: unit.guid,
+                unitID: unit.id,
                 type: subunit.type,
                 id: subunit.subunitID
             )

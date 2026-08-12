@@ -21,7 +21,7 @@ extension ASFWMCPToolCatalog {
             visibility: .readOnly,
             readOnly: true,
             idempotent: false,
-            summary: "Send the Linux-style AV/C unit PLUG_INFO STATUS query and decode ISO/external plug counts (targetGuid, nodeId, generation required).",
+            summary: "Send the Linux-style AV/C unit PLUG_INFO STATUS query and decode ISO/external plug counts (unit instance and route generation required).",
             requiredProtocolHints: ["bebob"]
         ),
         ASFWMCPToolDefinition(
@@ -30,7 +30,7 @@ extension ASFWMCPToolCatalog {
             visibility: .readOnly,
             readOnly: true,
             idempotent: false,
-            summary: "Inspect Music Subunit SYNC input topology and classify its current BridgeCo clock source (targetGuid, nodeId, generation required).",
+            summary: "Inspect Music Subunit SYNC input topology and classify its current BridgeCo clock source (unit instance and route generation required).",
             requiredProtocolHints: ["bebob"]
         ),
         ASFWMCPToolDefinition(
@@ -39,7 +39,7 @@ extension ASFWMCPToolCatalog {
             visibility: .readOnly,
             readOnly: true,
             idempotent: false,
-            summary: "Get the current clock status of PHASE 88 (targetGuid, nodeId, generation required).",
+            summary: "Get the current clock status of PHASE 88 (unit instance and route generation required).",
             requiredProtocolHints: ["bebob"]
         ),
         ASFWMCPToolDefinition(
@@ -48,7 +48,7 @@ extension ASFWMCPToolCatalog {
             visibility: .developerWrite,
             readOnly: false,
             idempotent: false,
-            summary: "Set PHASE 88 clock source to Internal (targetGuid, nodeId, generation required).",
+            summary: "Set PHASE 88 clock source to Internal (unit instance and route generation required).",
             requiredProtocolHints: ["bebob"]
         ),
         ASFWMCPToolDefinition(
@@ -73,7 +73,7 @@ extension ASFWMCPToolCatalog {
 }
 
 struct ASFWMCPPhase88StreamingReceipt: Equatable {
-    let targetGuid: UInt64
+    let endpointId: AudioEndpointID
     let started: Bool
     let status: Int32
 
@@ -81,7 +81,7 @@ struct ASFWMCPPhase88StreamingReceipt: Equatable {
 
     var mcpValue: ASFWMCPValue {
         .object([
-            "targetGuid": .string(String(format: "0x%016llX", targetGuid)),
+            "endpointId": .uint64(endpointId.rawValue),
             "action": .string(started ? "start" : "stop"),
             "status": .int(Int(status)),
             "ok": .bool(ok),

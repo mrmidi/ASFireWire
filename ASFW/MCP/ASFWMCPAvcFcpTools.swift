@@ -48,7 +48,9 @@ struct ASFWMCPAVCUnitSummary: Equatable {
         let destinationPlugCount: UInt8
     }
 
-    let guid: UInt64
+    let id: UnitInstanceID
+    let observedGuid: UInt64
+    let generation: UInt32
     let nodeId: UInt32
     let vendorId: UInt32
     let modelId: UInt32
@@ -91,7 +93,10 @@ struct ASFWMCPAVCSubunitCapabilities: Equatable {
 extension ASFWMCPAVCUnitSummary {
     var mcpValue: ASFWMCPValue {
         .object([
-            "guid": .string(String(format: "0x%016llX", guid)),
+            "deviceInstanceId": .uint64(id.device.rawValue),
+            "unitDirectoryOffset": .uint64(UInt64(id.unitDirectoryOffset)),
+            "observedGuid": .string(String(format: "0x%016llX", observedGuid)),
+            "generation": .int(Int(generation)),
             "nodeId": .int(Int(nodeId)),
             "vendorId": .string(String(format: "0x%06X", vendorId)),
             "modelId": .string(String(format: "0x%06X", modelId)),
@@ -148,9 +153,9 @@ extension ASFWMCPAVCSubunitCapabilities {
 
 /// A raw FCP/AV/C command directed at a node's FCP command register.
 struct ASFWMCPFcpCommandRequest: Equatable {
-    /// Stable device identity selected by the caller. The live adapter resolves
-    /// it to `address.nodeId` immediately before issuing the command.
-    let targetGUID: UInt64
+    /// Runtime unit identity selected by the caller. The live adapter validates
+    /// its current route immediately before issuing the command.
+    let targetUnitID: UnitInstanceID
     /// Target node's FCP command register address.
     let address: ASFWMCPAddress
     let intent: ASFWMCPAvcCommandIntent
@@ -214,7 +219,7 @@ struct ASFWMCPFcpCommandRequest: Equatable {
 /// chronology.
 struct ASFWMCPFcpRecord: Equatable {
     let correlationId: String
-    let targetGUID: UInt64
+    let targetUnitID: UnitInstanceID
     let nodeId: UInt32?
     let generation: UInt32
     let intent: String
@@ -229,7 +234,8 @@ extension ASFWMCPFcpRecord {
     var mcpValue: ASFWMCPValue {
         .object([
             "correlationId": .string(correlationId),
-            "targetGuid": .string(String(format: "0x%016llX", targetGUID)),
+            "deviceInstanceId": .uint64(targetUnitID.device.rawValue),
+            "unitDirectoryOffset": .uint64(UInt64(targetUnitID.unitDirectoryOffset)),
             "nodeId": nodeId.map { .int(Int($0)) } ?? .null,
             "generation": .int(Int(generation)),
             "intent": .string(intent),
@@ -243,7 +249,7 @@ extension ASFWMCPFcpRecord {
 }
 
 struct ASFWMCPFcpCommandReceipt: Equatable {
-    let targetGUID: UInt64
+    let targetUnitID: UnitInstanceID
     let expectedNodeId: UInt32
     let expectedGeneration: UInt32
     let observedNodeId: UInt32?
@@ -263,7 +269,8 @@ extension ASFWMCPFcpCommandReceipt {
             "kind": .string("fcpCommand"),
             "ok": .bool(ok),
             "status": .string(status.rawValue),
-            "targetGuid": .string(String(format: "0x%016llX", targetGUID)),
+            "deviceInstanceId": .uint64(targetUnitID.device.rawValue),
+            "unitDirectoryOffset": .uint64(UInt64(targetUnitID.unitDirectoryOffset)),
             "expectedNodeId": .int(Int(expectedNodeId)),
             "expectedGeneration": .int(Int(expectedGeneration)),
             "observedNodeId": observedNodeId.map { .int(Int($0)) } ?? .null,

@@ -7,7 +7,7 @@ import Foundation
 // plan is refused unless both developer gates are present, and remains skipped
 // until a separately reviewed recipe is supplied for that exact hardware.
 
-enum ASFWMCPHardwareSmokeDisposition: String, Equatable {
+enum ASFWMCPHardwareSmokeDisposition: String, Equatable, Sendable {
     case passed
     case skipped
     case unsupported
@@ -15,7 +15,7 @@ enum ASFWMCPHardwareSmokeDisposition: String, Equatable {
     case refused
 }
 
-struct ASFWMCPHardwareSmokeOptions: Equatable {
+struct ASFWMCPHardwareSmokeOptions: Equatable, Sendable {
     /// Must be set by the caller before any live-driver operation is issued.
     var hardwareAccessEnabled: Bool
     /// First of two gates required for a plan's mutating step.
@@ -23,13 +23,13 @@ struct ASFWMCPHardwareSmokeOptions: Equatable {
     /// Second gate required for a plan's mutating step.
     var mutatingSmokeEnabled: Bool
 
-    static let disabled = ASFWMCPHardwareSmokeOptions(
+    nonisolated static let disabled = ASFWMCPHardwareSmokeOptions(
         hardwareAccessEnabled: false,
         developerModeEnabled: false,
         mutatingSmokeEnabled: false
     )
 
-    static let readOnly = ASFWMCPHardwareSmokeOptions(
+    nonisolated static let readOnly = ASFWMCPHardwareSmokeOptions(
         hardwareAccessEnabled: true,
         developerModeEnabled: false,
         mutatingSmokeEnabled: false
@@ -40,7 +40,7 @@ struct ASFWMCPHardwareSmokeOptions: Equatable {
     }
 }
 
-struct ASFWMCPHardwareSmokeStepResult: Equatable {
+struct ASFWMCPHardwareSmokeStepResult: Equatable, Sendable {
     let name: String
     let disposition: ASFWMCPHardwareSmokeDisposition
     let reason: String
@@ -48,7 +48,7 @@ struct ASFWMCPHardwareSmokeStepResult: Equatable {
     let toolName: String?
 }
 
-struct ASFWMCPHardwareSmokeReport: Equatable {
+struct ASFWMCPHardwareSmokeReport: Equatable, Sendable {
     let generation: UInt32?
     let detectedNodes: [ASFWMCPNodeSummary]
     let results: [ASFWMCPHardwareSmokeStepResult]
@@ -175,6 +175,16 @@ struct ASFWMCPHardwareSmokeRunner<Driver: ASFWDriverControlling> {
 
         var results: [ASFWMCPHardwareSmokeStepResult] = []
         for node in nodes {
+            guard let deviceID = node.deviceInstanceId else {
+                results.append(ASFWMCPHardwareSmokeStepResult(
+                    name: "Read Config ROM prefix (node \(node.nodeId))",
+                    disposition: .skipped,
+                    reason: "Node has no runtime device instance identity.",
+                    resourceURI: nil,
+                    toolName: "asfw_read_block"
+                ))
+                continue
+            }
             guard node.configRomCached else {
                 results.append(ASFWMCPHardwareSmokeStepResult(
                     name: "Read Config ROM prefix (node \(node.nodeId))",
@@ -187,6 +197,7 @@ struct ASFWMCPHardwareSmokeRunner<Driver: ASFWDriverControlling> {
             }
 
             let arguments: ASFWMCPValue = .object([
+                "deviceInstanceId": .uint64(deviceID.rawValue),
                 "nodeId": .int(Int(node.nodeId)),
                 "generation": .int(Int(generation)),
                 "addressHigh": .int(Int(ASFWMCPHardwareSmokeConstants.configRomBaseHigh)),
@@ -200,6 +211,7 @@ struct ASFWMCPHardwareSmokeRunner<Driver: ASFWDriverControlling> {
             ))
 
             let prefixArguments: ASFWMCPValue = .object([
+                "deviceInstanceId": .uint64(deviceID.rawValue),
                 "nodeId": .int(Int(node.nodeId)),
                 "generation": .int(Int(generation)),
                 "addressHigh": .int(Int(ASFWMCPHardwareSmokeConstants.configRomBaseHigh)),

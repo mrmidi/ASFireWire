@@ -149,6 +149,12 @@ final class RomExplorerViewModel: ObservableObject {
             error = "Topology generation unknown. Refresh topology and try again."
             return
         }
+        guard let device = connector.getDiscoveredDevices()?.first(where: {
+            $0.nodeId == node.nodeId && $0.generation == UInt32(gen)
+        }) else {
+            error = "Node \(node.nodeId) has no discovered device instance in generation \(gen)."
+            return
+        }
 
         isLoading = true
         error = nil
@@ -159,7 +165,8 @@ final class RomExplorerViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            guard let result = connector.getConfigROM(nodeId: node.nodeId, generation: gen) else {
+            guard let result = connector.getConfigROM(deviceID: device.id,
+                                                      expectedGeneration: gen) else {
                 DispatchQueue.main.async {
                     self.isLoading = false
                     self.liveReadState = .idle
@@ -185,10 +192,17 @@ final class RomExplorerViewModel: ObservableObject {
             error = "Select a node first"
             return
         }
-        triggerROMRead(nodeId: node.nodeId)
+        guard let gen = topologyGeneration,
+              let device = connector?.getDiscoveredDevices()?.first(where: {
+                  $0.nodeId == node.nodeId && $0.generation == UInt32(gen)
+              }) else {
+            error = "Selected node has no current device instance. Refresh topology first."
+            return
+        }
+        triggerROMRead(deviceID: device.id, nodeId: node.nodeId)
     }
 
-    func triggerROMRead(nodeId: UInt8) {
+    private func triggerROMRead(deviceID: DeviceInstanceID, nodeId: UInt8) {
         guard let connector = connector else {
             error = "Driver not connected"
             return
@@ -200,11 +214,11 @@ final class RomExplorerViewModel: ObservableObject {
         liveReadState = .triggeringRead
         sourceType = .driver
 
-        let status = connector.triggerROMRead(nodeId: nodeId)
+        let status = connector.triggerROMRead(deviceID: deviceID)
         switch status {
         case .initiated:
             statusMessage = "ROM read initiated. Waiting for driver to cache the ROM..."
-            pollForROM(nodeId: nodeId, remainingRetries: 12)
+            pollForROM(deviceID: deviceID, nodeId: nodeId, remainingRetries: 12)
         case .alreadyInProgress:
             isLoading = false
             liveReadState = .idle
@@ -216,7 +230,9 @@ final class RomExplorerViewModel: ObservableObject {
         }
     }
 
-    private func pollForROM(nodeId: UInt8, remainingRetries: Int) {
+    private func pollForROM(deviceID: DeviceInstanceID,
+                            nodeId: UInt8,
+                            remainingRetries: Int) {
         guard remainingRetries > 0 else {
             isLoading = false
             liveReadState = .idle
@@ -235,7 +251,8 @@ final class RomExplorerViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self else { return }
-            if let result = connector.getConfigROM(nodeId: nodeId, generation: gen) {
+            if let result = connector.getConfigROM(deviceID: deviceID,
+                                                   expectedGeneration: gen) {
                 DispatchQueue.main.async {
                     if result.isExactGenerationMatch {
                         self.parseAndPublishROM(data: result.data,
@@ -243,12 +260,16 @@ final class RomExplorerViewModel: ObservableObject {
                                                 statusMessage: "ROM read complete (\(result.data.count) bytes)")
                     } else {
                         self.statusMessage = "Waiting for fresh ROM read... saw stale cache from gen \(result.resolvedGeneration)"
-                        self.pollForROM(nodeId: nodeId, remainingRetries: remainingRetries - 1)
+                        self.pollForROM(deviceID: deviceID,
+                                        nodeId: nodeId,
+                                        remainingRetries: remainingRetries - 1)
                     }
                 }
             } else {
                 DispatchQueue.main.async {
-                    self.pollForROM(nodeId: nodeId, remainingRetries: remainingRetries - 1)
+                    self.pollForROM(deviceID: deviceID,
+                                    nodeId: nodeId,
+                                    remainingRetries: remainingRetries - 1)
                 }
             }
         }

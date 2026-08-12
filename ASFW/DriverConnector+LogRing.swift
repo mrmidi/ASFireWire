@@ -8,7 +8,7 @@ import Foundation
 // ASFWDriver/Logging/LogRing.hpp: a 40-byte response header followed by
 // recordCount x { 20-byte record header, message bytes }.
 
-struct ASFWLogRingQuery: Sendable {
+nonisolated struct ASFWLogRingQuery: Sendable {
     var afterSequence: UInt64 = 0
     var categoryMask: UInt32 = 0xFFFF_FFFF
     var maxLevel: UInt8 = 4
@@ -17,7 +17,7 @@ struct ASFWLogRingQuery: Sendable {
     var maxRecords: Int = 200
 }
 
-struct ASFWLogRingRecord: Identifiable, Equatable, Sendable {
+nonisolated struct ASFWLogRingRecord: Identifiable, Equatable, Sendable {
     let sequence: UInt64
     let timestampNs: UInt64
     let category: UInt8
@@ -29,7 +29,7 @@ struct ASFWLogRingRecord: Identifiable, Equatable, Sendable {
     var levelName: String { ASFWLogRingCategories.levelName(for: level) }
 }
 
-struct ASFWLogRingQueryResponse: Sendable {
+nonisolated struct ASFWLogRingQueryResponse: Sendable {
     let records: [ASFWLogRingRecord]
     let nextSequence: UInt64
     let latestSequence: UInt64
@@ -51,7 +51,7 @@ struct ASFWLogRingQueryResponse: Sendable {
     }
 }
 
-struct ASFWLogRingStats: Sendable {
+nonisolated struct ASFWLogRingStats: Sendable {
     let totalEmitted: UInt64
     let droppedRecords: UInt64
     let latestSequence: UInt64
@@ -62,7 +62,7 @@ struct ASFWLogRingStats: Sendable {
 
 /// Legacy category mapping retained for MCP request compatibility. The GUI
 /// renders selector 1014's driver-exported catalog and presets instead.
-enum ASFWLogRingCategories {
+nonisolated enum ASFWLogRingCategories {
     static let names: [String] = [
         "Controller", "Hardware", "BusReset", "Topology", "Metrics", "Async",
         "UserClient", "Discovery", "IRM", "BusManager", "ConfigROM",

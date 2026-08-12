@@ -179,10 +179,10 @@ extension ASFWDriverConnector {
 
     /// Start DV capture for a discovered device. The driver resolves its
     /// generation/node and negotiates CMP/IRM resources (with broadcast fallback).
-    func startDVCapture(deviceGUID: UInt64) -> Bool {
+    func startDVCapture(deviceID: DeviceInstanceID) -> Bool {
         guard isConnected, connection != 0 else { return false }
 
-        var input: [UInt64] = [deviceGUID]
+        var input: [UInt64] = [deviceID.rawValue]
         let kr = IOConnectCallScalarMethod(
             connection,
             Method.startDVCapture.rawValue,
@@ -194,7 +194,7 @@ extension ASFWDriverConnector {
             log("startDVCapture failed: \(interpretIOReturn(kr))", level: .error)
             return false
         }
-        log("Started DV capture for GUID \(String(format: "%016llX", deviceGUID))",
+        log("Started DV capture for device instance \(deviceID.rawValue)",
             level: .info)
         return true
     }

@@ -79,9 +79,9 @@ extension ASFWMCPToolDefinition {
             return .object([
                 "type": .string("object"),
                 "properties": .object([
-                    "nodeId": .object([
-                        "type": .string("integer"), "minimum": .int(0), "maximum": .int(63),
-                        "description": .string("Current physical node ID from asfw://nodes.")
+                    "deviceInstanceId": .object([
+                        "type": .string("integer"), "minimum": .int(1),
+                        "description": .string("Opaque physical instance ID from asfw://nodes.")
                     ]),
                     "generation": .object([
                         "type": .string("integer"), "minimum": .int(0), "maximum": .int(65535),
@@ -109,7 +109,7 @@ extension ASFWMCPToolDefinition {
                         "description": .string("Maximum parsed entries for view=tree; ignored by other views.")
                     ])
                 ]),
-                "required": .array([.string("nodeId"), .string("generation")]),
+                "required": .array([.string("deviceInstanceId"), .string("generation")]),
                 "additionalProperties": .bool(false)
             ])
         case "asfw_log_query":
@@ -148,6 +148,54 @@ extension ASFWMCPToolDefinition {
         case "asfw_log_stats":
             return .object([
                 "type": .string("object"),
+                "additionalProperties": .bool(false)
+            ])
+        case "asfw_cmp_list_plugs":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "deviceInstanceId": .object([
+                        "type": .string("integer"), "minimum": .int(1),
+                        "description": .string("Opaque physical instance ID from asfw://nodes.")
+                    ]),
+                    "nodeId": .object([
+                        "type": .string("integer"), "minimum": .int(0), "maximum": .int(63),
+                        "description": .string("Current node route guard; refresh after reset.")
+                    ]),
+                    "generation": .object([
+                        "type": .string("integer"), "minimum": .int(0),
+                        "description": .string("Current bus generation route guard.")
+                    ]),
+                ]),
+                "required": .array(["deviceInstanceId", "nodeId", "generation"].map(MCP.Value.string)),
+                "additionalProperties": .bool(false)
+            ])
+        case "asfw_cmp_read_pcr":
+            return .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "deviceInstanceId": .object([
+                        "type": .string("integer"), "minimum": .int(1),
+                        "description": .string("Opaque physical instance ID from asfw://nodes.")
+                    ]),
+                    "nodeId": .object([
+                        "type": .string("integer"), "minimum": .int(0), "maximum": .int(63)
+                    ]),
+                    "generation": .object([
+                        "type": .string("integer"), "minimum": .int(0)
+                    ]),
+                    "direction": .object([
+                        "type": .string("string"),
+                        "enum": .array([.string("input"), .string("output")])
+                    ]),
+                    "plug": .object([
+                        "type": .string("integer"), "minimum": .int(0), "maximum": .int(30)
+                    ]),
+                ]),
+                "required": .array(
+                    ["deviceInstanceId", "nodeId", "generation", "direction", "plug"]
+                        .map(MCP.Value.string)
+                ),
                 "additionalProperties": .bool(false)
             ])
         default:

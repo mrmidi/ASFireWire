@@ -1,7 +1,7 @@
 import Foundation
 
 // Audio stream health: read-only projection of the driver's per-endpoint RX
-// bring-up attribution and TX cursor ownership (AudioTelemetrySnapshot v4).
+// bring-up attribution and TX cursor ownership (AudioTelemetrySnapshot v5).
 //
 // This exists because a stream that never establishes used to be one
 // indistinguishable silence. Every RX outcome now lands in exactly one counter,
@@ -20,7 +20,9 @@ extension ASFWMCPToolCatalog {
 
 /// One endpoint's RX attribution, plus the verdict derived from it.
 struct ASFWMCPAudioStreamHealth: Equatable {
-    let guid: UInt64
+    let endpointId: AudioEndpointID
+    let deviceInstanceId: DeviceInstanceID
+    let observedGuid: UInt64
     let bindingReady: Bool
     let streaming: Bool
     let sampleRateHz: UInt32
@@ -91,7 +93,9 @@ struct ASFWMCPAudioStreamHealth: Equatable {
 
     func mcpValue() -> ASFWMCPValue {
         .object([
-            "guid": .uint64(guid),
+            "endpointId": .uint64(endpointId.rawValue),
+            "deviceInstanceId": .uint64(deviceInstanceId.rawValue),
+            "observedGuid": .string(String(format: "0x%016llX", observedGuid)),
             "bindingReady": .bool(bindingReady),
             "streaming": .bool(streaming),
             "sampleRateHz": .int(Int(sampleRateHz)),
@@ -119,7 +123,9 @@ struct ASFWMCPAudioStreamHealth: Equatable {
 extension AudioTelemetryEndpoint {
     var mcpStreamHealth: ASFWMCPAudioStreamHealth {
         ASFWMCPAudioStreamHealth(
-            guid: guid,
+            endpointId: endpointId,
+            deviceInstanceId: deviceInstanceId,
+            observedGuid: observedGuid,
             bindingReady: isBindingReady,
             streaming: isStreaming,
             sampleRateHz: sampleRateHz,
@@ -144,7 +150,9 @@ extension AudioTelemetryEndpoint {
 /// and transport owns packet completion. Their units are named in the wire
 /// response so a caller cannot accidentally subtract frames from packets.
 struct ASFWMCPAudioCursorSnapshot: Equatable {
-    let guid: UInt64
+    let endpointId: AudioEndpointID
+    let deviceInstanceId: DeviceInstanceID
+    let observedGuid: UInt64
     let bindingReady: Bool
     let streaming: Bool
     let sampleRateHz: UInt32
@@ -242,7 +250,9 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
 
     func mcpValue() -> ASFWMCPValue {
         .object([
-            "guid": .uint64(guid),
+            "endpointId": .uint64(endpointId.rawValue),
+            "deviceInstanceId": .uint64(deviceInstanceId.rawValue),
+            "observedGuid": .string(String(format: "0x%016llX", observedGuid)),
             "bindingReady": .bool(bindingReady),
             "streaming": .bool(streaming),
             "sampleRateHz": .int(Int(sampleRateHz)),
@@ -296,7 +306,9 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
 extension AudioTelemetryEndpoint {
     var mcpAudioCursors: ASFWMCPAudioCursorSnapshot {
         ASFWMCPAudioCursorSnapshot(
-            guid: guid,
+            endpointId: endpointId,
+            deviceInstanceId: deviceInstanceId,
+            observedGuid: observedGuid,
             bindingReady: isBindingReady,
             streaming: isStreaming,
             sampleRateHz: sampleRateHz,

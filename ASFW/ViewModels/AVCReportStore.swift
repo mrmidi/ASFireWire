@@ -63,15 +63,16 @@ final class AVCReportStore: ObservableObject {
 
         var reports = [String]()
         var found = 0
-        var unstableGuids = [UInt64]()
+        var unstableUnits = [UnitInstanceID]()
         var skipped = 0
 
-        for device in devices {
+        let units = connector.getAVCUnits() ?? []
+        for unit in units {
             guard !Task.isCancelled else {
                 isRefreshing = false
                 return
             }
-            switch connector.captureAVCSnapshot(guid: device.guid) {
+            switch connector.captureAVCSnapshot(unitID: unit.id) {
             case .captured(let snapshot):
                 found += 1
                 reports.append(AVCReportTextFormatter.format(
@@ -81,8 +82,8 @@ final class AVCReportStore: ObservableObject {
                 ))
             case .notAVC:
                 skipped += 1
-            case .unstable(let guid):
-                unstableGuids.append(guid)
+            case .unstable(let unitID):
+                unstableUnits.append(unitID)
             case .unavailable:
                 continue
             }
@@ -112,8 +113,8 @@ final class AVCReportStore: ObservableObject {
                 .joined(separator: "\n\n")
         }
 
-        if !unstableGuids.isEmpty {
-            error = "Bus reset or node-ID change interrupted \(unstableGuids.count) AV/C capture(s); retry once the bus is stable."
+        if !unstableUnits.isEmpty {
+            error = "Bus reset or route change interrupted \(unstableUnits.count) AV/C capture(s); retry once the bus is stable."
         }
         reportText = text
         deviceCount = found

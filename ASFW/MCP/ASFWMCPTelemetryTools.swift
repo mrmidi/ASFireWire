@@ -76,7 +76,7 @@ struct ASFWMCPConfigRomBIBField: Equatable {
 /// full parser stays in the app model; this DTO intentionally omits arbitrary
 /// leaf payload bytes because agents normally need the decoded descriptor or
 /// the fact that a target was not fetched from the partial cache.
-struct ASFWMCPConfigRomTreeEntry: Equatable {
+nonisolated struct ASFWMCPConfigRomTreeEntry: Equatable {
     let path: String
     let key: String
     let keyId: UInt8
@@ -417,7 +417,7 @@ private extension ASFWMCPConfigRomTreeEntry {
 }
 
 extension ASFWMCPConfigRomTreeEntry {
-    init(entry: DirectoryEntry) {
+    nonisolated init(entry: DirectoryEntry) {
         self.init(
             path: entry.pathId,
             key: entry.keyName,
@@ -431,12 +431,14 @@ extension ASFWMCPConfigRomTreeEntry {
         )
     }
 
-    private static func children(_ value: RomValue) -> [ASFWMCPConfigRomTreeEntry] {
+    nonisolated private static func children(
+        _ value: RomValue
+    ) -> [ASFWMCPConfigRomTreeEntry] {
         guard case .directory(let entries) = value else { return [] }
         return entries.map(ASFWMCPConfigRomTreeEntry.init(entry:))
     }
 
-    private static func valueDescription(_ value: RomValue) -> String? {
+    nonisolated private static func valueDescription(_ value: RomValue) -> String? {
         switch value {
         case .immediate(let word):
             String(format: "0x%06X", word)

@@ -14,18 +14,18 @@ import Foundation
 // C++ `enum class` in a namespace and cannot be bridged to Swift, so the values are
 // restated here. Keep the two in sync when RegisterMap.hpp changes.
 
-struct ASFWMCPOhciRegister: Equatable {
+nonisolated struct ASFWMCPOhciRegister: Equatable {
     let name: String
     let offset: UInt32
     let value: UInt32
 }
 
-struct ASFWMCPOhciSnapshot: Equatable {
+nonisolated struct ASFWMCPOhciSnapshot: Equatable {
     let generation: UInt32
     let registers: [ASFWMCPOhciRegister]
 }
 
-enum ASFWMCPOhciRegisterMap {
+nonisolated enum ASFWMCPOhciRegisterMap {
     /// One table drives both the snapshot and the single-register read so the two
     /// tools can never disagree about which registers are covered.
     static let covered: [(name: String, offset: UInt32, field: KeyPath<ASFWDiagOHCI, UInt32>)] = [

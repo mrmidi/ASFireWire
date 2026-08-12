@@ -13,12 +13,12 @@ import SwiftUI
 @MainActor
 final class AudioTelemetryViewModel: ObservableObject {
     @Published private(set) var endpoints: [AudioTelemetryEndpoint] = []
-    @Published var selectedEndpointID: UInt64?
+    @Published var selectedEndpointID: AudioEndpointID?
     @Published private(set) var marginHistory: [MarginHistoryPoint] = []
     @Published private(set) var lastUpdated: Date?
 
     private let connector: ASFWDriverConnector
-    private var observedIntervals: [UInt64: UInt64] = [:]
+    private var observedIntervals: [AudioEndpointID: UInt64] = [:]
 
     init(connector: ASFWDriverConnector) {
         self.connector = connector
@@ -26,7 +26,7 @@ final class AudioTelemetryViewModel: ObservableObject {
 
     var selectedEndpoint: AudioTelemetryEndpoint? {
         if let selectedEndpointID,
-           let endpoint = endpoints.first(where: { $0.guid == selectedEndpointID }) {
+           let endpoint = endpoints.first(where: { $0.endpointId == selectedEndpointID }) {
             return endpoint
         }
         return endpoints.first
@@ -42,17 +42,17 @@ final class AudioTelemetryViewModel: ObservableObject {
     private func refresh() {
         guard let snapshot = connector.getAudioTelemetry() else { return }
         endpoints = snapshot.endpoints
-        if selectedEndpointID == nil || !endpoints.contains(where: { $0.guid == selectedEndpointID }) {
-            selectedEndpointID = endpoints.first?.guid
+        if selectedEndpointID == nil || !endpoints.contains(where: { $0.endpointId == selectedEndpointID }) {
+            selectedEndpointID = endpoints.first?.endpointId
         }
         lastUpdated = Date()
 
         for endpoint in endpoints where endpoint.hasCompletedInterval {
-            guard observedIntervals[endpoint.guid] != endpoint.completedIntervalSequence,
+            guard observedIntervals[endpoint.endpointId] != endpoint.completedIntervalSequence,
                   let intervalMinimum = endpoint.intervalMinimum else { continue }
-            observedIntervals[endpoint.guid] = endpoint.completedIntervalSequence
+            observedIntervals[endpoint.endpointId] = endpoint.completedIntervalSequence
             marginHistory.append(MarginHistoryPoint(
-                endpointGUID: endpoint.guid,
+                endpointID: endpoint.endpointId,
                 timestamp: lastUpdated ?? Date(),
                 packets: intervalMinimum
             ))
@@ -79,7 +79,7 @@ struct AudioTelemetryView: View {
                         if viewModel.endpoints.count > 1 {
                             Picker("Audio endpoint", selection: $viewModel.selectedEndpointID) {
                                 ForEach(viewModel.endpoints) { candidate in
-                                    Text(candidate.guidText).tag(Optional(candidate.guid))
+                                    Text(candidate.identityText).tag(Optional(candidate.endpointId))
                                 }
                             }
                             .pickerStyle(.menu)
@@ -107,7 +107,7 @@ struct AudioTelemetryView: View {
     private func header(_ endpoint: AudioTelemetryEndpoint) -> some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(endpoint.guidText)
+                Text(endpoint.identityText)
                     .font(.title2.weight(.semibold))
                 Text("\(endpoint.sampleRateHz.formatted()) Hz · \(endpoint.outputChannels) out / \(endpoint.inputChannels) in")
                     .foregroundStyle(.secondary)
@@ -157,7 +157,7 @@ struct AudioTelemetryView: View {
         }
 
         TelemetryPanel(title: "Interval margin low") {
-            Chart(viewModel.marginHistory.filter { $0.endpointGUID == endpoint.guid }) { point in
+            Chart(viewModel.marginHistory.filter { $0.endpointID == endpoint.endpointId }) { point in
                 LineMark(
                     x: .value("Time", point.timestamp),
                     y: .value("Packets", point.packets)
@@ -200,10 +200,10 @@ struct AudioTelemetryView: View {
 }
 
 struct MarginHistoryPoint: Identifiable {
-    let endpointGUID: UInt64
+    let endpointID: AudioEndpointID
     let timestamp: Date
     let packets: UInt32
-    var id: String { "\(endpointGUID)-\(timestamp.timeIntervalSinceReferenceDate)" }
+    var id: String { "\(endpointID.rawValue)-\(timestamp.timeIntervalSinceReferenceDate)" }
 }
 
 struct TelemetryMetricCard: View {
@@ -264,7 +264,9 @@ struct HistogramChart: View {
 }
 
 private extension AudioTelemetryEndpoint {
-    var guidText: String { String(format: "GUID 0x%016llX", guid) }
+    var identityText: String {
+        "Endpoint \(endpointId.rawValue) · device \(deviceInstanceId.rawValue) · observed \(String(format: "0x%016llX", observedGuid))"
+    }
 }
 
 private extension UInt64 {

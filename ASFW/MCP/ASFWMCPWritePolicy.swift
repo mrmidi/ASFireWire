@@ -14,7 +14,7 @@ import Foundation
 // called for in documentation/MCP_TEST_GATE.md §6.
 
 /// Coarse policy classification of a FireWire address.
-enum ASFWMCPAddressSpace: String, Equatable {
+nonisolated enum ASFWMCPAddressSpace: String, Equatable {
     /// IEEE 1212 CSR-architecture register block (0xFFFF_F000_0000 ..< 0x0400).
     case csrCore
     /// Config ROM space (0xFFFF_F000_0400 ..< 0x0800) — architecturally read-only.
@@ -30,7 +30,7 @@ enum ASFWMCPAddressSpace: String, Equatable {
 }
 
 /// Mutation class of a request for policy purposes.
-enum ASFWMCPOperationType: String, Equatable {
+nonisolated enum ASFWMCPOperationType: String, Equatable {
     case read
     case write
     case compareSwap
@@ -39,7 +39,7 @@ enum ASFWMCPOperationType: String, Equatable {
 }
 
 /// Structured policy decision categories (taxonomy §11).
-enum ASFWMCPWriteDecision: String, Equatable, CaseIterable {
+nonisolated enum ASFWMCPWriteDecision: String, Equatable, CaseIterable {
     case allowed
     case denied
     case dryRunOnly
@@ -50,7 +50,7 @@ enum ASFWMCPWriteDecision: String, Equatable, CaseIterable {
 }
 
 /// A policy decision plus its human- and machine-readable justification.
-struct ASFWMCPPolicyDecision: Equatable {
+nonisolated struct ASFWMCPPolicyDecision: Equatable {
     let decision: ASFWMCPWriteDecision
     /// Human-readable explanation, including how to make the operation valid when
     /// that is possible.

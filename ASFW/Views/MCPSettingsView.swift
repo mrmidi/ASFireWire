@@ -58,7 +58,7 @@ struct MCPSettingsView: View {
                         }
 
                     if viewModel.guardedFCPExperimentsEnabled {
-                        Label("Developer tools require a current GUID, node, and generation. The in-process MCP test gate must pass before startup.", systemImage: "exclamationmark.shield")
+                        Label("Developer tools require a current device or unit instance ID; node and generation are stale-route guards. The in-process MCP test gate must pass before startup.", systemImage: "exclamationmark.shield")
                             .font(.footnote)
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)

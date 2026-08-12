@@ -13,10 +13,14 @@ import Foundation
 // onto the bus by the live driver layer; block `payload`/`payload` bytes are
 // already in bus (big-endian) order.
 
-/// A typed 48-bit FireWire target address plus the addressing context required to
-/// issue an async transaction against it.
-struct ASFWMCPAddress: Equatable, Sendable {
-    /// 16-bit bus/node identifier (`bus_id` << 6 | `phy_id`) of the target node.
+/// A typed 48-bit FireWire target address plus a runtime physical identity and
+/// the observed route context used for stale-snapshot checks.
+nonisolated struct ASFWMCPAddress: Equatable, Sendable {
+    /// Sole transaction target. The driver resolves its current route and
+    /// rejects missing, suspended, retired, or quarantined instances.
+    let deviceInstanceId: DeviceInstanceID
+    /// Diagnostic physical node observed with this request. Never used as the
+    /// driver/user-client routing key.
     let nodeId: UInt32
     /// Bus generation the request is pinned to. A mismatch against the live
     /// generation is a `staleGeneration` refusal (see FW-79).
@@ -33,7 +37,7 @@ struct ASFWMCPAddress: Equatable, Sendable {
 }
 
 /// The async transaction primitives ASFW models for MCP.
-enum ASFWMCPTransactionKind: String, Equatable, Sendable {
+nonisolated enum ASFWMCPTransactionKind: String, Equatable, Sendable {
     case readQuadlet
     case readBlock
     case writeQuadlet
@@ -53,20 +57,20 @@ enum ASFWMCPTransactionKind: String, Equatable, Sendable {
 }
 
 /// Conservative schema bounds for async transactions.
-enum ASFWMCPTransactionLimits {
+nonisolated enum ASFWMCPTransactionLimits {
     /// Async block payload ceiling used by schema validation. The IEEE 1394
     /// per-packet maximum scales with speed (2048 B @ S400, 4096 B @ S800); the
     /// schema validates against the S400 ceiling unless a caller raises it.
     static let maxBlockBytes: UInt32 = 2048
 }
 
-struct ASFWMCPReadQuadletRequest: Equatable, Sendable {
+nonisolated struct ASFWMCPReadQuadletRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
 
     var kind: ASFWMCPTransactionKind { .readQuadlet }
 }
 
-struct ASFWMCPReadBlockRequest: Equatable, Sendable {
+nonisolated struct ASFWMCPReadBlockRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Requested length in bytes; must be a non-zero multiple of 4 within bounds.
     let length: UInt32
@@ -81,7 +85,7 @@ struct ASFWMCPReadBlockRequest: Equatable, Sendable {
     }
 }
 
-struct ASFWMCPWriteQuadletRequest: Equatable, Sendable {
+nonisolated struct ASFWMCPWriteQuadletRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Quadlet value in host byte order.
     let value: UInt32
@@ -97,7 +101,7 @@ struct ASFWMCPWriteQuadletRequest: Equatable, Sendable {
     var kind: ASFWMCPTransactionKind { .writeQuadlet }
 }
 
-struct ASFWMCPWriteBlockRequest: Equatable, Sendable {
+nonisolated struct ASFWMCPWriteBlockRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Payload bytes in bus (big-endian) order.
     let payload: [UInt8]
@@ -121,7 +125,7 @@ struct ASFWMCPWriteBlockRequest: Equatable, Sendable {
 
 /// Quadlet lock / compare-and-swap (taxonomy §5.5 `asfw_cas_quadlet`). Also the
 /// primitive behind IRM and CMP mutations.
-struct ASFWMCPCompareSwapRequest: Equatable, Sendable {
+nonisolated struct ASFWMCPCompareSwapRequest: Equatable, Sendable {
     let address: ASFWMCPAddress
     /// Expected current quadlet (host byte order).
     let expected: UInt32
@@ -132,7 +136,7 @@ struct ASFWMCPCompareSwapRequest: Equatable, Sendable {
 }
 
 /// Terminal status of a (possibly refused) async transaction.
-enum ASFWMCPTransactionStatus: String, Equatable, Sendable {
+nonisolated enum ASFWMCPTransactionStatus: String, Equatable, Sendable {
     case ok
     case timeout
     case rcodeError
@@ -149,7 +153,7 @@ enum ASFWMCPTransactionStatus: String, Equatable, Sendable {
 }
 
 /// Stable async transaction result shape (taxonomy §5.3).
-struct ASFWMCPTransactionResult: Equatable, Sendable {
+nonisolated struct ASFWMCPTransactionResult: Equatable, Sendable {
     let kind: ASFWMCPTransactionKind
     let ok: Bool
     let status: ASFWMCPTransactionStatus
@@ -196,7 +200,7 @@ extension ASFWMCPTransactionResult {
     /// Build the result for a write/CAS that the policy engine did not authorize
     /// for execution. Denials and dry runs share this shape; neither reaches the
     /// driver write path.
-    static func policyRefusal(
+    nonisolated static func policyRefusal(
         kind: ASFWMCPTransactionKind,
         correlationId: String,
         generation: UInt32,
@@ -213,7 +217,7 @@ extension ASFWMCPTransactionResult {
     }
 
     /// Build the result for a request rejected by schema validation.
-    static func malformed(
+    nonisolated static func malformed(
         kind: ASFWMCPTransactionKind,
         correlationId: String,
         generation: UInt32

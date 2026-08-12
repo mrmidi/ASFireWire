@@ -106,7 +106,7 @@ public struct DirectoryEntry: Codable, Sendable, Identifiable {
     public var rawEntryWord: UInt32?
     public var relativeOffset24: Int32?
     public var targetQuadletIndex: Int?
-    public var keyName: String { KeyType.name(for: keyId) }
+    nonisolated public var keyName: String { KeyType.name(for: keyId) }
 
     public init(pathId: String = UUID().uuidString,
                 keyId: UInt8,
@@ -172,7 +172,7 @@ public enum RomError: Error, CustomStringConvertible {
     }
 }
 
-public enum KeyType: UInt8, Codable, Sendable {
+nonisolated public enum KeyType: UInt8, Codable, Sendable {
     case descriptor = 0x01
     case busDependentInfo = 0x02
     case vendor = 0x03

@@ -123,6 +123,7 @@ final class ASFWDriverConnector: ObservableObject {
     var sharedMemoryPointer: UnsafeMutableRawPointer?
     var lastDeliveredSequence: UInt64 = 0
     private let logStore = DriverConnectorLogStore(maxEntries: 100)
+    let duetStateCacheStore = DriverConnectorDuetStateCacheStore()
 
     lazy var transport = DriverConnectorTransport(
         connectionProvider: { [weak self] in self?.connection ?? 0 },

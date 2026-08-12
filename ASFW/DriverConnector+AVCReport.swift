@@ -29,30 +29,31 @@ extension ASFWDriverConnector {
     private static let subunitInfoCommand: [UInt8] =
         [0x01, 0xff, 0x31, 0x07, 0xff, 0xff, 0xff, 0xff]
 
-    /// Capture only a stable view of a GUID. The legacy user-client async read
-    /// selector has no generation argument, so a before/after discovery check
-    /// is the boundary that prevents node-ID reuse after a bus reset from being
-    /// presented as one coherent device report.
-    func captureAVCSnapshot(guid: UInt64, attempts: Int = 2) -> AVCSnapshotCaptureResult {
+    /// Capture one stable unit instance. The route is revalidated after the
+    /// diagnostic reads so a reset can never splice two generations together.
+    func captureAVCSnapshot(unitID: UnitInstanceID, attempts: Int = 2) -> AVCSnapshotCaptureResult {
         for _ in 0..<max(1, attempts) {
-            guard let before = getDiscoveredDevices()?.first(where: { $0.guid == guid }) else {
-                return .unavailable(guid: guid)
+            guard let before = getDiscoveredDevices()?.first(where: { $0.id == unitID.device }),
+                  let beforeUnit = getAVCUnits()?.first(where: { $0.id == unitID }) else {
+                return .unavailable(unitID: unitID)
             }
-            let snapshot = captureAVCSnapshotOnce(device: before)
-            guard let after = getDiscoveredDevices()?.first(where: { $0.guid == guid }) else {
+            let snapshot = captureAVCSnapshotOnce(device: before, unit: beforeUnit)
+            guard let after = getDiscoveredDevices()?.first(where: { $0.id == unitID.device }),
+                  getAVCUnits()?.contains(where: { $0.id == unitID }) == true else {
                 continue
             }
             guard after.nodeId == before.nodeId, after.generation == before.generation else {
                 continue
             }
-            return snapshot.isAVCDevice ? .captured(snapshot) : .notAVC(guid: guid)
+            return snapshot.isAVCDevice ? .captured(snapshot) : .notAVC(unitID: unitID)
         }
-        return .unstable(guid: guid)
+        return .unstable(unitID: unitID)
     }
 
-    private func captureAVCSnapshotOnce(device: FWDeviceInfo) -> AVCDeviceSnapshot {
+    private func captureAVCSnapshotOnce(device: FWDeviceInfo,
+                                        unit: AVCUnitInfo) -> AVCDeviceSnapshot {
         var snap = AVCDeviceSnapshot()
-        snap.guid = device.guid
+        snap.guid = device.observedGuid
         snap.nodeId = UInt16(device.nodeId)
         snap.generation = device.generation
         snap.vendorId = device.vendorId
@@ -61,34 +62,44 @@ extension ASFWDriverConnector {
         snap.modelName = device.modelName
 
         // Decided from Config ROM identity alone -- nothing has been sent yet.
-        snap.policy = AVCProbeRestrictions.policy(vendorId: device.vendorId,
-                                                  modelId: device.modelId)
+        snap.policy = device.isQuarantined
+            ? AVCProbePolicy(
+                tier: .memoryOnly,
+                rationale: "The runtime identity resolver quarantined this instance (\(device.quarantineReason)); no bus transaction is permitted."
+            )
+            : AVCProbePolicy(
+                tier: .avcStatus,
+                rationale: "The selected unit passed the runtime catalog safety gate; STATUS-only AV/C diagnostics are permitted."
+            )
+
+        guard !device.isQuarantined else {
+            snap.note("Only cached Config-ROM identity is available for this quarantined instance.")
+            return snap
+        }
 
         // Family memory blocks first: they are safe at every tier, and they are
         // what identifies a device whose AV/C surface we are not allowed to ask.
-        let node = UInt16(0xFFC0) | UInt16(device.nodeId)
-        captureBridgeCoSection(node: node, device: device, into: &snap)
+        captureBridgeCoSection(device: device, into: &snap)
 
         // The driver's own discovery already ran UNIT/SUBUNIT INFO for units it
         // did not bypass. Reuse it rather than re-probing the device.
-        adoptDriverDiscoveredInventory(guid: device.guid, into: &snap)
+        adoptDriverDiscoveredInventory(unit: unit, into: &snap)
 
         switch snap.policy.tier {
         case .memoryOnly:
             snap.note("AV/C probing suppressed by policy — plug inventory not queried.")
         case .avcStatus:
-            captureUnitPlugs(guid: device.guid, into: &snap)
-            captureSubunits(guid: device.guid, into: &snap)
-            captureMusicSubunitPlugs(guid: device.guid, into: &snap)
+            captureUnitPlugs(unitID: unit.id, into: &snap)
+            captureSubunits(unitID: unit.id, into: &snap)
+            captureMusicSubunitPlugs(unitID: unit.id, into: &snap)
         }
         return snap
     }
 
     // MARK: - Driver-side discovery reuse
 
-    private func adoptDriverDiscoveredInventory(guid: UInt64, into snap: inout AVCDeviceSnapshot) {
-        guard let unit = getAVCUnits()?.first(where: { $0.guid == guid }) else { return }
-
+    private func adoptDriverDiscoveredInventory(unit: AVCUnitInfo,
+                                                into snap: inout AVCDeviceSnapshot) {
         // The driver registers a unit before its probe runs, so an entry with
         // nothing in it is the signature of a probe that failed or never
         // completed -- not a device that reported four zero plug counts. Adopt
@@ -121,8 +132,8 @@ extension ASFWDriverConnector {
     // MARK: - Generic AV/C STATUS inventory
 
     /// AV/C General PLUG_INFO (opcode 0x02, subfunction 0x00).
-    private func captureUnitPlugs(guid: UInt64, into snap: inout AVCDeviceSnapshot) {
-        guard let response = sendAVCStatus(guid: guid,
+    private func captureUnitPlugs(unitID: UnitInstanceID, into snap: inout AVCDeviceSnapshot) {
+        guard let response = sendAVCStatus(unitID: unitID,
                                            frame: ASFWMCPBeBoBUnitPlugInformation.statusCommand) else {
             if snap.inventory.unitPlugs == nil {
                 snap.note("Unit PLUG_INFO (AV/C STATUS 0x02) did not answer.")
@@ -144,9 +155,9 @@ extension ASFWDriverConnector {
 
     /// AV/C General SUBUNIT INFO (opcode 0x31). Only probed when the driver's
     /// discovery did not already supply the list.
-    private func captureSubunits(guid: UInt64, into snap: inout AVCDeviceSnapshot) {
+    private func captureSubunits(unitID: UnitInstanceID, into snap: inout AVCDeviceSnapshot) {
         guard snap.inventory.subunits.isEmpty else { return }
-        guard let response = sendAVCStatus(guid: guid, frame: Self.subunitInfoCommand) else {
+        guard let response = sendAVCStatus(unitID: unitID, frame: Self.subunitInfoCommand) else {
             snap.note("SUBUNIT INFO (AV/C STATUS 0x31) did not answer.")
             return
         }
@@ -168,9 +179,9 @@ extension ASFWDriverConnector {
     }
 
     /// AV/C Music subunit plug inventory via extended plug info (0x02 / 0xC0).
-    private func captureMusicSubunitPlugs(guid: UInt64, into snap: inout AVCDeviceSnapshot) {
+    private func captureMusicSubunitPlugs(unitID: UnitInstanceID, into snap: inout AVCDeviceSnapshot) {
         guard let response = sendAVCStatus(
-                guid: guid,
+                unitID: unitID,
                 frame: ASFWMCPBeBoBClockTopology.musicSubunitPlugInfoCommand()) else {
             snap.note("Music subunit PLUG_INFO did not answer — device may have no music subunit.")
             return
@@ -187,7 +198,7 @@ extension ASFWDriverConnector {
         }
         for plug in 0..<count {
             guard let typeResponse = sendAVCStatus(
-                    guid: guid,
+                    unitID: unitID,
                     frame: ASFWMCPBeBoBClockTopology.musicSubunitInputPlugTypeCommand(plug)),
                   let type = ASFWMCPBeBoBClockTopology.plugType(typeResponse) else {
                 snap.note("Music subunit input plug \(plug): type query did not answer.")
@@ -201,7 +212,7 @@ extension ASFWDriverConnector {
 
     // MARK: - Family section: BridgeCo (BeBoB)
 
-    private func captureBridgeCoSection(node: UInt16, device: FWDeviceInfo,
+    private func captureBridgeCoSection(device: FWDeviceInfo,
                                         into snap: inout AVCDeviceSnapshot) {
         let base = (UInt64(ASFWMCPBeBoBBootRomInformation.addressHigh) << 32)
             | UInt64(ASFWMCPBeBoBBootRomInformation.addressLow)
@@ -211,7 +222,10 @@ extension ASFWDriverConnector {
         let lengths = [ASFWMCPBeBoBBootRomInformation.sizeWithDebugger,
                        ASFWMCPBeBoBBootRomInformation.sizeWithoutDebugger]
         for length in lengths {
-            guard let data = readNodeBlock(node: node, base: base, offset: 0, length: length) else {
+            guard let data = readDeviceBlock(deviceID: device.id,
+                                             base: base,
+                                             offset: 0,
+                                             length: length) else {
                 continue
             }
             var section = BridgeCoSection()
@@ -234,9 +248,9 @@ extension ASFWDriverConnector {
 
     /// STATUS-only FCP. The ctype byte is asserted rather than trusted so a
     /// future caller cannot turn this diagnostic into a CONTROL path.
-    private func sendAVCStatus(guid: UInt64, frame: [UInt8]) -> [UInt8]? {
+    private func sendAVCStatus(unitID: UnitInstanceID, frame: [UInt8]) -> [UInt8]? {
         guard frame.first == 0x01 else { return nil }  // AV/C STATUS
-        guard let response = sendRawFCPCommand(guid: guid,
+        guard let response = sendRawFCPCommand(unitID: unitID,
                                                frame: Data(frame),
                                                timeoutMs: Self.avcReportFcpTimeoutMs) else {
             return nil

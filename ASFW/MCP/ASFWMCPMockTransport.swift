@@ -21,7 +21,9 @@ struct ASFWMCPMockTransport<Driver: ASFWDriverControlling> {
 }
 
 enum ASFWMCPHardwareSmokeHarness {
-    static func defaultPlan(includeMutatingOperations: Bool = false) -> ASFWMCPHardwareSmokePlan {
+    nonisolated static func defaultPlan(
+        includeMutatingOperations: Bool = false
+    ) -> ASFWMCPHardwareSmokePlan {
         var steps = [
             ASFWMCPHardwareSmokeStep(
                 name: "Read telemetry snapshot",

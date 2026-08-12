@@ -17,7 +17,7 @@ struct DuetControlView: View {
                 if !viewModel.isConnected {
                     stateCard(title: "Driver Not Connected",
                               message: "Connect to ASFWDriver to control Duet settings.")
-                } else if viewModel.duetGUID == nil {
+                } else if viewModel.duetUnitID == nil {
                     stateCard(title: "No Apogee Duet Found",
                               message: "Discover a Duet AV/C unit, then refresh this page.")
                 } else {
@@ -44,8 +44,8 @@ struct DuetControlView: View {
         GroupBox {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 6) {
-                    if let guid = viewModel.duetGUID {
-                        Text(String(format: "GUID 0x%016llX", guid))
+                    if let unitID = viewModel.duetUnitID {
+                        Text("Unit \(unitID.description)")
                             .font(.system(.subheadline, design: .monospaced))
                     } else {
                         Text("No Duet selected")

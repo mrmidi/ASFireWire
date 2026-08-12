@@ -1,5 +1,35 @@
 import Foundation
 
+nonisolated struct DeviceInstanceID: RawRepresentable, Hashable, Codable, Sendable, CustomStringConvertible {
+    let rawValue: UInt64
+
+    nonisolated init(rawValue: UInt64) { self.rawValue = rawValue }
+    nonisolated init(_ rawValue: UInt64) { self.rawValue = rawValue }
+    nonisolated var description: String { String(rawValue) }
+}
+
+nonisolated struct UnitInstanceID: Hashable, Codable, Sendable, CustomStringConvertible {
+    let device: DeviceInstanceID
+    let unitDirectoryOffset: UInt32
+
+    nonisolated init(device: DeviceInstanceID, unitDirectoryOffset: UInt32) {
+        self.device = device
+        self.unitDirectoryOffset = unitDirectoryOffset
+    }
+
+    nonisolated var description: String {
+        "\(device.rawValue):\(String(format: "0x%08X", unitDirectoryOffset))"
+    }
+}
+
+nonisolated struct AudioEndpointID: RawRepresentable, Hashable, Codable, Sendable, CustomStringConvertible {
+    let rawValue: UInt64
+
+    nonisolated init(rawValue: UInt64) { self.rawValue = rawValue }
+    nonisolated init(_ rawValue: UInt64) { self.rawValue = rawValue }
+    nonisolated var description: String { String(rawValue) }
+}
+
 // Canonical DriverConnector model types (IOKit-free, pure data/parsers).
 
 enum DriverConnectorSharedStatusReason: UInt32 {
@@ -148,7 +178,7 @@ struct DriverConnectorVersionInfo {
     }
 }
 
-struct DriverConnectorAVCSubunitInfo: Identifiable {
+struct DriverConnectorAVCSubunitInfo: Identifiable, Sendable {
     let id = UUID()
     let type: UInt8
     let subunitID: UInt8
@@ -183,12 +213,18 @@ struct DriverConnectorAVCSubunitInfo: Identifiable {
     }
 }
 
-struct DriverConnectorAVCUnitInfo: Identifiable {
-    let id = UUID()
-    let guid: UInt64
+struct DriverConnectorAVCUnitInfo: Identifiable, Sendable {
+    let id: UnitInstanceID
+    let observedGuid: UInt64
+    let generation: UInt32
     let nodeID: UInt16
-    let vendorID: UInt32
-    let modelID: UInt32
+    let isInitialized: Bool
+    let rootVendorID: UInt32
+    let rootModelID: UInt32
+    let unitVendorID: UInt32
+    let unitModelID: UInt32
+    let specifierID: UInt32
+    let unitVersion: UInt32
     let subunits: [DriverConnectorAVCSubunitInfo]
     
     // Unit-level plug counts (from AVCUnitPlugInfoCommand)
@@ -197,9 +233,12 @@ struct DriverConnectorAVCUnitInfo: Identifiable {
     let extInputPlugs: UInt8
     let extOutputPlugs: UInt8
 
-    var guidHex: String { String(format: "0x%016X", guid) }
+    var deviceInstanceID: DeviceInstanceID { id.device }
+    var unitDirectoryOffset: UInt32 { id.unitDirectoryOffset }
+    var observedGuidHex: String { String(format: "0x%016X", observedGuid) }
     var nodeIDHex: String { String(format: "0x%04X", nodeID) }
-    var isInitialized: Bool { true } // Always true for discovered units
+    var vendorID: UInt32 { unitVendorID != 0 ? unitVendorID : rootVendorID }
+    var modelID: UInt32 { unitModelID != 0 ? unitModelID : rootModelID }
     
     /// Total isochronous plugs (bidirectional)
     var totalIsoPlugs: UInt8 { isoInputPlugs + isoOutputPlugs }
@@ -471,7 +510,25 @@ struct DriverConnectorAVCMusicCapabilities {
     }
 }
 
-enum DriverConnectorFWDeviceState: UInt8 {
+enum DriverConnectorFWDeviceState: UInt8, Sendable {
+    case created = 0
+    case ready = 1
+    case quarantined = 2
+    case suspended = 3
+    case terminated = 4
+
+    var description: String {
+        switch self {
+        case .created: return "Created"
+        case .ready: return "Ready"
+        case .quarantined: return "Quarantined"
+        case .suspended: return "Suspended"
+        case .terminated: return "Terminated"
+        }
+    }
+}
+
+enum DriverConnectorFWUnitState: UInt8, Sendable {
     case created = 0
     case ready = 1
     case suspended = 2
@@ -487,35 +544,65 @@ enum DriverConnectorFWDeviceState: UInt8 {
     }
 }
 
-enum DriverConnectorFWUnitState: UInt8 {
-    case created = 0
-    case ready = 1
-    case suspended = 2
-    case terminated = 3
+enum DriverConnectorDeviceQuarantineReason: UInt8, Sendable, CustomStringConvertible {
+    case none = 0
+    case zeroObservedGuid = 1
+    case duplicateObservedGuid = 2
+    case hazardousNoProbe = 3
+    case ambiguousIdentity = 4
+    case insufficientSafeEvidence = 5
+    case unsupportedFamily = 6
+    case unknown = 255
+
+    init(wireValue: UInt8) {
+        self = Self(rawValue: wireValue) ?? .unknown
+    }
 
     var description: String {
         switch self {
-        case .created: return "Created"
-        case .ready: return "Ready"
-        case .suspended: return "Suspended"
-        case .terminated: return "Terminated"
+        case .none: return "None"
+        case .zeroObservedGuid: return "Zero observed GUID"
+        case .duplicateObservedGuid: return "Duplicate observed GUID"
+        case .hazardousNoProbe: return "Unsafe to probe"
+        case .ambiguousIdentity: return "Ambiguous identity"
+        case .insufficientSafeEvidence: return "Insufficient safe evidence"
+        case .unsupportedFamily: return "Unsupported family"
+        case .unknown: return "Unknown"
         }
     }
 }
 
-struct DriverConnectorFWDeviceInfo: Identifiable {
-    let id: UInt64  // GUID
-    let guid: UInt64
-    let vendorId: UInt32
-    let modelId: UInt32
+enum DeviceDiscoverySelectionPolicy {
+    static func reconcile(
+        selected: DeviceInstanceID?,
+        available: Set<DeviceInstanceID>
+    ) -> DeviceInstanceID? {
+        guard let selected, available.contains(selected) else { return nil }
+        return selected
+    }
+}
+
+struct DriverConnectorFWDeviceInfo: Identifiable, Sendable {
+    let id: DeviceInstanceID
+    let observedGuid: UInt64
+    let nodeVendorOui: UInt32
+    let rootVendorId: UInt32?
+    let rootModelId: UInt32?
     let vendorName: String
     let modelName: String
-    let nodeId: UInt8
+    let nodeId: UInt16
     let generation: UInt32
     let state: DriverConnectorFWDeviceState
+    let quarantineReason: DriverConnectorDeviceQuarantineReason
+    let rawBusInfoQuadlets: [UInt32]
     let units: [DriverConnectorFWUnitInfo]
     let deviceKind: UInt8  // DeviceKind enum value from driver
 
+    var deviceInstanceID: DeviceInstanceID { id }
+    var vendorId: UInt32 { rootVendorId ?? nodeVendorOui }
+    var modelId: UInt32 { rootModelId ?? 0 }
+    var observedGuidHex: String { String(format: "0x%016llX", observedGuid) }
+    var isQuarantined: Bool { quarantineReason != .none }
     var stateString: String { state.description }
     var isStorage: Bool { deviceKind == 4 }  // DeviceKind::Storage = 4
     var hasSBP2Unit: Bool { units.contains(where: \.isSBP2Unit) }
@@ -523,10 +610,12 @@ struct DriverConnectorFWDeviceInfo: Identifiable {
     var storageUnits: [DriverConnectorFWUnitInfo] { sbp2Units }
 }
 
-struct DriverConnectorFWUnitInfo: Identifiable {
-    let id = UUID()
+struct DriverConnectorFWUnitInfo: Identifiable, Sendable {
+    let id: UnitInstanceID
     let specId: UInt32
     let swVersion: UInt32
+    let vendorId: UInt32?
+    let modelId: UInt32?
     let state: DriverConnectorFWUnitState
     let romOffset: UInt32
     let managementAgentOffset: UInt32?

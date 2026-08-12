@@ -1,11 +1,15 @@
 import Foundation
 
-private final class DuetStateCacheStore {
-    let lock = NSLock()
-    var snapshots: [UInt64: DuetStateSnapshot] = [:]
-}
+final class DriverConnectorDuetStateCacheStore {
+    struct Entry {
+        let generation: UInt32
+        var snapshot: DuetStateSnapshot
+    }
 
-private let duetStateCacheStore = DuetStateCacheStore()
+    let lock = NSLock()
+    var snapshots: [UnitInstanceID: Entry] = [:]
+    var routeGenerations: [DeviceInstanceID: UInt32] = [:]
+}
 
 extension ASFWDriverConnector {
     static let duetVendorID: UInt32 = 0x0003DB
@@ -13,14 +17,14 @@ extension ASFWDriverConnector {
 
     // MARK: - Device Selection
 
-    func getDuetUnitGUIDs() -> [UInt64] {
+    func getDuetUnitIDs() -> [UnitInstanceID] {
         return (getAVCUnits() ?? [])
             .filter { isDuetUnit($0) }
-            .map { $0.guid }
+            .map(\.id)
     }
 
-    func getFirstDuetUnitGUID() -> UInt64? {
-        return getDuetUnitGUIDs().first
+    func getFirstDuetUnitID() -> UnitInstanceID? {
+        return getDuetUnitIDs().first
     }
 
     func isDuetUnit(_ unit: AVCUnitInfo) -> Bool {
@@ -29,49 +33,75 @@ extension ASFWDriverConnector {
 
     // MARK: - Sidecar Cache
 
-    func getDuetCachedState(guid: UInt64) -> DuetStateSnapshot? {
+    func getDuetCachedState(unitID: UnitInstanceID) -> DuetStateSnapshot? {
         duetStateCacheStore.lock.lock()
         defer { duetStateCacheStore.lock.unlock() }
-        return duetStateCacheStore.snapshots[guid]
+        guard let entry = duetStateCacheStore.snapshots[unitID],
+              entry.generation == duetStateCacheStore.routeGenerations[unitID.device, default: 0] else {
+            return nil
+        }
+        return entry.snapshot
     }
 
-    func setDuetCachedState(guid: UInt64, snapshot: DuetStateSnapshot) {
+    func setDuetCachedState(unitID: UnitInstanceID, snapshot: DuetStateSnapshot) {
         duetStateCacheStore.lock.lock()
-        duetStateCacheStore.snapshots[guid] = snapshot
+        let generation = duetStateCacheStore.routeGenerations[unitID.device, default: 0]
+        duetStateCacheStore.snapshots[unitID] = .init(
+            generation: generation,
+            snapshot: snapshot
+        )
         duetStateCacheStore.lock.unlock()
     }
 
-    func clearDuetCachedState(guid: UInt64) {
+    func clearDuetCachedState(unitID: UnitInstanceID) {
         duetStateCacheStore.lock.lock()
-        duetStateCacheStore.snapshots.removeValue(forKey: guid)
+        duetStateCacheStore.snapshots.removeValue(forKey: unitID)
         duetStateCacheStore.lock.unlock()
     }
 
-    private func updateDuetCachedState(guid: UInt64, _ mutate: (inout DuetStateSnapshot) -> Void) {
+    private func updateDuetCachedState(unitID: UnitInstanceID, _ mutate: (inout DuetStateSnapshot) -> Void) {
         duetStateCacheStore.lock.lock()
-        var snapshot = duetStateCacheStore.snapshots[guid] ?? DuetStateSnapshot()
+        let generation = duetStateCacheStore.routeGenerations[unitID.device, default: 0]
+        var snapshot = duetStateCacheStore.snapshots[unitID]
+            .flatMap { $0.generation == generation ? $0.snapshot : nil }
+            ?? DuetStateSnapshot()
         mutate(&snapshot)
         snapshot.updatedAt = Date()
-        duetStateCacheStore.snapshots[guid] = snapshot
+        duetStateCacheStore.snapshots[unitID] = .init(
+            generation: generation,
+            snapshot: snapshot
+        )
+        duetStateCacheStore.lock.unlock()
+    }
+
+    /// Replace the complete route-generation snapshot. Unit IDs intentionally
+    /// survive an uninterrupted reset, but cached device state does not: a
+    /// generation change invalidates every entry for that physical instance.
+    func reconcileDuetCachedStateRoutes(_ routes: [DeviceInstanceID: UInt32]) {
+        duetStateCacheStore.lock.lock()
+        duetStateCacheStore.routeGenerations = routes
+        duetStateCacheStore.snapshots = duetStateCacheStore.snapshots.filter { unitID, entry in
+            routes[unitID.device] == entry.generation
+        }
         duetStateCacheStore.lock.unlock()
     }
 
     // MARK: - Typed Duet API (Vendor-dependent over raw FCP)
 
-    func refreshDuetState(guid: UInt64, timeoutMs: UInt32 = 15_000) -> DuetStateSnapshot? {
-        let knob = getDuetKnobState(guid: guid, timeoutMs: timeoutMs)
-        let output = getDuetOutputParams(guid: guid, timeoutMs: timeoutMs)
-        let input = getDuetInputParams(guid: guid, timeoutMs: timeoutMs)
-        let mixer = getDuetMixerParams(guid: guid, timeoutMs: timeoutMs)
-        let display = getDuetDisplayParams(guid: guid, timeoutMs: timeoutMs)
-        let firmware = getDuetFirmwareID(guid: guid)
-        let hardware = getDuetHardwareID(guid: guid)
+    func refreshDuetState(unitID: UnitInstanceID, timeoutMs: UInt32 = 15_000) -> DuetStateSnapshot? {
+        let knob = getDuetKnobState(unitID: unitID, timeoutMs: timeoutMs)
+        let output = getDuetOutputParams(unitID: unitID, timeoutMs: timeoutMs)
+        let input = getDuetInputParams(unitID: unitID, timeoutMs: timeoutMs)
+        let mixer = getDuetMixerParams(unitID: unitID, timeoutMs: timeoutMs)
+        let display = getDuetDisplayParams(unitID: unitID, timeoutMs: timeoutMs)
+        let firmware = getDuetFirmwareID(unitID: unitID)
+        let hardware = getDuetHardwareID(unitID: unitID)
 
         if knob == nil && output == nil && input == nil && mixer == nil && display == nil {
             return nil
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             snapshot.knobState = knob ?? snapshot.knobState
             snapshot.outputParams = output ?? snapshot.outputParams
             snapshot.inputParams = input ?? snapshot.inputParams
@@ -81,11 +111,11 @@ extension ASFWDriverConnector {
             snapshot.hardwareID = hardware ?? snapshot.hardwareID
         }
 
-        return getDuetCachedState(guid: guid)
+        return getDuetCachedState(unitID: unitID)
     }
 
-    func getDuetKnobState(guid: UInt64, timeoutMs: UInt32 = 15_000) -> DuetKnobState? {
-        guard let raw = duetReadHwState(guid: guid, timeoutMs: timeoutMs), raw.count >= 11 else {
+    func getDuetKnobState(unitID: UnitInstanceID, timeoutMs: UInt32 = 15_000) -> DuetKnobState? {
+        guard let raw = duetReadHwState(unitID: unitID, timeoutMs: timeoutMs), raw.count >= 11 else {
             return nil
         }
 
@@ -98,11 +128,11 @@ extension ASFWDriverConnector {
 
         state.inputGains = [raw[4], raw[5]]
 
-        updateDuetCachedState(guid: guid) { $0.knobState = state }
+        updateDuetCachedState(unitID: unitID) { $0.knobState = state }
         return state
     }
 
-    func setDuetKnobState(guid: UInt64, state: DuetKnobState, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetKnobState(unitID: UnitInstanceID, state: DuetKnobState, timeoutMs: UInt32 = 15_000) -> Bool {
         var payload = [UInt8](repeating: 0, count: 11)
         payload[0] = state.outputMute ? 1 : 0
         payload[1] = state.target.rawValue
@@ -115,23 +145,23 @@ extension ASFWDriverConnector {
             payload[5] = state.inputGains[1]
         }
 
-        guard duetWriteHwState(guid: guid, payload: payload, timeoutMs: timeoutMs) else {
+        guard duetWriteHwState(unitID: unitID, payload: payload, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { $0.knobState = state }
+        updateDuetCachedState(unitID: unitID) { $0.knobState = state }
         return true
     }
 
-    func getDuetOutputParams(guid: UInt64, timeoutMs: UInt32 = 15_000) -> DuetOutputParams? {
-        guard let mute = duetReadBool(guid: guid, code: .outMute, timeoutMs: timeoutMs),
-              let volume = duetReadU8(guid: guid, code: .outVolume, timeoutMs: timeoutMs),
-              let sourceIsMixer = duetReadBool(guid: guid, code: .outSourceIsMixer, timeoutMs: timeoutMs),
-              let isConsumer = duetReadBool(guid: guid, code: .outIsConsumerLevel, timeoutMs: timeoutMs),
-              let lineMute = duetReadBool(guid: guid, code: .muteForLineOut, timeoutMs: timeoutMs),
-              let lineUnmute = duetReadBool(guid: guid, code: .unmuteForLineOut, timeoutMs: timeoutMs),
-              let hpMute = duetReadBool(guid: guid, code: .muteForHpOut, timeoutMs: timeoutMs),
-              let hpUnmute = duetReadBool(guid: guid, code: .unmuteForHpOut, timeoutMs: timeoutMs)
+    func getDuetOutputParams(unitID: UnitInstanceID, timeoutMs: UInt32 = 15_000) -> DuetOutputParams? {
+        guard let mute = duetReadBool(unitID: unitID, code: .outMute, timeoutMs: timeoutMs),
+              let volume = duetReadU8(unitID: unitID, code: .outVolume, timeoutMs: timeoutMs),
+              let sourceIsMixer = duetReadBool(unitID: unitID, code: .outSourceIsMixer, timeoutMs: timeoutMs),
+              let isConsumer = duetReadBool(unitID: unitID, code: .outIsConsumerLevel, timeoutMs: timeoutMs),
+              let lineMute = duetReadBool(unitID: unitID, code: .muteForLineOut, timeoutMs: timeoutMs),
+              let lineUnmute = duetReadBool(unitID: unitID, code: .unmuteForLineOut, timeoutMs: timeoutMs),
+              let hpMute = duetReadBool(unitID: unitID, code: .muteForHpOut, timeoutMs: timeoutMs),
+              let hpUnmute = duetReadBool(unitID: unitID, code: .unmuteForHpOut, timeoutMs: timeoutMs)
         else {
             return nil
         }
@@ -145,36 +175,36 @@ extension ASFWDriverConnector {
             hpMuteMode: .fromWire(mute: hpMute, unmute: hpUnmute)
         )
 
-        updateDuetCachedState(guid: guid) { $0.outputParams = params }
+        updateDuetCachedState(unitID: unitID) { $0.outputParams = params }
         return params
     }
 
-    func setDuetOutputParams(guid: UInt64, params: DuetOutputParams, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetOutputParams(unitID: UnitInstanceID, params: DuetOutputParams, timeoutMs: UInt32 = 15_000) -> Bool {
         let lineFlags = params.lineMuteMode.toWireFlags()
         let hpFlags = params.hpMuteMode.toWireFlags()
 
         let ok =
-            duetWriteBool(guid: guid, code: .outMute, value: params.mute, timeoutMs: timeoutMs) &&
-            duetWriteU8(guid: guid, code: .outVolume, value: params.volume, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .outSourceIsMixer, value: params.source == .mixerOutputPair0, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .outIsConsumerLevel, value: params.nominalLevel == .consumer, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .muteForLineOut, value: lineFlags.mute, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .unmuteForLineOut, value: lineFlags.unmute, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .muteForHpOut, value: hpFlags.mute, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .unmuteForHpOut, value: hpFlags.unmute, timeoutMs: timeoutMs)
+            duetWriteBool(unitID: unitID, code: .outMute, value: params.mute, timeoutMs: timeoutMs) &&
+            duetWriteU8(unitID: unitID, code: .outVolume, value: params.volume, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .outSourceIsMixer, value: params.source == .mixerOutputPair0, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .outIsConsumerLevel, value: params.nominalLevel == .consumer, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .muteForLineOut, value: lineFlags.mute, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .unmuteForLineOut, value: lineFlags.unmute, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .muteForHpOut, value: hpFlags.mute, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .unmuteForHpOut, value: hpFlags.unmute, timeoutMs: timeoutMs)
 
         if ok {
-            updateDuetCachedState(guid: guid) { $0.outputParams = params }
+            updateDuetCachedState(unitID: unitID) { $0.outputParams = params }
         }
         return ok
     }
 
-    func setDuetOutputMute(guid: UInt64, enabled: Bool, timeoutMs: UInt32 = 15_000) -> Bool {
-        guard duetWriteBool(guid: guid, code: .outMute, value: enabled, timeoutMs: timeoutMs) else {
+    func setDuetOutputMute(unitID: UnitInstanceID, enabled: Bool, timeoutMs: UInt32 = 15_000) -> Bool {
+        guard duetWriteBool(unitID: unitID, code: .outMute, value: enabled, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var output = snapshot.outputParams {
                 output.mute = enabled
                 snapshot.outputParams = output
@@ -183,13 +213,13 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetOutputVolume(guid: UInt64, volume: UInt8, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetOutputVolume(unitID: UnitInstanceID, volume: UInt8, timeoutMs: UInt32 = 15_000) -> Bool {
         let clamped = max(DuetOutputParams.volumeMin, min(DuetOutputParams.volumeMax, volume))
-        guard duetWriteU8(guid: guid, code: .outVolume, value: clamped, timeoutMs: timeoutMs) else {
+        guard duetWriteU8(unitID: unitID, code: .outVolume, value: clamped, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var output = snapshot.outputParams {
                 output.volume = clamped
                 snapshot.outputParams = output
@@ -198,13 +228,13 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetOutputSource(guid: UInt64, source: DuetOutputSource, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetOutputSource(unitID: UnitInstanceID, source: DuetOutputSource, timeoutMs: UInt32 = 15_000) -> Bool {
         let isMixer = (source == .mixerOutputPair0)
-        guard duetWriteBool(guid: guid, code: .outSourceIsMixer, value: isMixer, timeoutMs: timeoutMs) else {
+        guard duetWriteBool(unitID: unitID, code: .outSourceIsMixer, value: isMixer, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var output = snapshot.outputParams {
                 output.source = source
                 snapshot.outputParams = output
@@ -213,13 +243,13 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetOutputNominalLevel(guid: UInt64, level: DuetOutputNominalLevel, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetOutputNominalLevel(unitID: UnitInstanceID, level: DuetOutputNominalLevel, timeoutMs: UInt32 = 15_000) -> Bool {
         let isConsumer = (level == .consumer)
-        guard duetWriteBool(guid: guid, code: .outIsConsumerLevel, value: isConsumer, timeoutMs: timeoutMs) else {
+        guard duetWriteBool(unitID: unitID, code: .outIsConsumerLevel, value: isConsumer, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var output = snapshot.outputParams {
                 output.nominalLevel = level
                 snapshot.outputParams = output
@@ -228,16 +258,16 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetOutputLineMuteMode(guid: UInt64, mode: DuetOutputMuteMode, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetOutputLineMuteMode(unitID: UnitInstanceID, mode: DuetOutputMuteMode, timeoutMs: UInt32 = 15_000) -> Bool {
         let flags = mode.toWireFlags()
         let ok =
-            duetWriteBool(guid: guid, code: .muteForLineOut, value: flags.mute, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .unmuteForLineOut, value: flags.unmute, timeoutMs: timeoutMs)
+            duetWriteBool(unitID: unitID, code: .muteForLineOut, value: flags.mute, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .unmuteForLineOut, value: flags.unmute, timeoutMs: timeoutMs)
         guard ok else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var output = snapshot.outputParams {
                 output.lineMuteMode = mode
                 snapshot.outputParams = output
@@ -246,16 +276,16 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetOutputHPMuteMode(guid: UInt64, mode: DuetOutputMuteMode, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetOutputHPMuteMode(unitID: UnitInstanceID, mode: DuetOutputMuteMode, timeoutMs: UInt32 = 15_000) -> Bool {
         let flags = mode.toWireFlags()
         let ok =
-            duetWriteBool(guid: guid, code: .muteForHpOut, value: flags.mute, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .unmuteForHpOut, value: flags.unmute, timeoutMs: timeoutMs)
+            duetWriteBool(unitID: unitID, code: .muteForHpOut, value: flags.mute, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .unmuteForHpOut, value: flags.unmute, timeoutMs: timeoutMs)
         guard ok else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var output = snapshot.outputParams {
                 output.hpMuteMode = mode
                 snapshot.outputParams = output
@@ -264,20 +294,20 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func getDuetInputParams(guid: UInt64, timeoutMs: UInt32 = 15_000) -> DuetInputParams? {
-        guard let gain0 = duetReadU8(guid: guid, code: .inGain, index: 0, timeoutMs: timeoutMs),
-              let gain1 = duetReadU8(guid: guid, code: .inGain, index: 1, timeoutMs: timeoutMs),
-              let polarity0 = duetReadBool(guid: guid, code: .micPolarity, index: 0, timeoutMs: timeoutMs),
-              let polarity1 = duetReadBool(guid: guid, code: .micPolarity, index: 1, timeoutMs: timeoutMs),
-              let micLevel0 = duetReadBool(guid: guid, code: .xlrIsMicLevel, index: 0, timeoutMs: timeoutMs),
-              let micLevel1 = duetReadBool(guid: guid, code: .xlrIsMicLevel, index: 1, timeoutMs: timeoutMs),
-              let consumer0 = duetReadBool(guid: guid, code: .xlrIsConsumerLevel, index: 0, timeoutMs: timeoutMs),
-              let consumer1 = duetReadBool(guid: guid, code: .xlrIsConsumerLevel, index: 1, timeoutMs: timeoutMs),
-              let phantom0 = duetReadBool(guid: guid, code: .micPhantom, index: 0, timeoutMs: timeoutMs),
-              let phantom1 = duetReadBool(guid: guid, code: .micPhantom, index: 1, timeoutMs: timeoutMs),
-              let sourcePhone0 = duetReadBool(guid: guid, code: .inputSourceIsPhone, index: 0, timeoutMs: timeoutMs),
-              let sourcePhone1 = duetReadBool(guid: guid, code: .inputSourceIsPhone, index: 1, timeoutMs: timeoutMs),
-              let clickless = duetReadBool(guid: guid, code: .inClickless, timeoutMs: timeoutMs)
+    func getDuetInputParams(unitID: UnitInstanceID, timeoutMs: UInt32 = 15_000) -> DuetInputParams? {
+        guard let gain0 = duetReadU8(unitID: unitID, code: .inGain, index: 0, timeoutMs: timeoutMs),
+              let gain1 = duetReadU8(unitID: unitID, code: .inGain, index: 1, timeoutMs: timeoutMs),
+              let polarity0 = duetReadBool(unitID: unitID, code: .micPolarity, index: 0, timeoutMs: timeoutMs),
+              let polarity1 = duetReadBool(unitID: unitID, code: .micPolarity, index: 1, timeoutMs: timeoutMs),
+              let micLevel0 = duetReadBool(unitID: unitID, code: .xlrIsMicLevel, index: 0, timeoutMs: timeoutMs),
+              let micLevel1 = duetReadBool(unitID: unitID, code: .xlrIsMicLevel, index: 1, timeoutMs: timeoutMs),
+              let consumer0 = duetReadBool(unitID: unitID, code: .xlrIsConsumerLevel, index: 0, timeoutMs: timeoutMs),
+              let consumer1 = duetReadBool(unitID: unitID, code: .xlrIsConsumerLevel, index: 1, timeoutMs: timeoutMs),
+              let phantom0 = duetReadBool(unitID: unitID, code: .micPhantom, index: 0, timeoutMs: timeoutMs),
+              let phantom1 = duetReadBool(unitID: unitID, code: .micPhantom, index: 1, timeoutMs: timeoutMs),
+              let sourcePhone0 = duetReadBool(unitID: unitID, code: .inputSourceIsPhone, index: 0, timeoutMs: timeoutMs),
+              let sourcePhone1 = duetReadBool(unitID: unitID, code: .inputSourceIsPhone, index: 1, timeoutMs: timeoutMs),
+              let clickless = duetReadBool(unitID: unitID, code: .inClickless, timeoutMs: timeoutMs)
         else {
             return nil
         }
@@ -294,11 +324,11 @@ extension ASFWDriverConnector {
             clickless: clickless
         )
 
-        updateDuetCachedState(guid: guid) { $0.inputParams = params }
+        updateDuetCachedState(unitID: unitID) { $0.inputParams = params }
         return params
     }
 
-    func setDuetInputParams(guid: UInt64, params: DuetInputParams, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetInputParams(unitID: UnitInstanceID, params: DuetInputParams, timeoutMs: UInt32 = 15_000) -> Bool {
         guard params.gains.count >= 2,
               params.polarities.count >= 2,
               params.xlrNominalLevels.count >= 2,
@@ -309,27 +339,27 @@ extension ASFWDriverConnector {
         }
 
         let ok =
-            duetWriteU8(guid: guid, code: .inGain, index: 0, value: params.gains[0], timeoutMs: timeoutMs) &&
-            duetWriteU8(guid: guid, code: .inGain, index: 1, value: params.gains[1], timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .micPolarity, index: 0, value: params.polarities[0], timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .micPolarity, index: 1, value: params.polarities[1], timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .micPhantom, index: 0, value: params.phantomPowerings[0], timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .micPhantom, index: 1, value: params.phantomPowerings[1], timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .inputSourceIsPhone, index: 0, value: params.sources[0] == .phone, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .inputSourceIsPhone, index: 1, value: params.sources[1] == .phone, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .inClickless, value: params.clickless, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .xlrIsMicLevel, index: 0, value: params.xlrNominalLevels[0] == .microphone, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .xlrIsMicLevel, index: 1, value: params.xlrNominalLevels[1] == .microphone, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .xlrIsConsumerLevel, index: 0, value: params.xlrNominalLevels[0] == .consumer, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .xlrIsConsumerLevel, index: 1, value: params.xlrNominalLevels[1] == .consumer, timeoutMs: timeoutMs)
+            duetWriteU8(unitID: unitID, code: .inGain, index: 0, value: params.gains[0], timeoutMs: timeoutMs) &&
+            duetWriteU8(unitID: unitID, code: .inGain, index: 1, value: params.gains[1], timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .micPolarity, index: 0, value: params.polarities[0], timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .micPolarity, index: 1, value: params.polarities[1], timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .micPhantom, index: 0, value: params.phantomPowerings[0], timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .micPhantom, index: 1, value: params.phantomPowerings[1], timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .inputSourceIsPhone, index: 0, value: params.sources[0] == .phone, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .inputSourceIsPhone, index: 1, value: params.sources[1] == .phone, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .inClickless, value: params.clickless, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .xlrIsMicLevel, index: 0, value: params.xlrNominalLevels[0] == .microphone, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .xlrIsMicLevel, index: 1, value: params.xlrNominalLevels[1] == .microphone, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .xlrIsConsumerLevel, index: 0, value: params.xlrNominalLevels[0] == .consumer, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .xlrIsConsumerLevel, index: 1, value: params.xlrNominalLevels[1] == .consumer, timeoutMs: timeoutMs)
 
         if ok {
-            updateDuetCachedState(guid: guid) { $0.inputParams = params }
+            updateDuetCachedState(unitID: unitID) { $0.inputParams = params }
         }
         return ok
     }
 
-    func setDuetInputGain(guid: UInt64,
+    func setDuetInputGain(unitID: UnitInstanceID,
                           channel: Int,
                           gain: UInt8,
                           timeoutMs: UInt32 = 15_000) -> Bool {
@@ -338,7 +368,7 @@ extension ASFWDriverConnector {
         }
 
         let clamped = max(DuetInputParams.gainMin, min(DuetInputParams.gainMax, gain))
-        guard duetWriteU8(guid: guid,
+        guard duetWriteU8(unitID: unitID,
                           code: .inGain,
                           index: UInt8(channel),
                           value: clamped,
@@ -347,7 +377,7 @@ extension ASFWDriverConnector {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var input = snapshot.inputParams,
                channel < input.gains.count {
                 input.gains[channel] = clamped
@@ -357,7 +387,7 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetInputSource(guid: UInt64,
+    func setDuetInputSource(unitID: UnitInstanceID,
                             channel: Int,
                             source: DuetInputSource,
                             timeoutMs: UInt32 = 15_000) -> Bool {
@@ -366,7 +396,7 @@ extension ASFWDriverConnector {
         }
 
         let isPhone = (source == .phone)
-        guard duetWriteBool(guid: guid,
+        guard duetWriteBool(unitID: unitID,
                             code: .inputSourceIsPhone,
                             index: UInt8(channel),
                             value: isPhone,
@@ -375,7 +405,7 @@ extension ASFWDriverConnector {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var input = snapshot.inputParams,
                channel < input.sources.count {
                 input.sources[channel] = source
@@ -385,7 +415,7 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetInputXlrNominalLevel(guid: UInt64,
+    func setDuetInputXlrNominalLevel(unitID: UnitInstanceID,
                                      channel: Int,
                                      level: DuetInputXlrNominalLevel,
                                      timeoutMs: UInt32 = 15_000) -> Bool {
@@ -398,12 +428,12 @@ extension ASFWDriverConnector {
         let index = UInt8(channel)
 
         let ok =
-            duetWriteBool(guid: guid,
+            duetWriteBool(unitID: unitID,
                           code: .xlrIsMicLevel,
                           index: index,
                           value: isMic,
                           timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid,
+            duetWriteBool(unitID: unitID,
                           code: .xlrIsConsumerLevel,
                           index: index,
                           value: isConsumer,
@@ -412,7 +442,7 @@ extension ASFWDriverConnector {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var input = snapshot.inputParams,
                channel < input.xlrNominalLevels.count {
                 input.xlrNominalLevels[channel] = level
@@ -422,7 +452,7 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetInputPolarity(guid: UInt64,
+    func setDuetInputPolarity(unitID: UnitInstanceID,
                               channel: Int,
                               inverted: Bool,
                               timeoutMs: UInt32 = 15_000) -> Bool {
@@ -430,7 +460,7 @@ extension ASFWDriverConnector {
             return false
         }
 
-        guard duetWriteBool(guid: guid,
+        guard duetWriteBool(unitID: unitID,
                             code: .micPolarity,
                             index: UInt8(channel),
                             value: inverted,
@@ -439,7 +469,7 @@ extension ASFWDriverConnector {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var input = snapshot.inputParams,
                channel < input.polarities.count {
                 input.polarities[channel] = inverted
@@ -449,7 +479,7 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetInputPhantom(guid: UInt64,
+    func setDuetInputPhantom(unitID: UnitInstanceID,
                              channel: Int,
                              enabled: Bool,
                              timeoutMs: UInt32 = 15_000) -> Bool {
@@ -459,7 +489,7 @@ extension ASFWDriverConnector {
 
         let index = UInt8(channel)
 
-        guard duetWriteBool(guid: guid,
+        guard duetWriteBool(unitID: unitID,
                             code: .micPhantom,
                             index: index,
                             value: enabled,
@@ -468,7 +498,7 @@ extension ASFWDriverConnector {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var input = snapshot.inputParams,
                channel < input.phantomPowerings.count {
                 input.phantomPowerings[channel] = enabled
@@ -479,12 +509,12 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetInputClickless(guid: UInt64, enabled: Bool, timeoutMs: UInt32 = 15_000) -> Bool {
-        guard duetWriteBool(guid: guid, code: .inClickless, value: enabled, timeoutMs: timeoutMs) else {
+    func setDuetInputClickless(unitID: UnitInstanceID, enabled: Bool, timeoutMs: UInt32 = 15_000) -> Bool {
+        guard duetWriteBool(unitID: unitID, code: .inClickless, value: enabled, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var input = snapshot.inputParams {
                 input.clickless = enabled
                 snapshot.inputParams = input
@@ -493,12 +523,12 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func getDuetMixerParams(guid: UInt64, timeoutMs: UInt32 = 15_000) -> DuetMixerParams? {
+    func getDuetMixerParams(unitID: UnitInstanceID, timeoutMs: UInt32 = 15_000) -> DuetMixerParams? {
         var params = DuetMixerParams()
 
         for destination in 0..<2 {
             for source in 0..<4 {
-                guard let gain = duetReadU16(guid: guid,
+                guard let gain = duetReadU16(unitID: unitID,
                                              code: .mixerSrc,
                                              index: UInt8(source),
                                              index2: UInt8(destination),
@@ -510,11 +540,11 @@ extension ASFWDriverConnector {
             }
         }
 
-        updateDuetCachedState(guid: guid) { $0.mixerParams = params }
+        updateDuetCachedState(unitID: unitID) { $0.mixerParams = params }
         return params
     }
 
-    func setDuetMixerParams(guid: UInt64, params: DuetMixerParams, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetMixerParams(unitID: UnitInstanceID, params: DuetMixerParams, timeoutMs: UInt32 = 15_000) -> Bool {
         guard params.outputs.count >= 2 else {
             return false
         }
@@ -522,7 +552,7 @@ extension ASFWDriverConnector {
         for destination in 0..<2 {
             for source in 0..<4 {
                 let gain = params.gain(destination: destination, source: source)
-                let ok = duetWriteU16(guid: guid,
+                let ok = duetWriteU16(unitID: unitID,
                                       code: .mixerSrc,
                                       index: UInt8(source),
                                       index2: UInt8(destination),
@@ -534,11 +564,11 @@ extension ASFWDriverConnector {
             }
         }
 
-        updateDuetCachedState(guid: guid) { $0.mixerParams = params }
+        updateDuetCachedState(unitID: unitID) { $0.mixerParams = params }
         return true
     }
 
-    func setDuetMixerGain(guid: UInt64,
+    func setDuetMixerGain(unitID: UnitInstanceID,
                           destination: Int,
                           source: Int,
                           gain: UInt16,
@@ -550,7 +580,7 @@ extension ASFWDriverConnector {
         }
 
         let clamped = max(DuetMixerParams.gainMin, min(DuetMixerParams.gainMax, gain))
-        guard duetWriteU16(guid: guid,
+        guard duetWriteU16(unitID: unitID,
                            code: .mixerSrc,
                            index: UInt8(source),
                            index2: UInt8(destination),
@@ -560,7 +590,7 @@ extension ASFWDriverConnector {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var mixer = snapshot.mixerParams {
                 mixer.setGain(destination: destination, source: source, value: clamped)
                 snapshot.mixerParams = mixer
@@ -569,10 +599,10 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func getDuetDisplayParams(guid: UInt64, timeoutMs: UInt32 = 15_000) -> DuetDisplayParams? {
-        guard let isInput = duetReadBool(guid: guid, code: .displayIsInput, timeoutMs: timeoutMs),
-              let follow = duetReadBool(guid: guid, code: .displayFollowToKnob, timeoutMs: timeoutMs),
-              let overholdTwoSec = duetReadBool(guid: guid, code: .displayOverholdTwoSec, timeoutMs: timeoutMs)
+    func getDuetDisplayParams(unitID: UnitInstanceID, timeoutMs: UInt32 = 15_000) -> DuetDisplayParams? {
+        guard let isInput = duetReadBool(unitID: unitID, code: .displayIsInput, timeoutMs: timeoutMs),
+              let follow = duetReadBool(unitID: unitID, code: .displayFollowToKnob, timeoutMs: timeoutMs),
+              let overholdTwoSec = duetReadBool(unitID: unitID, code: .displayOverholdTwoSec, timeoutMs: timeoutMs)
         else {
             return nil
         }
@@ -583,29 +613,29 @@ extension ASFWDriverConnector {
             overhold: overholdTwoSec ? .twoSeconds : .infinite
         )
 
-        updateDuetCachedState(guid: guid) { $0.displayParams = params }
+        updateDuetCachedState(unitID: unitID) { $0.displayParams = params }
         return params
     }
 
-    func setDuetDisplayParams(guid: UInt64, params: DuetDisplayParams, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetDisplayParams(unitID: UnitInstanceID, params: DuetDisplayParams, timeoutMs: UInt32 = 15_000) -> Bool {
         let ok =
-            duetWriteBool(guid: guid, code: .displayIsInput, value: params.target == .input, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .displayFollowToKnob, value: params.mode == .followingToKnobTarget, timeoutMs: timeoutMs) &&
-            duetWriteBool(guid: guid, code: .displayOverholdTwoSec, value: params.overhold == .twoSeconds, timeoutMs: timeoutMs)
+            duetWriteBool(unitID: unitID, code: .displayIsInput, value: params.target == .input, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .displayFollowToKnob, value: params.mode == .followingToKnobTarget, timeoutMs: timeoutMs) &&
+            duetWriteBool(unitID: unitID, code: .displayOverholdTwoSec, value: params.overhold == .twoSeconds, timeoutMs: timeoutMs)
 
         if ok {
-            updateDuetCachedState(guid: guid) { $0.displayParams = params }
+            updateDuetCachedState(unitID: unitID) { $0.displayParams = params }
         }
         return ok
     }
 
-    func setDuetDisplayTarget(guid: UInt64, target: DuetDisplayTarget, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetDisplayTarget(unitID: UnitInstanceID, target: DuetDisplayTarget, timeoutMs: UInt32 = 15_000) -> Bool {
         let isInput = (target == .input)
-        guard duetWriteBool(guid: guid, code: .displayIsInput, value: isInput, timeoutMs: timeoutMs) else {
+        guard duetWriteBool(unitID: unitID, code: .displayIsInput, value: isInput, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var display = snapshot.displayParams {
                 display.target = target
                 snapshot.displayParams = display
@@ -614,13 +644,13 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetDisplayMode(guid: UInt64, mode: DuetDisplayMode, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetDisplayMode(unitID: UnitInstanceID, mode: DuetDisplayMode, timeoutMs: UInt32 = 15_000) -> Bool {
         let follow = (mode == .followingToKnobTarget)
-        guard duetWriteBool(guid: guid, code: .displayFollowToKnob, value: follow, timeoutMs: timeoutMs) else {
+        guard duetWriteBool(unitID: unitID, code: .displayFollowToKnob, value: follow, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var display = snapshot.displayParams {
                 display.mode = mode
                 snapshot.displayParams = display
@@ -629,13 +659,13 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func setDuetDisplayOverhold(guid: UInt64, overhold: DuetDisplayOverhold, timeoutMs: UInt32 = 15_000) -> Bool {
+    func setDuetDisplayOverhold(unitID: UnitInstanceID, overhold: DuetDisplayOverhold, timeoutMs: UInt32 = 15_000) -> Bool {
         let twoSec = (overhold == .twoSeconds)
-        guard duetWriteBool(guid: guid, code: .displayOverholdTwoSec, value: twoSec, timeoutMs: timeoutMs) else {
+        guard duetWriteBool(unitID: unitID, code: .displayOverholdTwoSec, value: twoSec, timeoutMs: timeoutMs) else {
             return false
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
+        updateDuetCachedState(unitID: unitID) { snapshot in
             if var display = snapshot.displayParams {
                 display.overhold = overhold
                 snapshot.displayParams = display
@@ -644,44 +674,36 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func clearDuetDisplay(guid: UInt64, timeoutMs: UInt32 = 15_000) -> Bool {
-        return duetWriteNoValue(guid: guid, code: .displayClear, timeoutMs: timeoutMs)
+    func clearDuetDisplay(unitID: UnitInstanceID, timeoutMs: UInt32 = 15_000) -> Bool {
+        return duetWriteNoValue(unitID: unitID, code: .displayClear, timeoutMs: timeoutMs)
     }
 
-    func getDuetFirmwareID(guid: UInt64) -> UInt32? {
-        guard let nodeID = duetNodeID(for: guid) else {
-            return nil
-        }
-
-        let value = duetReadQuadlet(destinationID: nodeID,
+    func getDuetFirmwareID(unitID: UnitInstanceID) -> UInt32? {
+        let value = duetReadQuadlet(deviceID: unitID.device,
                                     address: 0xFFFF_F000_0000 + 0x0005_0000)
         if let value {
-            updateDuetCachedState(guid: guid) { $0.firmwareID = value }
+            updateDuetCachedState(unitID: unitID) { $0.firmwareID = value }
         }
         return value
     }
 
-    func getDuetHardwareID(guid: UInt64) -> UInt32? {
-        guard let nodeID = duetNodeID(for: guid) else {
-            return nil
-        }
-
-        let value = duetReadQuadlet(destinationID: nodeID,
+    func getDuetHardwareID(unitID: UnitInstanceID) -> UInt32? {
+        let value = duetReadQuadlet(deviceID: unitID.device,
                                     address: 0xFFFF_F000_0000 + 0x0009_0020)
         if let value {
-            updateDuetCachedState(guid: guid) { $0.hardwareID = value }
+            updateDuetCachedState(unitID: unitID) { $0.hardwareID = value }
         }
         return value
     }
 
     // MARK: - Private codec helpers
 
-    private func duetReadBool(guid: UInt64,
+    private func duetReadBool(unitID: UnitInstanceID,
                               code: DuetVendorCommandCode,
                               index: UInt8? = nil,
                               index2: UInt8? = nil,
                               timeoutMs: UInt32) -> Bool? {
-        guard let payload = duetExchange(guid: guid,
+        guard let payload = duetExchange(unitID: unitID,
                                          isStatus: true,
                                          code: code,
                                          index: index,
@@ -696,11 +718,11 @@ extension ASFWDriverConnector {
         return value == DuetVendorWireConstants.boolOn
     }
 
-    private func duetReadU8(guid: UInt64,
+    private func duetReadU8(unitID: UnitInstanceID,
                             code: DuetVendorCommandCode,
                             index: UInt8? = nil,
                             timeoutMs: UInt32) -> UInt8? {
-        guard let payload = duetExchange(guid: guid,
+        guard let payload = duetExchange(unitID: unitID,
                                          isStatus: true,
                                          code: code,
                                          index: index,
@@ -713,12 +735,12 @@ extension ASFWDriverConnector {
         return value
     }
 
-    private func duetReadU16(guid: UInt64,
+    private func duetReadU16(unitID: UnitInstanceID,
                              code: DuetVendorCommandCode,
                              index: UInt8,
                              index2: UInt8,
                              timeoutMs: UInt32) -> UInt16? {
-        guard let payload = duetExchange(guid: guid,
+        guard let payload = duetExchange(unitID: unitID,
                                          isStatus: true,
                                          code: code,
                                          index: index,
@@ -733,8 +755,8 @@ extension ASFWDriverConnector {
         return (UInt16(payload[0]) << 8) | UInt16(payload[1])
     }
 
-    private func duetReadHwState(guid: UInt64, timeoutMs: UInt32) -> [UInt8]? {
-        guard let payload = duetExchange(guid: guid,
+    private func duetReadHwState(unitID: UnitInstanceID, timeoutMs: UInt32) -> [UInt8]? {
+        guard let payload = duetExchange(unitID: unitID,
                                          isStatus: true,
                                          code: .hwState,
                                          controlPayload: [],
@@ -746,13 +768,13 @@ extension ASFWDriverConnector {
         return Array(payload.prefix(11))
     }
 
-    private func duetWriteBool(guid: UInt64,
+    private func duetWriteBool(unitID: UnitInstanceID,
                                code: DuetVendorCommandCode,
                                index: UInt8? = nil,
                                value: Bool,
                                timeoutMs: UInt32) -> Bool {
         let byte = value ? DuetVendorWireConstants.boolOn : DuetVendorWireConstants.boolOff
-        return duetExchange(guid: guid,
+        return duetExchange(unitID: unitID,
                             isStatus: false,
                             code: code,
                             index: index,
@@ -760,12 +782,12 @@ extension ASFWDriverConnector {
                             timeoutMs: timeoutMs) != nil
     }
 
-    private func duetWriteU8(guid: UInt64,
+    private func duetWriteU8(unitID: UnitInstanceID,
                              code: DuetVendorCommandCode,
                              index: UInt8? = nil,
                              value: UInt8,
                              timeoutMs: UInt32) -> Bool {
-        return duetExchange(guid: guid,
+        return duetExchange(unitID: unitID,
                             isStatus: false,
                             code: code,
                             index: index,
@@ -773,14 +795,14 @@ extension ASFWDriverConnector {
                             timeoutMs: timeoutMs) != nil
     }
 
-    private func duetWriteU16(guid: UInt64,
+    private func duetWriteU16(unitID: UnitInstanceID,
                               code: DuetVendorCommandCode,
                               index: UInt8,
                               index2: UInt8,
                               value: UInt16,
                               timeoutMs: UInt32) -> Bool {
         let payload: [UInt8] = [UInt8((value >> 8) & 0xFF), UInt8(value & 0xFF)]
-        return duetExchange(guid: guid,
+        return duetExchange(unitID: unitID,
                             isStatus: false,
                             code: code,
                             index: index,
@@ -789,29 +811,29 @@ extension ASFWDriverConnector {
                             timeoutMs: timeoutMs) != nil
     }
 
-    private func duetWriteHwState(guid: UInt64, payload: [UInt8], timeoutMs: UInt32) -> Bool {
+    private func duetWriteHwState(unitID: UnitInstanceID, payload: [UInt8], timeoutMs: UInt32) -> Bool {
         guard payload.count == 11 else {
             return false
         }
 
-        return duetExchange(guid: guid,
+        return duetExchange(unitID: unitID,
                             isStatus: false,
                             code: .hwState,
                             controlPayload: payload,
                             timeoutMs: timeoutMs) != nil
     }
 
-    private func duetWriteNoValue(guid: UInt64,
+    private func duetWriteNoValue(unitID: UnitInstanceID,
                                   code: DuetVendorCommandCode,
                                   timeoutMs: UInt32) -> Bool {
-        return duetExchange(guid: guid,
+        return duetExchange(unitID: unitID,
                             isStatus: false,
                             code: code,
                             controlPayload: [],
                             timeoutMs: timeoutMs) != nil
     }
 
-    private func duetExchange(guid: UInt64,
+    private func duetExchange(unitID: UnitInstanceID,
                               isStatus: Bool,
                               code: DuetVendorCommandCode,
                               index: UInt8? = nil,
@@ -823,7 +845,7 @@ extension ASFWDriverConnector {
                                                      index: index,
                                                      index2: index2,
                                                      controlPayload: controlPayload),
-              let response = sendRawFCPCommand(guid: guid, frame: frame, timeoutMs: timeoutMs),
+              let response = sendRawFCPCommand(unitID: unitID, frame: frame, timeoutMs: timeoutMs),
               let payload = DuetVendorCodec.parseStatusPayload(response,
                                                                expectedCode: code,
                                                                expectedIndex: index,
@@ -835,12 +857,8 @@ extension ASFWDriverConnector {
         return payload
     }
 
-    private func duetNodeID(for guid: UInt64) -> UInt16? {
-        return getAVCUnits()?.first(where: { $0.guid == guid })?.nodeID
-    }
-
-    private func duetReadQuadlet(destinationID: UInt16, address: UInt64) -> UInt32? {
-        guard let data = duetSyncAsyncRead(destinationID: destinationID, address: address, length: 4),
+    private func duetReadQuadlet(deviceID: DeviceInstanceID, address: UInt64) -> UInt32? {
+        guard let data = duetSyncAsyncRead(deviceID: deviceID, address: address, length: 4),
               data.count >= 4
         else {
             return nil
@@ -852,16 +870,24 @@ extension ASFWDriverConnector {
                UInt32(data[3])
     }
 
-    private func duetSyncAsyncRead(destinationID: UInt16, address: UInt64, length: UInt32) -> Data? {
+    private func duetSyncAsyncRead(deviceID: DeviceInstanceID,
+                                   address: UInt64,
+                                   length: UInt32) -> Data? {
         let addressHigh = UInt16((address >> 32) & 0xFFFF)
         let addressLow = UInt32(address & 0xFFFF_FFFF)
-
-        var input = Data(capacity: 12)
-        input.append(contentsOf: withUnsafeBytes(of: destinationID.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: addressHigh.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: addressLow.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: length.bigEndian) { Data($0) })
-
-        return callStruct(.asyncRead, input: input, initialCap: Int(length) + 128)
+        guard let handle = asyncRead(deviceID: deviceID,
+                                     addressHigh: addressHigh,
+                                     addressLow: addressLow,
+                                     length: length) else { return nil }
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            if let result = getTransactionResult(handle: handle,
+                                                 initialPayloadCapacity: Int(length) + 128) {
+                guard result.status == 0, result.responseCode == 0 else { return nil }
+                return result.payload
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return nil
     }
 }

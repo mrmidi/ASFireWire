@@ -1,6 +1,6 @@
 import Foundation
 
-enum ASFWMCPRuntimeMode: String, Equatable, Sendable {
+nonisolated enum ASFWMCPRuntimeMode: String, Equatable, Sendable {
     case disabled
     case mock
     case readOnlyDeveloper
@@ -18,7 +18,7 @@ enum ASFWMCPVisibility: String, Equatable, Sendable {
     case rawDeveloper
 }
 
-enum ASFWMCPErrorCode: String, Equatable, Sendable {
+nonisolated enum ASFWMCPErrorCode: String, Equatable, Sendable {
     case driverNotConnected
     case mcpDisabled
     case unsupportedRuntimeMode
@@ -55,7 +55,7 @@ enum ASFWMCPConfigRomView: String, Equatable, Sendable {
     case raw
 }
 
-enum ASFWMCPValue: Equatable, Sendable {
+nonisolated enum ASFWMCPValue: Equatable, Sendable {
     case null
     case bool(Bool)
     case int(Int)
@@ -144,7 +144,7 @@ struct ASFWMCPResourceDefinition: Equatable {
     let summary: String
 }
 
-struct ASFWMCPRuntimeConfiguration: Equatable, Sendable {
+nonisolated struct ASFWMCPRuntimeConfiguration: Equatable, Sendable {
     var mode: ASFWMCPRuntimeMode
     var writePolicyAvailable: Bool
     var swiftTestGatePassed: Bool
@@ -182,7 +182,7 @@ struct ASFWMCPRuntimeConfiguration: Equatable, Sendable {
     }
 }
 
-struct ASFWMCPPolicyTelemetry: Equatable, Sendable {
+nonisolated struct ASFWMCPPolicyTelemetry: Equatable, Sendable {
     let runtimeMode: ASFWMCPRuntimeMode
     let writesListed: Bool
     let writeGate: String
@@ -221,9 +221,10 @@ struct ASFWMCPProtocolTelemetry: Equatable, Sendable {
 }
 
 struct ASFWMCPNodeSummary: Equatable, Sendable {
+    let deviceInstanceId: DeviceInstanceID?
     let nodeId: UInt32
     let address16: String
-    let guid: String?
+    let observedGuid: String?
     let vendorId: String?
     let modelId: String?
     let vendorName: String?
@@ -263,7 +264,7 @@ struct ASFWMCPTelemetrySnapshot: Equatable, Sendable {
     let policy: ASFWMCPPolicyTelemetry
 }
 
-struct ASFWMCPHardwareSmokeStep: Equatable {
+struct ASFWMCPHardwareSmokeStep: Equatable, Sendable {
     let name: String
     let resourceURI: String?
     let toolName: String?
@@ -271,7 +272,7 @@ struct ASFWMCPHardwareSmokeStep: Equatable {
     let requiresExplicitEnablement: Bool
 }
 
-struct ASFWMCPHardwareSmokePlan: Equatable {
+struct ASFWMCPHardwareSmokePlan: Equatable, Sendable {
     let steps: [ASFWMCPHardwareSmokeStep]
 
     var containsMutatingOperations: Bool {

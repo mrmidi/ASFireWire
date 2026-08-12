@@ -16,19 +16,9 @@
 //  BootROM, and later Oxford/Fireworks equivalents) attach as optional
 //  sections. See BridgeCoReportModels.swift for the first such section.
 //
-//  SAFETY: probe depth is NOT a generic-AV/C or per-family property -- it is a
-//  per-device fact. Some firmware hangs permanently on commands it does not
-//  implement, requiring a power cycle. M-Audio's "special" firmware (FireWire
-//  1814, ProjectMix I/O) is the known case:
-//    - linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:30-34
-//      ("It will be freezed when receiving any commands which the firmware
-//       can't understand.")
-//    - linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:417
-//      (map_data_channels is skipped entirely for the special quirk)
-//    - libffado-2.5.0/src/bebob/bebob_avdevice.cpp:88-91
-//      ("M-Audio Special Devices don't support followed commands")
-//  The tier is therefore decided from Config ROM identity alone, before a
-//  single byte is sent to the device.
+//  SAFETY: probe depth is resolved in the driver's declarative audio catalog,
+//  before Swift is given a routable unit. Swift renders that decision; it does
+//  not maintain a second vendor/model restriction table.
 //
 
 import Foundation
@@ -58,40 +48,6 @@ struct AVCProbePolicy: Equatable {
     /// Why this tier was chosen. Always printed, so the report is honest about
     /// what it did and did not ask the device.
     let rationale: String
-}
-
-/// Devices that must not be probed, regardless of protocol family.
-///
-/// This is a deny-list, not an allow-list: an unknown device gets the full
-/// STATUS probe, because refusing to probe unknown hardware would defeat the
-/// report's purpose. Entries are added only with a reference citation showing
-/// the firmware actually misbehaves.
-enum AVCProbeRestrictions {
-
-    struct Entry {
-        let vendorId: UInt32
-        let modelId: UInt32
-        let name: String
-        /// Printed verbatim in the report.
-        let reason: String
-    }
-
-    static let entries: [Entry] = BridgeCoKnownDevice.probeRestrictions
-
-    static func entry(vendorId: UInt32, modelId: UInt32) -> Entry? {
-        entries.first { $0.vendorId == vendorId && $0.modelId == modelId }
-    }
-
-    /// The probe tier for an identity, decided before any transaction is sent.
-    static func policy(vendorId: UInt32, modelId: UInt32) -> AVCProbePolicy {
-        if let restricted = entry(vendorId: vendorId, modelId: modelId) {
-            return AVCProbePolicy(tier: .memoryOnly, rationale: restricted.reason)
-        }
-        return AVCProbePolicy(
-            tier: .avcStatus,
-            rationale: "No probe restriction recorded for this identity; "
-                + "STATUS-only AV/C probing is safe.")
-    }
 }
 
 // MARK: - Generic AV/C inventory
@@ -216,7 +172,7 @@ struct AVCDeviceSnapshot {
 
 enum AVCSnapshotCaptureResult {
     case captured(AVCDeviceSnapshot)
-    case notAVC(guid: UInt64)
-    case unavailable(guid: UInt64)
-    case unstable(guid: UInt64)
+    case notAVC(unitID: UnitInstanceID)
+    case unavailable(unitID: UnitInstanceID)
+    case unstable(unitID: UnitInstanceID)
 }

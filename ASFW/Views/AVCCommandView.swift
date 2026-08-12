@@ -11,7 +11,7 @@ struct AVCCommandView: View {
     @ObservedObject var viewModel: DebugViewModel
 
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
-    @State private var selectedUnitGUID: UInt64?
+    @State private var selectedUnitID: UnitInstanceID?
 
     @State private var commandTab: CommandTab = .presetBuilder
 
@@ -90,11 +90,11 @@ struct AVCCommandView: View {
                                     .foregroundColor(.secondary)
                             }
                         } else {
-                            Picker("Unit", selection: $selectedUnitGUID) {
-                                Text("Select unit...").tag(nil as UInt64?)
+                            Picker("Unit", selection: $selectedUnitID) {
+                                Text("Select unit...").tag(nil as UnitInstanceID?)
                                 ForEach(avcUnits) { unit in
-                                    Text("GUID: \(unit.guidHex) (Node: \(unit.nodeIDHex))")
-                                        .tag(unit.guid as UInt64?)
+                                    Text("Unit \(unit.id.description) (Node: \(unit.nodeIDHex), observed \(unit.observedGuidHex))")
+                                        .tag(unit.id as UnitInstanceID?)
                                 }
                             }
                             .labelsHidden()
@@ -180,7 +180,7 @@ struct AVCCommandView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isSending || !viewModel.isConnected || selectedUnitGUID == nil)
+                .disabled(isSending || !viewModel.isConnected || selectedUnitID == nil)
                 .controlSize(.large)
 
                 Spacer()
@@ -346,14 +346,14 @@ struct AVCCommandView: View {
             DispatchQueue.main.async {
                 self.avcUnits = units
                 if let first = units.first {
-                    self.selectedUnitGUID = first.guid
+                    self.selectedUnitID = first.id
                 }
             }
         }
     }
 
     private func sendCommand() {
-        guard let guid = selectedUnitGUID else { return }
+        guard let unitID = selectedUnitID else { return }
 
         let commandData: Data?
         switch commandTab {
@@ -377,7 +377,7 @@ struct AVCCommandView: View {
         lastSentTime = Date()
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let response = viewModel.connector.sendRawFCPCommand(guid: guid, frame: commandData)
+            let response = viewModel.connector.sendRawFCPCommand(unitID: unitID, frame: commandData)
 
             DispatchQueue.main.async {
                 self.isSending = false

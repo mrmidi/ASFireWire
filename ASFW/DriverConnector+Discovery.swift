@@ -1,154 +1,201 @@
 import Foundation
 
 extension ASFWDriverConnector {
-    // MARK: - Device Discovery
+    private static let deviceDiscoveryWireVersion: UInt16 = 2
+    private static let discoveryHeaderSize = 16
+    private static let discoveryDeviceSize = 174
+    private static let discoveryUnitSize = 184
 
     func getDiscoveredDevices() -> [FWDeviceInfo]? {
         guard isConnected else {
             log("getDiscoveredDevices: Not connected", level: .warning)
             return nil
         }
-
-        // Use callStruct to get wire format data (4KB limit for IOConnectCallStructMethod)
-        guard let wireData = callStruct(.getDiscoveredDevices, initialCap: 4096) else {
+        guard let wireData = callStruct(.getDiscoveredDevices, initialCap: 16 * 1024) else {
             log("getDiscoveredDevices: callStruct failed", level: .error)
             return nil
         }
-
-        guard !wireData.isEmpty else {
-            log("getDiscoveredDevices: no data returned", level: .warning)
-            return []
+        guard !wireData.isEmpty else { return [] }
+        guard let devices = Self.parseDeviceDiscoveryWire(wireData) else { return nil }
+        var routes: [DeviceInstanceID: UInt32] = [:]
+        for device in devices {
+            routes[device.id] = device.generation
         }
-
-        print("[Connector] 📦 Received \(wireData.count) bytes of wire format data")
-
-        // Parse wire format
-        return Self.parseDeviceDiscoveryWire(wireData)
+        reconcileDuetCachedStateRoutes(routes)
+        return devices
     }
 
-    /// Parse wire format data from driver
     static func parseDeviceDiscoveryWire(_ data: Data) -> [FWDeviceInfo]? {
-        @inline(__always)
-        func readUInt8(at offset: Int) -> UInt8 {
-            data[data.startIndex + offset]
+        func contains(_ offset: Int, _ length: Int, limit: Int? = nil) -> Bool {
+            guard offset >= 0, length >= 0 else { return false }
+            let upper = limit ?? data.count
+            return offset <= upper && length <= upper - offset && upper <= data.count
         }
 
-        @inline(__always)
-        func readUInt32(at offset: Int) -> UInt32 {
+        func u8(_ offset: Int) -> UInt8? {
+            guard contains(offset, 1) else { return nil }
+            return data[data.startIndex + offset]
+        }
+
+        func u16(_ offset: Int) -> UInt16? {
+            guard contains(offset, 2) else { return nil }
+            return UInt16(data[data.startIndex + offset]) |
+                (UInt16(data[data.startIndex + offset + 1]) << 8)
+        }
+
+        func u32(_ offset: Int) -> UInt32? {
+            guard contains(offset, 4) else { return nil }
             var value: UInt32 = 0
-            for i in 0..<4 {
-                value |= UInt32(data[data.startIndex + offset + i]) << (i * 8)
+            for index in 0..<4 {
+                value |= UInt32(data[data.startIndex + offset + index]) << (index * 8)
             }
             return value
         }
 
-        @inline(__always)
-        func readUInt64(at offset: Int) -> UInt64 {
+        func u64(_ offset: Int) -> UInt64? {
+            guard contains(offset, 8) else { return nil }
             var value: UInt64 = 0
-            for i in 0..<8 {
-                value |= UInt64(data[data.startIndex + offset + i]) << (i * 8)
+            for index in 0..<8 {
+                value |= UInt64(data[data.startIndex + offset + index]) << (index * 8)
             }
             return value
         }
 
-        func readCString(at offset: Int, length: Int) -> String {
-            let start = data.startIndex + offset
-            let end = start + length
-            let bytes = data[start..<end]
-            let trimmed = bytes.prefix { $0 != 0 }
-            return String(decoding: trimmed, as: UTF8.self)
+        func cString(_ offset: Int, length: Int, limit: Int) -> String? {
+            guard contains(offset, length, limit: limit) else { return nil }
+            let bytes = data[(data.startIndex + offset)..<(data.startIndex + offset + length)]
+            return String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
         }
 
-        var offset = 0
-
-        // Read header
-        guard offset + 8 <= data.count else {
-            print("[Connector] ❌ Data too small for header")
+        guard contains(0, discoveryHeaderSize),
+              u16(0) == deviceDiscoveryWireVersion,
+              let headerSize = u16(2).map(Int.init),
+              headerSize >= discoveryHeaderSize,
+              let byteSize = u32(4).map(Int.init),
+              byteSize >= headerSize,
+              byteSize <= data.count,
+              let deviceCount = u32(8),
+              u32(12) == 0 else {
             return nil
         }
 
-        let deviceCount = readUInt32(at: offset)
-        offset += 8  // deviceCount + padding
-
-        print("[Connector] 📋 Device count: \(deviceCount)")
-
+        var cursor = headerSize
         var devices: [FWDeviceInfo] = []
+        devices.reserveCapacity(Int(deviceCount))
 
-        // Read each device
         for _ in 0..<deviceCount {
-            guard offset + 152 <= data.count else {  // sizeof(FWDeviceWire) = 152
-                print("[Connector] ❌ Data truncated while reading device")
+            guard contains(cursor, discoveryDeviceSize, limit: byteSize),
+                  u16(cursor) == deviceDiscoveryWireVersion,
+                  let recordSize = u16(cursor + 2).map(Int.init),
+                  recordSize >= discoveryDeviceSize,
+                  recordSize <= byteSize - cursor,
+                  let rawInstance = u64(cursor + 4),
+                  rawInstance != 0,
+                  let observedGuid = u64(cursor + 12),
+                  let generation = u32(cursor + 20),
+                  let nodeId = u16(cursor + 24),
+                  let stateRaw = u8(cursor + 26),
+                  let quarantineRaw = u8(cursor + 27),
+                  let deviceKind = u8(cursor + 28),
+                  let evidenceFlags = u8(cursor + 29),
+                  let unitCount = u16(cursor + 30),
+                  let busInfoWordCount = u16(cursor + 32),
+                  let nodeVendorOui = u32(cursor + 34),
+                  let rootVendorRaw = u32(cursor + 38),
+                  let rootModelRaw = u32(cursor + 42),
+                  let deviceState = FWDeviceState(rawValue: stateRaw) else {
                 return nil
             }
 
-            let guid = readUInt64(at: offset)
-            let vendorId = readUInt32(at: offset + 8)
-            let modelId = readUInt32(at: offset + 12)
-            let generation = readUInt32(at: offset + 16)
-            let nodeId = readUInt8(at: offset + 20)
-            let stateRaw = readUInt8(at: offset + 21)
-            let unitCount = readUInt8(at: offset + 22)
-            let deviceKind = readUInt8(at: offset + 23)
-            let vendorName = readCString(at: offset + 24, length: 64)
-            let modelName = readCString(at: offset + 88, length: 64)
+            let recordEnd = cursor + recordSize
+            guard let vendorName = cString(cursor + 46, length: 64, limit: recordEnd),
+                  let modelName = cString(cursor + 110, length: 64, limit: recordEnd) else {
+                return nil
+            }
 
-            let state = FWDeviceState(rawValue: stateRaw) ?? .created
+            let deviceId = DeviceInstanceID(rawValue: rawInstance)
+            var sectionCursor = cursor + discoveryDeviceSize
+            let busInfoBytes = Int(busInfoWordCount) * MemoryLayout<UInt32>.size
+            guard contains(sectionCursor, busInfoBytes, limit: recordEnd) else { return nil }
+            var rawBusInfo: [UInt32] = []
+            rawBusInfo.reserveCapacity(Int(busInfoWordCount))
+            for index in 0..<Int(busInfoWordCount) {
+                guard let word = u32(sectionCursor + index * 4) else { return nil }
+                rawBusInfo.append(word)
+            }
+            sectionCursor += busInfoBytes
 
-            offset += 152  // sizeof(FWDeviceWire)
-
-            // Read units
             var units: [FWUnitInfo] = []
+            units.reserveCapacity(Int(unitCount))
             for _ in 0..<unitCount {
-                guard offset + 160 <= data.count else {  // sizeof(FWUnitWire) = 160
-                    print("[Connector] ❌ Data truncated while reading unit")
+                guard contains(sectionCursor, discoveryUnitSize, limit: recordEnd),
+                      u16(sectionCursor) == deviceDiscoveryWireVersion,
+                      let unitByteSize = u16(sectionCursor + 2).map(Int.init),
+                      unitByteSize == discoveryUnitSize,
+                      let unitDeviceRaw = u64(sectionCursor + 4),
+                      unitDeviceRaw == rawInstance,
+                      let romOffset = u32(sectionCursor + 12),
+                      let specId = u32(sectionCursor + 16),
+                      let swVersion = u32(sectionCursor + 20),
+                      let unitFlags = u32(sectionCursor + 24),
+                      let unitVendorRaw = u32(sectionCursor + 28),
+                      let unitModelRaw = u32(sectionCursor + 32),
+                      let lunRaw = u32(sectionCursor + 36),
+                      let managementRaw = u32(sectionCursor + 40),
+                      let characteristicsRaw = u32(sectionCursor + 44),
+                      let fastStartRaw = u32(sectionCursor + 48),
+                      let unitStateRaw = u8(sectionCursor + 52),
+                      let unitState = FWUnitState(rawValue: unitStateRaw),
+                      let unitVendorName = cString(sectionCursor + 56, length: 64, limit: recordEnd),
+                      let unitProductName = cString(sectionCursor + 120, length: 64, limit: recordEnd) else {
                     return nil
                 }
 
-                let specId = readUInt32(at: offset)
-                let swVersion = readUInt32(at: offset + 4)
-                let romOffset = readUInt32(at: offset + 8)
-                let unitStateRaw = readUInt8(at: offset + 12)
-                let managementAgentOffset = readUInt32(at: offset + 16)
-                let lun = readUInt32(at: offset + 20)
-                let unitCharacteristics = readUInt32(at: offset + 24)
-                let fastStart = readUInt32(at: offset + 28)
-                let unitVendorName = readCString(at: offset + 32, length: 64)
-                let unitProductName = readCString(at: offset + 96, length: 64)
-
-                let unitState = FWUnitState(rawValue: unitStateRaw) ?? .created
-
+                let hasUnitVendor = (unitFlags & (1 << 0)) != 0
+                let hasUnitModel = (unitFlags & (1 << 1)) != 0
+                let hasLun = (unitFlags & (1 << 2)) != 0
+                let hasManagement = (unitFlags & (1 << 3)) != 0
+                let hasCharacteristics = (unitFlags & (1 << 4)) != 0
+                let hasFastStart = (unitFlags & (1 << 5)) != 0
                 units.append(FWUnitInfo(
+                    id: UnitInstanceID(device: deviceId, unitDirectoryOffset: romOffset),
                     specId: specId,
                     swVersion: swVersion,
+                    vendorId: hasUnitVendor ? unitVendorRaw : nil,
+                    modelId: hasUnitModel ? unitModelRaw : nil,
                     state: unitState,
                     romOffset: romOffset,
-                    managementAgentOffset: managementAgentOffset == 0 ? nil : managementAgentOffset,
-                    lun: lun == 0 ? nil : lun,
-                    unitCharacteristics: unitCharacteristics == 0 ? nil : unitCharacteristics,
-                    fastStart: fastStart == 0 ? nil : fastStart,
+                    managementAgentOffset: hasManagement ? managementRaw : nil,
+                    lun: hasLun ? lunRaw : nil,
+                    unitCharacteristics: hasCharacteristics ? characteristicsRaw : nil,
+                    fastStart: hasFastStart ? fastStartRaw : nil,
                     vendorName: unitVendorName.isEmpty ? nil : unitVendorName,
                     productName: unitProductName.isEmpty ? nil : unitProductName
                 ))
-
-                offset += 160  // sizeof(FWUnitWire)
+                sectionCursor += unitByteSize
             }
 
+            guard sectionCursor == recordEnd else { return nil }
             devices.append(FWDeviceInfo(
-                id: guid,
-                guid: guid,
-                vendorId: vendorId,
-                modelId: modelId,
+                id: deviceId,
+                observedGuid: observedGuid,
+                nodeVendorOui: nodeVendorOui,
+                rootVendorId: (evidenceFlags & (1 << 0)) != 0 ? rootVendorRaw : nil,
+                rootModelId: (evidenceFlags & (1 << 1)) != 0 ? rootModelRaw : nil,
                 vendorName: vendorName,
                 modelName: modelName,
                 nodeId: nodeId,
                 generation: generation,
-                state: state,
+                state: deviceState,
+                quarantineReason: DriverConnectorDeviceQuarantineReason(wireValue: quarantineRaw),
+                rawBusInfoQuadlets: rawBusInfo,
                 units: units,
                 deviceKind: deviceKind
             ))
+            cursor = recordEnd
         }
 
-        print("[Connector] ✅ Parsed \(devices.count) devices")
+        guard cursor == byteSize, byteSize == data.count else { return nil }
         return devices
     }
 }

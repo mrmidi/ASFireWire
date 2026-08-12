@@ -105,28 +105,6 @@ enum BridgeCoKnownDevice {
               bootedModelId: 0x0001_0046, name: "M-Audio FireWire 410"),
     ]
 
-    /// Probe restrictions this family contributes to the generic deny-list.
-    /// Both the hang-prone firmware and bootloader state qualify: a bootloader
-    /// has not loaded the audio command set, so probing it proves nothing.
-    static var probeRestrictions: [AVCProbeRestrictions.Entry] {
-        specialFirmware.map { special in
-            AVCProbeRestrictions.Entry(
-                vendorId: special.vendorId,
-                modelId: special.modelId,
-                name: special.name,
-                reason: "\(special.name) runs M-Audio special firmware, which hangs on AV/C "
-                    + "commands it does not implement (linux bebob_maudio.c:30-34; "
-                    + "libffado bebob_avdevice.cpp:88-91). AV/C probing is suppressed.")
-        } + bootloaders.map { boot in
-            AVCProbeRestrictions.Entry(
-                vendorId: boot.vendorId,
-                modelId: boot.bootloaderModelId,
-                name: boot.name,
-                reason: "\(boot.name) is in bootloader state; the audio command set is not "
-                    + "loaded yet. Only the BootROM information block is meaningful.")
-        }
-    }
-
     /// Devices whose stream geometry cannot be queried and is therefore known
     /// only from the reference stacks. Printed as reference-derived, never
     /// presented as something the device told us.

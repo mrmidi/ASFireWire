@@ -34,12 +34,12 @@ final class DVCaptureController: ObservableObject {
     private var assembler = DVFrameAssembler()
 
     func start(connector: ASFWDriverConnector,
-               deviceGUID: UInt64,
+               deviceID: DeviceInstanceID,
                url: URL) {
         guard !isCapturing else { return }
         lastError = nil
 
-        guard connector.startDVCapture(deviceGUID: deviceGUID) else {
+        guard connector.startDVCapture(deviceID: deviceID) else {
             lastError = connector.lastError ?? "startDVCapture failed (is audio receive running?)"
             return
         }
@@ -174,7 +174,7 @@ struct DVCaptureView: View {
     @StateObject private var controller = DVCaptureController()
 
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
-    @State private var selectedUnitGUID: UInt64?
+    @State private var selectedUnitID: UnitInstanceID?
     @State private var outputURL: URL?
     @State private var transportBusy = false
     @State private var transportStatus: String?
@@ -220,10 +220,10 @@ struct DVCaptureView: View {
                     Button("Refresh") { refreshUnits() }
                 }
             } else {
-                Picker("Unit", selection: $selectedUnitGUID) {
+                Picker("Unit", selection: $selectedUnitID) {
                     ForEach(avcUnits) { unit in
-                        Text("GUID: \(unit.guidHex) (Node: \(unit.nodeIDHex))")
-                            .tag(unit.guid as UInt64?)
+                        Text("Unit \(unit.id.description) (Node: \(unit.nodeIDHex), observed \(unit.observedGuidHex))")
+                            .tag(unit.id as UnitInstanceID?)
                     }
                 }
             }
@@ -247,7 +247,7 @@ struct DVCaptureView: View {
                     Label("Stop", systemImage: "stop.fill")
                 }
             }
-            .disabled(transportBusy || selectedUnitGUID == nil || !viewModel.isConnected)
+            .disabled(transportBusy || selectedUnitID == nil || !viewModel.isConnected)
 
             if let status = transportStatus {
                 Text(status)
@@ -279,7 +279,7 @@ struct DVCaptureView: View {
                 } label: {
                     Label("Start Capture", systemImage: "record.circle")
                 }
-                .disabled(!viewModel.isConnected || outputURL == nil || selectedUnitGUID == nil)
+                .disabled(!viewModel.isConnected || outputURL == nil || selectedUnitID == nil)
             }
 
             captureStats
@@ -337,15 +337,15 @@ struct DVCaptureView: View {
             }
             DispatchQueue.main.async {
                 self.avcUnits = units
-                if !units.contains(where: { $0.guid == self.selectedUnitGUID }) {
-                    self.selectedUnitGUID = units.first?.guid
+                if !units.contains(where: { $0.id == self.selectedUnitID }) {
+                    self.selectedUnitID = units.first?.id
                 }
             }
         }
     }
 
     private func sendTransport(opcode: UInt8, operand: UInt8, label: String) {
-        guard let guid = selectedUnitGUID else { return }
+        guard let unitID = selectedUnitID else { return }
 
         // CONTROL, tape subunit (type 0x04, id 0), opcode, operand.
         // Exactly 4 bytes - transport opcodes take a single operand and some
@@ -356,7 +356,7 @@ struct DVCaptureView: View {
         transportStatus = "Sending \(label)…"
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let response = viewModel.connector.sendRawFCPCommand(guid: guid, frame: frame)
+            let response = viewModel.connector.sendRawFCPCommand(unitID: unitID, frame: frame)
             DispatchQueue.main.async {
                 self.transportBusy = false
                 if let response, response.count >= 1 {
@@ -390,9 +390,9 @@ struct DVCaptureView: View {
     }
 
     private func startCapture() {
-        guard let url = outputURL, let guid = selectedUnitGUID else { return }
+        guard let url = outputURL, let unitID = selectedUnitID else { return }
         controller.start(connector: viewModel.connector,
-                         deviceGUID: guid,
+                         deviceID: unitID.device,
                          url: url)
     }
 

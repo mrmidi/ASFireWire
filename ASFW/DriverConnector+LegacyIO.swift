@@ -9,9 +9,9 @@ extension ASFWDriverConnector {
         let payload: Data
     }
 
-    // MARK: - Legacy command helpers
+    // MARK: - Runtime-instance command helpers
 
-    func asyncRead(destinationID: UInt16,
+    func asyncRead(deviceID: DeviceInstanceID,
                    addressHigh: UInt16,
                    addressLow: UInt32,
                    length: UInt32) -> UInt16? {
@@ -21,7 +21,7 @@ extension ASFWDriverConnector {
         }
 
         var inputs: [UInt64] = [
-            UInt64(destinationID),
+            deviceID.rawValue,
             UInt64(addressHigh),
             UInt64(addressLow),
             UInt64(length)
@@ -52,7 +52,7 @@ extension ASFWDriverConnector {
         return handle
     }
 
-    func asyncWrite(destinationID: UInt16,
+    func asyncWrite(deviceID: DeviceInstanceID,
                     addressHigh: UInt16,
                     addressLow: UInt32,
                     payload: Data) -> UInt16? {
@@ -62,7 +62,7 @@ extension ASFWDriverConnector {
         }
 
         var scalars: [UInt64] = [
-            UInt64(destinationID),
+            deviceID.rawValue,
             UInt64(addressHigh),
             UInt64(addressLow),
             UInt64(payload.count)
@@ -99,7 +99,7 @@ extension ASFWDriverConnector {
         return handle
     }
 
-    func asyncBlockRead(destinationID: UInt16,
+    func asyncBlockRead(deviceID: DeviceInstanceID,
                         addressHigh: UInt16,
                         addressLow: UInt32,
                         length: UInt32) -> UInt16? {
@@ -109,7 +109,7 @@ extension ASFWDriverConnector {
         }
 
         var inputs: [UInt64] = [
-            UInt64(destinationID),
+            deviceID.rawValue,
             UInt64(addressHigh),
             UInt64(addressLow),
             UInt64(length)
@@ -140,7 +140,7 @@ extension ASFWDriverConnector {
         return handle
     }
 
-    func asyncBlockWrite(destinationID: UInt16,
+    func asyncBlockWrite(deviceID: DeviceInstanceID,
                          addressHigh: UInt16,
                          addressLow: UInt32,
                          payload: Data) -> UInt16? {
@@ -150,7 +150,7 @@ extension ASFWDriverConnector {
         }
 
         var scalars: [UInt64] = [
-            UInt64(destinationID),
+            deviceID.rawValue,
             UInt64(addressHigh),
             UInt64(addressLow),
             UInt64(payload.count)
@@ -253,7 +253,7 @@ extension ASFWDriverConnector {
     }
 
     func asyncCompareSwap(
-        destinationID: UInt16,
+        deviceID: DeviceInstanceID,
         addressHigh: UInt16,
         addressLow: UInt32,
         compareValue: Data,
@@ -285,7 +285,7 @@ extension ASFWDriverConnector {
         operand.append(newValue)
 
         var scalars: [UInt64] = [
-            UInt64(destinationID),
+            deviceID.rawValue,
             UInt64(addressHigh),
             UInt64(addressLow),
             UInt64(size)

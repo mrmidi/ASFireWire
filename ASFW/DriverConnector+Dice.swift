@@ -11,53 +11,51 @@ import Foundation
 
 enum DiceSnapshotCaptureResult {
     case captured(DiceSnapshot)
-    case unavailable(guid: UInt64)
-    case unstable(guid: UInt64)
+    case unavailable(deviceID: DeviceInstanceID)
+    case unstable(deviceID: DeviceInstanceID)
 }
 
 extension ASFWDriverConnector {
 
     // MARK: - Snapshot
 
-    /// Capture only a stable view of a GUID. The legacy user-client async read
-    /// selector has no generation argument, so a before/after discovery check
-    /// is the boundary that prevents node-ID reuse after a bus reset from being
-    /// presented as one coherent device report.
-    func captureDiceSnapshot(guid: UInt64, attempts: Int = 2) -> DiceSnapshotCaptureResult {
+    /// Capture one stable runtime instance and reject a route that changes
+    /// while the diagnostic register snapshot is in progress.
+    func captureDiceSnapshot(deviceID: DeviceInstanceID, attempts: Int = 2) -> DiceSnapshotCaptureResult {
         for _ in 0..<max(1, attempts) {
-            guard let before = getDiscoveredDevices()?.first(where: { $0.guid == guid }) else {
-                return .unavailable(guid: guid)
+            guard let before = getDiscoveredDevices()?.first(where: { $0.id == deviceID }),
+                  !before.isQuarantined else {
+                return .unavailable(deviceID: deviceID)
             }
             let snapshot = captureDiceSnapshotOnce(device: before)
-            guard let after = getDiscoveredDevices()?.first(where: { $0.guid == guid }) else {
+            guard let after = getDiscoveredDevices()?.first(where: { $0.id == deviceID }) else {
                 continue
             }
             if after.nodeId == before.nodeId, after.generation == before.generation {
                 return .captured(snapshot)
             }
         }
-        return .unstable(guid: guid)
+        return .unstable(deviceID: deviceID)
     }
 
     private func captureDiceSnapshotOnce(device: FWDeviceInfo) -> DiceSnapshot {
         var snap = DiceSnapshot()
         snap.nodeId = UInt16(device.nodeId)
         snap.generation = device.generation
-        snap.guid = device.guid
+        snap.guid = device.observedGuid
         snap.vendorName = device.vendorName
         snap.modelName = device.modelName
 
-        let node = UInt16(0xFFC0) | UInt16(device.nodeId)
-        captureGeneralSpace(node: node, into: &snap)
-        captureExtensionSpace(node: node, into: &snap)
+        captureGeneralSpace(deviceID: device.id, into: &snap)
+        captureExtensionSpace(deviceID: device.id, into: &snap)
         return snap
     }
 
     // MARK: General space
 
-    private func captureGeneralSpace(node: UInt16, into snap: inout DiceSnapshot) {
+    private func captureGeneralSpace(deviceID: DeviceInstanceID, into snap: inout DiceSnapshot) {
         let base = DiceWire.generalBase
-        guard let tableData = readNodeBlock(node: node, base: base, offset: 0, length: 40) else {
+        guard let tableData = readDeviceBlock(deviceID: deviceID, base: base, offset: 0, length: 40) else {
             snap.mark("general.table", .unreadable)
             snap.notes.append("General section table unreadable at 0xFFFFE0000000 — device may not be DICE.")
             return
@@ -76,7 +74,7 @@ extension ASFWDriverConnector {
             if global.byteSize < 0x60 {
                 snap.mark("general.global", .malformed)
                 snap.notes.append("Global section is shorter than its required 96-byte core.")
-            } else if let d = readNodeBlock(node: node, base: base,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base,
                                              offset: global.byteOffset, length: global.byteSize) {
                 snap.global = DiceGlobal.decode(d, size: global.byteSize)
                 snap.mark("general.global", .decoded)
@@ -93,7 +91,7 @@ extension ASFWDriverConnector {
             if tx.byteSize < 8 {
                 snap.mark("general.tx", .malformed)
                 snap.notes.append("TX section is shorter than its NUMBER/SIZE header.")
-            } else if let d = readNodeBlock(node: node, base: base,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base,
                                              offset: tx.byteOffset, length: tx.byteSize) {
                 let r = DiceStreamSection.decode(d, isTx: true)
                 snap.txCount = r.count
@@ -114,7 +112,7 @@ extension ASFWDriverConnector {
             if rx.byteSize < 8 {
                 snap.mark("general.rx", .malformed)
                 snap.notes.append("RX section is shorter than its NUMBER/SIZE header.")
-            } else if let d = readNodeBlock(node: node, base: base,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base,
                                              offset: rx.byteOffset, length: rx.byteSize) {
                 let r = DiceStreamSection.decode(d, isTx: false)
                 snap.rxCount = r.count
@@ -135,7 +133,7 @@ extension ASFWDriverConnector {
             if xs.byteSize < 16 {
                 snap.mark("general.ext_sync", .malformed)
                 snap.notes.append("EXT_SYNC section is shorter than 16 bytes.")
-            } else if let d = readNodeBlock(node: node, base: base,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base,
                                              offset: xs.byteOffset, length: 16) {
                 snap.extSync = DiceExtSync.decode(d)
                 snap.mark("general.ext_sync", .decoded)
@@ -163,9 +161,9 @@ extension ASFWDriverConnector {
 
     // MARK: Extension (EAP) space
 
-    private func captureExtensionSpace(node: UInt16, into snap: inout DiceSnapshot) {
+    private func captureExtensionSpace(deviceID: DeviceInstanceID, into snap: inout DiceSnapshot) {
         let base = DiceWire.extensionBase
-        guard let tableData = readNodeBlock(node: node, base: base, offset: 0, length: 72) else {
+        guard let tableData = readDeviceBlock(deviceID: deviceID, base: base, offset: 0, length: 72) else {
             snap.mark("eap.table", .unreadable)
             snap.notes.append("No extended application (EAP) space at 0xFFFFE0200000.")
             return
@@ -195,7 +193,7 @@ extension ASFWDriverConnector {
             snap.notes.append("EAP capabilities section is shorter than 12 bytes; remaining EAP sections skipped.")
             return
         }
-        guard let capsData = readNodeBlock(node: node, base: base,
+        guard let capsData = readDeviceBlock(deviceID: deviceID, base: base,
                                            offset: capsSection.byteOffset,
                                            length: capsSection.byteSize),
               let caps = DiceEapCaps.decode(capsData) else {
@@ -216,7 +214,7 @@ extension ASFWDriverConnector {
                 snap.notes.append("EAP stream-format staging section is shorter than its advertised stream layout.")
             } else if formatBytes > Self.maxNodeDiagnosticReadBytes {
                 snap.mark("eap.stream_format", .bounded)
-            } else if let d = readNodeBlock(node: node, base: base, offset: s.byteOffset,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base, offset: s.byteOffset,
                                              length: formatBytes) {
                 snap.eapStreamFormats = DiceEapStreamFormats.decode(d)
                 snap.mark("eap.stream_format", .decoded)
@@ -233,13 +231,13 @@ extension ASFWDriverConnector {
                 snap.mark("eap.router", .malformed)
             } else if required > Self.maxNodeDiagnosticReadBytes {
                 snap.mark("eap.router", .bounded)
-            } else if let header = readNodeBlock(node: node, base: base, offset: s.byteOffset, length: 4) {
+            } else if let header = readDeviceBlock(deviceID: deviceID, base: base, offset: s.byteOffset, length: 4) {
                 let count = min(Int(DiceWire.u32(header, 0) ?? 0), maxEntries)
                 let actualBytes = 4 + count * 4
                 if s.byteSize < actualBytes {
                     snap.mark("eap.router", .malformed)
                     snap.notes.append("EAP router section ends before its declared route count.")
-                } else if let d = readNodeBlock(node: node, base: base, offset: s.byteOffset,
+                } else if let d = readDeviceBlock(deviceID: deviceID, base: base, offset: s.byteOffset,
                                                  length: actualBytes) {
                     snap.eapRouter = DiceRouterEntry.decodeAll(d, hasLeadingCount: true, maxEntries: maxEntries)
                     snap.mark("eap.router", .decoded)
@@ -259,7 +257,7 @@ extension ASFWDriverConnector {
                 snap.mark("eap.peak", .malformed)
             } else if required > Self.maxNodeDiagnosticReadBytes {
                 snap.mark("eap.peak", .bounded)
-            } else if let d = readNodeBlock(node: node, base: base, offset: s.byteOffset,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base, offset: s.byteOffset,
                                              length: required) {
                 snap.eapPeak = DiceRouterEntry.decodeAll(d, hasLeadingCount: false,
                                                          maxEntries: maxEntries)
@@ -275,7 +273,7 @@ extension ASFWDriverConnector {
             let need = 4 + 4 * DiceMixer.maxOutputs * DiceMixer.maxInputs
             if s.byteSize < need {
                 snap.mark("eap.mixer", .malformed)
-            } else if let d = readNodeBlock(node: node, base: base, offset: s.byteOffset,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base, offset: s.byteOffset,
                                              length: need) {
                 snap.eapMixer = DiceMixer.decode(d, caps: caps)
                 snap.mark("eap.mixer", .decoded)
@@ -289,7 +287,7 @@ extension ASFWDriverConnector {
         if let s = table["standalone"], s.isPresent {
             if s.byteSize < 20 {
                 snap.mark("eap.standalone", .malformed)
-            } else if let d = readNodeBlock(node: node, base: base, offset: s.byteOffset,
+            } else if let d = readDeviceBlock(deviceID: deviceID, base: base, offset: s.byteOffset,
                                              length: 20) {
                 snap.eapStandalone = DiceStandalone.decode(d)
                 snap.mark("eap.standalone", .decoded)
@@ -312,12 +310,12 @@ extension ASFWDriverConnector {
                     snap.mark(routerKey, .absent)
                 } else if routerBytes > Self.maxNodeDiagnosticReadBytes {
                     snap.mark(routerKey, .bounded)
-                } else if let header = readNodeBlock(node: node, base: base, offset: rOff, length: 4) {
+                } else if let header = readDeviceBlock(deviceID: deviceID, base: base, offset: rOff, length: 4) {
                     let count = min(Int(DiceWire.u32(header, 0) ?? 0), maxEntries)
                     let actualBytes = 4 + count * 4
                     if mode.routerOffset + actualBytes > s.byteSize {
                         snap.mark(routerKey, .malformed)
-                    } else if let d = readNodeBlock(node: node, base: base, offset: rOff,
+                    } else if let d = readDeviceBlock(deviceID: deviceID, base: base, offset: rOff,
                                                      length: actualBytes) {
                     snap.eapCurrentRouters[mode] =
                         DiceRouterEntry.decodeAll(d, hasLeadingCount: true, maxEntries: maxEntries)
@@ -336,7 +334,7 @@ extension ASFWDriverConnector {
                     snap.mark(formatKey, .bounded)
                 } else if mode.streamOffset + formatBytes > s.byteSize {
                     snap.mark(formatKey, .malformed)
-                } else if let d = readNodeBlock(node: node, base: base, offset: sOff,
+                } else if let d = readDeviceBlock(deviceID: deviceID, base: base, offset: sOff,
                                                  length: formatBytes) {
                     snap.eapCurrentFormats[mode] = DiceEapStreamFormats.decode(d)
                     snap.mark(formatKey, .decoded)

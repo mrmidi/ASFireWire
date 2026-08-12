@@ -13,7 +13,7 @@ struct ReadWriteView: View {
 
     // Transaction parameters
     @State private var operationType: OperationType = .read
-    @State private var destinationID: String = "ffc0"
+    @State private var deviceInstanceID: String = "1"
     @State private var addressHigh: String = "ffff"
     @State private var addressLow: String = "f0000400"
     @State private var length: String = "4"
@@ -66,20 +66,17 @@ struct ReadWriteView: View {
             // Transaction Parameters
             GroupBox {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Destination Node ID
+                    // Runtime device target
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Destination Node ID")
+                        Text("Device Instance ID")
                             .font(.caption)
                             .foregroundColor(.secondary)
                         HStack {
-                            Text("0x")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            TextField("ffc0", text: $destinationID)
+                            TextField("1", text: $deviceInstanceID)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(.body, design: .monospaced))
                         }
-                        Text("Bus + Node (e.g., ffc0 = local bus, node 0)")
+                        Text("Opaque ID from Device Discovery; the driver resolves its current node route")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -265,8 +262,8 @@ struct ReadWriteView: View {
         }
 
         // Parse parameters
-        guard let destID = parseHex16(destinationID) else {
-            lastError = "Invalid destination ID (must be 4 hex digits)"
+        guard let rawDeviceID = parseInstanceID(deviceInstanceID), rawDeviceID != 0 else {
+            lastError = "Invalid device instance ID"
             return
         }
 
@@ -310,7 +307,7 @@ struct ReadWriteView: View {
         switch operationType {
         case .read:
             handle = viewModel.connector.asyncRead(
-                destinationID: destID,
+                deviceID: DeviceInstanceID(rawDeviceID),
                 addressHigh: addrHi,
                 addressLow: addrLo,
                 length: len
@@ -318,7 +315,7 @@ struct ReadWriteView: View {
 
         case .blockRead:
             handle = viewModel.connector.asyncBlockRead(
-                destinationID: destID,
+                deviceID: DeviceInstanceID(rawDeviceID),
                 addressHigh: addrHi,
                 addressLow: addrLo,
                 length: len
@@ -326,7 +323,7 @@ struct ReadWriteView: View {
 
         case .write:
             handle = viewModel.connector.asyncWrite(
-                destinationID: destID,
+                deviceID: DeviceInstanceID(rawDeviceID),
                 addressHigh: addrHi,
                 addressLow: addrLo,
                 payload: payloadData ?? Data()
@@ -334,7 +331,7 @@ struct ReadWriteView: View {
 
         case .blockWrite:
             handle = viewModel.connector.asyncBlockWrite(
-                destinationID: destID,
+                deviceID: DeviceInstanceID(rawDeviceID),
                 addressHigh: addrHi,
                 addressLow: addrLo,
                 payload: payloadData ?? Data()
@@ -384,6 +381,15 @@ struct ReadWriteView: View {
             .replacingOccurrences(of: "0x", with: "")
             .replacingOccurrences(of: " ", with: "")
         return UInt16(cleaned, radix: 16)
+    }
+
+    private func parseInstanceID(_ str: String) -> UInt64? {
+        let cleaned = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+        if cleaned.hasPrefix("0x") || cleaned.hasPrefix("0X") {
+            return UInt64(cleaned.dropFirst(2), radix: 16)
+        }
+        return UInt64(cleaned)
     }
 
     private func parseHex32(_ str: String) -> UInt32? {

@@ -169,7 +169,7 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
         let snapshot = await driver.fetchTelemetrySnapshot(configuration: configuration)
         let nodes = await driver.listNodes()
         return envelope(
-            schema: "asfw.telemetry.nodes.v1",
+            schema: "asfw.telemetry.nodes.v2",
             uri: "asfw://nodes",
             snapshot: snapshot,
             data: .object([
@@ -178,7 +178,8 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
                     .object([
                         "nodeId": .int(Int(node.nodeId)),
                         "address16": .string(node.address16),
-                        "guid": node.guid.map { .string($0) } ?? .null,
+                        "deviceInstanceId": node.deviceInstanceId.map { .uint64($0.rawValue) } ?? .null,
+                        "observedGuid": node.observedGuid.map { .string($0) } ?? .null,
                         "vendorId": node.vendorId.map { .string($0) } ?? .null,
                         "modelId": node.modelId.map { .string($0) } ?? .null,
                         "vendorName": node.vendorName.map { .string($0) } ?? .null,

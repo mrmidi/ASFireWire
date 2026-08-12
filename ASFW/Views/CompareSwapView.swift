@@ -12,7 +12,7 @@ struct CompareSwapView: View {
     @ObservedObject var connector: ASFWDriverConnector
 
     // Transaction parameters - pre-filled with Apple driver test pattern
-    @State private var destinationID: String = "ffc0"      // Duet node 0
+    @State private var deviceInstanceID: String = "1"
     @State private var addressHigh: String = "ffff"
     @State private var addressLow: String = "f0000228"     // CHANNELS_AVAILABLE_31_0
     @State private var compareValue: String = "ffffffff"
@@ -79,20 +79,17 @@ struct CompareSwapView: View {
                 // Transaction Parameters
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
-                        // Destination Node ID
+                        // Runtime device target
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Destination Node ID")
+                            Text("Device Instance ID")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             HStack {
-                                Text("0x")
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                TextField("ffc0", text: $destinationID)
+                                TextField("1", text: $deviceInstanceID)
                                     .textFieldStyle(.roundedBorder)
                                     .font(.system(.body, design: .monospaced))
                             }
-                            Text("Bus + Node (e.g., ffc0 = local bus, node 0)")
+                            Text("Opaque ID from Device Discovery; route changes are resolved by the driver")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
@@ -324,8 +321,8 @@ struct CompareSwapView: View {
         }
 
         // Parse parameters
-        guard let destID = parseHex16(destinationID) else {
-            lastError = "Invalid destination ID (must be 4 hex digits)"
+        guard let rawDeviceID = parseInstanceID(deviceInstanceID), rawDeviceID != 0 else {
+            lastError = "Invalid device instance ID"
             return
         }
 
@@ -349,8 +346,8 @@ struct CompareSwapView: View {
             return
         }
 
-        // Validate node ID against current topology
-        validateNodeID(destID)
+        let target = DeviceInstanceID(rawDeviceID)
+        validateDeviceID(target)
 
         isSending = true
         lastError = nil
@@ -358,7 +355,7 @@ struct CompareSwapView: View {
 
         // Call driver
         if let result = connector.asyncCompareSwap(
-            destinationID: destID,
+            deviceID: target,
             addressHigh: addrHi,
             addressLow: addrLo,
             compareValue: cmpData,
@@ -389,6 +386,15 @@ struct CompareSwapView: View {
             .replacingOccurrences(of: "0x", with: "")
             .replacingOccurrences(of: " ", with: "")
         return UInt16(cleaned, radix: 16)
+    }
+
+    private func parseInstanceID(_ str: String) -> UInt64? {
+        let cleaned = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+        if cleaned.hasPrefix("0x") || cleaned.hasPrefix("0X") {
+            return UInt64(cleaned.dropFirst(2), radix: 16)
+        }
+        return UInt64(cleaned)
     }
 
     private func parseHex32(_ str: String) -> UInt32? {
@@ -451,12 +457,15 @@ struct CompareSwapView: View {
             return
         }
 
-        // Construct full node ID using busBase16 from topology
-        // busBase16 = (bus << 6), ready to OR with physical node ID
-        let fullNodeID = topology.busBase16 | UInt16(irmNodeId)
+        guard let device = connector.getDiscoveredDevices()?.first(where: {
+            $0.nodeId == irmNodeId && $0.generation == topology.generation && !$0.isQuarantined
+        }) else {
+            topologyWarning = "The remote IRM is not a routable discovered device instance"
+            lastError = "IRM device instance unavailable"
+            return
+        }
 
-        // Set destination to IRM node
-        destinationID = String(format: "%04x", fullNodeID)
+        deviceInstanceID = String(device.id.rawValue)
 
         // Set address to BANDWIDTH_AVAILABLE CSR (IEEE 1394 spec)
         addressHigh = "ffff"
@@ -468,15 +477,15 @@ struct CompareSwapView: View {
         presetStatus = "Step 1/2: Reading current BANDWIDTH_AVAILABLE value..."
         isLoadingPreset = true
 
-        print("[CompareSwapView] Loaded IRM preset: node=0x\(String(format: "%04x", fullNodeID)) (physID=\(irmNodeId) busBase=0x\(String(format: "%04X", topology.busBase16))), addr=0xFFFF:F0000220")
+        print("[CompareSwapView] Loaded IRM preset: instance=\(device.id) node=\(irmNodeId), addr=0xFFFF:F0000220")
 
         // Step 1: Read current value (like Apple driver does)
-        readCurrentValueForPreset(destinationID: fullNodeID)
+        readCurrentValueForPreset(deviceID: device.id)
     }
 
-    private func readCurrentValueForPreset(destinationID: UInt16) {
+    private func readCurrentValueForPreset(deviceID: DeviceInstanceID) {
         guard let readHandle = connector.asyncRead(
-            destinationID: destinationID,
+            deviceID: deviceID,
             addressHigh: 0xFFFF,
             addressLow: 0xF0000220,  // BANDWIDTH_AVAILABLE
             length: 4
@@ -525,22 +534,17 @@ struct CompareSwapView: View {
 
     // MARK: - Validation
 
-    private func validateNodeID(_ destID: UInt16) {
-        guard let topology = connector.getTopologySnapshot() else {
-            topologyWarning = "Topology unavailable - node ID cannot be validated"
+    private func validateDeviceID(_ deviceID: DeviceInstanceID) {
+        guard let devices = connector.getDiscoveredDevices() else {
+            topologyWarning = "Discovery unavailable - device instance cannot be validated"
             return
         }
-
-        // Extract physical ID from full node ID (bits 5:0)
-        let physID = UInt8(destID & 0x3F)
-
-        // Check if this physical ID exists in current topology
-        let nodeExists = topology.nodes.contains { $0.nodeId == physID }
-
-        if !nodeExists {
-            topologyWarning = "Warning: Node \(physID) not found in current topology (gen=\(topology.generation), \(topology.nodeCount) nodes)"
+        if let device = devices.first(where: { $0.id == deviceID }) {
+            topologyWarning = device.isQuarantined
+                ? "Device instance \(deviceID) is quarantined (\(device.quarantineReason))"
+                : nil
         } else {
-            topologyWarning = nil
+            topologyWarning = "Device instance \(deviceID) is not present in the current discovery snapshot"
         }
     }
 }

@@ -10,7 +10,7 @@ import SwiftUI
 struct DeviceDiscoveryView: View {
     @ObservedObject var viewModel: DebugViewModel
     @State private var devices: [ASFWDriverConnector.FWDeviceInfo] = []
-    @State private var selectedDeviceId: UInt64?
+    @State private var selectedDeviceId: DeviceInstanceID?
     @State private var autoRefreshEnabled = true
     @State private var lastRefresh: Date?
     @State private var refreshTimer: Timer?
@@ -96,6 +96,10 @@ struct DeviceDiscoveryView: View {
 
         if let newDevices = viewModel.connector.getDiscoveredDevices() {
             devices = newDevices
+            selectedDeviceId = DeviceDiscoverySelectionPolicy.reconcile(
+                selected: selectedDeviceId,
+                available: Set(newDevices.map(\.id))
+            )
             lastRefresh = Date()
         }
     }
@@ -126,11 +130,11 @@ struct DeviceRowView: View {
                 Text("\(device.vendorName) \(device.modelName)")
                     .font(.headline)
             } else {
-                Text(String(format: "Device 0x%016llX", device.guid))
+                Text("Device instance \(device.id.rawValue)")
                     .font(.headline)
             }
 
-            // GUID and node info
+            // Runtime route and state
             HStack(spacing: 8) {
                 Label(String(format: "Node %d", device.nodeId), systemImage: "circle.fill")
                     .font(.caption)
@@ -190,10 +194,21 @@ struct DeviceDetailView: View {
                 GroupBox("Device Properties") {
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                         GridRow {
-                            Text("GUID:")
+                            Text("Instance ID:")
                                 .fontWeight(.medium)
-                            Text(String(format: "0x%016llX", device.guid))
+                            Text(String(device.id.rawValue))
                                 .monospaced()
+                        }
+                        GridRow {
+                            Text("Observed GUID:")
+                                .fontWeight(.medium)
+                            Text(device.observedGuidHex)
+                                .monospaced()
+                        }
+                        GridRow {
+                            Text("Quarantine:")
+                                .fontWeight(.medium)
+                            Text(device.quarantineReason.description)
                         }
                         GridRow {
                             Text("Vendor ID:")
@@ -302,7 +317,7 @@ struct StateLabel: View {
         switch state {
         case "Ready": return .green
         case "Suspended": return .orange
-        case "Terminated": return .red
+        case "Quarantined", "Terminated": return .red
         case "Created": return .blue
         default: return .gray
         }

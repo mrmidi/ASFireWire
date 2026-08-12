@@ -12,17 +12,18 @@ extension ASFWDriverConnector {
         var isExactGenerationMatch: Bool { requestedGeneration == resolvedGeneration }
     }
 
-    func getConfigROM(nodeId: UInt8, generation: UInt16) -> ConfigROMFetchResult? {
+    func getConfigROM(deviceID: DeviceInstanceID,
+                      expectedGeneration: UInt16) -> ConfigROMFetchResult? {
         guard isConnected else {
             log("getConfigROM: Not connected", level: .warning)
             return nil
         }
 
-        let input: [UInt64] = [UInt64(nodeId), UInt64(generation)]
+        let input: [UInt64] = [deviceID.rawValue]
         let maxSize = 1024 * 4  // Max 1024 quadlets
         var outputStruct = Data(count: maxSize)
         var outputSize = outputStruct.count
-        var resolvedGeneration: UInt64 = UInt64(generation)
+        var resolvedGeneration: UInt64 = 0
         var scalarOutputCount: UInt32 = 1
 
         let kr = outputStruct.withUnsafeMutableBytes { bufferPtr in
@@ -48,19 +49,15 @@ extension ASFWDriverConnector {
         }
 
         guard outputSize > 0 else {
-            log("getConfigROM: ROM not cached for node=\(nodeId) gen=\(generation)", level: .info)
+            log("getConfigROM: ROM not cached for instance=\(deviceID)", level: .info)
             return nil  // ROM not cached
         }
 
         let romData = outputStruct.prefix(outputSize)
         let resolvedGen16 = UInt16(truncatingIfNeeded: resolvedGeneration)
-        if resolvedGen16 != generation {
-            log("getConfigROM: received stale cache for node=\(nodeId) requestedGen=\(generation) resolvedGen=\(resolvedGen16) bytes=\(outputSize)", level: .warning)
-        } else {
-            log("getConfigROM: received \(outputSize) bytes for node=\(nodeId) gen=\(generation)", level: .success)
-        }
+        log("getConfigROM: received \(outputSize) bytes for instance=\(deviceID) gen=\(resolvedGen16)", level: .success)
         return ConfigROMFetchResult(data: Data(romData),
-                                    requestedGeneration: generation,
+                                    requestedGeneration: expectedGeneration,
                                     resolvedGeneration: resolvedGen16)
     }
 
@@ -70,18 +67,18 @@ extension ASFWDriverConnector {
         case failed = 2
     }
 
-    func triggerROMRead(nodeId: UInt8) -> ROMReadStatus {
+    func triggerROMRead(deviceID: DeviceInstanceID) -> ROMReadStatus {
         guard isConnected else {
             log("triggerROMRead: Not connected", level: .warning)
             print("[Connector] ❌ triggerROMRead: Not connected")
             return .failed
         }
 
-        var input: [UInt64] = [UInt64(nodeId)]
+        var input: [UInt64] = [deviceID.rawValue]
         var output = [UInt64](repeating: 0, count: 1)  // Use array like getBusResetCount
         var outputCount: UInt32 = 1
 
-        print("[Connector] 📞 triggerROMRead: nodeId=\(nodeId) (0x\(String(nodeId, radix: 16))) connection=0x\(String(connection, radix: 16))")
+        print("[Connector] 📞 triggerROMRead: instance=\(deviceID) connection=0x\(String(connection, radix: 16))")
         print("[Connector]    input=\(input) inputCount=\(input.count) selector=\(Method.triggerROMRead.rawValue)")
 
         let kr = input.withUnsafeMutableBufferPointer { buffer -> kern_return_t in
@@ -108,8 +105,8 @@ extension ASFWDriverConnector {
         let status = ROMReadStatus(rawValue: UInt32(output[0])) ?? .failed
         let statusText = status == .initiated ? "initiated" :
                         status == .alreadyInProgress ? "already in progress" : "failed"
-        log("triggerROMRead: node=\(nodeId) \(statusText)", level: status == .failed ? .error : .success)
-        print("[Connector] ✅ triggerROMRead: node=\(nodeId) status=\(statusText) (rawStatus=\(output[0]))")
+        log("triggerROMRead: instance=\(deviceID) \(statusText)", level: status == .failed ? .error : .success)
+        print("[Connector] ✅ triggerROMRead: instance=\(deviceID) status=\(statusText) (rawStatus=\(output[0]))")
         return status
     }
 }

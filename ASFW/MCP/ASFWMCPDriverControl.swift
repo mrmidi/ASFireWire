@@ -3,13 +3,14 @@ import Foundation
 protocol ASFWDriverControlling {
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
     func fetchTopology() async -> ASFWMCPTopologySnapshot?
-    func fetchConfigROM(nodeId: UInt32, generation: UInt32) async -> ASFWMCPConfigRomSummary?
+    func fetchConfigROM(deviceID: DeviceInstanceID,
+                        generation: UInt32) async -> ASFWMCPConfigRomSummary?
     func fetchOhciSnapshot() async -> ASFWMCPOhciSnapshot?
     func fetchIrmAllocations() async -> ASFWMCPIrmAllocationReport?
     func recentFcpRecords(limit: Int) async -> [ASFWMCPFcpRecord]
     func listNodes() async -> [ASFWMCPNodeSummary]
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary]
-    func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities?
+    func avcSubunitCapabilities(unitID: UnitInstanceID, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities?
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent]
     func executeReadQuadlet(_ request: ASFWMCPReadQuadletRequest) async -> ASFWMCPTransactionResult
     func executeReadBlock(_ request: ASFWMCPReadBlockRequest) async -> ASFWMCPTransactionResult
@@ -17,7 +18,7 @@ protocol ASFWDriverControlling {
     func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
-    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt
+    func executePhase88Streaming(endpointID: AudioEndpointID, start: Bool) async -> ASFWMCPPhase88StreamingReceipt
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
     func queryLogRecords(_ query: ASFWLogRingQuery) async -> ASFWLogRingQueryResponse?
@@ -143,12 +144,14 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     }
 
-    func fetchConfigROM(nodeId: UInt32, generation requestedGeneration: UInt32) async -> ASFWMCPConfigRomSummary? {
-        guard let node = nodes.first(where: { $0.nodeId == nodeId }), node.configRomCached else {
+    func fetchConfigROM(deviceID: DeviceInstanceID,
+                        generation requestedGeneration: UInt32) async -> ASFWMCPConfigRomSummary? {
+        guard let node = nodes.first(where: { $0.deviceInstanceId == deviceID }),
+              node.configRomCached else {
             return nil
         }
         return ASFWMCPConfigRomSummary(
-            nodeId: nodeId,
+            nodeId: node.nodeId,
             requestedGeneration: requestedGeneration,
             resolvedGeneration: generation,
             exactGenerationMatch: requestedGeneration == generation,
@@ -157,7 +160,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             rootDirectoryStartQuadlet: 5,
             parsed: true,
             parseNote: nil,
-            guid: node.guid,
+            guid: node.observedGuid,
             busName: "1394",
             irmc: true,
             cmc: true,
@@ -216,8 +219,9 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {
         nodes.compactMap { node in
             guard node.protocolHints.contains("avc"),
-                  let guidText = node.guid,
+                  let guidText = node.observedGuid,
                   let guid = UInt64(guidText.dropFirst(2), radix: 16),
+                  let deviceID = node.deviceInstanceId,
                   let vendorText = node.vendorId,
                   let vendorId = UInt32(vendorText.dropFirst(2), radix: 16),
                   let modelText = node.modelId,
@@ -225,7 +229,12 @@ actor MockASFWDriverControl: ASFWDriverControlling {
                 return nil
             }
             return ASFWMCPAVCUnitSummary(
-                guid: guid, nodeId: node.nodeId, vendorId: vendorId, modelId: modelId,
+                id: UnitInstanceID(device: deviceID, unitDirectoryOffset: 0x28),
+                observedGuid: guid,
+                generation: generation,
+                nodeId: node.nodeId,
+                vendorId: vendorId,
+                modelId: modelId,
                 isoInputPlugCount: 1, isoOutputPlugCount: 1,
                 externalInputPlugCount: 1, externalOutputPlugCount: 1,
                 subunits: [.init(type: 0x0C, id: 0, sourcePlugCount: 1, destinationPlugCount: 1)]
@@ -233,8 +242,8 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         }
     }
 
-    func avcSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities? {
-        guard (await listAVCUnits()).contains(where: { $0.guid == guid &&
+    func avcSubunitCapabilities(unitID: UnitInstanceID, type: UInt8, id: UInt8) async -> ASFWMCPAVCSubunitCapabilities? {
+        guard (await listAVCUnits()).contains(where: { $0.id == unitID &&
             $0.subunits.contains(where: { $0.type == type && $0.id == id })
         }) else {
             return nil
@@ -347,12 +356,12 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {
         let matchingNode = nodes.first {
             $0.nodeId == request.address.nodeId &&
-            $0.guid == String(format: "0x%016llX", request.targetGUID) &&
+            $0.deviceInstanceId == request.targetUnitID.device &&
             $0.protocolHints.contains("avc")
         }
         guard matchingNode != nil else {
             return ASFWMCPFcpCommandReceipt(
-                targetGUID: request.targetGUID,
+                targetUnitID: request.targetUnitID,
                 expectedNodeId: request.address.nodeId,
                 expectedGeneration: request.address.generation,
                 observedNodeId: nil,
@@ -366,7 +375,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         }
         guard request.address.generation == generation else {
             return ASFWMCPFcpCommandReceipt(
-                targetGUID: request.targetGUID,
+                targetUnitID: request.targetUnitID,
                 expectedNodeId: request.address.nodeId,
                 expectedGeneration: request.address.generation,
                 observedNodeId: request.address.nodeId,
@@ -383,7 +392,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         if request.intent == .status,
            payload == [0x01, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00] {
             return ASFWMCPFcpCommandReceipt(
-                targetGUID: request.targetGUID,
+                targetUnitID: request.targetUnitID,
                 expectedNodeId: request.address.nodeId,
                 expectedGeneration: request.address.generation,
                 observedNodeId: request.address.nodeId,
@@ -398,7 +407,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         if request.intent == .status,
            payload == [0x01, 0x60, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00] {
             return ASFWMCPFcpCommandReceipt(
-                targetGUID: request.targetGUID,
+                targetUnitID: request.targetUnitID,
                 expectedNodeId: request.address.nodeId,
                 expectedGeneration: request.address.generation,
                 observedNodeId: request.address.nodeId,
@@ -413,7 +422,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         if request.intent == .status,
            payload == [0x01, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00] {
             return ASFWMCPFcpCommandReceipt(
-                targetGUID: request.targetGUID,
+                targetUnitID: request.targetUnitID,
                 expectedNodeId: request.address.nodeId,
                 expectedGeneration: request.address.generation,
                 observedNodeId: request.address.nodeId,
@@ -429,7 +438,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
            payload == [0x01, 0x60, 0x02, 0xC0, 0x00, 0x01, 0x00, 0xFF,
                        0xFF, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] {
             return ASFWMCPFcpCommandReceipt(
-                targetGUID: request.targetGUID,
+                targetUnitID: request.targetUnitID,
                 expectedNodeId: request.address.nodeId,
                 expectedGeneration: request.address.generation,
                 observedNodeId: request.address.nodeId,
@@ -446,7 +455,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             let isInput = payload[2] == 0x19
             if request.intent == .status {
                 return ASFWMCPFcpCommandReceipt(
-                    targetGUID: request.targetGUID,
+                    targetUnitID: request.targetUnitID,
                     expectedNodeId: request.address.nodeId,
                     expectedGeneration: request.address.generation,
                     observedNodeId: request.address.nodeId,
@@ -463,7 +472,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             }
         }
         return ASFWMCPFcpCommandReceipt(
-            targetGUID: request.targetGUID,
+            targetUnitID: request.targetUnitID,
             expectedNodeId: request.address.nodeId,
             expectedGeneration: request.address.generation,
             observedNodeId: request.address.nodeId,
@@ -476,15 +485,13 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     }
 
-    func executePhase88Streaming(targetGuid: UInt64, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {
+    func executePhase88Streaming(endpointID: AudioEndpointID, start: Bool) async -> ASFWMCPPhase88StreamingReceipt {
         attemptedWriteCount += 1
-        let matched = nodes.contains { $0.guid == String(format: "0x%016llX", targetGuid) &&
-            $0.protocolHints.contains("bebob") && $0.protocolHints.contains("cmp") }
-        guard matched else {
-            return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: -536_870_201)
+        guard endpointID.rawValue != 0 else {
+            return ASFWMCPPhase88StreamingReceipt(endpointId: endpointID, started: start, status: -536_870_201)
         }
         phase88Streaming = start
-        return ASFWMCPPhase88StreamingReceipt(targetGuid: targetGuid, started: start, status: 0)
+        return ASFWMCPPhase88StreamingReceipt(endpointId: endpointID, started: start, status: 0)
     }
 
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt {
@@ -591,7 +598,9 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         // A device that is streaming cleanly: every packet carries data and the
         // replay ring is being fed.
         [ASFWMCPAudioStreamHealth(
-            guid: 0x0011_2233_4455_6677,
+            endpointId: AudioEndpointID(401),
+            deviceInstanceId: DeviceInstanceID(4),
+            observedGuid: 0x000A_AC03_00B1_D1F7,
             bindingReady: true,
             streaming: true,
             sampleRateHz: 48_000,
@@ -612,7 +621,9 @@ actor MockASFWDriverControl: ASFWDriverControlling {
 
     func fetchAudioCursors() async -> [ASFWMCPAudioCursorSnapshot] {
         [ASFWMCPAudioCursorSnapshot(
-            guid: 0x0011_2233_4455_6677,
+            endpointId: AudioEndpointID(101),
+            deviceInstanceId: DeviceInstanceID(1),
+            observedGuid: 0x0011_2233_4455_6677,
             bindingReady: true,
             streaming: true,
             sampleRateHz: 48_000,
@@ -684,11 +695,12 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         ]
     }
 
-    static let defaultNodes: [ASFWMCPNodeSummary] = [
+    nonisolated static let defaultNodes: [ASFWMCPNodeSummary] = [
         ASFWMCPNodeSummary(
+            deviceInstanceId: DeviceInstanceID(1),
             nodeId: 0,
             address16: "0xFFC0",
-            guid: "0x0011223344556677",
+            observedGuid: "0x0011223344556677",
             vendorId: "0x0003DB",
             modelId: "0x01DDDD",
             vendorName: "Apogee",
@@ -697,9 +709,10 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             protocolHints: ["avc", "cmp"]
         ),
         ASFWMCPNodeSummary(
+            deviceInstanceId: DeviceInstanceID(2),
             nodeId: 1,
             address16: "0xFFC1",
-            guid: "0x00AABBCCDDEEFF00",
+            observedGuid: "0x00AABBCCDDEEFF00",
             vendorId: "0x00130E",
             modelId: "0x00000001",
             vendorName: "TCAT",
@@ -710,9 +723,10 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     ]
 
     static let sbp2Node = ASFWMCPNodeSummary(
+        deviceInstanceId: DeviceInstanceID(3),
         nodeId: 2,
         address16: "0xFFC2",
-        guid: "0x0022334455667788",
+        observedGuid: "0x0022334455667788",
         vendorId: "0x00609E",
         modelId: "0x00001000",
         vendorName: "Mock SBP-2",
@@ -722,9 +736,10 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     )
 
     static let bebobNode = ASFWMCPNodeSummary(
+        deviceInstanceId: DeviceInstanceID(4),
         nodeId: 3,
         address16: "0xFFC3",
-        guid: "0x000AAC0300B1D1F7",
+        observedGuid: "0x000AAC0300B1D1F7",
         vendorId: "0x000AAC",
         modelId: "0x000003",
         vendorName: "TerraTec Electronic GmbH",
@@ -733,7 +748,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         protocolHints: ["avc", "bebob", "cmp"]
     )
 
-    static let defaultTransactions: [ASFWMCPTransactionEvent] = [
+    nonisolated static let defaultTransactions: [ASFWMCPTransactionEvent] = [
         ASFWMCPTransactionEvent(
             timestampNs: 123_456_780_000,
             generation: 17,

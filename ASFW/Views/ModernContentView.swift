@@ -268,7 +268,7 @@ struct ModernContentView: View {
 struct AsyncCommandView: View {
     @ObservedObject var viewModel: DebugViewModel
 
-    @State private var destinationID: String = "0x0000"
+    @State private var deviceInstanceID: String = "1"
     @State private var addressHigh: String = "0x0000"
     @State private var addressLow: String = "0x00000000"
     @State private var readLength: String = "16"
@@ -301,8 +301,8 @@ struct AsyncCommandView: View {
                 GroupBox("Common Parameters") {
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
                         GridRow {
-                            Text("Destination ID")
-                            TextField("0x0000", text: $destinationID)
+                            Text("Device Instance ID")
+                            TextField("1", text: $deviceInstanceID)
                                 .textFieldStyle(.roundedBorder)
                                 .monospaced()
                                 .frame(width: 160)
@@ -400,8 +400,8 @@ struct AsyncCommandView: View {
 
     private func submitRead() {
         validationError = nil
-        guard let destination = parseUInt16(destinationID) else {
-            validationError = "Invalid destination ID"
+        guard let rawDeviceID = parseUInt64(deviceInstanceID), rawDeviceID != 0 else {
+            validationError = "Invalid device instance ID"
             return
         }
         guard let high = parseUInt16(addressHigh) else {
@@ -417,7 +417,7 @@ struct AsyncCommandView: View {
             return
         }
 
-        viewModel.performAsyncRead(destinationID: destination,
+        viewModel.performAsyncRead(deviceID: DeviceInstanceID(rawDeviceID),
                                    addressHigh: high,
                                    addressLow: low,
                                    length: length)
@@ -425,8 +425,8 @@ struct AsyncCommandView: View {
 
     private func submitWrite() {
         validationError = nil
-        guard let destination = parseUInt16(destinationID) else {
-            validationError = "Invalid destination ID"
+        guard let rawDeviceID = parseUInt64(deviceInstanceID), rawDeviceID != 0 else {
+            validationError = "Invalid device instance ID"
             return
         }
         guard let high = parseUInt16(addressHigh) else {
@@ -442,7 +442,7 @@ struct AsyncCommandView: View {
             return
         }
 
-        viewModel.performAsyncWrite(destinationID: destination,
+        viewModel.performAsyncWrite(deviceID: DeviceInstanceID(rawDeviceID),
                                     addressHigh: high,
                                     addressLow: low,
                                     payload: data)
@@ -453,6 +453,10 @@ struct AsyncCommandView: View {
     }
 
     private func parseUInt32(_ value: String) -> UInt32? {
+        parseUnsigned(value)
+    }
+
+    private func parseUInt64(_ value: String) -> UInt64? {
         parseUnsigned(value)
     }
 

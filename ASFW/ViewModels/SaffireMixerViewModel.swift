@@ -19,7 +19,7 @@ class SaffireMixerViewModel: ObservableObject {
     @Published var lastUpdateTime: Date?
 
     // Resolved device target (runtime, from discovery).
-    @Published var deviceGUID: UInt64?
+    @Published var deviceInstanceID: DeviceInstanceID?
     @Published var deviceNodeId: UInt16?
     
     // MARK: - Private Properties
@@ -54,7 +54,7 @@ class SaffireMixerViewModel: ObservableObject {
                     self.resolveTargetIfNeeded()
                     self.refresh()
                 } else {
-                    self.deviceGUID = nil
+                    self.deviceInstanceID = nil
                     self.deviceNodeId = nil
                 }
             }
@@ -62,22 +62,26 @@ class SaffireMixerViewModel: ObservableObject {
     }
 
     private func resolveTargetIfNeeded() {
-        if deviceGUID != nil && deviceNodeId != nil {
+        if deviceInstanceID != nil && deviceNodeId != nil {
             return
         }
 
         guard let devices = connector.getDiscoveredDevices() else { return }
 
-        // If we already have a GUID but nodeId is missing, refresh just nodeId.
-        if let guid = deviceGUID,
-           let device = devices.first(where: { $0.guid == guid }) {
+        // If the instance survived a reset, refresh its current route node.
+        if let deviceID = deviceInstanceID,
+           let device = devices.first(where: { $0.id == deviceID && !$0.isQuarantined }) {
             deviceNodeId = UInt16(device.nodeId)
             return
         }
 
         // Otherwise, attempt to find the Saffire Pro 24 DSP.
-        if let device = devices.first(where: { $0.vendorId == Self.focusriteVendorId && $0.modelId == Self.saffirePro24DspModelId }) {
-            deviceGUID = device.guid
+        if let device = devices.first(where: {
+            !$0.isQuarantined &&
+                $0.vendorId == Self.focusriteVendorId &&
+                $0.modelId == Self.saffirePro24DspModelId
+        }) {
+            deviceInstanceID = device.id
             deviceNodeId = UInt16(device.nodeId)
         }
     }
@@ -89,7 +93,7 @@ class SaffireMixerViewModel: ObservableObject {
         guard !isLoading else { return }
 
         resolveTargetIfNeeded()
-        guard let nodeId = deviceNodeId else {
+        guard let deviceID = deviceInstanceID else {
             errorMessage = "No Saffire Pro 24 DSP found"
             return
         }
@@ -101,7 +105,7 @@ class SaffireMixerViewModel: ObservableObject {
             guard let self = self else { return }
             
             // Read output group state
-            if let outputState = self.connector.getSaffireOutputGroup(destinationID: nodeId) {
+            if let outputState = self.connector.getSaffireOutputGroup(deviceID: deviceID) {
                 DispatchQueue.main.async {
                     self.outputState = outputState
                 }
@@ -112,7 +116,7 @@ class SaffireMixerViewModel: ObservableObject {
             }
             
             // Read input parameters
-            if let inputParams = self.connector.getSaffireInputParams(destinationID: nodeId) {
+            if let inputParams = self.connector.getSaffireInputParams(deviceID: deviceID) {
                 DispatchQueue.main.async {
                     self.inputParams = inputParams
                 }
@@ -132,7 +136,7 @@ class SaffireMixerViewModel: ObservableObject {
     /// Update output group state on device
     func updateOutputState(_ newState: OutputGroupState) {
         resolveTargetIfNeeded()
-        guard let nodeId = deviceNodeId else {
+        guard let deviceID = deviceInstanceID else {
             errorMessage = "No Saffire Pro 24 DSP found"
             return
         }
@@ -142,7 +146,7 @@ class SaffireMixerViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
-            if self.connector.setSaffireOutputGroup(destinationID: nodeId, newState) {
+            if self.connector.setSaffireOutputGroup(deviceID: deviceID, newState) {
                 DispatchQueue.main.async {
                     self.outputState = newState
                     self.lastUpdateTime = Date()
@@ -158,7 +162,7 @@ class SaffireMixerViewModel: ObservableObject {
     /// Update input parameters on device
     func updateInputParams(_ newParams: InputParams) {
         resolveTargetIfNeeded()
-        guard let nodeId = deviceNodeId else {
+        guard let deviceID = deviceInstanceID else {
             errorMessage = "No Saffire Pro 24 DSP found"
             return
         }
@@ -168,7 +172,7 @@ class SaffireMixerViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
-            if self.connector.setSaffireInputParams(destinationID: nodeId, newParams) {
+            if self.connector.setSaffireInputParams(deviceID: deviceID, newParams) {
                 DispatchQueue.main.async {
                     self.inputParams = newParams
                     self.lastUpdateTime = Date()
