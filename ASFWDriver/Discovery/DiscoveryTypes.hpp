@@ -2,6 +2,7 @@
 
 #include "../Common/FWCommon.hpp"
 #include "DiscoveryValues.hpp"  // FwSpeed enum and constants
+#include "RuntimeIdentity.hpp"
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -120,6 +121,8 @@ struct UnitDirectory {
     uint32_t unitSwVersion{0};
 
     std::optional<uint32_t> logicalUnitNumber;
+    std::optional<uint32_t> vendorId;
+    std::optional<std::string> vendorName;
     std::optional<uint32_t> modelId;
     std::optional<std::string> modelName;
 
@@ -184,35 +187,74 @@ enum class LifeState : uint8_t {
     Lost           // Node gone this generation
 };
 
-// Device record anchored to GUID (stable across bus resets)
-struct DeviceRecord {
-    // ---- Stable identity (persistent across resets) ----
-    Guid64 guid{0};
-    // Device incarnation changes only when this GUID is removed and later
-    // discovered again. Route epoch changes on reset/rebind independently.
-    uint64_t deviceIncarnation{0};
-    uint64_t routeEpoch{0};
-    uint32_t vendorId{0};
-    uint32_t modelId{0};
-    DeviceKind kind{DeviceKind::Unknown};
+enum class QuarantineReason : uint8_t {
+    None = 0,
+    ZeroObservedGuid,
+    DuplicateObservedGuid,
+    HazardousNoProbe,
+    AmbiguousIdentity,
+    InsufficientSafeEvidence,
+    UnsupportedFamily,
+};
 
-    // ---- Text descriptors from ROM ----
-    std::string vendorName;
-    std::string modelName;
+struct UnitIdentityEvidence {
+    uint32_t unitDirectoryOffset{0};
+    std::optional<uint32_t> vendorId;
+    std::optional<uint32_t> modelId;
+    std::optional<uint32_t> specifierId;
+    std::optional<uint32_t> version;
+    std::optional<uint32_t> logicalUnitNumber;
+    std::optional<std::string> vendorName;
+    std::optional<std::string> modelName;
+};
+
+// Immutable Config-ROM evidence.  None of these fields is promoted to a
+// canonical identity; callers choose the evidence appropriate for their
+// protocol family.  rawBusInfoQuadlets remains in big-endian wire order.
+struct DeviceIdentityEvidence {
+    Guid64 observedGuid{0};
+    uint32_t nodeVendorOui{0};
+    std::vector<uint32_t> rawBusInfoQuadlets;
+
+    std::optional<uint32_t> rootVendorId;
+    std::optional<uint32_t> rootModelId;
+    std::string rootVendorName;
+    std::string rootModelName;
+
+    std::vector<UnitIdentityEvidence> units;
+};
+
+// Device record anchored to an opaque runtime instance.  observedGuid is raw
+// evidence only and may be zero or shared by several live devices.
+struct DeviceRecord {
+    DeviceInstanceId instanceId{};
+    DeviceIdentityEvidence identity{};
+    uint64_t routeEpoch{0};
+    DeviceKind kind{DeviceKind::Unknown};
 
     // ---- Live mapping (current generation) ----
     Generation gen{0};
     uint16_t nodeId{kInvalidNodeId}; // 0xFFFF when not present this gen
     LinkPolicy link{};
     LifeState state{LifeState::Discovered};
+    QuarantineReason quarantineReason{QuarantineReason::None};
 
     // ---- Audio classification (inferred from ROM) ----
     bool isAudioCandidate{false};    // Unit_Spec_Id==0x00A02D or AV/C Audio
     bool supportsAMDTP{false};       // Inferred from spec/version combos
 
-    // ---- Optional metadata ----
-    std::optional<uint32_t> unitSpecId;
-    std::optional<uint32_t> unitSwVersion;
+    [[nodiscard]] Guid64 ObservedGuid() const noexcept { return identity.observedGuid; }
+    [[nodiscard]] uint32_t RootVendorIdOrZero() const noexcept {
+        return identity.rootVendorId.value_or(0);
+    }
+    [[nodiscard]] uint32_t RootModelIdOrZero() const noexcept {
+        return identity.rootModelId.value_or(0);
+    }
+};
+
+struct DeviceObservation {
+    const ConfigROM* rom{nullptr};
+    LinkPolicy link{};
 };
 
 // ============================================================================

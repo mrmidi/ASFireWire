@@ -34,7 +34,7 @@ DeviceManager::DeviceManager() : mutex_(IOLockAlloc()) {
 
 DeviceManager::~DeviceManager() {
     // Terminate all devices on shutdown
-    for (auto& [guid, device] : devicesByGuid_) {
+    for (auto& [instanceId, device] : devicesByInstance_) {
         if (device) {
             device->Terminate();
         }
@@ -55,7 +55,7 @@ std::vector<std::shared_ptr<FWUnit>> DeviceManager::FindUnitsBySpec(
     IOLockLock(mutex_);
     std::vector<std::shared_ptr<FWUnit>> matches;
 
-    for (const auto& [guid, device] : devicesByGuid_) {
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (!device || device->IsTerminated()) {
             continue;
         }
@@ -73,7 +73,7 @@ std::vector<std::shared_ptr<FWUnit>> DeviceManager::GetAllUnits() const
     IOLockLock(mutex_);
     std::vector<std::shared_ptr<FWUnit>> allUnits;
 
-    for (const auto& [guid, device] : devicesByGuid_) {
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (!device || device->IsTerminated()) {
             continue;
         }
@@ -91,7 +91,7 @@ std::vector<std::shared_ptr<FWUnit>> DeviceManager::GetReadyUnits() const
     IOLockLock(mutex_);
     std::vector<std::shared_ptr<FWUnit>> readyUnits;
 
-    for (const auto& [guid, device] : devicesByGuid_) {
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (!device || device->IsTerminated()) {
             continue;
         }
@@ -143,7 +143,7 @@ DeviceManager::CallbackHandle DeviceManager::RegisterUnitCallback(
 
     // Invoke callback for existing matching units
     auto& entry = unitCallbacks_.back();
-    for (const auto& [guid, device] : devicesByGuid_) {
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (!device || device->IsTerminated()) {
             continue;
         }
@@ -177,12 +177,12 @@ void DeviceManager::UnregisterCallback(CallbackHandle handle)
 
 // === IDeviceManager Implementation ===
 
-std::shared_ptr<FWDevice> DeviceManager::GetDeviceByGUID(Guid64 guid) const
+std::shared_ptr<FWDevice> DeviceManager::GetDevice(DeviceInstanceId instanceId) const
 {
     IOLockLock(mutex_);
 
-    auto it = devicesByGuid_.find(guid);
-    if (it != devicesByGuid_.end()) {
+    auto it = devicesByInstance_.find(instanceId);
+    if (it != devicesByInstance_.end()) {
         auto device = it->second;
         IOLockUnlock(mutex_);
         return device;
@@ -192,21 +192,35 @@ std::shared_ptr<FWDevice> DeviceManager::GetDeviceByGUID(Guid64 guid) const
     return nullptr;
 }
 
+std::vector<std::shared_ptr<FWDevice>>
+DeviceManager::FindDevicesByObservedGuid(Guid64 observedGuid) const
+{
+    IOLockLock(mutex_);
+    std::vector<std::shared_ptr<FWDevice>> matches;
+    for (const auto& [instanceId, device] : devicesByInstance_) {
+        if (device && !device->IsTerminated() && device->GetObservedGuid() == observedGuid) {
+            matches.push_back(device);
+        }
+    }
+    IOLockUnlock(mutex_);
+    return matches;
+}
+
 std::shared_ptr<FWDevice> DeviceManager::GetDeviceByNode(
     Generation gen,
     uint8_t nodeId) const
 {
     IOLockLock(mutex_);
     GenNodeKey key = MakeKey(gen, nodeId);
-    auto it = genNodeToGuid_.find(key);
-    if (it == genNodeToGuid_.end()) {
+    auto it = genNodeToInstance_.find(key);
+    if (it == genNodeToInstance_.end()) {
         IOLockUnlock(mutex_);
         return nullptr;
     }
 
-    Guid64 guid = it->second;
-    auto devIt = devicesByGuid_.find(guid);
-    if (devIt != devicesByGuid_.end()) {
+    const DeviceInstanceId instanceId = it->second;
+    auto devIt = devicesByInstance_.find(instanceId);
+    if (devIt != devicesByInstance_.end()) {
         auto device = devIt->second;
         IOLockUnlock(mutex_);
         return device;
@@ -222,7 +236,7 @@ std::vector<std::shared_ptr<FWDevice>> DeviceManager::GetDevicesByGeneration(
     IOLockLock(mutex_);
     std::vector<std::shared_ptr<FWDevice>> devices;
 
-    for (const auto& [guid, device] : devicesByGuid_) {
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (device && device->GetGeneration() == gen && !device->IsTerminated()) {
             devices.push_back(device);
         }
@@ -237,7 +251,7 @@ std::vector<std::shared_ptr<FWDevice>> DeviceManager::GetAllDevices() const
     IOLockLock(mutex_);
     std::vector<std::shared_ptr<FWDevice>> devices;
 
-    for (const auto& [guid, device] : devicesByGuid_) {
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (device && !device->IsTerminated()) {
             devices.push_back(device);
         }
@@ -252,7 +266,7 @@ std::vector<std::shared_ptr<FWDevice>> DeviceManager::GetReadyDevices() const
     IOLockLock(mutex_);
     std::vector<std::shared_ptr<FWDevice>> devices;
 
-    for (const auto& [guid, device] : devicesByGuid_) {
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (device && device->IsReady()) {
             devices.push_back(device);
         }
@@ -287,12 +301,12 @@ std::shared_ptr<FWDevice> DeviceManager::UpsertDevice(
     const ConfigROM& rom)
 {
     IOLockLock(mutex_);
-    const Guid64 guid = record.guid;
+    const DeviceInstanceId instanceId = record.instanceId;
     // Reset main's SBP2 missing-scan counter when a device is (re)upserted so a
     // device that reappears is not prematurely terminated (see MarkDeviceLost).
-    missingScanCounts_.erase(guid);
+    missingScanCounts_.erase(instanceId);
 
-    if (auto it = devicesByGuid_.find(guid); it != devicesByGuid_.end()) {
+    if (auto it = devicesByInstance_.find(instanceId); it != devicesByInstance_.end()) {
         if (auto device = ResumeExistingDevice(it->second, record)) {
             IOLockUnlock(mutex_);
             return device;
@@ -304,11 +318,11 @@ std::shared_ptr<FWDevice> DeviceManager::UpsertDevice(
     return device;
 }
 
-void DeviceManager::MarkDeviceLost(Guid64 guid)
+void DeviceManager::MarkDeviceLost(DeviceInstanceId instanceId)
 {
     IOLockLock(mutex_);
-    auto it = devicesByGuid_.find(guid);
-    if (it == devicesByGuid_.end()) {
+    auto it = devicesByInstance_.find(instanceId);
+    if (it == devicesByInstance_.end()) {
         IOLockUnlock(mutex_);
         return;
     }
@@ -320,16 +334,16 @@ void DeviceManager::MarkDeviceLost(Guid64 guid)
     }
 
     if (!HasSBP2Unit(device)) {
-        missingScanCounts_.erase(guid);
+        missingScanCounts_.erase(instanceId);
         IOLockUnlock(mutex_);
-        TerminateDevice(guid);
+        TerminateDevice(instanceId);
         return;
     }
 
-    const uint8_t missingCount = ++missingScanCounts_[guid];
+    const uint8_t missingCount = ++missingScanCounts_[instanceId];
     if (missingCount >= kSBP2MissingTerminateThreshold) {
         IOLockUnlock(mutex_);
-        TerminateDevice(guid);
+        TerminateDevice(instanceId);
         return;
     }
 
@@ -343,10 +357,10 @@ void DeviceManager::MarkDeviceLost(Guid64 guid)
         }
     }
 
-    auto genNodeIt = genNodeToGuid_.begin();
-    while (genNodeIt != genNodeToGuid_.end()) {
-        if (genNodeIt->second == guid) {
-            genNodeIt = genNodeToGuid_.erase(genNodeIt);
+    auto genNodeIt = genNodeToInstance_.begin();
+    while (genNodeIt != genNodeToInstance_.end()) {
+        if (genNodeIt->second == instanceId) {
+            genNodeIt = genNodeToInstance_.erase(genNodeIt);
         } else {
             ++genNodeIt;
         }
@@ -360,7 +374,7 @@ void DeviceManager::SuspendAllForBusReset()
     IOLockLock(mutex_);
 
     size_t suspendedCount = 0;
-    for (const auto& entry : devicesByGuid_) {
+    for (const auto& entry : devicesByInstance_) {
         const auto& device = entry.second;
         if (!device || device->IsTerminated() || !device->IsReady()) {
             continue;
@@ -378,25 +392,25 @@ void DeviceManager::SuspendAllForBusReset()
 
     // A reset invalidates all node IDs, including those whose numerical node
     // number happens not to change after the topology is rediscovered.
-    genNodeToGuid_.clear();
+    genNodeToInstance_.clear();
     missingScanCounts_.clear();
     IOLockUnlock(mutex_);
 
     ASFW_LOG(Discovery, "Bus reset: suspended %zu published devices pending discovery", suspendedCount);
 }
 
-void DeviceManager::TerminateDevice(Guid64 guid)
+void DeviceManager::TerminateDevice(DeviceInstanceId instanceId)
 {
     IOLockLock(mutex_);
-    auto it = devicesByGuid_.find(guid);
-    if (it == devicesByGuid_.end()) {
+    auto it = devicesByInstance_.find(instanceId);
+    if (it == devicesByInstance_.end()) {
         IOLockUnlock(mutex_);
         return;
     }
 
     auto device = it->second;
     if (!device) {
-        missingScanCounts_.erase(guid);
+        missingScanCounts_.erase(instanceId);
         IOLockUnlock(mutex_);
         return;
     }
@@ -412,21 +426,21 @@ void DeviceManager::TerminateDevice(Guid64 guid)
     device->Terminate();
 
     // Remove from secondary index
-    auto genNodeIt = genNodeToGuid_.begin();
-    while (genNodeIt != genNodeToGuid_.end()) {
-        if (genNodeIt->second == guid) {
-            genNodeIt = genNodeToGuid_.erase(genNodeIt);
+    auto genNodeIt = genNodeToInstance_.begin();
+    while (genNodeIt != genNodeToInstance_.end()) {
+        if (genNodeIt->second == instanceId) {
+            genNodeIt = genNodeToInstance_.erase(genNodeIt);
         } else {
             ++genNodeIt;
         }
     }
 
     // Notify observers
-    NotifyDeviceRemoved(guid);
+    NotifyDeviceRemoved(instanceId);
 
     // Remove from primary map
-    devicesByGuid_.erase(it);
-    missingScanCounts_.erase(guid);
+    devicesByInstance_.erase(it);
+    missingScanCounts_.erase(instanceId);
 
     IOLockUnlock(mutex_);
 }
@@ -454,10 +468,10 @@ void DeviceManager::NotifyDeviceSuspended(std::shared_ptr<FWDevice> device)
     }
 }
 
-void DeviceManager::NotifyDeviceRemoved(Guid64 guid)
+void DeviceManager::NotifyDeviceRemoved(DeviceInstanceId instanceId)
 {
     for (auto* observer : deviceObservers_) {
-        observer->OnDeviceRemoved(guid);
+        observer->OnDeviceRemoved(instanceId);
     }
 }
 
@@ -505,19 +519,20 @@ void DeviceManager::NotifyUnitTerminated(std::shared_ptr<FWUnit> unit)
     }
 }
 
-void DeviceManager::UpdateOperationalIndex(Guid64 guid,
+void DeviceManager::UpdateOperationalIndex(DeviceInstanceId instanceId,
                                            Generation gen,
                                            uint16_t nodeId,
                                            const char* action)
 {
     if (const auto operationalNodeId = TryOperationalNodeId(nodeId); operationalNodeId.has_value()) {
         const GenNodeKey key = MakeKey(gen, *operationalNodeId);
-        genNodeToGuid_[key] = guid;
+        genNodeToInstance_[key] = instanceId;
         return;
     }
 
-    ASFW_LOG(Discovery, "Skipping device index %{public}s for GUID=0x%016llx with invalid nodeId=%u",
-             action, guid, nodeId);
+    ASFW_LOG(Discovery,
+             "Skipping device index %{public}s for instance=%llu with invalid nodeId=%u",
+             action, instanceId.value, nodeId);
 }
 
 void DeviceManager::NotifyPublishedUnits(const std::shared_ptr<FWDevice>& device)
@@ -555,7 +570,7 @@ std::shared_ptr<FWDevice> DeviceManager::ResumeExistingDevice(const std::shared_
 
     if (device->IsSuspended()) {
         device->Resume(record.gen, record.nodeId, record.link);
-        UpdateOperationalIndex(record.guid, record.gen, record.nodeId, "update");
+        UpdateOperationalIndex(record.instanceId, record.gen, record.nodeId, "update");
         NotifyDeviceResumed(device);
         NotifyResumedUnits(device);
     }
@@ -572,8 +587,8 @@ std::shared_ptr<FWDevice> DeviceManager::CreateAndRegisterDevice(const DeviceRec
         return nullptr;
     }
 
-    devicesByGuid_[record.guid] = device;
-    UpdateOperationalIndex(record.guid, record.gen, record.nodeId, "insert");
+    devicesByInstance_[record.instanceId] = device;
+    UpdateOperationalIndex(record.instanceId, record.gen, record.nodeId, "insert");
     device->Publish();
     NotifyDeviceAdded(device);
     NotifyPublishedUnits(device);

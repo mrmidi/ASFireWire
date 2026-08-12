@@ -79,7 +79,7 @@ private:
 
     // Default-queue context only.
     void OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>& unit);
-    void OnLoginStateChanged(uint64_t guid, bool loggedIn);
+    void OnLoginStateChanged(Discovery::DeviceInstanceId instanceId, bool loggedIn);
     void AdoptExistingUnits();
     void Pump();
 
@@ -111,7 +111,7 @@ private:
     bool pumpScheduled_{false};
     bool stopping_{false};
     uint64_t sessionHandle_{0};
-    uint64_t sessionGuid_{0};
+    Discovery::DeviceInstanceId sessionDevice_{};
 
     Discovery::IUnitRegistry::CallbackHandle unitCallbackHandle_{0};
     bool unitCallbackRegistered_{false};

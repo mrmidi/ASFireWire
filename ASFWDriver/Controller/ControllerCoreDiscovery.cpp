@@ -3,7 +3,7 @@
 #include <DriverKit/IOLib.h>
 #include <cstdio>
 #include <string>
-#include <unordered_set>
+#include <set>
 
 #include "../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../Async/DMAMemoryImpl.hpp"
@@ -29,6 +29,7 @@
 #include "../Common/CSRSpace.hpp"
 #include "../Diagnostics/DiagnosticLogger.hpp"
 #include "../Diagnostics/MetricsSink.hpp"
+#include "../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../Discovery/DiscoveryConvergence.hpp"
 #include "../Discovery/DeviceManager.hpp"
 #include "../Discovery/DeviceRegistry.hpp"
@@ -43,7 +44,6 @@
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
-#include "../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
 #include "ControllerStateMachine.hpp"
@@ -520,20 +520,23 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         }
     }
 
-    std::unordered_set<uint64_t> discoveredGuids;
-    discoveredGuids.reserve(roms.size());
-    std::unordered_set<uint64_t> seenGuids;
-    std::unordered_set<uint64_t> duplicateGuids;
-    seenGuids.reserve(roms.size());
-    duplicateGuids.reserve(roms.size());
-
+    std::vector<Discovery::DeviceObservation> observations;
+    observations.reserve(roms.size());
     for (const auto& rom : roms) {
-        if (rom.bib.guid == 0) {
+        const auto nodeId = ASFW::Discovery::TryOperationalNodeId(rom.nodeId);
+        if (!nodeId.has_value()) {
             continue;
         }
-        if (!seenGuids.insert(rom.bib.guid).second) {
-            duplicateGuids.insert(rom.bib.guid);
-        }
+        observations.push_back(Discovery::DeviceObservation{
+            .rom = &rom,
+            .link = deps_.speedPolicy->ForNode(*nodeId),
+        });
+    }
+
+    const auto reconciled = deps_.deviceRegistry->ReconcileGeneration(gen, observations);
+    std::set<Discovery::DeviceInstanceId> discoveredInstances;
+    for (const auto& record : reconciled) {
+        discoveredInstances.insert(record.instanceId);
     }
 
     for (const auto& rom : roms) {
@@ -544,48 +547,32 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
             continue;
         }
 
-        if (rom.bib.guid == 0) {
-            ASFW_LOG(Discovery,
-                     "Skipping ROM with GUID=0 gen=%u node=%u; minimal/invalid Config ROM cannot "
-                     "anchor a stable device",
-                     rom.gen.value,
-                     rom.nodeId);
-            continue;
-        }
-
-        if (duplicateGuids.contains(rom.bib.guid)) {
-            ASFW_LOG(Discovery,
-                     "Skipping duplicate GUID=0x%016llx gen=%u node=%u during discovery",
-                     rom.bib.guid,
-                     rom.gen.value,
-                     rom.nodeId);
-            deps_.deviceRegistry->MarkDuplicateGuid(gen, rom.bib.guid, *nodeId);
-            continue;
-        }
-
         deps_.romStore->Insert(rom);
 
-        auto policy = deps_.speedPolicy->ForNode(*nodeId);
+        auto deviceRecord = deps_.deviceRegistry->SnapshotByNode(gen, *nodeId);
+        if (!deviceRecord.has_value()) {
+            ASFW_LOG(Discovery,
+                     "No runtime instance produced for gen=%u node=%u",
+                     gen.value, *nodeId);
+            continue;
+        }
 
-        auto& bus = this->Bus();
-        const auto deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
-        discoveredGuids.insert(deviceRecord.guid);
-
-        // Create the device-specific runtime protocol here, at the orchestrator layer,
-        // where the bus + IRM are already in scope. No-op for unknown devices. This is the
-        // trigger that formerly lived inside the Discovery data layer
-        // (DeviceRegistry::MaybeCreateKnownProtocol); Discovery now carries metadata only.
-        if (deps_.audioRuntimeRegistry) {
-            deps_.audioRuntimeRegistry->EnsureForDevice(
-                deviceRecord,
-                static_cast<Async::IFireWireBusOps*>(&bus),
-                static_cast<Async::IFireWireBusInfo*>(&bus),
-                *deps_.deviceRegistry,
-                deps_.irmClient.get());
+        if (const auto safety =
+                DeviceProfiles::Audio::AudioDeviceCatalog::MatchAnySafetyRule(
+                    deviceRecord->identity);
+            safety.has_value()) {
+            deviceRecord->state = Discovery::LifeState::Quarantined;
+            deviceRecord->quarantineReason = (*safety)->reason;
+            deps_.deviceRegistry->Quarantine(deviceRecord->instanceId, (*safety)->reason);
+            ASFW_LOG(Discovery,
+                     "[DeviceIdentity] quarantined instance=%llu model=%{public}s before "
+                     "protocol publication",
+                     deviceRecord->instanceId.value,
+                     (*safety)->name ? (*safety)->name : "hazardous device");
         }
 
         if (deps_.deviceManager) {
-            auto fwDevice = deps_.deviceManager->UpsertDevice(deviceRecord, rom);
+            auto fwDevice = deps_.deviceManager->UpsertDevice(*deviceRecord, rom);
 
             if (fwDevice) {
                 ASFW_LOG(Discovery, "  Created FWDevice with %zu units",
@@ -595,13 +582,14 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
 
         ASFW_LOG(Discovery, "═══════════════════════════════════════");
         ASFW_LOG(Discovery, "Device Discovered:");
-        ASFW_LOG(Discovery, "  GUID: 0x%016llx", deviceRecord.guid);
-        ASFW_LOG(Discovery, "  Vendor: 0x%06x", deviceRecord.vendorId);
-        ASFW_LOG(Discovery, "  Model: 0x%06x", deviceRecord.modelId);
+        ASFW_LOG(Discovery, "  Instance: %llu", deviceRecord->instanceId.value);
+        ASFW_LOG(Discovery, "  Observed GUID: 0x%016llx", deviceRecord->ObservedGuid());
+        ASFW_LOG(Discovery, "  Root vendor: 0x%06x", deviceRecord->RootVendorIdOrZero());
+        ASFW_LOG(Discovery, "  Root model: 0x%06x", deviceRecord->RootModelIdOrZero());
         ASFW_LOG(Discovery, "  Node: %u (gen=%u)", rom.nodeId, rom.gen.value);
-        ASFW_LOG(Discovery, "  Kind: %{public}s", DeviceKindString(deviceRecord.kind));
+        ASFW_LOG(Discovery, "  Kind: %{public}s", DeviceKindString(deviceRecord->kind));
         ASFW_LOG(Discovery, "  Audio Candidate: %{public}s",
-                 deviceRecord.isAudioCandidate ? "YES" : "NO");
+                 deviceRecord->isAudioCandidate ? "YES" : "NO");
     }
 
     if (deps_.deviceManager && !zeroRomScanInconclusive) {
@@ -611,20 +599,19 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                 continue;
             }
 
-            const uint64_t guid = device->GetGUID();
-            if (discoveredGuids.contains(guid)) {
+            const auto instanceId = device->GetInstanceId();
+            if (discoveredInstances.contains(instanceId)) {
                 continue;
             }
 
             ASFW_LOG(Discovery,
-                     "Device missing from generation %u scan - marking lost (GUID=0x%016llx)",
-                     gen.value, guid);
-            deps_.deviceManager->MarkDeviceLost(guid);
-            if (!deps_.deviceManager->GetDeviceByGUID(guid)) {
+                     "Device missing from generation %u scan - marking lost (instance=%llu)",
+                     gen.value, instanceId.value);
+            deps_.deviceManager->MarkDeviceLost(instanceId);
+            if (!deps_.deviceManager->GetDevice(instanceId)) {
                 // DeviceManager has confirmed termination rather than temporary
-                // reset suspension. Retiring here advances the next incarnation
-                // when this GUID is later rediscovered.
-                deps_.deviceRegistry->RetireDevice(guid);
+                // reset suspension. A later replug receives a fresh instance.
+                deps_.deviceRegistry->RetireDevice(instanceId);
             }
         }
     } else if (deps_.deviceManager && zeroRomScanInconclusive) {

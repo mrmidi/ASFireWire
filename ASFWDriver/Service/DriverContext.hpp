@@ -24,6 +24,9 @@ class ASFWDriver;
 
 namespace ASFW::Audio {
 class AudioCoordinator;
+namespace Devices {
+class AudioDeviceSessionManager;
+}
 }
 
 namespace ASFW::Protocols::SBP2 {
@@ -55,6 +58,8 @@ struct ServiceContext {
     ASFW::Protocols::DV::DVCaptureService dvCapture;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
+    std::shared_ptr<ASFW::Audio::Devices::AudioDeviceSessionManager>
+        audioSessionManager;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2NubPublisher> sbp2NubPublisher;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2TargetBridge> sbp2Bridge;
 

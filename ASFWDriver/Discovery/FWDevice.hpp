@@ -17,6 +17,7 @@ public:
     enum class State {
         Created,
         Ready,
+        Quarantined,
         Suspended,
         Terminated
     };
@@ -26,13 +27,15 @@ public:
         const ConfigROM& rom
     );
 
-    Guid64 GetGUID() const { return guid_; }
-    uint32_t GetVendorID() const { return vendorId_; }
-    uint32_t GetModelID() const { return modelId_; }
+    DeviceInstanceId GetInstanceId() const { return instanceId_; }
+    Guid64 GetObservedGuid() const { return identity_.observedGuid; }
+    std::optional<uint32_t> GetRootVendorID() const { return identity_.rootVendorId; }
+    std::optional<uint32_t> GetRootModelID() const { return identity_.rootModelId; }
+    const DeviceIdentityEvidence& GetIdentityEvidence() const { return identity_; }
     DeviceKind GetKind() const { return kind_; }
 
-    std::string_view GetVendorName() const { return vendorName_; }
-    std::string_view GetModelName() const { return modelName_; }
+    std::string_view GetVendorName() const { return identity_.rootVendorName; }
+    std::string_view GetModelName() const { return identity_.rootModelName; }
 
     Generation GetGeneration() const { return generation_; }
     uint16_t GetNodeID() const { return nodeId_; }
@@ -50,6 +53,8 @@ public:
 
     State GetState() const { return state_; }
     bool IsReady() const { return state_ == State::Ready; }
+    bool IsQuarantined() const { return state_ == State::Quarantined; }
+    QuarantineReason GetQuarantineReason() const { return quarantineReason_; }
     bool IsSuspended() const { return state_ == State::Suspended; }
     bool IsTerminated() const { return state_ == State::Terminated; }
 
@@ -68,16 +73,13 @@ private:
         uint32_t offsetQuadlets
     ) const;
 
-    const Guid64 guid_;
-    const uint32_t vendorId_;
-    const uint32_t modelId_;
+    const DeviceInstanceId instanceId_;
+    DeviceIdentityEvidence identity_;
     const DeviceKind kind_;
-
-    std::string vendorName_;
-    std::string modelName_;
 
     bool isAudioCandidate_{false};
     bool supportsAMDTP_{false};
+    QuarantineReason quarantineReason_{QuarantineReason::None};
 
     Generation generation_{0};
     uint16_t nodeId_{0xFFFF};

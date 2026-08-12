@@ -18,29 +18,54 @@ namespace Shared {
 // AV/C Unit Information
 // -----------------------------------------------------------------------------
 
-struct AVCSubunitInfoWire {
+inline constexpr uint16_t kAVCUnitsWireVersion = 2;
+
+struct AVCUnitsWireV2 {
+    uint16_t version;
+    uint16_t headerSize;
+    uint32_t byteSize;
+    uint32_t unitCount;
+    uint32_t _reserved;
+} __attribute__((packed));
+
+static_assert(sizeof(AVCUnitsWireV2) == 16, "AVCUnitsWireV2 must be 16 bytes");
+
+struct AVCSubunitInfoWireV2 {
+    uint16_t version;
+    uint16_t byteSize;
     uint8_t  type;
     uint8_t  subunitID;
     uint8_t  numSrcPlugs;
     uint8_t  numDestPlugs;
 } __attribute__((packed));
 
-struct AVCUnitInfoWire {
-    uint64_t guid;
+static_assert(sizeof(AVCSubunitInfoWireV2) == 8,
+              "AVCSubunitInfoWireV2 must be 8 bytes");
+
+struct AVCUnitInfoWireV2 {
+    uint16_t version;
+    uint16_t byteSize; // fixed record plus immediately following subunit records
+    uint64_t deviceInstanceId;
+    uint32_t unitDirectoryOffset;
+    uint32_t generation;
+    uint64_t observedGuid;
     uint16_t nodeID;
-    uint32_t vendorID;
-    uint32_t modelID;
+    uint8_t  isInitialized;
     uint8_t  subunitCount;
+    uint32_t rootVendorID;
+    uint32_t rootModelID;
+    uint32_t unitVendorID;
+    uint32_t unitModelID;
+    uint32_t specifierID;
+    uint32_t unitVersion;
     uint8_t  isoInputPlugs;
     uint8_t  isoOutputPlugs;
     uint8_t  extInputPlugs;
     uint8_t  extOutputPlugs;
-    uint8_t  _reserved;    // Padding to 24 bytes
-    // Followed by variable length AVCSubunitInfoWire array
-    // AVCSubunitInfoWire subunits[0];
+    // Followed by variable length AVCSubunitInfoWireV2 array.
 } __attribute__((packed));
 
-static_assert(sizeof(AVCUnitInfoWire) == 24, "AVCUnitInfoWire must be 24 bytes");
+static_assert(sizeof(AVCUnitInfoWireV2) == 60, "AVCUnitInfoWireV2 must be 60 bytes");
 
 // -----------------------------------------------------------------------------
 // Music Subunit Capabilities

@@ -109,8 +109,8 @@ public:
 
     // Developer control-plane entry points. They use the complete audio
     // lifecycle rather than exposing individual CMP/isoch primitives.
-    kern_return_t StartAudioStreaming(uint64_t guid) LOCALONLY;
-    kern_return_t StopAudioStreaming(uint64_t guid) LOCALONLY;
+    kern_return_t StartAudioStreaming(uint64_t endpointId) LOCALONLY;
+    kern_return_t StopAudioStreaming(uint64_t endpointId) LOCALONLY;
 
     // Isochronous Receive Control
     kern_return_t StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) LOCALONLY;
@@ -118,7 +118,7 @@ public:
     void* GetIsochReceiveContext() const LOCALONLY;
 
     // DV capture (raw DIF stream to shared ring, no audio nub required)
-    kern_return_t StartDVCapture(uint64_t deviceGuid,
+    kern_return_t StartDVCapture(uint64_t deviceInstanceId,
                                  uint64_t ownerToken) LOCALONLY;
     kern_return_t StopDVCapture(uint64_t ownerToken) LOCALONLY;
     kern_return_t CopyDVCaptureMemory(uint64_t ownerToken,

@@ -315,17 +315,18 @@ kern_return_t IsochHandler::StopIsochReceive(IOUserClientMethodArguments* args) 
 // ============================================================================
 
 kern_return_t IsochHandler::StartDVCapture(IOUserClientMethodArguments* args) {
-    // Arguments: [0] = stable device GUID. The driver resolves the current
-    // node/generation and negotiates the receive channel through CMP/IRM.
+    // Arguments: [0] = runtime DeviceInstanceId. The driver resolves the
+    // current route and negotiates the receive channel through CMP/IRM.
     if (args->scalarInputCount < 1)
         return kIOReturnBadArgument;
-    const uint64_t deviceGuid = args->scalarInput[0];
-    if (deviceGuid == 0)
+    const uint64_t deviceInstanceId = args->scalarInput[0];
+    if (deviceInstanceId == 0)
         return kIOReturnBadArgument;
 
-    ASFW_LOG(UserClient, "StartDVCapture called for GUID 0x%llx", deviceGuid);
+    ASFW_LOG(UserClient, "StartDVCapture called for instance %llu",
+             deviceInstanceId);
     const kern_return_t kr = driver_->StartDVCapture(
-        deviceGuid, ownerToken_);
+        deviceInstanceId, ownerToken_);
     if (kr == kIOReturnSuccess) {
         ownsDVCapture_ = true;
     }

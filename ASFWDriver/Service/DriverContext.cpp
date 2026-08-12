@@ -11,6 +11,7 @@
 #include "../Async/Tx/ResponseSender.hpp"
 #include "../Audio/Core/AudioCoordinator.hpp"
 #include "../Audio/Core/AudioRuntimeRegistry.hpp"
+#include "../Audio/Devices/AudioDeviceSessionManager.hpp"
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
@@ -71,6 +72,13 @@ void ServiceContext::Reset(ResetMode mode) {
         sbp2NubPublisher->Shutdown();
         sbp2NubPublisher.reset();
     }
+    // The session manager is the protocol/profile owner and must drain its
+    // endpoint teardown sequence while bus/IRM/CMP services are still alive.
+    if (audioSessionManager) {
+        audioSessionManager->Shutdown();
+        audioSessionManager.reset();
+    }
+
     // Tear down the runtime audio protocols while the services they were built from
     // (bus/hardware/IRM) are still alive. The bus is one of those services: it lives in
     // ControllerCore::busImpl_, and IRMClient borrows it as a non-owning IFireWireBus&.
@@ -209,16 +217,10 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         d.audioRuntimeRegistry = std::make_shared<ASFW::Audio::AudioRuntimeRegistry>();
     }
 
-    // Provide genuinely-deferred one-shot timers to protocol control planes.
-    // BeBoB uses this for the post-format settle delay instead of IOSleep.
-    if (d.audioRuntimeRegistry && d.sbp2SessionScheduler) {
-        d.audioRuntimeRegistry->SetTimerScheduler(d.sbp2SessionScheduler.get());
-    }
-
     if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware &&
         d.audioRuntimeRegistry) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
-            driver, *d.deviceManager, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isoch,
+            driver, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isoch,
             *d.hardware);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
     }
@@ -260,10 +262,6 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
             return kr;
         }
         ASFW_LOG(Controller, "[Controller] SBP2 session scheduler initialized");
-    }
-
-    if (d.audioRuntimeRegistry && d.sbp2SessionScheduler) {
-        d.audioRuntimeRegistry->SetTimerScheduler(d.sbp2SessionScheduler.get());
     }
 
     if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&

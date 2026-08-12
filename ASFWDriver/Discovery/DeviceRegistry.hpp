@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include <DriverKit/IOLib.h>
@@ -12,78 +13,75 @@
 
 namespace ASFW::Discovery {
 
-// Stable GUID-keyed device registry with per-generation live mapping.
-// Maintains device identity across bus resets and performs audio classification.
-// See documentation:
-//   - documentation/TOKEN_BASED_LIFECYCLE.md
-//   - ASFWDriver/Service/Lifecycle/RUNTIME_LIFECYCLE_CONTRACT.md
-//
+// Registry for runtime device instances and their current generation/node
+// routes.  EUI-64/GUID values are retained as observed Config-ROM evidence and
+// deliberately are not primary keys.
 class DeviceRegistry {
 public:
     DeviceRegistry();
     ~DeviceRegistry();
 
-    // Create or update device record from parsed ROM. Returns a stable snapshot;
-    // no registry-owned mutable record escapes its lock.
-    // Pure metadata: device-specific runtime protocol creation is owned by the Audio layer
-    // (Audio::AudioRuntimeRegistry), triggered from the controller discovery path.
+    DeviceRegistry(const DeviceRegistry&) = delete;
+    DeviceRegistry& operator=(const DeviceRegistry&) = delete;
+
+    // Production discovery entry point.  The whole generation is reconciled at
+    // once so duplicate and zero EUI-64 values are handled before any route is
+    // exposed to a protocol layer.
+    [[nodiscard]] std::vector<DeviceRecord>
+    ReconcileGeneration(Generation gen, std::span<const DeviceObservation> observations);
+
+    // Single-observation helper used by focused host tests and explicit route
+    // fixtures. Production discovery uses ReconcileGeneration().
     [[nodiscard]] DeviceRecord UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link);
 
-    // Mark device as discovered (seen in Self-ID, before ROM fetch)
-    void MarkDiscovered(Generation gen, uint8_t nodeId);
+    void RetireDevice(DeviceInstanceId instanceId);
+    void Quarantine(DeviceInstanceId instanceId, QuarantineReason reason);
 
-    // Handle duplicate GUID detection within same generation
-    void MarkDuplicateGuid(Generation gen, Guid64 guid, uint8_t nodeId);
-
-    // Mark device as lost (not present in current generation)
-    void MarkLost(Generation gen, uint8_t nodeId);
-
-    // Retire an actually removed device. A later replug of the same GUID gets a
-    // new device incarnation and cannot validate old asynchronous callbacks.
-    void RetireDevice(Guid64 guid);
-
-    // A bus reset invalidates every generation/node mapping immediately. Device
-    // identity remains cached by GUID and is rebound only after a new ROM scan.
+    // A reset invalidates every route immediately. Instances remain suspended
+    // candidates and may be rebound by the next complete generation scan.
     void InvalidateLiveMappingsForBusReset();
 
-    // Locked value snapshots. Callers must act after the lock is released; no
-    // registry lock is ever held while invoking backend or DriverKit code.
-    [[nodiscard]] std::optional<DeviceRecord> SnapshotByGuid(Guid64 guid) const;
-    [[nodiscard]] std::optional<DeviceRecord> SnapshotByNode(Generation gen, uint8_t nodeId) const;
+    [[nodiscard]] std::optional<DeviceRecord> Snapshot(DeviceInstanceId instanceId) const;
+    [[nodiscard]] std::optional<DeviceRecord> SnapshotByNode(Generation gen,
+                                                              uint8_t nodeId) const;
+    [[nodiscard]] std::vector<DeviceRecord>
+    FindInstancesByObservedGuid(Guid64 observedGuid) const;
 
-    [[nodiscard]] std::optional<DeviceRouteToken> CurrentRoute(Guid64 guid) const;
+    [[nodiscard]] std::optional<DeviceRouteToken>
+    CurrentRoute(DeviceInstanceId instanceId) const;
     [[nodiscard]] bool IsCurrent(const DeviceRouteToken& token) const noexcept;
 
-    // Export snapshot of all devices present in given generation
-    std::vector<DeviceRecord> LiveDevices(Generation gen) const;
+    [[nodiscard]] std::vector<DeviceRecord> LiveDevices(Generation gen) const;
+    [[nodiscard]] std::vector<DeviceRecord> AllDevices() const;
 
-    // Clear all records (e.g., on driver stop)
     void Clear();
 
 private:
-    // Classify device kind from ROM entries
-    DeviceKind ClassifyDevice(const ConfigROM& rom) const;
-
-    // Check if device is audio candidate based on ROM
-    bool IsAudioCandidate(const ConfigROM& rom) const;
-
-    // Primary storage: GUID-keyed device records
-    mutable IOLock* lock_{nullptr};
-    std::map<Guid64, DeviceRecord> devicesByGuid_;
-
-    // Preserve the last incarnation after a record is retired so replugging the
-    // same GUID cannot accidentally validate callbacks from its old service.
-    std::map<Guid64, uint64_t> lastDeviceIncarnationByGuid_;
-    uint64_t nextRouteEpoch_{0};
-
-    // Secondary index: (generation, nodeId) → GUID for fast per-generation lookup
     using GenNodeKey = uint32_t;
-    static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
-    std::map<GenNodeKey, Guid64> genNodeToGuid_;
 
+    [[nodiscard]] DeviceRecord UpsertOneLocked(const ConfigROM& rom,
+                                               const LinkPolicy& link,
+                                               size_t observedGuidCount,
+                                               bool batchReconcile);
+    [[nodiscard]] std::optional<DeviceInstanceId>
+    ReusableInstanceLocked(Guid64 observedGuid) const;
+    void RetirePriorCollisionGroupLocked(Guid64 observedGuid, Generation currentGeneration);
+    void EraseInstanceLocked(DeviceInstanceId instanceId);
+
+    [[nodiscard]] DeviceKind ClassifyDevice(const ConfigROM& rom) const;
+    [[nodiscard]] bool IsAudioCandidate(const ConfigROM& rom) const;
+
+    [[nodiscard]] DeviceInstanceId AllocateDeviceInstanceIdLocked() noexcept;
     [[nodiscard]] uint64_t AllocateRouteEpochLocked() noexcept;
     [[nodiscard]] static bool HasLiveRoute(const DeviceRecord& device) noexcept;
     [[nodiscard]] static DeviceRouteToken MakeRouteToken(const DeviceRecord& device) noexcept;
+    [[nodiscard]] static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
+
+    mutable IOLock* lock_{nullptr};
+    std::map<DeviceInstanceId, DeviceRecord> devicesByInstance_;
+    std::map<GenNodeKey, DeviceInstanceId> genNodeToInstance_;
+    uint64_t nextDeviceInstanceId_{0};
+    uint64_t nextRouteEpoch_{0};
 };
 
 } // namespace ASFW::Discovery

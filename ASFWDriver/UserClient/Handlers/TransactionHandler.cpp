@@ -6,17 +6,62 @@
 //
 
 #include "TransactionHandler.hpp"
+#include "../../Controller/ControllerCore.hpp"
+#include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Core/UserClientRuntimeState.hpp"
 #include "../Storage/TransactionStorage.hpp"
 #include "ASFWDriver.h"
 #include "ASFWDriverUserClient.h"
 #include "AsyncPortAccess.hpp"
+#include "ControllerCoreAccess.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
 
+#include <optional>
+
 namespace ASFW::UserClient {
+
+namespace {
+
+std::optional<ASFW::Discovery::DeviceRouteToken>
+ResolveDeviceRoute(ASFWDriver* driver, uint64_t rawInstanceId, const char* operation) {
+    const ASFW::Discovery::DeviceInstanceId instanceId{rawInstanceId};
+    if (!instanceId) {
+        ASFW_LOG(UserClient, "%{public}s: zero DeviceInstanceId", operation);
+        return std::nullopt;
+    }
+
+    auto* controller = GetControllerCorePtr(driver);
+    auto* registry = controller != nullptr ? controller->GetDeviceRegistry() : nullptr;
+    if (registry == nullptr) {
+        ASFW_LOG(UserClient, "%{public}s: DeviceRegistry unavailable", operation);
+        return std::nullopt;
+    }
+
+    const auto route = registry->CurrentRoute(instanceId);
+    if (!route.has_value()) {
+        ASFW_LOG(UserClient,
+                 "%{public}s: instance=%llu has no routable current binding "
+                 "(missing, suspended, retired, or quarantined)",
+                 operation, instanceId.value);
+    }
+    return route;
+}
+
+bool IsRouteCurrent(ASFWDriverUserClient* userClient,
+                    const ASFW::Discovery::DeviceRouteToken& route) noexcept {
+    if (userClient == nullptr || userClient->ivars == nullptr ||
+        userClient->ivars->driver == nullptr) {
+        return false;
+    }
+    auto* controller = GetControllerCorePtr(userClient->ivars->driver);
+    auto* registry = controller != nullptr ? controller->GetDeviceRegistry() : nullptr;
+    return registry != nullptr && registry->IsCurrent(route);
+}
+
+} // namespace
 
 TransactionHandler::TransactionHandler(ASFWDriver* driver, TransactionStorage* storage)
     : driver_(driver), storage_(storage) {}
@@ -26,6 +71,7 @@ TransactionHandler::TransactionHandler(ASFWDriver* driver, TransactionStorage* s
 void TransactionHandler::AsyncCompletionCallback(ASFW::Async::AsyncHandle handle,
                                                  ASFW::Async::AsyncStatus status,
                                                  uint8_t responseCode, void* context, // NOLINT(bugprone-easily-swappable-parameters)
+                                                 ASFW::Discovery::DeviceRouteToken route,
                                                  const uint8_t* responsePayload,
                                                  uint32_t responseLength) {
 
@@ -33,6 +79,16 @@ void TransactionHandler::AsyncCompletionCallback(ASFW::Async::AsyncHandle handle
     auto* runtimeState = GetRuntimeState(userClient);
     if (runtimeState == nullptr) {
         return;
+    }
+
+    // A successful packet response is not a successful user operation if the
+    // physical route was invalidated while it was in flight. Fail closed so a
+    // pre-reset request can never be attributed to the post-reset occupant of
+    // the same node ID.
+    if (!IsRouteCurrent(userClient, route)) {
+        status = ASFW::Async::AsyncStatus::kStaleGeneration;
+        responsePayload = nullptr;
+        responseLength = 0;
     }
 
     // Store result in ring buffer
@@ -49,18 +105,23 @@ void TransactionHandler::AsyncCompletionCallback(ASFW::Async::AsyncHandle handle
 
 kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
                                             ASFWDriverUserClient* userClient) {
-    // Input: destinationID[16], addressHi[16], addressLo[32], length[32]
+    // Input: DeviceInstanceId[64], addressHi[16], addressLo[32], length[32]
     // Output: handle[16]
     if (!args || args->scalarInputCount < 4 || args->scalarOutputCount < 1) {
         return kIOReturnBadArgument;
     }
 
-    const uint16_t destinationID = static_cast<uint16_t>(args->scalarInput[0] & 0xFFFF);
+    const auto route = ResolveDeviceRoute(driver_, args->scalarInput[0], "AsyncRead");
+    if (!route.has_value()) {
+        return kIOReturnNotReady;
+    }
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
-    ASFW_LOG(UserClient, "AsyncRead: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID, addressHi,
+    ASFW_LOG(UserClient,
+             "AsyncRead: instance=%llu epoch=%llu node=%u addr=0x%04x:%08x len=%u",
+             route->deviceInstanceId.value, route->routeEpoch, route->nodeId, addressHi,
              addressLo, length);
 
     using namespace ASFW::Async;
@@ -72,7 +133,7 @@ kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
 
     // Build ReadParams
     ReadParams params{};
-    params.destinationID = destinationID;
+    params.destinationID = route->nodeId;
     params.addressHigh = addressHi;
     params.addressLow = addressLo;
     params.length = length;
@@ -80,9 +141,9 @@ kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
     // Initiate async read with completion callback
     userClient->retain();
     AsyncHandle handle = asyncPort->Read(
-        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+        params, [userClient, route = *route](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
                              std::span<const uint8_t> responsePayload) {
-            AsyncCompletionCallback(handle, status, responseCode, userClient,
+            AsyncCompletionCallback(handle, status, responseCode, userClient, route,
                                     responsePayload.data(),
                                     static_cast<uint32_t>(responsePayload.size()));
             userClient->release();
@@ -103,7 +164,7 @@ kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
 
 kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
                                              ASFWDriverUserClient* userClient) {
-    // Input: destinationID[16], addressHi[16], addressLo[32], length[32]
+    // Input: DeviceInstanceId[64], addressHi[16], addressLo[32], length[32]
     // structureInput: payload data
     // Output: handle[16]
     if (!args || args->scalarInputCount < 4 || args->scalarOutputCount < 1) {
@@ -128,7 +189,10 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
         return kIOReturnBadArgument;
     }
 
-    const uint16_t destinationID = static_cast<uint16_t>(args->scalarInput[0] & 0xFFFF);
+    const auto route = ResolveDeviceRoute(driver_, args->scalarInput[0], "AsyncWrite");
+    if (!route.has_value()) {
+        return kIOReturnNotReady;
+    }
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
@@ -139,8 +203,10 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG(UserClient, "AsyncWrite: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID,
-             addressHi, addressLo, length);
+    ASFW_LOG(UserClient,
+             "AsyncWrite: instance=%llu epoch=%llu node=%u addr=0x%04x:%08x len=%u",
+             route->deviceInstanceId.value, route->routeEpoch, route->nodeId, addressHi,
+             addressLo, length);
 
     using namespace ASFW::Async;
     auto* asyncPort = GetAsyncSubsystemPort(driver_);
@@ -158,7 +224,7 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
 
     // Build WriteParams
     WriteParams params{};
-    params.destinationID = destinationID;
+    params.destinationID = route->nodeId;
     params.addressHigh = addressHi;
     params.addressLow = addressLo;
     params.payload = payload;
@@ -167,9 +233,9 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
     // Initiate async write with completion callback
     userClient->retain();
     AsyncHandle handle = asyncPort->Write(
-        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+        params, [userClient, route = *route](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
                              std::span<const uint8_t> responsePayload) {
-            AsyncCompletionCallback(handle, status, responseCode, userClient,
+            AsyncCompletionCallback(handle, status, responseCode, userClient, route,
                                     responsePayload.data(),
                                     static_cast<uint32_t>(responsePayload.size()));
             userClient->release();
@@ -190,19 +256,24 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
 
 kern_return_t TransactionHandler::AsyncBlockRead(IOUserClientMethodArguments* args,
                                                  ASFWDriverUserClient* userClient) {
-    // Input: destinationID[16], addressHi[16], addressLo[32], length[32]
+    // Input: DeviceInstanceId[64], addressHi[16], addressLo[32], length[32]
     // Output: handle[16]
     if (!args || args->scalarInputCount < 4 || args->scalarOutputCount < 1) {
         return kIOReturnBadArgument;
     }
 
-    const uint16_t destinationID = static_cast<uint16_t>(args->scalarInput[0] & 0xFFFF);
+    const auto route = ResolveDeviceRoute(driver_, args->scalarInput[0], "AsyncBlockRead");
+    if (!route.has_value()) {
+        return kIOReturnNotReady;
+    }
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
-    ASFW_LOG(UserClient, "AsyncBlockRead: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID,
-             addressHi, addressLo, length);
+    ASFW_LOG(UserClient,
+             "AsyncBlockRead: instance=%llu epoch=%llu node=%u addr=0x%04x:%08x len=%u",
+             route->deviceInstanceId.value, route->routeEpoch, route->nodeId, addressHi,
+             addressLo, length);
 
     using namespace ASFW::Async;
     auto* asyncPort = GetAsyncSubsystemPort(driver_);
@@ -212,7 +283,7 @@ kern_return_t TransactionHandler::AsyncBlockRead(IOUserClientMethodArguments* ar
     }
 
     ReadParams params{};
-    params.destinationID = destinationID;
+    params.destinationID = route->nodeId;
     params.addressHigh = addressHi;
     params.addressLow = addressLo;
     params.length = length;
@@ -220,9 +291,9 @@ kern_return_t TransactionHandler::AsyncBlockRead(IOUserClientMethodArguments* ar
 
     userClient->retain();
     AsyncHandle handle = asyncPort->Read(
-        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+        params, [userClient, route = *route](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
                              std::span<const uint8_t> responsePayload) {
-            AsyncCompletionCallback(handle, status, responseCode, userClient,
+            AsyncCompletionCallback(handle, status, responseCode, userClient, route,
                                     responsePayload.data(),
                                     static_cast<uint32_t>(responsePayload.size()));
             userClient->release();
@@ -243,7 +314,7 @@ kern_return_t TransactionHandler::AsyncBlockRead(IOUserClientMethodArguments* ar
 
 kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* args,
                                                   ASFWDriverUserClient* userClient) {
-    // Input: destinationID[16], addressHi[16], addressLo[32], length[32]
+    // Input: DeviceInstanceId[64], addressHi[16], addressLo[32], length[32]
     // structureInput: payload data
     // Output: handle[16]
     if (!args || args->scalarInputCount < 4 || args->scalarOutputCount < 1) {
@@ -267,7 +338,10 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
         return kIOReturnBadArgument;
     }
 
-    const uint16_t destinationID = static_cast<uint16_t>(args->scalarInput[0] & 0xFFFF);
+    const auto route = ResolveDeviceRoute(driver_, args->scalarInput[0], "AsyncBlockWrite");
+    if (!route.has_value()) {
+        return kIOReturnNotReady;
+    }
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
@@ -278,8 +352,10 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG(UserClient, "AsyncBlockWrite: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID,
-             addressHi, addressLo, length);
+    ASFW_LOG(UserClient,
+             "AsyncBlockWrite: instance=%llu epoch=%llu node=%u addr=0x%04x:%08x len=%u",
+             route->deviceInstanceId.value, route->routeEpoch, route->nodeId, addressHi,
+             addressLo, length);
 
     using namespace ASFW::Async;
     auto* asyncPort = GetAsyncSubsystemPort(driver_);
@@ -295,7 +371,7 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
     }
 
     WriteParams params{};
-    params.destinationID = destinationID;
+    params.destinationID = route->nodeId;
     params.addressHigh = addressHi;
     params.addressLow = addressLo;
     params.payload = payload;
@@ -304,9 +380,9 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
 
     userClient->retain();
     AsyncHandle handle = asyncPort->Write(
-        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+        params, [userClient, route = *route](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
                              std::span<const uint8_t> responsePayload) {
-            AsyncCompletionCallback(handle, status, responseCode, userClient,
+            AsyncCompletionCallback(handle, status, responseCode, userClient, route,
                                     responsePayload.data(),
                                     static_cast<uint32_t>(responsePayload.size()));
             userClient->release();
@@ -411,7 +487,7 @@ kern_return_t TransactionHandler::RegisterTransactionListener(IOUserClientMethod
 
 kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* args,
                                                    ASFWDriverUserClient* userClient) {
-    // Input scalars: destinationID[16], addressHi[16], addressLo[32], size[8]
+    // Input scalars: DeviceInstanceId[64], addressHi[16], addressLo[32], size[8]
     // structureInput: compareValue (4 or 8 bytes) + newValue (4 or 8 bytes)
     // Output: handle[16], locked[8]
 
@@ -432,7 +508,10 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
         return kIOReturnBadArgument;
     }
 
-    const uint16_t destinationID = static_cast<uint16_t>(args->scalarInput[0] & 0xFFFF);
+    const auto route = ResolveDeviceRoute(driver_, args->scalarInput[0], "AsyncCompareSwap");
+    if (!route.has_value()) {
+        return kIOReturnNotReady;
+    }
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint8_t size = static_cast<uint8_t>(args->scalarInput[3] & 0xFF); // 4 or 8 bytes
@@ -452,8 +531,10 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG(UserClient, "AsyncCompareSwap: dest=0x%04x addr=0x%04x:%08x size=%u", destinationID,
-             addressHi, addressLo, size);
+    ASFW_LOG(UserClient,
+             "AsyncCompareSwap: instance=%llu epoch=%llu node=%u addr=0x%04x:%08x size=%u",
+             route->deviceInstanceId.value, route->routeEpoch, route->nodeId, addressHi,
+             addressLo, size);
 
     using namespace ASFW::Async;
     auto* asyncPort = GetAsyncSubsystemPort(driver_);
@@ -471,7 +552,7 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
 
     // Build LockParams
     LockParams params{};
-    params.destinationID = destinationID;
+    params.destinationID = route->nodeId;
     params.addressHigh = addressHi;
     params.addressLow = addressLo;
     params.operand = operand;
@@ -487,14 +568,14 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
     userClient->retain();
     AsyncHandle handle = asyncPort->Lock(
         params, extendedTCode,
-        [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+        [userClient, route = *route](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
                      std::span<const uint8_t> responsePayload) {
             // For compare-swap, responsePayload contains the old value read from memory
             // locked = true if compare succeeded (old == compare), false otherwise
             bool locked = (status == AsyncStatus::kSuccess);
 
             // Store result with lock status and old value
-            AsyncCompletionCallback(handle, status, responseCode, userClient,
+            AsyncCompletionCallback(handle, status, responseCode, userClient, route,
                                     responsePayload.data(),
                                     static_cast<uint32_t>(responsePayload.size()));
 

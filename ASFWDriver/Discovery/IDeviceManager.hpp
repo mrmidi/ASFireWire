@@ -20,7 +20,7 @@ public:
     virtual void OnDeviceAdded(std::shared_ptr<FWDevice> device) = 0;
     virtual void OnDeviceResumed(std::shared_ptr<FWDevice> device) = 0;
     virtual void OnDeviceSuspended(std::shared_ptr<FWDevice> device) = 0;
-    virtual void OnDeviceRemoved(Guid64 guid) = 0;
+    virtual void OnDeviceRemoved(DeviceInstanceId instanceId) = 0;
 };
 
 class IUnitObserver {
@@ -66,7 +66,10 @@ class IDeviceManager : public IUnitRegistry {
 public:
     virtual ~IDeviceManager() = default;
 
-    virtual std::shared_ptr<FWDevice> GetDeviceByGUID(Guid64 guid) const = 0;
+    virtual std::shared_ptr<FWDevice> GetDevice(DeviceInstanceId instanceId) const = 0;
+
+    virtual std::vector<std::shared_ptr<FWDevice>>
+    FindDevicesByObservedGuid(Guid64 observedGuid) const = 0;
 
     virtual std::shared_ptr<FWDevice> GetDeviceByNode(
         Generation gen,
@@ -90,9 +93,9 @@ public:
         const ConfigROM& rom
     ) = 0;
 
-    virtual void MarkDeviceLost(Guid64 guid) = 0;
+    virtual void MarkDeviceLost(DeviceInstanceId instanceId) = 0;
 
-    virtual void TerminateDevice(Guid64 guid) = 0;
+    virtual void TerminateDevice(DeviceInstanceId instanceId) = 0;
 };
 
 template<typename ObserverType>

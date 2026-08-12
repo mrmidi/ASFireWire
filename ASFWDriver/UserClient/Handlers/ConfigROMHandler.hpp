@@ -24,10 +24,10 @@ class ConfigROMHandler {
     ConfigROMHandler(const ConfigROMHandler&) = delete;
     ConfigROMHandler& operator=(const ConfigROMHandler&) = delete;
 
-    // Method 14: Export Config ROM for a given nodeId and generation
+    // Method 14: Export Config ROM for a DeviceInstanceId and generation
     kern_return_t ExportConfigROM(IOUserClientMethodArguments* args);
 
-    // Method 15: Manually trigger ROM read for a specific nodeId
+    // Method 15: Manually trigger ROM read for a DeviceInstanceId
     kern_return_t TriggerROMRead(IOUserClientMethodArguments* args);
 
   private:

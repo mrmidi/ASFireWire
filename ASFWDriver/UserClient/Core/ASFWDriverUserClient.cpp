@@ -332,13 +332,13 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
     switch (selector) {
     case kMethodStartAudioStreaming:
     case kMethodStopAudioStreaming: {
-        const auto guid = GetFirstScalarInput(arguments);
-        if (!guid.has_value() || *guid == 0) {
+        const auto endpointId = GetFirstScalarInput(arguments);
+        if (!endpointId.has_value() || *endpointId == 0) {
             return MethodDispatchResult{kIOReturnBadArgument};
         }
         return MethodDispatchResult{selector == kMethodStartAudioStreaming
-                                        ? driver.StartAudioStreaming(*guid)
-                                        : driver.StopAudioStreaming(*guid)};
+                                        ? driver.StartAudioStreaming(*endpointId)
+                                        : driver.StopAudioStreaming(*endpointId)};
     }
     case kMethodGetAudioAutoStart:
         return HandleGetAudioAutoStart(driver, arguments);
@@ -662,7 +662,7 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
 
 // LOCALONLY user-client ABI entry point.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-kern_return_t ASFWDriverUserClient::AsyncRead(uint16_t destinationID, uint16_t addressHi,
+kern_return_t ASFWDriverUserClient::AsyncRead(uint64_t deviceInstanceID, uint16_t addressHi,
                                               uint32_t addressLo, uint32_t length,
                                               uint16_t* handle) {
     // LOCALONLY method - implementation is in TransactionHandler via ExternalMethod case 8
@@ -674,7 +674,7 @@ kern_return_t ASFWDriverUserClient::AsyncRead(uint16_t destinationID, uint16_t a
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-kern_return_t ASFWDriverUserClient::AsyncWrite(uint16_t destinationID, uint16_t addressHi,
+kern_return_t ASFWDriverUserClient::AsyncWrite(uint64_t deviceInstanceID, uint16_t addressHi,
                                                uint32_t addressLo, uint32_t length,
                                                const uint8_t* payload, uint16_t* handle) {
     // LOCALONLY method - implementation is in TransactionHandler via ExternalMethod case 9
@@ -686,7 +686,7 @@ kern_return_t ASFWDriverUserClient::AsyncWrite(uint16_t destinationID, uint16_t 
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-kern_return_t ASFWDriverUserClient::AsyncCompareSwap(uint16_t destinationID, uint16_t addressHi,
+kern_return_t ASFWDriverUserClient::AsyncCompareSwap(uint64_t deviceInstanceID, uint16_t addressHi,
                                                      uint32_t addressLo, uint8_t size,
                                                      const uint8_t* compareValue, const uint8_t* newValue, // NOLINT(bugprone-easily-swappable-parameters)
                                                      uint16_t* handle, uint8_t* locked) {

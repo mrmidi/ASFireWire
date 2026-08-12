@@ -33,10 +33,12 @@ uint8_t StateToWire(Discovery::FWDevice::State state) {
         return 0;
     case State::Ready:
         return 1;
-    case State::Suspended:
+    case State::Quarantined:
         return 2;
-    case State::Terminated:
+    case State::Suspended:
         return 3;
+    case State::Terminated:
+        return 4;
     default:
         return 0;
     }
@@ -105,10 +107,19 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
     ASFW_LOG(UserClient, "GetDiscoveredDevices: found %zu devices", allDevices.size());
 
     // Calculate total size needed
-    size_t totalSize = sizeof(DeviceDiscoveryWire);
+    size_t totalSize = sizeof(DeviceDiscoveryWireV2);
+    uint32_t deviceCount = 0;
     for (const auto& device : allDevices) {
-        totalSize += sizeof(FWDeviceWire);
-        totalSize += device->GetUnits().size() * sizeof(FWUnitWire);
+        if (!device) {
+            continue;
+        }
+        ++deviceCount;
+        totalSize += sizeof(FWDeviceWireV2);
+        totalSize += device->GetIdentityEvidence().rawBusInfoQuadlets.size() * sizeof(uint32_t);
+        totalSize += device->GetUnits().size() * sizeof(FWUnitWireV2);
+    }
+    if (totalSize > UINT32_MAX) {
+        return kIOReturnMessageTooLarge;
     }
 
     ASFW_LOG(UserClient, "GetDiscoveredDevices: total wire format size=%zu bytes", totalSize);
@@ -121,9 +132,11 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
     }
 
     // Write header
-    DeviceDiscoveryWire header{};
-    header.deviceCount = static_cast<uint32_t>(allDevices.size());
-    header._padding = 0;
+    DeviceDiscoveryWireV2 header{};
+    header.version = kDeviceDiscoveryWireVersion;
+    header.headerSize = sizeof(header);
+    header.byteSize = static_cast<uint32_t>(totalSize);
+    header.deviceCount = deviceCount;
     if (!data->appendBytes(&header, sizeof(header))) {
         data->release();
         return kIOReturnNoMemory;
@@ -131,15 +144,45 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
 
     // Write each device
     for (const auto& device : allDevices) {
-        FWDeviceWire deviceWire{};
-        deviceWire.guid = device->GetGUID();
-        deviceWire.vendorId = device->GetVendorID();
-        deviceWire.modelId = device->GetModelID();
+        if (!device) {
+            continue;
+        }
+        const auto& evidence = device->GetIdentityEvidence();
+        if (device->GetUnits().size() > UINT16_MAX ||
+            evidence.rawBusInfoQuadlets.size() > UINT16_MAX) {
+            data->release();
+            return kIOReturnMessageTooLarge;
+        }
+        const size_t deviceByteSize = sizeof(FWDeviceWireV2) +
+            evidence.rawBusInfoQuadlets.size() * sizeof(uint32_t) +
+            device->GetUnits().size() * sizeof(FWUnitWireV2);
+        if (deviceByteSize > UINT16_MAX) {
+            data->release();
+            return kIOReturnMessageTooLarge;
+        }
+
+        FWDeviceWireV2 deviceWire{};
+        deviceWire.version = kDeviceDiscoveryWireVersion;
+        deviceWire.byteSize = static_cast<uint16_t>(deviceByteSize);
+        deviceWire.deviceInstanceId = device->GetInstanceId().value;
+        deviceWire.observedGuid = device->GetObservedGuid();
         deviceWire.generation = device->GetGeneration().value;
         deviceWire.nodeId = device->GetNodeID();
         deviceWire.state = StateToWire(device->GetState());
-        deviceWire.unitCount = static_cast<uint8_t>(device->GetUnits().size());
+        deviceWire.quarantineReason = static_cast<uint8_t>(device->GetQuarantineReason());
         deviceWire.deviceKind = static_cast<uint8_t>(device->GetKind());
+        deviceWire.unitCount = static_cast<uint16_t>(device->GetUnits().size());
+        deviceWire.busInfoWordCount =
+            static_cast<uint16_t>(evidence.rawBusInfoQuadlets.size());
+        deviceWire.nodeVendorOui = evidence.nodeVendorOui;
+        if (evidence.rootVendorId) {
+            deviceWire.evidenceFlags |= kHasRootVendorId;
+            deviceWire.rootVendorId = *evidence.rootVendorId;
+        }
+        if (evidence.rootModelId) {
+            deviceWire.evidenceFlags |= kHasRootModelId;
+            deviceWire.rootModelId = *evidence.rootModelId;
+        }
 
         // Copy vendor and model names
         CopyStringToBuffer(deviceWire.vendorName, sizeof(deviceWire.vendorName),
@@ -152,18 +195,50 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
             return kIOReturnNoMemory;
         }
 
+        if (!evidence.rawBusInfoQuadlets.empty() &&
+            !data->appendBytes(evidence.rawBusInfoQuadlets.data(),
+                               evidence.rawBusInfoQuadlets.size() * sizeof(uint32_t))) {
+            data->release();
+            return kIOReturnNoMemory;
+        }
+
         // Write units for this device
         for (const auto& unit : device->GetUnits()) {
-            FWUnitWire unitWire{};
+            if (!unit) {
+                continue;
+            }
+            FWUnitWireV2 unitWire{};
+            unitWire.version = kDeviceDiscoveryWireVersion;
+            unitWire.byteSize = sizeof(unitWire);
+            unitWire.deviceInstanceId = device->GetInstanceId().value;
             unitWire.specId = unit->GetUnitSpecID();
             unitWire.swVersion = unit->GetUnitSwVersion();
             unitWire.romOffset = unit->GetDirectoryOffset();
             unitWire.state = UnitStateToWire(unit->GetState());
-            memset(unitWire._padding, 0, sizeof(unitWire._padding));
-            unitWire.managementAgentOffset = unit->GetManagementAgentOffset().value_or(0);
-            unitWire.lun = unit->GetLUN().value_or(0);
-            unitWire.unitCharacteristics = unit->GetUnitCharacteristics().value_or(0);
-            unitWire.fastStart = unit->GetFastStart().value_or(0);
+            if (const auto value = unit->GetVendorID()) {
+                unitWire.evidenceFlags |= kHasUnitVendorId;
+                unitWire.vendorId = *value;
+            }
+            if (const auto value = unit->GetModelID()) {
+                unitWire.evidenceFlags |= kHasUnitModelId;
+                unitWire.modelId = *value;
+            }
+            if (const auto value = unit->GetLUN()) {
+                unitWire.evidenceFlags |= kHasLun;
+                unitWire.lun = *value;
+            }
+            if (const auto value = unit->GetManagementAgentOffset()) {
+                unitWire.evidenceFlags |= kHasManagementAgentOffset;
+                unitWire.managementAgentOffset = *value;
+            }
+            if (const auto value = unit->GetUnitCharacteristics()) {
+                unitWire.evidenceFlags |= kHasUnitCharacteristics;
+                unitWire.unitCharacteristics = *value;
+            }
+            if (const auto value = unit->GetFastStart()) {
+                unitWire.evidenceFlags |= kHasFastStart;
+                unitWire.fastStart = *value;
+            }
 
             // Copy vendor and product names
             CopyStringToBuffer(unitWire.vendorName, sizeof(unitWire.vendorName),

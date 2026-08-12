@@ -49,8 +49,8 @@ public:
      * @brief Get capabilities for a specific subunit
      *
      * @param args IOUserClientMethodArguments
-     *        - scalarInput[0]: Unit GUID (high 32 bits)
-     *        - scalarInput[1]: Unit GUID (low 32 bits)
+     *        - scalarInput[0]: DeviceInstanceId
+     *        - scalarInput[1]: unit-directory offset
      *        - scalarInput[2]: Subunit Type
      *        - scalarInput[3]: Subunit ID
      *        - structureOutput: Capabilities data
@@ -71,8 +71,8 @@ public:
      * @brief Get raw descriptor data for a specific subunit
      *
      * @param args IOUserClientMethodArguments
-     *        - scalarInput[0]: Unit GUID (high 32 bits)
-     *        - scalarInput[1]: Unit GUID (low 32 bits)
+     *        - scalarInput[0]: DeviceInstanceId
+     *        - scalarInput[1]: unit-directory offset
      *        - scalarInput[2]: Subunit Type
      *        - scalarInput[3]: Subunit ID
      *        - structureOutput: Raw descriptor data
@@ -84,8 +84,8 @@ public:
      * @brief Submit a raw FCP command asynchronously
      *
      * @param args IOUserClientMethodArguments
-     *        - scalarInput[0]: Unit GUID (high 32 bits)
-     *        - scalarInput[1]: Unit GUID (low 32 bits)
+     *        - scalarInput[0]: DeviceInstanceId
+     *        - scalarInput[1]: unit-directory offset
      *        - structureInput: Raw FCP command bytes (3-512 bytes)
      *        - scalarOutput[0]: Request ID for GetRawFCPCommandResult
      * @return kIOReturnSuccess on successful submission

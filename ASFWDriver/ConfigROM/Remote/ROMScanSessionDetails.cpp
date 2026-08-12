@@ -81,6 +81,8 @@ struct ROMScanSession::DetailsDiscovery : std::enable_shared_from_this<DetailsDi
     void OnUnitDirHeaderReady(bool ok);
     void EnsureUnitDirData();
     void OnUnitDirDataReady(bool ok);
+    void MaybeFetchUnitVendorName();
+    void OnUnitVendorNameFetched(std::string text);
     void MaybeFetchUnitModelName();
     void OnUnitModelNameFetched(std::string text);
 
@@ -95,6 +97,7 @@ struct ROMScanSession::DetailsDiscovery : std::enable_shared_from_this<DetailsDi
         FetchModel,
         UnitHeader,
         UnitData,
+        UnitVendorName,
         UnitModelName,
         Finalize,
     };
@@ -122,6 +125,7 @@ struct ROMScanSession::DetailsDiscovery : std::enable_shared_from_this<DetailsDi
     ASFW::ConfigROM::QuadletCount unitRel{0};
     uint16_t unitDirLen{0};
     UnitDirectory parsedUnit{};
+    std::optional<DescriptorRef> unitVendorRef;
     std::optional<DescriptorRef> unitModelRef;
 };
 
@@ -645,6 +649,7 @@ void ROMScanSession::DetailsDiscovery::StartNextUnitDir() {
     absUnitDir = rootDirStart + unitRel;
     unitDirLen = 0;
     parsedUnit = UnitDirectory{};
+    unitVendorRef = std::nullopt;
     unitModelRef = std::nullopt;
 
     ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: unit[%zu/%zu] start node=%u abs=%u rel=%u",
@@ -749,6 +754,9 @@ void ROMScanSession::DetailsDiscovery::OnUnitDirDataReady(bool ok) {
             continue;
         }
         switch (entry.keyId) {
+        case ASFW::FW::ConfigKey::kModuleVendorId:
+            parsedUnit.vendorId = entry.value;
+            break;
         case ASFW::FW::ConfigKey::kUnitSpecId:
             parsedUnit.unitSpecId = entry.value;
             break;
@@ -766,14 +774,33 @@ void ROMScanSession::DetailsDiscovery::OnUnitDirDataReady(bool ok) {
         }
     }
 
+    unitVendorRef = FindDescriptorRef(unitEntries, ASFW::FW::ConfigKey::kModuleVendorId);
     unitModelRef = FindDescriptorRef(unitEntries, ASFW::FW::ConfigKey::kModelId);
-    if (!unitModelRef) {
-        node->MutableROM().unitDirectories.push_back(std::move(parsedUnit));
-        ++unitIndex;
-        StartNextUnitDir();
+    MaybeFetchUnitVendorName();
+}
+
+void ROMScanSession::DetailsDiscovery::MaybeFetchUnitVendorName() {
+    if (session == nullptr) {
         return;
     }
 
+    if (!unitVendorRef.has_value()) {
+        MaybeFetchUnitModelName();
+        return;
+    }
+
+    step = Step::UnitVendorName;
+    const auto absOffset = absUnitDir + unitVendorRef->targetRel;
+    TextDescriptorFetcher::Start(*session, nodeId, absOffset, unitVendorRef->keyType,
+                                 [self = shared_from_this()](std::string text) {
+                                     self->OnUnitVendorNameFetched(std::move(text));
+                                 });
+}
+
+void ROMScanSession::DetailsDiscovery::OnUnitVendorNameFetched(std::string text) {
+    if (!text.empty()) {
+        parsedUnit.vendorName = std::move(text);
+    }
     MaybeFetchUnitModelName();
 }
 
@@ -784,6 +811,9 @@ void ROMScanSession::DetailsDiscovery::MaybeFetchUnitModelName() {
 
     step = Step::UnitModelName;
     if (!unitModelRef.has_value()) {
+        if (auto* node = FindNode(); node != nullptr) {
+            node->MutableROM().unitDirectories.push_back(std::move(parsedUnit));
+        }
         ++unitIndex;
         StartNextUnitDir();
         return;

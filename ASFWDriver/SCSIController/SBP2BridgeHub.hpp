@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include "../Discovery/RuntimeIdentity.hpp"
 
 namespace ASFW::Protocols::SBP2 {
 
@@ -32,10 +33,11 @@ public:
     // HBA's Stop is load-bearing on that synchrony (once ClearTargetObserver
     // returns, no observer call is running or can start), so the observer must
     // only schedule non-blocking work; see NotifyTargetState.
-    using TargetStateCallback = std::function<void(uint64_t guid, bool loggedIn)>;
+    using TargetStateCallback =
+        std::function<void(Discovery::DeviceInstanceId instanceId, bool loggedIn)>;
     static void SetTargetObserver(TargetStateCallback observer);
     static void ClearTargetObserver();
-    static void NotifyTargetState(uint64_t guid, bool loggedIn);
+    static void NotifyTargetState(Discovery::DeviceInstanceId instanceId, bool loggedIn);
 };
 
 } // namespace ASFW::Protocols::SBP2

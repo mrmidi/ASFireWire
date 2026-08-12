@@ -39,7 +39,10 @@ public:
 
     // === IDeviceManager Implementation ===
 
-    std::shared_ptr<FWDevice> GetDeviceByGUID(Guid64 guid) const override;
+    std::shared_ptr<FWDevice> GetDevice(DeviceInstanceId instanceId) const override;
+
+    std::vector<std::shared_ptr<FWDevice>>
+    FindDevicesByObservedGuid(Guid64 observedGuid) const override;
 
     std::shared_ptr<FWDevice> GetDeviceByNode(
         Generation gen,
@@ -65,26 +68,26 @@ public:
         const ConfigROM& rom
     ) override;
 
-    void MarkDeviceLost(Guid64 guid) override;
+    void MarkDeviceLost(DeviceInstanceId instanceId) override;
 
-    void TerminateDevice(Guid64 guid) override;
+    void TerminateDevice(DeviceInstanceId instanceId) override;
 
     // Suspend the current generation as soon as the reset edge is observed.
-    // Devices resume only when discovery has rebound a GUID to a new node.
+    // Devices resume only when discovery has rebound an instance to a new node.
     void SuspendAllForBusReset();
 
 private:
     void NotifyDeviceAdded(std::shared_ptr<FWDevice> device);
     void NotifyDeviceResumed(std::shared_ptr<FWDevice> device);
     void NotifyDeviceSuspended(std::shared_ptr<FWDevice> device);
-    void NotifyDeviceRemoved(Guid64 guid);
+    void NotifyDeviceRemoved(DeviceInstanceId instanceId);
 
     void NotifyUnitPublished(std::shared_ptr<FWUnit> unit);
     void NotifyUnitSuspended(std::shared_ptr<FWUnit> unit);
     void NotifyUnitResumed(std::shared_ptr<FWUnit> unit);
     void NotifyUnitTerminated(std::shared_ptr<FWUnit> unit);
 
-    void UpdateOperationalIndex(Guid64 guid,
+    void UpdateOperationalIndex(DeviceInstanceId instanceId,
                                 Generation gen,
                                 uint16_t nodeId,
                                 const char* action);
@@ -102,12 +105,12 @@ private:
     ) const;
 
     mutable IOLock* mutex_;
-    std::map<Guid64, std::shared_ptr<FWDevice>> devicesByGuid_;
+    std::map<DeviceInstanceId, std::shared_ptr<FWDevice>> devicesByInstance_;
 
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
-    std::map<GenNodeKey, Guid64> genNodeToGuid_;
-    std::map<Guid64, uint8_t> missingScanCounts_;
+    std::map<GenNodeKey, DeviceInstanceId> genNodeToInstance_;
+    std::map<DeviceInstanceId, uint8_t> missingScanCounts_;
 
     std::set<IDeviceObserver*> deviceObservers_;
     std::set<IUnitObserver*> unitObservers_;

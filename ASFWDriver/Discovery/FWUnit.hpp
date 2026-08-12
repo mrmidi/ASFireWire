@@ -22,13 +22,17 @@ public:
 
     static std::shared_ptr<FWUnit> Create(
         std::shared_ptr<FWDevice> parentDevice,
-        uint32_t directoryOffset,
-        const std::vector<RomEntry>& entries
+        const UnitDirectory& directory
     );
 
+    UnitInstanceId GetInstanceId() const {
+        return UnitInstanceId{.device = parentDeviceId_,
+                              .unitDirectoryOffset = directoryOffset_};
+    }
     uint32_t GetUnitSpecID() const { return unitSpecId_; }
     uint32_t GetUnitSwVersion() const { return unitSwVersion_; }
-    uint32_t GetModelID() const { return modelId_; }
+    std::optional<uint32_t> GetVendorID() const { return vendorId_; }
+    std::optional<uint32_t> GetModelID() const { return modelId_; }
     std::optional<uint32_t> GetLUN() const { return logicalUnitNumber_; }
     uint32_t GetDirectoryOffset() const { return directoryOffset_; }
 
@@ -54,19 +58,17 @@ public:
     void Terminate();
 
 private:
-    FWUnit(std::shared_ptr<FWDevice> parentDevice, uint32_t directoryOffset);
-
-    void ParseEntries(const std::vector<RomEntry>& entries);
-
-    void ExtractTextLeaves(const std::vector<RomEntry>& entries);
+    FWUnit(std::shared_ptr<FWDevice> parentDevice, const UnitDirectory& directory);
 
     std::shared_ptr<FWDevice> parentDevice_;
+    const DeviceInstanceId parentDeviceId_;
 
     const uint32_t directoryOffset_;
 
     uint32_t unitSpecId_{0};
     uint32_t unitSwVersion_{0};
-    uint32_t modelId_{0};
+    std::optional<uint32_t> vendorId_;
+    std::optional<uint32_t> modelId_;
     std::optional<uint32_t> logicalUnitNumber_;
 
     // SBP-2 specific metadata

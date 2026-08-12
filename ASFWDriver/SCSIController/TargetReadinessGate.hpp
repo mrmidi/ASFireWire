@@ -31,6 +31,7 @@
 
 #include "../Protocols/SBP2/SCSICommandSet.hpp"
 #include "../Scheduling/ITimerScheduler.hpp"
+#include "../Discovery/RuntimeIdentity.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -43,7 +44,8 @@ public:
 
     using SubmitFn = std::function<void(SCSI::CommandRequest,
                                         std::function<void(const SCSI::CommandResult&)>)>;
-    using NotifyFn = std::function<void(uint64_t guid, bool loggedIn)>;
+    using NotifyFn =
+        std::function<void(Discovery::DeviceInstanceId instanceId, bool loggedIn)>;
 
     // Probe budget caps the fail-open wait at ~kProbeBudget × kRetryDelayNs
     // (immediate UA re-probes share the budget). HW: the LS-9000 answered
@@ -58,7 +60,7 @@ public:
 
     // Feed every login edge through here. notify_ fires with the same edge —
     // immediately for down edges and re-asserts, gated for a fresh up edge.
-    void OnEdge(uint64_t guid, bool loggedIn);
+    void OnEdge(Discovery::DeviceInstanceId instanceId, bool loggedIn);
 
     // Invalidate outstanding probe/timer callbacks (bridge Shutdown). After
     // this returns, no notify_ fires until the next OnEdge.
@@ -68,9 +70,10 @@ public:
     [[nodiscard]] static Probe Classify(const SCSI::CommandResult& result) noexcept;
 
 private:
-    void ProbeOnce(uint64_t guid, uint64_t epoch);
-    void OnProbeResult(uint64_t guid, uint64_t epoch, const SCSI::CommandResult& result);
-    void Finish(uint64_t guid, const char* reason);
+    void ProbeOnce(Discovery::DeviceInstanceId instanceId, uint64_t epoch);
+    void OnProbeResult(Discovery::DeviceInstanceId instanceId, uint64_t epoch,
+                       const SCSI::CommandResult& result);
+    void Finish(Discovery::DeviceInstanceId instanceId, const char* reason);
     void CancelTimer() noexcept;
 
     Scheduling::ITimerScheduler& scheduler_;

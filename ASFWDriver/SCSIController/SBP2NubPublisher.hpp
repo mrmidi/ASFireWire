@@ -43,18 +43,7 @@ public:
     void OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) override;
 
 private:
-    struct UnitKey {
-        uint64_t guid{0};
-        uint32_t directoryOffset{0};
-
-        [[nodiscard]] bool operator==(const UnitKey&) const noexcept = default;
-    };
-
-    struct UnitKeyHash {
-        [[nodiscard]] size_t operator()(const UnitKey& key) const noexcept {
-            return static_cast<size_t>(key.guid ^ (static_cast<uint64_t>(key.directoryOffset) << 32));
-        }
-    };
+    using UnitKey = Discovery::UnitInstanceId;
 
     struct PublishedNub {
         std::weak_ptr<Discovery::FWUnit> unit;
@@ -77,7 +66,7 @@ private:
     IOLock* lock_{nullptr};
     bool observing_{false};
     bool stopping_{false};
-    std::unordered_map<UnitKey, PublishedNub, UnitKeyHash> nubsByUnit_;
+    std::unordered_map<UnitKey, PublishedNub, Discovery::UnitInstanceIdHash> nubsByUnit_;
 };
 
 } // namespace ASFW::Protocols::SBP2

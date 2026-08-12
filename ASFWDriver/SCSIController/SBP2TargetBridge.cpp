@@ -70,8 +70,8 @@ void SBP2TargetBridge::Start() {
                     self->SubmitTask(std::move(request), std::move(callback));
                 }
             },
-            [](uint64_t guid, bool loggedIn) {
-                SBP2BridgeHub::NotifyTargetState(guid, loggedIn);
+            [](Discovery::DeviceInstanceId instanceId, bool loggedIn) {
+                SBP2BridgeHub::NotifyTargetState(instanceId, loggedIn);
             });
     }
 
@@ -97,9 +97,10 @@ void SBP2TargetBridge::Start() {
     // logs in/out. Forward to the HBA via the hub. Registered before adopting
     // existing units so a login that completes during adoption is not missed.
     if (auto reg = registry_.lock()) {
-        reg->SetLoginStateObserver([weak](uint64_t guid, bool loggedIn) {
+        reg->SetLoginStateObserver([weak](Discovery::DeviceInstanceId instanceId,
+                                          bool loggedIn) {
             if (auto self = weak.lock()) {
-                self->OnLoginStateChanged(guid, loggedIn);
+                self->OnLoginStateChanged(instanceId, loggedIn);
             }
         });
     }
@@ -110,7 +111,7 @@ void SBP2TargetBridge::Start() {
 
 void SBP2TargetBridge::Shutdown() {
     uint64_t handle = 0;
-    uint64_t guid = 0;
+    Discovery::DeviceInstanceId instanceId{};
     std::deque<PendingTask> drained;
     {
         IOLockGuard g(lock_);
@@ -119,9 +120,9 @@ void SBP2TargetBridge::Shutdown() {
         }
         stopping_ = true;
         handle = sessionHandle_;
-        guid = sessionGuid_;
+        instanceId = sessionDevice_;
         sessionHandle_ = 0;
-        sessionGuid_ = 0;
+        sessionDevice_ = {};
         drained.swap(pending_);
     }
 
@@ -170,7 +171,7 @@ void SBP2TargetBridge::Shutdown() {
     // target with no LUN state to wedge. Redundant edges are safe: the HBA's
     // down leg is a no-op when no target is attached.
     if (handle != 0) {
-        SBP2BridgeHub::NotifyTargetState(guid, false);
+        SBP2BridgeHub::NotifyTargetState(instanceId, false);
     }
 }
 
@@ -221,8 +222,7 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
     if (!device) {
         return;
     }
-    const uint64_t guid = device->GetGUID();
-    const uint32_t romOffset = unit->GetDirectoryOffset();
+    const auto unitId = unit->GetInstanceId();
 
     uint64_t existing = 0;
     {
@@ -269,13 +269,13 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
         }
     }
 
-    auto handle = reg->CreateSession(this, guid, romOffset);
+    auto handle = reg->CreateSession(this, unitId);
     if (!handle.has_value()) {
         // kIOReturnExclusiveAccess: someone else (e.g. the probe tool) owns this
         // target — stay out of the way.
         ASFW_LOG(Controller,
-                 "[SBP2Bridge] CreateSession failed 0x%x (guid=0x%016llx romOffset=%u)",
-                 handle.error(), guid, romOffset);
+                 "[SBP2Bridge] CreateSession failed 0x%x (instance=%llu romOffset=%u)",
+                 handle.error(), unitId.device.value, unitId.unitDirectoryOffset);
         return;
     }
     {
@@ -284,16 +284,17 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
             return;
         }
         sessionHandle_ = *handle;
-        sessionGuid_ = guid;
+        sessionDevice_ = unitId.device;
     }
-    ASFW_LOG(Controller, "[SBP2Bridge] session %llu created for guid=0x%016llx — logging in",
-             *handle, guid);
+    ASFW_LOG(Controller, "[SBP2Bridge] session %llu created for instance=%llu — logging in",
+             *handle, unitId.device.value);
     if (!reg->StartLogin(this, *handle)) {
         ASFW_LOG(Controller, "[SBP2Bridge] StartLogin failed for session %llu", *handle);
     }
 }
 
-void SBP2TargetBridge::OnLoginStateChanged(uint64_t guid, bool loggedIn) {
+void SBP2TargetBridge::OnLoginStateChanged(Discovery::DeviceInstanceId instanceId,
+                                           bool loggedIn) {
     // The registry emits this on TERMINAL edges only: login-up (fresh login or
     // reconnect re-assert) and logout/login-failure. A transient bus-reset
     // suspension emits nothing. The HBA drives target 0 create/destroy off
@@ -303,13 +304,13 @@ void SBP2TargetBridge::OnLoginStateChanged(uint64_t guid, bool loggedIn) {
     // A fresh up edge goes through the readiness gate, which delays the hub
     // notification until the device answers TUR without a warm-up sense; down
     // edges and reconnect re-asserts pass straight through it.
-    ASFW_LOG(Controller, "[SBP2Bridge] login %{public}s guid=0x%016llx",
-             loggedIn ? "up" : "down", guid);
+    ASFW_LOG(Controller, "[SBP2Bridge] login %{public}s instance=%llu",
+             loggedIn ? "up" : "down", instanceId.value);
     if (readinessGate_) {
-        readinessGate_->OnEdge(guid, loggedIn);
+        readinessGate_->OnEdge(instanceId, loggedIn);
         return;
     }
-    SBP2BridgeHub::NotifyTargetState(guid, loggedIn);
+    SBP2BridgeHub::NotifyTargetState(instanceId, loggedIn);
 }
 
 void SBP2TargetBridge::AdoptExistingUnits() {

@@ -48,7 +48,7 @@ public:
         if (!manager_) {
             return kIOReturnNotReady;
         }
-        if (!args || !args->scalarInput || args->scalarInputCount < 3 ||
+        if (!args || !args->scalarInput || args->scalarInputCount < 2 ||
             !args->scalarOutput || args->scalarOutputCount < 1) {
             return kIOReturnBadArgument;
         }
@@ -162,12 +162,13 @@ public:
             return kIOReturnBadArgument;
         }
 
-        const uint32_t guidHi = static_cast<uint32_t>(args->scalarInput[0] & 0xFFFF'FFFFu);
-        const uint32_t guidLo = static_cast<uint32_t>(args->scalarInput[1] & 0xFFFF'FFFFu);
-        const uint32_t romOffset = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFF'FFFFu);
-        const uint64_t guid = (static_cast<uint64_t>(guidHi) << 32) | guidLo;
+        const Discovery::UnitInstanceId unitId{
+            .device = Discovery::DeviceInstanceId{args->scalarInput[0]},
+            .unitDirectoryOffset =
+                static_cast<uint32_t>(args->scalarInput[1] & 0xFFFF'FFFFu),
+        };
 
-        auto result = registry_->CreateSession(owner, guid, romOffset);
+        auto result = registry_->CreateSession(owner, unitId);
         if (!result.has_value()) {
             return result.error();
         }

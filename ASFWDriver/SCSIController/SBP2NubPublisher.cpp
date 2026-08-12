@@ -18,7 +18,8 @@ namespace ASFW::Protocols::SBP2 {
 
 namespace {
 
-constexpr const char* kFireWireGuidProperty = "ASFWFireWireGUID";
+constexpr const char* kDeviceInstanceIdProperty = "ASFWDeviceInstanceID";
+constexpr const char* kObservedGuidProperty = "ASFWObservedGUID";
 constexpr const char* kUnitDirectoryOffsetProperty = "ASFWUnitDirectoryOffset";
 constexpr const char* kLogicalUnitNumberProperty = "ASFWLogicalUnitNumber";
 
@@ -54,10 +55,10 @@ std::optional<SBP2NubPublisher::UnitKey> SBP2NubPublisher::MakeKey(
         return std::nullopt;
     }
     const auto device = unit->GetDevice();
-    if (!device || device->GetGUID() == 0) {
+    if (!device || !device->IsReady()) {
         return std::nullopt;
     }
-    return UnitKey{.guid = device->GetGUID(), .directoryOffset = unit->GetDirectoryOffset()};
+    return unit->GetInstanceId();
 }
 
 void SBP2NubPublisher::Start() {
@@ -108,8 +109,8 @@ void SBP2NubPublisher::Shutdown() noexcept {
     for (const auto& [key, published] : nubs) {
         if (published.nub != nullptr) {
             ASFW_LOG(Controller,
-                     "[SBP2Nub] terminating GUID=0x%016llx unitOffset=%u during shutdown",
-                     key.guid, key.directoryOffset);
+                     "[SBP2Nub] terminating instance=%llu unitOffset=%u during shutdown",
+                     key.device.value, key.unitDirectoryOffset);
             published.nub->Terminate(0);
         }
     }
@@ -191,8 +192,8 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
     const kern_return_t kr = driver_->Create(driver_, "ASFWSBP2NubProperties", &nubService);
     if (kr != kIOReturnSuccess || nubService == nullptr) {
         ASFW_LOG_ERROR(Controller,
-                       "[SBP2Nub] creation failed GUID=0x%016llx unitOffset=%u kr=0x%x",
-                       key->guid, key->directoryOffset, kr);
+                       "[SBP2Nub] creation failed instance=%llu unitOffset=%u kr=0x%x",
+                       key->device.value, key->unitDirectoryOffset, kr);
         TerminateNub(unit, "create-failed");
         return;
     }
@@ -201,10 +202,15 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
     OSDictionary* propertiesRaw = nullptr;
     if (nubService->CopyProperties(&propertiesRaw) == kIOReturnSuccess && propertiesRaw != nullptr) {
         OSSharedPtr<OSDictionary> properties(propertiesRaw, OSNoRetain);
-        auto guid = OSSharedPtr(OSNumber::withNumber(key->guid, 64), OSNoRetain);
-        auto directory = OSSharedPtr(OSNumber::withNumber(key->directoryOffset, 32), OSNoRetain);
-        if (guid && directory) {
-            properties->setObject(kFireWireGuidProperty, guid.get());
+        const auto device = unit->GetDevice();
+        auto instance = OSSharedPtr(OSNumber::withNumber(key->device.value, 64), OSNoRetain);
+        auto observedGuid = OSSharedPtr(
+            OSNumber::withNumber(device ? device->GetObservedGuid() : 0, 64), OSNoRetain);
+        auto directory = OSSharedPtr(
+            OSNumber::withNumber(key->unitDirectoryOffset, 32), OSNoRetain);
+        if (instance && observedGuid && directory) {
+            properties->setObject(kDeviceInstanceIdProperty, instance.get());
+            properties->setObject(kObservedGuidProperty, observedGuid.get());
             properties->setObject(kUnitDirectoryOffsetProperty, directory.get());
             if (const auto lun = unit->GetLUN()) {
                 if (auto lunNumber = OSSharedPtr(OSNumber::withNumber(*lun, 32), OSNoRetain)) {
@@ -216,8 +222,8 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
     }
     if (!propertiesReady) {
         ASFW_LOG_ERROR(Controller,
-                       "[SBP2Nub] property setup failed GUID=0x%016llx unitOffset=%u",
-                       key->guid, key->directoryOffset);
+                       "[SBP2Nub] property setup failed instance=%llu unitOffset=%u",
+                       key->device.value, key->unitDirectoryOffset);
         nubService->release();
         TerminateNub(unit, "property-failed");
         return;
@@ -226,8 +232,8 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
     ASFWSBP2Nub* nub = OSDynamicCast(ASFWSBP2Nub, nubService);
     if (nub == nullptr) {
         ASFW_LOG_ERROR(Controller,
-                       "[SBP2Nub] created wrong service type GUID=0x%016llx unitOffset=%u",
-                       key->guid, key->directoryOffset);
+                       "[SBP2Nub] created wrong service type instance=%llu unitOffset=%u",
+                       key->device.value, key->unitDirectoryOffset);
         nubService->release();
         TerminateNub(unit, "type-failed");
         return;
@@ -250,8 +256,8 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
     }
 
     ASFW_LOG(Controller,
-             "[SBP2Nub] published GUID=0x%016llx unitOffset=%u",
-             key->guid, key->directoryOffset);
+             "[SBP2Nub] published instance=%llu unitOffset=%u",
+             key->device.value, key->unitDirectoryOffset);
 }
 
 void SBP2NubPublisher::TerminateNub(const std::shared_ptr<Discovery::FWUnit>& unit,
@@ -272,8 +278,9 @@ void SBP2NubPublisher::TerminateNub(const std::shared_ptr<Discovery::FWUnit>& un
 
     if (nub != nullptr) {
         ASFW_LOG(Controller,
-                 "[SBP2Nub] terminating GUID=0x%016llx unitOffset=%u (%{public}s)",
-                 key->guid, key->directoryOffset, reasonTag ? reasonTag : "unknown");
+                 "[SBP2Nub] terminating instance=%llu unitOffset=%u (%{public}s)",
+                 key->device.value, key->unitDirectoryOffset,
+                 reasonTag ? reasonTag : "unknown");
         nub->Terminate(0);
     }
 }

@@ -87,13 +87,13 @@ OSData* CastStructureInputToOSData(IOUserClientMethodArguments* args) {
 #endif
 
 struct SubunitLookupRequest {
-    uint64_t guid{0};
+    Discovery::UnitInstanceId unitId{};
     uint8_t type{0};
     uint8_t id{0};
 };
 
 struct RawFCPSubmissionRequest {
-    uint64_t guid{0};
+    Discovery::UnitInstanceId unitId{};
     OSData* commandData{nullptr};
     size_t commandLength{0};
 };
@@ -134,7 +134,10 @@ ParseSubunitLookupRequest(IOUserClientMethodArguments* args, const char* operati
     }
 
     return SubunitLookupRequest{
-        .guid = (static_cast<uint64_t>(args->scalarInput[0]) << 32) | args->scalarInput[1],
+        .unitId = Discovery::UnitInstanceId{
+            .device = Discovery::DeviceInstanceId{args->scalarInput[0]},
+            .unitDirectoryOffset = static_cast<uint32_t>(args->scalarInput[1]),
+        },
         .type = static_cast<uint8_t>(args->scalarInput[2]),
         .id = static_cast<uint8_t>(args->scalarInput[3]),
     };
@@ -148,8 +151,7 @@ SubunitPtr FindRequestedSubunit(Protocols::AVC::IAVCDiscovery& discovery,
             continue;
         }
 
-        auto device = unit->GetDevice();
-        if (!device || device->GetGUID() != request.guid) {
+        if (unit->GetUnitInstanceId() != request.unitId) {
             continue;
         }
 
@@ -438,21 +440,25 @@ ParseRawFCPSubmissionRequest(IOUserClientMethodArguments* args) {
     }
 
     return RawFCPSubmissionRequest{
-        .guid = (static_cast<uint64_t>(args->scalarInput[0]) << 32) | args->scalarInput[1],
+        .unitId = Discovery::UnitInstanceId{
+            .device = Discovery::DeviceInstanceId{args->scalarInput[0]},
+            .unitDirectoryOffset = static_cast<uint32_t>(args->scalarInput[1]),
+        },
         .commandData = commandData,
         .commandLength = commandLength,
     };
 }
 
-Protocols::AVC::AVCUnit* FindAVCUnitByGuid(Protocols::AVC::IAVCDiscovery& discovery, uint64_t guid) {
+Protocols::AVC::AVCUnit* FindAVCUnit(
+    Protocols::AVC::IAVCDiscovery& discovery,
+    Discovery::UnitInstanceId unitId) {
     const auto allUnits = discovery.GetAllAVCUnits();
     for (auto* unit : allUnits) {
         if (!unit) {
             continue;
         }
 
-        auto device = unit->GetDevice();
-        if (device && device->GetGUID() == guid) {
+        if (unit->GetUnitInstanceId() == unitId) {
             return unit;
         }
     }
@@ -536,24 +542,18 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
 
     ASFW_LOG(UserClient, "GetAVCUnits: found %zu AV/C units", allUnits.size());
 
-    // Calculate total size
-    // We send an OSData containing a sequence of AVCUnitInfoWire structures.
-    // Each AVCUnitInfoWire is followed by N * AVCSubunitInfoWire.
-    size_t totalSize = 0;
-    
-    // Add header size (count of units)? 
-    // The previous implementation had a header. The new spec doesn't explicitly define a top-level header,
-    // but usually we send an array.
-    // Let's assume the UI expects just the sequence of units, or we can add a simple count at the start.
-    // The proposed AVCUnitInfoWire doesn't have a "next" pointer, so we rely on the buffer size or a count.
-    // Let's prepend a uint32_t count for safety/easier parsing.
-    totalSize += sizeof(uint32_t);
+    size_t totalSize = sizeof(AVCUnitsWireV2);
+    uint32_t unitCount = 0;
 
     for (auto* avcUnit : allUnits) {
         if (avcUnit) {
-            totalSize += sizeof(AVCUnitInfoWire);
-            totalSize += avcUnit->GetSubunits().size() * sizeof(AVCSubunitInfoWire);
+            ++unitCount;
+            totalSize += sizeof(AVCUnitInfoWireV2);
+            totalSize += avcUnit->GetSubunits().size() * sizeof(AVCSubunitInfoWireV2);
         }
+    }
+    if (totalSize > kMaxWireSize || totalSize > UINT32_MAX) {
+        return kIOReturnMessageTooLarge;
     }
 
     ASFW_LOG(UserClient, "GetAVCUnits: total wire format size=%zu bytes", totalSize);
@@ -565,9 +565,14 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
         return kIOReturnNoMemory;
     }
 
-    // Write unit count
-    uint32_t unitCount = static_cast<uint32_t>(allUnits.size());
-    if (!data->appendBytes(&unitCount, sizeof(unitCount))) {
+    const AVCUnitsWireV2 header{
+        .version = kAVCUnitsWireVersion,
+        .headerSize = static_cast<uint16_t>(sizeof(AVCUnitsWireV2)),
+        .byteSize = static_cast<uint32_t>(totalSize),
+        .unitCount = unitCount,
+        ._reserved = 0,
+    };
+    if (!data->appendBytes(&header, sizeof(header))) {
         data->release();
         return kIOReturnNoMemory;
     }
@@ -576,20 +581,29 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
     for (auto* avcUnit : allUnits) {
         if (!avcUnit) continue;
 
-        AVCUnitInfoWire unitWire{};
+        AVCUnitInfoWireV2 unitWire{};
+        unitWire.version = kAVCUnitsWireVersion;
+        const auto subunitBytes =
+            avcUnit->GetSubunits().size() * sizeof(AVCSubunitInfoWireV2);
+        unitWire.byteSize = static_cast<uint16_t>(sizeof(unitWire) + subunitBytes);
+        unitWire.deviceInstanceId = avcUnit->GetDeviceInstanceId().value;
+        unitWire.unitDirectoryOffset = avcUnit->GetUnitInstanceId().unitDirectoryOffset;
+        unitWire.observedGuid = avcUnit->GetObservedGuid();
+        unitWire.isInitialized = avcUnit->IsInitialized() ? 1 : 0;
         
         // Get device from AVCUnit
         auto device = avcUnit->GetDevice();
         if (device) {
-            unitWire.guid = device->GetGUID();
+            unitWire.generation = device->GetGeneration().value;
             unitWire.nodeID = device->GetNodeID();
-            unitWire.vendorID = device->GetVendorID();
-            unitWire.modelID = device->GetModelID();
-        } else {
-            unitWire.guid = 0;
-            unitWire.nodeID = 0xFFFF;
-            unitWire.vendorID = 0;
-            unitWire.modelID = 0;
+            unitWire.rootVendorID = device->GetRootVendorID().value_or(0);
+            unitWire.rootModelID = device->GetRootModelID().value_or(0);
+        }
+        if (const auto fwUnit = avcUnit->GetFWUnit()) {
+            unitWire.unitVendorID = fwUnit->GetVendorID().value_or(0);
+            unitWire.unitModelID = fwUnit->GetModelID().value_or(0);
+            unitWire.specifierID = fwUnit->GetUnitSpecID();
+            unitWire.unitVersion = fwUnit->GetUnitSwVersion();
         }
 
         const auto& subunits = avcUnit->GetSubunits();
@@ -612,7 +626,9 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
         for (const auto& subunitPtr : subunits) {
             if (!subunitPtr) continue;
 
-            AVCSubunitInfoWire subunitWire{};
+            AVCSubunitInfoWireV2 subunitWire{};
+            subunitWire.version = kAVCUnitsWireVersion;
+            subunitWire.byteSize = sizeof(subunitWire);
             subunitWire.type = static_cast<uint8_t>(subunitPtr->GetType());
             subunitWire.subunitID = subunitPtr->GetID();
             subunitWire.numDestPlugs = subunitPtr->GetNumDestPlugs();
@@ -704,8 +720,9 @@ kern_return_t AVCHandler::GetSubunitDescriptor(IOUserClientMethodArguments* args
     const auto subunit = FindRequestedSubunit(*discovery_, *request);
     if (!subunit) {
         ASFW_LOG(UserClient,
-                 "GetSubunitDescriptor: subunit not found (GUID=0x%llx type=0x%02x id=%d)",
-                 request->guid,
+                 "GetSubunitDescriptor: subunit not found (instance=%llu unitOffset=%u type=0x%02x id=%d)",
+                 request->unitId.device.value,
+                 request->unitId.unitDirectoryOffset,
                  request->type,
                  request->id);
         return kIOReturnNotFound;
@@ -755,11 +772,12 @@ kern_return_t AVCHandler::SendRawFCPCommand(IOUserClientMethodArguments* args) {
         return kIOReturnBadArgument;
     }
 
-    auto* targetUnit = FindAVCUnitByGuid(*discovery_, request->guid);
+    auto* targetUnit = FindAVCUnit(*discovery_, request->unitId);
     if (!targetUnit) {
         ASFW_LOG(UserClient,
-                 "SendRawFCPCommand: target unit not found (guid=0x%llx)",
-                 request->guid);
+                 "SendRawFCPCommand: target unit not found (instance=%llu unitOffset=%u)",
+                 request->unitId.device.value,
+                 request->unitId.unitDirectoryOffset);
         return kIOReturnNotFound;
     }
 

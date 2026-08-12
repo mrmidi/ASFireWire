@@ -1,313 +1,392 @@
 #include "DeviceRegistry.hpp"
+
 #include <algorithm>
 #include <limits>
+#include <unordered_map>
+
 #include "../Logging/Logging.hpp"
-#include "../DeviceProfiles/Audio/AudioProfileRegistry.hpp"
 
 namespace ASFW::Discovery {
 
-constexpr uint32_t kUnitSpecId_TA = 0x00A02D;
-constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;
-constexpr uint32_t kUnitSpecId_SBP2 = 0x00609E; // SBP-2 Unit_Spec_Id
-constexpr uint32_t kUnitSwVersion_SBP2 = 0x010483; // SBP-2 Unit_Sw_Version
-
-[[nodiscard]] constexpr bool IsSBP2Unit(const UnitDirectory& unit) noexcept {
-    return unit.unitSpecId == kUnitSpecId_SBP2 && unit.unitSwVersion == kUnitSwVersion_SBP2;
-}
-
 namespace {
 
-void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
+constexpr uint32_t kUnitSpecIdTA = 0x00A02D;
+constexpr uint32_t kUnitSpecIdSBP2 = 0x00609E;
+constexpr uint32_t kUnitSwVersionSBP2 = 0x010483;
+
+[[nodiscard]] constexpr bool IsSBP2Unit(const UnitDirectory& unit) noexcept {
+    return unit.unitSpecId == kUnitSpecIdSBP2 &&
+           unit.unitSwVersion == kUnitSwVersionSBP2;
+}
+
+[[nodiscard]] DeviceIdentityEvidence BuildIdentityEvidence(const ConfigROM& rom) {
+    // Preserve bus-information, root-directory, and every unit-directory view
+    // independently. The TCAT parser models these as separate structures and
+    // enumerates all units; it never promotes one into a canonical identity:
+    // references/alsa-userspace-control-protocols-impl/protocols/dice/src/tcat/config_rom.rs:11-50,71-130.
+    DeviceIdentityEvidence evidence{};
+    evidence.observedGuid = rom.bib.guid;
+    evidence.nodeVendorOui = static_cast<uint32_t>((rom.bib.guid >> 40U) & 0x00FF'FFFFU);
+    evidence.rootVendorName = rom.vendorName;
+    evidence.rootModelName = rom.modelName;
+
+    const size_t busInfoQuadletCount = std::min(
+        rom.rawQuadlets.size(), static_cast<size_t>(rom.bib.busInfoLength) + 1U);
+    evidence.rawBusInfoQuadlets.assign(rom.rawQuadlets.begin(),
+                                       rom.rawQuadlets.begin() + busInfoQuadletCount);
+
     for (const auto& entry : rom.rootDirMinimal) {
-        if (entry.key == CfgKey::VendorId) {
-            device.vendorId = entry.value;
-        } else if (entry.key == CfgKey::ModelId) {
-            device.modelId = entry.value;
+        if (entry.key == CfgKey::VendorId && !evidence.rootVendorId.has_value()) {
+            evidence.rootVendorId = entry.value;
+        } else if (entry.key == CfgKey::ModelId && !evidence.rootModelId.has_value()) {
+            evidence.rootModelId = entry.value;
         }
     }
 
-    device.unitSpecId.reset();
-    device.unitSwVersion.reset();
+    evidence.units.reserve(rom.unitDirectories.size());
     for (const auto& unit : rom.unitDirectories) {
+        UnitIdentityEvidence unitEvidence{};
+        unitEvidence.unitDirectoryOffset = unit.offsetQuadlets;
+        unitEvidence.vendorId = unit.vendorId;
+        unitEvidence.modelId = unit.modelId;
         if (unit.unitSpecId != 0) {
-            device.unitSpecId = unit.unitSpecId;
+            unitEvidence.specifierId = unit.unitSpecId;
         }
         if (unit.unitSwVersion != 0) {
-            device.unitSwVersion = unit.unitSwVersion;
+            unitEvidence.version = unit.unitSwVersion;
         }
-        if (device.unitSpecId.has_value() && device.unitSwVersion.has_value()) {
-            break;
+        unitEvidence.logicalUnitNumber = unit.logicalUnitNumber;
+        unitEvidence.vendorName = unit.vendorName;
+        unitEvidence.modelName = unit.modelName;
+        evidence.units.push_back(std::move(unitEvidence));
+    }
+
+    // Some minimal devices place unit keys directly in the root directory.
+    // Preserve that as a real offset-zero unit without flattening it into the
+    // physical-device identity.
+    if (evidence.units.empty()) {
+        UnitIdentityEvidence rootUnit{};
+        bool hasUnitEvidence = false;
+        for (const auto& entry : rom.rootDirMinimal) {
+            switch (entry.key) {
+                case CfgKey::Unit_Spec_Id:
+                    rootUnit.specifierId = entry.value;
+                    hasUnitEvidence = true;
+                    break;
+                case CfgKey::Unit_Sw_Version:
+                    rootUnit.version = entry.value;
+                    hasUnitEvidence = true;
+                    break;
+                case CfgKey::Logical_Unit_Number:
+                    rootUnit.logicalUnitNumber = entry.value;
+                    hasUnitEvidence = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (hasUnitEvidence) {
+            evidence.units.push_back(std::move(rootUnit));
         }
     }
 
-    device.vendorName = rom.vendorName;
-    device.modelName = rom.modelName;
+    return evidence;
 }
 
-void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
-    const DeviceProfiles::DeviceProfileQuery query{
-        .guid = guid, .vendorId = device.vendorId, .modelId = device.modelId};
-
-    const auto identity = DeviceProfiles::Audio::AudioProfileRegistry::LookupIdentity(query);
-    if (!identity.has_value()) {
-        return;
-    }
-
-    // A GUID-based match refines the vendor/model identity when the Config ROM did not
-    // surface usable IDs (e.g. Focusrite DICE boards encode the model in the GUID). A
-    // direct vendor/model match leaves the IDs unchanged.
-    if (identity->vendorId != device.vendorId || identity->modelId != device.modelId) {
-        const uint32_t prevVendorId = device.vendorId;
-        const uint32_t prevModelId = device.modelId;
-        device.vendorId = identity->vendorId;
-        device.modelId = identity->modelId;
-        ASFW_LOG(Discovery,
-                 "Inferred known device identity from GUID=0x%016llx: vendor 0x%06x->0x%06x model "
-                 "0x%06x->0x%06x",
-                 guid, prevVendorId, device.vendorId, prevModelId, device.modelId);
-    }
-
-    if (identity->vendorName) {
-        device.vendorName = identity->vendorName;
-    }
-    if (identity->modelName) {
-        device.modelName = identity->modelName;
-    }
-}
-
-const char* DeviceKindString(DeviceKind kind) noexcept {
-    switch (kind) {
-        case DeviceKind::AV_C:
-            return "AV_C";
-        case DeviceKind::TA_61883:
-            return "TA_61883";
-        case DeviceKind::VendorSpecificAudio:
-            return "VendorAudio";
-        case DeviceKind::Storage:
-            return "Storage";
-        case DeviceKind::Camera:
-            return "Camera";
+[[nodiscard]] const char* QuarantineReasonString(QuarantineReason reason) noexcept {
+    switch (reason) {
+        case QuarantineReason::ZeroObservedGuid:
+            return "zero-observed-guid";
+        case QuarantineReason::DuplicateObservedGuid:
+            return "duplicate-observed-guid";
+        case QuarantineReason::HazardousNoProbe:
+            return "hazardous-no-probe";
+        case QuarantineReason::AmbiguousIdentity:
+            return "ambiguous-identity";
+        case QuarantineReason::InsufficientSafeEvidence:
+            return "insufficient-safe-evidence";
+        case QuarantineReason::UnsupportedFamily:
+            return "unsupported-family";
+        case QuarantineReason::None:
         default:
-            return "Unknown";
+            return "none";
     }
-}
-
-void LogDeviceUpsert(Guid64 guid, const DeviceRecord& device, const ConfigROM& rom) {
-    const char* kindStr = DeviceKindString(device.kind);
-    if (!device.vendorName.empty() && !device.modelName.empty()) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
-        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) "
-                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
-                 guid, device.vendorId, device.vendorName.c_str(),
-                 device.modelId, device.modelName.c_str(), kindStr,
-                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
-        return;
-    }
-
-    ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x model=0x%06x "
-             "kind=%{public}s audioCandidate=%d node=%u gen=%u",
-             guid, device.vendorId, device.modelId, kindStr,
-             device.isAudioCandidate, rom.nodeId, rom.gen.value);
 }
 
 } // namespace
 
-DeviceRegistry::DeviceRegistry()
-    : lock_(IOLockAlloc()) {}
+DeviceRegistry::DeviceRegistry() : lock_(IOLockAlloc()) {}
 
 DeviceRegistry::~DeviceRegistry() {
-    if (lock_) {
+    if (lock_ != nullptr) {
         IOLockFree(lock_);
         lock_ = nullptr;
     }
 }
 
+std::vector<DeviceRecord>
+DeviceRegistry::ReconcileGeneration(Generation gen,
+                                    std::span<const DeviceObservation> observations) {
+    std::unordered_map<Guid64, size_t> guidCounts;
+    guidCounts.reserve(observations.size());
+    for (const auto& observation : observations) {
+        if (observation.rom != nullptr && observation.rom->gen == gen) {
+            ++guidCounts[observation.rom->bib.guid];
+        }
+    }
+
+    IOLockLock(lock_);
+
+    // A previous collision group can never be correlated safely with a new
+    // generation. Likewise, a previously unique instance must not be reused
+    // when the same observed EUI-64 is now present on multiple nodes. FFADO's
+    // ProFire workaround adds node ID to 0x000d6c0404000002
+    // (references/libffado-2.5.0/src/libieee1394/configrom.cpp:207-218);
+    // ASFW deliberately retains the observed value and quarantines instead.
+    for (const auto& [observedGuid, count] : guidCounts) {
+        if (observedGuid == 0) {
+            continue;
+        }
+        if (count > 1U) {
+            RetirePriorCollisionGroupLocked(observedGuid, gen);
+            continue;
+        }
+
+        std::vector<DeviceInstanceId> staleCollisionInstances;
+        for (const auto& [instanceId, device] : devicesByInstance_) {
+            if (device.ObservedGuid() == observedGuid && device.gen != gen &&
+                device.quarantineReason == QuarantineReason::DuplicateObservedGuid) {
+                staleCollisionInstances.push_back(instanceId);
+            }
+        }
+        for (const auto instanceId : staleCollisionInstances) {
+            EraseInstanceLocked(instanceId);
+        }
+    }
+
+    std::vector<DeviceRecord> reconciled;
+    reconciled.reserve(observations.size());
+    for (const auto& observation : observations) {
+        if (observation.rom == nullptr || observation.rom->gen != gen ||
+            !TryOperationalNodeId(observation.rom->nodeId).has_value()) {
+            continue;
+        }
+        const size_t count = guidCounts[observation.rom->bib.guid];
+        reconciled.push_back(
+            UpsertOneLocked(*observation.rom, observation.link, count, true));
+    }
+
+    IOLockUnlock(lock_);
+    return reconciled;
+}
+
 DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link) {
     IOLockLock(lock_);
-    const Guid64 guid = rom.bib.guid;
-    const auto operationalNodeId = TryOperationalNodeId(rom.nodeId);
+    DeviceRecord result = UpsertOneLocked(rom, link, 1U, false);
+    IOLockUnlock(lock_);
+    return result;
+}
 
-    auto [it, inserted] = devicesByGuid_.try_emplace(guid);
-    auto& device = it->second;
+DeviceRecord DeviceRegistry::UpsertOneLocked(const ConfigROM& rom,
+                                             const LinkPolicy& link,
+                                             size_t observedGuidCount,
+                                             bool batchReconcile) {
+    const auto operationalNodeId = TryOperationalNodeId(rom.nodeId);
+    const GenNodeKey key = operationalNodeId.has_value()
+                               ? MakeKey(rom.gen, *operationalNodeId)
+                               : GenNodeKey{0};
+
+    DeviceInstanceId instanceId{};
+    if (operationalNodeId.has_value()) {
+        if (const auto current = genNodeToInstance_.find(key);
+            current != genNodeToInstance_.end()) {
+            const auto existing = devicesByInstance_.find(current->second);
+            if (existing != devicesByInstance_.end() &&
+                existing->second.ObservedGuid() == rom.bib.guid) {
+                instanceId = existing->first;
+            } else {
+                genNodeToInstance_.erase(current);
+            }
+        }
+    }
+
+    const bool duplicated = batchReconcile && rom.bib.guid != 0 && observedGuidCount > 1U;
+    if (!instanceId && rom.bib.guid != 0 && !duplicated) {
+        instanceId = ReusableInstanceLocked(rom.bib.guid).value_or(DeviceInstanceId{});
+    }
+    if (!instanceId) {
+        instanceId = AllocateDeviceInstanceIdLocked();
+    }
+
+    auto [recordIt, inserted] = devicesByInstance_.try_emplace(instanceId);
+    auto& device = recordIt->second;
     if (inserted) {
-        device.deviceIncarnation = ++lastDeviceIncarnationByGuid_[guid];
+        device.instanceId = instanceId;
         device.routeEpoch = AllocateRouteEpochLocked();
     } else if (device.gen != rom.gen || device.nodeId != rom.nodeId ||
                !HasLiveRoute(device)) {
         device.routeEpoch = AllocateRouteEpochLocked();
     }
-    device.guid = guid;
-    PopulateDeviceIdentity(device, rom);
-    MaybeInferKnownIdentityFromGuid(device, guid);
 
-    // Known device profiles can choose their integration mode:
-    // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
-    // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
-    const auto audioProfile = DeviceProfiles::Audio::AudioProfileRegistry::LookupBestAudioProfile(
-        DeviceProfiles::DeviceProfileQuery{.vendorId = device.vendorId, .modelId = device.modelId});
-    const auto integrationMode = audioProfile.has_value()
-                                     ? audioProfile->mode
-                                     : DeviceProfiles::Audio::AudioIntegrationMode::kNone;
-
-    if (integrationMode != DeviceProfiles::Audio::AudioIntegrationMode::kNone) {
-        ASFW_LOG(Discovery,
-                 "Known device profile available for vendor=0x%06x model=0x%06x integration=%u",
-                 device.vendorId,
-                 device.modelId,
-                 static_cast<unsigned>(integrationMode));
-        if (integrationMode == DeviceProfiles::Audio::AudioIntegrationMode::kHardcodedNub) {
-            device.kind = DeviceKind::VendorSpecificAudio;
-            device.isAudioCandidate = true;
-        } else {
-            device.kind = ClassifyDevice(rom);
-            device.isAudioCandidate = IsAudioCandidate(rom);
-        }
-    } else {
-        device.kind = ClassifyDevice(rom);
-        device.isAudioCandidate = IsAudioCandidate(rom);
-    }
-
-    // TODO: Generic AV/C devices should work purely via MusicSubunit discovery; vendor protocols are only for extra controls.
-    // TODO: Generic DICE/TCAT discovery (non-hardcoded vendor/model) is not implemented yet.
-    
+    device.identity = BuildIdentityEvidence(rom);
+    device.kind = ClassifyDevice(rom);
+    device.isAudioCandidate = IsAudioCandidate(rom);
     device.gen = rom.gen;
     device.nodeId = rom.nodeId;
     device.link = link;
+    device.quarantineReason = QuarantineReason::None;
 
-    // Clamp max async payload by remote MaxRec code (BIB bus options).
+    if (rom.bib.guid == 0) {
+        device.state = LifeState::Quarantined;
+        device.quarantineReason = QuarantineReason::ZeroObservedGuid;
+    } else if (duplicated) {
+        device.state = LifeState::Quarantined;
+        device.quarantineReason = QuarantineReason::DuplicateObservedGuid;
+    } else {
+        // Reconciliation runs only after the complete Config-ROM observation
+        // batch is available. A non-quarantined record is therefore routable
+        // immediately; no later component may silently promote identity state.
+        device.state = LifeState::Ready;
+    }
+
     const uint32_t maxFromRec32 = ASFW::FW::MaxAsyncPayloadBytesFromMaxRec(rom.bib.maxRec);
-    const uint16_t maxFromRec = (maxFromRec32 > std::numeric_limits<uint16_t>::max())
+    const uint16_t maxFromRec = maxFromRec32 > std::numeric_limits<uint16_t>::max()
                                     ? std::numeric_limits<uint16_t>::max()
                                     : static_cast<uint16_t>(maxFromRec32);
     if (device.link.maxPayloadBytes > maxFromRec) {
         device.link.maxPayloadBytes = maxFromRec;
     }
-    device.state = LifeState::Identified;
 
     if (operationalNodeId.has_value()) {
-        GenNodeKey key = MakeKey(rom.gen, *operationalNodeId);
-        genNodeToGuid_[key] = guid;
-    } else {
-        ASFW_LOG(Discovery, "Skipping node-index update for GUID=0x%016llx with invalid nodeId=%u",
-                 guid, rom.nodeId);
+        genNodeToInstance_[key] = instanceId;
     }
 
-    LogDeviceUpsert(guid, device, rom);
-    DeviceRecord snapshot = device;
-    IOLockUnlock(lock_);
-    return snapshot;
+    ASFW_LOG(Discovery,
+             "[DeviceIdentity] instance=%llu observedGuid=0x%016llx gen=%u node=%u "
+             "rootVendor=0x%06x rootModel=0x%06x units=%zu quarantine=%{public}s",
+             instanceId.value, device.ObservedGuid(), rom.gen.value, rom.nodeId,
+             device.RootVendorIdOrZero(), device.RootModelIdOrZero(),
+             device.identity.units.size(), QuarantineReasonString(device.quarantineReason));
+    return device;
 }
 
-void DeviceRegistry::MarkDiscovered(Generation gen, uint8_t nodeId) {
-    IOLockLock(lock_);
-    // Check if we already know this (gen, nodeId)
-    GenNodeKey key = MakeKey(gen, nodeId);
-    auto it = genNodeToGuid_.find(key);
-    
-    if (it != genNodeToGuid_.end()) {
-        // Update existing device
-        Guid64 guid = it->second;
-        auto devIt = devicesByGuid_.find(guid);
-        if (devIt != devicesByGuid_.end()) {
-            devIt->second.state = LifeState::Discovered;
-            devIt->second.gen = gen;
-            devIt->second.nodeId = nodeId;
+std::optional<DeviceInstanceId>
+DeviceRegistry::ReusableInstanceLocked(Guid64 observedGuid) const {
+    std::optional<DeviceInstanceId> match;
+    for (const auto& [instanceId, device] : devicesByInstance_) {
+        if (device.ObservedGuid() != observedGuid ||
+            device.quarantineReason == QuarantineReason::DuplicateObservedGuid ||
+            device.quarantineReason == QuarantineReason::ZeroObservedGuid) {
+            continue;
+        }
+        if (match.has_value()) {
+            return std::nullopt;
+        }
+        match = instanceId;
+    }
+    return match;
+}
+
+void DeviceRegistry::RetirePriorCollisionGroupLocked(Guid64 observedGuid,
+                                                      Generation currentGeneration) {
+    std::vector<DeviceInstanceId> staleInstances;
+    for (const auto& [instanceId, device] : devicesByInstance_) {
+        if (device.ObservedGuid() == observedGuid && device.gen != currentGeneration) {
+            staleInstances.push_back(instanceId);
         }
     }
-    // If not found, we'll create it later when ROM arrives
+    for (const auto instanceId : staleInstances) {
+        EraseInstanceLocked(instanceId);
+    }
+}
+
+void DeviceRegistry::RetireDevice(DeviceInstanceId instanceId) {
+    IOLockLock(lock_);
+    EraseInstanceLocked(instanceId);
     IOLockUnlock(lock_);
 }
 
-void DeviceRegistry::MarkDuplicateGuid(Generation gen, Guid64 guid, uint8_t nodeId) {
+void DeviceRegistry::Quarantine(DeviceInstanceId instanceId, QuarantineReason reason) {
+    if (reason == QuarantineReason::None) {
+        return;
+    }
     IOLockLock(lock_);
-    auto it = devicesByGuid_.find(guid);
-    if (it != devicesByGuid_.end()) {
+    if (auto it = devicesByInstance_.find(instanceId); it != devicesByInstance_.end()) {
         it->second.state = LifeState::Quarantined;
-        ASFW_LOG(Discovery, "⚠️  Duplicate GUID detected: 0x%016llx node=%u gen=%u (quarantined)",
-                 guid, nodeId, gen.value);
+        it->second.quarantineReason = reason;
+        it->second.routeEpoch = AllocateRouteEpochLocked();
     }
     IOLockUnlock(lock_);
 }
 
-void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
-    IOLockLock(lock_);
-    GenNodeKey key = MakeKey(gen, nodeId);
-    auto it = genNodeToGuid_.find(key);
-    
-    if (it != genNodeToGuid_.end()) {
-        Guid64 guid = it->second;
-        auto devIt = devicesByGuid_.find(guid);
-        if (devIt != devicesByGuid_.end()) {
-            devIt->second.state = LifeState::Lost;
-            devIt->second.nodeId = kInvalidNodeId;
-            devIt->second.routeEpoch = AllocateRouteEpochLocked();
-            ASFW_LOG(Discovery, "Device lost: GUID=0x%016llx node=%u gen=%u",
-                     guid, nodeId, gen.value);
-        }
-        // Remove from secondary index
-        genNodeToGuid_.erase(it);
+void DeviceRegistry::EraseInstanceLocked(DeviceInstanceId instanceId) {
+    devicesByInstance_.erase(instanceId);
+    for (auto it = genNodeToInstance_.begin(); it != genNodeToInstance_.end();) {
+        it = it->second == instanceId ? genNodeToInstance_.erase(it) : std::next(it);
     }
-    IOLockUnlock(lock_);
-}
-
-void DeviceRegistry::RetireDevice(Guid64 guid) {
-    IOLockLock(lock_);
-    auto it = devicesByGuid_.find(guid);
-    if (it != devicesByGuid_.end()) {
-        lastDeviceIncarnationByGuid_[guid] = it->second.deviceIncarnation;
-        devicesByGuid_.erase(it);
-    }
-    for (auto mapping = genNodeToGuid_.begin(); mapping != genNodeToGuid_.end();) {
-        mapping = (mapping->second == guid) ? genNodeToGuid_.erase(mapping) : std::next(mapping);
-    }
-    IOLockUnlock(lock_);
 }
 
 void DeviceRegistry::InvalidateLiveMappingsForBusReset() {
     IOLockLock(lock_);
     size_t invalidatedCount = 0;
-    for (auto& entry : devicesByGuid_) {
-        auto& device = entry.second;
+    for (auto& [instanceId, device] : devicesByInstance_) {
         if (!TryOperationalNodeId(device.nodeId).has_value()) {
             continue;
         }
-
         device.nodeId = kInvalidNodeId;
         device.routeEpoch = AllocateRouteEpochLocked();
         ++invalidatedCount;
     }
+    genNodeToInstance_.clear();
+    IOLockUnlock(lock_);
 
-    genNodeToGuid_.clear();
     ASFW_LOG(Discovery,
-             "Bus reset: invalidated %zu live GUID-to-node mappings pending ROM rescan",
+             "Bus reset: invalidated %zu runtime instance routes pending ROM rescan",
              invalidatedCount);
-    IOLockUnlock(lock_);
 }
 
-std::optional<DeviceRecord> DeviceRegistry::SnapshotByGuid(Guid64 guid) const {
+std::optional<DeviceRecord> DeviceRegistry::Snapshot(DeviceInstanceId instanceId) const {
     IOLockLock(lock_);
-    auto it = devicesByGuid_.find(guid);
-    const auto snapshot = (it != devicesByGuid_.end()) ? std::optional<DeviceRecord>{it->second}
-                                                        : std::nullopt;
-    IOLockUnlock(lock_);
-    return snapshot;
-}
-
-std::optional<DeviceRecord> DeviceRegistry::SnapshotByNode(Generation gen, uint8_t nodeId) const {
-    IOLockLock(lock_);
-    GenNodeKey key = MakeKey(gen, nodeId);
-    auto it = genNodeToGuid_.find(key);
-    const auto record = (it != genNodeToGuid_.end()) ? devicesByGuid_.find(it->second)
-                                                      : devicesByGuid_.end();
-    const auto snapshot = (record != devicesByGuid_.end()) ? std::optional<DeviceRecord>{record->second}
-                                                            : std::nullopt;
+    const auto it = devicesByInstance_.find(instanceId);
+    const auto snapshot = it != devicesByInstance_.end()
+                              ? std::optional<DeviceRecord>{it->second}
+                              : std::nullopt;
     IOLockUnlock(lock_);
     return snapshot;
 }
 
-std::optional<DeviceRouteToken> DeviceRegistry::CurrentRoute(Guid64 guid) const {
+std::optional<DeviceRecord> DeviceRegistry::SnapshotByNode(Generation gen,
+                                                            uint8_t nodeId) const {
     IOLockLock(lock_);
-    const auto it = devicesByGuid_.find(guid);
-    const auto token = (it != devicesByGuid_.end() && HasLiveRoute(it->second))
+    const auto route = genNodeToInstance_.find(MakeKey(gen, nodeId));
+    const auto record = route != genNodeToInstance_.end()
+                            ? devicesByInstance_.find(route->second)
+                            : devicesByInstance_.end();
+    const auto snapshot = record != devicesByInstance_.end()
+                              ? std::optional<DeviceRecord>{record->second}
+                              : std::nullopt;
+    IOLockUnlock(lock_);
+    return snapshot;
+}
+
+std::vector<DeviceRecord>
+DeviceRegistry::FindInstancesByObservedGuid(Guid64 observedGuid) const {
+    IOLockLock(lock_);
+    std::vector<DeviceRecord> matches;
+    for (const auto& [instanceId, device] : devicesByInstance_) {
+        if (device.ObservedGuid() == observedGuid) {
+            matches.push_back(device);
+        }
+    }
+    IOLockUnlock(lock_);
+    return matches;
+}
+
+std::optional<DeviceRouteToken>
+DeviceRegistry::CurrentRoute(DeviceInstanceId instanceId) const {
+    IOLockLock(lock_);
+    const auto it = devicesByInstance_.find(instanceId);
+    const auto token = it != devicesByInstance_.end() && HasLiveRoute(it->second)
                            ? std::optional<DeviceRouteToken>{MakeRouteToken(it->second)}
                            : std::nullopt;
     IOLockUnlock(lock_);
@@ -319,11 +398,11 @@ bool DeviceRegistry::IsCurrent(const DeviceRouteToken& token) const noexcept {
         return false;
     }
     IOLockLock(lock_);
-    const auto it = devicesByGuid_.find(token.guid);
-    const bool current = it != devicesByGuid_.end() && HasLiveRoute(it->second) &&
-                         it->second.deviceIncarnation == token.deviceIncarnation &&
+    const auto it = devicesByInstance_.find(token.deviceInstanceId);
+    const bool current = it != devicesByInstance_.end() && HasLiveRoute(it->second) &&
                          it->second.routeEpoch == token.routeEpoch &&
-                         it->second.gen == token.generation && it->second.nodeId == token.nodeId;
+                         it->second.gen == token.generation &&
+                         it->second.nodeId == token.nodeId;
     IOLockUnlock(lock_);
     return current;
 }
@@ -331,63 +410,62 @@ bool DeviceRegistry::IsCurrent(const DeviceRouteToken& token) const noexcept {
 std::vector<DeviceRecord> DeviceRegistry::LiveDevices(Generation gen) const {
     IOLockLock(lock_);
     std::vector<DeviceRecord> result;
-    
-    for (const auto& entry : devicesByGuid_) {
-        const auto& device = entry.second;
+    for (const auto& [instanceId, device] : devicesByInstance_) {
         if (device.gen == gen && TryOperationalNodeId(device.nodeId).has_value()) {
             result.push_back(device);
         }
     }
-    
+    IOLockUnlock(lock_);
+    return result;
+}
+
+std::vector<DeviceRecord> DeviceRegistry::AllDevices() const {
+    IOLockLock(lock_);
+    std::vector<DeviceRecord> result;
+    result.reserve(devicesByInstance_.size());
+    for (const auto& [instanceId, device] : devicesByInstance_) {
+        result.push_back(device);
+    }
     IOLockUnlock(lock_);
     return result;
 }
 
 void DeviceRegistry::Clear() {
     IOLockLock(lock_);
-    devicesByGuid_.clear();
-    genNodeToGuid_.clear();
-    lastDeviceIncarnationByGuid_.clear();
+    devicesByInstance_.clear();
+    genNodeToInstance_.clear();
+    nextDeviceInstanceId_ = 0;
     nextRouteEpoch_ = 0;
     IOLockUnlock(lock_);
 }
 
 DeviceKind DeviceRegistry::ClassifyDevice(const ConfigROM& rom) const {
     for (const auto& unit : rom.unitDirectories) {
-        if (unit.unitSpecId == kUnitSpecId_TA) {
-            return DeviceKind::TA_61883;
-        }
         if (IsSBP2Unit(unit)) {
             return DeviceKind::Storage;
         }
+        if (unit.unitSpecId == kUnitSpecIdTA) {
+            return DeviceKind::TA_61883;
+        }
     }
-
     return DeviceKind::Unknown;
 }
 
 bool DeviceRegistry::IsAudioCandidate(const ConfigROM& rom) const {
-    // Device is audio candidate if:
-    // 1. Unit_Spec_Id == 0x00A02D (1394 TA / AV/C)
-    // 2. Has appropriate Unit_Sw_Version for audio
-    
-    bool hasAudioSpec = false;
-    
-    for (const auto& unit : rom.unitDirectories) {
-        if (unit.unitSpecId == kUnitSpecId_TA || unit.unitSpecId == kUnitSpecId_AVC) {
-            hasAudioSpec = true;
-        }
-    }
-    
-    return hasAudioSpec;
+    return std::ranges::any_of(rom.unitDirectories, [](const UnitDirectory& unit) {
+        return unit.unitSpecId == kUnitSpecIdTA;
+    });
 }
 
-DeviceRegistry::GenNodeKey DeviceRegistry::MakeKey(Generation gen, uint8_t nodeId) {
-    return (gen.value << 8) | static_cast<uint32_t>(nodeId);
+DeviceInstanceId DeviceRegistry::AllocateDeviceInstanceIdLocked() noexcept {
+    ++nextDeviceInstanceId_;
+    if (nextDeviceInstanceId_ == 0) {
+        ++nextDeviceInstanceId_;
+    }
+    return DeviceInstanceId{nextDeviceInstanceId_};
 }
 
 uint64_t DeviceRegistry::AllocateRouteEpochLocked() noexcept {
-    // Zero is reserved for an invalid token. Wrap is theoretically possible but
-    // requires 2^64 route changes during one driver incarnation.
     ++nextRouteEpoch_;
     if (nextRouteEpoch_ == 0) {
         ++nextRouteEpoch_;
@@ -401,11 +479,14 @@ bool DeviceRegistry::HasLiveRoute(const DeviceRecord& device) noexcept {
 }
 
 DeviceRouteToken DeviceRegistry::MakeRouteToken(const DeviceRecord& device) noexcept {
-    return DeviceRouteToken{.guid = device.guid,
-                            .deviceIncarnation = device.deviceIncarnation,
+    return DeviceRouteToken{.deviceInstanceId = device.instanceId,
                             .routeEpoch = device.routeEpoch,
                             .generation = device.gen,
                             .nodeId = device.nodeId};
+}
+
+DeviceRegistry::GenNodeKey DeviceRegistry::MakeKey(Generation gen, uint8_t nodeId) {
+    return (gen.value << 8U) | static_cast<uint32_t>(nodeId);
 }
 
 } // namespace ASFW::Discovery

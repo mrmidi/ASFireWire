@@ -10,6 +10,7 @@
 
 #include <DriverKit/IOUserClient.h>
 #include "../../Async/AsyncTypes.hpp"
+#include "../../Discovery/DeviceRouteToken.hpp"
 
 // Forward declarations
 class ASFWDriver;
@@ -65,6 +66,7 @@ private:
         ASFW::Async::AsyncStatus status,
         uint8_t responseCode,
         void* context,
+        ASFW::Discovery::DeviceRouteToken route,
         const uint8_t* responsePayload,
         uint32_t responseLength);
 };

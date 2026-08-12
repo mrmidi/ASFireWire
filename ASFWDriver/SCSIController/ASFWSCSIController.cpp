@@ -180,7 +180,7 @@ void FillResponseFromResult(SCSIUserParallelResponse& resp,
 // framework must tolerate hotplug create/destroy racing termination; the call
 // then fails and is logged. HW validation covers the unplug paths.
 void HandleLoginEdge(ASFWSCSIController* self, PendingState* ps,
-                     uint64_t guid, bool loggedIn)
+                     ASFW::Discovery::DeviceInstanceId instanceId, bool loggedIn)
 {
     if (IsStopping(ps)) {
         return;
@@ -232,7 +232,8 @@ void HandleLoginEdge(ASFWSCSIController* self, PendingState* ps,
         if (kr == kIOReturnSuccess) {
             SetTargetAttached(ps, true);
             ASFW_LOG(Controller,
-                     "[SCSIHBA] target 0 created (SBP-2 login, guid=0x%016llx)", guid);
+                     "[SCSIHBA] target 0 created (SBP-2 login, instance=%llu)",
+                     instanceId.value);
         } else {
             // Not retried here: a reconnect or replug re-fires the up edge.
             ASFW_LOG(Controller, "[SCSIHBA] UserCreateTargetForID(0) failed: 0x%x", kr);
@@ -252,11 +253,12 @@ void HandleLoginEdge(ASFWSCSIController* self, PendingState* ps,
         SetTargetAttached(ps, false);
         if (kr == kIOReturnSuccess) {
             ASFW_LOG(Controller,
-                     "[SCSIHBA] target 0 destroyed (SBP-2 logout, guid=0x%016llx)", guid);
+                     "[SCSIHBA] target 0 destroyed (SBP-2 logout, instance=%llu)",
+                     instanceId.value);
         } else {
             ASFW_LOG(Controller,
-                     "[SCSIHBA] UserDestroyTargetForID(0) failed: 0x%x (guid=0x%016llx)",
-                     kr, guid);
+                     "[SCSIHBA] UserDestroyTargetForID(0) failed: 0x%x (instance=%llu)",
+                     kr, instanceId.value);
         }
     }
 }
@@ -355,13 +357,14 @@ kern_return_t IMPL(ASFWSCSIController, Start)
     // Runs UNDER the hub lock (see SBP2BridgeHub::NotifyTargetState), so it only
     // schedules work: retain self, hop onto lifecycleQueue, handle there, release.
     PendingState* ps = static_cast<PendingState*>(ivars->pendingState);
-    SBP2::SBP2BridgeHub::SetTargetObserver([this, ps](uint64_t guid, bool loggedIn) {
+    SBP2::SBP2BridgeHub::SetTargetObserver(
+        [this, ps](ASFW::Discovery::DeviceInstanceId instanceId, bool loggedIn) {
         if (ivars == nullptr || ivars->lifecycleQueue == nullptr) {
             return;
         }
         this->retain();
         ivars->lifecycleQueue->DispatchAsync(^{
-            HandleLoginEdge(this, ps, guid, loggedIn);
+            HandleLoginEdge(this, ps, instanceId, loggedIn);
             this->release();
         });
     });
@@ -376,7 +379,7 @@ kern_return_t IMPL(ASFWSCSIController, Start)
     if (bridge && bridge->IsReady()) {
         this->retain();
         ivars->lifecycleQueue->DispatchAsync(^{
-            HandleLoginEdge(this, ps, /*guid*/ 0, /*loggedIn*/ true);
+            HandleLoginEdge(this, ps, ASFW::Discovery::DeviceInstanceId{}, /*loggedIn*/ true);
             this->release();
         });
     }

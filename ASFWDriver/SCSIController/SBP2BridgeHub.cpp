@@ -69,7 +69,8 @@ void SBP2BridgeHub::ClearTargetObserver() {
     IOLockUnlock(s.lock);
 }
 
-void SBP2BridgeHub::NotifyTargetState(uint64_t guid, bool loggedIn) {
+void SBP2BridgeHub::NotifyTargetState(Discovery::DeviceInstanceId instanceId,
+                                      bool loggedIn) {
     // Invoke UNDER the lock so ClearTargetObserver() is synchronous with respect
     // to an in-flight notification: once ClearTargetObserver returns, no observer
     // call is running or can start, so the HBA's Stop can safely tear down after.
@@ -79,7 +80,7 @@ void SBP2BridgeHub::NotifyTargetState(uint64_t guid, bool loggedIn) {
     auto& s = State();
     IOLockLock(s.lock);
     if (s.targetObserver) {
-        s.targetObserver(guid, loggedIn);
+        s.targetObserver(instanceId, loggedIn);
     }
     IOLockUnlock(s.lock);
 }

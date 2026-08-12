@@ -5,18 +5,27 @@
 
 namespace ASFW::Discovery {
 
-// Private constructor
-FWUnit::FWUnit(std::shared_ptr<FWDevice> parentDevice, uint32_t directoryOffset)
-    : parentDevice_(std::move(parentDevice))
-    , directoryOffset_(directoryOffset)
+FWUnit::FWUnit(std::shared_ptr<FWDevice> parentDevice, const UnitDirectory& directory)
+    : parentDevice_(parentDevice)
+    , parentDeviceId_(parentDevice ? parentDevice->GetInstanceId() : DeviceInstanceId{})
+    , directoryOffset_(directory.offsetQuadlets)
+    , unitSpecId_(directory.unitSpecId)
+    , unitSwVersion_(directory.unitSwVersion)
+    , vendorId_(directory.vendorId)
+    , modelId_(directory.modelId)
+    , logicalUnitNumber_(directory.logicalUnitNumber)
+    , managementAgentOffset_(directory.managementAgentOffset)
+    , unitCharacteristics_(directory.unitCharacteristics)
+    , fastStart_(directory.fastStart)
+    , vendorName_(directory.vendorName.value_or(std::string{}))
+    , productName_(directory.modelName.value_or(std::string{}))
 {
 }
 
 // Factory method
 std::shared_ptr<FWUnit> FWUnit::Create(
     std::shared_ptr<FWDevice> parentDevice,
-    uint32_t directoryOffset,
-    const std::vector<RomEntry>& entries)
+    const UnitDirectory& directory)
 {
     if (!parentDevice) {
         return nullptr;
@@ -24,11 +33,8 @@ std::shared_ptr<FWUnit> FWUnit::Create(
 
     // Use new + shared_ptr constructor (can't use make_shared with private ctor)
     auto unit = std::shared_ptr<FWUnit>(
-        new FWUnit(std::move(parentDevice), directoryOffset)
+        new FWUnit(std::move(parentDevice), directory)
     );
-
-    // Parse ROM entries to extract unit keys
-    unit->ParseEntries(entries);
 
     // Validate required keys are present
     if (unit->unitSpecId_ == 0 || unit->unitSwVersion_ == 0) {
@@ -36,54 +42,7 @@ std::shared_ptr<FWUnit> FWUnit::Create(
         return nullptr;
     }
 
-    // Extract text descriptors (optional)
-    unit->ExtractTextLeaves(entries);
-
     return unit;
-}
-
-void FWUnit::ParseEntries(const std::vector<RomEntry>& entries)
-{
-    for (const auto& entry : entries) {
-        switch (entry.key) {
-            case CfgKey::Unit_Spec_Id:
-                unitSpecId_ = entry.value;
-                break;
-
-            case CfgKey::Unit_Sw_Version:
-                unitSwVersion_ = entry.value;
-                break;
-
-            case CfgKey::Logical_Unit_Number:
-                logicalUnitNumber_ = entry.value;
-                break;
-
-            case CfgKey::ModelId:
-                modelId_ = entry.value;
-                break;
-
-            case CfgKey::Management_Agent_Offset:
-                managementAgentOffset_ = entry.value;
-                break;
-
-            case CfgKey::Unit_Characteristics:
-                unitCharacteristics_ = entry.value;
-                break;
-
-            case CfgKey::Fast_Start:
-                fastStart_ = entry.value;
-                break;
-
-            // Other keys (CSR offsets, dependent directories) ignored for now
-            default:
-                break;
-        }
-    }
-}
-
-void FWUnit::ExtractTextLeaves(const std::vector<RomEntry>& entries)
-{
-    (void)entries;
 }
 
 bool FWUnit::Matches(uint32_t specId, std::optional<uint32_t> swVersion) const

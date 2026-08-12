@@ -9,14 +9,12 @@ namespace ASFW::Discovery {
 
 // Private constructor
 FWDevice::FWDevice(const DeviceRecord& record)
-    : guid_(record.guid)
-    , vendorId_(record.vendorId)
-    , modelId_(record.modelId)
+    : instanceId_(record.instanceId)
+    , identity_(record.identity)
     , kind_(record.kind)
-    , vendorName_(record.vendorName)
-    , modelName_(record.modelName)
     , isAudioCandidate_(record.isAudioCandidate)
     , supportsAMDTP_(record.supportsAMDTP)
+    , quarantineReason_(record.quarantineReason)
     , generation_(record.gen)
     , nodeId_(record.nodeId)
     , linkPolicy_(record.link)
@@ -28,7 +26,7 @@ std::shared_ptr<FWDevice> FWDevice::Create(
     const DeviceRecord& record,
     const ConfigROM& rom)
 {
-    if (record.guid == 0) {
+    if (!record.instanceId) {
         return nullptr; // Invalid device
     }
 
@@ -43,33 +41,31 @@ std::shared_ptr<FWDevice> FWDevice::Create(
 
 void FWDevice::ParseUnits(const ConfigROM& rom)
 {
-    constexpr uint8_t kEntryTypeDirectory = 3;
-
-    for (const auto& entry : rom.rootDirMinimal) {
-        if (entry.key == CfgKey::Unit_Directory && entry.entryType == kEntryTypeDirectory) {
-            uint32_t unitDirOffset = entry.leafOffsetQuadlets;
-
-            if (unitDirOffset == 0) {
-                continue;
-            }
-
-            auto unitEntries = ExtractUnitDirectory(rom, unitDirOffset);
-
-            if (unitEntries.empty()) {
-                ASFW_LOG_V1(Discovery, "Failed to extract unit directory at offset %u", unitDirOffset);
-                continue;
-            }
-
-            auto unit = FWUnit::Create(shared_from_this(), unitDirOffset, unitEntries);
-
-            if (unit) {
-                units_.push_back(std::move(unit));
-            }
+    for (const auto& directory : rom.unitDirectories) {
+        auto unit = FWUnit::Create(shared_from_this(), directory);
+        if (unit) {
+            units_.push_back(std::move(unit));
         }
     }
 
     if (units_.empty()) {
-        auto unit = FWUnit::Create(shared_from_this(), 0, rom.rootDirMinimal);
+        UnitDirectory rootUnit{};
+        for (const auto& entry : rom.rootDirMinimal) {
+            switch (entry.key) {
+                case CfgKey::Unit_Spec_Id:
+                    rootUnit.unitSpecId = entry.value;
+                    break;
+                case CfgKey::Unit_Sw_Version:
+                    rootUnit.unitSwVersion = entry.value;
+                    break;
+                case CfgKey::Logical_Unit_Number:
+                    rootUnit.logicalUnitNumber = entry.value;
+                    break;
+                default:
+                    break;
+            }
+        }
+        auto unit = FWUnit::Create(shared_from_this(), rootUnit);
 
         if (unit) {
             units_.push_back(std::move(unit));
@@ -174,6 +170,11 @@ std::vector<std::shared_ptr<FWUnit>> FWDevice::FindUnitsBySpec(
 void FWDevice::Publish()
 {
     if (state_ != State::Created) {
+        return;
+    }
+
+    if (quarantineReason_ != QuarantineReason::None) {
+        state_ = State::Quarantined;
         return;
     }
 

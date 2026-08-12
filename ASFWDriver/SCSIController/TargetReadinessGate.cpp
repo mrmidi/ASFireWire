@@ -24,19 +24,19 @@ TargetReadinessGate::TargetReadinessGate(Scheduling::ITimerScheduler& scheduler,
     , submit_(std::move(submit))
     , notify_(std::move(notify)) {}
 
-void TargetReadinessGate::OnEdge(uint64_t guid, bool loggedIn) {
+void TargetReadinessGate::OnEdge(Discovery::DeviceInstanceId instanceId, bool loggedIn) {
     if (!loggedIn) {
         ++epoch_; // invalidate outstanding probe + timer callbacks
         CancelTimer();
         gateActive_ = false;
         notifiedUp_ = false;
-        notify_(guid, false);
+        notify_(instanceId, false);
         return;
     }
     if (notifiedUp_) {
         // Reconnect re-assert: login continuous, target attached — pass
         // through without probes (see header).
-        notify_(guid, true);
+        notify_(instanceId, true);
         return;
     }
     if (gateActive_) {
@@ -44,7 +44,7 @@ void TargetReadinessGate::OnEdge(uint64_t guid, bool loggedIn) {
     }
     gateActive_ = true;
     attempts_ = 0;
-    ProbeOnce(guid, ++epoch_);
+    ProbeOnce(instanceId, ++epoch_);
 }
 
 void TargetReadinessGate::Cancel() {
@@ -53,51 +53,52 @@ void TargetReadinessGate::Cancel() {
     gateActive_ = false;
 }
 
-void TargetReadinessGate::ProbeOnce(uint64_t guid, uint64_t epoch) {
+void TargetReadinessGate::ProbeOnce(Discovery::DeviceInstanceId instanceId, uint64_t epoch) {
     ++attempts_;
     // The completion callback may outlive this gate inside the bridge's task
     // queue, but it only ever runs while the owning bridge is alive (the
     // bridge's Shutdown drains it after Cancel() has bumped epoch_), so the
     // raw `this` capture cannot be dereferenced after free.
     submit_(SCSI::BuildTestUnitReadyRequest(),
-            [this, guid, epoch](const SCSI::CommandResult& result) {
-                OnProbeResult(guid, epoch, result);
+            [this, instanceId, epoch](const SCSI::CommandResult& result) {
+                OnProbeResult(instanceId, epoch, result);
             });
 }
 
-void TargetReadinessGate::OnProbeResult(uint64_t guid, uint64_t epoch,
+void TargetReadinessGate::OnProbeResult(Discovery::DeviceInstanceId instanceId, uint64_t epoch,
                                         const SCSI::CommandResult& result) {
     if (epoch != epoch_ || !gateActive_) {
         return; // superseded by a later edge or Cancel()
     }
     const Probe probe = Classify(result);
     if (probe == Probe::Ready) {
-        Finish(guid, "device ready");
+        Finish(instanceId, "device ready");
         return;
     }
     if (attempts_ >= kProbeBudget) {
-        Finish(guid, "probe budget exhausted — announcing anyway");
+        Finish(instanceId, "probe budget exhausted — announcing anyway");
         return;
     }
     if (probe == Probe::RetryNow) {
-        ProbeOnce(guid, epoch);
+        ProbeOnce(instanceId, epoch);
         return;
     }
-    timer_ = scheduler_.ScheduleAfter(kRetryDelayNs, [this, guid, epoch]() {
+    timer_ = scheduler_.ScheduleAfter(kRetryDelayNs, [this, instanceId, epoch]() {
         timer_ = Scheduling::kInvalidTimerToken;
         if (epoch == epoch_ && gateActive_) {
-            ProbeOnce(guid, epoch);
+            ProbeOnce(instanceId, epoch);
         }
     });
 }
 
-void TargetReadinessGate::Finish(uint64_t guid, const char* reason) {
+void TargetReadinessGate::Finish(Discovery::DeviceInstanceId instanceId,
+                                 const char* reason) {
     gateActive_ = false;
     notifiedUp_ = true;
     ASFW_LOG(Controller,
              "[SBP2Bridge] readiness gate: %{public}s after %u probe(s) — announcing target",
              reason, attempts_);
-    notify_(guid, true);
+    notify_(instanceId, true);
 }
 
 void TargetReadinessGate::CancelTimer() noexcept {

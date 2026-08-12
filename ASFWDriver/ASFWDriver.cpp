@@ -41,7 +41,8 @@
 #include "Audio/Core/AudioCoordinator.hpp"
 #include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
-#include "Audio/Protocols/AVCStartReadiness.hpp"
+#include "Audio/Devices/AudioDeviceSessionManager.hpp"
+#include "Audio/Families/ExistingFamilyProviders.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/BusResetCoordinator.hpp"
 #include "Bus/SelfIDCapture.hpp"
@@ -196,6 +197,11 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
 
     if (ctx.deps.asyncSubsystem) {
         ctx.deps.asyncSubsystem->BeginQuiesce();
+    }
+    if (ctx.audioSessionManager) {
+        // Sole owner of endpoint lifecycle: quiesce stream, cancel probes,
+        // invalidate neutral bindings, terminate nubs, then release adapters.
+        ctx.audioSessionManager->Shutdown();
     }
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->BeginTeardown();
@@ -435,8 +441,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager && ctx.deps.deviceRegistry) {
         auto& bus = ctx.controller->Bus();
         ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
-            this, *ctx.deps.deviceRegistry, *ctx.deps.deviceManager, bus, bus, *ctx.deps.sbp2SessionScheduler,
-            ctx.audioCoordinator.get());
+            *ctx.deps.deviceRegistry, *ctx.deps.deviceManager, bus, bus,
+            *ctx.deps.sbp2SessionScheduler);
         ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
         ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
     }
@@ -478,8 +484,45 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ASFW_LOG(Controller, "✅ CMPClient initialized");
     }
 
-    if (ctx.audioCoordinator) {
-        ctx.audioCoordinator->SetCMPClient(ctx.deps.cmpClient.get());
+    if (!ctx.audioSessionManager && ctx.audioCoordinator &&
+        ctx.deps.deviceManager && ctx.deps.deviceRegistry &&
+        ctx.deps.avcDiscovery && ctx.deps.irmClient && ctx.deps.cmpClient &&
+        ctx.deps.sbp2SessionScheduler) {
+        auto manager = std::make_shared<
+            ASFW::Audio::Devices::AudioDeviceSessionManager>(
+                *ctx.deps.deviceManager, *ctx.deps.deviceRegistry,
+                *ctx.audioCoordinator);
+        auto& bus = ctx.controller->Bus();
+        ASFW::Audio::Families::ExistingFamilyProviderDependencies providers{
+            bus, bus, *ctx.deps.deviceRegistry, *ctx.deps.avcDiscovery,
+            ctx.deps.irmClient.get(), ctx.deps.cmpClient.get(),
+            *ctx.deps.sbp2SessionScheduler};
+        const bool registered =
+            manager->RegisterProvider(
+                ASFW::Audio::Families::MakeGenericAvcFamilyProvider(providers)) &&
+            manager->RegisterProvider(
+                ASFW::Audio::Families::MakeBeBoBFamilyProvider(providers)) &&
+            manager->RegisterProvider(
+                ASFW::Audio::Families::MakeDiceFamilyProvider(providers)) &&
+            manager->RegisterProvider(
+                ASFW::Audio::Families::MakeOxfwFamilyProvider(providers));
+        if (!registered) {
+            return failStart(kIOReturnError,
+                             "audio family provider registration failed");
+        }
+        std::weak_ptr<ASFW::Audio::Devices::AudioDeviceSessionManager> weakManager =
+            manager;
+        ctx.audioCoordinator->SetSessionStreamingCallback(
+            [weakManager](ASFW::Audio::Devices::AudioEndpointId endpointId,
+                          bool streaming) noexcept {
+                const auto managerHold = weakManager.lock();
+                return managerHold &&
+                       managerHold->UpdateStreamingState(endpointId, streaming);
+            });
+        ctx.audioSessionManager = manager;
+        manager->Start();
+        ASFW_LOG(Controller,
+                 "✅ AudioDeviceSessionManager initialized with explicit family providers");
     }
 
     // Allocate the queryable log ring before configuration so its
@@ -1082,55 +1125,36 @@ kern_return_t ASFWDriver::GetAudioAutoStart(uint32_t* enabled) const {
     return kIOReturnSuccess;
 }
 
-kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
+kern_return_t ASFWDriver::StartAudioStreaming(uint64_t rawEndpointId) {
+    const ASFW::Audio::Devices::AudioEndpointId endpointId{rawEndpointId};
     if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
         ASFW_LOG_ERROR(Audio,
-                       "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx",
-                       "audio-coordinator", guid);
+                       "[AudioSession] developer stream start refused stage=%{public}s endpoint=%llu",
+                       "audio-coordinator", rawEndpointId);
         return kIOReturnNotReady;
     }
     auto& ctx = *ivars->context;
-    // The normal AudioDriverKit path refreshes FCP routing immediately before
-    // each AV/C start. MCP must do the same: a GUID survives a bus reset while
-    // its node/FCP transport does not. This prevents a developer start from
-    // issuing the PHASE 88's unit-plug format command through a stale route.
-    if (!ctx.deps.deviceRegistry || !ctx.deps.audioRuntimeRegistry ||
-        !ctx.deps.avcDiscovery) {
+    if (!endpointId || !ctx.deps.audioRuntimeRegistry ||
+        !ctx.deps.audioRuntimeRegistry->FindProfile(endpointId)) {
         ASFW_LOG_ERROR(Audio,
-                       "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx",
-                       "runtime-dependencies", guid);
+                       "[AudioSession] developer stream start refused stage=%{public}s endpoint=%llu",
+                       "resolved-endpoint", rawEndpointId);
         return kIOReturnNotReady;
     }
-    const auto record = ctx.deps.deviceRegistry->SnapshotByGuid(guid);
-    auto protocol = ctx.deps.audioRuntimeRegistry->FindShared(guid);
-    if (!record.has_value() || !protocol) {
-        ASFW_LOG_ERROR(Audio,
-                       "[BeBoB] developer stream start refused stage=%{public}s GUID=0x%016llx record=%u protocol=%u",
-                       "device-config", guid, record.has_value(), protocol != nullptr);
-        return kIOReturnNotReady;
-    }
-    auto* transport = ctx.deps.avcDiscovery->GetFCPTransportForNodeID(record->nodeId);
-    if (!ASFW::Audio::HasReadyAVCStartRoute(record->nodeId, transport != nullptr)) {
-        ASFW_LOG(Audio,
-                 "[BeBoB] developer stream start refused; no live FCP route GUID=0x%016llx node=%u",
-                 guid, record->nodeId);
-        return kIOReturnNotReady;
-    }
-    const auto route = ctx.deps.deviceRegistry->CurrentRoute(guid);
-    if (!route) {
-        return kIOReturnNotReady;
-    }
-    protocol->UpdateRuntimeContext(*route, transport);
-    ASFW_LOG(Audio, "[BeBoB] developer stream start GUID=0x%016llx", guid);
-    return ctx.audioCoordinator->StartStreaming(guid);
+    ASFW_LOG(Audio, "[AudioSession] developer stream start endpoint=%llu",
+             rawEndpointId);
+    return ctx.audioCoordinator->StartStreaming(endpointId);
 }
 
-kern_return_t ASFWDriver::StopAudioStreaming(uint64_t guid) {
+kern_return_t ASFWDriver::StopAudioStreaming(uint64_t rawEndpointId) {
     if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
         return kIOReturnNotReady;
     }
-    ASFW_LOG(Audio, "[BeBoB] developer stream stop GUID=0x%016llx", guid);
-    return ivars->context->audioCoordinator->StopStreaming(guid);
+    const ASFW::Audio::Devices::AudioEndpointId endpointId{rawEndpointId};
+    if (!endpointId) return kIOReturnBadArgument;
+    ASFW_LOG(Audio, "[AudioSession] developer stream stop endpoint=%llu",
+             rawEndpointId);
+    return ivars->context->audioCoordinator->StopStreaming(endpointId);
 }
 
 kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) {
@@ -1184,7 +1208,7 @@ void* ASFWDriver::GetIsochReceiveContext() const {
 // MARK: - DV Capture (no audio nub required)
 // =============================================================================
 
-kern_return_t ASFWDriver::StartDVCapture(uint64_t deviceGuid,
+kern_return_t ASFWDriver::StartDVCapture(uint64_t deviceInstanceId,
                                          uint64_t ownerToken) {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
@@ -1203,7 +1227,8 @@ kern_return_t ASFWDriver::StartDVCapture(uint64_t deviceGuid,
         !ctx.deps.cmpClient) {
         return kIOReturnNotReady;
     }
-    return ctx.dvCapture.Start(deviceGuid, ownerToken, ctx.isoch,
+    return ctx.dvCapture.Start(ASFW::Discovery::DeviceInstanceId{deviceInstanceId},
+                               ownerToken, ctx.isoch,
                                *ctx.deps.hardware, *ctx.deps.deviceRegistry,
                                *ctx.deps.irmClient, *ctx.deps.cmpClient);
 }
