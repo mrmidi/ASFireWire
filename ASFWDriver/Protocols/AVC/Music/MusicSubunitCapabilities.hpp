@@ -75,7 +75,7 @@ struct MusicSubunitCapabilities {
     
     std::string vendorName;                      // From FWDevice::GetVendorName()
     std::string modelName;                       // From FWDevice::GetModelName()
-    uint64_t guid{0};                            // From FWDevice::GetGUID()
+    uint64_t guid{0};                            // Observed Config-ROM evidence only
 
     //==========================================================================
     // Audio Configuration (derived from MusicSubunit discovery)

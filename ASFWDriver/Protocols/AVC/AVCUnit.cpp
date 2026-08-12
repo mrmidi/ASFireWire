@@ -22,7 +22,8 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                  Discovery::DeviceRegistry& routeRegistry,
                  Protocols::Ports::FireWireBusOps& busOps,
                  Protocols::Ports::FireWireBusInfo& busInfo,
-                 Scheduling::ITimerScheduler& timerScheduler)
+                 Scheduling::ITimerScheduler& timerScheduler,
+                 std::shared_ptr<FCPTransport> sharedTransport)
     : device_(device),
       unit_(unit),
       routeRegistry_(routeRegistry),
@@ -40,10 +41,19 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     config.maxRetries = kFCPMaxRetries;
     config.allowBusResetRetry = false;  // Default: generation-locked
 
-    // Create FCP transport
-    fcpTransport_ = std::make_shared<FCPTransport>();
+    // One physical node owns one FCP transaction domain. AVCDiscovery passes a
+    // shared remote transport when a node has multiple unit directories; this
+    // mirrors Linux's per-fw_unit transaction routing and bus-reset abort
+    // behavior (references/linux-sound-firewire-stack/firewire/fcp.c:208-314).
+    fcpTransport_ = std::move(sharedTransport);
+    ownsFcpTransport_ = !fcpTransport_;
+    if (!fcpTransport_) {
+        fcpTransport_ = std::make_shared<FCPTransport>();
+    }
     if (fcpTransport_) {
-        if (!fcpTransport_->init(&busOps_, &busInfo_, device.get(), routeRegistry_, timerScheduler_, config)) {
+        if (ownsFcpTransport_ &&
+            !fcpTransport_->init(&busOps_, &busInfo_, device.get(), routeRegistry_,
+                                 timerScheduler_, config)) {
             ASFW_LOG_ERROR(AVC, "AVCUnit: Failed to initialize FCPTransport");
             fcpTransport_.reset();
             return;
@@ -61,7 +71,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
 
     ASFW_LOG_V1(AVC,
                 "AVCUnit: Created for device GUID=%llx, specID=0x%06x",
-                GetGUID(), GetSpecID());
+                GetObservedGuid(), GetSpecID());
 }
 
 void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
@@ -87,12 +97,12 @@ void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
 
 AVCUnit::~AVCUnit() {
     Shutdown();
-    ASFW_LOG_V1(AVC, "AVCUnit: Destroyed (GUID=%llx)", GetGUID());
+    ASFW_LOG_V1(AVC, "AVCUnit: Destroyed (instance=%llu)", GetDeviceInstanceId().value);
 }
 
 void AVCUnit::Shutdown() {
     initialized_ = false;
-    if (fcpTransport_) {
+    if (ownsFcpTransport_ && fcpTransport_) {
         fcpTransport_->Shutdown();
     }
 }
@@ -157,7 +167,8 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
 }
 
 void AVCUnit::ReScan(std::function<void(bool)> completion) {
-    ASFW_LOG_V1(AVC, "AVCUnit: Re-scan requested (GUID=%llx)", GetGUID());
+    ASFW_LOG_V1(AVC, "AVCUnit: Re-scan requested (instance=%llu)",
+                GetDeviceInstanceId().value);
     
     // Reset state
     initialized_ = false;
@@ -638,7 +649,7 @@ void AVCUnit::OnBusReset(uint32_t newGeneration) {
 }
 
 void AVCUnit::OnRouteRevalidated() {
-    const auto route = routeRegistry_.CurrentRoute(GetGUID());
+    const auto route = routeRegistry_.CurrentRoute(GetDeviceInstanceId());
     if (fcpTransport_ && route.has_value()) {
         fcpTransport_->OnRouteRevalidated(*route);
     }
@@ -648,12 +659,22 @@ void AVCUnit::OnRouteRevalidated() {
 // Accessors
 //==============================================================================
 
-uint64_t AVCUnit::GetGUID() const {
+ASFW::Discovery::DeviceInstanceId AVCUnit::GetDeviceInstanceId() const {
     auto device = device_.lock();
     if (!device) {
-        return 0;
+        return {};
     }
-    return device->GetGUID();
+    return device->GetInstanceId();
+}
+
+ASFW::Discovery::UnitInstanceId AVCUnit::GetUnitInstanceId() const {
+    auto unit = unit_.lock();
+    return unit ? unit->GetInstanceId() : ASFW::Discovery::UnitInstanceId{};
+}
+
+uint64_t AVCUnit::GetObservedGuid() const {
+    auto device = device_.lock();
+    return device ? device->GetObservedGuid() : 0;
 }
 
 uint32_t AVCUnit::GetSpecID() const {

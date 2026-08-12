@@ -22,14 +22,16 @@ Config ROM identity is known from discovery. Choose what may be sent **from that
 alone**. Do not probe-and-back-off on timeout: a freeze is not a timeout, and no
 timeout value recovers a device that needs its power cycled.
 
-The app-side deny-list is `AVCProbeRestrictions` (`ASFW/Models/AVCReportModels.swift`).
-It is a deny-list on purpose — unknown devices are still probed, because the AV/C
-Device Report exists to describe hardware we do not support yet.
+The production authority is the safety-rule section of
+`DeviceProfiles/Audio/AudioDeviceCatalog.cpp`. It runs before positive matching or
+generic AV/C fallback. Discovery publishes the resulting quarantine state to the app;
+there is no second Swift deny-list to drift out of sync.
 
-**The driver side has no equivalent gate yet.** `AVCDiscovery.cpp` routes every
-identity in `BeBoBDeviceProfiles::kDevices` into `StartAVCPlug0Discovery`, and
-everything else into generic `AVCUnit::Initialize()`. Adding a hazardous identity to
-either table without landing a gate in the same change is unsafe.
+The FireWire 1814 bootloader (`0x00010070`), operational firmware (`0x00010071`),
+and ProjectMix I/O (`0x00010091`) are diagnostics-only in the normalized pass. No
+automatic or user-initiated FCP/vendor transaction, family adapter, or audio nub is
+permitted for those identities until a later hardware-support change supplies a
+separately reviewed named operation policy.
 
 ---
 
@@ -68,9 +70,9 @@ Not "no AV/C". The safe surface is narrower *and* wider than a blanket ban:
 | AV/C extended stream format (`0x2F` + `0xC0`/`0xC1`) | **No** | `maudio/special.rs:100`; and the vendor kext binds `FWRev1AudioDevice::AVCControlPlugSignalFormat` (blind `0x18`/`0x19` CONTROL) into the 1814's vtable at `0x37510`, never the `FWRev2AudioDevice` builder that queries the `0xC1` list |
 | AV/C SIGNAL SOURCE (`0x1A`) | **No** | vendor kext calls it only from Audiophile/FW410/Solo/Lightbridge `SetClockSourceInternal`; the 1814 uses the `04 00 04` vendor command |
 
-So the report's binary `memoryOnly` / `avcStatus` tiering is too coarse for a booted
-1814; it wants a third `signalFormatOnly` tier. Suppressing *all* AV/C would break the
-one query that works.
+This table is research for that later operation policy, not an authorization surface.
+The normalized pass suppresses all transactions for these identities deliberately;
+streaming support is out of scope.
 
 ---
 

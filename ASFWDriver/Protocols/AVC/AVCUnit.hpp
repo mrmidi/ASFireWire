@@ -72,7 +72,8 @@ public:
             Discovery::DeviceRegistry& routeRegistry,
             Protocols::Ports::FireWireBusOps& busOps,
             Protocols::Ports::FireWireBusInfo& busInfo,
-            Scheduling::ITimerScheduler& timerScheduler);
+            Scheduling::ITimerScheduler& timerScheduler,
+            std::shared_ptr<FCPTransport> sharedTransport = {});
 
     ~AVCUnit();
 
@@ -111,7 +112,9 @@ public:
 
     bool IsInitialized() const { return initialized_; }
 
-    uint64_t GetGUID() const;
+    Discovery::DeviceInstanceId GetDeviceInstanceId() const;
+    Discovery::UnitInstanceId GetUnitInstanceId() const;
+    uint64_t GetObservedGuid() const;
 
     uint32_t GetSpecID() const;
 
@@ -144,6 +147,7 @@ private:
     Scheduling::ITimerScheduler& timerScheduler_;
 
     std::shared_ptr<FCPTransport> fcpTransport_;
+    bool ownsFcpTransport_{true};
 
     std::shared_ptr<DescriptorAccessor> descriptorAccessor_;
 

@@ -109,16 +109,18 @@ SessionRegistry::~SessionRegistry() {
 }
 
 std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
-                                                            uint64_t guid,
-                                                            uint32_t romOffset) {
-    const auto route = deviceRegistry_.CurrentRoute(guid);
+                                                            Discovery::UnitInstanceId unitId) {
+    if (!unitId) {
+        return std::unexpected(kIOReturnBadArgument);
+    }
+    const auto route = deviceRegistry_.CurrentRoute(unitId.device);
     if (!route.has_value()) {
         return std::unexpected(kIOReturnNotReady);
     }
-    auto unit = ResolveUnit(guid, romOffset);
+    auto unit = ResolveUnit(unitId);
     if (!unit) {
-        ASFW_LOG(Async, "SessionRegistry: no unit found for guid=0x%016llx romOffset=%u",
-                 guid, romOffset);
+        ASFW_LOG(Async, "SessionRegistry: no unit found for instance=%llu romOffset=%u",
+                 unitId.device.value, unitId.unitDirectoryOffset);
         return std::unexpected(kIOReturnNotFound);
     }
 
@@ -140,9 +142,9 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     }
 
     IOLockGuard lock(lock_);
-    if (HasSessionForTargetLocked(guid, romOffset)) {
-        ASFW_LOG(Async, "SessionRegistry: duplicate session for guid=0x%016llx romOffset=%u",
-                 guid, romOffset);
+    if (HasSessionForTargetLocked(unitId)) {
+        ASFW_LOG(Async, "SessionRegistry: duplicate session for instance=%llu romOffset=%u",
+                 unitId.device.value, unitId.unitDirectoryOffset);
         return std::unexpected(kIOReturnExclusiveAccess);
     }
 
@@ -156,8 +158,10 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     SessionRecord& record = it->second;
     record.handle = handle;
     record.owner = owner;
-    record.guid = guid;
-    record.romOffset = romOffset;
+    record.unitId = unitId;
+    if (const auto device = unit->GetDevice()) {
+        record.observedGuid = device->GetObservedGuid();
+    }
     record.route = *route;
     record.session = std::make_shared<LoginSession>(bus_, busInfo_, addrSpaceMgr_, scheduler_);
     record.session->Configure(targetInfo);
@@ -167,8 +171,9 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
         bus_, busInfo_, addrSpaceMgr_, *record.session, scheduler_, owner, record.lastError);
     record.executor->SetBusResetRequester(busResetRequester_);
 
-    ASFW_LOG(Async, "SessionRegistry: created session handle=%llu guid=0x%016llx romOffset=%u",
-             handle, guid, romOffset);
+    ASFW_LOG(Async,
+             "SessionRegistry: created session handle=%llu instance=%llu romOffset=%u observedGuid=0x%016llx",
+             handle, unitId.device.value, unitId.unitDirectoryOffset, record.observedGuid);
     return handle;
 }
 
@@ -201,7 +206,7 @@ bool SessionRegistry::StartLogin(void* owner, uint64_t handle) {
                 rec->lastError = params.status;
                 // status==0 is LoggedIn (fresh login or reconnect, which re-fires
                 // this callback); non-zero is a terminal login failure.
-                EmitLoginStateLocked(rec->guid, params.status == 0);
+                EmitLoginStateLocked(rec->unitId.device, params.status == 0);
             });
         session = record->session;
     }
@@ -293,12 +298,12 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
         const LoginState state = record.session ? record.session->State() : LoginState::Idle;
         if (record.session &&
             (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
-            SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
+            SetReleaseLogoutCallbackLocked(handle, record.unitId.device, record.session);
             // Retire optimistically; un-retired below if Logout() is rejected.
             RetireSessionLocked(record);
             toLogout = record.session;
         } else if (record.session && state == LoginState::LoggingOut) {
-            SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
+            SetReleaseLogoutCallbackLocked(handle, record.unitId.device, record.session);
             RetireSessionLocked(record);
         }
         sessions_.erase(it);
@@ -329,12 +334,12 @@ void SessionRegistry::ReleaseOwner(void* owner) {
 
             if (record.session &&
                 (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
-                SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
+                SetReleaseLogoutCallbackLocked(record.handle, record.unitId.device, record.session);
                 // Retire optimistically; un-retired below if Logout() is rejected.
                 RetireSessionLocked(record);
                 toLogout.push_back(record.session);
             } else if (record.session && state == LoginState::LoggingOut) {
-                SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
+                SetReleaseLogoutCallbackLocked(record.handle, record.unitId.device, record.session);
                 RetireSessionLocked(record);
             }
 
@@ -365,12 +370,13 @@ void SessionRegistry::SetBusResetRequester(std::function<void()> requester) {
 }
 
 void SessionRegistry::SetLoginStateObserver(
-    std::function<void(uint64_t guid, bool loggedIn)> observer) {
+    std::function<void(Discovery::DeviceInstanceId, bool loggedIn)> observer) {
     IOLockGuard lock(lock_);
     loginStateObserver_ = std::move(observer);
 }
 
-void SessionRegistry::EmitLoginStateLocked(uint64_t guid, bool loggedIn) {
+void SessionRegistry::EmitLoginStateLocked(Discovery::DeviceInstanceId instanceId,
+                                           bool loggedIn) {
     // Called with lock_ held (reads loginStateObserver_ under it). The observer
     // itself runs off lock_: on workQueue_ in production (which also defers the
     // inline management-write failure path off the caller's stack), or inline on
@@ -381,10 +387,10 @@ void SessionRegistry::EmitLoginStateLocked(uint64_t guid, bool loggedIn) {
     auto observer = loginStateObserver_;
     if (workQueue_ != nullptr) {
         workQueue_->DispatchAsync(^{
-            observer(guid, loggedIn);
+            observer(instanceId, loggedIn);
         });
     } else {
-        observer(guid, loggedIn);
+        observer(instanceId, loggedIn);
     }
 }
 
@@ -409,13 +415,13 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
                 continue;
             }
 
-            const auto route = deviceRegistry_.CurrentRoute(record.guid);
+            const auto route = deviceRegistry_.CurrentRoute(record.unitId.device);
             if (!route.has_value() || route->generation != gen ||
-                route->deviceIncarnation != record.route.deviceIncarnation) {
+                route->deviceInstanceId != record.route.deviceInstanceId) {
                 continue;
             }
 
-            auto unit = ResolveUnit(record.guid, record.romOffset);
+            auto unit = ResolveUnit(record.unitId);
             if (!unit) {
                 ASFW_LOG(Async, "SessionRegistry: RefreshTargets: unit not found for handle=%llu",
                          handle);
@@ -473,32 +479,29 @@ const SessionRecord* SessionRegistry::FindByHandleForOwner(void* owner, uint64_t
     return (record != nullptr && record->owner == owner) ? record : nullptr;
 }
 
-std::shared_ptr<Discovery::FWUnit> SessionRegistry::ResolveUnit(uint64_t guid,
-                                                               uint32_t romOffset) const {
-    const auto devices = deviceManager_.GetAllDevices();
-    for (const auto& device : devices) {
-        if (!device || !device->IsReady() || device->GetGUID() != guid) {
-            continue;
-        }
-        for (const auto& unit : device->GetUnits()) {
-            if (unit && unit->GetDirectoryOffset() == romOffset) {
-                return unit;
-            }
+std::shared_ptr<Discovery::FWUnit>
+SessionRegistry::ResolveUnit(Discovery::UnitInstanceId unitId) const {
+    const auto device = deviceManager_.GetDevice(unitId.device);
+    if (!device || !device->IsReady()) {
+        return nullptr;
+    }
+    for (const auto& unit : device->GetUnits()) {
+        if (unit && unit->GetInstanceId() == unitId) {
+            return unit;
         }
     }
     return nullptr;
 }
 
-bool SessionRegistry::HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const {
+bool SessionRegistry::HasSessionForTargetLocked(Discovery::UnitInstanceId unitId) const {
     for (const auto& [handle, record] : sessions_) {
-        if (record.guid == guid && record.romOffset == romOffset && record.session != nullptr) {
+        if (record.unitId == unitId && record.session != nullptr) {
             return true;
         }
     }
     return std::any_of(retiringSessions_.begin(), retiringSessions_.end(),
-                       [guid, romOffset](const RetiringSession& retired) {
-                           return retired.guid == guid && retired.romOffset == romOffset &&
-                                  retired.session != nullptr;
+                       [unitId](const RetiringSession& retired) {
+                           return retired.unitId == unitId && retired.session != nullptr;
                        });
 }
 
@@ -511,8 +514,7 @@ void SessionRegistry::RetireSessionLocked(const SessionRecord& record) {
         [&record](const RetiringSession& retired) { return retired.session == record.session; });
     if (it == retiringSessions_.end()) {
         retiringSessions_.push_back(RetiringSession{
-            .guid = record.guid,
-            .romOffset = record.romOffset,
+            .unitId = record.unitId,
             .session = record.session,
         });
     }
@@ -531,7 +533,8 @@ void SessionRegistry::EraseRetiredSessionLocked(const std::shared_ptr<LoginSessi
 }
 
 void SessionRegistry::SetReleaseLogoutCallbackLocked(
-    uint64_t handle, uint64_t guid, const std::shared_ptr<LoginSession>& session) {
+    uint64_t handle, Discovery::DeviceInstanceId instanceId,
+    const std::shared_ptr<LoginSession>& session) {
     if (session == nullptr) {
         return;
     }
@@ -541,7 +544,7 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
     std::weak_ptr<LoginSession> weakSession = session;
     std::weak_ptr<int> alive = lifetimeToken_;
     session->SetLogoutCallback(
-        [this, handle, guid, weakSession, alive](const LogoutCompleteParams&) {
+        [this, handle, instanceId, weakSession, alive](const LogoutCompleteParams&) {
             if (alive.expired()) {
                 return;  // registry destroyed; session outlived it
             }
@@ -558,7 +561,7 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
             }
 
             EraseRetiredSessionLocked(completedSession);
-            EmitLoginStateLocked(guid, false);
+            EmitLoginStateLocked(instanceId, false);
         });
 }
 

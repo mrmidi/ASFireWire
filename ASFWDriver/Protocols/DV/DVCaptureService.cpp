@@ -131,7 +131,7 @@ DVCaptureService::~DVCaptureService() {
 }
 
 kern_return_t DVCaptureService::Start(
-    uint64_t deviceGuid,
+    Discovery::DeviceInstanceId deviceInstanceId,
     uint64_t ownerToken,
     Driver::IsochService& isoch,
     Driver::HardwareInterface& hardware,
@@ -139,11 +139,12 @@ kern_return_t DVCaptureService::Start(
     IRM::IRMClient& irm,
     CMP::CMPClient& cmp) {
     if (!lock_) return kIOReturnNoResources;
-    if (ownerToken == 0 || deviceGuid == 0) return kIOReturnBadArgument;
+    if (ownerToken == 0 || !deviceInstanceId) return kIOReturnBadArgument;
 
     LockGuard guard(lock_);
     if (active_) {
-        return ownerToken_ == ownerToken && route_.guid == deviceGuid
+        return ownerToken_ == ownerToken &&
+                       route_.deviceInstanceId == deviceInstanceId
                    ? kIOReturnSuccess
                    : kIOReturnExclusiveAccess;
     }
@@ -154,14 +155,14 @@ kern_return_t DVCaptureService::Start(
         return kIOReturnBusy;
     }
 
-    const auto record = registry.SnapshotByGuid(deviceGuid);
+    const auto record = registry.Snapshot(deviceInstanceId);
     if (!record || record->state == Discovery::LifeState::Lost ||
         record->state == Discovery::LifeState::Quarantined) {
         return kIOReturnNotFound;
     }
     const auto node = Discovery::TryOperationalNodeId(record->nodeId);
     if (!node) return kIOReturnNotReady;
-    const auto route = registry.CurrentRoute(deviceGuid);
+    const auto route = registry.CurrentRoute(deviceInstanceId);
     if (!route || !*route) return kIOReturnNotReady;
     const CMP::CMPDevice cmpDevice{.route = *route};
 
@@ -240,8 +241,9 @@ kern_return_t DVCaptureService::Start(
         }
     } else {
         ASFW_LOG_WARNING(Isoch,
-                         "[DV] oMPR unavailable for GUID=0x%llx; using broadcast channel 63",
-                         deviceGuid);
+                         "[DV] oMPR unavailable for instance=%llu observedGUID=0x%llx; using broadcast channel 63",
+                         static_cast<unsigned long long>(deviceInstanceId.value),
+                         static_cast<unsigned long long>(record->ObservedGuid()));
     }
 
     irm_ = &irm;
@@ -322,8 +324,10 @@ kern_return_t DVCaptureService::Start(
     active_ = true;
     sink_.MarkActive(channel, static_cast<uint8_t>(mode));
     ASFW_LOG(Isoch,
-             "[DV] capture started GUID=0x%llx channel=%u mode=%u plug=%u bandwidth=%u owner=0x%llx",
-             deviceGuid, channel, static_cast<unsigned>(mode), outputPlug,
+             "[DV] capture started instance=%llu observedGUID=0x%llx channel=%u mode=%u plug=%u bandwidth=%u owner=0x%llx",
+             static_cast<unsigned long long>(deviceInstanceId.value),
+             static_cast<unsigned long long>(record->ObservedGuid()),
+             channel, static_cast<unsigned>(mode), outputPlug,
              bandwidthUnits, ownerToken);
     return kIOReturnSuccess;
 }
@@ -386,8 +390,8 @@ void DVCaptureService::HandleBusReset(
     }
     (void)TeardownConnection(true);
     ASFW_LOG_WARNING(Isoch,
-                     "[DV] capture terminated by bus reset GUID=0x%llx",
-                     route_.guid);
+                     "[DV] capture terminated by bus reset instance=%llu",
+                     static_cast<unsigned long long>(route_.deviceInstanceId.value));
     ResetState();
 }
 

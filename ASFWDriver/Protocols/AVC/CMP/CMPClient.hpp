@@ -81,9 +81,8 @@ private:
     };
     struct LeaseKeyHash {
         size_t operator()(const LeaseKey& key) const noexcept {
-            return std::hash<uint64_t>{}(key.route.guid) ^
-                   (std::hash<uint64_t>{}(key.route.deviceIncarnation) << 1U) ^
-                   (std::hash<uint64_t>{}(key.route.routeEpoch) << 2U) ^
+            return std::hash<uint64_t>{}(key.route.deviceInstanceId.value) ^
+                   (std::hash<uint64_t>{}(key.route.routeEpoch) << 1U) ^
                    (static_cast<size_t>(key.direction) << 8U) ^ key.plugNum;
         }
     };

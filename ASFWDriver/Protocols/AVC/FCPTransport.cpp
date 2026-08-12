@@ -218,7 +218,7 @@ bool FCPTransport::StartPendingWrite() {
         return false;
     }
 
-    const auto route = routeRegistry_->CurrentRoute(device_->GetGUID());
+    const auto route = routeRegistry_->CurrentRoute(device_->GetInstanceId());
     if (!route.has_value()) {
         IOLockUnlock(lock_);
         CompleteCommand(FCPStatus::kBusReset, {});
@@ -723,7 +723,8 @@ void FCPTransport::OnRouteRevalidated(const Discovery::DeviceRouteToken& route) 
 
     const bool routeIsCurrent = routeRegistry_ && routeRegistry_->IsCurrent(route) &&
                                 pending_->resetRoute.has_value() &&
-                                route.deviceIncarnation == pending_->resetRoute->deviceIncarnation;
+                                route.deviceInstanceId ==
+                                    pending_->resetRoute->deviceInstanceId;
     if (!routeIsCurrent) {
         IOLockUnlock(lock_);
         ASFW_LOG_V3(FCP,

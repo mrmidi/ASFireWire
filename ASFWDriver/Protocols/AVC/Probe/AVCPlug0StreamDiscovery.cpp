@@ -11,13 +11,26 @@
 
 #include "AVCPlug0StreamDiscovery.hpp"
 
+#include "../StreamFormats/StreamFormatTypes.hpp"
 #include "../../../Logging/Logging.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
 
 namespace ASFW::Protocols::AVC::Probe {
+
+uint32_t RateCodeToHz(uint8_t code) noexcept {
+    // This byte is the AV/C extended-stream-format sampling-frequency code,
+    // not the Music Subunit signal-format/FDF ordinal. Cross-validated with
+    // references/linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:24-46,
+    // references/linux-sound-firewire-stack/firewire/oxfw/oxfw-stream.c:20-39,
+    // and references/libffado-2.5.0/src/libavc/avc_definitions.h:116-130.
+    return StreamFormats::SampleRateToHz(
+        static_cast<StreamFormats::SampleRate>(code));
+}
+
 namespace {
 
 constexpr uint8_t kOpcodePlugInfo = 0x02;
@@ -345,6 +358,23 @@ std::optional<uint8_t> DeviceModel::CurrentRateCode() const noexcept {
         return std::nullopt;
     }
     return inputRate->rateCode;
+}
+
+std::vector<uint32_t> DeviceModel::CommonDuplexRatesHz() const {
+    std::vector<uint32_t> rates;
+    for (const auto& inputFormation : input.supportedFormations) {
+        const bool alsoOutput = std::any_of(
+            output.supportedFormations.begin(), output.supportedFormations.end(),
+            [&inputFormation](const auto& outputFormation) {
+                return outputFormation.rateCode == inputFormation.rateCode;
+            });
+        const uint32_t hz = RateCodeToHz(inputFormation.rateCode);
+        if (alsoOutput && hz != 0 &&
+            std::find(rates.begin(), rates.end(), hz) == rates.end()) {
+            rates.push_back(hz);
+        }
+    }
+    return rates;
 }
 
 bool DeviceModel::SupportsDuplexFormation(uint8_t pcmChannels,

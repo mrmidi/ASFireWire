@@ -95,12 +95,21 @@ struct DeviceModel {
     [[nodiscard]] bool HasAgreedCurrentRate() const noexcept;
     [[nodiscard]] std::optional<uint8_t> CurrentRateCode() const noexcept;
 
+    /// Rates advertised by both host-to-device and device-to-host plug 0.
+    /// The standards-only AV/C model owns this interpretation so BeBoB, OXFW,
+    /// and generic AV/C family providers cannot apply different rate tables.
+    [[nodiscard]] std::vector<uint32_t> CommonDuplexRatesHz() const;
+
     /// True when both host-to-device and device-to-host ISO plug 0 advertise
     /// the same AM824 slot geometry. Rate selection remains a separate
     /// operation: a formation list is capability data, not the current clock.
     [[nodiscard]] bool SupportsDuplexFormation(uint8_t pcmChannels,
                                                 uint8_t midiSlots) const noexcept;
 };
+
+/// Convert an AV/C extended-stream-format sampling-frequency code to Hz.
+/// This is deliberately distinct from Music Subunit signal-format/FDF codes.
+[[nodiscard]] uint32_t RateCodeToHz(uint8_t code) noexcept;
 
 [[nodiscard]] std::optional<StreamFormation>
 ParseExtendedStreamFormatListResponse(uint8_t requestedIndex,

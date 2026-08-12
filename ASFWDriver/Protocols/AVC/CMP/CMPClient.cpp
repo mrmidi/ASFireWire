@@ -78,8 +78,9 @@ void CMPClient::ReadIPCR(const CMPDevice& device, uint8_t plugNum, PCRReadCallba
 void CMPClient::ConnectOPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel,
                             CMPCallback callback) {
     const LeaseKey key{device.route, PCRDirection::kOutput, plugNum};
-    CMPTRACE("ConnectOPCR entry: guid=0x%016llx node=%u gen=%u plug=%u ch=%u",
-             device.route.guid, device.route.nodeId, device.route.generation.value, plugNum, channel);
+    CMPTRACE("ConnectOPCR entry: instance=%llu node=%u gen=%u plug=%u ch=%u",
+             device.route.deviceInstanceId.value, device.route.nodeId,
+             device.route.generation.value, plugNum, channel);
     if (!IsCurrent(device) || plugNum > kMaxPlugNumber || channel > 63 || !BeginConnect(key, device, channel)) {
         CMPTRACE("ConnectOPCR: rejected invalid args or BeginConnect failed");
         callback(CMPStatus::Failed);
@@ -99,8 +100,9 @@ void CMPClient::ConnectOPCR(const CMPDevice& device, uint8_t plugNum, uint8_t ch
 void CMPClient::ConnectIPCR(const CMPDevice& device, uint8_t plugNum, uint8_t channel,
                             CMPCallback callback) {
     const LeaseKey key{device.route, PCRDirection::kInput, plugNum};
-    CMPTRACE("ConnectIPCR entry: guid=0x%016llx node=%u gen=%u plug=%u ch=%u",
-             device.route.guid, device.route.nodeId, device.route.generation.value, plugNum, channel);
+    CMPTRACE("ConnectIPCR entry: instance=%llu node=%u gen=%u plug=%u ch=%u",
+             device.route.deviceInstanceId.value, device.route.nodeId,
+             device.route.generation.value, plugNum, channel);
     if (!IsCurrent(device) || plugNum > kMaxPlugNumber || channel > 63 || !BeginConnect(key, device, channel)) {
         CMPTRACE("ConnectIPCR: rejected invalid args or BeginConnect failed");
         callback(CMPStatus::Failed);
@@ -120,8 +122,9 @@ void CMPClient::ConnectIPCR(const CMPDevice& device, uint8_t plugNum, uint8_t ch
 void CMPClient::DisconnectOPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback) {
     const LeaseKey key{device.route, PCRDirection::kOutput, plugNum};
     Lease lease{};
-    CMPTRACE("DisconnectOPCR entry: guid=0x%016llx node=%u gen=%u plug=%u",
-             device.route.guid, device.route.nodeId, device.route.generation.value, plugNum);
+    CMPTRACE("DisconnectOPCR entry: instance=%llu node=%u gen=%u plug=%u",
+             device.route.deviceInstanceId.value, device.route.nodeId,
+             device.route.generation.value, plugNum);
     if (!IsCurrent(device) || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
         // No local lease means this client never established the remote p2p
         // count. Treat BREAK as idempotent without touching a foreign stream.
@@ -135,8 +138,9 @@ void CMPClient::DisconnectOPCR(const CMPDevice& device, uint8_t plugNum, CMPCall
 void CMPClient::DisconnectIPCR(const CMPDevice& device, uint8_t plugNum, CMPCallback callback) {
     const LeaseKey key{device.route, PCRDirection::kInput, plugNum};
     Lease lease{};
-    CMPTRACE("DisconnectIPCR entry: guid=0x%016llx node=%u gen=%u plug=%u",
-             device.route.guid, device.route.nodeId, device.route.generation.value, plugNum);
+    CMPTRACE("DisconnectIPCR entry: instance=%llu node=%u gen=%u plug=%u",
+             device.route.deviceInstanceId.value, device.route.nodeId,
+             device.route.generation.value, plugNum);
     if (!IsCurrent(device) || plugNum > kMaxPlugNumber || !BeginDisconnect(key, device, lease)) {
         CMPTRACE("DisconnectIPCR: no local lease, returning Success");
         callback(CMPStatus::Success);

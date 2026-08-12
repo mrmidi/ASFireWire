@@ -41,7 +41,7 @@ public:
     DVCaptureService(const DVCaptureService&) = delete;
     DVCaptureService& operator=(const DVCaptureService&) = delete;
 
-    [[nodiscard]] kern_return_t Start(uint64_t deviceGuid,
+    [[nodiscard]] kern_return_t Start(Discovery::DeviceInstanceId deviceInstanceId,
                                       uint64_t ownerToken,
                                       Driver::IsochService& isoch,
                                       Driver::HardwareInterface& hardware,
@@ -86,9 +86,7 @@ private:
     RingMapping ring_{};
     DVCaptureSink sink_{};
     uint64_t ownerToken_{0};
-    // dev2 route/nub model: identity and liveness travel together in one token
-    // (Discovery::DeviceRouteToken), replacing the separate guid/nodeId/generation
-    // scalars. Matches BeBoBProtocol and ApogeeDuetDuplex.
+    // Runtime identity and liveness travel together in one route token.
     Discovery::DeviceRouteToken route_{};
     uint8_t channel_{0xFF};
     uint8_t outputPlug_{0xFF};

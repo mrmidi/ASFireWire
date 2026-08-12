@@ -84,7 +84,9 @@ Owns everything command-related currently bloating `SBP2SessionRecord`.
 | `CleanupCommandResources`, `CleanupManagementResources`, `BuildCommandFlags` | |
 
 ### 2c. `SessionRecord` — slim value type
-`{ handle, owner, guid, romOffset, shared_ptr<LoginSession> session, SBP2SessionState state }`. Command guts → `CommandExecutor` (keyed by handle).
+`{ handle, owner, UnitInstanceId, observedGuid (diagnostic), DeviceRouteToken,
+shared_ptr<LoginSession> session, SBP2SessionState state }`. Command guts →
+`CommandExecutor` (keyed by handle).
 
 ---
 

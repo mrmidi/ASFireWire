@@ -55,9 +55,11 @@ class FCPResponseRouter {
         ASFW_LOG_V2(FCP, "✅ FCPResponseRouter: FCP response detected! srcNode=0x%04x gen=%u",
                     srcNodeID, generation);
 
-        // Keep ownership across response delivery. Discovery can erase/rebuild
-        // its node map concurrently with a hot-unplug or bus reset.
-        auto transport = avcDiscovery_.AcquireFCPTransportForNodeID(srcNodeID);
+        // Resolve the packet's transient route to a strong device instance and
+        // keep ownership across delivery. A stale generation or hot-unplug
+        // therefore fails closed before the transport sees the response.
+        auto transport = avcDiscovery_.AcquireFCPTransportForIngress(
+            Discovery::Generation{generation}, srcNodeID);
         if (!transport) {
             ASFW_LOG_V1(FCP, "FCPResponseRouter: FCP response from unknown node 0x%04x", srcNodeID);
             return Protocols::Ports::BlockWriteDisposition::kComplete;

@@ -4,8 +4,8 @@
 //
 // Decomposed from PR #19's SBP2SessionRegistry (§2a of SBP2_SESSION_PORT.md):
 // identity & lifecycle only. Sessions are created for an owner and target
-// (guid, romOffset); public operations use opaque handles plus owner validation,
-// and the registry rejects duplicate live targets by (guid, romOffset). The
+// UnitInstanceId; public operations use opaque handles plus owner validation,
+// and the registry rejects duplicate live targets by UnitInstanceId. The
 // command plane lives in a per-record CommandExecutor (§2b); command/inquiry/
 // task-management calls validate here and delegate to it.
 //
@@ -54,8 +54,8 @@ struct SBP2SessionState {
 struct SessionRecord {
     uint64_t handle{0};
     void* owner{nullptr};
-    uint64_t guid{0};
-    uint32_t romOffset{0};
+    Discovery::UnitInstanceId unitId{};
+    uint64_t observedGuid{0}; // diagnostics only
     Discovery::DeviceRouteToken route{};
     std::shared_ptr<LoginSession> session;
     int32_t lastError{0};
@@ -78,8 +78,7 @@ public:
     SessionRegistry& operator=(const SessionRegistry&) = delete;
 
     [[nodiscard]] std::expected<uint64_t, int> CreateSession(void* owner,
-                                                             uint64_t guid,
-                                                             uint32_t romOffset);
+                                                             Discovery::UnitInstanceId unitId);
 
     [[nodiscard]] bool StartLogin(void* owner, uint64_t handle);
 
@@ -108,12 +107,13 @@ public:
     // before any session exists.
     void SetBusResetRequester(std::function<void()> requester);
 
-    // Push channel for login state. Fires observer(guid, true) when a session
-    // reaches LoggedIn (fresh login or reconnect) and observer(guid, false) on
+    // Push channel for login state. Fires observer(instanceId, true) when a session
+    // reaches LoggedIn (fresh login or reconnect) and observer(instanceId, false) on
     // terminal login failure or logout completion. NOT fired on Suspended (bus
     // reset) — reconnect re-fires up. The observer runs on workQueue_ (off
     // lock_). Set once during wiring, before any session exists.
-    void SetLoginStateObserver(std::function<void(uint64_t guid, bool loggedIn)> observer);
+    void SetLoginStateObserver(
+        std::function<void(Discovery::DeviceInstanceId, bool loggedIn)> observer);
 
 #ifdef ASFW_HOST_TEST
     LoginSession* GetSessionForTesting(uint64_t handle);
@@ -126,17 +126,18 @@ private:
     SessionRecord* FindByHandleForOwner(void* owner, uint64_t handle);
     const SessionRecord* FindByHandleForOwner(void* owner, uint64_t handle) const;
 
-    std::shared_ptr<Discovery::FWUnit> ResolveUnit(uint64_t guid, uint32_t romOffset) const;
+    std::shared_ptr<Discovery::FWUnit> ResolveUnit(Discovery::UnitInstanceId unitId) const;
 
-    [[nodiscard]] bool HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const;
+    [[nodiscard]] bool HasSessionForTargetLocked(Discovery::UnitInstanceId unitId) const;
     void RetireSessionLocked(const SessionRecord& record);
     void EraseRetiredSessionLocked(const std::shared_ptr<LoginSession>& session);
-    void SetReleaseLogoutCallbackLocked(uint64_t handle, uint64_t guid,
+    void SetReleaseLogoutCallbackLocked(uint64_t handle,
+                                        Discovery::DeviceInstanceId instanceId,
                                         const std::shared_ptr<LoginSession>& session);
 
     // Dispatches loginStateObserver_ onto workQueue_ (off lock_). MUST be called
     // with lock_ held (reads the observer under it).
-    void EmitLoginStateLocked(uint64_t guid, bool loggedIn);
+    void EmitLoginStateLocked(Discovery::DeviceInstanceId instanceId, bool loggedIn);
 
     Async::IFireWireBus& bus_;
     Async::IFireWireBusInfo& busInfo_;
@@ -148,11 +149,10 @@ private:
 
     IOLock* lock_{nullptr};
     std::function<void()> busResetRequester_;
-    std::function<void(uint64_t, bool)> loginStateObserver_;
+    std::function<void(Discovery::DeviceInstanceId, bool)> loginStateObserver_;
     std::map<uint64_t, SessionRecord> sessions_;
     struct RetiringSession {
-        uint64_t guid{0};
-        uint32_t romOffset{0};
+        Discovery::UnitInstanceId unitId{};
         std::shared_ptr<LoginSession> session;
     };
     // Hidden from registry clients, but retained until async logout finishes/times out.
