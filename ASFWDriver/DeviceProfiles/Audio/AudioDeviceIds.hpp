@@ -4,9 +4,9 @@
 // AudioDeviceIds.hpp - Canonical IEEE OUI vendor IDs, model IDs and display names for
 // the FireWire audio devices ASFW recognizes.
 //
-// Single source of truth: both the DeviceProfiles audio providers (this layer) and
-// Protocols/Audio/DeviceProtocolFactory reference these constants, so the metadata
-// matcher and the runtime instantiator can never drift on identity.
+// Numeric evidence used only by the declarative AudioDeviceCatalog. Runtime
+// protocol construction receives a resolved provider/profile ID and never
+// branches on these constants.
 
 #pragma once
 
