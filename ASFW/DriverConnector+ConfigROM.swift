@@ -20,7 +20,11 @@ extension ASFWDriverConnector {
         }
 
         let input: [UInt64] = [deviceID.rawValue]
-        let maxSize = 1024 * 4  // Max 1024 quadlets
+        // 1024 quadlets, which is also exactly the inline struct-output limit. Do not
+        // raise this to fit a longer ROM without paginating: above the limit the reply
+        // moves to the descriptor path the driver does not populate, and the call comes
+        // back "successful" but empty. See DriverConnectorTransport.maxInlineStructOutputBytes.
+        let maxSize = DriverConnectorTransport.maxInlineStructOutputBytes
         var outputStruct = Data(count: maxSize)
         var outputSize = outputStruct.count
         var resolvedGeneration: UInt64 = 0

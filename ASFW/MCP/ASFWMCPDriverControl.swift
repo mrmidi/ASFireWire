@@ -1,10 +1,26 @@
 import Foundation
 
+/// Why a Config ROM lookup produced nothing.
+///
+/// These were previously one `nil`, which reported every cause as "no Config ROM
+/// is cached" — including the case where the device instance never appeared in
+/// the node list at all. That misattributed an empty discovery payload as a
+/// driver-side ROM-store miss and cost a full investigation. Keep them split.
+enum ASFWMCPConfigRomLookupFailure: Error, Equatable {
+    /// The node list has no such instance, so the ROM was never asked for. When
+    /// the whole list is empty this is a discovery-transport failure, not a ROM one.
+    case unknownDeviceInstance(instanceCount: Int)
+    /// The driver was asked and reported no cached ROM for that instance.
+    case notCached
+    /// Caller passed a generation the 16-bit wire field cannot carry.
+    case generationOutOfRange(UInt32)
+}
+
 protocol ASFWDriverControlling {
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
     func fetchTopology() async -> ASFWMCPTopologySnapshot?
     func fetchConfigROM(deviceID: DeviceInstanceID,
-                        generation: UInt32) async -> ASFWMCPConfigRomSummary?
+                        generation: UInt32) async -> Result<ASFWMCPConfigRomSummary, ASFWMCPConfigRomLookupFailure>
     func fetchOhciSnapshot() async -> ASFWMCPOhciSnapshot?
     func fetchIrmAllocations() async -> ASFWMCPIrmAllocationReport?
     func recentFcpRecords(limit: Int) async -> [ASFWMCPFcpRecord]
@@ -145,12 +161,17 @@ actor MockASFWDriverControl: ASFWDriverControlling {
     }
 
     func fetchConfigROM(deviceID: DeviceInstanceID,
-                        generation requestedGeneration: UInt32) async -> ASFWMCPConfigRomSummary? {
-        guard let node = nodes.first(where: { $0.deviceInstanceId == deviceID }),
-              node.configRomCached else {
-            return nil
+                        generation requestedGeneration: UInt32) async -> Result<ASFWMCPConfigRomSummary, ASFWMCPConfigRomLookupFailure> {
+        guard requestedGeneration <= UInt32(UInt16.max) else {
+            return .failure(.generationOutOfRange(requestedGeneration))
         }
-        return ASFWMCPConfigRomSummary(
+        guard let node = nodes.first(where: { $0.deviceInstanceId == deviceID }) else {
+            return .failure(.unknownDeviceInstance(instanceCount: nodes.count))
+        }
+        guard node.configRomCached else {
+            return .failure(.notCached)
+        }
+        return .success(ASFWMCPConfigRomSummary(
             nodeId: node.nodeId,
             requestedGeneration: requestedGeneration,
             resolvedGeneration: generation,
@@ -178,7 +199,7 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             bibFields: [],
             rawQuadlets: [],
             tree: []
-        )
+        ))
     }
 
     func fetchOhciSnapshot() async -> ASFWMCPOhciSnapshot? {

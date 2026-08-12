@@ -116,8 +116,8 @@ struct MCPLiveDriverControlTests {
             resolvedGeneration: 17
         )
 
-        let report = try #require(await LiveASFWDriverControl(backend: backend).fetchConfigROM(
-            deviceID: DeviceInstanceID(1), generation: 17))
+        let report = try (await LiveASFWDriverControl(backend: backend).fetchConfigROM(
+            deviceID: DeviceInstanceID(1), generation: 17)).get()
 
         #expect(report.parsed)
         #expect(report.rootDirectoryStartQuadlet == 5)
@@ -131,6 +131,43 @@ struct MCPLiveDriverControlTests {
         #expect(report.bibFields.first?.name == "bus_info_length")
         #expect(report.bibFields.first?.meaning.contains("root directory") == true)
         #expect(report.tree.map(\.key) == ["VENDOR", "MODEL"])
+    }
+
+    @Test func configRomDistinguishesAnUnresolvableInstanceFromAnUncachedRom() async throws {
+        // An empty discovery payload used to surface as "no Config ROM is cached",
+        // which reads as a driver-side ROM-store miss when the driver was never asked.
+        let emptyBus = FakeLiveDriverBackend()
+        emptyBus.configROM = ASFWDriverConnector.ConfigROMFetchResult(
+            data: configRomFixture(), requestedGeneration: 17, resolvedGeneration: 17
+        )
+        let unresolved = await LiveASFWDriverControl(backend: emptyBus).fetchConfigROM(
+            deviceID: DeviceInstanceID(1), generation: 17)
+        #expect(unresolved == .failure(.unknownDeviceInstance(instanceCount: 0)))
+
+        // A device that *is* discovered but has no cached ROM is the genuine miss.
+        let discovered = FakeLiveDriverBackend()
+        discovered.devices = [device(
+            id: 1,
+            observedGuid: 0x0013_0E04_0200_4713,
+            vendorId: 0x00130E,
+            modelId: 0x000008,
+            vendorName: "Focusrite",
+            modelName: "Saffire",
+            nodeId: 0,
+            generation: 17,
+            state: .ready,
+            units: [],
+            deviceKind: 0
+        )]
+        discovered.configROM = nil
+        let uncached = await LiveASFWDriverControl(backend: discovered).fetchConfigROM(
+            deviceID: DeviceInstanceID(1), generation: 17)
+        #expect(uncached == .failure(.notCached))
+
+        // A generation the 16-bit wire field cannot carry is a caller error, not either of those.
+        let outOfRange = await LiveASFWDriverControl(backend: discovered).fetchConfigROM(
+            deviceID: DeviceInstanceID(1), generation: 0x1_0000)
+        #expect(outOfRange == .failure(.generationOutOfRange(0x1_0000)))
     }
 
     @Test func avcInspectionMapsDriverEvidenceWithoutFcpTraffic() async throws {

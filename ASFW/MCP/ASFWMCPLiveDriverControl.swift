@@ -311,16 +311,23 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
     }
 
     func fetchConfigROM(deviceID: DeviceInstanceID,
-                        generation: UInt32) async -> ASFWMCPConfigRomSummary? {
-        guard generation <= UInt32(UInt16.max),
-              let node = await listNodes().first(where: {
-                  $0.deviceInstanceId == deviceID
-              }) else { return nil }
+                        generation: UInt32) async -> Result<ASFWMCPConfigRomSummary, ASFWMCPConfigRomLookupFailure> {
+        guard generation <= UInt32(UInt16.max) else {
+            return .failure(.generationOutOfRange(generation))
+        }
+        // This resolves the node *before* the driver is asked for anything, so an
+        // empty or unparsable discovery payload lands here — not in the ROM store.
+        // Reporting that as "no ROM cached" is what previously sent the diagnosis
+        // into the driver; the instance count distinguishes the two on sight.
+        let nodes = await listNodes()
+        guard let node = nodes.first(where: { $0.deviceInstanceId == deviceID }) else {
+            return .failure(.unknownDeviceInstance(instanceCount: nodes.count))
+        }
         guard let fetched = backend.mcpConfigROM(
             deviceID: deviceID,
             expectedGeneration: UInt16(truncatingIfNeeded: generation)
         ) else {
-            return nil
+            return .failure(.notCached)
         }
 
         let byteCount = fetched.data.count
@@ -352,14 +359,14 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
         // parse failure is reported as an unparsed prefix rather than as a malformed
         // device ROM. Callers needing proof must do a generation-pinned full read.
         guard let tree = try? RomParser.parse(data: fetched.data) else {
-            return base.withParseNote(
+            return .success(base.withParseNote(
                 "Cached bytes could not be parsed as a complete ROM; this is expected when discovery cached only a prefix."
-            )
+            ))
         }
 
         let summary = Summarizer.summarize(tree: tree)
         let options = tree.busInfo.busOptions
-        return ASFWMCPConfigRomSummary(
+        return .success(ASFWMCPConfigRomSummary(
             nodeId: node.nodeId,
             requestedGeneration: UInt32(fetched.requestedGeneration),
             resolvedGeneration: UInt32(fetched.resolvedGeneration),
@@ -394,7 +401,7 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             bibFields: ASFWMCPConfigRomBIBField.makeFields(from: tree.busInfo),
             rawQuadlets: rawQuadlets,
             tree: tree.rootDirectory.map(ASFWMCPConfigRomTreeEntry.init(entry:))
-        )
+        ))
     }
 
     func listAVCUnits() async -> [ASFWMCPAVCUnitSummary] {

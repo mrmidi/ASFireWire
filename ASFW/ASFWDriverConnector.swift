@@ -182,7 +182,9 @@ final class ASFWDriverConnector: ObservableObject {
         transport.callStruct(selector: selector.rawValue, input: input, initialCap: initialCap)
     }
 
-    func callStructWithScalar(_ selector: Method, input: Data? = nil, initialCap: Int = 64 * 1024, scalarOutput: inout UInt64) -> Data? {
+    func callStructWithScalar(_ selector: Method, input: Data? = nil,
+                              initialCap: Int = DriverConnectorTransport.maxInlineStructOutputBytes,
+                              scalarOutput: inout UInt64) -> Data? {
         transport.callStructWithScalar(selector: selector.rawValue, input: input, initialCap: initialCap, scalarOutput: &scalarOutput)
     }
 

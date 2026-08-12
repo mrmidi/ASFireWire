@@ -1692,12 +1692,31 @@ private extension ASFWMCPCore {
             let startQuadlet = try decoder.int("startQuadlet", default: 0, range: 0...Int.max)
             let maxQuadlets = try decoder.int("maxQuadlets", default: 32, range: 1...64)
             let maxTreeEntries = try decoder.int("maxTreeEntries", default: 64, range: 1...128)
-            guard let summary = await driver.fetchConfigROM(deviceID: deviceID,
-                                                            generation: generation) else {
+            let lookup = await driver.fetchConfigROM(deviceID: deviceID, generation: generation)
+            let summary: ASFWMCPConfigRomSummary
+            switch lookup {
+            case .success(let value):
+                summary = value
+            case .failure(.generationOutOfRange(let requested)):
+                return .failure(
+                    toolName: toolName,
+                    code: .malformedRequest,
+                    reason: "Generation \(requested) exceeds the 16-bit generation the driver reports."
+                )
+            case .failure(.unknownDeviceInstance(let instanceCount)):
+                // Never report this as a ROM-store miss: the driver was not asked.
                 return .failure(
                     toolName: toolName,
                     code: .capabilityUnavailable,
-                    reason: "No Config ROM is cached for device instance \(deviceID) in generation \(generation)."
+                    reason: instanceCount == 0
+                        ? "The node list is empty, so device instance \(deviceID) could not be resolved and no Config ROM was requested. An empty list with a connected driver points at the discovery read, not at the ROM store — check the app log for a getDiscoveredDevices parse error."
+                        : "Device instance \(deviceID) is not among the \(instanceCount) node(s) currently discovered; no Config ROM was requested."
+                )
+            case .failure(.notCached):
+                return .failure(
+                    toolName: toolName,
+                    code: .capabilityUnavailable,
+                    reason: "The driver reports no cached Config ROM for device instance \(deviceID) in generation \(generation)."
                 )
             }
             return .success(

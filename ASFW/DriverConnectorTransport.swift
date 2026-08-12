@@ -111,7 +111,7 @@ final class DriverConnectorTransport {
 
     func callStructWithScalar(selector: UInt32,
                               input: Data? = nil,
-                              initialCap: Int = 64 * 1024,
+                              initialCap: Int = maxInlineStructOutputBytes,
                               scalarOutput: inout UInt64) -> Data? {
         let connection = connectionProvider()
         guard connection != 0 else {
@@ -122,7 +122,8 @@ final class DriverConnectorTransport {
 
         print("[Connector] 📞 callStructWithScalar: selector=\(selector) connection=0x\(String(connection, radix: 16)) initialCap=\(initialCap)")
 
-        var outSize = initialCap
+        // Same inline limit as `callStruct` — see `maxInlineStructOutputBytes`.
+        var outSize = min(initialCap, Self.maxInlineStructOutputBytes)
         var out = Data(count: outSize)
         var scalarOutputCount: UInt32 = 1
 
@@ -148,6 +149,14 @@ final class DriverConnectorTransport {
 
         var kr = doCall()
         if kr == kIOReturnNoSpace {
+            guard outSize <= Self.maxInlineStructOutputBytes else {
+                let errMsg = "selector \(selector) needs \(outSize) bytes, above the "
+                    + "\(Self.maxInlineStructOutputBytes)-byte inline struct-output limit; "
+                    + "this reply must be paginated"
+                print("[Connector] callStructWithScalar: \(errMsg)")
+                errorHandler(errMsg)
+                return nil
+            }
             print("[Connector] callStructWithScalar: got kIOReturnNoSpace, retrying with size=\(outSize)")
             out = Data(count: outSize)
             kr = doCall()
