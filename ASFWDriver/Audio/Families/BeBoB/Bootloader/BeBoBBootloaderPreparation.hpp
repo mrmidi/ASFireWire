@@ -131,6 +131,11 @@ struct PreparationStep final {
 
 [[nodiscard]] const char* RetireReasonName(RetireReason reason) noexcept;
 
+/// Names the state itself, for the case where preparation is torn down from
+/// outside rather than retiring under its own rules — a bus reset removes the
+/// device, so no RetireReason is ever produced.
+[[nodiscard]] const char* PreparationStateName(const PreparationState& state) noexcept;
+
 /// True once the machine has stopped. Preparation is deliberately terminal: it
 /// never becomes an audio endpoint. A cued device returns as a different
 /// identity in a later generation and is resolved from scratch.

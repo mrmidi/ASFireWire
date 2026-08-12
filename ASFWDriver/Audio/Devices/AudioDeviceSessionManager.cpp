@@ -508,6 +508,44 @@ void AudioDeviceSessionManager::RetireSession(AudioEndpointId endpointId,
                                               const char* reason) noexcept {
     std::unique_ptr<IAudioDeviceAdapter> adapter;
     Discovery::UnitInstanceId unitId{};
+
+    // A preparation session torn down from outside — which is the *expected*
+    // ending, because a successful cue makes the device reset and disappear.
+    // It never published an endpoint, so the sink has nothing to quiesce, and
+    // the machine never produced a RetireReason, so log the state it died in:
+    // awaiting-response means the cue was written and the device left before
+    // answering, which is what success looks like from here.
+    {
+        std::shared_ptr<Families::BeBoB::Bootloader::BeBoBBootloaderClient> client;
+        {
+            Lock guard(lock_);
+            auto* session = FindLocked(endpointId);
+            if (!session || session->state == AudioSessionState::Retired) return;
+            if (session->state == AudioSessionState::Preparing) {
+                ASFW_LOG(Firmware,
+                         "[Bootloader] endpoint=%llu torn down in state=%{public}s "
+                         "reason=%{public}s",
+                         endpointId.value,
+                         Families::BeBoB::Bootloader::PreparationStateName(
+                             session->preparationState),
+                         reason);
+                ++session->probeEpoch;
+                client = std::move(session->bootloaderClient);
+                const auto preparingUnit = session->unitId;
+                TransitionLocked(*session, AudioSessionState::Retired, reason);
+                sessions_.erase(endpointId);
+                endpointByUnit_.erase(preparingUnit);
+            }
+        }
+        if (client) {
+            // Outside the lock. Cancels a response-read timer that may still be
+            // armed; without this it fires later against a stale generation and
+            // keeps the client alive past the session that owned it.
+            client->Cancel();
+            return;
+        }
+    }
+
     {
         Lock guard(lock_);
         auto* session = FindLocked(endpointId);

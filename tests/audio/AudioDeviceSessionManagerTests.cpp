@@ -536,12 +536,43 @@ TEST(AudioDeviceSessionManagerBootloader, ActiveBootloaderIsCuedExactlyOnce) {
     manager.Start();
 
     ASSERT_EQ(bus.writes.size(), 1U);
+    // Exactly one info read decides it. The response read is behind a timer the
+    // fake scheduler has not fired, so anything above one here is the redundant
+    // second info read this machine used to require.
+    EXPECT_EQ(bus.reads.size(), 1U);
+    EXPECT_EQ(bus.reads[0], Boot::kInfoAddressLo);
     EXPECT_EQ(bus.writes[0].first, Boot::kRequestAddressLo);
     EXPECT_TRUE(Boot::IsPermittedBootloaderWrite(
         Boot::kBootloaderAddressHi, bus.writes[0].first, bus.writes[0].second));
     // Preparation is terminal and never publishes an endpoint.
     EXPECT_TRUE(sink.events.empty());
     EXPECT_EQ(sink.profile, nullptr);
+}
+
+TEST(AudioDeviceSessionManagerBootloader, TeardownCancelsThePendingResponseRead) {
+    // The expected ending: a successful cue makes the device reset and vanish,
+    // so the session is torn down from outside while the 2 s response-read timer
+    // is still armed. Without cancelling it, the timer later fires a read
+    // against a stale generation and keeps the client alive past its session.
+    Fixture fixture;
+    RecordingSink sink;
+    BootloaderBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 1;
+
+    AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
+                                      BootloaderCatalog(), &bus, &timers);
+    manager.Start();
+    ASSERT_EQ(bus.writes.size(), 1U);
+    const auto readsBeforeTeardown = bus.reads.size();
+
+    manager.OnDeviceRemoved(fixture.record.instanceId);
+    EXPECT_TRUE(manager.SnapshotAll().empty());
+
+    // Well past the 2000 ms response delay.
+    timers.Advance(5'000'000'000ULL);
+    EXPECT_EQ(bus.reads.size(), readsBeforeTeardown)
+        << "a response read was issued after the session was torn down";
 }
 
 TEST(AudioDeviceSessionManagerBootloader, InactiveBootloaderPutsNoWriteOnTheBus) {

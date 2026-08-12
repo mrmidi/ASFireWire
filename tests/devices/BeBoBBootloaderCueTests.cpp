@@ -180,7 +180,6 @@ TEST(BeBoBBootloaderPreparationTests, InactiveBootloaderWritesNothing) {
     EXPECT_TRUE(std::holds_alternative<ReadInfoBlock>(step.action));
 
     step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 0)});
-    step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 0)});
 
     ASSERT_TRUE(IsRetired(step.state));
     EXPECT_EQ(std::get<Retired>(step.state).reason, RetireReason::NoCueNeeded);
@@ -190,7 +189,6 @@ TEST(BeBoBBootloaderPreparationTests, InactiveBootloaderWritesNothing) {
 TEST(BeBoBBootloaderPreparationTests, ActiveBootloaderProducesExactlyOneCue) {
     auto step = BeginPreparation();
     step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(2, 1)});
-    step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(2, 1)});
 
     ASSERT_TRUE(std::holds_alternative<WriteCue>(step.action));
     // Built from the info block that was actually read.
@@ -198,9 +196,29 @@ TEST(BeBoBBootloaderPreparationTests, ActiveBootloaderProducesExactlyOneCue) {
     EXPECT_TRUE(std::holds_alternative<AwaitingResponse>(step.state));
 }
 
+TEST(BeBoBBootloaderPreparationTests, OneInfoReadIsEnoughToDecide) {
+    // Regression guard. The machine used to answer the first InfoReadSucceeded
+    // with a second ReadInfoBlock and then discard that read's payload, so
+    // forward progress depended on a redundant transaction to a device in
+    // bootloader state. Observed twice on hardware before it was fixed.
+    auto step = BeginPreparation();
+    ASSERT_TRUE(std::holds_alternative<ReadInfoBlock>(step.action));
+
+    step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
+    EXPECT_FALSE(std::holds_alternative<ReadInfoBlock>(step.action))
+        << "a second info read was requested after the block was already in hand";
+    EXPECT_TRUE(std::holds_alternative<WriteCue>(step.action));
+
+    // Same for the no-cue branch: one read decides it.
+    auto inactive = BeginPreparation();
+    inactive = AdvancePreparation(inactive.state, InfoReadSucceeded{MakeInfo(1, 0)});
+    EXPECT_FALSE(std::holds_alternative<ReadInfoBlock>(inactive.action));
+    ASSERT_TRUE(IsRetired(inactive.state));
+    EXPECT_EQ(std::get<Retired>(inactive.state).reason, RetireReason::NoCueNeeded);
+}
+
 TEST(BeBoBBootloaderPreparationTests, ResponseTimeoutNeverReWritesTheCue) {
     auto step = BeginPreparation();
-    step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
     step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
     ASSERT_TRUE(std::holds_alternative<WriteCue>(step.action));
     step = AdvancePreparation(step.state, CueWriteSucceeded{});
@@ -219,7 +237,6 @@ TEST(BeBoBBootloaderPreparationTests, ResponseTimeoutNeverReWritesTheCue) {
 
 TEST(BeBoBBootloaderPreparationTests, ResponseReadRetriesAreBounded) {
     auto step = BeginPreparation();
-    step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
     step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
     step = AdvancePreparation(step.state, CueWriteSucceeded{});
 
@@ -261,7 +278,6 @@ TEST(BeBoBBootloaderPreparationTests, GenerationChangeRetiresWithoutWriting) {
 
 TEST(BeBoBBootloaderPreparationTests, FailedWriteRetiresRatherThanRetrying) {
     auto step = BeginPreparation();
-    step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
     step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
     step = AdvancePreparation(step.state, CueWriteFailed{});
 
