@@ -67,7 +67,9 @@ nonisolated enum ASFWLogRingCategories {
         "Controller", "Hardware", "BusReset", "Topology", "Metrics", "Async",
         "UserClient", "Discovery", "IRM", "BusManager", "ConfigROM",
         "MusicSubunit", "FCP", "CMP", "AVC", "Isoch", "Audio", "DirectAudio",
-        "DICE", "Zts", "TxSyt", "PayloadWriter", "Oxfw",
+        // Index 21 is a reserved hole: the driver retired the PayloadWriter
+        // category but kept its ID so later categories keep their values.
+        "DICE", "Zts", "TxSyt", "Reserved21", "Oxfw",
     ]
 
     static func name(for category: UInt8) -> String {

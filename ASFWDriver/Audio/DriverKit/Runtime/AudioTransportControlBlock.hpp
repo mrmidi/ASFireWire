@@ -4,7 +4,6 @@
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
 #include "TxSytTrace.hpp"
-#include "PayloadWriterTelemetry.hpp"
 #include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/TxPcmStagingRing.hpp"
@@ -508,7 +507,6 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> fatalGeneration{0};
 
     // TX control block members
-    PayloadWriterTelemetryRing payloadWriterTelemetry{};
     TxWirePayloadTelemetry txWirePayloadTelemetry{};
     TxPcmStagingTelemetry txPcmStagingTelemetry{};
 
@@ -712,7 +710,6 @@ struct AudioTransportControlBlock final {
         discontinuities.store(0, std::memory_order_release);
 
         // Reset TX members
-        payloadWriterTelemetry.Reset();
         txWirePayloadTelemetry.Reset();
         txPcmStagingTelemetry.Reset();
         txSytTrace.Reset();

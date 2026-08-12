@@ -17,7 +17,6 @@ namespace {
 // watchdog selects only bounded work classes; the consumer owns their meaning.
 constexpr uint32_t kReceiveTelemetryIntervalTicks = 100;
 constexpr uint32_t kReceiveTelemetryRecordsPerDrain = 8;
-constexpr uint32_t kReceiveDiagnosticsIntervalTicks = 100;
 constexpr uint32_t kReceiveTraceIntervalTicks = 1000;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
@@ -108,7 +107,6 @@ void WatchdogCoordinator::Reset() {
     receiveProgressLogDivider_ = 0;
     itLogDivider_ = 0;
     receiveTelemetryDivider_ = 0;
-    receiveDiagnosticsDivider_ = 0;
     receiveTraceDivider_ = 0;
     lastDrainEligible_ = true;
 }
@@ -176,12 +174,6 @@ void WatchdogCoordinator::TickIsochReceive(
             isochReceiveContext->RunConsumerMaintenance(
                 ASFW::Isoch::IsochConsumerMaintenanceKind::kTelemetryDrain,
                 kReceiveTelemetryRecordsPerDrain);
-        }
-        if (++receiveDiagnosticsDivider_ >= kReceiveDiagnosticsIntervalTicks) {
-            receiveDiagnosticsDivider_ = 0;
-            isochReceiveContext->RunConsumerMaintenance(
-                ASFW::Isoch::IsochConsumerMaintenanceKind::kDiagnosticsDrain,
-                1);
         }
         if (++receiveTraceDivider_ >= kReceiveTraceIntervalTicks) {
             receiveTraceDivider_ = 0;

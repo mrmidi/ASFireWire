@@ -213,25 +213,37 @@ timed.  A small, targeted driver-ring query is permitted only when requested;
 it is read-only and never changes stream state.  Do not run broad or parallel
 queries while audio is playing.
 
-For a live TX-content incident, use the retained `DirectAudio` anomaly record:
+For a live TX-content incident, use the retained `DirectAudio` fault record:
 
 ```bash
 python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
-  '{"categories":["DirectAudio"],"contains":"[PayloadWriter] anomaly","maxLevel":"debug","maxRecords":20}'
+  '{"categories":["DirectAudio"],"contains":"[TxContent]","maxLevel":"debug","maxRecords":20}'
 ```
 
-`[PayloadWriter] anomaly` is already MCP-visible because `ASFW_LOG` writes to
-the driver-owned ring.  The first-deficit and last-callback sections include:
+Each record names the failing stage directly, for example
+`reason=not-yet-written-at-deadline`, and carries `packet`, `frame`,
+`staged=[oldest,writtenEnd)`, `required`, `completion` and `committed`. Read
+`frame` against `staged`: because the range is half-open, `frame == staged.end`
+means the writer had committed nothing for that packet, a zero-frame shortfall
+rather than a small deficit.
 
-- host range, exposed timeline end, and exposure deficit;
-- `firstPacketizer` / `lastPacketizer`: absolute `next` cursor, alignment bit,
-  cursor epoch, last DATA packet index, and its `[first,end)` audio range;
-- `prepared`: total, DATA, NODATA, and slot-acquisition-failure counters.
+Pair it with the `[TxPrep]` heartbeat, which carries two independent margins:
 
-The packetizer snapshot is intentionally best-effort and read-only across the
-audio callback/TX-preparation boundary.  Interpret a cursor mismatch or a
-cursor-epoch change as evidence for a timeline transition; do not treat the
-diagnostic snapshot as a synchronization primitive.
+- `margin` / `iMin` / `iMax` / `min` — our headroom against the transmit
+  deadline. These stay healthy through a producer-side xrun and cannot predict
+  one.
+- `prodMin` / `prodRunMin` — frames the CoreAudio writer has staged beyond the
+  next frame packetization will consume, as an interval minimum and a
+  since-start watermark. This is the term that reaches zero when the host
+  callback is late. `UINT32_MAX` means no packet was prepared in the interval.
+
+A `[TxContent]` deadline fault with healthy `margin` but collapsing `prodMin` is
+producer starvation, not a transmit-timing problem. `late1500` in the same line
+settles whether preparation itself ever ran late.
+
+There is no `[PayloadWriter]` record. That pipeline lost its producer in
+`31ef0286` and was removed; `LogCategory` 21 is a retired, frozen slot. Do not
+query for it.
 
 ### Stream will not start: attribute it before theorising
 

@@ -55,7 +55,6 @@ class WatchdogCoordinator {
     uint32_t receiveProgressLogDivider_{0};
     uint32_t itLogDivider_{0};
     uint32_t receiveTelemetryDivider_{0};
-    uint32_t receiveDiagnosticsDivider_{0};
     uint32_t receiveTraceDivider_{0};
     // Edge-triggered so a permanently ineligible drain reports once, not at
     // 1 kHz. Starts true: the interesting event is the drop to false.

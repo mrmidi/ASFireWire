@@ -57,7 +57,13 @@ enum class LogCategory : uint8_t {
     DICE = 18,
     Zts = 19,
     TxSyt = 20,
-    PayloadWriter = 21,
+    // 21 is retired, not reused. It was PayloadWriter, whose telemetry
+    // pipeline lost its producer in 31ef0286 and has now been removed. IDs
+    // are frozen and positional across the dext/app boundary
+    // (ASFWLogRingCategories indexes its name array by this value), so the
+    // slot keeps its number and a placeholder name; renumbering would
+    // silently mislabel every later category when only one side is rebuilt.
+    Reserved21 = 21,
     // Device backends get one category each, so a single filter isolates a
     // backend end to end. DICE (18) is the precedent; Oxfw covers the
     // OXFW-common layer and its device overlays (Apogee Duet).
@@ -116,7 +122,7 @@ inline constexpr LogCategoryDefinition kLogCategoryDefinitions[] = {
     {LogCategory::DICE, "DICE"},
     {LogCategory::Zts, "Zts"},
     {LogCategory::TxSyt, "TxSyt"},
-    {LogCategory::PayloadWriter, "PayloadWriter"},
+    {LogCategory::Reserved21, "Reserved21"},
     {LogCategory::Oxfw, "Oxfw"},
 };
 
@@ -276,8 +282,7 @@ inline constexpr LogCategoryPresetDefinition kLogCategoryPresetDefinitions[] = {
             CategoryBit(LogCategory::Audio) |
             CategoryBit(LogCategory::DirectAudio) |
             CategoryBit(LogCategory::Zts) |
-            CategoryBit(LogCategory::TxSyt) |
-            CategoryBit(LogCategory::PayloadWriter),
+            CategoryBit(LogCategory::TxSyt),
     },
 };
 inline constexpr uint32_t kLogCategoryPresetCount =

@@ -420,7 +420,6 @@ TEST(LogRingTests, CategoryCatalogExportsNamesAndDriverOwnedTxPreset) {
     EXPECT_TRUE(contains(LogCategory::DirectAudio));
     EXPECT_TRUE(contains(LogCategory::Zts));
     EXPECT_TRUE(contains(LogCategory::TxSyt));
-    EXPECT_TRUE(contains(LogCategory::PayloadWriter));
     EXPECT_FALSE(contains(LogCategory::Metrics));
 }
 

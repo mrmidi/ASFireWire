@@ -36,7 +36,6 @@ struct IsochReceivePacket final {
 // without knowing what a content consumer records or emits.
 enum class IsochConsumerMaintenanceKind : uint8_t {
     kTelemetryDrain = 0,
-    kDiagnosticsDrain = 1,
     kTraceSnapshot = 2,
 };
 

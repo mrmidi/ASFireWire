@@ -106,7 +106,6 @@ os_log_t DirectAudio();
 os_log_t DICE();
 os_log_t Zts();
 os_log_t TxSyt();
-os_log_t PayloadWriter();
 os_log_t Oxfw();
 } // namespace ASFW::Driver::Logging
 

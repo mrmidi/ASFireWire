@@ -79,7 +79,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void ResetReplayEpochForDiscontinuity(ReplayResetReason reason,
                                           const ReplayResetContext& context) noexcept;
     void DrainReceiveTelemetry(uint32_t maxRecords);
-    void DrainPayloadTelemetry();
     void LogTransmitTimingTrace();
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
@@ -111,8 +110,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
-    ::ASFW::Audio::Runtime::PayloadWriterTelemetryAnomalyAggregator
-        payloadWriterTelemetryAggregator_{};
     uint8_t lastDbc_{0};
     bool dbcInitialized_{false};
     ::ASFW::Audio::Runtime::ZtsTelemetryLogGate ztsTelemetryLogGate_{};

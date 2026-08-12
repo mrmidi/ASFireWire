@@ -14,7 +14,7 @@ struct DriverLogViewModelTests {
             timestampNs: 1_000,
             category: 17,
             level: 0,
-            message: "[PayloadWriter] W=480 E=472 deficit=8"
+            message: "[TxContent] deadline-xrun-hold-nodata deficit=8"
         ),
         ASFWLogRingRecord(
             sequence: 101,
@@ -102,7 +102,7 @@ struct DriverLogViewModelTests {
 
         #expect(payload == [
             "#100 0.000001 s [DirectAudio] ERROR "
-                + "[PayloadWriter] W=480 E=472 deficit=8\n"
+                + "[TxContent] deadline-xrun-hold-nodata deficit=8\n"
                 + "#102 0.000003 s [Async] DEBUG [Async] request complete",
         ])
     }
