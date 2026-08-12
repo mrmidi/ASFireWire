@@ -201,6 +201,8 @@ add_device_test(BeBoBBootloaderCueTests
     BeBoBBootloaderCueTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderCue.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderPreparation.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderClient.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
 # Apogee Duet runtime stream caps: aggregate vs per-stream wire view

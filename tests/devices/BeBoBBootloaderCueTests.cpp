@@ -8,7 +8,10 @@
 
 #include <gtest/gtest.h>
 
+#include "ASFWDriver/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderClient.hpp"
 #include "ASFWDriver/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderPreparation.hpp"
+
+#include "FakeTimerScheduler.hpp"
 
 #include <array>
 #include <cstdint>
@@ -248,4 +251,165 @@ TEST(BeBoBBootloaderPreparationTests, RetiredMachineIsInert) {
     }
 }
 
-} // namespace
+
+// --- The transport client ---------------------------------------------------
+
+/// Records every transaction so a test can assert what actually reached the bus.
+class RecordingBus final : public ASFW::Async::IFireWireBusOps {
+public:
+    struct Write {
+        uint16_t addressHi{0};
+        uint32_t addressLo{0};
+        std::vector<uint8_t> payload;
+    };
+    struct Read {
+        uint32_t addressLo{0};
+        uint32_t length{0};
+    };
+
+    std::vector<Write> writes;
+    std::vector<Read> reads;
+    ASFW::Async::AsyncStatus readStatus{ASFW::Async::AsyncStatus::kSuccess};
+    ASFW::Async::AsyncStatus writeStatus{ASFW::Async::AsyncStatus::kSuccess};
+    std::vector<uint8_t> readPayload;
+
+    ASFW::Async::AsyncHandle ReadBlock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress address,
+        uint32_t length, ASFW::FW::FwSpeed,
+        ASFW::Async::InterfaceCompletionCallback callback) override {
+        reads.push_back(Read{address.addressLo, length});
+        callback(readStatus, readPayload);
+        return ASFW::Async::AsyncHandle{1};
+    }
+
+    ASFW::Async::AsyncHandle WriteBlock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress address,
+        std::span<const uint8_t> data, ASFW::FW::FwSpeed,
+        ASFW::Async::InterfaceCompletionCallback callback) override {
+        writes.push_back(Write{address.addressHi, address.addressLo,
+                               std::vector<uint8_t>(data.begin(), data.end())});
+        callback(writeStatus, std::span<const uint8_t>{});
+        return ASFW::Async::AsyncHandle{1};
+    }
+
+    ASFW::Async::AsyncHandle Lock(
+        ASFW::FW::Generation, ASFW::FW::NodeId, ASFW::Async::FWAddress,
+        ASFW::FW::LockOp, std::span<const uint8_t>, uint32_t, ASFW::FW::FwSpeed,
+        ASFW::Async::InterfaceCompletionCallback callback) override {
+        callback(ASFW::Async::AsyncStatus::kSuccess, std::span<const uint8_t>{});
+        return ASFW::Async::AsyncHandle{1};
+    }
+
+    bool Cancel(ASFW::Async::AsyncHandle) override { return true; }
+};
+
+[[nodiscard]] ASFW::Discovery::DeviceRouteToken MakeRoute(uint16_t nodeId = 1) {
+    ASFW::Discovery::DeviceRouteToken route{};
+    route.deviceInstanceId = ASFW::Discovery::DeviceInstanceId{1};
+    route.routeEpoch = 1;
+    route.generation = ASFW::FW::Generation{2};
+    route.nodeId = nodeId;
+    return route;
+}
+
+TEST(BeBoBBootloaderClientTests, ReadsTheInfoBlockAtTheInfoRegister) {
+    RecordingBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    bus.readPayload.assign(kInfoBlockBytes, 0);
+    bus.readPayload[kInfoOffsetBootloaderVersion] = 1;  // bootloader active
+
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+    PreparationEvent seen{InfoReadFailed{}};
+    client->ReadInfo([&seen](PreparationEvent e) { seen = e; });
+
+    ASSERT_EQ(bus.reads.size(), 1U);
+    EXPECT_EQ(bus.reads[0].addressLo, kInfoAddressLo);
+    EXPECT_EQ(bus.reads[0].length, kInfoBlockBytes);
+    ASSERT_TRUE(std::holds_alternative<InfoReadSucceeded>(seen));
+    EXPECT_TRUE(std::get<InfoReadSucceeded>(seen).info.BootloaderActive());
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(BeBoBBootloaderClientTests, ShortInfoReadIsAFailureNotAPartialBlock) {
+    RecordingBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    bus.readPayload.assign(kInfoBlockBytes - 1, 0);
+
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+    PreparationEvent seen{InfoReadSucceeded{}};
+    client->ReadInfo([&seen](PreparationEvent e) { seen = e; });
+    EXPECT_TRUE(std::holds_alternative<InfoReadFailed>(seen));
+}
+
+TEST(BeBoBBootloaderClientTests, EveryWriteItMakesIsAPermittedCue) {
+    RecordingBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+
+    const BeBoBBootloaderCue cue{MakeInfo(2, 1)};
+    PreparationEvent seen{CueWriteFailed{}};
+    client->SendCue(cue, [&seen](PreparationEvent e) { seen = e; });
+
+    ASSERT_EQ(bus.writes.size(), 1U);
+    const auto& write = bus.writes[0];
+    EXPECT_EQ(write.addressLo, kRequestAddressLo);
+    EXPECT_EQ(write.payload.size(), BeBoBBootloaderCue::kCueBytes);
+    // The invariant that matters: anything this client puts on the bus must
+    // still satisfy the choke point when read back off the recording.
+    EXPECT_TRUE(IsPermittedBootloaderWrite(write.addressHi, write.addressLo,
+                                           write.payload));
+    EXPECT_TRUE(std::holds_alternative<CueWriteSucceeded>(seen));
+}
+
+TEST(BeBoBBootloaderClientTests, AnUnusableRouteTouchesTheBusNotAtAll) {
+    RecordingBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    auto client = std::make_shared<BeBoBBootloaderClient>(
+        bus, timers, MakeRoute(ASFW::Discovery::kInvalidNodeId));
+
+    PreparationEvent info{InfoReadSucceeded{}};
+    client->ReadInfo([&info](PreparationEvent e) { info = e; });
+    PreparationEvent write{CueWriteSucceeded{}};
+    client->SendCue(BeBoBBootloaderCue{MakeInfo(1, 1)},
+                    [&write](PreparationEvent e) { write = e; });
+
+    EXPECT_TRUE(bus.reads.empty());
+    EXPECT_TRUE(bus.writes.empty());
+    EXPECT_TRUE(std::holds_alternative<InfoReadFailed>(info));
+    EXPECT_TRUE(std::holds_alternative<CueWriteFailed>(write));
+}
+
+TEST(BeBoBBootloaderClientTests, ResponseReadWaitsForTheTimerRatherThanSleeping) {
+    RecordingBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+
+    bool fired = false;
+    client->ReadResponse(kResponseRetryDelayMs,
+                         [&fired](PreparationEvent) { fired = true; });
+    // Nothing may reach the bus before the delay elapses.
+    EXPECT_TRUE(bus.reads.empty());
+    EXPECT_FALSE(fired);
+
+    timers.Advance(static_cast<uint64_t>(kResponseRetryDelayMs) * 1'000'000ULL);
+    ASSERT_EQ(bus.reads.size(), 1U);
+    EXPECT_EQ(bus.reads[0].addressLo, kResponseAddressLo);
+    EXPECT_TRUE(fired);
+}
+
+TEST(BeBoBBootloaderClientTests, CancelStopsThePendingResponseRead) {
+    RecordingBus bus;
+    ASFW::Testing::FakeTimerScheduler timers;
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+
+    bool fired = false;
+    client->ReadResponse(kResponseRetryDelayMs,
+                         [&fired](PreparationEvent) { fired = true; });
+    client->Cancel();
+    timers.Advance(static_cast<uint64_t>(kResponseRetryDelayMs) * 1'000'000ULL);
+
+    EXPECT_TRUE(bus.reads.empty());
+    EXPECT_FALSE(fired);
+}
+
+} // namespace\n

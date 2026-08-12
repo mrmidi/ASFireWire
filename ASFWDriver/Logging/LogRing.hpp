@@ -68,7 +68,10 @@ enum class LogCategory : uint8_t {
     // backend end to end. DICE (18) is the precedent; Oxfw covers the
     // OXFW-common layer and its device overlays (Apogee Duet).
     Oxfw = 22,
-    Count = 23,
+    // Device preparation that runs before a device can be anything else: the
+    // BeBoB bootloader cue. Cold path, so every state transition is logged.
+    Firmware = 23,
+    Count = 24,
 };
 
 /// Severity scale (smaller = more severe), used for filtering.
@@ -124,6 +127,7 @@ inline constexpr LogCategoryDefinition kLogCategoryDefinitions[] = {
     {LogCategory::TxSyt, "TxSyt"},
     {LogCategory::Reserved21, "Reserved21"},
     {LogCategory::Oxfw, "Oxfw"},
+    {LogCategory::Firmware, "Firmware"},
 };
 
 [[nodiscard]] constexpr uint32_t CategoryBit(LogCategory category) noexcept {
