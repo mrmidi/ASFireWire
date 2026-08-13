@@ -44,6 +44,8 @@ enum class DeviceDefinitionId : uint32_t {
     PreSonusStudioLive2442,
     PreSonusStudioLive3242,
     MAudioFireWire1814Bootloader,
+    MAudioFireWire1814,
+    MAudioProjectMix,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -61,6 +63,13 @@ enum class ProbePolicyId : uint8_t {
     BeBoBPlug0,
     DiceTcat,
     OxfwAvc,
+    /// Firmware that hangs on AV/C it does not implement. Nothing is sent
+    /// automatically; the few commands the device is known to tolerate are
+    /// **allowed by an explicit table** and every other frame is refused at
+    /// FCPTransport::SubmitCommand — an allowlist, not a blocklist. The table
+    /// and its per-row evidence live in Protocols/AVC/AVCCommandFilter.hpp;
+    /// the hazard itself is AVC_DEVICE_HAZARDS.md H1.
+    BeBoBFilteredCommandSet,
 };
 
 /// Device preparation that must run before an identity can become anything
@@ -213,6 +222,14 @@ public:
 
     [[nodiscard]] static std::optional<const AudioSafetyRule*>
     MatchAnySafetyRule(const Discovery::DeviceIdentityEvidence& device) noexcept;
+
+    /// Which AV/C command shapes this identity may be sent, decided from Config
+    /// ROM alone and before any transaction. Device-level like
+    /// MatchAnySafetyRule: it tries every unit and returns the first definition
+    /// that constrains the device. Unmatched identities are Unrestricted, which
+    /// preserves today's behaviour for every device without a definition.
+    [[nodiscard]] static Discovery::AvcCommandFilterId
+    CommandFilterFor(const Discovery::DeviceIdentityEvidence& device) noexcept;
 
     [[nodiscard]] static std::span<const AudioDeviceDefinition> Definitions() noexcept;
     [[nodiscard]] static std::span<const AudioSafetyRule> SafetyRules() noexcept;

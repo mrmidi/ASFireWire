@@ -11,6 +11,27 @@ evidence is, and the rule that follows.
 A hazard here is only listed when it is backed by a reference stack or a measurement
 on real hardware. Where a claim is ours and unverified, it says so.
 
+### Two severities, two guards — do not conflate them
+
+| surface | worst case | recovery | guard |
+|---|---|---|---|
+| **AV/C command path** (H1) | firmware hangs | **power cycle** | per-device permitted-frame table, `Protocols/AVC/AVCCommandFilter.hpp`, enforced at `FCPTransport::SubmitCommand` |
+| **Bootloader register window** (H4, `0xFFFF_C802_1000`) | permanent, in flash | **possibly none** | command code frozen to `0x11` in `BeBoBBootloaderCue.hpp` + user-client refusal of writes into the window |
+
+Neither reference claims permanent damage from AV/C: Linux says *"freezed"*
+(`bebob_maudio.c:30-31`) and FFADO the same (`special_avdevice.h:34-37`). Do not
+escalate that to "bricks the device" — a maintainer who believes an FCP mistake is
+unrecoverable will refuse to test on hardware at all, and a power cycle is a risk worth
+taking to get the probe validated.
+
+The bootloader window is the one where "brick" is the right word, because it is the
+firmware upload channel: `0x0a ProgramGUID`, `0x0b ProgramMAC` and `0x10
+ProgramHWIdVersion` write flash permanently, and `0x04`/`0x05`/`0x06`
+`DownloadStart/Block/End` overwrite the firmware itself
+(`references/libffado-2.5.0/src/bebob/bebob_dl_codes.h:39-54`). Our cue and
+`ProgramGUID` are the same 12-byte block write to the same address, differing in **one
+byte at offset 6**.
+
 Deeper background lives in the local-only notes (gitignored `docs/`):
 `docs/BEBOB_BRIDGECO_REFERENCE.md` and `docs/MAUDIO_1814_KEXT_RE.md`.
 
@@ -28,10 +49,20 @@ generic AV/C fallback. Discovery publishes the resulting quarantine state to the
 there is no second Swift deny-list to drift out of sync.
 
 The FireWire 1814 bootloader (`0x00010070`), operational firmware (`0x00010071`),
-and ProjectMix I/O (`0x00010091`) are diagnostics-only in the normalized pass. No
-automatic or user-initiated FCP/vendor transaction, family adapter, or audio nub is
-permitted for those identities until a later hardware-support change supplies a
-separately reviewed named operation policy.
+and ProjectMix I/O (`0x00010091`) produce no family adapter and no audio nub, and
+nothing is sent to them automatically.
+
+The two operational personas were previously quarantined outright. They now carry
+`ProbePolicyId::BeBoBFilteredCommandSet`, the "separately reviewed named operation
+policy" this section used to defer to. The change is a narrowing, not a loosening:
+quarantine was a device-level kill switch that refused even the command these devices
+tolerate, while proving nothing about the commands that freeze them. What replaces it
+bounds every frame individually, at the point frames are sent, including the
+user-client raw path.
+
+**Widening that table is the reviewed act.** Adding a row means adding its evidence to
+H1 first. Adding a *family provider* to those definitions is a separate decision again,
+and is gated on H5 and H8.
 
 ---
 
@@ -177,7 +208,7 @@ provably does not own one.
 
 ---
 
-## H3 — the 1814 and ProjectMix need a forced bus reset after registration
+## H3 — Linux's forced bus reset is a Linux workaround. Do not port it.
 
 Linux forces a bus reset immediately after registering these two models
 (`bebob.c:284-293`):
@@ -186,11 +217,47 @@ Linux forces a bus reset immediately after registering these two models
 > correctly handling transactions. Without this, the devices have gap_count mismatch.
 > This causes much failure of transaction."*
 
-This is a strong candidate explanation for H2's symptom on the bootloader: the device
-is not reliably handling transactions until a reset has happened. **Untested by us.**
+An earlier revision of this file read that as a device requirement and flagged it as
+work we owed. **That was wrong**, and the correction matters because the wrong reading
+leads somewhere harmful: a per-model bus reset in a device class, which is global state
+affecting every device on the bus.
+
+**The vendor kext does not do it.** Cross-checked in IDA against
+`M-AudioFireWireBeBoB` (`FireWireBeBoB_01.11.002`, fully symbolized): `resetBus` has
+**zero** occurrences in the binary, and the string `gap` does not appear anywhere,
+including comments and data. `com_m_audio_FWMetaNub::start` (`0x1cf68`) — the exact
+analogue of Linux's post-`snd_card_register` hook — does `safeMetaCast` →
+`getController` → `getNodeIDGeneration` → copy five properties →
+`FirmwareCacheInfoRegisters` → register, and nothing else. The kext imports
+`IOFireWireNub::getBus()` and `getController()`, so it *could* reach `resetBus()`
+through the vtable; it never does.
+
+**Because IOFireWireFamily handles gap mismatch generically**, for every device:
+
+| site | behaviour |
+|---|---|
+| `IOFireWireController.cpp:2137-2155` | `processSelfIDs` compares gap counts across self-IDs; on mismatch sends a PHY config forcing gap `0x3F` and sets `fGapCountMismatch` |
+| `:1605-1620` | `doBusReset` promotes to **IBR instead of ISBR** while `fGapCountMismatch`, with a comment describing exactly the latch-and-reset loop Linux is compensating for |
+| `:3404-3418` | `finishedBusScan`, on inconsistent gaps, stages the PHY config packet and calls `resetBus()` |
+
+So Apple *does* issue a driver-initiated bus reset for gap count — from the controller,
+as bus policy, never from a device driver. Linux's device-driver kick exists because its
+core converges more weakly.
+
+**ASFW already implements all three:** `kConservativeMismatchGapCount = 0x3F`
+(`Bus/BusResetCoordinatorActions.cpp:25`, forced at `:444`),
+`GapPolicyDecision::GapMismatchRequiresLongReset`
+(`Bus/BusManager/GapPolicyCoordinator.cpp:155`, driving long-reset selection at
+`:61-80` — the mismatch case overrides `useShortResetForPureOptimization`, matching
+Apple's `useIBR`), and PHY config dispatch at `:635`.
+
+**Rule:** if these devices show transaction failures with gap-count symptoms, the fix
+belongs in bus policy, not in a BeBoB device class. Confirming our mismatch path fires
+with a 1814 attached is a log check, not new code.
 
 Linux also defers registration to the next `update()` so user space does not start I/O
-before that reset lands.
+before that reset lands. That part is about Linux's own registration ordering and has no
+ASFW analogue either.
 
 ---
 

@@ -6,11 +6,20 @@
 //
 // The cue tells a BridgeCo BeBoB bootloader to start the application firmware.
 // It writes nothing persistent, so a malformed cue costs a power cycle and no
-// more. Its *neighbours* are another matter: in the same byte field, 0x0a
-// rewrites the device GUID and 0x10 rewrites the hardware ID/version, both
-// permanently, in flash. Command 0x11 is therefore frozen here and no opcode
-// parameter exists anywhere in this interface — the destructive commands have no
-// representation in the driver at all.
+// more. Its *neighbours* are another matter. Every one of these is the same
+// 12-byte block write to the same address, differing only in the command-code
+// byte at offset 6 (bebob_dl_codes.h:39-54):
+//
+//   0x04/0x05/0x06  DownloadStart/Block/End  overwrite the firmware image
+//   0x0a            ProgramGUID              rewrites the device GUID, in flash
+//   0x0b            ProgramMAC               rewrites the MAC, in flash
+//   0x0c            InitPersParams           rewrites persistent parameters
+//   0x10            ProgramHWIdVersion       rewrites hardware ID/version, in flash
+//
+// Command 0x11 is therefore frozen here and no opcode parameter exists anywhere
+// in this interface — the destructive commands have no representation in the
+// driver at all. The second guard is the user client, which refuses any write
+// into this register window so the app cannot hand-assemble one either.
 //
 // Wire behaviour cross-validated with
 // references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:41-49,119-121

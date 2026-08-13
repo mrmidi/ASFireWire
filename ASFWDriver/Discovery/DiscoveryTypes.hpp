@@ -197,6 +197,19 @@ enum class QuarantineReason : uint8_t {
     UnsupportedFamily,
 };
 
+// Which AV/C command shapes a device may be sent. Decided by the audio catalog
+// from Config-ROM identity alone and stamped onto the record here, the same way
+// QuarantineReason is, so that consumers read one neutral verdict instead of
+// re-deriving identity. Enforced in FCPTransport::SubmitCommand; the tables
+// live in Protocols/AVC/AVCCommandFilter.hpp.
+enum class AvcCommandFilterId : uint8_t {
+    /// No restriction. Every ordinary device.
+    Unrestricted = 0,
+    /// M-Audio special firmware (FireWire 1814, ProjectMix I/O), which hangs on
+    /// AV/C it does not implement. See AVC_DEVICE_HAZARDS.md H1.
+    MAudioSpecialBeBoB,
+};
+
 struct UnitIdentityEvidence {
     uint32_t unitDirectoryOffset{0};
     std::optional<uint32_t> vendorId;
@@ -238,6 +251,7 @@ struct DeviceRecord {
     LinkPolicy link{};
     LifeState state{LifeState::Discovered};
     QuarantineReason quarantineReason{QuarantineReason::None};
+    AvcCommandFilterId avcCommandFilter{AvcCommandFilterId::Unrestricted};
 
     // ---- Audio classification (inferred from ROM) ----
     bool isAudioCandidate{false};    // Unit_Spec_Id==0x00A02D or AV/C Audio

@@ -323,7 +323,7 @@ TEST(AudioDeviceSessionManager, MultipleAudioUnitsProduceDistinctEndpoints) {
     EXPECT_EQ(probeCount, 2U);
 }
 
-TEST(AudioDeviceSessionManager, HazardousMAudioCreatesNoAdapterProbeOrNub) {
+TEST(AudioDeviceSessionManager, FilteredMAudioCreatesNoAdapterProbeOrNub) {
     Discovery::DeviceRegistry routes;
     Discovery::DeviceManager devices;
     Discovery::ConfigROM rom{};
@@ -348,11 +348,17 @@ TEST(AudioDeviceSessionManager, HazardousMAudioCreatesNoAdapterProbeOrNub) {
     ASSERT_TRUE(manager.RegisterProvider(std::make_unique<Template::Provider>(harness)));
     manager.Start();
 
-    const auto sessions = manager.SnapshotAll();
-    ASSERT_EQ(sessions.size(), 1U);
-    EXPECT_EQ(sessions.front().state, AudioSessionState::Quarantined);
-    EXPECT_EQ(sessions.front().quarantineReason,
-              Discovery::QuarantineReason::HazardousNoProbe);
+    // De-quarantining the 1814 must not make it an audio endpoint.
+    //
+    // It previously produced a Quarantined session, because Resolve() failed
+    // with HazardousIdentity and the failure branch records one. It now resolves
+    // successfully to a RecognizedUnsupported definition carrying no family and
+    // no cue, so the support early-out skips it before any session exists —
+    // the same treatment the bootloader persona gets, and a stronger outcome
+    // than a session in a quarantined state.
+    //
+    // The assertions that matter are unchanged: no adapter, no probe, no nub.
+    EXPECT_TRUE(manager.SnapshotAll().empty());
     EXPECT_EQ(harness->acceptedProbeCount, 0U);
     EXPECT_TRUE(sink.events.empty());
     EXPECT_EQ(sink.profile, nullptr);

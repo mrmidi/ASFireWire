@@ -22,6 +22,7 @@
 #include <optional>
 #include <span>
 #include "AVCDefs.hpp"
+#include "AVCCommandFilter.hpp"
 #include "../Ports/FireWireBusPort.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
@@ -42,6 +43,7 @@ enum class FCPStatus : uint8_t {
     kInvalidPayload,        ///< Payload size invalid
     kResponseMismatch,      ///< Response doesn't match command
     kBusy,                  ///< Command already pending
+    kRefusedByFilter,       ///< Not in this device's permitted command set
 };
 
 //==============================================================================
@@ -142,6 +144,14 @@ struct FCPTransportConfig {
 
     /// Commands submitted while one is active either queue FIFO or fail Busy.
     FCPQueuePolicy queuePolicy{FCPQueuePolicy::kFifo};
+
+    /// Allowlist of command shapes this device may be sent. Empty (the default)
+    /// means unrestricted, which is what every ordinary device carries. When
+    /// non-empty, SubmitCommand refuses any frame that matches no entry — the
+    /// guard for firmware that hangs on unimplemented AV/C. The span is
+    /// non-owning and must point at storage outliving the transport; all
+    /// tables in AVCCommandFilter.hpp are constexpr statics.
+    std::span<const FCPPermittedFrame> permittedFrames;
 };
 
 //==============================================================================

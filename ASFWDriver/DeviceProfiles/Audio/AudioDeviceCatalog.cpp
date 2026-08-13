@@ -90,6 +90,8 @@ constexpr AudioDeviceDefinition Definition(
 
 constexpr uint32_t kMAudioVendorId = 0x000D6C;
 constexpr uint32_t kMAudioFireWire1814BootloaderModelId = 0x00010070;
+constexpr uint32_t kMAudioFireWire1814ModelId = 0x00010071;
+constexpr uint32_t kMAudioProjectMixModelId = 0x00010091;
 
 constexpr std::array kDefinitions{
     Definition(DeviceDefinitionId::FocusriteSPro14, kFocusriteVendorId, kSPro14ModelId,
@@ -210,48 +212,42 @@ constexpr std::array kDefinitions{
                SupportDisposition::RecognizedUnsupported, "M-Audio",
                "FireWire 1814 (bootloader)", std::nullopt,
                BootloaderCuePolicy::BeBoBStartFirmware),
+    // The two M-Audio "special firmware" personas. They were previously blocked
+    // by a safety rule, which stopped even the one command they tolerate; the
+    // bound is now expressed as a permitted-command table instead
+    // (Protocols/AVC/AVCCommandFilter.hpp), which is both narrower and stricter.
+    //
+    // They stay RecognizedUnsupported with AudioFamilyProviderId::None for now,
+    // exactly like the bootloader persona above: the session manager skips them,
+    // no adapter is built, and nothing is sent automatically. The probe policy
+    // is what a deliberate, operator-initiated command is checked against.
+    // Streaming needs the geometry and choreography work in H5 and H8 first.
+    Definition(DeviceDefinitionId::MAudioFireWire1814, kMAudioVendorId,
+               kMAudioFireWire1814ModelId, AudioFamilyProviderId::None,
+               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::None,
+               SupportDisposition::RecognizedUnsupported, "M-Audio",
+               "FireWire 1814"),
+    Definition(DeviceDefinitionId::MAudioProjectMix, kMAudioVendorId,
+               kMAudioProjectMixModelId, AudioFamilyProviderId::None,
+               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::None,
+               SupportDisposition::RecognizedUnsupported, "M-Audio",
+               "ProjectMix I/O"),
 };
 
-// The bootloader persona (0x00010070) is deliberately NOT here. H1 concerns
-// AV/C commands reaching operational firmware; a bootloader is not running that
-// firmware and has no AV/C surface to freeze, and both Linux and FFADO write the
-// cue to it as the normal path. It gets its own definition below carrying a cue
-// policy, no family and no audio support, so it produces no session, no adapter
-// and no FCP. The two operational personas remain hazardous.
-constexpr std::array<uint32_t, 2> kHazardousMAudioModels{
-    0x00010071, // FireWire 1814 operational firmware
-    0x00010091, // ProjectMix I/O
-};
-
-constexpr AudioSafetyRule HazardRule(uint32_t model, const char* name) {
-    // These identities are intentionally diagnostics-only in this pass. Linux
-    // identifies all three personas in
-    // references/linux-sound-firewire-stack/firewire/bebob/bebob.c:463-469,
-    // while FFADO warns that an unsupported command can freeze the firmware:
-    // references/libffado-2.5.0/src/bebob/maudio/special_avdevice.h:34-45.
-    return AudioSafetyRule{
-        .clauses = {
-            IdentityMatchClause{.rootVendorId = MaskedValue32{kMAudioVendorId},
-                                .rootModelId = MaskedValue32{model}},
-            IdentityMatchClause{.rootVendorId = MaskedValue32{kMAudioVendorId},
-                                .unitModelId = MaskedValue32{model}},
-            IdentityMatchClause{.nodeVendorOui = MaskedValue32{kMAudioVendorId},
-                                .rootModelId = MaskedValue32{model}},
-            IdentityMatchClause{.nodeVendorOui = MaskedValue32{kMAudioVendorId},
-                                .unitModelId = MaskedValue32{model}},
-            IdentityMatchClause{},
-            IdentityMatchClause{},
-        },
-        .clauseCount = 4,
-        .reason = Discovery::QuarantineReason::HazardousNoProbe,
-        .name = name,
-    };
-}
-
-constexpr std::array kSafetyRules{
-    HazardRule(kHazardousMAudioModels[0], "M-Audio FireWire 1814"),
-    HazardRule(kHazardousMAudioModels[1], "M-Audio ProjectMix I/O"),
-};
+// No safety rule is currently defined.
+//
+// The M-Audio special-firmware personas (0x00010071, 0x00010091) used to live
+// here. A safety rule is a device-level kill switch: it quarantines the record,
+// which stops the audio session, the family adapter, *and* FCP transport
+// construction alike. That was too blunt in both directions — it refused the one
+// command those devices tolerate (AVC_DEVICE_HAZARDS.md H1) while doing nothing
+// to distinguish the commands that actually freeze them. They now carry
+// ProbePolicyId::BeBoBFilteredCommandSet, which bounds them per-frame at the
+// point frames are sent.
+//
+// Keep the mechanism. It remains the right expression for an identity that must
+// never be touched at all, as opposed to one that must be touched carefully.
+constexpr std::array<AudioSafetyRule, 0> kSafetyRules{};
 
 [[nodiscard]] const Discovery::UnitIdentityEvidence*
 FindUnit(const Discovery::DeviceRecord& device, uint32_t directoryOffset) noexcept {
@@ -377,8 +373,11 @@ enum ClauseConstraintBit : uint16_t {
     return id >= AudioFamilyProviderId::GenericAvc && id <= AudioFamilyProviderId::OXFW;
 }
 
+// Range check: keep the upper bound on the last member, or a newly added policy
+// silently reads as unknown and any Supported definition carrying it is rejected.
 [[nodiscard]] constexpr bool KnownProbe(ProbePolicyId id) noexcept {
-    return id >= ProbePolicyId::GenericAvc && id <= ProbePolicyId::OxfwAvc;
+    return id >= ProbePolicyId::GenericAvc &&
+           id <= ProbePolicyId::BeBoBFilteredCommandSet;
 }
 
 [[nodiscard]] constexpr bool KnownBuilder(ProfileBuilderId id) noexcept {
@@ -531,6 +530,47 @@ AudioDeviceCatalog::ResolveWithDefinitions(
                                                   match.clauseIndex});
     }
     return plan;
+}
+
+Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
+    const Discovery::DeviceIdentityEvidence& device) noexcept {
+    const auto filterForPolicy = [](ProbePolicyId policy) {
+        switch (policy) {
+            case ProbePolicyId::BeBoBFilteredCommandSet:
+                return Discovery::AvcCommandFilterId::MAudioSpecialBeBoB;
+            case ProbePolicyId::None:
+            case ProbePolicyId::NoAutomaticTraffic:
+            case ProbePolicyId::GenericAvc:
+            case ProbePolicyId::BeBoBPlug0:
+            case ProbePolicyId::DiceTcat:
+            case ProbePolicyId::OxfwAvc:
+                break;
+        }
+        return Discovery::AvcCommandFilterId::Unrestricted;
+    };
+
+    const auto matchAgainst = [&](const Discovery::UnitIdentityEvidence& unit) {
+        for (const auto& definition : kDefinitions) {
+            for (uint8_t i = 0; i < definition.clauseCount; ++i) {
+                if (definition.clauses[i].Matches(device, unit)) {
+                    return filterForPolicy(definition.probePolicy);
+                }
+            }
+        }
+        return Discovery::AvcCommandFilterId::Unrestricted;
+    };
+
+    if (device.units.empty()) {
+        const Discovery::UnitIdentityEvidence emptyUnit{};
+        return matchAgainst(emptyUnit);
+    }
+    for (const auto& unit : device.units) {
+        if (const auto filter = matchAgainst(unit);
+            filter != Discovery::AvcCommandFilterId::Unrestricted) {
+            return filter;
+        }
+    }
+    return Discovery::AvcCommandFilterId::Unrestricted;
 }
 
 std::optional<const AudioSafetyRule*>

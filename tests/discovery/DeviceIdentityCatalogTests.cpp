@@ -149,18 +149,51 @@ TEST(DeviceRuntimeIdentityTests, CollisionGroupsAreRecreatedOnEveryGeneration) {
     EXPECT_NE(second[1].instanceId, first[1].instanceId);
 }
 
-TEST(AudioDeviceCatalogTests, HazardousMAudioPersonasFailBeforeGenericAvcFallback) {
-    // The two OPERATIONAL personas stay hazardous: H1 is about AV/C reaching
-    // running firmware. The bootloader persona is covered separately below.
+TEST(AudioDeviceCatalogTests, MAudioSpecialPersonasResolveWithAFilteredCommandSet) {
+    // The two OPERATIONAL personas are no longer quarantined. Quarantine is a
+    // device-level kill switch that also refused the one command they tolerate;
+    // the bound is now per-frame (AVC_DEVICE_HAZARDS.md H1, AVCCommandFilter.hpp).
+    //
+    // What must remain true is that de-quarantining buys them nothing automatic:
+    // no family provider, no profile builder, and a support disposition the
+    // session manager skips. Only the filter changes.
     for (const uint32_t model : {0x00010071U, 0x00010091U}) {
         DeviceRegistry registry;
         const auto rom = MakeRom(0x000D6C0000000001ULL, 1, 2, 0x000D6C, model);
         const auto record = registry.UpsertFromROM(rom, {});
+
+        EXPECT_FALSE(AudioDeviceCatalog::MatchAnySafetyRule(record.identity).has_value())
+            << "model " << std::hex << model;
+
         const auto result = AudioDeviceCatalog::Resolve(record, OnlyUnit(record));
-        ASSERT_FALSE(result.has_value());
-        EXPECT_EQ(result.error(), CatalogResolutionError::HazardousIdentity);
-        EXPECT_TRUE(AudioDeviceCatalog::MatchAnySafetyRule(record.identity).has_value());
+        ASSERT_TRUE(result.has_value()) << "model " << std::hex << model;
+        EXPECT_EQ(result->probePolicy, ProbePolicyId::BeBoBFilteredCommandSet);
+        EXPECT_EQ(result->family, AudioFamilyProviderId::None);
+        EXPECT_EQ(result->profileBuilder, ProfileBuilderId::None);
+        EXPECT_NE(result->support, SupportDisposition::Supported);
+        EXPECT_NE(result->support, SupportDisposition::GenericFallback);
+
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(record.identity),
+                  ASFW::Discovery::AvcCommandFilterId::MAudioSpecialBeBoB);
     }
+}
+
+TEST(AudioDeviceCatalogTests, OrdinaryIdentitiesCarryNoCommandFilter) {
+    // The filter must be opt-in. An unmatched identity, and a matched one whose
+    // definition carries an ordinary probe policy, both stay unrestricted —
+    // otherwise this change would silently bound every device on the bus.
+    DeviceRegistry registry;
+    const auto unknown = registry.UpsertFromROM(
+        MakeRom(0x00112200000000AAULL, 1, 2, 0x001122, 0x00004321), {});
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(unknown.identity),
+              ASFW::Discovery::AvcCommandFilterId::Unrestricted);
+
+    DeviceRegistry bootloaderRegistry;
+    auto bootRom = MakeRom(0x000D6C0000000002ULL, 1, 3, 0x000D6C, 0x00010070U);
+    bootRom.unitDirectories.front().modelId = 0x00010070U;
+    const auto bootloader = bootloaderRegistry.UpsertFromROM(bootRom, {});
+    EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(bootloader.identity),
+              ASFW::Discovery::AvcCommandFilterId::Unrestricted);
 }
 
 TEST(AudioDeviceCatalogTests, MAudioBootloaderPersonaCarriesACuePolicyAndNoAudio) {

@@ -557,6 +557,20 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
             continue;
         }
 
+        // Decided from Config-ROM identity alone, before anything can be sent.
+        // Carried on the record so FCPTransport can bound what this device is
+        // ever asked; see Protocols/AVC/AVCCommandFilter.hpp.
+        deviceRecord->avcCommandFilter =
+            DeviceProfiles::Audio::AudioDeviceCatalog::CommandFilterFor(
+                deviceRecord->identity);
+        if (deviceRecord->avcCommandFilter !=
+            Discovery::AvcCommandFilterId::Unrestricted) {
+            ASFW_LOG(Discovery,
+                     "[DeviceIdentity] instance=%llu carries a filtered AV/C command "
+                     "set; unlisted frames will be refused at submit",
+                     deviceRecord->instanceId.value);
+        }
+
         if (const auto safety =
                 DeviceProfiles::Audio::AudioDeviceCatalog::MatchAnySafetyRule(
                     deviceRecord->identity);

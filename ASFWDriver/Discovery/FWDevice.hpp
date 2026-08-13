@@ -55,6 +55,9 @@ public:
     bool IsReady() const { return state_ == State::Ready; }
     bool IsQuarantined() const { return state_ == State::Quarantined; }
     QuarantineReason GetQuarantineReason() const { return quarantineReason_; }
+    /// Which AV/C command shapes this device may be sent. See
+    /// Protocols/AVC/AVCCommandFilter.hpp.
+    AvcCommandFilterId GetAvcCommandFilter() const { return avcCommandFilter_; }
     bool IsSuspended() const { return state_ == State::Suspended; }
     bool IsTerminated() const { return state_ == State::Terminated; }
 
@@ -80,6 +83,7 @@ private:
     bool isAudioCandidate_{false};
     bool supportsAMDTP_{false};
     QuarantineReason quarantineReason_{QuarantineReason::None};
+    AvcCommandFilterId avcCommandFilter_{AvcCommandFilterId::Unrestricted};
 
     Generation generation_{0};
     uint16_t nodeId_{0xFFFF};

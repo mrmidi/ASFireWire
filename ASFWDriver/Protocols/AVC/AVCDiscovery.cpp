@@ -39,9 +39,13 @@ bool AVCDiscovery::IsAVCUnit(
     return unit && (unit->GetUnitSpecID() & 0x00FF'FFFFU) == kSpecID_1394TA;
 }
 
+// Quarantine is deliberately NOT consulted here. Constructing a transport puts
+// no bytes on the wire; what is dangerous is which frames get sent, and that is
+// bounded per-device by the permitted-command table below. Refusing the
+// transport outright would also refuse the one command such a device tolerates.
 std::shared_ptr<FCPTransport> AVCDiscovery::EnsureRemoteTransportLocked(
     const std::shared_ptr<Discovery::FWDevice>& device) {
-    if (!device || device->IsQuarantined()) return nullptr;
+    if (!device) return nullptr;
     const auto instanceId = device->GetInstanceId();
     if (const auto it = transportsByDevice_.find(instanceId);
         it != transportsByDevice_.end()) {
@@ -55,6 +59,7 @@ std::shared_ptr<FCPTransport> AVCDiscovery::EnsureRemoteTransportLocked(
     config.interimTimeoutMs = kFCPTimeoutAfterInterim;
     config.maxRetries = kFCPMaxRetries;
     config.allowBusResetRetry = false;
+    config.permittedFrames = PermittedFramesFor(device->GetAvcCommandFilter());
 
     auto transport = std::make_shared<FCPTransport>();
     if (!transport ||

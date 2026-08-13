@@ -286,3 +286,9 @@ add_protocols_test(SBP2HandlerTests
 add_protocols_test(AVCSignalFormatProbeTests
     AVCSignalFormatProbeTests.cpp
 )
+
+# The per-device allowlist that bounds what may reach that firmware. Header-only
+# match rule plus the tables; enforcement lives in FCPTransport::SubmitCommand.
+add_protocols_test(AVCCommandFilterTests
+    AVCCommandFilterTests.cpp
+)
