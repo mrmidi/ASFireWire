@@ -131,6 +131,32 @@ extension ASFWDriverConnector {
 
     // MARK: - Generic AV/C STATUS inventory
 
+    // TODO: distinguish "refused by driver policy" from "did not answer".
+    //
+    // Every `did not answer` note below is written on a nil response, which
+    // collapses two different facts. Measured against a booted M-Audio 1814 on
+    // 2026-08-13: the driver refused PLUG_INFO (0x02) and SUBUNIT_INFO (0x31) at
+    // FCPTransport::SubmitCommand — the frames never reached the bus, confirmed
+    // by three `FCPTransport: refused ctype=0x01 opcode=…` ring records and by
+    // the absence of any matching AT write in the transaction trace — and the
+    // report said the device did not answer. The device was never asked.
+    //
+    // The driver already draws the distinction: FCPStatus::kRefusedByFilter maps
+    // to kIOReturnNotPermitted precisely so this layer can tell them apart. It
+    // is thrown away here because sendAVCStatus returns Data?.
+    //
+    // Fix: surface the kern_return_t (or a small typed result) out of
+    // sendAVCStatus and note refusals as "not sent — outside this device's
+    // permitted command set", citing AVC_DEVICE_HAZARDS.md H1.
+    //
+    // Related and larger: the probe tier itself is stale. `Tier: memory + AV/C
+    // STATUS` reasons from "passed the catalog safety gate", a gate these
+    // identities no longer have, and splits on STATUS-vs-CONTROL — which is the
+    // wrong axis, since PLUG_INFO and SUBUNIT_INFO are both STATUS and both
+    // freeze-capable. The app should read the device's ProbePolicyId and simply
+    // not attempt these commands for BeBoBFilteredCommandSet devices. The driver
+    // gate is sufficient for safety; this is about the report telling the truth.
+
     /// AV/C General PLUG_INFO (opcode 0x02, subfunction 0x00).
     private func captureUnitPlugs(unitID: UnitInstanceID, into snap: inout AVCDeviceSnapshot) {
         guard let response = sendAVCStatus(unitID: unitID,
