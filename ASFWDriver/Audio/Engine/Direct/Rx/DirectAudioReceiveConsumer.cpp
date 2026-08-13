@@ -7,9 +7,31 @@
 #include "../../../../Logging/Logging.hpp"
 #include "../../../Shared/AudioTimingGeometry.hpp"
 
+#include <DriverKit/IOLib.h>
+
+#include <cstring>
 #include <utility>
 
 namespace ASFW::AudioEngine::Direct::Rx {
+
+namespace {
+
+constexpr size_t kIsochReceivePrefixBytes = 8;
+constexpr size_t kCipHeaderBytes = 8;
+
+[[nodiscard]] uint32_t LoadLittleEndianQuadlet(const uint8_t* bytes) noexcept {
+    uint32_t value = 0;
+    std::memcpy(&value, bytes, sizeof(value));
+    return OSSwapLittleToHostInt32(value);
+}
+
+[[nodiscard]] uint32_t LoadBigEndianQuadlet(const uint8_t* bytes) noexcept {
+    uint32_t value = 0;
+    std::memcpy(&value, bytes, sizeof(value));
+    return OSSwapBigToHostInt32(value);
+}
+
+} // namespace
 
 const char* DirectAudioReceiveConsumer::ReplayResetReasonName(
     ReplayResetReason reason) noexcept {
@@ -66,6 +88,8 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     replayResetForStart_ = false;
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
+    zeroDataBlockSizeCaptureLogBudget_ = kZeroDataBlockSizeCaptureLogBudget;
+    zeroDataBlockSizeCaptureCount_ = 0;
     ztsTelemetry_.Reset();
     ztsTelemetryLogGate_.Reset();
     prevLoggedAnchorFrame_ = 0;
@@ -125,6 +149,8 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
             inputView_.control->rxReplayEpochResets.fetch_add(1, std::memory_order_relaxed);
             replayResetForStart_ = true;
             bootstrapResetLogBudget_ = kBootstrapResetLogBudget;
+            zeroDataBlockSizeCaptureLogBudget_ = kZeroDataBlockSizeCaptureLogBudget;
+            zeroDataBlockSizeCaptureCount_ = 0;
         }
         inputWriter_.Bind(&inputView_);
         if (!configuration_.isSecondary) {
@@ -190,6 +216,9 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
         configuration_.channelOffset, !configuration_.isSecondary);
+    if (result.status == DirectRxWriteStatus::kZeroDataBlockSize) {
+        LogZeroDataBlockSizeEvidence(batch, packet, result);
+    }
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -400,6 +429,54 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             ztsTelemetry_.Record(record);
         }
     }
+}
+
+void DirectAudioReceiveConsumer::LogZeroDataBlockSizeEvidence(
+    const ::ASFW::Isoch::IsochReceiveBatch& batch,
+    const ::ASFW::Isoch::IsochReceivePacket& packet,
+    const RxAudioPacketProcessorResult& result) noexcept {
+    // ProcessPacket has already proved that the span holds an 8-byte OHCI
+    // receive prefix and an 8-byte CIP header. Keep this guard here so the
+    // evidence path remains memory-safe if that contract ever changes.
+    if (zeroDataBlockSizeCaptureLogBudget_ == 0 ||
+        packet.payload.size() < kIsochReceivePrefixBytes + kCipHeaderBytes) {
+        return;
+    }
+
+    const auto* bytes = packet.payload.data();
+    const uint32_t prefix0 = LoadLittleEndianQuadlet(bytes);
+    const uint32_t prefix1 = LoadLittleEndianQuadlet(bytes + sizeof(uint32_t));
+    const uint32_t cip0 = LoadBigEndianQuadlet(bytes + kIsochReceivePrefixBytes);
+    const uint32_t cip1 = LoadBigEndianQuadlet(
+        bytes + kIsochReceivePrefixBytes + sizeof(uint32_t));
+    const uint32_t sourceNodeId = (cip0 >> 24) & 0x3fu;
+    const uint32_t expectedDbs = configuration_.am824Slots != 0
+        ? configuration_.am824Slots
+        : inputView_.deviceToHostAm824Slots;
+    const uint32_t configuredChannels = configuration_.streamChannels != 0
+        ? configuration_.streamChannels
+        : inputView_.memory.inputChannels;
+    const uint32_t capture = ++zeroDataBlockSizeCaptureCount_;
+    --zeroDataBlockSizeCaptureLogBudget_;
+
+    // `prefixLE` is the controller-owned 8-byte IR prefix, decoded as two
+    // little-endian quadlets. `cipBE` is the following on-wire CIP header,
+    // decoded as two big-endian quadlets. The pair makes a four-byte offset
+    // error visible without asking the transport to understand CIP.
+    ASFW_LOG_ERROR(
+        DirectAudio,
+        "[RxCipDbsZero] capture=%u desc=%u xfer=0x%04x residual=%u bytes=%zu "
+        "drain=0x%08x rawTs=0x%04x tsValid=%u cfgDbs=%u channels=%u",
+        capture, packet.descriptorIndex, packet.transferStatus, packet.residualCount,
+        packet.payload.size(), batch.drainCycleTimer, result.receiveCycleTimestamp,
+        result.hasReceiveCycleTimestamp ? 1U : 0U, expectedDbs, configuredChannels);
+    ASFW_LOG_ERROR(
+        DirectAudio,
+        "[RxCipDbsZero] capture=%u prefixLE=[0x%08x,0x%08x] "
+        "cipBE=[0x%08x,0x%08x] sid=%u dbs=%u dbc=%u fmt=0x%02x fdf=0x%02x syt=0x%04x",
+        capture, prefix0, prefix1, cip0, cip1, sourceNodeId,
+        result.dbs, result.dbc, static_cast<unsigned>((cip1 >> 24) & 0x3fu),
+        result.fdf, result.syt);
 }
 
 void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(

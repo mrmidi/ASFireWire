@@ -78,6 +78,10 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     [[nodiscard]] static const char* ReplayResetReasonName(ReplayResetReason reason) noexcept;
     void ResetReplayEpochForDiscontinuity(ReplayResetReason reason,
                                           const ReplayResetContext& context) noexcept;
+    void LogZeroDataBlockSizeEvidence(
+        const ::ASFW::Isoch::IsochReceiveBatch& batch,
+        const ::ASFW::Isoch::IsochReceivePacket& packet,
+        const RxAudioPacketProcessorResult& result) noexcept;
     void DrainReceiveTelemetry(uint32_t maxRecords);
     void LogTransmitTimingTrace();
 
@@ -108,6 +112,13 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     // would log at the isochronous packet rate.
     static constexpr uint32_t kBootstrapResetLogBudget = 8;
     uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
+    // A zero DBS conflicts with the configured stream geometry. It could be a
+    // device-specific representation or an RX offset/descriptor problem, so
+    // preserve evidence for a few occurrences without producing an 8 kHz trace.
+    static constexpr uint32_t kZeroDataBlockSizeCaptureLogBudget = 4;
+    uint32_t zeroDataBlockSizeCaptureLogBudget_{
+        kZeroDataBlockSizeCaptureLogBudget};
+    uint32_t zeroDataBlockSizeCaptureCount_{0};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
     uint8_t lastDbc_{0};
