@@ -12,6 +12,7 @@
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Families/BeBoB/MAudio/MAudioDuplexPolicy.hpp"
+#include "../Families/BeBoB/MAudio/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockAdapter.hpp"
 #include "../Runtime/TxPcmStagingRing.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
@@ -257,6 +258,10 @@ struct AudioDriverRuntimeState {
     // before TX DMA starts; StopIO drains that queue before disarming it.
     ASFW::Audio::Families::BeBoB::MAudio::TxClockAdapter
         mAudioTxClockAdapter;
+    // Shares the same serialized owner as mAudioTxClockAdapter but produces
+    // wire packet timing from actual OUTPUT_LAST completion stamps.
+    ASFW::Audio::Families::BeBoB::MAudio::InternalTxTiming
+        mAudioInternalTxTiming;
 
     // Audio-owned retention between the CoreAudio WriteEnd producer and the
     // independent TX preparation consumer. Both DICE streams read the same
@@ -378,13 +383,17 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
 // normal AMDTP cadence is preserved but every packet carries NO_INFO
 // (SYT=0xffff), matching the reference Saffire seed behavior. Set
 // allowRecoveredClock only after HAL has accepted the first real RX anchor.
+// M-Audio special firmware instead supplies a profile-scoped internal TX
+// schedule from OUTPUT_LAST completion timestamps; it never falls through to
+// capture replay for packet timing.
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               uint64_t startPacketIndex,
                               uint64_t requiredPacketIndex,
                               uint64_t limitPacketIndex,
                               uint32_t maxToPrepare,
                               uint64_t targetFrameEnd,
-                              bool allowRecoveredClock) noexcept;
+                              bool allowRecoveredClock,
+                              bool useMAudioInternalTiming) noexcept;
 
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets
 // before the IT DMA context starts, so the first refill finds committed slots.

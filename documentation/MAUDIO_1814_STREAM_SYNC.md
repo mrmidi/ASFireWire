@@ -1,8 +1,9 @@
 # M-Audio FireWire 1814 / ProjectMix — stream sync model
 
-Status: research, nothing implemented. Decoded from the vendor kext
-(`M-AudioFireWireBeBoB`, fully symbolised) and cross-checked against Linux and
-FFADO. `com_m_audio_FWProjectMixDevice` reuses `__ZTV24com_m_audio_FW1814Device`
+Status: **V1 internal 48 kHz TX timing is implemented; hardware validation is
+pending.** Decoded from the vendor kext (`M-AudioFireWireBeBoB`, fully
+symbolised) and cross-checked against Linux and FFADO.
+`com_m_audio_FWProjectMixDevice` reuses `__ZTV24com_m_audio_FW1814Device`
 outright, so everything here covers both devices.
 
 Addresses are file offsets in the IDA database named in the local-only
@@ -32,6 +33,27 @@ And at 48 kHz internal the free-run model degenerates to almost nothing:
 So a 48 kHz internal-clock TX is: `SYT += 4096`, NO-DATA every fourth packet,
 re-anchor when out of window. No drift estimation exists anywhere in this
 design. The RX conversion is exact at 48 k too, since `4096 = 8 × 512`.
+
+### V1 implementation boundary
+
+ASFW now models that exact internal 48 kHz TX policy in
+`Audio/Families/BeBoB/MAudio/MAudioInternalTxTiming` and wires it only for the
+1814/ProjectMix profile pair:
+
+- seed running SYT at zero after TX prefill;
+- schedule `DATA, DATA, DATA, NO-DATA`, with the first emitted DATA SYT
+  `0x1000`;
+- advance DBC by eight on every M-Audio NO-DATA packet;
+- phase re-anchor solely from an actual TX `OUTPUT_LAST` completion stamp,
+  using the kext's `completion + 683 + 4` rule and `[3, 6)` hold window;
+- turn a planned DATA packet into safe NO-DATA if a complete immutable PCM
+  packet is not yet available, rather than inventing samples or consuming RX
+  replay.
+
+It intentionally does **not** use an RX raw timestamp as a TX seed, read the
+cycle-time register from the audio path, support non-48 kHz internal rates, or
+implement Mode A/external sync. Those remain separate work with hardware proof
+required.
 
 ---
 
@@ -245,10 +267,11 @@ re-derivation path on a digital-format change.
 
 ## 12. What this means for ASFW
 
-- **Mode B is close to what we already do**: SYT = transmit cycle + lead with a
-  periodic re-anchor that preserves the sub-cycle offset. The exact rational
-  accumulators are *simpler* than our current drift handling, because there is
-  none to do.
+- **Mode B internal 48 kHz is implemented as its own M-Audio policy.** It does
+  not borrow ASFW's generic RX replay/bootstrap path: zero seed, `D,D,D,N`,
+  and completion-driven phase re-anchor are explicit. The generic AMDTP path
+  retains its normal NO-DATA DBC behavior; the M-Audio DBC exception is
+  profile-scoped.
 - **Mode A has no ASFW equivalent** and is arguably better for a device-clocked
   stream, since it removes rate estimation entirely. Out of scope until external
   sync is.

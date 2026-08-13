@@ -86,10 +86,11 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
                              uint64_t requiredPacketIndex,
-                             uint64_t limitPacketIndex,
-                             uint32_t maxToPrepare,
-                             uint64_t targetFrameEnd,
-                             bool allowRecoveredClock) noexcept {
+                              uint64_t limitPacketIndex,
+                              uint32_t maxToPrepare,
+                              uint64_t targetFrameEnd,
+                              bool allowRecoveredClock,
+                              bool useMAudioInternalTiming) noexcept {
     const uint32_t numSlots = ivars.runtime.txSlotProvider.numSlots;
     auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
     auto* directControl = ivars.runtime.directAudioGraph.control;
@@ -241,12 +242,82 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
         bool replayEntryPeeked = false;
+        bool mAudioPacketPlanActive = false;
+        ASFW::Audio::Families::BeBoB::MAudio::InternalTxPacketPlan
+            mAudioPacketPlan{};
         timing.replayValid = true;
         timing.disposition =
             ASFW::Protocols::Audio::AMDTP::
                 AmdtpPacketDisposition::NoData;
 
-        if (allowRecoveredClock) {
+        if (useMAudioInternalTiming) {
+            // The special M-Audio firmware owns playback time internally. Its
+            // vendor driver neither consumes RX SYT nor seeds output from an
+            // RX DMA timestamp; the policy starts at ResetPort(0) and takes
+            // phase correction only from completed TX OUTPUT_LAST stamps.
+            if (!ivars.runtime.mAudioInternalTxTiming.PreviewNextPacket(
+                    mAudioPacketPlan)) {
+                failProducer(
+                    ASFW::Audio::Runtime::TxProducerFaultStage::kPacketize,
+                    ASFW::Audio::Runtime::TxProducerFaultReason::
+                        kPacketizerRejected,
+                    ASFW::Audio::Runtime::FatalStreamReason::
+                        InvalidGeometry,
+                    nextPacketToPrepare);
+                break;
+            }
+            mAudioPacketPlanActive = true;
+            timing.replayValid = false;
+            timing.hasExplicitPacketSchedule = true;
+            timing.explicitDataBlocks = mAudioPacketPlan.dataBlocks;
+            timing.disposition = mAudioPacketPlan.isData
+                ? ASFW::Protocols::Audio::AMDTP::
+                      AmdtpPacketDisposition::Data
+                : ASFW::Protocols::Audio::AMDTP::
+                      AmdtpPacketDisposition::NoData;
+            timing.txClockValid = mAudioPacketPlan.isData;
+            timing.nextDataSyt = mAudioPacketPlan.syt;
+
+            // The first M-Audio DATA packet derives its audio cursor from the
+            // same TX-originated start epoch as the HAL clock.  Frame zero is
+            // the exact ideal origin; SelectCompletePcmPacket safely clamps to
+            // a complete retained packet if startup already passed it.
+            if (mAudioPacketPlan.isData &&
+                !ivars.runtime.txStreamEngine.IsFrameCursorAligned()) {
+                const auto& txConfig =
+                    ivars.runtime.txStreamEngine.StreamConfig();
+                const uint64_t oldestRetainedFrame =
+                    ivars.runtime.txPcmStagingRing.OldestValidFrame();
+                const uint64_t writtenEndFrame =
+                    ivars.runtime.txPcmStagingRing.WrittenEndFrame();
+                const auto selection =
+                    ASFW::Audio::Runtime::SelectCompletePcmPacket(
+                        /*projectedFrame=*/0,
+                        oldestRetainedFrame,
+                        writtenEndFrame,
+                        txConfig.framesPerDataPacket);
+                bool aligned = false;
+                if (selection.available) {
+                    aligned = ivars.runtime.txStreamEngine
+                                  .AlignFrameCursorOnce(
+                                      selection.firstFrame);
+                    if (ivars.runtime.txSecondaryActive) {
+                        aligned = ivars.runtime.txStreamEngineSecondary
+                                      .AlignFrameCursorOnce(
+                                          selection.firstFrame) ||
+                                  aligned;
+                    }
+                }
+                if (aligned) {
+                    ASFW_LOG(
+                        DirectAudio,
+                        "[MAudioTxAlign] frame=%llu origin=0 staged=[%llu,%llu)",
+                        selection.firstFrame,
+                        oldestRetainedFrame,
+                        writtenEndFrame);
+                }
+            }
+        } else if (allowRecoveredClock) {
             int64_t packetAnchorTicks = 0;
             if (!ivars.runtime.txExecutionTimeline.AnchorForPacket(
                     nextPacketToPrepare, packetAnchorTicks)) {
@@ -675,6 +746,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 ASFW::Protocols::Audio::AMDTP::
                     AmdtpPacketDisposition::NoData;
             timing.replayDataBlocks = 0;
+            timing.explicitDataBlocks = 0;
             prepareResult =
                 ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
                     static_cast<uint32_t>(nextPacketToPrepare), timing);
@@ -839,6 +911,21 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             }
         }
 
+        if (mAudioPacketPlanActive &&
+            !ivars.runtime.mAudioInternalTxTiming.CommitPacket(
+                mAudioPacketPlan,
+                timing.disposition ==
+                    ASFW::Protocols::Audio::AMDTP::
+                        AmdtpPacketDisposition::Data)) {
+            failProducer(
+                ASFW::Audio::Runtime::TxProducerFaultStage::kPacketize,
+                ASFW::Audio::Runtime::TxProducerFaultReason::
+                    kPacketizerRejected,
+                ASFW::Audio::Runtime::FatalStreamReason::InvalidGeometry,
+                nextPacketToPrepare);
+            break;
+        }
+
         if (replayEntryPeeked) {
             ivars.runtime.txReplayReader.Advance();
             directControl->txReplayEntries.fetch_add(
@@ -979,6 +1066,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     const bool useMAudioTxClock =
         ASFW::Audio::Families::BeBoB::MAudio::UsesSpecialDuplexPolicy(
             ivars->resolvedProfile.Value().profileBuilder);
+    const bool useMAudioInternalTiming =
+        useMAudioTxClock &&
+        ivars->runtime.mAudioInternalTxTiming.IsArmed();
     if (directControl) {
         directControl->txTransportCompletionCursor.store(
             completionCursor, std::memory_order_relaxed);
@@ -1036,6 +1126,40 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             }
         }
     }
+    if (useMAudioInternalTiming) {
+        const uint64_t stampCount =
+            txControl->completionStampCount.load(std::memory_order_acquire);
+        if (stampCount != 0) {
+            uint64_t completedPacketIndex = 0;
+            uint32_t completionCycleTimer = 0;
+            if (txControl->ReadCompletionStamp(
+                    stampCount - 1,
+                    completedPacketIndex,
+                    completionCycleTimer)) {
+                const auto observation =
+                    ivars->runtime.mAudioInternalTxTiming
+                        .ObserveTxCompletion(
+                            stampCount, completionCycleTimer);
+                if (observation.reanchored) {
+                    // Anomaly/startup evidence only.  Healthy phase-window
+                    // observations do not log on the producer hot path.
+                    ASFW_LOG_RING_ONLY_RL(
+                        DirectAudio,
+                        "maudio-tx-phase-reanchor",
+                        1000u,
+                        ::ASFW::Logging::LogLevel::Warning,
+                        "[MAudioTxPhase] reanchor stamp=%llu packet=%llu completion=0x%08x phase=%d lead=%u running=0x%08x",
+                        observation.stampCount,
+                        completedPacketIndex,
+                        observation.completionCycleTimer,
+                        observation.phaseCycles,
+                        ASFW::Audio::Families::BeBoB::MAudio::
+                            kInternalTxLeadCycles,
+                        observation.runningCycleTimer);
+                }
+            }
+        }
+    }
     const bool replayEstablished =
         directControl && directControl->rxSequenceReplay.IsEstablished();
     const uint64_t audioRequested = directControl
@@ -1069,7 +1193,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             ASFW::Audio::Shared::AudioTimingGeometry::
                 kTxPreparationLeadPackets,
             targetFrameEnd,
-            replayEstablished);
+            replayEstablished,
+            useMAudioInternalTiming);
     const uint64_t finalizedFrameEndAfter =
         ivars->runtime.txStreamEngine.Timeline().FinalizedFrameEnd();
     if (directControl) {

@@ -116,6 +116,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 ivars.txPreparationQueue->DispatchSync(^{ });
             }
             ivars.runtime.mAudioTxClockAdapter.Disarm();
+            ivars.runtime.mAudioInternalTxTiming.Disarm();
             if (streamingStarted && ivars.device.audioNub) {
                 const kern_return_t stopKr =
                     ivars.device.audioNub->StopAudioStreaming();
@@ -149,6 +150,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         }
         control->ResetForStart();
         ivars.runtime.mAudioTxClockAdapter.Disarm();
+        ivars.runtime.mAudioInternalTxTiming.Disarm();
         ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
@@ -384,17 +386,38 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         }
 
         // --- Start hardware streaming ---
-        if (useMAudioTxClock && !ivars.runtime.mAudioTxClockAdapter.Arm(
+        if (useMAudioTxClock) {
+            const auto startEpoch =
                 ASFW::Audio::Families::BeBoB::MAudio::StartEpoch{
-                    .value = ++ivars.runtime.mAudioTxClockEpoch},
-                ivars.runtime.txStreamEngine.StreamConfig().sampleRate,
-                GetZeroTimestampPeriod())) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: StartIO failed - M-Audio TX clock arm failed rate=%u period=%u",
-                     ivars.runtime.txStreamEngine.StreamConfig().sampleRate,
-                     GetZeroTimestampPeriod());
-            kr = failStart(kIOReturnNotReady, "ArmMAudioTxClock");
-            return;
+                    .value = ++ivars.runtime.mAudioTxClockEpoch};
+            const auto& txStreamConfig =
+                ivars.runtime.txStreamEngine.StreamConfig();
+            if (!ivars.runtime.mAudioTxClockAdapter.Arm(
+                    startEpoch,
+                    txStreamConfig.sampleRate,
+                    GetZeroTimestampPeriod())) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioDevice: StartIO failed - M-Audio TX clock arm failed rate=%u period=%u",
+                         txStreamConfig.sampleRate,
+                         GetZeroTimestampPeriod());
+                kr = failStart(kIOReturnNotReady, "ArmMAudioTxClock");
+                return;
+            }
+            // V1 deliberately supports the vendor-verified internal 48 kHz
+            // output policy only.  Do not let another rate silently borrow
+            // generic RX replay and look like a successful M-Audio start.
+            if (!ivars.runtime.mAudioInternalTxTiming.Arm(
+                    startEpoch,
+                    txStreamConfig.sampleRate,
+                    txStreamConfig.framesPerDataPacket)) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioDevice: StartIO failed - M-Audio internal TX timing requires 48k/8 rate=%u frames=%u",
+                         txStreamConfig.sampleRate,
+                         txStreamConfig.framesPerDataPacket);
+                kr = failStart(kIOReturnUnsupported,
+                               "ArmMAudioInternalTxTiming");
+                return;
+            }
         }
         ivars.runtime.txActive.store(true, std::memory_order_release);
         // A failed start can still leave a partially-started backend. Mark the
@@ -601,6 +624,7 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
             ivars.txPreparationQueue->DispatchSync(^{ });
         }
         ivars.runtime.mAudioTxClockAdapter.Disarm();
+        ivars.runtime.mAudioInternalTxTiming.Disarm();
 
         if (ivars.runtime.directAudioGraph.control) {
             const auto* control = ivars.runtime.directAudioGraph.control;

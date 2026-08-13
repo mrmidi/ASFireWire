@@ -1,8 +1,9 @@
 # M-Audio FireWire 1814 / ProjectMix — clock configuration, start choreography, and the host time base
 
-Status: research. Decoded from the vendor kext (`M-AudioFireWireBeBoB`, fully
-symbolised). **The kext is authoritative here; Linux is supporting evidence.**
-Where they differ, the divergence is called out rather than averaged.
+Status: research, with the internal 48 kHz TX portion now implemented in ASFW.
+Decoded from the vendor kext (`M-AudioFireWireBeBoB`, fully symbolised). **The
+kext is authoritative here; Linux is supporting evidence.** Where they differ,
+the divergence is called out rather than averaged.
 
 Companion to `MAUDIO_1814_STREAM_SYNC.md`, which covers SYT modes, packet
 cadence, CIP templates and the RX cursor. This document covers what happens
@@ -128,6 +129,12 @@ The lead is computed against the bus cycle timer, not wall clock. `0xA0000 >> 12
 
 The final call seeds the engine's timeline with a timestamp 20 ms in the future
 and `increment = false`.
+
+ASFW's V1 M-Audio path keeps the asymmetric transport choreography already
+wired for this family, then seeds its *audio packet policy* at TX zero after
+the safe all-NO-DATA prefill. It does not wait for RX SYT/replay before it can
+produce the first TX DATA packet. Runtime phase correction is later driven by
+TX completion timestamps, not by an audio-layer MMIO cycle-time read.
 
 ### 2.2 `m_audio_b_FWDCLOutputProgram::Start` @ `0x26900`
 
