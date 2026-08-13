@@ -222,6 +222,13 @@ add_device_test(MAudioTxClockAdapterTests
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockAdapter.cpp"
 )
 
+# The output SYT seed/cadence/re-anchor policy is pure and deliberately tested
+# independently of TX DMA, so hardware timing cannot hide an arithmetic error.
+add_device_test(MAudioInternalTxTimingTests
+    MAudioInternalTxTimingTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioInternalTxTiming.cpp"
+)
+
 # Apogee Duet runtime stream caps: aggregate vs per-stream wire view
 add_device_test(ApogeeDuetStreamCapsTests
     ApogeeDuetStreamCapsTests.cpp
