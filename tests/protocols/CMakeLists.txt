@@ -292,3 +292,9 @@ add_protocols_test(AVCSignalFormatProbeTests
 add_protocols_test(AVCCommandFilterTests
     AVCCommandFilterTests.cpp
 )
+
+# Stream geometry for firmware that cannot be asked for it. Header-only table
+# transcribed from bebob_maudio.c; a wrong value here is silent on the wire.
+add_protocols_test(MAudioSpecialFormationTests
+    MAudioSpecialFormationTests.cpp
+)
