@@ -205,6 +205,13 @@ add_device_test(BeBoBBootloaderCueTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
+# M-Audio 1814 / ProjectMix: pure custom duplex choreography before wiring it
+# into the generic BeBoB coordinator or live transport.
+add_device_test(MAudioDuplexChoreographyTests
+    MAudioDuplexChoreographyTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+)
+
 # Apogee Duet runtime stream caps: aggregate vs per-stream wire view
 add_device_test(ApogeeDuetStreamCapsTests
     ApogeeDuetStreamCapsTests.cpp
