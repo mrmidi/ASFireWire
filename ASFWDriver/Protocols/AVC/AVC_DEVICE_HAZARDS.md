@@ -101,9 +101,39 @@ Not "no AV/C". The safe surface is narrower *and* wider than a blanket ban:
 | AV/C extended stream format (`0x2F` + `0xC0`/`0xC1`) | **No** | `maudio/special.rs:100`; and the vendor kext binds `FWRev1AudioDevice::AVCControlPlugSignalFormat` (blind `0x18`/`0x19` CONTROL) into the 1814's vtable at `0x37510`, never the `FWRev2AudioDevice` builder that queries the `0xC1` list |
 | AV/C SIGNAL SOURCE (`0x1A`) | **No** | vendor kext calls it only from Audiophile/FW410/Solo/Lightbridge `SetClockSourceInternal`; the 1814 uses the `04 00 04` vendor command |
 
-This table is research for that later operation policy, not an authorization surface.
-The normalized pass suppresses all transactions for these identities deliberately;
-streaming support is out of scope.
+**This table is research; the authorization surface is the permitted-frame table in
+`AVCCommandFilter.hpp`.** They are deliberately not the same size — a row moves from
+here to there only when something in the driver actually sends it. Everything not in
+that table is refused at `FCPTransport::SubmitCommand`.
+
+### Measured on hardware, 2026-08-13
+
+The safe surface is no longer a claim inherited from Linux. On a booted 1814
+(`0x000D6C04002DF763`, model `0x010071`), via `asfw_avc_probe_signal_format`:
+
+```
+input  plug 0 -> outcome=decoded  sampleRateHz=44100  sfc=1  transportStatus=ok
+output plug 0 -> outcome=decoded  sampleRateHz=44100  sfc=1  transportStatus=ok
+```
+
+Three exchanges, bus generation stable throughout, no reset, and the device kept
+answering afterwards. **Unit PLUG SIGNAL FORMAT STATUS is confirmed safe on
+operational M-Audio special firmware, and this device is reachable by AV/C at all** —
+which the blanket quarantine had made untestable.
+
+Two cautions on reading that result:
+
+- **One rate, one device, one session.** It does not generalise to the rows still
+  marked safe-but-unsent (the `04 00 04` clock command, the `03 00 01` LED command,
+  CONTROL signal format). Each still needs its own first contact.
+- **Both plugs answered here.** Linux's *"Input plug shows actual rate"*
+  (`bebob_maudio.c:302-313`) implies the output plug may not be trustworthy on this
+  firmware. One agreeing sample at 44.1 kHz is not evidence that it is. Keep
+  defaulting to the input plug.
+
+The refusal half is covered by `tests/protocols/AVCCommandFilterTests.cpp` but has
+**not** been exercised against a live filtered transport — no unlisted frame has yet
+been offered to real hardware.
 
 ---
 
