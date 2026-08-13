@@ -154,27 +154,41 @@ TEST(AudioDeviceCatalogTests, MAudioSpecialPersonasResolveWithAFilteredCommandSe
     // device-level kill switch that also refused the one command they tolerate;
     // the bound is now per-frame (AVC_DEVICE_HAZARDS.md H1, AVCCommandFilter.hpp).
     //
-    // What must remain true is that de-quarantining buys them nothing automatic:
-    // no family provider, no profile builder, and a support disposition the
-    // session manager skips. Only the filter changes.
-    for (const uint32_t model : {0x00010071U, 0x00010091U}) {
+    // They are now Supported and reach a real adapter. What must remain true is
+    // that they reach it *without being interrogated*: the probe policy is what
+    // routes the family provider to its unprobed install path, and the command
+    // filter is what makes that safe. Those two are the invariant here, not the
+    // support disposition.
+    struct Expected {
+        uint32_t model;
+        ProfileBuilderId builder;
+    };
+    constexpr Expected kModels[] = {
+        {0x00010071U, ProfileBuilderId::MAudioFireWire1814},
+        {0x00010091U, ProfileBuilderId::MAudioProjectMix},
+    };
+
+    for (const auto& expected : kModels) {
         DeviceRegistry registry;
-        const auto rom = MakeRom(0x000D6C0000000001ULL, 1, 2, 0x000D6C, model);
+        const auto rom = MakeRom(0x000D6C0000000001ULL, 1, 2, 0x000D6C, expected.model);
         const auto record = registry.UpsertFromROM(rom, {});
 
         EXPECT_FALSE(AudioDeviceCatalog::MatchAnySafetyRule(record.identity).has_value())
-            << "model " << std::hex << model;
+            << "model " << std::hex << expected.model;
 
         const auto result = AudioDeviceCatalog::Resolve(record, OnlyUnit(record));
-        ASSERT_TRUE(result.has_value()) << "model " << std::hex << model;
-        EXPECT_EQ(result->probePolicy, ProbePolicyId::BeBoBFilteredCommandSet);
-        EXPECT_EQ(result->family, AudioFamilyProviderId::None);
-        EXPECT_EQ(result->profileBuilder, ProfileBuilderId::None);
-        EXPECT_NE(result->support, SupportDisposition::Supported);
-        EXPECT_NE(result->support, SupportDisposition::GenericFallback);
+        ASSERT_TRUE(result.has_value()) << "model " << std::hex << expected.model;
 
+        // The invariant: no probing, and every frame bounded.
+        EXPECT_EQ(result->probePolicy, ProbePolicyId::BeBoBFilteredCommandSet);
         EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(record.identity),
                   ASFW::Discovery::AvcCommandFilterId::MAudioSpecialBeBoB);
+
+        // Both personas share one protocol class; the builder id is only how the
+        // family provider picks the rate list.
+        EXPECT_EQ(result->family, AudioFamilyProviderId::BeBoB);
+        EXPECT_EQ(result->profileBuilder, expected.builder);
+        EXPECT_EQ(result->support, SupportDisposition::Supported);
     }
 }
 

@@ -348,17 +348,22 @@ TEST(AudioDeviceSessionManager, FilteredMAudioCreatesNoAdapterProbeOrNub) {
     ASSERT_TRUE(manager.RegisterProvider(std::make_unique<Template::Provider>(harness)));
     manager.Start();
 
-    // De-quarantining the 1814 must not make it an audio endpoint.
+    // The 1814 now resolves as Supported with AudioFamilyProviderId::BeBoB, so
+    // the session manager does create a session for it. This fixture registers
+    // only a GenericAvc provider, so no adapter is built and the session stops
+    // at UnsupportedFamily — which is what makes this test still meaningful:
+    // it pins that the session manager itself never probes and never publishes,
+    // independent of whether a provider happens to be present.
     //
-    // It previously produced a Quarantined session, because Resolve() failed
-    // with HazardousIdentity and the failure branch records one. It now resolves
-    // successfully to a RecognizedUnsupported definition carrying no family and
-    // no cue, so the support early-out skips it before any session exists —
-    // the same treatment the bootloader persona gets, and a stronger outcome
-    // than a session in a quarantined state.
-    //
-    // The assertions that matter are unchanged: no adapter, no probe, no nub.
-    EXPECT_TRUE(manager.SnapshotAll().empty());
+    // The real BeBoB path is exercised by the family provider, not here; this
+    // fixture deliberately has no way to instantiate MAudioSpecialProtocol.
+    const auto sessions = manager.SnapshotAll();
+    ASSERT_EQ(sessions.size(), 1U);
+    EXPECT_EQ(sessions.front().state, AudioSessionState::Quarantined);
+    EXPECT_EQ(sessions.front().quarantineReason,
+              Discovery::QuarantineReason::UnsupportedFamily);
+
+    // Unchanged and the point of the test: no probe, no nub.
     EXPECT_EQ(harness->acceptedProbeCount, 0U);
     EXPECT_TRUE(sink.events.empty());
     EXPECT_EQ(sink.profile, nullptr);

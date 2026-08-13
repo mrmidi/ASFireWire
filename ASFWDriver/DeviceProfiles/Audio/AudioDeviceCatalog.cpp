@@ -217,21 +217,26 @@ constexpr std::array kDefinitions{
     // bound is now expressed as a permitted-command table instead
     // (Protocols/AVC/AVCCommandFilter.hpp), which is both narrower and stricter.
     //
-    // They stay RecognizedUnsupported with AudioFamilyProviderId::None for now,
-    // exactly like the bootloader persona above: the session manager skips them,
-    // no adapter is built, and nothing is sent automatically. The probe policy
-    // is what a deliberate, operator-initiated command is checked against.
-    // Streaming needs the geometry and choreography work in H5 and H8 first.
+    // Both are Supported, but they reach their adapter by a route no other
+    // definition uses: ProbePolicyId::BeBoBFilteredCommandSet routes the family
+    // provider to StartUnprobedInstall, which builds the protocol from this
+    // catalog entry and the hardcoded formation table instead of from probe
+    // evidence. Nothing interrogates these devices, at any point.
+    //
+    // ProjectMix is not validated on hardware — we have no unit. It shares the
+    // 1814's protocol class and geometry and differs only in rate ceiling
+    // (96 kHz), so it rides along rather than being synthesised separately, but
+    // treat its first run as untested.
     Definition(DeviceDefinitionId::MAudioFireWire1814, kMAudioVendorId,
-               kMAudioFireWire1814ModelId, AudioFamilyProviderId::None,
-               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::None,
-               SupportDisposition::RecognizedUnsupported, "M-Audio",
-               "FireWire 1814"),
+               kMAudioFireWire1814ModelId, AudioFamilyProviderId::BeBoB,
+               ProbePolicyId::BeBoBFilteredCommandSet,
+               ProfileBuilderId::MAudioFireWire1814,
+               SupportDisposition::Supported, "M-Audio", "FireWire 1814"),
     Definition(DeviceDefinitionId::MAudioProjectMix, kMAudioVendorId,
-               kMAudioProjectMixModelId, AudioFamilyProviderId::None,
-               ProbePolicyId::BeBoBFilteredCommandSet, ProfileBuilderId::None,
-               SupportDisposition::RecognizedUnsupported, "M-Audio",
-               "ProjectMix I/O"),
+               kMAudioProjectMixModelId, AudioFamilyProviderId::BeBoB,
+               ProbePolicyId::BeBoBFilteredCommandSet,
+               ProfileBuilderId::MAudioProjectMix,
+               SupportDisposition::Supported, "M-Audio", "ProjectMix I/O"),
 };
 
 // No safety rule is currently defined.
@@ -380,9 +385,11 @@ enum ClauseConstraintBit : uint16_t {
            id <= ProbePolicyId::BeBoBFilteredCommandSet;
 }
 
+// Range check: keep the upper bound on the last member, or a newly added builder
+// silently reads as unknown and any Supported definition carrying it is rejected.
 [[nodiscard]] constexpr bool KnownBuilder(ProfileBuilderId id) noexcept {
     return id >= ProfileBuilderId::GenericAvc &&
-           id <= ProfileBuilderId::PreSonusStudioLive1602;
+           id <= ProfileBuilderId::MAudioProjectMix;
 }
 
 [[nodiscard]] constexpr bool CompatibleOverlap(

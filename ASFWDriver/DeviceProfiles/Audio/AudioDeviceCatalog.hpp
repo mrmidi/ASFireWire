@@ -95,6 +95,10 @@ enum class ProfileBuilderId : uint16_t {
     AlesisMultiMix,
     MidasVeniceF32,
     PreSonusStudioLive1602,
+    // Two ids for one protocol class: the class is shared, and the id is how
+    // the family provider tells the two personas apart when picking a rate list.
+    MAudioFireWire1814,
+    MAudioProjectMix,
 };
 
 enum class SupportDisposition : uint8_t {

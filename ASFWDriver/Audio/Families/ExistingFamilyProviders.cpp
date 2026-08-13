@@ -4,6 +4,7 @@
 #include "ExistingFamilyProviders.hpp"
 
 #include "../Protocols/BeBoB/GenericBeBoBProtocol.hpp"
+#include "../Protocols/BeBoB/MAudioSpecialProtocol.hpp"
 #include "../Protocols/BeBoB/Phase88Protocol.hpp"
 #include "../Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "../Protocols/DICE/TCAT/DICETcatProtocol.hpp"
@@ -80,7 +81,11 @@ private:
         case FamilyId::GenericAvc:
             return policy == ProbePolicyId::GenericAvc;
         case FamilyId::BeBoB:
-            return policy == ProbePolicyId::BeBoBPlug0;
+            // BeBoBFilteredCommandSet is a BeBoB device that must never be
+            // probed. It takes the same family provider and a different route
+            // through it — see StartProbe.
+            return policy == ProbePolicyId::BeBoBPlug0 ||
+                   policy == ProbePolicyId::BeBoBFilteredCommandSet;
         case FamilyId::DICE:
             return policy == ProbePolicyId::DiceTcat;
         case FamilyId::OXFW:
@@ -259,8 +264,103 @@ private:
         }
         if (family_ == FamilyId::DICE) {
             StartDiceProbe(epoch, std::move(cancel));
+        } else if (context_.staticPlan.probePolicy ==
+                   ProbePolicyId::BeBoBFilteredCommandSet) {
+            StartUnprobedInstall(epoch, std::move(cancel));
         } else {
             StartAvcProbe(epoch, std::move(cancel));
+        }
+    }
+
+    // Bring a device up with no probe at all.
+    //
+    // StartAvcProbe cannot be used here and no amount of gating inside it would
+    // help: its first two acts are AVCUnit::Initialize (UNIT_INFO, SUBUNIT_INFO)
+    // and ProbePlug0 (PLUG_INFO), which are precisely the commands that hang
+    // this firmware. They would now be refused by the transport's permitted-frame
+    // table, so the probe would not damage the device — it would simply always
+    // fail, and the device would never come up.
+    //
+    // Everything StartAvcProbe would have learned is instead asserted by the
+    // catalog and the protocol class: geometry from the hardcoded formation
+    // table, rates from the model. There is no observed evidence to intersect
+    // with, so there is no IntersectRates step — what the protocol says is all
+    // there is. That is the trade H5 forces.
+    void StartUnprobedInstall(uint64_t epoch,
+                              std::shared_ptr<std::atomic<bool>> cancel) {
+        auto route = CurrentRoute(epoch);
+        if (!route) {
+            Complete(epoch, std::unexpected(Devices::ProbeError::StaleRoute));
+            return;
+        }
+        // Acquired for its transport only. Initialize() is deliberately never
+        // called — that is the probe.
+        auto session = dependencies_.avc.AcquireRemoteSession(context_.unit);
+        auto transport = session ? session->Transport() : nullptr;
+        if (!transport) {
+            Complete(epoch, std::unexpected(Devices::ProbeError::Unsupported));
+            return;
+        }
+        {
+            Lock guard(lock_);
+            if (!IsActiveLocked(epoch)) return;
+            avcSession_ = session;
+        }
+
+        auto protocol = CreateUnprobedProtocol(*route);
+        if (!protocol) {
+            Complete(epoch, std::unexpected(Devices::ProbeError::Unsupported));
+            return;
+        }
+        protocol->UpdateRuntimeContext(*route, transport.get());
+        const IOReturn initializeStatus = protocol->Initialize();
+        if (initializeStatus != kIOReturnSuccess) {
+            Complete(epoch, std::unexpected(MapProbeStatus(initializeStatus)));
+            return;
+        }
+
+        AudioStreamRuntimeCaps caps{};
+        std::vector<uint32_t> rates;
+        if (!protocol->GetRuntimeAudioStreamCaps(caps) ||
+            !HasUsableDuplexGeometry(caps) ||
+            !protocol->GetSupportedSampleRates(rates) || rates.empty()) {
+            // Reachable if the formation table has no entry for the protocol's
+            // current rate. Failing here is deliberate: a device published with
+            // empty geometry would be silently mis-shaped on the wire.
+            (void)protocol->Shutdown();
+            Complete(epoch, std::unexpected(Devices::ProbeError::InvalidEvidence));
+            return;
+        }
+
+        ASFW_LOG(Audio,
+                 "[BeBoB] installing %{public}s without probing: %ux%u PCM @ %u Hz",
+                 protocol->GetName(), caps.hostInputPcmChannels,
+                 caps.hostOutputPcmChannels, caps.sampleRateHz);
+
+        InstallProtocol(protocol, std::move(cancel));
+        Complete(epoch, Devices::BeBoBProbeFacts{
+            .streams = caps,
+            .supportedRates = std::move(rates),
+            .operationPolicyId =
+                static_cast<uint32_t>(context_.staticPlan.probePolicy),
+        });
+    }
+
+    [[nodiscard]] std::shared_ptr<IDeviceProtocol> CreateUnprobedProtocol(
+        const Discovery::DeviceRouteToken& route) {
+        switch (context_.staticPlan.profileBuilder) {
+            case ProfileBuilderId::MAudioFireWire1814:
+                return std::make_shared<BeBoB::MAudioSpecialProtocol>(
+                    dependencies_.busOps, dependencies_.busInfo, route,
+                    dependencies_.irm, dependencies_.cmp, &dependencies_.scheduler,
+                    BeBoB::MAudioSpecialModel::FireWire1814);
+            case ProfileBuilderId::MAudioProjectMix:
+                return std::make_shared<BeBoB::MAudioSpecialProtocol>(
+                    dependencies_.busOps, dependencies_.busInfo, route,
+                    dependencies_.irm, dependencies_.cmp, &dependencies_.scheduler,
+                    BeBoB::MAudioSpecialModel::ProjectMix);
+            default:
+                return nullptr;
         }
     }
 
