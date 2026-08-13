@@ -46,6 +46,18 @@ TEST_F(RuntimeLifecycleCoordinatorTests, DuplicateStartDoesNotRerunResourcePipel
     EXPECT_EQ(coordinator_.CurrentState(), ControllerState::kStarting);
 }
 
+TEST_F(RuntimeLifecycleCoordinatorTests, NormalWorkAdmissionBeginsOnlyAfterStartCompletes) {
+    ASSERT_TRUE(coordinator_.BeginStart("start", 1));
+
+    // Timers that use AdmitsNormalWork() cannot be armed during Start().
+    // The service must schedule them after CompleteStart() publishes Running.
+    EXPECT_FALSE(coordinator_.AdmitsNormalWork());
+    EXPECT_TRUE(coordinator_.AdmitsBringupInterrupts());
+
+    ASSERT_TRUE(coordinator_.CompleteStart("running", 2));
+    EXPECT_TRUE(coordinator_.AdmitsNormalWork());
+}
+
 TEST_F(RuntimeLifecycleCoordinatorTests, FailedStartUnwindsOnlyCompletedStages) {
     ASSERT_TRUE(coordinator_.BeginStart("start", 1));
     coordinator_.MarkStageComplete(StartStage::kQueueReady);

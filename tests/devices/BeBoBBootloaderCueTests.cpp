@@ -11,8 +11,6 @@
 #include "ASFWDriver/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderClient.hpp"
 #include "ASFWDriver/Audio/Families/BeBoB/Bootloader/BeBoBBootloaderPreparation.hpp"
 
-#include "FakeTimerScheduler.hpp"
-
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -193,7 +191,7 @@ TEST(BeBoBBootloaderPreparationTests, ActiveBootloaderProducesExactlyOneCue) {
     ASSERT_TRUE(std::holds_alternative<WriteCue>(step.action));
     // Built from the info block that was actually read.
     EXPECT_EQ(std::get<WriteCue>(step.action).cue.ProtocolVersion(), 2U);
-    EXPECT_TRUE(std::holds_alternative<AwaitingResponse>(step.state));
+    EXPECT_TRUE(std::holds_alternative<AwaitingReenumeration>(step.state));
 }
 
 TEST(BeBoBBootloaderPreparationTests, OneInfoReadIsEnoughToDecide) {
@@ -217,35 +215,22 @@ TEST(BeBoBBootloaderPreparationTests, OneInfoReadIsEnoughToDecide) {
     EXPECT_EQ(std::get<Retired>(inactive.state).reason, RetireReason::NoCueNeeded);
 }
 
-TEST(BeBoBBootloaderPreparationTests, ResponseTimeoutNeverReWritesTheCue) {
+TEST(BeBoBBootloaderPreparationTests,
+     AcknowledgedCueWaitsForReenumerationWithoutMoreTransactions) {
     auto step = BeginPreparation();
     step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
     ASSERT_TRUE(std::holds_alternative<WriteCue>(step.action));
     step = AdvancePreparation(step.state, CueWriteSucceeded{});
 
-    // Exhaust the read budget. The cue must not be emitted again at any point:
-    // the first write may have landed and the device may be mid-boot.
-    for (int attempt = 0; attempt < 10; ++attempt) {
-        step = AdvancePreparation(step.state, ResponseReadFailed{});
-        EXPECT_FALSE(std::holds_alternative<WriteCue>(step.action))
-            << "re-sent the cue on response attempt " << attempt;
-        if (IsRetired(step.state)) break;
-    }
-    ASSERT_TRUE(IsRetired(step.state));
-    EXPECT_EQ(std::get<Retired>(step.state).reason, RetireReason::ResponseTimeout);
-}
-
-TEST(BeBoBBootloaderPreparationTests, ResponseReadRetriesAreBounded) {
-    auto step = BeginPreparation();
-    step = AdvancePreparation(step.state, InfoReadSucceeded{MakeInfo(1, 1)});
+    // The normal M-Audio path is cue -> reset -> fresh discovery, not a
+    // C802:9000 response poll. Its old route stays inert until reset tears it
+    // down, which also makes a duplicate completion harmless.
+    EXPECT_TRUE(std::holds_alternative<AwaitingReenumeration>(step.state));
+    EXPECT_TRUE(std::holds_alternative<Done>(step.action));
     step = AdvancePreparation(step.state, CueWriteSucceeded{});
-
-    int reads = 0;
-    while (!IsRetired(step.state)) {
-        step = AdvancePreparation(step.state, ResponseReadFailed{});
-        if (std::holds_alternative<ReadResponse>(step.action)) ++reads;
-    }
-    EXPECT_EQ(reads, kMaxResponseReadAttempts - 1);
+    EXPECT_TRUE(std::holds_alternative<AwaitingReenumeration>(step.state));
+    EXPECT_TRUE(std::holds_alternative<Done>(step.action));
+    EXPECT_FALSE(std::holds_alternative<WriteCue>(step.action));
 }
 
 TEST(BeBoBBootloaderPreparationTests, InfoReadRetriesAreBoundedAndSendNoCue) {
@@ -265,7 +250,7 @@ TEST(BeBoBBootloaderPreparationTests, GenerationChangeRetiresWithoutWriting) {
     const std::vector<PreparationState> states{
         ReadingInfo{0},
         EvaluatingInfo{MakeInfo(1, 1)},
-        AwaitingResponse{1, 0},
+        AwaitingReenumeration{1},
     };
     for (const auto& state : states) {
         const auto step = AdvancePreparation(state, GenerationInvalidated{});
@@ -287,10 +272,10 @@ TEST(BeBoBBootloaderPreparationTests, FailedWriteRetiresRatherThanRetrying) {
 }
 
 TEST(BeBoBBootloaderPreparationTests, RetiredMachineIsInert) {
-    const PreparationState retired = Retired{RetireReason::Cued};
+    const PreparationState retired = Retired{RetireReason::NoCueNeeded};
     for (const PreparationEvent& event :
          std::vector<PreparationEvent>{InfoReadSucceeded{MakeInfo(1, 1)},
-                                       CueWriteSucceeded{}, ResponseReadFailed{},
+                                       CueWriteSucceeded{}, CueWriteFailed{},
                                        GenerationInvalidated{}}) {
         const auto step = AdvancePreparation(retired, event);
         EXPECT_FALSE(std::holds_alternative<WriteCue>(step.action));
@@ -361,11 +346,10 @@ public:
 
 TEST(BeBoBBootloaderClientTests, ReadsTheInfoBlockAtTheInfoRegister) {
     RecordingBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
     bus.readPayload.assign(kInfoBlockBytes, 0);
     bus.readPayload[kInfoOffsetBootloaderVersion] = 1;  // bootloader active
 
-    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, MakeRoute());
     PreparationEvent seen{InfoReadFailed{}};
     client->ReadInfo([&seen](PreparationEvent e) { seen = e; });
 
@@ -379,10 +363,9 @@ TEST(BeBoBBootloaderClientTests, ReadsTheInfoBlockAtTheInfoRegister) {
 
 TEST(BeBoBBootloaderClientTests, ShortInfoReadIsAFailureNotAPartialBlock) {
     RecordingBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
     bus.readPayload.assign(kInfoBlockBytes - 1, 0);
 
-    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, MakeRoute());
     PreparationEvent seen{InfoReadSucceeded{}};
     client->ReadInfo([&seen](PreparationEvent e) { seen = e; });
     EXPECT_TRUE(std::holds_alternative<InfoReadFailed>(seen));
@@ -390,8 +373,7 @@ TEST(BeBoBBootloaderClientTests, ShortInfoReadIsAFailureNotAPartialBlock) {
 
 TEST(BeBoBBootloaderClientTests, EveryWriteItMakesIsAPermittedCue) {
     RecordingBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
-    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, MakeRoute());
 
     const BeBoBBootloaderCue cue{MakeInfo(2, 1)};
     PreparationEvent seen{CueWriteFailed{}};
@@ -410,9 +392,8 @@ TEST(BeBoBBootloaderClientTests, EveryWriteItMakesIsAPermittedCue) {
 
 TEST(BeBoBBootloaderClientTests, AnUnusableRouteTouchesTheBusNotAtAll) {
     RecordingBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
     auto client = std::make_shared<BeBoBBootloaderClient>(
-        bus, timers, MakeRoute(ASFW::Discovery::kInvalidNodeId));
+        bus, MakeRoute(ASFW::Discovery::kInvalidNodeId));
 
     PreparationEvent info{InfoReadSucceeded{}};
     client->ReadInfo([&info](PreparationEvent e) { info = e; });
@@ -426,37 +407,17 @@ TEST(BeBoBBootloaderClientTests, AnUnusableRouteTouchesTheBusNotAtAll) {
     EXPECT_TRUE(std::holds_alternative<CueWriteFailed>(write));
 }
 
-TEST(BeBoBBootloaderClientTests, ResponseReadWaitsForTheTimerRatherThanSleeping) {
+TEST(BeBoBBootloaderClientTests, CancelSuppressesNewTransactions) {
     RecordingBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
-    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
+    auto client = std::make_shared<BeBoBBootloaderClient>(bus, MakeRoute());
 
-    bool fired = false;
-    client->ReadResponse(kResponseRetryDelayMs,
-                         [&fired](PreparationEvent) { fired = true; });
-    // Nothing may reach the bus before the delay elapses.
-    EXPECT_TRUE(bus.reads.empty());
-    EXPECT_FALSE(fired);
-
-    timers.Advance(static_cast<uint64_t>(kResponseRetryDelayMs) * 1'000'000ULL);
-    ASSERT_EQ(bus.reads.size(), 1U);
-    EXPECT_EQ(bus.reads[0].addressLo, kResponseAddressLo);
-    EXPECT_TRUE(fired);
-}
-
-TEST(BeBoBBootloaderClientTests, CancelStopsThePendingResponseRead) {
-    RecordingBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
-    auto client = std::make_shared<BeBoBBootloaderClient>(bus, timers, MakeRoute());
-
-    bool fired = false;
-    client->ReadResponse(kResponseRetryDelayMs,
-                         [&fired](PreparationEvent) { fired = true; });
     client->Cancel();
-    timers.Advance(static_cast<uint64_t>(kResponseRetryDelayMs) * 1'000'000ULL);
+    client->ReadInfo([](PreparationEvent) {});
+    client->SendCue(BeBoBBootloaderCue{MakeInfo(1, 1)},
+                    [](PreparationEvent) {});
 
     EXPECT_TRUE(bus.reads.empty());
-    EXPECT_FALSE(fired);
+    EXPECT_TRUE(bus.writes.empty());
 }
 
 } // namespace\n

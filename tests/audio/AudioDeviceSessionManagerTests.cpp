@@ -4,8 +4,6 @@
 #include "ASFWDriver/Discovery/DeviceManager.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Testing/Audio/FakeExistingFamilyDevice.hpp"
-#include "FakeTimerScheduler.hpp"
-
 #include <gtest/gtest.h>
 
 #include <array>
@@ -536,20 +534,18 @@ TEST(AudioDeviceSessionManagerBootloader, ActiveBootloaderIsCuedExactlyOnce) {
     Fixture fixture;
     RecordingSink sink;
     BootloaderBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
     // Non-zero bootloader "version" is the state flag meaning the bootloader is
     // the running image, so the cue is warranted.
     bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 1;
     bus.infoBlock[Boot::kInfoOffsetProtocolVersion] = 1;
 
     AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
-                                      BootloaderCatalog(), &bus, &timers);
+                                      BootloaderCatalog(), &bus);
     manager.Start();
 
     ASSERT_EQ(bus.writes.size(), 1U);
-    // Exactly one info read decides it. The response read is behind a timer the
-    // fake scheduler has not fired, so anything above one here is the redundant
-    // second info read this machine used to require.
+    // Exactly one info read decides it. The normal cue path deliberately does
+    // not poll the response register in this generation.
     EXPECT_EQ(bus.reads.size(), 1U);
     EXPECT_EQ(bus.reads[0], Boot::kInfoAddressLo);
     EXPECT_EQ(bus.writes[0].first, Boot::kRequestAddressLo);
@@ -560,42 +556,40 @@ TEST(AudioDeviceSessionManagerBootloader, ActiveBootloaderIsCuedExactlyOnce) {
     EXPECT_EQ(sink.profile, nullptr);
 }
 
-TEST(AudioDeviceSessionManagerBootloader, TeardownCancelsThePendingResponseRead) {
-    // The expected ending: a successful cue makes the device reset and vanish,
-    // so the session is torn down from outside while the 2 s response-read timer
-    // is still armed. Without cancelling it, the timer later fires a read
-    // against a stale generation and keeps the client alive past its session.
+TEST(AudioDeviceSessionManagerBootloader,
+     ResetRetiresAwaitingReenumerationBeforeTheCurrentPersonaIsResolved) {
+    // A real 1814 returns as 0x00010071. This fixture intentionally keeps the
+    // bootloader catalog result after reset so that a second preparation proves
+    // the old endpoint-by-unit mapping was removed; the production catalog then
+    // resolves the current operational model instead of sending this second cue.
     Fixture fixture;
     RecordingSink sink;
     BootloaderBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
     bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 1;
 
     AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
-                                      BootloaderCatalog(), &bus, &timers);
+                                      BootloaderCatalog(), &bus);
     manager.Start();
     ASSERT_EQ(bus.writes.size(), 1U);
-    const auto readsBeforeTeardown = bus.reads.size();
+    ASSERT_EQ(bus.reads, std::vector<uint32_t>{Boot::kInfoAddressLo});
 
-    manager.OnDeviceRemoved(fixture.record.instanceId);
-    EXPECT_TRUE(manager.SnapshotAll().empty());
-
-    // Well past the 2000 ms response delay.
-    timers.Advance(5'000'000'000ULL);
-    EXPECT_EQ(bus.reads.size(), readsBeforeTeardown)
-        << "a response read was issued after the session was torn down";
+    fixture.RebindAfterReset();
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.reads,
+              (std::vector<uint32_t>{Boot::kInfoAddressLo, Boot::kInfoAddressLo}));
+    ASSERT_EQ(manager.SnapshotAll().size(), 1U);
+    EXPECT_EQ(manager.SnapshotAll()[0].state, AudioSessionState::Preparing);
 }
 
 TEST(AudioDeviceSessionManagerBootloader, InactiveBootloaderPutsNoWriteOnTheBus) {
     Fixture fixture;
     RecordingSink sink;
     BootloaderBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
     // Zero means the device is already running application firmware.
     bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 0;
 
     AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
-                                      BootloaderCatalog(), &bus, &timers);
+                                      BootloaderCatalog(), &bus);
     manager.Start();
 
     EXPECT_FALSE(bus.reads.empty());
@@ -606,8 +600,8 @@ TEST(AudioDeviceSessionManagerBootloader, InactiveBootloaderPutsNoWriteOnTheBus)
 TEST(AudioDeviceSessionManagerBootloader, WithoutTransportNothingIsPrepared) {
     Fixture fixture;
     RecordingSink sink;
-    // No bus and no scheduler: the session is recorded and left alone rather
-    // than driven down a second, degraded firmware path.
+    // No bus: the session is recorded and left alone rather than driven down a
+    // second, degraded firmware path.
     AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
                                       BootloaderCatalog());
     manager.Start();
@@ -622,12 +616,11 @@ TEST(AudioDeviceSessionManagerBootloader, CuePolicyNeverCreatesAnAdapterOrProbes
     Fixture fixture;
     RecordingSink sink;
     BootloaderBus bus;
-    ASFW::Testing::FakeTimerScheduler timers;
     bus.infoBlock[Boot::kInfoOffsetBootloaderVersion] = 1;
 
     auto harness = std::make_shared<Template::ProbeHarness>();
     AudioDeviceSessionManager manager(fixture.devices, fixture.routes, sink,
-                                      BootloaderCatalog(), &bus, &timers);
+                                      BootloaderCatalog(), &bus);
     ASSERT_TRUE(manager.RegisterProvider(std::make_unique<Template::Provider>(harness)));
     manager.Start();
 

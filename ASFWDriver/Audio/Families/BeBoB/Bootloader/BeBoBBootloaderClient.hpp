@@ -4,7 +4,7 @@
 // BeBoBBootloaderClient.hpp — the only code in this driver that transacts with a
 // BeBoB bootloader.
 //
-// It exposes exactly three operations and no parameterised write. Every write
+// It exposes exactly two operations and no parameterised write. Every write
 // goes through IsPermittedBootloaderWrite, so a caller cannot reach the
 // destructive neighbours of the cue command even by constructing bytes by hand:
 // in that byte field 0x0a rewrites the device GUID and 0x10 the hardware ID,
@@ -21,7 +21,6 @@
 
 #include "../../../../Async/Interfaces/IFireWireBusOps.hpp"
 #include "../../../../Discovery/DeviceRouteToken.hpp"
-#include "../../../../Scheduling/ITimerScheduler.hpp"
 
 #include <functional>
 #include <memory>
@@ -36,7 +35,6 @@ class BeBoBBootloaderClient final
     : public std::enable_shared_from_this<BeBoBBootloaderClient> {
 public:
     BeBoBBootloaderClient(ASFW::Async::IFireWireBusOps& busOps,
-                          ASFW::Scheduling::ITimerScheduler& scheduler,
                           Discovery::DeviceRouteToken route) noexcept;
 
     /// Read the BootROM info block. Success carries the parsed block, which is
@@ -47,10 +45,6 @@ public:
     /// address are not exactly right, and reports that as a write failure
     /// rather than putting anything on the bus.
     void SendCue(const BeBoBBootloaderCue& cue, PreparationEventCallback completion);
-
-    /// Read the bootloader response after the configured delay. The delay is a
-    /// timer, never IOSleep: this runs on the single dispatch queue.
-    void ReadResponse(uint32_t delayMs, PreparationEventCallback completion);
 
     /// Drop pending work. Callbacks already queued may still arrive and are
     /// safe: the state machine ignores events that cannot occur in its state.
@@ -69,10 +63,7 @@ private:
     [[nodiscard]] std::optional<ASFW::FW::NodeId> OperationalNode() const noexcept;
 
     ASFW::Async::IFireWireBusOps& busOps_;
-    ASFW::Scheduling::ITimerScheduler& scheduler_;
     Discovery::DeviceRouteToken route_{};
-    ASFW::Scheduling::TimerToken pendingTimer_{
-        ASFW::Scheduling::kInvalidTimerToken};
     bool cancelled_{false};
 };
 

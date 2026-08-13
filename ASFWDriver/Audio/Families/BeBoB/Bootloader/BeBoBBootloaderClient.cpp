@@ -17,15 +17,12 @@ namespace {
 /// request goes out at the conservative speed rather than the negotiated best.
 constexpr ASFW::FW::FwSpeed kBootloaderSpeed = ASFW::FW::FwSpeed::S100;
 
-constexpr uint64_t kNanosPerMilli = 1'000'000ULL;
-
 } // namespace
 
 BeBoBBootloaderClient::BeBoBBootloaderClient(
     ASFW::Async::IFireWireBusOps& busOps,
-    ASFW::Scheduling::ITimerScheduler& scheduler,
     Discovery::DeviceRouteToken route) noexcept
-    : busOps_(busOps), scheduler_(scheduler), route_(route) {}
+    : busOps_(busOps), route_(route) {}
 
 std::optional<ASFW::FW::NodeId>
 BeBoBBootloaderClient::OperationalNode() const noexcept {
@@ -137,54 +134,8 @@ void BeBoBBootloaderClient::SendCue(const BeBoBBootloaderCue& cue,
         });
 }
 
-void BeBoBBootloaderClient::ReadResponse(uint32_t delayMs,
-                                         PreparationEventCallback completion) {
-    if (cancelled_ || !completion) {
-        return;
-    }
-    // A timer, never IOSleep — this runs on the single dispatch queue and
-    // sleeping on it would stall every other subsystem.
-    pendingTimer_ = scheduler_.ScheduleAfter(
-        static_cast<uint64_t>(delayMs) * kNanosPerMilli,
-        [self = shared_from_this(), completion = std::move(completion)]() mutable {
-            if (self->cancelled_) {
-                return;
-            }
-            self->pendingTimer_ = ASFW::Scheduling::kInvalidTimerToken;
-            const auto node = self->OperationalNode();
-            if (!node) {
-                completion(ResponseReadFailed{});
-                return;
-            }
-            (void)self->busOps_.ReadBlock(
-                self->route_.generation, *node,
-                self->AddressFor(kResponseAddressLo), sizeof(uint32_t),
-                kBootloaderSpeed,
-                [self, completion = std::move(completion)](
-                    ASFW::Async::AsyncStatus status,
-                    std::span<const uint8_t>) mutable {
-                    if (self->cancelled_) {
-                        return;
-                    }
-                    if (status != ASFW::Async::AsyncStatus::kSuccess) {
-                        ASFW_LOG(Firmware,
-                                 "[Bootloader] response read failed status=%{public}s",
-                                 ASFW::Async::ToString(status));
-                        completion(ResponseReadFailed{});
-                        return;
-                    }
-                    ASFW_LOG(Firmware, "[Bootloader] response received");
-                    completion(ResponseReadSucceeded{});
-                });
-        });
-}
-
 void BeBoBBootloaderClient::Cancel() noexcept {
     cancelled_ = true;
-    if (pendingTimer_ != ASFW::Scheduling::kInvalidTimerToken) {
-        scheduler_.Cancel(pendingTimer_);
-        pendingTimer_ = ASFW::Scheduling::kInvalidTimerToken;
-    }
 }
 
 } // namespace ASFW::Audio::Families::BeBoB::Bootloader

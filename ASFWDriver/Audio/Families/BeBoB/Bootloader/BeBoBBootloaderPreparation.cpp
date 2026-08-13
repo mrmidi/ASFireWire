@@ -28,7 +28,7 @@ namespace {
     // The one write. Built from this state's own info block, so its protocol
     // version cannot be stale.
     return PreparationStep{
-        AwaitingResponse{state.info.ProtocolVersion(), 0},
+        AwaitingReenumeration{state.info.ProtocolVersion()},
         WriteCue{BeBoBBootloaderCue{state.info}}};
 }
 
@@ -58,10 +58,17 @@ namespace {
     return Stay(state);
 }
 
-[[nodiscard]] PreparationStep OnAwaitingResponse(
-    const AwaitingResponse& state, const PreparationEvent& event) noexcept {
+[[nodiscard]] PreparationStep OnAwaitingReenumeration(
+    const AwaitingReenumeration& state, const PreparationEvent& event) noexcept {
     if (std::holds_alternative<CueWriteSucceeded>(event)) {
-        return PreparationStep{state, ReadResponse{kResponseRetryDelayMs}};
+        // FirmwareStart in the vendor kext writes the cue and immediately
+        // schedules re-registration; it does not call FirmwareReadResponse.
+        // Linux has the same normal path: cue -> bus reset -> fresh detection
+        // (references/linux-sound-firewire-stack/firewire/bebob/
+        // bebob_maudio.c:87-92,119-134). Keep the old generation inert rather
+        // than polling C802:9000, whose read protocol belongs to firmware
+        // download rather than this start cue.
+        return PreparationStep{state, Done{}};
     }
     if (std::holds_alternative<CueWriteFailed>(event)) {
         // The write did not land, so nothing was started and there is nothing
@@ -69,20 +76,6 @@ namespace {
         // have landed, and the transport reports that as a failed read later
         // rather than as CueWriteFailed. See the header.
         return Retire(RetireReason::CueWriteFailed);
-    }
-    if (std::holds_alternative<ResponseReadSucceeded>(event)) {
-        return Retire(RetireReason::Cued);
-    }
-    if (std::holds_alternative<ResponseReadFailed>(event)) {
-        const uint8_t next = static_cast<uint8_t>(state.attempt + 1);
-        if (next >= kMaxResponseReadAttempts) {
-            // Retire without re-sending. The device may be mid-boot; the cue is
-            // never written twice for one bootloader-active observation.
-            return Retire(RetireReason::ResponseTimeout);
-        }
-        return PreparationStep{
-            AwaitingResponse{state.cuedProtocolVersion, next},
-            ReadResponse{kResponseRetryDelayMs}};
     }
     return Stay(state);
 }
@@ -115,8 +108,8 @@ PreparationStep AdvancePreparation(const PreparationState& state,
         // variant, and it still consumes no event.
         return OnEvaluatingInfo(*evaluating);
     }
-    if (const auto* awaiting = std::get_if<AwaitingResponse>(&state)) {
-        return OnAwaitingResponse(*awaiting, event);
+    if (const auto* awaiting = std::get_if<AwaitingReenumeration>(&state)) {
+        return OnAwaitingReenumeration(*awaiting, event);
     }
     return Stay(state);
 }
@@ -124,10 +117,11 @@ PreparationStep AdvancePreparation(const PreparationState& state,
 const char* PreparationStateName(const PreparationState& state) noexcept {
     if (std::holds_alternative<ReadingInfo>(state)) return "reading-info";
     if (std::holds_alternative<EvaluatingInfo>(state)) return "evaluating-info";
-    // The post-cue state. Seeing this in a teardown log means the cue was
-    // written and the device left the bus before answering — which is the
-    // expected shape of a *successful* cue, not a failure.
-    if (std::holds_alternative<AwaitingResponse>(state)) return "awaiting-response";
+    // The post-cue state. Seeing this in a reset teardown log means the cue was
+    // written and the device is expected to return in a fresh generation.
+    if (std::holds_alternative<AwaitingReenumeration>(state)) {
+        return "awaiting-reenumeration";
+    }
     if (std::holds_alternative<Retired>(state)) return "retired";
     return "unknown";
 }
@@ -135,10 +129,8 @@ const char* PreparationStateName(const PreparationState& state) noexcept {
 const char* RetireReasonName(RetireReason reason) noexcept {
     switch (reason) {
         case RetireReason::NoCueNeeded: return "no-cue-needed";
-        case RetireReason::Cued: return "cued";
         case RetireReason::InfoUnavailable: return "info-unavailable";
         case RetireReason::CueWriteFailed: return "cue-write-failed";
-        case RetireReason::ResponseTimeout: return "response-timeout";
         case RetireReason::GenerationChanged: return "generation-changed";
     }
     return "unknown";

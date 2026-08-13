@@ -13,10 +13,10 @@
 //   * A cue's protocol version cannot be stale or defaulted. SendCue is
 //     reachable only from EvaluatingInfo, the sole state that owns a
 //     BootRomInfo, and BeBoBBootloaderCue can only be built from one.
-//   * "Cue already sent" is not a bool. AwaitingResponse *is* the post-cue
-//     state, so a timeout handler cannot re-send by misreading a flag —
+//   * "Cue already sent" is not a bool. AwaitingReenumeration *is* the
+//     post-cue state, so no later callback can re-send by misreading a flag —
 //     re-sending would require constructing EvaluatingInfo again, which
-//     requires a fresh info-block read. That is the intended recovery.
+//     requires a fresh info-block read in a new generation.
 
 #pragma once
 
@@ -27,13 +27,8 @@
 
 namespace ASFW::Audio::Families::BeBoB::Bootloader {
 
-/// Reads may be retried; see RetryBudget below.
+/// Info-block reads may be retried before any cue reaches the bus.
 inline constexpr uint8_t kMaxInfoReadAttempts = 3;
-inline constexpr uint8_t kMaxResponseReadAttempts = 3;
-
-/// The vendor driver waits 2 s between response reads. The bootloader answers on
-/// its own schedule and this path is cold, so the generous interval is kept.
-inline constexpr uint32_t kResponseRetryDelayMs = 2000;
 
 // --- States -----------------------------------------------------------------
 
@@ -48,25 +43,24 @@ struct EvaluatingInfo final {
     BootRomInfo info{};
 };
 
-/// The cue has been written. Reaching this state *is* the record that it was
-/// sent; there is no separate flag.
-struct AwaitingResponse final {
+/// The cue has been accepted. The device is now expected to reset and return
+/// under its application-firmware persona. This deliberately issues no
+/// response-register read: Linux's M-Audio cue path sends the request and then
+/// relies on the ensuing reset/re-detection (bebob_maudio.c:87-92,119-134).
+///
+/// Reaching this state *is* the record that the one cue was sent; there is no
+/// separate flag and no timer that can create new traffic in the old generation.
+struct AwaitingReenumeration final {
     uint32_t cuedProtocolVersion{0};
-    uint8_t attempt{0};
 };
 
 enum class RetireReason : uint8_t {
     /// Bootloader was not active — the device is already running firmware.
     NoCueNeeded,
-    /// Cue written and acknowledged; the device is expected to reset.
-    Cued,
     /// Info block could not be read within its retry budget.
     InfoUnavailable,
     /// The write itself failed outright, so the cue did not land.
     CueWriteFailed,
-    /// Cue was written but no response arrived within the retry budget. The
-    /// device may still be booting; this is not proof the cue failed.
-    ResponseTimeout,
     /// Bus generation moved under us. Nothing is inferred; the machine restarts
     /// from discovery on the next generation.
     GenerationChanged,
@@ -77,7 +71,7 @@ struct Retired final {
 };
 
 using PreparationState =
-    std::variant<ReadingInfo, EvaluatingInfo, AwaitingResponse, Retired>;
+    std::variant<ReadingInfo, EvaluatingInfo, AwaitingReenumeration, Retired>;
 
 // --- Events -----------------------------------------------------------------
 
@@ -87,14 +81,11 @@ struct InfoReadSucceeded final {
 struct InfoReadFailed final {};
 struct CueWriteSucceeded final {};
 struct CueWriteFailed final {};
-struct ResponseReadSucceeded final {};
-struct ResponseReadFailed final {};
 struct GenerationInvalidated final {};
 
 using PreparationEvent =
     std::variant<InfoReadSucceeded, InfoReadFailed, CueWriteSucceeded,
-                 CueWriteFailed, ResponseReadSucceeded, ResponseReadFailed,
-                 GenerationInvalidated>;
+                 CueWriteFailed, GenerationInvalidated>;
 
 // --- Actions ----------------------------------------------------------------
 
@@ -106,14 +97,10 @@ struct WriteCue final {
     BeBoBBootloaderCue cue;
 };
 
-struct ReadResponse final {
-    uint32_t delayMs{0};
-};
-
 struct Done final {};
 
 using PreparationAction =
-    std::variant<ReadInfoBlock, WriteCue, ReadResponse, Done>;
+    std::variant<ReadInfoBlock, WriteCue, Done>;
 
 struct PreparationStep final {
     PreparationState state;
@@ -137,8 +124,8 @@ struct PreparationStep final {
 [[nodiscard]] const char* PreparationStateName(const PreparationState& state) noexcept;
 
 /// True once the machine has stopped. Preparation is deliberately terminal: it
-/// never becomes an audio endpoint. A cued device returns as a different
-/// identity in a later generation and is resolved from scratch.
+/// never becomes an audio endpoint. A cued device resets, then the current
+/// generation is resolved from scratch.
 [[nodiscard]] inline bool IsRetired(const PreparationState& state) noexcept {
     return std::holds_alternative<Retired>(state);
 }

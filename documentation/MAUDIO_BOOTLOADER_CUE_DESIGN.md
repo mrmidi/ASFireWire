@@ -1,7 +1,7 @@
 # M-Audio bootloader cue — subsystem design
 
-Status: design, not implemented. Scope is the FireWire 1814 / ProjectMix I/O
-bootloader persona only. No audio, no adapter, no nub.
+Status: implemented. Scope is the FireWire 1814 / ProjectMix I/O bootloader
+persona only. No audio, no adapter, no nub.
 
 Wire authority, all three independently agreeing:
 
@@ -42,7 +42,7 @@ nothing more.
 ```
 AddrRegInfo  0xFFFF_C802_0000   read 80 bytes  — BootROM info block
 AddrRegReq   0xFFFF_C802_1000   write 12 bytes — the cue
-AddrRegResp  0xFFFF_C802_9000   read           — bootloader response
+AddrRegResp  0xFFFF_C802_9000   firmware-download response register; not read by the start cue
 ```
 
 ```
@@ -57,6 +57,14 @@ no-swap on x86.
 `bootloaderActive = info[+0x0C] != 0`. That field is the BootROM "bootloader
 version", **used as a state flag**. If it is zero the device is already running
 application firmware and **no cue is sent**.
+
+The normal start-cue path ends at the acknowledged write. It does **not** poll
+`AddrRegResp`: Linux sends the cue and waits for the device's bus reset and fresh
+detection (`references/linux-sound-firewire-stack/firewire/bebob/
+bebob_maudio.c:87-92,119-134`); the original M-Audio kext's `FirmwareStart` does
+the same, scheduling re-registration immediately after its write. Its
+`FirmwareReadResponse` helper belongs to the firmware-download call path, not
+normal application start.
 
 ## 2. Why this needs a guard, not just care
 
@@ -106,8 +114,8 @@ private:
 ```
 
 **(b) No generic write reaches the region.** The bootloader client exposes
-exactly three operations — `ReadInfo()`, `SendCue()`, `ReadResponse()`. There is
-no parameterised write. A single choke point validates that any write to
+exactly two operations — `ReadInfo()` and `SendCue()`. There is no parameterised
+write. A single choke point validates that any write to
 `0xFFFF_C802_xxxx` targets exactly `AddrRegReq`, is exactly 12 bytes, and has
 quadlets [1] and [2] bit-identical to the frozen constants; quadlet [0] is the
 only variable. Violations are a hard failure, not a log line.
@@ -141,7 +149,7 @@ Family-local, under the BeBoB family that owns it:
 ```
 ASFWDriver/Audio/Families/BeBoB/Bootloader/
     BeBoBBootloaderCue.{hpp,cpp}          the frozen 12-byte value type
-    BeBoBBootloaderClient.{hpp,cpp}       ReadInfo / SendCue / ReadResponse + choke point
+    BeBoBBootloaderClient.{hpp,cpp}       ReadInfo / SendCue + choke point
     BeBoBBootloaderPreparation.{hpp,cpp}  the state machine
 ```
 
@@ -171,26 +179,29 @@ Observed(0x00010070, cue policy = BeBoBStartFirmware)
       EvaluatingInfo     bootloaderActive = info[+0x0C] != 0
              if inactive → Retired(NoCueNeeded)
       SendCue            write the frozen 12 B ONCE, version from info+0x08
-      AwaitingResponse   read @ AddrRegResp, ≤3 attempts, 2000 ms apart
-  → device resets; this session is retired with the generation
-  → new generation, new instance, operational persona → the ordinary path
+      AwaitingReenumeration
+                         no more bus traffic in this generation
+  → device resets; the Preparing session is retired on suspension
+  → new generation, current operational persona → the ordinary path
 ```
 
 The session is deliberately terminal: preparation never becomes an audio
-endpoint. The cued device returns as a different identity in a later generation
-and is resolved from scratch, which is what makes the machine idempotent (§6).
+endpoint. `AwaitingReenumeration` holds the old-generation gate only long enough
+to prevent a duplicate cue; reset suspension removes it before the resumed
+device is resolved from its current Config ROM identity (§6).
 
 ### The states are a `std::variant`, not an enum plus flags
 
 ```cpp
 struct ReadingInfo      { uint8_t attempt{0}; };
 struct EvaluatingInfo   { BootRomInfo info; };            // owns the only parsed block
-struct AwaitingResponse { uint32_t cuedProtocolVersion;    // what we actually sent
-                          uint8_t attempt{0}; };
+struct AwaitingReenumeration {
+    uint32_t cuedProtocolVersion;                          // what we actually sent
+};
 struct Retired          { RetireReason reason; };
 
 using PreparationState = std::variant<ReadingInfo, EvaluatingInfo,
-                                      AwaitingResponse, Retired>;
+                                      AwaitingReenumeration, Retired>;
 ```
 
 This is not stylistic. Two of the safety rules become type invariants instead of
@@ -199,41 +210,32 @@ checks someone can forget:
 - **The cue's protocol version cannot be stale or defaulted.** `SendCue` is
   reachable only from `EvaluatingInfo`, the sole state that owns a `BootRomInfo`.
   There is no member holding a "last known" version for a later state to reuse.
-- **"Cue already sent" is not a bool.** `AwaitingResponse` *is* the post-cue
-  state. The once-only rule of §5 is expressed by the state's existence, so a
-  timeout handler cannot re-send by mistaking a flag; re-sending would require
-  constructing `EvaluatingInfo` again, which requires a fresh info-block read —
-  exactly the intended recovery.
+- **"Cue already sent" is not a bool.** `AwaitingReenumeration` *is* the
+  post-cue state. The once-only rule of §5 is expressed by the state's existence,
+  so no callback can re-send by mistaking a flag; re-sending requires a fresh
+  `EvaluatingInfo` in a new generation.
 
-Each state also carries its own `attempt` counter, so a retry budget cannot leak
-across phases the way a shared member would.
+`ReadingInfo` alone carries a retry counter, so the bounded pre-cue retry budget
+cannot leak into the post-cue state.
 
-**The cue is written at most once per bootloader-active observation.** A write
-timeout must NOT retry the write: the first attempt may already have landed and
-the device may be mid-boot. On write timeout, return to `ReadInfo` and re-derive
-state from the device. Only the *response read* retries.
-
-No `IOSleep` anywhere — it blocks the single dispatch queue. Delays use
-`IOTimerDispatchSource`, consistent with the SBP-2 session port work.
-
-The kext sets a 10 s command timeout because IOKit aborts the command otherwise.
-With callback-driven retries we do not need that. The driver's per-attempt
-default is 500 ms (`kDefaultTimeoutUsec` in `AsyncCommandImpl.hpp`), which is
-not obviously too tight for any single transaction here; if it proves to be,
-tune the retry schedule before reaching for a per-command timeout knob.
+**The cue is written at most once per bootloader-active observation.** A failed
+write is never retried in the same generation: an ambiguous failure may have
+landed and the device may already be mid-boot. An acknowledged cue then leaves
+the session inert until the reset is observed.
 
 ## 6. Correlation across the reset — deliberately not load-bearing
 
-The device re-enumerates with a different model ID and therefore a new
-`DeviceInstanceId`. Correlating "the device I cued" is wanted for diagnostics but
-**must not be required for correctness**, because the only trustworthy
-correlation key would be the observed GUID, and M-Audio GUID uniqueness is
-exactly what cannot be assumed.
+The device can return with a different model ID while retaining its
+`DeviceInstanceId`; its observed GUID is not reliable enough to use as a required
+correlation key. The session manager therefore removes a `Preparing` session in
+`OnDeviceSuspended`, before `OnDeviceResumed` resolves the current registry record.
+This prevents the old unit-to-endpoint mapping from masking the operational
+persona after a successful cue.
 
-Correctness comes from the device instead: the info-block read is authoritative,
-and a device already running firmware reports `bootloaderActive == 0` and is
-never cued. Re-running the whole state machine on a fresh instance is therefore
-safe and idempotent.
+Correctness comes from the current device state instead: the info-block read is
+authoritative, and a device already running firmware reports
+`bootloaderActive == 0` and is never cued. Re-running resolution for the resumed
+record is therefore safe and idempotent.
 
 Correlation is best-effort: match on observed GUID when it is non-zero and unique
 within the generation; otherwise record an expiring "cue in flight" marker purely
@@ -257,8 +259,9 @@ suppression rule does not apply here.
 - The write-choke-point rejects: wrong address in range, wrong length, any
   mutation of quadlet [1] or [2].
 - State machine: inactive bootloader sends nothing; cue is written exactly once;
-  a write timeout re-reads info and does **not** re-write; response read retries
-  at most three times; re-enumeration window expires cleanly.
+  an acknowledged cue reaches `AwaitingReenumeration` with no response-register
+  transaction; a bus reset retires the old mapping before the resumed persona is
+  resolved.
 - Architectural test: the constants `0x04`–`0x10` from the command table appear
   nowhere in `ASFWDriver/` as bootloader command codes.
 

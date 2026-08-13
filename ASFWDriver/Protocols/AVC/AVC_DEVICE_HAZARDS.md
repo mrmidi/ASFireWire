@@ -204,30 +204,29 @@ the deadline *was* armed, and the expiry never ran.
   for **~695 s**. Nothing in the ring mentions tLabel 38 after its AT request — no
   completion, no cancel, no timeout.
 
-The fault is therefore in the expiry path, not in a missing deadline. Three guards can
-silence it, and they are not equally bad:
+The fault was in the expiry path, not in a missing deadline. The first guard above was
+the concrete bug: `StartRuntime()` prepared the watchdog, then called
+`ScheduleAsyncWatchdog()` while the lifecycle was still `Starting`. That helper correctly
+requires `AdmitsNormalWork()` (`Running`), so it returned without arming the timer; the
+only re-arm lives in the timer callback, which could never run.
 
-1. **`AdmitsNormalWork()` went false.** `ScheduleAsyncWatchdog`
-   (`ASFWDriver.cpp:928-937`) returns without arming, and **nothing else re-arms the
-   chain** — the only re-arm is the timer rescheduling itself from
-   `AsyncWatchdogTimerFired_Impl` (`:953`), with the initial arm at `:424`. One false
-   reading kills async timeouts permanently for the life of the driver.
-2. **`is_bus_reset_in_progress_` stuck true.** `AsyncSubsystem::OnTimeoutTick`
-   early-returns (`AsyncSubsystemLifecycle.cpp:689-691`) while the timer keeps ticking
-   — timeouts silently disabled with no other symptom.
-3. **`isRunning_` false** (`:686-688`). Least likely: submissions were succeeding.
+Fixed 2026-08-13: call `ScheduleAsyncWatchdog()` immediately after
+`CompleteStart()` publishes `Running`. The startup log now includes
+`Async watchdog armed after runtime entered Running`. A split transaction that receives
+no response will therefore complete as a timeout instead of becoming immortal; the ROM
+scanner can then execute its existing retry and S400 → S200 → S100 fallback policy.
 
-`watchdogTickCount` separates them, and it already crosses the wire — `StatusPublisher`
-publishes it (`StatusPublisher.cpp:115`, `:181`) and the app decodes it at status offset
-136 (`ASFW/Models/DriverConnectorModels.swift:109`). It is simply never surfaced
-anywhere: no UI, no MCP field. Mapping it into the telemetry snapshot is an app-only
-change (relaunch, no dext reinstall) and is the next step.
+Two residual diagnostic guards remain if timeout recovery ever fails again:
 
-Note the severity: **this is not a BeBoB bug.** What was measured is that the expiry
-path did not run for at least 695 s of this generation — long enough that any device
-failing to answer any request would wedge the same way. The 1814 bootloader is only
-what made it visible. Whether the tick runs in other generations is exactly what
-`watchdogTickCount` would tell us.
+1. **`is_bus_reset_in_progress_` stuck true.** `AsyncSubsystem::OnTimeoutTick`
+   early-returns while the timer keeps ticking.
+2. **`isRunning_` false.** Least likely once a transaction was successfully submitted.
+
+`watchdogTickCount` still separates those cases. `StatusPublisher` publishes it and the
+app decodes it at status offset 136, although MCP does not currently expose that field.
+
+Note the severity: **this is not a BeBoB bug.** The 1814 bootloader merely made a
+generic async-timeout defect visible.
 
 ### H2.2 — a command that reaches `pending_` must always reach its completion
 
@@ -377,6 +376,12 @@ Both references treat it as a **device-side register the host reads**:
 - The vendor kext does the same in `com_m_audio_FWMetaNub::FirmwareReadResponse`
   (`0x1c20f`): `addressHi = -1`, `addressLo = 0xC8029000`, a **read**, three retries,
   `IOSleep(0x7D0)` = 2000 ms between attempts.
+
+That reader is a firmware-download helper, not the normal start cue:
+`FirmwareStart` writes the three cue quadlets and schedules reset re-registration
+without calling it. The cue path must therefore leave `C802:9000` unpolled and wait
+for the bus reset; the response-register notification itself remains harmlessly
+unclaimed.
 
 The 1814 *also* pushes that register to the host at the same numeric address, and the
 8-byte length identifies the payload exactly. A bootloader response header is protocol

@@ -427,7 +427,6 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ASFW_LOG(Controller, "Failed to prepare async watchdog: 0x%08x", kr);
         return failStart(kr, "watchdog preparation failed");
     }
-    ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 
     ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.rolePolicy, ctx.deps);
 
@@ -489,15 +488,15 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ctx.deps.avcDiscovery && ctx.deps.irmClient && ctx.deps.cmpClient &&
         ctx.deps.sbp2SessionScheduler) {
         auto& bus = ctx.controller->Bus();
-        // The last two arguments exist only for bootloader preparation, which is
-        // gated on a catalog cue policy no shipping audio device carries. See
+        // The final argument exists only for bootloader preparation, which is
+        // gated on an explicit catalog cue policy. See
         // documentation/MAUDIO_BOOTLOADER_CUE_DESIGN.md.
         auto manager = std::make_shared<
             ASFW::Audio::Devices::AudioDeviceSessionManager>(
                 *ctx.deps.deviceManager, *ctx.deps.deviceRegistry,
                 *ctx.audioCoordinator,
                 ASFW::Audio::Devices::AudioDeviceSessionManager::CatalogResolver{},
-                &bus, ctx.deps.sbp2SessionScheduler.get());
+                &bus);
         ASFW::Audio::Families::ExistingFamilyProviderDependencies providers{
             bus, bus, *ctx.deps.deviceRegistry, *ctx.deps.avcDiscovery,
             ctx.deps.irmClient.get(), ctx.deps.cmpClient.get(),
@@ -552,6 +551,14 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     if (!ctx.lifecycle->CompleteStart("runtime start complete", mach_absolute_time())) {
         return failStart(kIOReturnError, "runtime start completion rejected");
     }
+
+    // ScheduleAsyncWatchdog deliberately admits only normal runtime work.  An
+    // earlier attempt here ran while the lifecycle was still Starting and was
+    // therefore dropped; nothing could re-arm the timer, leaving split
+    // transactions without a timeout path.  Arm it only after CompleteStart
+    // publishes Running, before the first discovery transaction can stall.
+    ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
+    ASFW_LOG(Controller, "Async watchdog armed after runtime entered Running");
 
     // NOTE: do NOT call ChangePowerState/SetPowerOverride here. The kernel
     // joins a dext into the PM tree only after Start() returns

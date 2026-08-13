@@ -27,9 +27,9 @@ enum class AudioSessionState : uint8_t {
     Observed,
     /// Firmware preparation, ahead of any audio resolution. Only devices whose
     /// catalog plan carries a bootloader cue policy enter here, and the state is
-    /// terminal by design: a prepared device resets, re-enumerates under a
-    /// different identity, and is resolved from scratch. Preparation never
-    /// becomes an audio endpoint. See MAUDIO_BOOTLOADER_CUE_DESIGN.md §5.
+    /// terminal by design: a prepared device resets and is resolved from the
+    /// current generation's identity. Preparation never becomes an audio
+    /// endpoint. See MAUDIO_BOOTLOADER_CUE_DESIGN.md §5.
     Preparing,
     StaticResolved,
     Probing,
@@ -72,15 +72,14 @@ public:
             const Discovery::DeviceRecord&,
             const Discovery::UnitIdentityEvidence&)>;
 
-    /// `busOps` and `scheduler` are optional and used only for bootloader
-    /// preparation. Without both, a device carrying a cue policy is recorded and
-    /// left alone rather than half-prepared — no partial firmware path exists.
+    /// `busOps` is optional and used only for bootloader preparation. Without
+    /// it, a device carrying a cue policy is recorded and left alone rather than
+    /// half-prepared — no partial firmware path exists.
     AudioDeviceSessionManager(Discovery::IDeviceManager& devices,
                               Discovery::DeviceRegistry& routes,
                               IAudioSessionSink& sink,
                               CatalogResolver catalogResolver = {},
-                              Async::IFireWireBusOps* busOps = nullptr,
-                              Scheduling::ITimerScheduler* scheduler = nullptr) noexcept;
+                              Async::IFireWireBusOps* busOps = nullptr) noexcept;
     ~AudioDeviceSessionManager() override;
 
     AudioDeviceSessionManager(const AudioDeviceSessionManager&) = delete;
@@ -161,7 +160,6 @@ private:
     std::map<Discovery::UnitInstanceId, AudioEndpointId> endpointByUnit_;
     CatalogResolver catalogResolver_;
     Async::IFireWireBusOps* busOps_{nullptr};
-    Scheduling::ITimerScheduler* scheduler_{nullptr};
     std::shared_ptr<int> lifetime_{std::make_shared<int>(0)};
 };
 

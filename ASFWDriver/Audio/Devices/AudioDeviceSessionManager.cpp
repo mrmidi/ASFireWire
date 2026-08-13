@@ -27,11 +27,9 @@ AudioDeviceSessionManager::AudioDeviceSessionManager(
     Discovery::DeviceRegistry& routes,
     IAudioSessionSink& sink,
     CatalogResolver catalogResolver,
-    Async::IFireWireBusOps* busOps,
-    Scheduling::ITimerScheduler* scheduler) noexcept
+    Async::IFireWireBusOps* busOps) noexcept
     : devices_(devices), routes_(routes), sink_(sink), lock_(IOLockAlloc()),
-      catalogResolver_(std::move(catalogResolver)), busOps_(busOps),
-      scheduler_(scheduler) {
+      catalogResolver_(std::move(catalogResolver)), busOps_(busOps) {
     if (!catalogResolver_) {
         catalogResolver_ = [](const Discovery::DeviceRecord& record,
                               const Discovery::UnitIdentityEvidence& unit) {
@@ -165,13 +163,21 @@ void AudioDeviceSessionManager::OnDeviceSuspended(
     std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
     std::vector<AudioEndpointId> endpoints;
+    std::vector<AudioEndpointId> preparationEndpoints;
     std::vector<IAudioDeviceAdapter*> adapters;
     {
         Lock guard(lock_);
         for (auto& [id, session] : sessions_) {
             if (session.unitId.device != device->GetInstanceId()) continue;
-            if (session.adapter) adapters.push_back(session.adapter.get());
             ++session.probeEpoch;
+            if (session.state == AudioSessionState::Preparing) {
+                // A cue is one-shot for this observation. Retire the old
+                // generation's gate before resume so a device that preserves
+                // its DeviceInstanceId can resolve its application persona.
+                preparationEndpoints.push_back(id);
+                continue;
+            }
+            if (session.adapter) adapters.push_back(session.adapter.get());
             if (session.state == AudioSessionState::Ready ||
                 session.state == AudioSessionState::Streaming ||
                 session.state == AudioSessionState::Probing) {
@@ -194,6 +200,10 @@ void AudioDeviceSessionManager::OnDeviceSuspended(
         // into a fresh nub before the endpoint becomes Ready again.
         sink_.TerminateEndpoint(id);
     }
+    // Preparation has no published endpoint and therefore no sink teardown.
+    // RetireSession also cancels any in-flight read/write callback before the
+    // resumed generation can reconcile the current Config ROM identity.
+    for (const auto id : preparationEndpoints) RetireSession(id, "bus-reset");
 }
 
 void AudioDeviceSessionManager::OnDeviceRemoved(
@@ -270,17 +280,16 @@ void AudioDeviceSessionManager::ReconcileDevice(
                 // Without transport the session is recorded and left in
                 // Preparing rather than partially driven. There is no second,
                 // degraded firmware path to fall into.
-                start = busOps_ != nullptr && scheduler_ != nullptr &&
-                        route.has_value();
+                start = busOps_ != nullptr && route.has_value();
             }
             if (start) {
                 BeginPreparation(endpointId, *route);
             } else {
                 ASFW_LOG(Firmware,
                          "[Bootloader] endpoint=%llu preparation not started "
-                         "(busOps=%d scheduler=%d route=%d)",
+                         "(busOps=%d route=%d)",
                          endpointId.value, busOps_ != nullptr,
-                         scheduler_ != nullptr, route.has_value());
+                         route.has_value());
             }
             continue;
         }
@@ -331,7 +340,7 @@ void AudioDeviceSessionManager::BeginPreparation(
         auto* session = FindLocked(endpointId);
         if (!session || session->state != AudioSessionState::Preparing) return;
         session->bootloaderClient = std::make_shared<Boot::BeBoBBootloaderClient>(
-            *busOps_, *scheduler_, route);
+            *busOps_, route);
         step = Boot::BeginPreparation();
         session->preparationState = step.state;
         // Shared with the probe path deliberately: a generation change bumps it
@@ -370,8 +379,8 @@ void AudioDeviceSessionManager::DrivePreparation(
         // Dropped directly rather than through RetireSession: this session never
         // published an endpoint, so there is nothing for the sink to quiesce,
         // invalidate or terminate. A cued device comes back in a later
-        // generation under a different identity and is resolved from scratch,
-        // which is what makes re-running the machine idempotent (§6).
+        // generation and is resolved from its current identity, which is what
+        // makes re-running the machine idempotent (§6).
         Lock guard(lock_);
         if (const auto it = sessions_.find(endpointId); it != sessions_.end()) {
             TransitionLocked(it->second, AudioSessionState::Retired,
@@ -413,12 +422,6 @@ void AudioDeviceSessionManager::DrivePreparation(
                          "protocolVersion=%u",
                          endpointId.value, action.cue.ProtocolVersion());
                 client->SendCue(action.cue, std::move(onEvent));
-            } else if constexpr (std::is_same_v<Action, Boot::ReadResponse>) {
-                ASFW_LOG(Firmware,
-                         "[Bootloader] endpoint=%llu action=read-response "
-                         "delayMs=%u",
-                         endpointId.value, action.delayMs);
-                client->ReadResponse(action.delayMs, std::move(onEvent));
             }
             // Done carries no transport work; the Retired branch above owns it.
         },
@@ -513,8 +516,8 @@ void AudioDeviceSessionManager::RetireSession(AudioEndpointId endpointId,
     // ending, because a successful cue makes the device reset and disappear.
     // It never published an endpoint, so the sink has nothing to quiesce, and
     // the machine never produced a RetireReason, so log the state it died in:
-    // awaiting-response means the cue was written and the device left before
-    // answering, which is what success looks like from here.
+    // awaiting-reenumeration means the cue was written and the device reset,
+    // which is what success looks like from here.
     {
         std::shared_ptr<Families::BeBoB::Bootloader::BeBoBBootloaderClient> client;
         {
@@ -538,9 +541,8 @@ void AudioDeviceSessionManager::RetireSession(AudioEndpointId endpointId,
             }
         }
         if (client) {
-            // Outside the lock. Cancels a response-read timer that may still be
-            // armed; without this it fires later against a stale generation and
-            // keeps the client alive past the session that owned it.
+            // Outside the lock. Any queued completion sees cancelled_ and the
+            // incremented epoch, so it cannot issue traffic in the stale route.
             client->Cancel();
             return;
         }
