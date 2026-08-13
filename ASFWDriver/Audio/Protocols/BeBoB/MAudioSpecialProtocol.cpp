@@ -98,6 +98,52 @@ bool MAudioSpecialProtocol::GetRuntimeAudioStreamCaps(
     return outCaps.sampleRateHz != 0;
 }
 
+void MAudioSpecialProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
+    // The inverted start choreography (H8).
+    //
+    // Every other BeBoB device here is fully configured before CMP: signal
+    // format, then settle, then connect, then run. This firmware needs the rate
+    // asserted *again* once host DMA is already running, and Linux is explicit
+    // that this is what makes it transmit rather than a defensive re-send:
+    //
+    //   "The firmware customized by M-Audio uses these commands to start
+    //    transmitting stream. This is not usual way."
+    //     bebob_stream.c:648-659, after amdtp_domain_start()
+    //
+    // The coordinator has started host transmit before this stage runs
+    // (kStartingHostTransmit precedes ConfirmingDeviceStart), so this is the
+    // earliest point that matches Linux's ordering without adding a stage.
+    //
+    // Base confirm runs first: re-sending the rate into a connection that never
+    // came up would produce a misleading AV/C failure for what is really a CMP
+    // problem.
+    BeBoBProtocol::ConfirmDuplexStart(
+        [this, callback = std::move(callback)](IOReturn status,
+                                               DuplexConfirmResult result) mutable {
+            if (status != kIOReturnSuccess) {
+                callback(status, result);
+                return;
+            }
+
+            const AudioClockConfig clock{.sampleRateHz = currentRateHz_};
+            ASFW_LOG(Audio,
+                     "[BeBoB] %{public}s: re-sending signal format after DMA start "
+                     "(rate=%u, interlock=%ums)",
+                     DeviceName(), currentRateHz_, SignalFormatInterlockMs());
+
+            ProgramSignalFormat(clock, [callback = std::move(callback), result](
+                                           IOReturn fmtStatus) mutable {
+                if (fmtStatus != kIOReturnSuccess) {
+                    ASFW_LOG_ERROR(Audio,
+                                   "[BeBoB] post-start signal format failed: 0x%08x — "
+                                   "device will stay silent",
+                                   fmtStatus);
+                }
+                callback(fmtStatus, result);
+            });
+        });
+}
+
 void MAudioSpecialProtocol::ReadClockHealth(HealthCallback callback) {
     // Deliberately does not interrogate the device. The one command that could
     // report a rate is the signal-format probe, and issuing FCP from a health

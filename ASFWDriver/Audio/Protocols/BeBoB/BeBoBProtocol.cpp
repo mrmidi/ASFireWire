@@ -230,13 +230,42 @@ void BeBoBProtocol::ProgramSignalFormat(const AudioClockConfig& desiredClock,
             completion(kIOReturnNotReady);
             return;
         }
-        const uint8_t inPlug = StreamPlug(true);
-        auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, inPlug, true, rate);
-        input->Submit([completion = std::move(completion), input](
-                           Protocols::AVC::AVCResult inputResult,
-                           const SignalFormatCommand::SignalFormat& /*inputFormat*/) mutable {
-            completion(MapAVCResultToIOReturn(inputResult));
-        });
+
+        auto sendInput = [this, rate, completion = std::move(completion)]() mutable {
+            if (!fcpTransport_) {
+                completion(kIOReturnNotReady);
+                return;
+            }
+            const uint8_t inPlug = StreamPlug(true);
+            auto input = std::make_shared<SignalFormatCommand>(*fcpTransport_, inPlug, true, rate);
+            input->Submit([completion = std::move(completion), input](
+                               Protocols::AVC::AVCResult inputResult,
+                               const SignalFormatCommand::SignalFormat& /*inputFormat*/) mutable {
+                completion(MapAVCResultToIOReturn(inputResult));
+            });
+        };
+
+        // Some firmware fails the INPUT command when it arrives immediately
+        // after the OUTPUT one. Where a device declares that interlock, wait it
+        // out asynchronously — never IOSleep, which would block the single
+        // dispatch queue this and every other stage share.
+        const uint32_t interlockMs = SignalFormatInterlockMs();
+        if (interlockMs == 0 || !timerScheduler_) {
+            sendInput();
+            return;
+        }
+
+        const uint64_t epoch = ++signalFormatEpoch_;
+        signalFormatInterlockTimer_ = timerScheduler_->ScheduleAfter(
+            static_cast<uint64_t>(interlockMs) * 1000ULL * 1000ULL,
+            [this, epoch, sendInput = std::move(sendInput)]() mutable {
+                // Teardown or a newer format program invalidates this one; the
+                // completion is dropped with it, exactly as a cancelled clock
+                // apply drops its own.
+                if (signalFormatEpoch_ != epoch) return;
+                signalFormatInterlockTimer_ = Scheduling::kInvalidTimerToken;
+                sendInput();
+            });
     });
 }
 
@@ -320,6 +349,16 @@ void BeBoBProtocol::FinishClockApply(ClockApplyEpoch* epoch, IOReturn status) {
 }
 
 void BeBoBProtocol::CancelClockApply() {
+    // Invalidate any in-flight OUTPUT->INPUT interlock first. Bumping the epoch
+    // is what actually makes the pending callback a no-op; cancelling the timer
+    // just avoids the wakeup. Both are needed — the token may already have
+    // fired and be queued behind us.
+    ++signalFormatEpoch_;
+    if (timerScheduler_ != nullptr &&
+        signalFormatInterlockTimer_ != Scheduling::kInvalidTimerToken) {
+        timerScheduler_->Cancel(signalFormatInterlockTimer_);
+        signalFormatInterlockTimer_ = Scheduling::kInvalidTimerToken;
+    }
     if (auto* epoch = activeClockApply_) {
         activeClockApply_ = nullptr;
         timerScheduler_->Cancel(epoch->settleTimer);

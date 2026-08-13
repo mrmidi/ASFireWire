@@ -59,6 +59,16 @@ protected:
     [[nodiscard]] std::vector<uint32_t> SupportedRates() const override;
     void ReadClockHealth(HealthCallback callback) override;
 
+    /// This firmware fails the INPUT signal-format command when it lands
+    /// immediately after the OUTPUT one. Linux waits 100 ms; the vendor kext
+    /// waits 300 around its own rate set, and the vendor driver is authoritative
+    /// for what the hardware needs. See H8.
+    [[nodiscard]] uint32_t SignalFormatInterlockMs() const override { return 300; }
+
+    /// The start choreography is inverted here: signal format must be re-sent
+    /// *after* host DMA is running, not only before CMP. See the definition.
+    void ConfirmDuplexStart(ConfirmCallback callback) override;
+
 private:
     [[nodiscard]] AudioStreamRuntimeCaps CapsForCurrentFormation() const noexcept;
 

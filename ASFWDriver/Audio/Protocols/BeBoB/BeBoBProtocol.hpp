@@ -111,6 +111,18 @@ protected:
     // devices with format-set logic.
     [[nodiscard]] virtual bool IsRateSupported(uint32_t hz) const;
 
+    // Delay inserted *between* the OUTPUT and INPUT signal-format commands.
+    //
+    // Zero by default: the generic BeBoB path sends them back to back, and Linux
+    // only spaces them for M-Audio special firmware, where the reason is
+    // specific — "Just after changing sampling rate for output, a followed
+    // command for input is easy to fail" (bebob_maudio.c:324-327). Do not raise
+    // this globally; it is a per-device interlock, not a settle.
+    //
+    // Distinct from kFormatSettleMs, which follows *both* commands and precedes
+    // CMP. Conflating them silently drops one of the two waits.
+    [[nodiscard]] virtual uint32_t SignalFormatInterlockMs() const { return 0; }
+
     // Exactly-once completion guard for the async ApplyClockConfig chain.
     struct ClockApplyEpoch {
         FW::Generation generation{FW::Generation{0}};
@@ -142,10 +154,21 @@ protected:
     // In-flight clock-apply epoch. Non-nullptr while ApplyClockConfig is settling.
     ClockApplyEpoch* activeClockApply_{nullptr};
 
-private:
-    void EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug, std::function<void(IOReturn)> cb);
+    // In-flight OUTPUT->INPUT interlock timer, when SignalFormatInterlockMs() is
+    // non-zero. Held so teardown can cancel it: the callback captures `this` and
+    // would otherwise outlive the protocol on a bus reset or Shutdown.
+    Scheduling::TimerToken signalFormatInterlockTimer_{Scheduling::kInvalidTimerToken};
+    uint64_t signalFormatEpoch_{0};
+
+    // OUTPUT plug, then the interlock above, then INPUT plug. Protected rather
+    // than private because M-Audio special firmware needs the same pair re-sent
+    // after DMA start (H8) — subclasses must be able to repeat it, not
+    // reimplement it, or the interlock exists in two places and drifts.
     void ProgramSignalFormat(const AudioClockConfig& desiredClock,
                              std::function<void(IOReturn)> completion);
+
+private:
+    void EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug, std::function<void(IOReturn)> cb);
 
     static constexpr uint32_t kFormatSettleMs = 300;
 };
