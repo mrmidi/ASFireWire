@@ -92,6 +92,21 @@ constexpr uint32_t kCycleTimerOffsetMask = 0x00000FFF;   // bits 11:0
            (offset & kCycleTimerOffsetMask);
 }
 
+/// Advance an OHCI cycle-timer value by whole 125 us FireWire cycles while
+/// preserving its sub-cycle offset. The seconds field wraps every 128 seconds.
+[[nodiscard]] constexpr uint32_t AddCyclesToCycleTimer(
+    uint32_t cycleTimer, uint32_t cycles) noexcept {
+    const CycleTimerFields current = decodeCycleTimer(cycleTimer);
+    const uint64_t totalCycles = static_cast<uint64_t>(current.cycle) + cycles;
+    const uint32_t nextSeconds = static_cast<uint32_t>(
+        (static_cast<uint64_t>(current.seconds) +
+         totalCycles / kCyclesPerSecond) %
+        kFWTimeWrapSeconds);
+    const uint32_t nextCycle = static_cast<uint32_t>(
+        totalCycles % kCyclesPerSecond);
+    return encodeCycleTimer(nextSeconds, nextCycle, current.offset);
+}
+
 /// Collapse an already-decoded FireWire cycle timer to the 24.576 MHz offset domain.
 [[nodiscard]] inline int64_t tstampToOffsets(CycleTimerFields timestamp) noexcept {
     return tstampToOffsets(timestamp.seconds, timestamp.cycle, timestamp.offset);

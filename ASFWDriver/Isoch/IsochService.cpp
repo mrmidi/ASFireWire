@@ -142,6 +142,31 @@ kern_return_t IsochService::StartPreparedReceive() {
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochService::StartPreparedReceiveAtCycle(uint32_t cycleTimer) {
+    if (!isochReceiveContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch, "IsochService: Scheduling prepared IR at cycle timer=0x%08x",
+             cycleTimer);
+    const kern_return_t kr = isochReceiveContext_->StartAtCycle(cycleTimer);
+    if (kr != kIOReturnSuccess) {
+        return kr;
+    }
+    for (auto& ctx : secondaryReceiveContexts_) {
+        if (ctx) {
+            const kern_return_t skr = ctx->StartAtCycle(cycleTimer);
+            if (skr != kIOReturnSuccess) {
+                ASFW_LOG(Isoch, "IsochService: secondary scheduled IR start failed: 0x%08x",
+                         skr);
+                UpdateStreamingActiveState();
+                return skr;
+            }
+        }
+    }
+    UpdateStreamingActiveState();
+    return kIOReturnSuccess;
+}
+
 kern_return_t IsochService::StartPacketReceive(
     uint8_t channel, HardwareInterface& hardware,
     ASFW::Isoch::IIsochReceiveConsumer* consumer) {

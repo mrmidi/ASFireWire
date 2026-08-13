@@ -14,7 +14,9 @@ namespace ASFW::Audio {
 kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     uint32_t streamIndex, ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t channelOffset,
-    uint32_t streamChannels, bool isSecondary) noexcept {
+    uint32_t streamChannels, bool isSecondary,
+    bool acceptHeaderOnlyNoDataTransition,
+    bool useTxDerivedPlaybackClock) noexcept {
     if (streamIndex >= Driver::IsochService::kMaxStreamsPerDirection) {
         return kIOReturnBadArgument;
     }
@@ -26,6 +28,8 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
         .channelOffset = channelOffset,
         .streamChannels = streamChannels,
         .isSecondary = isSecondary,
+        .acceptHeaderOnlyNoDataTransition = acceptHeaderOnlyNoDataTransition,
+        .useTxDerivedPlaybackClock = useTxDerivedPlaybackClock,
     };
     // This is a DriverKit `noexcept` boundary: report allocation failure instead
     // of allowing std::make_unique to terminate the driver process.
@@ -121,10 +125,14 @@ kern_return_t IsochDuplexHostTransport::ReserveCaptureResources(EndpointId endpo
 kern_return_t IsochDuplexHostTransport::PrepareReceive(
     uint8_t channel, Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-    Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels) noexcept {
+    Encoding::AudioWireFormat wireFormat, uint32_t am824Slots, uint32_t streamChannels,
+    bool acceptHeaderOnlyNoDataTransition,
+    bool useTxDerivedPlaybackClock) noexcept {
     const kern_return_t attached =
         AttachReceiveConsumer(/*streamIndex=*/0, bindingSource, wireFormat, am824Slots,
-                              /*channelOffset=*/0, streamChannels, /*isSecondary=*/false);
+                              /*channelOffset=*/0, streamChannels, /*isSecondary=*/false,
+                              acceptHeaderOnlyNoDataTransition,
+                              useTxDerivedPlaybackClock);
     if (attached != kIOReturnSuccess) {
         return attached;
     }
@@ -147,7 +155,9 @@ kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     uint32_t streamChannels, Encoding::AudioWireFormat wireFormat, uint32_t am824Slots) noexcept {
     const kern_return_t attached =
         AttachReceiveConsumer(streamIndex, bindingSource, wireFormat, am824Slots, channelOffset,
-                              streamChannels, /*isSecondary=*/true);
+                              streamChannels, /*isSecondary=*/true,
+                              /*acceptHeaderOnlyNoDataTransition=*/false,
+                              /*useTxDerivedPlaybackClock=*/false);
     if (attached != kIOReturnSuccess) {
         return attached;
     }
@@ -168,6 +178,11 @@ kern_return_t IsochDuplexHostTransport::PrepareTransmitStream(uint32_t streamInd
 
 kern_return_t IsochDuplexHostTransport::StartPreparedReceive() noexcept {
     return isoch_.StartPreparedReceive();
+}
+
+kern_return_t IsochDuplexHostTransport::StartPreparedReceiveAtCycle(
+    uint32_t cycleTimer) noexcept {
+    return isoch_.StartPreparedReceiveAtCycle(cycleTimer);
 }
 
 kern_return_t IsochDuplexHostTransport::StartPreparedTransmit() noexcept {

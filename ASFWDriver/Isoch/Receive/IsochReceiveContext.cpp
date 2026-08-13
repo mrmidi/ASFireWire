@@ -66,6 +66,15 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextInd
 // ============================================================================
 
 kern_return_t IsochReceiveContext::Start() {
+    return StartImpl(std::nullopt);
+}
+
+kern_return_t IsochReceiveContext::StartAtCycle(uint32_t cycleTimer) {
+    return StartImpl(cycleTimer);
+}
+
+kern_return_t IsochReceiveContext::StartImpl(
+    std::optional<uint32_t> cycleTimer) noexcept {
     if (GetState() != IRPolicy::State::Stopped) {
         return kIOReturnInvalid;
     }
@@ -80,8 +89,20 @@ kern_return_t IsochReceiveContext::Start() {
         ASFW_LOG(Isoch, "❌ Start: Invalid descriptor cmdPtr");
         return kIOReturnInternalError;
     }
-    const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
-    const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
+    // The normal receive match accepts every tag (0xf) and sync value on the
+    // configured channel. For a scheduled start, OHCI compares the cycle field
+    // separately in ContextMatch and waits because the direction-specific IR
+    // CYCLE_MATCH_ENABLE bit is present in ContextControlSet. This mirrors
+    // Linux firewire/ohci.c:3203-3206; its `cycle` argument is an unencoded
+    // 13-bit cycle value, while our public seam receives the full OHCI timer.
+    uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
+    uint32_t ctlValue =
+        Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
+    if (cycleTimer.has_value()) {
+        const uint32_t cycle = ::ASFW::Timing::decodeCycleTimer(*cycleTimer).cycle;
+        contextMatch |= (cycle & 0x7fffu) << 12;
+        ctlValue |= Driver::ContextControl::kReceiveCycleMatchEnable;
+    }
     const uint32_t contextMask = 1u << contextIndex_;
     {
         auto access = hardware_->TryBeginAccess();
@@ -92,7 +113,10 @@ kern_return_t IsochReceiveContext::Start() {
         access.Write(registers_.ContextControlSet, ctlValue);
         access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
     }
-    ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
+    ASFW_LOG(Isoch,
+             "Start: Enabled IR interrupt for context %u (mask=0x%08x) scheduled=%u timer=0x%08x",
+             contextIndex_, contextMask, cycleTimer.has_value() ? 1U : 0U,
+             cycleTimer.value_or(0));
 
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
     }

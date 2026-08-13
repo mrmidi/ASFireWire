@@ -11,6 +11,8 @@
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
+#include "../Families/BeBoB/MAudio/MAudioDuplexPolicy.hpp"
+#include "../Families/BeBoB/MAudio/MAudioTxClockAdapter.hpp"
 #include "../Runtime/TxPcmStagingRing.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 #include "../../Shared/Isoch/TxPayloadSeal.hpp"
@@ -238,6 +240,7 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> lastHalZeroTimestampGeneration{0};
     std::atomic<uint64_t> lastHalZeroTimestampSampleFrame{0};
     std::atomic<uint64_t> lastHalZeroTimestampHostTicks{0};
+    uint64_t mAudioTxClockEpoch{0};
 
     uint64_t metricsLogCounter{0};
     bool rxStartupDrained{false};
@@ -250,6 +253,10 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
     std::atomic<bool> txActive{false};
+    // Owned by the serial TxPreparation queue while active. StartIO arms it
+    // before TX DMA starts; StopIO drains that queue before disarming it.
+    ASFW::Audio::Families::BeBoB::MAudio::TxClockAdapter
+        mAudioTxClockAdapter;
 
     // Audio-owned retention between the CoreAudio WriteEnd producer and the
     // independent TX preparation consumer. Both DICE streams read the same
@@ -361,7 +368,8 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
 
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                                                                                            const char* reason,
-                                                                                           bool logSuccess) noexcept;
+                                                                                           bool logSuccess,
+                                                                                           bool countAsRx = true) noexcept;
 // Prepares transmit slots from startPacketIndex until both producer invariants
 // are true or limitPacketIndex is reached:
 //   * requiredPacketIndex covers the core refill / commit-generation invariant.

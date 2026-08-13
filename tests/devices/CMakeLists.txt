@@ -52,6 +52,8 @@ add_device_test(DICERestartSessionTests
 add_device_test(AudioDuplexCoordinatorTests
     AudioDuplexCoordinatorTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Duplex/AudioDuplexCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexStartAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
@@ -210,6 +212,14 @@ add_device_test(BeBoBBootloaderCueTests
 add_device_test(MAudioDuplexChoreographyTests
     MAudioDuplexChoreographyTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+)
+
+# M-Audio's TX-derived CoreAudio anchor projection is a pure clock-policy
+# adapter, independently testable from DriverKit and the OHCI transport.
+add_device_test(MAudioTxClockAdapterTests
+    MAudioTxClockAdapterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockAdapter.cpp"
 )
 
 # Apogee Duet runtime stream caps: aggregate vs per-stream wire view

@@ -350,21 +350,30 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     uint32_t refillCycleTimer = 0;
     uint32_t ctrl = 0;
     uint32_t cmdPtr = 0;
+    uint64_t cycleReadBeforeHostTicks = 0;
+    uint64_t cycleReadAfterHostTicks = 0;
     {
         auto access = hw.TryBeginAccess();
         if (!access) {
             out.failureReason = RefillFailureReason::InvalidSharedContract;
             return out;
         }
+        cycleReadBeforeHostTicks = mach_absolute_time();
         refillCycleTimer = access.Read(Register32::kCycleTimer);
+        cycleReadAfterHostTicks = mach_absolute_time();
         ctrl = access.Read(ctrlReg);
         cmdPtr = access.Read(cmdPtrReg);
     }
 
-    // Publish the raw controller/host pair. Any smoothing or projection belongs
-    // to the content producer's clock domain.
+    // Publish the raw controller/host pair. Bracketing only the cycle-timer
+    // load provides a true midpoint without widening the MMIO batch. Any
+    // smoothing or projection belongs to the content producer's clock domain.
     {
-        const uint64_t hostTime = mach_absolute_time();
+        const uint64_t hostTime = cycleReadAfterHostTicks >=
+                cycleReadBeforeHostTicks
+            ? cycleReadBeforeHostTicks +
+                (cycleReadAfterHostTicks - cycleReadBeforeHostTicks) / 2
+            : cycleReadAfterHostTicks;
 
         IsochTxClockPairSample sample{};
         sample.hostTimeMid = hostTime;

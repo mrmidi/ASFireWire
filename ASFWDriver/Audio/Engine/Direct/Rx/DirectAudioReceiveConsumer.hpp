@@ -28,6 +28,15 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         uint32_t channelOffset{0};
         uint32_t streamChannels{0};
         bool isSecondary{false};
+        // M-Audio 1814 / ProjectMix can legitimately emit exactly an OHCI
+        // receive prefix plus a DBS=0/SYT=ffff CIP header while capture comes
+        // out of its special-firmware transition. This is opt-in per profile;
+        // generic AM824 receive remains strict.
+        bool acceptHeaderOnlyNoDataTransition{false};
+        // M-Audio's vendor transport derives playback time from its TX DMA
+        // callback. RX remains available for capture/replay, but it must not
+        // overwrite that playback clock with a late or header-only transition.
+        bool useTxDerivedPlaybackClock{false};
     };
 
     using TimingLossCallback = std::function<void()>;
@@ -78,6 +87,13 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     [[nodiscard]] static const char* ReplayResetReasonName(ReplayResetReason reason) noexcept;
     void ResetReplayEpochForDiscontinuity(ReplayResetReason reason,
                                           const ReplayResetContext& context) noexcept;
+    [[nodiscard]] bool IsAcceptedHeaderOnlyNoDataTransition(
+        const ::ASFW::Isoch::IsochReceivePacket& packet,
+        const RxAudioPacketProcessorResult& result) const noexcept;
+    void ObserveAcceptedHeaderOnlyNoDataTransition(
+        const ::ASFW::Isoch::IsochReceiveBatch& batch,
+        const ::ASFW::Isoch::IsochReceivePacket& packet,
+        const RxAudioPacketProcessorResult& result) noexcept;
     void LogZeroDataBlockSizeEvidence(
         const ::ASFW::Isoch::IsochReceiveBatch& batch,
         const ::ASFW::Isoch::IsochReceivePacket& packet,
@@ -119,6 +135,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint32_t zeroDataBlockSizeCaptureLogBudget_{
         kZeroDataBlockSizeCaptureLogBudget};
     uint32_t zeroDataBlockSizeCaptureCount_{0};
+    static constexpr uint32_t kHeaderOnlyNoDataTransitionLogBudget = 4;
+    uint32_t headerOnlyNoDataTransitionLogBudget_{
+        kHeaderOnlyNoDataTransitionLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
     uint8_t lastDbc_{0};

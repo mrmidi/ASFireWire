@@ -364,6 +364,54 @@ TEST(IsochRxTimingTests, ZeroDbsPacketIsAttributedAndInvalidatesReplay) {
     EXPECT_EQ(control.rxReplayEpochResets.load(std::memory_order_acquire), 2U);
 }
 
+TEST(IsochRxTimingTests,
+     MAudioHeaderOnlyNoDataTransitionIsAttributedWithoutResettingReplay) {
+    std::array<float, 8> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    FixedDirectAudioBindingSource source({
+        .generation = 1,
+        .inputBase = input.data(),
+        .inputBytes = sizeof(input),
+        .inputFrames = 4,
+        .inputChannels = 2,
+        .control = &control,
+        .sampleRateHz = 48000,
+        .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source,
+        {.am824Slots = 2,
+         .streamChannels = 2,
+         .acceptHeaderOnlyNoDataTransition = true});
+    const ASFW::Isoch::IsochReceiveBatch batch{
+        .drainCycleTimer = EncodeCycleTimer(13, 300, 0),
+        .drainHostTicks = 1'000'000,
+    };
+    // Exact M-Audio transition envelope: 8-byte OHCI receive prefix followed
+    // by an otherwise-valid 8-byte CIP header with DBS=0 and SYT=ffff.
+    alignas(4) std::array<uint8_t, 16> payload{};
+    payload[0] = 0x23;
+    payload[1] = 0xA1;
+    WriteBE32(payload.data() + 8, 0x02000000u);
+    WriteBE32(payload.data() + 12, 0x9002FFFFu);
+    const ASFW::Isoch::IsochReceivePacket packet{
+        .descriptorIndex = 101,
+        .transferStatus = 0x11,
+        .residualCount = 4080,
+        .payload = payload,
+    };
+
+    consumer.OnReceiveActivated();
+    consumer.BeginReceiveBatch(batch);
+    ASSERT_EQ(control.rxReplayEpochResets.load(std::memory_order_acquire), 1U);
+    consumer.ConsumePacket(batch, packet);
+
+    EXPECT_EQ(control.rxPacketsSeen.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(control.rxZeroDataBlockSize.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(control.rxNoDataPackets.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(control.rxReplayEpochResets.load(std::memory_order_acquire), 1U);
+}
+
 TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;

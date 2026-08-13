@@ -90,6 +90,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     lastReplayCycleOrdinal_ = 0;
     zeroDataBlockSizeCaptureLogBudget_ = kZeroDataBlockSizeCaptureLogBudget;
     zeroDataBlockSizeCaptureCount_ = 0;
+    headerOnlyNoDataTransitionLogBudget_ = kHeaderOnlyNoDataTransitionLogBudget;
     ztsTelemetry_.Reset();
     ztsTelemetryLogGate_.Reset();
     prevLoggedAnchorFrame_ = 0;
@@ -216,7 +217,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
         configuration_.channelOffset, !configuration_.isSecondary);
-    if (result.status == DirectRxWriteStatus::kZeroDataBlockSize) {
+    const bool acceptedHeaderOnlyNoDataTransition =
+        IsAcceptedHeaderOnlyNoDataTransition(packet, result);
+    if (result.status == DirectRxWriteStatus::kZeroDataBlockSize &&
+        !acceptedHeaderOnlyNoDataTransition) {
         LogZeroDataBlockSizeEvidence(batch, packet, result);
     }
     // Attribute every decoded packet before the reject branch returns; the
@@ -252,6 +256,9 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (result.status == DirectRxWriteStatus::kAvailable ||
         result.status == DirectRxWriteStatus::kInvalidBinding) {
         absoluteFrameCursor_ += result.framesDecoded;
+    } else if (acceptedHeaderOnlyNoDataTransition) {
+        ObserveAcceptedHeaderOnlyNoDataTransition(batch, packet, result);
+        return;
     } else {
         ResetReplayEpochForDiscontinuity(
             ReplayResetReason::kPacketProcessorStatus,
@@ -389,7 +396,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         static_cast<uint32_t>((1'000'000'000ULL << 8) / inputView_.sampleRateHz);
     if (kZtsPeriodFrames != 0 && result.framesDecoded != 0 &&
         (packetFirstFrame % kZtsPeriodFrames) == 0 && packetHostTicks != 0 &&
-        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && cadence.established) {
+        nanosPerSampleQ8 != 0 && clockPublisher_.IsBound() && cadence.established &&
+        !configuration_.useTxDerivedPlaybackClock) {
         const auto publish = clockPublisher_.Publish(packetFirstFrame, packetHostTicks,
                                                      nanosPerSampleQ8);
         if (!publish.accepted) {
@@ -429,6 +437,45 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             ztsTelemetry_.Record(record);
         }
     }
+}
+
+bool DirectAudioReceiveConsumer::IsAcceptedHeaderOnlyNoDataTransition(
+    const ::ASFW::Isoch::IsochReceivePacket& packet,
+    const RxAudioPacketProcessorResult& result) const noexcept {
+    return configuration_.acceptHeaderOnlyNoDataTransition &&
+           !configuration_.isSecondary &&
+           result.status == DirectRxWriteStatus::kZeroDataBlockSize &&
+           result.hasValidCip && result.dbs == 0 && result.syt == 0xffff &&
+           packet.payload.size() == kIsochReceivePrefixBytes + kCipHeaderBytes;
+}
+
+void DirectAudioReceiveConsumer::ObserveAcceptedHeaderOnlyNoDataTransition(
+    const ::ASFW::Isoch::IsochReceiveBatch& batch,
+    const ::ASFW::Isoch::IsochReceivePacket& packet,
+    const RxAudioPacketProcessorResult& result) noexcept {
+    // The packet carries no audio frame and must not enter the replay queue,
+    // but its OHCI receive timestamp preserves the one-cycle continuity check
+    // for the next usable packet. That is the precise narrow exception: do
+    // not turn any other DBS=0 packet into a healthy stream.
+    ::ASFW::Isoch::Rx::ExpandedReceiveTimestamp timestamp{};
+    if (result.hasReceiveCycleTimestamp &&
+        ::ASFW::Isoch::Rx::ExpandReceiveTimestamp(
+            result.receiveCycleTimestamp, batch.drainCycleTimer, timestamp)) {
+        const auto fields = ::ASFW::Timing::decodeCycleTimer(timestamp.cycleTimer);
+        lastReplayCycleOrdinal_ =
+            fields.seconds * ::ASFW::Timing::kCyclesPerSecond + fields.cycle;
+        replayCycleInitialized_ = true;
+    }
+
+    if (headerOnlyNoDataTransitionLogBudget_ == 0) {
+        return;
+    }
+    --headerOnlyNoDataTransitionLogBudget_;
+    ASFW_LOG(DirectAudio,
+             "[MAudioRxNoData] accepted desc=%u bytes=%zu drain=0x%08x rawTs=0x%04x "
+             "syt=0x%04x remaining=%u",
+             packet.descriptorIndex, packet.payload.size(), batch.drainCycleTimer,
+             result.receiveCycleTimestamp, result.syt, headerOnlyNoDataTransitionLogBudget_);
 }
 
 void DirectAudioReceiveConsumer::LogZeroDataBlockSizeEvidence(

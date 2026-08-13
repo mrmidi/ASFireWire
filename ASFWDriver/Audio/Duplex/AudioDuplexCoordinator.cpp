@@ -10,6 +10,8 @@
 #include "../../Logging/Logging.hpp"
 #include "../Core/AudioRuntimeRegistry.hpp"
 #include "../Devices/ResolvedAudioEndpointProfile.hpp"
+#include "../Families/BeBoB/MAudio/MAudioDuplexPolicy.hpp"
+#include "../Families/BeBoB/MAudio/MAudioDuplexStartAdapter.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -899,6 +901,15 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         *resolvedProfile, record.link.localToNode);
     AudioDuplexChannels channels = initialProfile.channels;
     const uint64_t restartId = AllocateRestartId();
+    const bool useMAudioDuplexChoreography =
+        Families::BeBoB::MAudio::UsesSpecialDuplexPolicy(
+            resolvedProfile->profileBuilder);
+    Families::BeBoB::MAudio::DuplexStartAdapter mAudioStartAdapter(
+        hostTransport_, hardware_);
+    if (useMAudioDuplexChoreography) {
+        mAudioStartAdapter.Begin(
+            Families::BeBoB::MAudio::StartEpoch{.value = restartId});
+    }
 
     auto finalizeFailure = [&](IOReturn failureStatus, DuplexRestartPhase failedPhase,
                                DuplexRestartFailureCause cause, DuplexRestartErrorClass errorClass,
@@ -1036,6 +1047,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         },
         kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (prepare.status != kIOReturnSuccess) {
+        if (useMAudioDuplexChoreography) {
+            mAudioStartAdapter.OnPreStreamConfigurationFailed();
+        }
         if (prepare.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("PreparingDevice", endpointId);
         }
@@ -1045,6 +1059,15 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     if (!IsRestartEpochCurrent(endpointId, restartId, *route)) {
         return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kPreparingDevice,
                                       DuplexRestartFailureCause::kPrepare);
+    }
+    if (useMAudioDuplexChoreography) {
+        const kern_return_t choreographyStatus =
+            mAudioStartAdapter.OnPreStreamConfigurationSucceeded();
+        if (choreographyStatus != kIOReturnSuccess) {
+            return rollbackToFailure(choreographyStatus,
+                                     DuplexRestartPhase::kPreparingDevice,
+                                     DuplexRestartFailureCause::kPrepare);
+        }
     }
     session.ownerClaimed = true;
     session.devicePrepared = true;
@@ -1157,7 +1180,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             const kern_return_t prepareReceiveStatus =
                 hostTransport_.PrepareReceive(channels.CaptureChannel(0), hardware_, bindingSource,
                                               streamProfile.captureWireFormat,
-                                              masterCapture.am824Slots, masterCapture.pcmChannels);
+                                              masterCapture.am824Slots, masterCapture.pcmChannels,
+                                              useMAudioDuplexChoreography,
+                                              useMAudioDuplexChoreography);
             if (prepareReceiveStatus != kIOReturnSuccess) {
                 return rollbackToFailure(prepareReceiveStatus,
                                          DuplexRestartPhase::kStartingHostReceive,
@@ -1259,7 +1284,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
 
     // AV/C/CMP profiles retain the historical interleave in which the host
     // context is running before the matching PCR connection is established.
-    if (streamProfile.startOrder.startReceiveBeforeDeviceRx) {
+    if (!useMAudioDuplexChoreography &&
+        streamProfile.startOrder.startReceiveBeforeDeviceRx) {
         if (abortIfTeardown("StartingHostReceiveBeforeDeviceRx")) {
             return kIOReturnAborted;
         }
@@ -1285,6 +1311,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         [&](auto callback) { deviceControl.ProgramRx(std::move(callback)); }, kSyncBridgeTimeoutMs,
         kIOReturnTimeout, cancel_);
     if (programRx.status != kIOReturnSuccess) {
+        if (useMAudioDuplexChoreography) {
+            mAudioStartAdapter.OnDeviceStreamsConnectionFailed();
+        }
         if (programRx.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("ProgrammingDeviceRx", endpointId);
         }
@@ -1304,7 +1333,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     SetSessionPhase(session, DuplexRestartPhase::kDeviceRxProgrammed);
     StoreSession(session);
 
-    if (streamProfile.startOrder.startTransmitBeforeDeviceTx) {
+    if (!useMAudioDuplexChoreography &&
+        streamProfile.startOrder.startTransmitBeforeDeviceTx) {
         if (abortIfTeardown("StartingHostTransmitBeforeDeviceTx")) {
             return kIOReturnAborted;
         }
@@ -1330,6 +1360,9 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
         [&](auto callback) { deviceControl.ProgramTxAndEnableDuplex(std::move(callback)); },
         kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
     if (programTx.status != kIOReturnSuccess) {
+        if (useMAudioDuplexChoreography) {
+            mAudioStartAdapter.OnDeviceStreamsConnectionFailed();
+        }
         if (programTx.status == kIOReturnAborted && TeardownRequested()) {
             RecordTeardownAbort("ProgrammingDeviceTx", endpointId);
         }
@@ -1349,58 +1382,97 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
     SetSessionPhase(session, DuplexRestartPhase::kDeviceTxArmed);
     StoreSession(session);
 
-    // The device-control contract completes its enable stage before the already-allocated host
-    // isoch channels start.
-    IOSleep(streamProfile.startOrder.postDeviceEnableDelayMs);
-    if (abortIfTeardown("PostGlobalEnableDelay")) {
-        return kIOReturnAborted;
-    }
+    if (useMAudioDuplexChoreography) {
+        if (abortIfTeardown("StartingMAudioAsymmetricHostTransport")) {
+            return kIOReturnAborted;
+        }
 
-    // A profile may start host receive first so the device is already transmitting before host
-    // transmit begins, avoiding a window without the expected clock reference.
-    for (const Duplex::HostDirection direction : streamProfile.startOrder.startOrder) {
-        if (direction == Duplex::HostDirection::kReceive) {
-            if (streamProfile.startOrder.startReceiveBeforeDeviceRx) {
-                continue;
-            }
-            if (abortIfTeardown("StartingHostReceive")) {
-                return kIOReturnAborted;
-            }
-            const kern_return_t startReceiveStatus = hostTransport_.StartPreparedReceive();
-            if (startReceiveStatus != kIOReturnSuccess) {
-                return rollbackToFailure(startReceiveStatus, DuplexRestartPhase::kStartingHostReceive,
-                                         DuplexRestartFailureCause::kStartReceive);
-            }
-            if (!IsRestartEpochCurrent(endpointId, restartId, *route)) {
-                return rollbackToInvalidation(kIOReturnAborted,
-                                              DuplexRestartPhase::kStartingHostReceive,
-                                              DuplexRestartFailureCause::kStartReceive);
-            }
+        // M-Audio special firmware is not a generic "device first, then RX,
+        // then TX" BeBoB start. Its vendor driver starts prefilled host TX
+        // immediately and arms IR exactly 160 bus cycles later; only then does
+        // its post-domain signal-format write make device capture flow. Keep
+        // that behavior isolated in the M-Audio adapter. The machine itself is
+        // host-tested in MAudioDuplexChoreographyTests.
+        const Families::BeBoB::MAudio::HostTransportArmResult hostArm =
+            mAudioStartAdapter.OnDeviceStreamsConnectedAndArmHost();
+        if (hostArm.transmitStarted) {
+            SetSessionPhase(session, DuplexRestartPhase::kStartingHostTransmit);
+            session.hostTransmitStarted = true;
+            StoreSession(session);
+        }
+        if (hostArm.receiveStarted) {
             SetSessionPhase(session, DuplexRestartPhase::kStartingHostReceive);
             session.hostReceiveStarted = true;
             StoreSession(session);
-
-            continue;
         }
-
-        if (streamProfile.startOrder.startTransmitBeforeDeviceTx) {
-            continue;
-        }
-        if (abortIfTeardown("StartingHostTransmit")) {
-            return kIOReturnAborted;
-        }
-        const kern_return_t startTransmitStatus = hostTransport_.StartPreparedTransmit();
-        if (startTransmitStatus != kIOReturnSuccess) {
-            return rollbackToFailure(startTransmitStatus, DuplexRestartPhase::kStartingHostTransmit,
-                                     DuplexRestartFailureCause::kStartTransmit);
+        if (hostArm.status != kIOReturnSuccess) {
+            return rollbackToFailure(
+                hostArm.status,
+                hostArm.transmitStarted ? DuplexRestartPhase::kStartingHostReceive
+                                        : DuplexRestartPhase::kStartingHostTransmit,
+                hostArm.transmitStarted ? DuplexRestartFailureCause::kStartReceive
+                                        : DuplexRestartFailureCause::kStartTransmit);
         }
         if (!IsRestartEpochCurrent(endpointId, restartId, *route)) {
-            return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kStartingHostTransmit,
-                                          DuplexRestartFailureCause::kStartTransmit);
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DuplexRestartPhase::kStartingHostReceive,
+                                          DuplexRestartFailureCause::kStartReceive);
         }
-        SetSessionPhase(session, DuplexRestartPhase::kStartingHostTransmit);
-        session.hostTransmitStarted = true;
-        StoreSession(session);
+    } else {
+        // The device-control contract completes its enable stage before the
+        // already-allocated host isoch channels start.
+        IOSleep(streamProfile.startOrder.postDeviceEnableDelayMs);
+        if (abortIfTeardown("PostGlobalEnableDelay")) {
+            return kIOReturnAborted;
+        }
+
+        // A profile may start host receive first so the device is already
+        // transmitting before host transmit begins, avoiding a window without
+        // the expected clock reference.
+        for (const Duplex::HostDirection direction : streamProfile.startOrder.startOrder) {
+            if (direction == Duplex::HostDirection::kReceive) {
+                if (streamProfile.startOrder.startReceiveBeforeDeviceRx) {
+                    continue;
+                }
+                if (abortIfTeardown("StartingHostReceive")) {
+                    return kIOReturnAborted;
+                }
+                const kern_return_t startReceiveStatus = hostTransport_.StartPreparedReceive();
+                if (startReceiveStatus != kIOReturnSuccess) {
+                    return rollbackToFailure(startReceiveStatus, DuplexRestartPhase::kStartingHostReceive,
+                                             DuplexRestartFailureCause::kStartReceive);
+                }
+                if (!IsRestartEpochCurrent(endpointId, restartId, *route)) {
+                    return rollbackToInvalidation(kIOReturnAborted,
+                                                  DuplexRestartPhase::kStartingHostReceive,
+                                                  DuplexRestartFailureCause::kStartReceive);
+                }
+                SetSessionPhase(session, DuplexRestartPhase::kStartingHostReceive);
+                session.hostReceiveStarted = true;
+                StoreSession(session);
+
+                continue;
+            }
+
+            if (streamProfile.startOrder.startTransmitBeforeDeviceTx) {
+                continue;
+            }
+            if (abortIfTeardown("StartingHostTransmit")) {
+                return kIOReturnAborted;
+            }
+            const kern_return_t startTransmitStatus = hostTransport_.StartPreparedTransmit();
+            if (startTransmitStatus != kIOReturnSuccess) {
+                return rollbackToFailure(startTransmitStatus, DuplexRestartPhase::kStartingHostTransmit,
+                                         DuplexRestartFailureCause::kStartTransmit);
+            }
+            if (!IsRestartEpochCurrent(endpointId, restartId, *route)) {
+                return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kStartingHostTransmit,
+                                              DuplexRestartFailureCause::kStartTransmit);
+            }
+            SetSessionPhase(session, DuplexRestartPhase::kStartingHostTransmit);
+            session.hostTransmitStarted = true;
+            StoreSession(session);
+        }
     }
 
     if (abortIfTeardown("ConfirmingDeviceStart")) {
@@ -1410,6 +1482,9 @@ const auto confirm = WaitForAsyncResult<DuplexConfirmResult>(
     [&](auto callback) { deviceControl.ConfirmDuplexStart(std::move(callback)); },
     kSyncBridgeTimeoutMs, kIOReturnTimeout, cancel_);
 if (confirm.status != kIOReturnSuccess) {
+    if (useMAudioDuplexChoreography) {
+        mAudioStartAdapter.OnDeviceStartRejected();
+    }
     if (confirm.status == kIOReturnAborted && TeardownRequested()) {
         RecordTeardownAbort("ConfirmingDeviceStart", endpointId);
     }
@@ -1419,6 +1494,14 @@ if (confirm.status != kIOReturnSuccess) {
 if (!IsRestartEpochCurrent(endpointId, restartId, *route)) {
     return rollbackToInvalidation(kIOReturnAborted, DuplexRestartPhase::kConfirmingDeviceStart,
                                   DuplexRestartFailureCause::kConfirmStart);
+}
+if (useMAudioDuplexChoreography) {
+    const kern_return_t choreographyStatus = mAudioStartAdapter.OnDeviceStartConfirmed();
+    if (choreographyStatus != kIOReturnSuccess) {
+        return rollbackToFailure(choreographyStatus,
+                                 DuplexRestartPhase::kConfirmingDeviceStart,
+                                 DuplexRestartFailureCause::kConfirmStart);
+    }
 }
 
 SetSessionPhase(session, DuplexRestartPhase::kConfirmingDeviceStart);

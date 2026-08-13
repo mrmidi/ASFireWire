@@ -112,6 +112,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 status == kIOReturnSuccess ? kIOReturnError : status;
             ivars.runtime.isRunning.store(false, std::memory_order_release);
             ivars.runtime.txActive.store(false, std::memory_order_release);
+            if (ivars.txPreparationQueue) {
+                ivars.txPreparationQueue->DispatchSync(^{ });
+            }
+            ivars.runtime.mAudioTxClockAdapter.Disarm();
             if (streamingStarted && ivars.device.audioNub) {
                 const kern_return_t stopKr =
                     ivars.device.audioNub->StopAudioStreaming();
@@ -144,12 +148,14 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             return;
         }
         control->ResetForStart();
+        ivars.runtime.mAudioTxClockAdapter.Disarm();
         ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
 
         // --- Allocate and map shared TX isoch resources ---
         uint32_t initialClockAnchorTimeoutMs = 500;
+        bool useMAudioTxClock = false;
         {
             const auto* profile = &ivars.resolvedProfile;
             if (!profile->IsValid()) {
@@ -158,6 +164,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 return;
             }
             initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
+            useMAudioTxClock =
+                ASFW::Audio::Families::BeBoB::MAudio::UsesSpecialDuplexPolicy(
+                    profile->Value().profileBuilder);
 
             ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
             if (!profile->BuildDefaultTxStreamConfig(txConfig)) {
@@ -375,6 +384,18 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         }
 
         // --- Start hardware streaming ---
+        if (useMAudioTxClock && !ivars.runtime.mAudioTxClockAdapter.Arm(
+                ASFW::Audio::Families::BeBoB::MAudio::StartEpoch{
+                    .value = ++ivars.runtime.mAudioTxClockEpoch},
+                ivars.runtime.txStreamEngine.StreamConfig().sampleRate,
+                GetZeroTimestampPeriod())) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: StartIO failed - M-Audio TX clock arm failed rate=%u period=%u",
+                     ivars.runtime.txStreamEngine.StreamConfig().sampleRate,
+                     GetZeroTimestampPeriod());
+            kr = failStart(kIOReturnNotReady, "ArmMAudioTxClock");
+            return;
+        }
         ivars.runtime.txActive.store(true, std::memory_order_release);
         // A failed start can still leave a partially-started backend. Mark the
         // attempt before the call so every non-success result is unwound with
@@ -413,11 +434,11 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         }
 
         // AudioDriverKit needs a valid clock anchor when StartIO transitions
-        // the device into the running state. The hardware ZTS action executes
-        // on its dedicated queue, so it can publish while this work queue
-        // waits. The budget is profile-owned: BeBoB devices spend ~1 s in CIP
-        // NO-DATA after their input stream starts before the first data packet
-        // can seed the anchor (Linux bebob_stream.c:661-666).
+        // the device into the running state. The profile-owned hardware anchor
+        // publisher runs on an independent RX or TX preparation queue, so it
+        // can publish while this work queue waits. Generic BeBoB devices can
+        // spend ~1 s in CIP NO-DATA after input starts (Linux
+        // bebob_stream.c:661-666); the M-Audio path instead seeds from TX.
         uint32_t ztsWaitMs = 0;
         while (ivars.runtime.lastHalZeroTimestampHostTicks.load(
                    std::memory_order_acquire) == 0 &&
@@ -579,6 +600,7 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         if (ivars.txPreparationQueue) {
             ivars.txPreparationQueue->DispatchSync(^{ });
         }
+        ivars.runtime.mAudioTxClockAdapter.Disarm();
 
         if (ivars.runtime.directAudioGraph.control) {
             const auto* control = ivars.runtime.directAudioGraph.control;

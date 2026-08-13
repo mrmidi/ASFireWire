@@ -26,7 +26,8 @@ namespace {
 ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
     ASFWAudioDriver_IVars& ivars,
     const char* reason,
-    bool logSuccess) noexcept {
+    bool logSuccess,
+    bool countAsRx) noexcept {
     auto* control = ivars.runtime.directAudioGraph.control;
     auto* audioDevice = ivars.audioDevice.get();
     if (!control || !audioDevice) {
@@ -56,7 +57,9 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
         anchor.generation, std::memory_order_release);
     control->hostClockAnchor.mirrorPublications.fetch_add(
         1, std::memory_order_relaxed);
-    control->counters.CountRxAdkZtsPublished();
+    if (countAsRx) {
+        control->counters.CountRxAdkZtsPublished();
+    }
 
     if (logSuccess) {
         ASFW_LOG(
@@ -973,6 +976,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             kTxPreparationLeadPackets;
 
     auto* directControl = ivars->runtime.directAudioGraph.control;
+    const bool useMAudioTxClock =
+        ASFW::Audio::Families::BeBoB::MAudio::UsesSpecialDuplexPolicy(
+            ivars->resolvedProfile.Value().profileBuilder);
     if (directControl) {
         directControl->txTransportCompletionCursor.store(
             completionCursor, std::memory_order_relaxed);
@@ -982,6 +988,53 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             static_cast<uint32_t>(txControl->statusWord.load(
                 std::memory_order_acquire)),
             std::memory_order_relaxed);
+    }
+
+    // The 1814 / ProjectMix vendor driver seeds playback time from completed
+    // TX groups, not from capture. This executes on the serialized producer
+    // queue after a real IT completion, and consumes only the payload-opaque
+    // controller/host timing pair published by the transport. RX is separately
+    // prevented from publishing a competing anchor by its profile policy.
+    if (directControl && useMAudioTxClock && hardwareWakePending) {
+        ASFW::Isoch::IsochTxClockPairSample pair{};
+        if (txControl->clockPair.TryRead(pair) && pair.hostTimeMid != 0) {
+            const auto publication =
+                ivars->runtime.mAudioTxClockAdapter.ObserveHardwareWake(
+                    requested,
+                    {.cycleTime = pair.cycleTimer32,
+                     .hostTicks = pair.hostTimeMid});
+            if (publication.captureReferencePlanted) {
+                ASFW_LOG(
+                    DirectAudio,
+                    "[MAudioClock] capture-reference group=2 cycle=0x%08x host=%llu",
+                    publication.captureReference.cycleTime,
+                    publication.captureReference.hostTicks);
+            }
+            if (publication.playbackAnchorReady) {
+                const auto published = directControl->PublishHostClockAnchor(
+                    publication.sampleFrame,
+                    publication.hostTicks,
+                    publication.hostNanosPerSampleQ8);
+                if (published.accepted) {
+                    directControl->counters.CountZtsPublished();
+                    const bool isFirstPlaybackAnchor =
+                        publication.sampleFrame == 0;
+                    if (isFirstPlaybackAnchor) {
+                        ASFW_LOG(
+                            DirectAudio,
+                            "[MAudioClock] playback-anchor group=3 cycle=0x%08x host=%llu rateQ8=%u",
+                            publication.source.cycleTime,
+                            publication.hostTicks,
+                            publication.hostNanosPerSampleQ8);
+                    }
+                    (void)ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(
+                        *ivars,
+                        "maudio-tx",
+                        isFirstPlaybackAnchor,
+                        /*countAsRx=*/false);
+                }
+            }
+        }
     }
     const bool replayEstablished =
         directControl && directControl->rxSequenceReplay.IsEstablished();

@@ -46,7 +46,9 @@ class IIsochDuplexHostTransport {
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
                    Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-                   uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept = 0;
+                   uint32_t am824Slots = 0, uint32_t streamChannels = 0,
+                   bool acceptHeaderOnlyNoDataTransition = false,
+                   bool useTxDerivedPlaybackClock = false) noexcept = 0;
     [[nodiscard]] virtual kern_return_t PrepareTransmit(uint8_t channel,
                                                         Driver::HardwareInterface& hardware,
                                                         uint8_t sourceId) noexcept = 0;
@@ -62,6 +64,8 @@ class IIsochDuplexHostTransport {
                                                               Driver::HardwareInterface& hardware,
                                                               uint8_t sourceId) noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedReceive() noexcept = 0;
+    [[nodiscard]] virtual kern_return_t
+    StartPreparedReceiveAtCycle(uint32_t cycleTimer) noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartPreparedTransmit() noexcept = 0;
     [[nodiscard]] virtual kern_return_t StopPreparedReceive() noexcept {
         return kIOReturnUnsupported;
@@ -109,7 +113,9 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
                    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
                    Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
-                   uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept override;
+                   uint32_t am824Slots = 0, uint32_t streamChannels = 0,
+                   bool acceptHeaderOnlyNoDataTransition = false,
+                   bool useTxDerivedPlaybackClock = false) noexcept override;
     [[nodiscard]] kern_return_t PrepareTransmit(uint8_t channel,
                                                 Driver::HardwareInterface& hardware,
                                                 uint8_t sourceId) noexcept override;
@@ -123,6 +129,8 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
                                                       Driver::HardwareInterface& hardware,
                                                       uint8_t sourceId) noexcept override;
     [[nodiscard]] kern_return_t StartPreparedReceive() noexcept override;
+    [[nodiscard]] kern_return_t
+    StartPreparedReceiveAtCycle(uint32_t cycleTimer) noexcept override;
     [[nodiscard]] kern_return_t StartPreparedTransmit() noexcept override;
     [[nodiscard]] kern_return_t StopPreparedReceive() noexcept override;
     [[nodiscard]] kern_return_t StopPreparedTransmit() noexcept override;
@@ -135,7 +143,9 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         uint32_t streamIndex,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         Encoding::AudioWireFormat wireFormat, uint32_t am824Slots,
-        uint32_t channelOffset, uint32_t streamChannels, bool isSecondary) noexcept;
+        uint32_t channelOffset, uint32_t streamChannels, bool isSecondary,
+        bool acceptHeaderOnlyNoDataTransition,
+        bool useTxDerivedPlaybackClock) noexcept;
     void DetachReceiveConsumers() noexcept;
 
     Driver::IsochService& isoch_;

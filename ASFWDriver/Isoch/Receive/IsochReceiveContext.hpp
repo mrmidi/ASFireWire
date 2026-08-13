@@ -5,6 +5,7 @@
 #include <atomic>
 #include <memory>
 #include <new>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -76,6 +77,9 @@ class IsochReceiveContext final
 
     kern_return_t Configure(uint8_t channel, uint8_t contextIndex);
     kern_return_t Start();
+    // Arm IR on the cycle encoded in an OHCI CycleTimer value. The context
+    // remains stopped until the controller observes the matching bus cycle.
+    kern_return_t StartAtCycle(uint32_t cycleTimer);
     // Clearing RUN only prevents new descriptor fetches.  The caller must not
     // release any DMA-visible memory until this returns success (ACTIVE clear).
     [[nodiscard]] kern_return_t Stop();
@@ -120,6 +124,7 @@ class IsochReceiveContext final
     std::atomic<uint64_t> lastProgressHostTicks_{0};
 
     Registers GetRegisters(uint8_t index) const;
+    kern_return_t StartImpl(std::optional<uint32_t> cycleTimer) noexcept;
 };
 
 } // namespace ASFW::Isoch

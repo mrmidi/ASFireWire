@@ -41,6 +41,10 @@ class IsochService {
     kern_return_t PrepareReceiveStream(
         uint32_t streamIndex, uint8_t channel, HardwareInterface& hardware);
     kern_return_t StartPreparedReceive();
+    // Schedule every prepared IR context on one bus-cycle boundary. This is a
+    // transport primitive: the caller supplies an opaque OHCI cycle timer and
+    // retains ownership of policy for why that cycle was chosen.
+    kern_return_t StartPreparedReceiveAtCycle(uint32_t cycleTimer);
 
     // Starts stream 0 with a caller-owned, content-side packet consumer. The
     // transport remains payload-opaque; the consumer must stay alive until

@@ -127,10 +127,20 @@ struct ContextControl {
     static constexpr uint32_t kActive = kContextControlActiveBit;
     static constexpr uint32_t kEventCodeMask = kContextControlEventMask;
     static constexpr uint32_t kEventCodeShift = 0;
-    static constexpr uint32_t kIsochHeader = 1u << 30;     // IR: includes isoch header (OHCI §10.2.2)
-    static constexpr uint32_t kCycleMatchEnable = 1u << 30; // IT: stall until cycle match (OHCI §9.2)
-    // Mask of all writable bits (for safe clearing without hitting reserved bits)
-    static constexpr uint32_t kWritableBits = kRun | kWake | kCycleMatchEnable;
+    static constexpr uint32_t kIsochHeader = 1u << 30; // IR: include OHCI isoch header
+    // Cycle-match enable occupies a different bit in the two OHCI context
+    // directions. Do not use a shared alias: bit 30 is IR's header-inclusion
+    // control, not IT's cycle-match bit. Cross-validated with Linux
+    // firewire/ohci.c:240-244 and :3187-3206.
+    static constexpr uint32_t kTransmitCycleMatchEnable = 1u << 31;
+    static constexpr uint32_t kReceiveCycleMatchEnable = 1u << 29;
+    static constexpr uint32_t kTransmitWritableBits =
+        kRun | kWake | kTransmitCycleMatchEnable;
+    static constexpr uint32_t kReceiveWritableBits =
+        kRun | kWake | kIsochHeader | kReceiveCycleMatchEnable;
+    // Compatibility alias for existing transmit callers. Direction-specific
+    // masks are required because bit 31 means TX cycle-match but IR buffer-fill.
+    static constexpr uint32_t kWritableBits = kTransmitWritableBits;
 };
 
 // ============================================================================

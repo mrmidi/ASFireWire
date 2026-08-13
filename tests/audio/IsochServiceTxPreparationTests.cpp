@@ -6,7 +6,9 @@
 #include <limits>
 
 #include "../ASFWDriver/Hardware/HardwareInterface.hpp"
+#include "../ASFWDriver/Hardware/OHCIConstants.hpp"
 #include "../ASFWDriver/Isoch/IsochService.hpp"
+#include "../ASFWDriver/Common/TimingUtils.hpp"
 #include "../ASFWDriver/Isoch/Transmit/IsochTxLayout.hpp"
 #include "../ASFWDriver/Audio/Shared/AudioTimingGeometry.hpp"
 #include "../ASFWDriver/Shared/Isoch/TxPayloadSeal.hpp"
@@ -443,6 +445,39 @@ TEST(IsochServiceTxPreparation, ReceiveConsumerAttachesBeforePreparedStart) {
 
     EXPECT_EQ(service.StopReceive(), kIOReturnSuccess);
     EXPECT_EQ(consumer.quiesced, 1u);
+}
+
+TEST(IsochServiceTxPreparation,
+     ScheduledReceiveStartUsesIrCycleMatchAndPreservesCycleTimerWrap) {
+    IsochService service;
+    HardwareInterface hardware;
+
+    ASSERT_EQ(service.PrepareReceive(/*channel=*/2, hardware),
+              kIOReturnSuccess);
+    const uint32_t nearWrap = ASFW::Timing::encodeCycleTimer(
+        /*seconds=*/127, /*cycle=*/7950, /*offset=*/0x345);
+    const uint32_t scheduled = ASFW::Timing::AddCyclesToCycleTimer(
+        nearWrap, /*cycles=*/160);
+    const auto scheduledFields = ASFW::Timing::decodeCycleTimer(scheduled);
+    EXPECT_EQ(scheduledFields.seconds, 0U);
+    EXPECT_EQ(scheduledFields.cycle, 110U);
+    EXPECT_EQ(scheduledFields.offset, 0x345U);
+
+    ASSERT_EQ(service.StartPreparedReceiveAtCycle(scheduled),
+              kIOReturnSuccess);
+
+    const Register32 contextMatch = static_cast<Register32>(
+        DMAContextHelpers::IsoRcvContextMatch(0));
+    const Register32 controlSet = static_cast<Register32>(
+        DMAContextHelpers::IsoRcvContextControlSet(0));
+    EXPECT_EQ(hardware.GetTestRegister(contextMatch),
+              0xf0000000U | (scheduledFields.cycle << 12) | 2U);
+    EXPECT_EQ(hardware.GetTestRegister(controlSet),
+              ASFW::Driver::ContextControl::kRun |
+                  ASFW::Driver::ContextControl::kIsochHeader |
+                  ASFW::Driver::ContextControl::kReceiveCycleMatchEnable);
+
+    EXPECT_EQ(service.StopReceive(), kIOReturnSuccess);
 }
 
 TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext) {

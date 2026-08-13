@@ -9,6 +9,7 @@
 #include "Audio/Protocols/Duplex/IDuplexDeviceControl.hpp"
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Bus/IRM/IRMClient.hpp"
+#include "Common/TimingUtils.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Hardware/HardwareInterface.hpp"
@@ -208,13 +209,18 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         uint8_t channel, HardwareInterface&,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-        uint32_t am824Slots = 0, uint32_t streamChannels = 0) noexcept override {
+        uint32_t am824Slots = 0, uint32_t streamChannels = 0,
+        bool acceptHeaderOnlyNoDataTransition = false,
+        bool useTxDerivedPlaybackClock = false) noexcept override {
         log_.Add("host.prepare_receive");
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
         lastReceiveWireFormat = wireFormat;
         lastReceiveAm824Slots = am824Slots;
         lastReceiveStreamChannels = streamChannels;
+        lastReceiveAcceptHeaderOnlyNoDataTransition =
+            acceptHeaderOnlyNoDataTransition;
+        lastReceiveUseTxDerivedPlaybackClock = useTxDerivedPlaybackClock;
         ++prepareReceiveCalls;
         return prepareReceiveStatus;
     }
@@ -262,6 +268,14 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
         return startReceiveStatus;
     }
 
+    kern_return_t StartPreparedReceiveAtCycle(uint32_t cycleTimer) noexcept override {
+        log_.Add("host.start_receive_at_cycle");
+        lastScheduledReceiveCycleTimer = cycleTimer;
+        ++startReceiveCalls;
+        ++scheduledStartReceiveCalls;
+        return startReceiveAtCycleStatus;
+    }
+
     kern_return_t StartPreparedTransmit() noexcept override {
         log_.Add("host.start_transmit");
         ++startTransmitCalls;
@@ -292,6 +306,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     kern_return_t prepareReceiveStatus{kIOReturnSuccess};
     kern_return_t prepareTransmitStatus{kIOReturnSuccess};
     kern_return_t startReceiveStatus{kIOReturnSuccess};
+    kern_return_t startReceiveAtCycleStatus{kIOReturnSuccess};
     kern_return_t startTransmitStatus{kIOReturnSuccess};
     kern_return_t stopStatus{kIOReturnSuccess};
     kern_return_t stopReceiveStatus{kIOReturnSuccess};
@@ -309,6 +324,9 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     ASFW::Encoding::AudioWireFormat lastReceiveWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
     uint32_t lastReceiveAm824Slots{0};
     uint32_t lastReceiveStreamChannels{0};
+    bool lastReceiveAcceptHeaderOnlyNoDataTransition{false};
+    bool lastReceiveUseTxDerivedPlaybackClock{false};
+    uint32_t lastScheduledReceiveCycleTimer{0};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
     uint32_t lastTransmitMode{0};
@@ -333,6 +351,7 @@ class FakeIsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     uint8_t lastSecondaryTransmitChannel{0};
     uint8_t lastSecondaryTransmitSourceId{0};
     int startReceiveCalls{0};
+    int scheduledStartReceiveCalls{0};
     int startTransmitCalls{0};
     int stopCalls{0};
     int stopReceiveCalls{0};
@@ -635,8 +654,10 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
         InstallDevice(protocol_);
     }
 
-    [[nodiscard]] std::shared_ptr<const ResolvedAudioEndpointProfile>
-    MakeProfile(const ASFW::Discovery::DeviceRecord& record, bool oxfw = false) const {
+    [[nodiscard]] std::shared_ptr<ResolvedAudioEndpointProfile>
+    MakeProfile(const ASFW::Discovery::DeviceRecord& record, bool oxfw = false,
+                ASFW::DeviceProfiles::Audio::ProfileBuilderId profileBuilder =
+                    ASFW::DeviceProfiles::Audio::ProfileBuilderId::None) const {
         auto profile = std::make_shared<ResolvedAudioEndpointProfile>();
         profile->endpointId = kTestEndpointId;
         profile->deviceInstanceId = record.instanceId;
@@ -660,6 +681,16 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
             profile->stopPolicy
                 .disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
         }
+        if (profileBuilder != ASFW::DeviceProfiles::Audio::ProfileBuilderId::None) {
+            profile->familyProvider =
+                ASFW::DeviceProfiles::Audio::AudioFamilyProviderId::BeBoB;
+            profile->profileBuilder = profileBuilder;
+            profile->captureIsoChannelPolicy =
+                ASFW::Audio::Duplex::IsoChannelPolicy::IRMSelectable;
+            profile->playbackIsoChannelPolicy =
+                ASFW::Audio::Duplex::IsoChannelPolicy::IRMSelectable;
+            profile->startPolicy.requiresPreStreamClockLock = false;
+        }
         return profile;
     }
 
@@ -682,6 +713,20 @@ class AudioDuplexCoordinatorTests : public ::testing::Test {
             MakeConfigRom(kObservedGuid, kApogeeVendorId, kApogeeDuetModelId),
             LinkPolicy{});
         ASSERT_NE(runtime_.InsertResolved(MakeProfile(record, true), protocol_), nullptr);
+    }
+
+    void InstallMAudioProfile() {
+        const auto record = registry_.UpsertFromROM(
+            MakeConfigRom(kObservedGuid, /*vendorId=*/0x000D6C,
+                          /*modelId=*/0x00010071),
+            LinkPolicy{});
+        ASSERT_NE(runtime_.InsertResolved(
+                      MakeProfile(
+                          record, false,
+                          ASFW::DeviceProfiles::Audio::ProfileBuilderId::
+                              MAudioFireWire1814),
+                      protocol_),
+                  nullptr);
     }
 
     [[nodiscard]] std::optional<DiceRestartSession> GetSession() const {
@@ -834,6 +879,44 @@ TEST_F(AudioDuplexCoordinatorTests,
                                  "host.stop",
                              }));
     EXPECT_EQ(protocol_->stopCalls, 0);
+}
+
+TEST_F(AudioDuplexCoordinatorTests,
+       MAudioProfileStartsPrefilledTxNowAndSchedulesRxTwentyMillisecondsLater) {
+    InstallMAudioProfile();
+    ClearLog();
+
+    const uint32_t now = ASFW::Timing::encodeCycleTimer(
+        /*seconds=*/127, /*cycle=*/7950, /*offset=*/0x234);
+    hardware_.SetTestRegister(Register32::kCycleTimer, now);
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestEndpointId), kIOReturnSuccess);
+
+    EXPECT_TRUE(hostTransport_.lastReceiveAcceptHeaderOnlyNoDataTransition);
+    EXPECT_TRUE(hostTransport_.lastReceiveUseTxDerivedPlaybackClock);
+    EXPECT_EQ(hostTransport_.startTransmitCalls, 1);
+    EXPECT_EQ(hostTransport_.startReceiveCalls, 1);
+    EXPECT_EQ(hostTransport_.scheduledStartReceiveCalls, 1);
+    EXPECT_EQ(hostTransport_.lastScheduledReceiveCycleTimer,
+              ASFW::Timing::AddCyclesToCycleTimer(
+                  now, /*cycles=*/160));
+
+    // The M-Audio profile bypasses generic BeBoB's RX-then-TX start loop. Its
+    // FCP confirmation stays last because MAudioSpecialProtocol uses it for
+    // the post-host-DMA rate/signal-format command that enables device TX.
+    EXPECT_EQ(LogSnapshot(), (std::vector<std::string>{
+                                 "host.begin",
+                                 "device.prepare",
+                                 "host.reserve_playback",
+                                 "host.reserve_capture",
+                                 "host.prepare_receive",
+                                 "host.prepare_transmit",
+                                 "device.program_rx",
+                                 "device.program_tx",
+                                 "host.start_transmit",
+                                 "host.start_receive_at_cycle",
+                                 "device.confirm",
+                             }));
 }
 
 TEST_F(AudioDuplexCoordinatorTests,

@@ -344,7 +344,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     if (!access) return kIOReturnNotReady;
     access.Write(cmdPtrReg, cmdPtr);
 
-    access.Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
+    access.Write(ctrlClrReg, Driver::ContextControl::kTransmitWritableBits);
 
     access.Write(Register32::kIsoXmitIntEventClear, 0xFFFFFFFF);
     access.Write(Register32::kIsoXmitIntMaskSet, (1u << contextIndex_));
