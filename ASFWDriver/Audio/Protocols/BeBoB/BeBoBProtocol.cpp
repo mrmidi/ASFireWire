@@ -361,7 +361,13 @@ void BeBoBProtocol::CancelClockApply() {
     }
     if (auto* epoch = activeClockApply_) {
         activeClockApply_ = nullptr;
-        timerScheduler_->Cancel(epoch->settleTimer);
+        // Guarded for the same reason as the interlock above. Unreachable with a
+        // null scheduler today — ApplyClockConfig would have dereferenced it
+        // before ever setting activeClockApply_ — but leaving one of the two
+        // cancels unguarded is the kind of asymmetry that becomes true later.
+        if (timerScheduler_ != nullptr) {
+            timerScheduler_->Cancel(epoch->settleTimer);
+        }
         // Mark completed so the timer callback (if already dispatched) is a no-op.
         if (!epoch->completed.exchange(true)) {
             ClockApplyCallback cb = std::move(epoch->completion);
