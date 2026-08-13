@@ -239,6 +239,10 @@ re-derivation path on a digital-format change.
 
 ---
 
+> **Companion:** `MAUDIO_1814_START_CHOREOGRAPHY.md` covers clock configuration,
+> the start order, and the cycle-timer host time base. The RX-cursor concern
+> raised in §12 below is developed there against a hardware run that hit it.
+
 ## 12. What this means for ASFW
 
 - **Mode B is close to what we already do**: SYT = transmit cycle + lead with a
