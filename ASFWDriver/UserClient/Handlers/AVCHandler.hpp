@@ -104,6 +104,30 @@ public:
     kern_return_t GetRawFCPCommandResult(IOUserClientMethodArguments* args);
 
     /**
+     * @brief Submit the signal-format probe — the one AV/C exchange that is safe
+     *        on firmware which hangs on ordinary discovery.
+     *
+     * Closed by construction, like the bootloader cue: there is no opcode and no
+     * operand input. The caller chooses a plug direction and a plug id, and a
+     * plug id addresses a plug — it can never become a command code. The
+     * device's permitted-frame table is checked again at submit, so this is not
+     * the only thing standing between the caller and the device.
+     *
+     * Decode happens here rather than in the app: validating that the reply
+     * echoed the request needs the request, which only exists driver-side.
+     *
+     * @param args IOUserClientMethodArguments
+     *        - scalarInput[0]: DeviceInstanceId
+     *        - scalarInput[1]: unit-directory offset
+     *        - scalarInput[2]: plug direction (0 = input, 1 = output)
+     *        - scalarInput[3]: plug id
+     *        - scalarOutput[0]: Request ID for GetRawFCPCommandResult, which
+     *          yields an AVCSignalFormatProbeResultWire
+     * @return kIOReturnSuccess on successful submission
+     */
+    kern_return_t SubmitSignalFormatProbe(IOUserClientMethodArguments* args);
+
+    /**
      * @brief Re-scan all AV/C units
      *
      * Triggers re-initialization of all discovered AV/C units.

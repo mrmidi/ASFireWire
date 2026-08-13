@@ -34,6 +34,12 @@ protocol ASFWDriverControlling {
     func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult
     func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt
+    /// The one AV/C exchange that is safe on firmware which hangs on ordinary
+    /// discovery. Deliberately not expressible through executeFCPCommand: that
+    /// takes a caller-supplied payload, and the whole point here is that no
+    /// opcode or operand crosses the boundary.
+    func executeSignalFormatProbe(_ request: ASFWMCPSignalFormatProbeRequest) async
+        -> ASFWMCPSignalFormatProbeReceipt
     func executePhase88Streaming(endpointID: AudioEndpointID, start: Bool) async -> ASFWMCPPhase88StreamingReceipt
     func executeBusReset(_ request: ASFWMCPBusResetRequest) async -> ASFWMCPBusResetReceipt
     func executeIRMSnapshot(_ request: ASFWMCPIrmSnapshotRequest) async -> ASFWMCPIrmResourceSnapshot
@@ -371,6 +377,22 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             rCode: comparePassed ? "complete" : "conflictError",
             durationUsec: 180,
             payload: quadletBytes(comparePassed ? request.swap : mockQuadletValue(for: request.address))
+        )
+    }
+
+    func executeSignalFormatProbe(_ request: ASFWMCPSignalFormatProbeRequest) async
+        -> ASFWMCPSignalFormatProbeReceipt {
+        // The mock has no device to ask. Report unavailable rather than
+        // synthesising a rate: a fabricated 48 kHz here would be indistinguishable
+        // from the real thing in a report, which is the one outcome this whole
+        // probe exists to avoid.
+        ASFWMCPSignalFormatProbeReceipt(
+            targetUnitID: request.targetUnitID,
+            plugDirection: request.plugDirection,
+            plugID: request.plugID,
+            result: nil,
+            status: .unavailable,
+            correlationId: "mock-signal-format-probe"
         )
     }
 

@@ -510,6 +510,8 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     var resultPolls = 0
     var fcpCommands = 0
     var fcpResponse: Data?
+    var signalFormatProbes: [(UnitInstanceID, SignalFormatPlugDirection, UInt8)] = []
+    var signalFormatProbeResult: SignalFormatProbeResult?
     var audioStreamingRequests: [(AudioEndpointID, Bool)] = []
     var busResetRequests = 0
     var resetGenerationOnRequest = false
@@ -567,6 +569,14 @@ private final class FakeLiveDriverBackend: ASFWLiveDriverBackend {
     func mcpSendRawFCPCommand(unitID: UnitInstanceID, frame: Data, timeoutMs: UInt32) -> Data? {
         fcpCommands += 1
         return fcpResponse
+    }
+
+    func mcpProbeSignalFormat(unitID: UnitInstanceID,
+                              plugDirection: SignalFormatPlugDirection,
+                              plugID: UInt8,
+                              timeoutMs: UInt32) -> SignalFormatProbeResult? {
+        signalFormatProbes.append((unitID, plugDirection, plugID))
+        return signalFormatProbeResult
     }
 
     func mcpSetAudioStreaming(endpointID: AudioEndpointID, enabled: Bool) -> Int32 {

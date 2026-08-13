@@ -23,6 +23,10 @@ protocol ASFWLiveDriverBackend: AnyObject {
     func mcpAsyncCompareSwap(deviceID: DeviceInstanceID, addressHigh: UInt16, addressLow: UInt32, compareValue: Data, newValue: Data) -> UInt16?
     func mcpTransactionResult(handle: UInt16, initialPayloadCapacity: Int) -> ASFWDriverConnector.AsyncTransactionResult?
     func mcpSendRawFCPCommand(unitID: UnitInstanceID, frame: Data, timeoutMs: UInt32) -> Data?
+    func mcpProbeSignalFormat(unitID: UnitInstanceID,
+                              plugDirection: SignalFormatPlugDirection,
+                              plugID: UInt8,
+                              timeoutMs: UInt32) -> SignalFormatProbeResult?
     func mcpSetAudioStreaming(endpointID: AudioEndpointID, enabled: Bool) -> Int32
     func mcpRequestUserBusReset(expectedGeneration: UInt32, shortReset: Bool) -> UInt32?
     func mcpQueryLogRecords(_ query: ASFWLogRingQuery) -> ASFWLogRingQueryResponse?
@@ -128,6 +132,14 @@ extension ASFWDriverConnector: ASFWLiveDriverBackend {
 
     func mcpSendRawFCPCommand(unitID: UnitInstanceID, frame: Data, timeoutMs: UInt32) -> Data? {
         sendRawFCPCommand(unitID: unitID, frame: frame, timeoutMs: timeoutMs)
+    }
+
+    func mcpProbeSignalFormat(unitID: UnitInstanceID,
+                              plugDirection: SignalFormatPlugDirection,
+                              plugID: UInt8,
+                              timeoutMs: UInt32) -> SignalFormatProbeResult? {
+        probeSignalFormat(unitID: unitID, plugDirection: plugDirection,
+                          plugID: plugID, timeoutMs: timeoutMs)
     }
 
     func mcpSetAudioStreaming(endpointID: AudioEndpointID, enabled: Bool) -> Int32 {
@@ -600,6 +612,46 @@ final class LiveASFWDriverControl: ASFWDriverControlling {
             fcpRecords.removeFirst(fcpRecords.count - Self.fcpRecordCapacity)
         }
         return receipt
+    }
+
+    func executeSignalFormatProbe(_ request: ASFWMCPSignalFormatProbeRequest) async
+        -> ASFWMCPSignalFormatProbeReceipt {
+        let correlationId = "live-sigfmt-\(UUID().uuidString)"
+        let currentGeneration = backend.mcpCurrentGeneration() ?? 0
+
+        func receipt(_ result: SignalFormatProbeResult?,
+                     _ status: ASFWMCPTransactionStatus) -> ASFWMCPSignalFormatProbeReceipt {
+            ASFWMCPSignalFormatProbeReceipt(
+                targetUnitID: request.targetUnitID,
+                plugDirection: request.plugDirection,
+                plugID: request.plugID,
+                result: result,
+                status: status,
+                correlationId: correlationId
+            )
+        }
+
+        guard backend.mcpIsConnected else {
+            return receipt(nil, .unavailable)
+        }
+        guard listAVCUnitsFromBackend().contains(where: {
+            $0.id == request.targetUnitID && $0.generation == currentGeneration
+        }) else {
+            return receipt(nil, .unavailable)
+        }
+
+        let probe = backend.mcpProbeSignalFormat(
+            unitID: request.targetUnitID,
+            plugDirection: request.plugDirection,
+            plugID: request.plugID,
+            timeoutMs: 15_000
+        )
+        let completedGeneration = backend.mcpCurrentGeneration() ?? currentGeneration
+        guard completedGeneration == currentGeneration else {
+            // A reset mid-probe invalidates the answer even if bytes came back.
+            return receipt(probe, .busReset)
+        }
+        return receipt(probe, probe == nil ? .timeout : .ok)
     }
 
     func executeFCPCommand(_ request: ASFWMCPFcpCommandRequest) async -> ASFWMCPFcpCommandReceipt {

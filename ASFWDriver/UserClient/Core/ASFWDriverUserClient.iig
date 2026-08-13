@@ -74,6 +74,11 @@ public:
         // Developer-only complete audio lifecycle control, endpoint-ID scalar input.
         kMethodStartAudioStreaming     = 62,
         kMethodStopAudioStreaming      = 63,
+        // The one AV/C exchange that is safe on firmware which hangs on ordinary
+        // discovery. Closed by construction: no opcode or operand input exists,
+        // only a plug direction and a plug id, and the device's permitted-frame
+        // table is checked again at submit. Result is polled with selector 39.
+        kMethodSubmitSignalFormatProbe = 64,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

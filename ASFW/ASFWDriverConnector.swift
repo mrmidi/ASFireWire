@@ -50,6 +50,11 @@ final class ASFWDriverConnector: ObservableObject {
         // AV/C raw FCP command (request/response)
         case sendRawFCPCommand = 38
         case getRawFCPCommandResult = 39
+        /// The one AV/C exchange that is safe on firmware which hangs on
+        /// ordinary discovery. The driver builds the whole frame; this side
+        /// supplies only a plug direction and a plug id. Result is polled with
+        /// `getRawFCPCommandResult`.
+        case submitSignalFormatProbe = 64
         case setIsochVerbosity = 40
         case asyncBlockRead = 44
         case asyncBlockWrite = 45

@@ -240,6 +240,101 @@ extension ASFWDriverConnector {
         return out
     }
 
+    /// Reads the sample rate from a device via unit PLUG SIGNAL FORMAT, STATUS.
+    ///
+    /// This is the only AV/C command that may be sent to M-Audio "special"
+    /// firmware — the FireWire 1814 and ProjectMix I/O hang on UNIT_INFO,
+    /// SUBUNIT_INFO, PLUG_INFO and every BridgeCo extension. Nothing here can
+    /// reach those: the driver builds the entire frame and this call carries no
+    /// opcode and no operands, only a plug direction and a plug id.
+    ///
+    /// On the 1814 the *input* plug is the one that reports the rate actually in
+    /// effect, which is why it is the default.
+    ///
+    /// Returns nil only when the request could not be submitted or timed out;
+    /// a device that answered NOT IMPLEMENTED, REJECTED or IN TRANSITION comes
+    /// back as a result carrying that outcome, not as nil.
+    func probeSignalFormat(
+        unitID: UnitInstanceID,
+        plugDirection: SignalFormatPlugDirection = .input,
+        plugID: UInt8 = 0,
+        timeoutMs: UInt32 = 15_000
+    ) -> SignalFormatProbeResult? {
+        guard isConnected, connection != 0 else {
+            log("probeSignalFormat: Not connected", level: .warning)
+            return nil
+        }
+
+        let scalarInputs: [UInt64] = [
+            unitID.device.rawValue,
+            UInt64(unitID.unitDirectoryOffset),
+            plugDirection == .input ? 0 : 1,
+            UInt64(plugID)
+        ]
+        var requestID: UInt64 = 0
+        var scalarOutputCount: UInt32 = 1
+        let submitKR = scalarInputs.withUnsafeBufferPointer { scalarPtr in
+            IOConnectCallMethod(
+                connection,
+                Method.submitSignalFormatProbe.rawValue,
+                scalarPtr.baseAddress, UInt32(scalarInputs.count),
+                nil, 0,
+                &requestID, &scalarOutputCount,
+                nil, nil
+            )
+        }
+
+        guard submitKR == KERN_SUCCESS, scalarOutputCount >= 1 else {
+            let error = "probeSignalFormat submit failed: \(interpretIOReturn(submitKR))"
+            log(error, level: .error)
+            lastError = error
+            return nil
+        }
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        let timeoutNanos = UInt64(timeoutMs) * 1_000_000
+        while DispatchTime.now().uptimeNanoseconds - start <= timeoutNanos {
+            let pollInput: [UInt64] = [requestID]
+            var outSize = MemoryLayout<AVCSignalFormatProbeResultWire>.size
+            var out = Data(count: outSize)
+            let pollKR = out.withUnsafeMutableBytes { outPtr in
+                pollInput.withUnsafeBufferPointer { inputPtr in
+                    IOConnectCallMethod(
+                        connection,
+                        Method.getRawFCPCommandResult.rawValue,
+                        inputPtr.baseAddress, UInt32(pollInput.count),
+                        nil, 0,
+                        nil, nil,
+                        outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize
+                    )
+                }
+            }
+            if pollKR == KERN_SUCCESS {
+                out.count = outSize
+                guard let result = SignalFormatProbeResult(wire: out) else {
+                    let error = "probeSignalFormat: short result (\(outSize) bytes)"
+                    log(error, level: .error)
+                    lastError = error
+                    return nil
+                }
+                return result
+            }
+            if pollKR == kIOReturnNotReady {
+                Thread.sleep(forTimeInterval: 0.005)
+                continue
+            }
+            let error = "probeSignalFormat poll failed: \(interpretIOReturn(pollKR))"
+            log(error, level: .error)
+            lastError = error
+            return nil
+        }
+
+        let error = "probeSignalFormat timed out waiting for response (\(timeoutMs) ms)"
+        log(error, level: .error)
+        lastError = error
+        return nil
+    }
+
     func sendRawFCPCommand(
         unitID: UnitInstanceID,
         frame: Data,

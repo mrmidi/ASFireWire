@@ -15,6 +15,12 @@ extension ASFWMCPToolCatalog {
         ASFWMCPToolDefinition(name: "asfw_avc_get_subunit_descriptor", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return bounded AV/C subunit descriptor bytes and parsed summary.", requiredProtocolHints: ["avc"]),
         ASFWMCPToolDefinition(name: "asfw_fcp_send_command", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Send an inquiry/status-only FCP/AV/C command.", requiredProtocolHints: ["avc"]),
         ASFWMCPToolDefinition(name: "asfw_fcp_get_recent_responses", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Inspect recent FCP command/response records.", requiredProtocolHints: ["avc"]),
+        // Read-only despite issuing a transaction, on the same grounds as
+        // asfw_fcp_send_command: it is an AV/C STATUS command and changes no
+        // device state. It exists as its own tool because it is the ONLY command
+        // that may be sent to M-Audio special firmware, and unlike the generic
+        // FCP tools it takes no payload — the driver builds the frame.
+        ASFWMCPToolDefinition(name: "asfw_avc_probe_signal_format", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Read a device's sample rate via unit PLUG SIGNAL FORMAT (STATUS). Safe on freeze-prone M-Audio special firmware.", requiredProtocolHints: ["avc"]),
         ASFWMCPToolDefinition(name: "asfw_apogee_duet_apply_format_dev", group: "avc_fcp", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Guardedly apply and verify an Apogee Duet OXFW AM824 format transition.", requiredProtocolHints: ["avc"]),
         ASFWMCPToolDefinition(name: "asfw_fcp_send_command_dev", group: "avc_fcp", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Developer-tier raw FCP command that may mutate device state.", requiredProtocolHints: ["avc"])
     ]
@@ -152,6 +158,52 @@ extension ASFWMCPAVCSubunitCapabilities {
 }
 
 /// A raw FCP/AV/C command directed at a node's FCP command register.
+/// Request for the closed signal-format probe.
+///
+/// Note what is absent: no payload, no opcode, no ctype. The driver builds the
+/// whole frame. That is the difference between this and
+/// `ASFWMCPFcpCommandRequest`, and the reason it is a separate type rather than
+/// a preset payload — a preset can be edited by the next caller.
+struct ASFWMCPSignalFormatProbeRequest: Equatable {
+    let targetUnitID: UnitInstanceID
+    let plugDirection: SignalFormatPlugDirection
+    let plugID: UInt8
+}
+
+struct ASFWMCPSignalFormatProbeReceipt: Equatable {
+    let targetUnitID: UnitInstanceID
+    let plugDirection: SignalFormatPlugDirection
+    let plugID: UInt8
+    /// nil when the probe could not be issued at all; the AV/C-level refusals
+    /// (NOT IMPLEMENTED, REJECTED, IN TRANSITION) arrive as a result, not as nil.
+    let result: SignalFormatProbeResult?
+    let status: ASFWMCPTransactionStatus
+    let correlationId: String
+
+    var ok: Bool { status == .ok }
+
+    var mcpValue: ASFWMCPValue {
+        var fields: [String: ASFWMCPValue] = [
+            "deviceInstanceId": .uint64(targetUnitID.device.rawValue),
+            "unitDirectoryOffset": .uint64(UInt64(targetUnitID.unitDirectoryOffset)),
+            "plugDirection": .string(plugDirection == .input ? "input" : "output"),
+            "plugId": .int(Int(plugID)),
+            "status": .string(status.rawValue),
+            "correlationId": .string(correlationId)
+        ]
+        if let result {
+            fields["outcome"] = .string(String(describing: result.outcome))
+            fields["transportStatus"] = .string(String(describing: result.transportStatus))
+            fields["sfc"] = .int(Int(result.sfc))
+            fields["summary"] = .string(result.summary)
+            if result.outcome == .decoded {
+                fields["sampleRateHz"] = .uint64(UInt64(result.sampleRateHz))
+            }
+        }
+        return .object(fields)
+    }
+}
+
 struct ASFWMCPFcpCommandRequest: Equatable {
     /// Runtime unit identity selected by the caller. The live adapter validates
     /// its current route immediately before issuing the command.

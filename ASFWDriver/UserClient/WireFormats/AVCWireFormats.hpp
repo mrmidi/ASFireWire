@@ -81,4 +81,31 @@ struct AVCAudioCapabilitiesWire {
 
 static_assert(sizeof(AVCAudioCapabilitiesWire) == 4, "AVCAudioCapabilitiesWire must be 4 bytes");
 
+/**
+ * @brief Result of the signal-format probe (selector 64), polled via selector 39.
+ *
+ * The AV/C decode happens in the driver, not the app. DecodeSignalFormatProbe
+ * validates that the reply echoed bytes 1-4 of the request, which is what stops
+ * a reply to a different command being read as this one's answer — and the
+ * request only exists driver-side. The app therefore receives a decoded verdict
+ * rather than raw AV/C, and no AV/C knowledge is duplicated in Swift.
+ *
+ * `outcome` is SignalFormatProbeOutcome. `sampleRateHz` is meaningful only when
+ * outcome == Decoded (0). `sfc` is retained even when reserved, for logging.
+ * `fcpStatus` is the transport-level FCPStatus, so "the device never answered"
+ * stays distinguishable from "the device refused".
+ */
+struct AVCSignalFormatProbeResultWire {
+    uint8_t outcome;
+    uint8_t sfc;
+    uint8_t fcpStatus;
+    uint8_t plugId;
+    uint8_t isInputPlug;
+    uint8_t _padding[3];
+    uint32_t sampleRateHz;
+} __attribute__((packed));
+
+static_assert(sizeof(AVCSignalFormatProbeResultWire) == 12,
+              "AVCSignalFormatProbeResultWire must be 12 bytes");
+
 } // namespace ASFW::UserClient::Wire

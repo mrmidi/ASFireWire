@@ -109,6 +109,8 @@ extension ASFWMCPCore {
                 reason: "AV/C READ DESCRIPTOR is not implemented. It requires the OPEN/READ/CLOSE "
                     + "descriptor sequence validated against a reference stack, not a routing change."
             )
+        case "asfw_avc_probe_signal_format":
+            return await dispatchSignalFormatProbe(name, decoder: decoder)
         case "asfw_fcp_send_command":
             return await dispatchFcpReadCommand(name, decoder: decoder)
         case "asfw_apogee_duet_apply_format_dev":
@@ -808,6 +810,33 @@ extension ASFWMCPCore {
         let audioPlugs = capabilities.plugs.filter { $0.type == 0x00 }
         return audioPlugs.contains(where: { $0.isInput && $0.supportedFormats.contains { $0.sampleRateCode == discoveryRateCode && $0.formatCode == 0x06 && $0.channelCount == 2 } }) &&
             audioPlugs.contains(where: { !$0.isInput && $0.supportedFormats.contains { $0.sampleRateCode == discoveryRateCode && $0.formatCode == 0x06 && $0.channelCount == 2 } })
+    }
+
+    private func dispatchSignalFormatProbe(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {
+        do {
+            // Default to the input plug: on M-Audio special firmware that is the
+            // one reporting the rate actually in effect (bebob_maudio.c:302-313).
+            let directionText = try decoder.string("plugDirection", default: "input")
+            guard directionText == "input" || directionText == "output" else {
+                return malformedToolResult(
+                    name,
+                    reason: "plugDirection must be \"input\" or \"output\", got \"\(directionText)\"."
+                )
+            }
+            let plugID = (try? decoder.uint32("plugId")) ?? 0
+            guard plugID <= 0xFF else {
+                return malformedToolResult(name, reason: "plugId must be 0-255.")
+            }
+            let request = ASFWMCPSignalFormatProbeRequest(
+                targetUnitID: try decoder.unitInstanceID(),
+                plugDirection: directionText == "input" ? .input : .output,
+                plugID: UInt8(plugID)
+            )
+            let receipt = await driver.executeSignalFormatProbe(request)
+            return ASFWMCPToolCallResult(toolName: name, ok: receipt.ok, data: receipt.mcpValue, errors: [])
+        } catch {
+            return malformedToolResult(name, reason: error.localizedDescription)
+        }
     }
 
     private func dispatchFcpReadCommand(_ name: String, decoder: ASFWMCPToolArgumentDecoder) async -> ASFWMCPToolCallResult {

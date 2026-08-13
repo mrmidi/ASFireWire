@@ -196,6 +196,45 @@ struct MCPToolDispatchTests {
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
     }
 
+    @Test func signalFormatProbeTakesNoPayloadAndDefaultsToTheInputPlug() async throws {
+        // The probe carries no opcode and no operands — that is the property that
+        // makes it safe to point at firmware which hangs on unimplemented AV/C.
+        // A payload argument must not be honoured even if a caller supplies one.
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
+        args["payload"] = .array([.int(0x01), .int(0xFF), .int(0x30), .int(0x00)])
+
+        let result = await transport.callTool("asfw_avc_probe_signal_format", arguments: .object(args))
+        let data = try object(result)
+
+        // Input plug is the default because on M-Audio special firmware it is the
+        // one reporting the rate actually in effect.
+        #expect(data["plugDirection"] == .string("input"))
+        #expect(data["plugId"] == .int(0))
+        // The mock has no device, and must say so rather than invent a rate.
+        #expect(data["status"] == .string("unavailable"))
+        #expect(data["sampleRateHz"] == nil)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
+    @Test func signalFormatProbeRejectsAnUnknownPlugDirection() async throws {
+        let driver = MockASFWDriverControl()
+        let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))
+        var args = addressArgs(deviceInstanceId: 1, nodeId: 0, addressLow: 0xF0000B00)
+        args["deviceInstanceId"] = .uint64(1)
+        args["unitDirectoryOffset"] = .uint64(0x28)
+        args["plugDirection"] = .string("sideways")
+
+        let result = await transport.callTool("asfw_avc_probe_signal_format", arguments: .object(args))
+
+        #expect(result.ok == false)
+        #expect(result.errors.first?.code == .malformedRequest)
+        #expect(await driver.unexpectedWriteAttemptCount() == 0)
+    }
+
     @Test func readOnlyFcpStatusCommandRoutesThroughDriver() async throws {
         let driver = MockASFWDriverControl()
         let transport = ASFWMCPMockTransport(core: ASFWMCPCore(configuration: .readOnlyDeveloper, driver: driver))

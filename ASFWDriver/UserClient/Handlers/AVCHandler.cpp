@@ -11,6 +11,8 @@
 #include "../../Protocols/AVC/Music/MusicSubunit.hpp"
 #include "../../Protocols/AVC/Audio/AudioSubunit.hpp"
 #include "../../Protocols/AVC/AVCDefs.hpp"
+#include "../../Protocols/AVC/AVCSignalFormatProbe.hpp"
+#include "../WireFormats/AVCWireFormats.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/SharedDataModels.hpp"
@@ -511,6 +513,42 @@ void StoreRawFCPCompletion(uint64_t requestID,
     IOLockUnlock(resultStore.lock);
 }
 
+// Unlike StoreRawFCPCompletion, this always produces a payload. A probe that
+// timed out, was refused by the device's permitted-frame table, or came back
+// NOT IMPLEMENTED are three different answers, and the operator needs to tell
+// them apart — returning a bare kern_return_t for the first two would collapse
+// them into "it didn't work". The transport status therefore travels *inside*
+// the struct and the slot status stays success.
+void StoreSignalFormatProbeCompletion(
+    uint64_t requestID,
+    Protocols::AVC::FCPStatus status,
+    const Protocols::AVC::SignalFormatProbeResult& decoded,
+    uint8_t plugId,
+    bool isInputPlug) {
+    auto& resultStore = GetRawFCPResultStore();
+    if (!resultStore.lock) {
+        return;
+    }
+
+    Wire::AVCSignalFormatProbeResultWire wire{};
+    wire.outcome = static_cast<uint8_t>(decoded.outcome);
+    wire.sfc = decoded.sfc;
+    wire.fcpStatus = static_cast<uint8_t>(status);
+    wire.plugId = plugId;
+    wire.isInputPlug = isInputPlug ? 1U : 0U;
+    wire.sampleRateHz = decoded.sampleRateHz;
+
+    IOLockLock(resultStore.lock);
+    const auto it = resultStore.results.find(requestID);
+    if (it != resultStore.results.end()) {
+        it->second.ready = true;
+        it->second.status = kIOReturnSuccess;
+        it->second.responseLength = static_cast<uint32_t>(sizeof(wire));
+        std::memcpy(it->second.response.data(), &wire, sizeof(wire));
+    }
+    IOLockUnlock(resultStore.lock);
+}
+
 void MarkRawFCPRequestFailed(RawFCPResultStore& store, uint64_t requestID) {
     IOLockLock(store.lock);
     const auto it = store.results.find(requestID);
@@ -803,6 +841,81 @@ kern_return_t AVCHandler::SendRawFCPCommand(IOUserClientMethodArguments* args) {
             StoreRawFCPCompletion(requestID, status, response);
         }
     );
+
+    if (!handle.IsValid()) {
+        MarkRawFCPRequestFailed(store, requestID);
+    }
+
+    args->scalarOutput[0] = requestID;
+    args->scalarOutputCount = 1;
+    return kIOReturnSuccess;
+}
+
+kern_return_t AVCHandler::SubmitSignalFormatProbe(IOUserClientMethodArguments* args) {
+    using namespace Protocols::AVC;
+
+    if (!discovery_) {
+        ASFW_LOG(UserClient, "SubmitSignalFormatProbe: discovery not available");
+        return kIOReturnNotReady;
+    }
+    if (!args || !args->scalarInput || args->scalarInputCount < 4 ||
+        !args->scalarOutput || args->scalarOutputCount < 1) {
+        ASFW_LOG(UserClient, "SubmitSignalFormatProbe: missing scalar arguments");
+        return kIOReturnBadArgument;
+    }
+
+    const Discovery::UnitInstanceId unitId{
+        Discovery::DeviceInstanceId{args->scalarInput[0]},
+        static_cast<uint32_t>(args->scalarInput[1])};
+    const bool isInputPlug = args->scalarInput[2] == 0;
+    const auto plugId = static_cast<uint8_t>(args->scalarInput[3] & 0xFFU);
+
+    auto* targetUnit = FindAVCUnit(*discovery_, unitId);
+    if (!targetUnit) {
+        ASFW_LOG(UserClient,
+                 "SubmitSignalFormatProbe: target unit not found (instance=%llu unitOffset=%u)",
+                 unitId.device.value, unitId.unitDirectoryOffset);
+        return kIOReturnNotFound;
+    }
+
+    // The whole frame is built here. Nothing the caller supplied reaches the
+    // opcode or the operands; plugId addresses a plug and cannot become a
+    // command code. See AVCSignalFormatProbe.hpp.
+    const auto request = BuildSignalFormatProbe(
+        isInputPlug ? SignalFormatPlugDirection::Input
+                    : SignalFormatPlugDirection::Output,
+        plugId);
+
+    FCPFrame command{};
+    command.length = request.size();
+    std::memcpy(command.data.data(), request.data(), request.size());
+
+    auto& store = GetRawFCPResultStore();
+    if (!store.lock) {
+        ASFW_LOG(UserClient, "SubmitSignalFormatProbe: result store lock unavailable");
+        return kIOReturnNoMemory;
+    }
+
+    const uint64_t requestID = ReserveRawFCPRequestSlot(store);
+
+    ASFW_LOG(UserClient,
+             "SubmitSignalFormatProbe: instance=%llu plug=%u dir=%{public}s requestID=%llu",
+             unitId.device.value, plugId, isInputPlug ? "in" : "out", requestID);
+
+    const auto handle = targetUnit->GetFCPTransport().SubmitCommand(
+        command,
+        [requestID, request, plugId, isInputPlug](FCPStatus status,
+                                                  const FCPFrame& response) {
+            // Decode against the request that produced it: the echo check on
+            // bytes 1-4 is what stops a reply to a different command being read
+            // as this one's answer.
+            SignalFormatProbeResult decoded{};
+            if (status == FCPStatus::kOk) {
+                decoded = DecodeSignalFormatProbe(request, response.Payload());
+            }
+            StoreSignalFormatProbeCompletion(requestID, status, decoded, plugId,
+                                             isInputPlug);
+        });
 
     if (!handle.IsValid()) {
         MarkRawFCPRequestFailed(store, requestID);

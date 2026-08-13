@@ -50,6 +50,7 @@ enum {
     kMethodReScanAVCUnits = 25,
     kMethodSendRawFCPCommand = 38,
     kMethodGetRawFCPCommandResult = 39,
+    kMethodSubmitSignalFormatProbe = 64,
     kMethodSetIsochVerbosity = 40,
     // 41 retired (was the dev TX-verifier toggle)
     kMethodSetAudioAutoStart = 42,
@@ -215,6 +216,8 @@ MethodDispatchResult DispatchAVCMethods(ASFW::UserClient::UserClientRuntimeState
         return runtimeState.AVC().SendRawFCPCommand(arguments);
     case kMethodGetRawFCPCommandResult:
         return runtimeState.AVC().GetRawFCPCommandResult(arguments);
+    case kMethodSubmitSignalFormatProbe:
+        return runtimeState.AVC().SubmitSignalFormatProbe(arguments);
     default:
         return std::nullopt;
     }
