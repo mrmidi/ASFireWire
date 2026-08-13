@@ -90,22 +90,53 @@ TEST(AVCCommandFilterTests, OpcodeAloneIsNotTheSafetyBoundary) {
         Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
     const auto bridgeCoVendor =
         Frame({0x00, 0xFF, 0x00, 0x00, 0x07, 0xF5, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
-    EXPECT_NE(maudioClock[2], 0x2FU);
+
+    // Identical ctype and identical opcode. Only bytes 3..5 differ.
+    EXPECT_EQ(maudioClock[0], bridgeCoVendor[0]);
     EXPECT_EQ(maudioClock[2], bridgeCoVendor[2]);
-    // Same opcode, different company ID: an opcode filter cannot tell them
-    // apart. Neither is in the table yet, so both are refused today.
-    EXPECT_FALSE(FrameIsPermitted(MAudioTable(), maudioClock));
+
+    // One is the command M-Audio's own driver sends on every boot; the other is
+    // the extension family that hangs this firmware. An opcode-granular
+    // allowlist admitting 0x00 would admit both, and one refusing 0x00 would
+    // block the only route to this device's geometry.
+    EXPECT_TRUE(FrameIsPermitted(MAudioTable(), maudioClock));
     EXPECT_FALSE(FrameIsPermitted(MAudioTable(), bridgeCoVendor));
 }
 
+TEST(AVCCommandFilterTests, VendorClockOperandsAreFreeButItsPaddingIsNot) {
+    // clk_src / dig_in_fmt / dig_out_fmt / clk_lock are caller-chosen; the two
+    // trailing pad bytes are set to zero by Linux and are pinned so a longer
+    // vendor command cannot ride in behind this row.
+    //   bebob_maudio.c:196-197
+    for (uint32_t operand = 0; operand <= 0xFF; ++operand) {
+        const auto byte = static_cast<uint8_t>(operand);
+        EXPECT_TRUE(FrameIsPermitted(
+            MAudioTable(),
+            Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, byte, byte, byte, byte, 0x00, 0x00})))
+            << "operand " << operand;
+    }
+    EXPECT_FALSE(FrameIsPermitted(
+        MAudioTable(),
+        Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00})));
+}
+
+TEST(AVCCommandFilterTests, AdmitsControlSignalFormatOnBothPlugs) {
+    // Rate setting, and the post-DMA-start re-send the 1814 needs (H8).
+    // Attested by Linux special_set_rate() and by the vendor kext binding blind
+    // 0x18/0x19 CONTROL into this model's own vtable.
+    EXPECT_TRUE(FrameIsPermitted(MAudioTable(),
+                                 Frame({0x00, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF})));
+    EXPECT_TRUE(FrameIsPermitted(MAudioTable(),
+                                 Frame({0x00, 0xFF, 0x18, 0x00, 0x90, 0x02, 0xFF, 0xFF})));
+}
+
 TEST(AVCCommandFilterTests, TableHoldsOnlyWhatSomethingActuallySends) {
-    // H1 lists more safe commands than this table carries, deliberately: H1 is
-    // research, the table is authorization. CONTROL signal format is safe per
-    // H1 and will be needed for the start choreography (H8), but nothing sends
-    // it yet, so it must not be admitted yet.
-    const auto controlSigFmt =
-        Frame({0x00, 0xFF, 0x19, 0x00, 0x90, 0xFF, 0xFF, 0xFF});
-    EXPECT_FALSE(FrameIsPermitted(MAudioTable(), controlSigFmt));
+    // H1 lists one more safe command than this table carries: the 03 00 01 LED
+    // vendor command. Nothing in the driver sends it, so it is not admitted.
+    // H1 is research; the table is authorization, and rows arrive with callers.
+    const auto ledCommand =
+        Frame({0x00, 0xFF, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    EXPECT_FALSE(FrameIsPermitted(MAudioTable(), ledCommand));
 }
 
 TEST(AVCCommandFilterTests, ShortFrameCannotMatchALongerRow) {

@@ -117,11 +117,8 @@ consteval FCPPermittedFrame Row(const char* name,
 /// format commands (0x2F with 0xC0/0xC1) — the four shapes AVC_DEVICE_HAZARDS.md
 /// H1 records as freeze-capable on this firmware.
 ///
-/// The table currently holds only what the signal-format probe sends. The rest
-/// of H1's safe surface — the `04 00 04` clock command, the `03 00 01` LED
-/// command, and CONTROL signal format — is deliberately *not* here: H1 is
-/// research, not an authorization surface, and nothing in the driver sends
-/// those yet. Add each row with its caller, not ahead of it.
+/// Rows arrive with their caller, not ahead of it. H1's remaining safe entry —
+/// the `03 00 01` LED command — is deliberately absent because nothing sends it.
 inline constexpr std::array kMAudioSpecialPermittedFrames{
     // STATUS, unit, INPUT PLUG SIGNAL FORMAT, plug id free, FMT pinned to
     // AM824 (0x90) because the device must echo it back, FDF is the answer.
@@ -136,6 +133,37 @@ inline constexpr std::array kMAudioSpecialPermittedFrames{
     detail::Row("sig-fmt STATUS output plug",
                 {0x01, 0xFF, 0x18, 0x00, 0x90, 0x00, 0x00, 0x00},
                 {0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00}),
+    // CONTROL signal format. Same shape as the STATUS rows above, differing in
+    // ctype and in carrying a real FDF instead of 0xFF. This is how the rate is
+    // set, and the 1814 additionally needs it re-sent after DMA start (H8).
+    //
+    // Sending CONTROL to this firmware is attested twice over, which is why it
+    // is admitted without a first-contact ceremony of our own:
+    //   references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:315-338
+    //     special_set_rate() — OUT, settle, IN, on these exact model IDs
+    //   the vendor kext binds FWRev1AudioDevice::AVCControlPlugSignalFormat
+    //     (blind 0x18/0x19 CONTROL) into the 1814's vtable at 0x37510
+    detail::Row("sig-fmt CONTROL input plug",
+                {0x00, 0xFF, 0x19, 0x00, 0x90, 0x00, 0x00, 0x00},
+                {0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00}),
+    detail::Row("sig-fmt CONTROL output plug",
+                {0x00, 0xFF, 0x18, 0x00, 0x90, 0x00, 0x00, 0x00},
+                {0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00}),
+    // M-Audio vendor-dependent clock/format command. Carries clk_src,
+    // dig_in_fmt, dig_out_fmt and clk_lock — and dig_in_fmt/dig_out_fmt are what
+    // select the hardcoded formation table (H5), so no geometry is reachable
+    // without this row.
+    //
+    // The company ID at bytes 3..5 is pinned. That is the entire safety
+    // boundary here: BridgeCo's own extensions are vendor-dependent too, share
+    // opcode 0x00, and freeze this firmware. Only these three bytes separate
+    // the command M-Audio's driver sends every boot from the ones that hang it.
+    //   references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:186-198
+    //     avc_maudio_set_special_clk(); byte-identical to the vendor kext's
+    //     SetClockSourceInternal frame at 0xe25c
+    detail::Row("M-Audio vendor clock/format",
+                {0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+                {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF}),
 };
 
 /// Resolves a filter id to its table. `Unrestricted` yields an empty span.
