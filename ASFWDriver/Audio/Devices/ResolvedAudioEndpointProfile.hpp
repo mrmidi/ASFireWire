@@ -51,6 +51,7 @@ struct TxPacketPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    bool advanceDbcOnNoData{false};
 };
 
 struct RecoveryPolicy final {

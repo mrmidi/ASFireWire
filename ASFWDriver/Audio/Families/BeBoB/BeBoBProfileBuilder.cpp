@@ -2,6 +2,7 @@
 
 #include "BeBoBProfileBuilder.hpp"
 #include "../Common/CommonProfileBuilder.hpp"
+#include "MAudio/MAudioDuplexPolicy.hpp"
 
 namespace ASFW::Audio::Families::BeBoB {
 
@@ -24,6 +25,8 @@ BuildProfile(const Devices::ProfileBuildContext& context) noexcept {
     profile.txPacketPolicy.emptyPacketsDuringIdle =
         context.staticPlan.profileBuilder ==
         DeviceProfiles::Audio::ProfileBuilderId::TerraTecPhase88;
+    profile.txPacketPolicy.advanceDbcOnNoData =
+        MAudio::UsesSpecialDuplexPolicy(context.staticPlan.profileBuilder);
     profile.facets.push_back({Devices::FacetKind::Clock, 1});
     Common::AddDefaultTiming(profile, 4000);
     for (uint8_t i = 0; i < profile.timingCount; ++i) {

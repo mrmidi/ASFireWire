@@ -220,6 +220,57 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
     EXPECT_EQ(second.firstAudioFrame, 8U);
 }
 
+TEST(AmdtpDirectTxTests,
+     ExplicitPacketScheduleCanAdvanceDbcOnNoDataForMAudioSpecialFirmware) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
+    AmdtpTxPolicy policy{};
+    policy.noDataDbcPolicy = NoDataDbcPolicy::AdvanceBySytInterval;
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), policy));
+
+    std::array<std::array<uint8_t, 128>, 4> bytes{};
+    std::array<float, 16> pcm{};
+
+    AmdtpTimingState noData{};
+    noData.disposition = AmdtpPacketDisposition::NoData;
+    noData.hasExplicitPacketSchedule = true;
+    PreparedTxPacket firstNoData{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes[0].data(), bytes[0].size()}, noData, firstNoData));
+    EXPECT_FALSE(firstNoData.isData);
+    EXPECT_EQ(firstNoData.dbc, 0U);
+
+    AmdtpTimingState data{};
+    data.txClockValid = true;
+    data.disposition = AmdtpPacketDisposition::Data;
+    data.nextDataSyt = 0x1234;
+    data.hasExplicitPacketSchedule = true;
+    data.explicitDataBlocks = 8;
+    PreparedTxPacket firstData{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {1, bytes[1].data(), bytes[1].size()}, data,
+        StereoSnapshot(pcm), firstData));
+    ASSERT_TRUE(firstData.isData);
+    EXPECT_EQ(firstData.dbc, 8U);
+    EXPECT_EQ(firstData.syt, 0x1234U);
+
+    PreparedTxPacket secondNoData{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {2, bytes[2].data(), bytes[2].size()}, noData, secondNoData));
+    EXPECT_FALSE(secondNoData.isData);
+    EXPECT_EQ(secondNoData.dbc, 16U);
+
+    PreparedTxPacket secondData{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {3, bytes[3].data(), bytes[3].size()}, data,
+        StereoSnapshot(pcm), secondData));
+    EXPECT_TRUE(secondData.isData);
+    EXPECT_EQ(secondData.dbc, 24U);
+}
+
 TEST(AmdtpDirectTxTests, NoDataFdfCanUseCompatibilityQuirk) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> slots{};

@@ -219,7 +219,17 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
             // CIP-header-only: no payload, even as padding (DICE-II rejects it).
             WriteCipHeader(slot.bytes, cipBuilder_.BuildNoData(dbc));
             timeline_->MarkNoDataPacket(slot.packetIndex);
-            // DBC deliberately not advanced.
+        }
+
+        if (txPolicy_.noDataDbcPolicy ==
+            NoDataDbcPolicy::AdvanceBySytInterval) {
+            // The M-Audio 1814 / ProjectMix special firmware advances output
+            // DBC by SYT_INTERVAL on header-only NO-DATA packets. Linux
+            // identifies the family as a wrong-DBC quirk in
+            // firewire/bebob/bebob.c:170-174; ASFW's exact 48 kHz behavior is
+            // cross-validated against the vendor callback.  Leave the generic
+            // default above unchanged for every other AMDTP endpoint.
+            dbcCounter_.AdvanceDataBlocks(streamConfig_.framesPerDataPacket);
         }
     }
 
@@ -234,14 +244,20 @@ bool AmdtpTxPacketizer::PreviewNextPacket(
         return false;
     }
     const bool cadenceData = cadence_->CurrentCycleIsData();
+    const bool hasScheduledDataBlocks =
+        timing.hasExplicitPacketSchedule || timing.replayValid;
+    const uint16_t scheduledDataBlocks =
+        timing.hasExplicitPacketSchedule
+            ? timing.explicitDataBlocks
+            : timing.replayDataBlocks;
     const bool isData =
         timing.disposition == AmdtpPacketDisposition::Data &&
-        (timing.replayValid ? timing.replayDataBlocks != 0 : cadenceData);
+        (hasScheduledDataBlocks ? scheduledDataBlocks != 0 : cadenceData);
     const uint8_t frames =
         isData
             ? static_cast<uint8_t>(
-                  timing.replayValid
-                      ? timing.replayDataBlocks
+                  hasScheduledDataBlocks
+                      ? scheduledDataBlocks
                       : cadence_->CurrentCycleDataFrames())
             : 0;
     if (frames > streamConfig_.framesPerDataPacket) {
