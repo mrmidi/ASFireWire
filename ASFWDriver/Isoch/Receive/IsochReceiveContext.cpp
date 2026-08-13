@@ -147,7 +147,17 @@ kern_return_t IsochReceiveContext::Stop() {
     // caller-owned consumer. See Linux firewire/ohci.c:1361-1378 for the same
     // teardown ordering; freeing this mapping while ACTIVE is set can fault
     // the host when OHCI completes a late DMA write.
-    ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
+    // Counters on the way down, symmetric with IT's "Stopped. Stats:" line.
+    // Their absence cost a diagnosis: on an M-Audio 1814 bring-up, IT reported
+    // 38850 packets while IR reported nothing at all, so "the device sent us
+    // zero packets" and "we did not count what it sent" were indistinguishable
+    // from the log. RX silence is the symptom this context exists to explain.
+    ASFW_LOG(Isoch,
+             "Stop: Disabled IR interrupt for context %u. Stats: %llu pkts "
+             "polls=%llu busy=%llu",
+             contextIndex_, packetsProcessed_.load(std::memory_order_relaxed),
+             pollCount_.load(std::memory_order_relaxed),
+             pollBusyCount_.load(std::memory_order_relaxed));
 
     // Two complementary guards, both required: the revocable access scope keeps
     // us from issuing MMIO after Detach, and the all-ones sentinel catches a

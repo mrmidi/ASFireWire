@@ -53,6 +53,16 @@ public:
     const char* GetName() const override { return DeviceName(); }
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
 
+    /// Tell the device which clock to run on and which digital formats are
+    /// selected, then wait out its settle. Must complete before streaming.
+    ///
+    /// This is the analogue of Linux's discover-time
+    /// avc_maudio_set_special_clk(bebob, 0x03, 0, 0, 0), and it lives here
+    /// rather than in ApplyClockConfig because the settle is 2500 ms — long
+    /// enough that paying it inside the stream-start path would blow the 4 s
+    /// initial-ZTS budget on its own. See kMAudioClockSettleMs.
+    void InitializeClock(std::function<void(IOReturn)> completion);
+
 protected:
     const char* DeviceName() const override;
     [[nodiscard]] AudioStreamRuntimeCaps DeviceCaps() const override;

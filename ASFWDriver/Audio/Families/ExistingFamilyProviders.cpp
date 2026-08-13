@@ -319,6 +319,31 @@ private:
             return;
         }
 
+        // Configure the clock before publishing anything. This is Linux's
+        // discover-time avc_maudio_set_special_clk, and like Linux we treat
+        // failure as fatal: an unclocked device does not transmit, so publishing
+        // one produces an endpoint that can only ever time out on ZTS.
+        //
+        // It is also why the install completes asynchronously — the settle is
+        // 2500 ms, and paying it here keeps it off the stream-start path where
+        // it would exceed the initial-ZTS budget by itself.
+        protocol->InitializeClock(
+            [self = shared_from_this(), epoch, cancel = std::move(cancel),
+             protocol](IOReturn clockStatus) mutable {
+                if (!self->IsActive(epoch)) return;
+                if (clockStatus != kIOReturnSuccess) {
+                    (void)protocol->Shutdown();
+                    self->Complete(epoch,
+                        std::unexpected(Devices::ProbeError::Transport));
+                    return;
+                }
+                self->FinishUnprobedInstall(epoch, std::move(cancel), protocol);
+            });
+    }
+
+    void FinishUnprobedInstall(uint64_t epoch,
+                               std::shared_ptr<std::atomic<bool>> cancel,
+                               std::shared_ptr<BeBoB::MAudioSpecialProtocol> protocol) {
         AudioStreamRuntimeCaps caps{};
         std::vector<uint32_t> rates;
         if (!protocol->GetRuntimeAudioStreamCaps(caps) ||
@@ -346,7 +371,9 @@ private:
         });
     }
 
-    [[nodiscard]] std::shared_ptr<IDeviceProtocol> CreateUnprobedProtocol(
+    // Returns the concrete type: the unprobed path needs InitializeClock, which
+    // is device-specific and deliberately not on IDeviceProtocol.
+    [[nodiscard]] std::shared_ptr<BeBoB::MAudioSpecialProtocol> CreateUnprobedProtocol(
         const Discovery::DeviceRouteToken& route) {
         switch (context_.staticPlan.profileBuilder) {
             case ProfileBuilderId::MAudioFireWire1814:

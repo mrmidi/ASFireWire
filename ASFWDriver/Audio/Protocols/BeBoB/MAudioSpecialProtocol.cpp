@@ -8,7 +8,11 @@
 
 #include "MAudioSpecialProtocol.hpp"
 
+#include "MAudioClockCommand.hpp"
+
 #include "../../../Logging/Logging.hpp"
+
+#include <cstring>
 
 namespace ASFW::Audio::BeBoB {
 
@@ -96,6 +100,88 @@ bool MAudioSpecialProtocol::GetRuntimeAudioStreamCaps(
     AudioStreamRuntimeCaps& outCaps) const {
     outCaps = CapsForCurrentFormation();
     return outCaps.sampleRateHz != 0;
+}
+
+void MAudioSpecialProtocol::InitializeClock(std::function<void(IOReturn)> completion) {
+    if (!fcpTransport_) {
+        completion(kIOReturnNotReady);
+        return;
+    }
+
+    // Internal, not the digital-mute variant. The two references differ here and
+    // both pick an internal clock: Linux sends 3 ("Internal") at discovery,
+    // while the vendor kext's SetBlankSlateClockSource sends 0 ("Internal with
+    // Digital Mute"). Taking Linux's, because Linux is the stack that
+    // demonstrably streams these devices and a muted variant is the wrong
+    // default for a playback path.
+    const auto frame = BuildMAudioClockCommand(
+        MAudioClockSource::Internal,
+        captureFormat_ == MAudioDigitalFormat::ADAT
+            ? MAudioClockDigitalFormat::ADAT : MAudioClockDigitalFormat::SPDIF,
+        playbackFormat_ == MAudioDigitalFormat::ADAT
+            ? MAudioClockDigitalFormat::ADAT : MAudioClockDigitalFormat::SPDIF,
+        /*lockSettings=*/false);
+
+    Protocols::AVC::FCPFrame command{};
+    command.length = frame.size();
+    std::memcpy(command.data.data(), frame.data(), frame.size());
+
+    ASFW_LOG(Audio,
+             "[BeBoB] %{public}s: setting clock source=internal digIn=%u digOut=%u, "
+             "then settling %ums",
+             DeviceName(), static_cast<unsigned>(captureFormat_),
+             static_cast<unsigned>(playbackFormat_), kMAudioClockSettleMs);
+
+    const auto handle = fcpTransport_->SubmitCommand(
+        command,
+        [this, completion = std::move(completion)](
+            Protocols::AVC::FCPStatus status,
+            const Protocols::AVC::FCPFrame& response) mutable {
+            if (status != Protocols::AVC::FCPStatus::kOk) {
+                ASFW_LOG_ERROR(Audio,
+                               "[BeBoB] clock command failed status=%u — device will "
+                               "not be clocked and will not transmit",
+                               static_cast<unsigned>(status));
+                completion(kIOReturnIOError);
+                return;
+            }
+            // Linux treats an AV/C refusal here as fatal to discovery; so do we.
+            // A device that rejected its clock configuration is not one to
+            // publish as an audio endpoint.
+            const uint8_t responseCode = response.length > 0 ? response.data[0] : 0xFFU;
+            if (responseCode != 0x09U && responseCode != 0x0CU) {
+                ASFW_LOG_ERROR(Audio,
+                               "[BeBoB] clock command refused: response=0x%02x",
+                               responseCode);
+                completion(kIOReturnUnsupported);
+                return;
+            }
+
+            if (!timerScheduler_) {
+                completion(kIOReturnSuccess);
+                return;
+            }
+            // 2500 ms, from the vendor kext. Asynchronous for the same reason
+            // every other wait here is: one dispatch queue serves every stage.
+            const uint64_t epoch = ++signalFormatEpoch_;
+            // Token deliberately dropped: the epoch is what makes a late firing
+            // a no-op, and teardown bumps it. Nothing here needs to cancel the
+            // wakeup itself.
+            (void)timerScheduler_->ScheduleAfter(
+                static_cast<uint64_t>(kMAudioClockSettleMs) * 1000ULL * 1000ULL,
+                [this, epoch, completion = std::move(completion)]() mutable {
+                    if (signalFormatEpoch_ != epoch) return;
+                    ASFW_LOG(Audio, "[BeBoB] %{public}s: clock settle complete",
+                             DeviceName());
+                    completion(kIOReturnSuccess);
+                });
+        });
+
+    // No failure branch on the handle. SubmitCommand invokes the completion on
+    // every path that returns an invalid handle — bad payload, no lock,
+    // shutting down, refused by the command filter — so calling it here would
+    // both use a moved-from std::function and complete the install twice.
+    (void)handle;
 }
 
 void MAudioSpecialProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
