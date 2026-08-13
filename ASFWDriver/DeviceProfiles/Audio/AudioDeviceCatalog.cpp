@@ -378,18 +378,12 @@ enum ClauseConstraintBit : uint16_t {
     return id >= AudioFamilyProviderId::GenericAvc && id <= AudioFamilyProviderId::OXFW;
 }
 
-// Range check: keep the upper bound on the last member, or a newly added policy
-// silently reads as unknown and any Supported definition carrying it is rejected.
 [[nodiscard]] constexpr bool KnownProbe(ProbePolicyId id) noexcept {
-    return id >= ProbePolicyId::GenericAvc &&
-           id <= ProbePolicyId::BeBoBFilteredCommandSet;
+    return id >= ProbePolicyId::GenericAvc && id <= ProbePolicyId::kLastValid;
 }
 
-// Range check: keep the upper bound on the last member, or a newly added builder
-// silently reads as unknown and any Supported definition carrying it is rejected.
 [[nodiscard]] constexpr bool KnownBuilder(ProfileBuilderId id) noexcept {
-    return id >= ProfileBuilderId::GenericAvc &&
-           id <= ProfileBuilderId::MAudioProjectMix;
+    return id >= ProfileBuilderId::GenericAvc && id <= ProfileBuilderId::kLastValid;
 }
 
 [[nodiscard]] constexpr bool CompatibleOverlap(

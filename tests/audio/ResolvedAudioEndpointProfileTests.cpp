@@ -75,6 +75,53 @@ TEST(AudioEndpointProfileWire, RoundTripsBoundedNumericSnapshot) {
     EXPECT_EQ(decoded->facets[1].schemaId, 0x53503234U);
 }
 
+TEST(AudioEndpointProfileWire, AcceptsEveryProfileBuilderTheCatalogCanEmit) {
+    // Regression: the wire validator capped profileBuilderId at a member that
+    // was last when it was written. Adding MAudioFireWire1814/MAudioProjectMix
+    // above that cap did not fail loudly — the device installed, published a
+    // nub, and then Start() rejected the profile with a bare
+    // kIOReturnBadArgument, which reads like a graph problem rather than an
+    // enum bound. Observed on hardware 2026-08-13.
+    //
+    // Every builder a Supported definition can carry must survive the round
+    // trip, so a new member cannot silently become unpublishable.
+    using DeviceProfiles::Audio::AudioDeviceCatalog;
+    using DeviceProfiles::Audio::ProfileBuilderId;
+    using DeviceProfiles::Audio::SupportDisposition;
+
+    size_t checked = 0;
+    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
+        if (definition.support != SupportDisposition::Supported ||
+            definition.profileBuilder == ProfileBuilderId::None) {
+            continue;
+        }
+        auto profile = MakeProfile();
+        profile.definitionId = definition.id;
+        profile.familyProvider = definition.family;
+        profile.profileBuilder = definition.profileBuilder;
+
+        const auto encoded = Audio::Devices::Wire::Serialize(profile);
+        ASSERT_TRUE(encoded.has_value())
+            << "builder " << static_cast<int>(definition.profileBuilder);
+        const auto decoded = Audio::Devices::Wire::Parse(*encoded);
+        ASSERT_TRUE(decoded.has_value())
+            << "builder " << static_cast<int>(definition.profileBuilder)
+            << " failed the wire validator — check its upper bound";
+        EXPECT_EQ(decoded->profileBuilder, definition.profileBuilder);
+        ++checked;
+    }
+    EXPECT_GT(checked, 0U) << "no Supported definitions found to check";
+}
+
+TEST(AudioEndpointProfileWire, LastValidAliasTracksTheRealLastMember) {
+    // The alias is what the three range checks now key on. If someone appends a
+    // member below it, this fails rather than the device failing at Start().
+    using DeviceProfiles::Audio::ProbePolicyId;
+    using DeviceProfiles::Audio::ProfileBuilderId;
+    EXPECT_EQ(ProfileBuilderId::kLastValid, ProfileBuilderId::MAudioProjectMix);
+    EXPECT_EQ(ProbePolicyId::kLastValid, ProbePolicyId::BeBoBFilteredCommandSet);
+}
+
 TEST(AudioEndpointProfileWire, RejectsVersionTruncationAndMalformedSection) {
     auto encoded = Audio::Devices::Wire::Serialize(MakeProfile());
     ASSERT_TRUE(encoded.has_value());

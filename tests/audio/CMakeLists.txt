@@ -160,9 +160,12 @@ add_audio_test(TimingCursorPolicyTests
     TimingCursorPolicyTests.cpp
 )
 
+# Links the catalog so the wire validator can be checked against every builder a
+# Supported definition can actually emit, rather than against a hand-kept list.
 add_audio_test(ResolvedAudioEndpointProfileTests
     ResolvedAudioEndpointProfileTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Devices/AudioEndpointProfileWire.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
 )
 
 add_audio_test(AudioDeviceSessionManagerTests

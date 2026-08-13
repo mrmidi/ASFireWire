@@ -70,6 +70,9 @@ enum class ProbePolicyId : uint8_t {
     /// and its per-row evidence live in Protocols/AVC/AVCCommandFilter.hpp;
     /// the hazard itself is AVC_DEVICE_HAZARDS.md H1.
     BeBoBFilteredCommandSet,
+
+    /// Alias for the last real member; see the note on ProfileBuilderId.
+    kLastValid = BeBoBFilteredCommandSet,
 };
 
 /// Device preparation that must run before an identity can become anything
@@ -99,6 +102,14 @@ enum class ProfileBuilderId : uint16_t {
     // the family provider tells the two personas apart when picking a rate list.
     MAudioFireWire1814,
     MAudioProjectMix,
+
+    // Alias for the last real member. Range checks over this enum live in two
+    // places — the catalog validator and the endpoint-profile wire validator —
+    // and a bound left pointing at an older member does not fail loudly: the
+    // device installs, publishes a nub, and then Start() rejects the profile
+    // with a bare kIOReturnBadArgument. Extend the enum above this line and the
+    // bounds follow.
+    kLastValid = MAudioProjectMix,
 };
 
 enum class SupportDisposition : uint8_t {

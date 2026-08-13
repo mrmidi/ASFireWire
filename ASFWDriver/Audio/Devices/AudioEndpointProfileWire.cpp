@@ -75,7 +75,7 @@ template <typename T>
            header.familyProviderId <= static_cast<uint8_t>(AudioFamilyProviderId::OXFW) &&
            header.profileBuilderId >= static_cast<uint16_t>(ProfileBuilderId::GenericAvc) &&
            header.profileBuilderId <=
-               static_cast<uint16_t>(ProfileBuilderId::PreSonusStudioLive1602) &&
+               static_cast<uint16_t>(ProfileBuilderId::kLastValid) &&
            header.identityStatus <= static_cast<uint8_t>(PersistentIdentityStatus::Ephemeral) &&
            header.captureWireFormat <=
                static_cast<uint8_t>(Encoding::AudioWireFormat::kRawPcm24In32) &&
