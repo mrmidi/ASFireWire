@@ -221,16 +221,13 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
             timeline_->MarkNoDataPacket(slot.packetIndex);
         }
 
-        if (txPolicy_.noDataDbcPolicy ==
-            NoDataDbcPolicy::AdvanceBySytInterval) {
-            // The M-Audio 1814 / ProjectMix special firmware advances output
-            // DBC by SYT_INTERVAL on header-only NO-DATA packets. Linux
-            // identifies the family as a wrong-DBC quirk in
-            // firewire/bebob/bebob.c:170-174; ASFW's exact 48 kHz behavior is
-            // cross-validated against the vendor callback.  Leave the generic
-            // default above unchanged for every other AMDTP endpoint.
-            dbcCounter_.AdvanceDataBlocks(streamConfig_.framesPerDataPacket);
-        }
+        // DBC counts data blocks actually transmitted, so a header-only packet
+        // carries none and must not advance it (IEC 61883-1 6.2.2).  Both
+        // reference stacks hold it: Linux advances by desc->data_blocks, which
+        // pool_blocking_data_blocks sets to 0 for the cadence empty
+        // (amdtp-stream.c:377, :1053-1061), and FFADO's
+        // fillNoDataPacketHeader returns 0 with the comment "DBC is not
+        // increased" (AmdtpTransmitStreamProcessor.cpp:394).
     }
 
     cadence_->AdvanceCycle();

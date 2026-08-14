@@ -31,7 +31,7 @@ ResolvedAudioEndpointProfile MakeProfile() {
     profile.playbackIsoChannelPolicy = Audio::Duplex::IsoChannelPolicy::IRMSelectable;
     profile.startPolicy.requiresPreStreamClockLock = false;
     profile.startPolicy.postDeviceEnableDelayMs = 9;
-    profile.txPacketPolicy.advanceDbcOnNoData = true;
+    profile.txPacketPolicy.emptyPacketsDuringIdle = true;
     profile.currentSampleRateHz = 96000;
     profile.supportedRates = {44100, 48000, 88200, 96000};
     profile.supportedRateCount = 4;
@@ -72,7 +72,7 @@ TEST(AudioEndpointProfileWire, RoundTripsBoundedNumericSnapshot) {
     EXPECT_EQ(decoded->runtimeCaps.deviceToHostStreamCount, 2U);
     EXPECT_EQ(decoded->runtimeCaps.deviceToHostStreams[1].pcmChannels, 8U);
     EXPECT_EQ(decoded->timing[0].anchorTimeoutMs, 750U);
-    EXPECT_TRUE(decoded->txPacketPolicy.advanceDbcOnNoData);
+    EXPECT_TRUE(decoded->txPacketPolicy.emptyPacketsDuringIdle);
     ASSERT_EQ(decoded->facets.size(), 2U);
     EXPECT_EQ(decoded->facets[1].schemaId, 0x53503234U);
 }

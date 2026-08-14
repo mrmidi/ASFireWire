@@ -95,7 +95,6 @@ ResolvedAudioStreamProfile::TxStreamPolicy() const noexcept {
         .initializeNonAudioSlots = profile_.txPacketPolicy.initializeNonAudioSlots,
         .preserveFdfInNoDataPackets = profile_.txPacketPolicy.preserveFdfInNoDataPackets,
         .emptyPacketsDuringIdle = profile_.txPacketPolicy.emptyPacketsDuringIdle,
-        .advanceDbcOnNoData = profile_.txPacketPolicy.advanceDbcOnNoData,
     };
 }
 

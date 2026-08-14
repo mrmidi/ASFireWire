@@ -37,7 +37,6 @@ struct AudioStreamTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
-    bool advanceDbcOnNoData{false};
 };
 
 // ADK packet allocation and AMDTP encoding are shared by multiple protocol

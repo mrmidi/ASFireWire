@@ -206,9 +206,6 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.initializeNonAudioSlots = streamPolicy.initializeNonAudioSlots;
     policy.preserveFdfInNoDataPackets = streamPolicy.preserveFdfInNoDataPackets;
     policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
-    policy.noDataDbcPolicy = streamPolicy.advanceDbcOnNoData
-        ? AMDTP::NoDataDbcPolicy::AdvanceBySytInterval
-        : AMDTP::NoDataDbcPolicy::Hold;
     return policy;
 }
 

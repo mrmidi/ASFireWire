@@ -31,14 +31,6 @@ enum class DbsPolicy : uint8_t {
     VariablePerPacket = 1,
 };
 
-// Most AMDTP devices hold DBC on a header-only NO-DATA packet.  M-Audio's
-// special 1814 / ProjectMix firmware is the narrow exception: its output path
-// advances by SYT_INTERVAL even when no data blocks are carried.
-enum class NoDataDbcPolicy : uint8_t {
-    Hold = 0,
-    AdvanceBySytInterval = 1,
-};
-
 struct AmdtpStreamConfig final {
     uint32_t sampleRate{48000};
     StreamMode streamMode{StreamMode::Blocking};
@@ -69,7 +61,6 @@ struct AmdtpTxPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
-    NoDataDbcPolicy noDataDbcPolicy{NoDataDbcPolicy::Hold};
 };
 
 // Value-owned PCM snapshot supplied to the packetizer. The bytes referenced by

@@ -783,18 +783,55 @@ def render(ev: Event, show_payload: bool) -> list[str]:
 
 SYT_WINDOW_TICKS = 16 * TICKS_PER_CYCLE
 
+# "Isoch channel 1 ACTIVE at 102:5046:0971 (CT 017:6413)" -- FireBug's own
+# capture counter next to the real bus cycle time.
+CT_ANCHOR_RE = re.compile(r"at (\d{3}):(\d{4}):(\d{4}) \(CT (\d{3}):(\d{4})\)")
 
-def syt_report(events: list[Event], channel: int, limit: int) -> None:
+
+def bus_cycle_offset(path: str) -> int | None:
+    """Cycles to add to a FireBug timestamp to get the bus cycle count.
+
+    FireBug's leading "seconds:cycle:offset" is its OWN capture counter, not the
+    bus cycle timer -- the two differ by a large constant (1367 cycles in one
+    1814 trace, 345367 including seconds).  Any SYT lead computed against the
+    raw FireBug cycle is therefore wrong by (offset % 16) cycles, which is
+    exactly the size of the whole SYT window.  The channel ACTIVE/STOPPED lines
+    print both clocks, so the offset is recoverable; it is stable to about one
+    cycle per 16 s of capture and jumps only across a bus reset.
+    """
+    offsets: list[int] = []
+    for line in open(path, errors="replace"):
+        m = CT_ANCHOR_RE.search(line)
+        if m:
+            fs, fc, _fo, cs, cc = (int(g) for g in m.groups())
+            offsets.append(((cs * CYCLES_PER_SECOND + cc) -
+                            (fs * CYCLES_PER_SECOND + fc)) %
+                           (SECONDS_MODULUS * CYCLES_PER_SECOND))
+    if not offsets:
+        return None
+    return max(set(offsets), key=offsets.count)
+
+
+def syt_report(events: list[Event], channel: int, limit: int,
+               offset: int | None) -> None:
     """Tabulate the AMDTP timestamp cadence of one isochronous channel.
 
     The SYT field carries only the low 4 bits of the cycle count, so deltas are
     taken modulo the 16-cycle window.  At 48 kHz with SYT_INTERVAL 8 the
     expected delta between consecutive DATA packets is 4096 ticks
     (24576000 * 8 / 48000); anything else is drift.
+
+    `lead` is the distance from the packet's own position on the bus to the
+    presentation time its SYT names.  IEC 61883-6 puts that at the transfer
+    delay: Linux computes 12800 ticks at 48 kHz blocking, i.e. 4.17 to 4.83
+    cycles ahead of the transmit cycle boundary (amdtp-stream.c:303-307,
+    :1019-1028).  It is printed only when the bus clock could be calibrated,
+    because an uncalibrated lead is off by a whole multiple of a cycle.
     """
-    print(f"{'timestamp':<15} {'DBC':>5} {'SYT':>6} {'cyc':>4} {'off':>5} "
-          f"{'d ticks':>8} {'lead':>5}  size")
-    print("-" * 66)
+    calibrated = offset is not None
+    print(f"{'timestamp':<15} {'bus cyc':>8} {'DBC':>5} {'SYT':>6} {'cyc':>4} "
+          f"{'off':>5} {'d ticks':>8} {'lead cyc':>9}  size")
+    print("-" * 80)
     previous: int | None = None
     shown = 0
     for ev in events:
@@ -803,19 +840,31 @@ def syt_report(events: list[Event], channel: int, limit: int) -> None:
         cip = decode_cip(bytes(ev.payload))
         if cip is None:
             continue
+        bus = (ev.ts.seconds * CYCLES_PER_SECOND + ev.ts.cycle +
+               (offset or 0)) % (SECONDS_MODULUS * CYCLES_PER_SECOND)
+        bus_text = f"{bus % CYCLES_PER_SECOND:>8}" if calibrated else f"{'?':>8}"
         if cip.syt == 0xFFFF:
-            print(f"{str(ev.ts):<15} {cip.dbc:>#5x} {'----':>6} {'':>4} {'':>5} "
-                  f"{'':>8} {'':>5}  {ev.size}   NO-DATA")
+            print(f"{str(ev.ts):<15} {bus_text} {cip.dbc:>#5x} {'----':>6} "
+                  f"{'':>4} {'':>5} {'':>8} {'':>9}  {ev.size}   NO-DATA")
         else:
             ticks = cip.syt_ticks or 0
             delta = "" if previous is None else f"{(ticks - previous) % SYT_WINDOW_TICKS:>8}"
-            lead = ((cip.syt >> 12) - (ev.ts.cycle & 0x0F)) % 16
-            print(f"{str(ev.ts):<15} {cip.dbc:>#5x} {cip.syt:>#6x} "
-                  f"{cip.syt >> 12:>4x} {cip.syt & 0xFFF:>5} {delta:>8} {lead:>5}  {ev.size}")
+            if calibrated:
+                position = (bus % 16) * TICKS_PER_CYCLE + ev.ts.offset
+                lead = f"{(ticks - position) % SYT_WINDOW_TICKS / TICKS_PER_CYCLE:>9.2f}"
+            else:
+                lead = f"{'n/a':>9}"
+            print(f"{str(ev.ts):<15} {bus_text} {cip.dbc:>#5x} {cip.syt:>#6x} "
+                  f"{cip.syt >> 12:>4x} {cip.syt & 0xFFF:>5} {delta:>8} {lead}  {ev.size}")
             previous = ticks
         shown += 1
         if limit and shown >= limit:
             break
+    if not calibrated:
+        print("\nNo 'ACTIVE/STOPPED ... (CT s:cccc)' line in this trace, so the "
+              "FireBug capture clock could not be tied to the bus cycle count. "
+              "Lead is unknowable from this trace -- do not read the SYT cycle "
+              "field against the timestamp column.")
 
 
 CATEGORY_ALIASES = {
@@ -850,7 +899,11 @@ def main() -> int:
     pair_transactions(events)
 
     if args.syt is not None:
-        syt_report(events, args.syt, args.limit)
+        offset = bus_cycle_offset(args.trace)
+        if offset is not None:
+            print(f"bus cycle = firebug cycle + {offset} "
+                  f"(+{offset % CYCLES_PER_SECOND} within the second)")
+        syt_report(events, args.syt, args.limit, offset)
         return 0
 
     if args.stats:
