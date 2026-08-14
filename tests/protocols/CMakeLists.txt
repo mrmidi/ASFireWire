@@ -298,3 +298,9 @@ add_protocols_test(AVCCommandFilterTests
 add_protocols_test(MAudioSpecialFormationTests
     MAudioSpecialFormationTests.cpp
 )
+
+# Exact vendor blank-slate clock operands and timing. Header-only so the test
+# cannot accidentally exercise or broaden the live FCP surface.
+add_protocols_test(MAudioClockCommandTests
+    MAudioClockCommandTests.cpp
+)

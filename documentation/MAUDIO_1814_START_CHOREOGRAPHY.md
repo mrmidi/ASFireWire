@@ -1,6 +1,7 @@
 # M-Audio FireWire 1814 / ProjectMix — clock configuration, start choreography, and the host time base
 
-Status: research, with the internal 48 kHz TX portion now implemented in ASFW.
+Status: research, with the internal 48 kHz TX and vendor blank-slate clock
+sequence now implemented in ASFW.
 Decoded from the vendor kext (`M-AudioFireWireBeBoB`, fully symbolised). **The
 kext is authoritative here; Linux is supporting evidence.** Where they differ,
 the divergence is called out rather than averaged.
@@ -40,36 +41,48 @@ Two entry points, and they are not interchangeable.
 
 ```
 arg = (cachedClockWord & 0x1C) + 0x40000003
-vtable[+2912](this, arg, /*flag=*/1)      // -> SetClockSourceInternal
-IOSleep(0x9C4)                            // 2500 ms
+vtable[+2912](this, arg, /*flag=*/1)      // -> SetClockSourceInternal:
+    send 16-byte vendor clock frame
+    IOSleep(0x12C)                        // 300 ms
+    map clock word -> selector FB 4/value 0
+    AVCSelectorCommand(4, 0)
+    IOSleep(0x12C)                        // 300 ms
+IOSleep(0x9C4)                            // outer 2500 ms
 ```
 
-Two things matter:
+Three things matter:
 
-- **The settle is 2500 ms.** Not 300. This is the initialisation path.
+- The full initialisation delay is the two inner 300 ms waits plus the outer
+  2500 ms blank-slate settle.
 - `& 0x1C` preserves the existing digital-format bits while forcing the clock
   source, so a blank-slate reset does not clobber a user's S/PDIF/ADAT choice.
+- The generic base call is not a sample-rate write: for this model it emits the
+  exact Audio-subunit selector frame
+  `00 08 B8 80 04 10 02 00 01 00 00 00`.
 
 ### 1.2 User-driven change: `com_m_audio_FW1814Device::SetClockSourceInternal` @ `0xe25c`
 
 ```
 build 16-byte AV/C frame  ->  vendor clock command
 IOSleep(0x12C)            // 300 ms
-rate set
+MapChannelAndFunctionBlock(clock word)
+AVCSelectorCommand(mapped FB, mapped input)
 IOSleep(0x12C)            // 300 ms
 ```
 
-**The 300 ms figure belongs to this path, not to initialisation.** Reading it as
-the init settle understates the wait by more than eight times.
+SetBlankSlateClockSource calls this whole path and then adds its own 2500 ms
+settle. These 300 ms waits do **not** describe the OUTPUT→INPUT plug-signal-format
+interlock; Linux's `special_set_rate()` gives that separate delay as 100 ms.
 
 ### 1.3 The frame
 
 ```
-00 FF 00 04 00 04 <clk_src> <dig_in_fmt> <dig_out_fmt> <clk_lock> 00 00
+00 FF 00 04 00 04 <clk_src> <dig_in_fmt> <dig_out_fmt> <clk_lock> 00 00 00 00 00 00
 ```
 
-Byte-identical to Linux `avc_maudio_set_special_clk`
-(`bebob_maudio.c:171-198`). Operand construction in the kext:
+The first 12 bytes are byte-identical to Linux `avc_maudio_set_special_clk`
+(`bebob_maudio.c:171-198`); the kext sends a 16-byte frame with four additional
+zero pad bytes. Operand construction in the kext:
 
 | byte | source |
 |---|---|
@@ -97,11 +110,25 @@ Linux's clock list, with labels (`bebob_maudio.c:343-364`):
 - **The kext's blank slate sends `0`** — `0x40000003 & 3 == 3` hits the `case 3:
   → 0` arm above.
 
-Same clock, different mute variant. **Unresolved which is correct for a
-FireWire playback path**; the mute in "Digital Mute" most likely refers to the
-device's digital I/O ports rather than the isochronous stream, but that is
-inference, not decompilation. ASFW currently sends `3`, following Linux on the
-grounds that Linux demonstrably streams these devices.
+Same physical clock family, different firmware mode. The original-driver
+FireBug capture now resolves the ASFW policy choice: it sends source `0` in a
+16-byte frame and follows it with selector FB 4/value 0; capture subsequently
+reaches full-size packets. ASFW therefore follows the vendor blank-slate path.
+Linux's source `3` remains a known, working-stack divergence rather than the
+selected compatibility policy here.
+
+### 1.5 FireBug cross-validation, 2026-08-14
+
+The original driver trace records the sequence directly:
+
+1. channel 1 begins with `02020000 9001ffff` (header-only NO-DATA);
+2. `00ff0004 00040000 00000000 00000000` is accepted;
+3. about 300 ms later, `0008b880 04100200 01000000` is accepted;
+4. the device-output stream restarts, and later runs report full-size packets
+   (`Largest: 552` for the prior ADAT formation, then `Largest: 360` for the
+   selected S/PDIF formation).
+
+ASFW previously sent a 12-byte source-`3` vendor frame and omitted step 3.
 
 ---
 
@@ -293,28 +320,31 @@ on before the hardware run.
 4. **Warm-up discard is three groups**, with the RX reference planted at group 2.
    Any ZTS timeout shorter than the warm-up plus the device's own transmission
    delay will fire on a healthy device.
-5. **Clock configuration is mandatory and slow.** 2500 ms on the initialisation
-   path. It must not sit inside a stream-start timeout budget.
+5. **Clock configuration is mandatory and slow.** The vendor path is a 16-byte
+   clock frame, 300 ms, selector FB 4, 300 ms, and an outer 2500 ms settle. It
+   must not sit inside a stream-start timeout budget.
 
 ---
 
 ## 8. Verified vs inferred
 
 **Verified by decompilation:** the two clock-configuration paths and their
-distinct settle constants; the vendor frame layout and operand construction; the
-`0x3FFFFFFF` guard; the start order and its 20 ms lead; the four-segment prefill;
+distinct settle constants; the 16-byte vendor frame layout and operand
+construction; the FB 4 selector call; the `0x3FFFFFFF` guard; the start order
+and its 20 ms lead; the four-segment prefill;
 `CycleTimeToHostNanos` in full including the 150 µs window, midpoint and wrap
 rule; the single call site of that function; the `takeTimeStamp` slot and its two
 call sites; the warm-up gating at group counters 2 and 3.
 
-**Cross-checked against Linux:** the vendor frame is byte-identical to
-`avc_maudio_set_special_clk`; the clock-source value list and labels.
+**Cross-checked against Linux:** the first 12 vendor-frame bytes match
+`avc_maudio_set_special_clk`; the clock-source value list and labels; FB 4 is
+the digital-input-interface selector; the signal-format interlock is 100 ms.
 
-**Not resolved:** whether clock source `0` or `3` is correct for a FireWire
-playback path — the two references disagree and the difference is the digital
-mute variant. Whether the 20 ms start lead is required or generous (already noted
-as unresolved in the sync doc). Whether the 2500 ms settle is required in full
-when the clock is already correctly configured.
+**Not resolved:** whether the 20 ms start lead is required or generous (already
+noted as unresolved in the sync doc), and whether the outer 2500 ms settle is
+required in full when the clock is already correctly configured. The source
+`0`/`3` divergence remains documented, but the ASFW compatibility policy is now
+deliberately source `0` because the vendor kext and captured wire sequence agree.
 
 **Not attempted:** the second-pass `vtable[+312]` arm step in `StartAudio`, and
 `AdjustOutputDCL` / `SetValidPackets` / `InitGroupCIPsForOutput` in the back half

@@ -319,14 +319,14 @@ private:
             return;
         }
 
-        // Configure the clock before publishing anything. This is Linux's
-        // discover-time avc_maudio_set_special_clk, and like Linux we treat
-        // failure as fatal: an unclocked device does not transmit, so publishing
-        // one produces an endpoint that can only ever time out on ZTS.
+        // Configure the clock before publishing anything. This reproduces the
+        // vendor driver's blank-slate sequence; like both reference drivers, we
+        // treat failure as fatal. An unclocked device does not transmit, so
+        // publishing one produces an endpoint that can only time out on ZTS.
         //
-        // It is also why the install completes asynchronously — the settle is
-        // 2500 ms, and paying it here keeps it off the stream-start path where
-        // it would exceed the initial-ZTS budget by itself.
+        // It is also why the install completes asynchronously: the vendor path
+        // is clock frame, 300 ms, selector FB 4, 300 ms, then a 2500 ms outer
+        // settle. Paying it here keeps it off the stream-start path.
         protocol->InitializeClock(
             [self = shared_from_this(), epoch, cancel = std::move(cancel),
              protocol](IOReturn clockStatus) mutable {

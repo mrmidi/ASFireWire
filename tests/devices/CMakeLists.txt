@@ -74,6 +74,20 @@ add_device_test(BeBoBProtocolTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
 )
 
+# M-Audio 1814 / ProjectMix blank-slate initialization through the real FCP
+# transport: exact vendor frame, selector command, and both timing boundaries.
+add_device_test(MAudioSpecialInitTests
+    MAudioSpecialInitTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/MAudioSpecialProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
 # FW-65: sync/async bridge (WaitForAsyncResult) characterization tests (header-only)
 add_device_test(WaitForAsyncResultTests
     WaitForAsyncResultTests.cpp

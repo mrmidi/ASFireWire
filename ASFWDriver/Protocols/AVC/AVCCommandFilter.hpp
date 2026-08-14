@@ -38,13 +38,13 @@
 namespace ASFW::Protocols::AVC {
 
 /// Longest prefix any row needs. The widest permitted shape on record is the
-/// 12-byte M-Audio vendor clock command (AVC_DEVICE_HAZARDS.md H1).
-inline constexpr size_t kCommandFilterPrefixBytes = 12;
+/// vendor kext's 16-byte M-Audio clock command (AVC_DEVICE_HAZARDS.md H1).
+inline constexpr size_t kCommandFilterPrefixBytes = 16;
 
 /// One permitted command shape.
 ///
-/// A frame matches when it is at least `length` bytes long and every one of the
-/// first `length` bytes satisfies `(frame[i] & care[i]) == (prefix[i] & care[i])`.
+/// A frame matches when it is exactly `length` bytes long and every byte
+/// satisfies `(frame[i] & care[i]) == (prefix[i] & care[i])`.
 /// A `care` byte of 0x00 marks a caller-supplied operand; 0xFF pins the byte.
 /// Partial masks are meaningful — an AV/C subunit address is `0x08 | id`, which
 /// pins with `care = 0xF8`.
@@ -59,7 +59,7 @@ struct FCPPermittedFrame final {
 /// True when `frame` matches this permitted shape.
 [[nodiscard]] constexpr bool FrameMatches(const FCPPermittedFrame& permitted,
                                           std::span<const uint8_t> frame) noexcept {
-    if (permitted.length == 0 || frame.size() < permitted.length) {
+    if (permitted.length == 0 || frame.size() != permitted.length) {
         return false;
     }
     for (size_t i = 0; i < permitted.length; ++i) {
@@ -159,11 +159,27 @@ inline constexpr std::array kMAudioSpecialPermittedFrames{
     // opcode 0x00, and freeze this firmware. Only these three bytes separate
     // the command M-Audio's driver sends every boot from the ones that hang it.
     //   references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:186-198
-    //     avc_maudio_set_special_clk(); byte-identical to the vendor kext's
-    //     SetClockSourceInternal frame at 0xe25c
+    //     avc_maudio_set_special_clk(); same 12 meaningful bytes
+    //   vendor kext SetClockSourceInternal @ 0xe25c and FireBug trace:
+    //     16-byte frame with four additional zero pad bytes
     detail::Row("M-Audio vendor clock/format",
-                {0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-                {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF}),
+                {0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00,
+                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+                {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00,
+                 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}),
+    // Exact second half of the vendor driver's blank-slate clock sequence:
+    // Audio subunit 0, selector FB 4, current attribute, input interface 0.
+    // Keep every byte pinned. A generic FUNCTION BLOCK allowance would expose
+    // this freeze-prone firmware to unrelated mixer commands.
+    //
+    //   vendor kext SetClockSourceInternal @ 0xe45a -> base
+    //     SetClockSourceInternal @ 0x23148 -> AVCSelectorCommand(4, 0)
+    //   references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:461-462,514
+    detail::Row("M-Audio blank-slate input selector",
+                {0x00, 0x08, 0xB8, 0x80, 0x04, 0x10,
+                 0x02, 0x00, 0x01, 0x00, 0x00, 0x00},
+                {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}),
 };
 
 /// Resolves a filter id to its table. `Unrestricted` yields an empty span.

@@ -87,9 +87,11 @@ TEST(AVCCommandFilterTests, OpcodeAloneIsNotTheSafetyBoundary) {
     //   references/linux-sound-firewire-stack/firewire/bebob/bebob_maudio.c:186-198
     //   references/linux-sound-firewire-stack/firewire/bebob/bebob_command.c:301-303
     const auto maudioClock =
-        Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+        Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00,
+               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
     const auto bridgeCoVendor =
-        Frame({0x00, 0xFF, 0x00, 0x00, 0x07, 0xF5, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+        Frame({0x00, 0xFF, 0x00, 0x00, 0x07, 0xF5, 0x00, 0x00,
+               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
 
     // Identical ctype and identical opcode. Only bytes 3..5 differ.
     EXPECT_EQ(maudioClock[0], bridgeCoVendor[0]);
@@ -105,19 +107,51 @@ TEST(AVCCommandFilterTests, OpcodeAloneIsNotTheSafetyBoundary) {
 
 TEST(AVCCommandFilterTests, VendorClockOperandsAreFreeButItsPaddingIsNot) {
     // clk_src / dig_in_fmt / dig_out_fmt / clk_lock are caller-chosen; the two
-    // trailing pad bytes are set to zero by Linux and are pinned so a longer
-    // vendor command cannot ride in behind this row.
-    //   bebob_maudio.c:196-197
+    // bytes 10..11 are set to zero by Linux; the vendor kext adds four more
+    // zero bytes and sends the full 16-byte frame seen by FireBug. All six are
+    // pinned so another vendor command cannot ride behind this row.
     for (uint32_t operand = 0; operand <= 0xFF; ++operand) {
         const auto byte = static_cast<uint8_t>(operand);
         EXPECT_TRUE(FrameIsPermitted(
             MAudioTable(),
-            Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, byte, byte, byte, byte, 0x00, 0x00})))
+            Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, byte, byte,
+                   byte, byte, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})))
             << "operand " << operand;
     }
     EXPECT_FALSE(FrameIsPermitted(
         MAudioTable(),
-        Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00})));
+        Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00,
+               0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00})));
+
+    EXPECT_FALSE(FrameIsPermitted(
+        MAudioTable(),
+        Frame({0x00, 0xFF, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00,
+               0x00, 0x00, 0x00, 0x00})))
+        << "Linux's shorter frame is not the selected vendor-kext policy";
+}
+
+TEST(AVCCommandFilterTests, AdmitsOnlyTheExactBlankSlateInputSelector) {
+    // The original kext emits this as the second half of
+    // SetBlankSlateClockSource. The three trailing bytes are AVCCdb's quadlet
+    // padding and are intentionally part of the filter boundary.
+    const auto exact = Frame({0x00, 0x08, 0xB8, 0x80, 0x04, 0x10,
+                              0x02, 0x00, 0x01, 0x00, 0x00, 0x00});
+    EXPECT_TRUE(FrameIsPermitted(MAudioTable(), exact));
+
+    // Do not turn this into an Audio-subunit or FUNCTION-BLOCK-wide escape
+    // hatch: this firmware freezes on commands outside its tiny known surface.
+    for (const size_t index : {size_t{1}, size_t{3}, size_t{4}, size_t{7},
+                               size_t{8}, size_t{11}}) {
+        auto mutated = exact;
+        mutated[index] ^= 0x01U;
+        EXPECT_FALSE(FrameIsPermitted(MAudioTable(), mutated))
+            << "byte " << index;
+    }
+    EXPECT_FALSE(FrameIsPermitted(
+        MAudioTable(),
+        Frame({0x00, 0x08, 0xB8, 0x81, 0x04, 0x10,
+               0x02, 0x00, 0x01, 0x00, 0x00, 0x00})))
+        << "feature block";
 }
 
 TEST(AVCCommandFilterTests, AdmitsControlSignalFormatOnBothPlugs) {
@@ -146,6 +180,20 @@ TEST(AVCCommandFilterTests, ShortFrameCannotMatchALongerRow) {
     EXPECT_FALSE(FrameIsPermitted(MAudioTable(), Frame({0x01, 0xFF, 0x19, 0x00, 0x90})));
 }
 
+TEST(AVCCommandFilterTests, AppendedOperandsCannotRideBehindAPermittedFrame) {
+    auto selector = Frame({0x00, 0x08, 0xB8, 0x80, 0x04, 0x10,
+                           0x02, 0x00, 0x01, 0x00, 0x00, 0x00});
+    ASSERT_TRUE(FrameIsPermitted(MAudioTable(), selector));
+    selector.push_back(0x00);
+    EXPECT_FALSE(FrameIsPermitted(MAudioTable(), selector));
+
+    auto signalFormat =
+        Frame({0x00, 0xFF, 0x19, 0x00, 0x90, 0x02, 0xFF, 0xFF});
+    ASSERT_TRUE(FrameIsPermitted(MAudioTable(), signalFormat));
+    signalFormat.push_back(0x00);
+    EXPECT_FALSE(FrameIsPermitted(MAudioTable(), signalFormat));
+}
+
 TEST(AVCCommandFilterTests, PinnedBytesAreEnforcedIndividually) {
     // Each 0xFF care byte must actually be load-bearing; a row that pinned
     // nothing would admit everything of the right length.
@@ -159,8 +207,9 @@ TEST(AVCCommandFilterTests, PinnedBytesAreEnforcedIndividually) {
 }
 
 TEST(AVCCommandFilterTests, CareMaskSupportsPartialBytes) {
-    // Needed for AV/C subunit addresses, which encode as 0x08 | id — a future
-    // row for the audio selector command will pin the type and free the id.
+    // AV/C subunit addresses encode as 0x08 | id. This synthetic row proves the
+    // mask primitive independently; the real M-Audio selector row intentionally
+    // pins subunit id 0 as part of its narrower safety boundary.
     constexpr FCPPermittedFrame subunitRow{
         .prefix = {0x00, 0x08, 0xB8},
         .care = {0xFF, 0xF8, 0xFF},

@@ -95,6 +95,7 @@ Not "no AV/C". The safe surface is narrower *and* wider than a blanket ban:
 | AV/C General signal format (`0x18`/`0x19`), get and set | **Yes** | Linux `special_get_rate` uses `avc_general_get_sig_fmt` on **input plug 0** — *"Input plug shows actual rate"* (`bebob_maudio.c:302-313`); ALSA `cache_freq` uses `OutputPlugSignalFormat` STATUS (`maudio/special.rs:101-119`) |
 | Vendor-dependent with company ID `04 00 04` (clock/format) | **Yes** | `bebob_maudio.c:187-189` |
 | Vendor-dependent with company ID `03 00 01` (LED) | **Yes** | `maudio/special.rs:127`; matches the vendor kext |
+| Audio-subunit selector FB `0x04`, value `0x00` (`00 08 B8 80 04 10 02 00 01`) | **Yes, exact frame only** | vendor `SetClockSourceInternal` calls `AVCSelectorCommand(4, 0)` after the `04 00 04` frame; Linux independently uses FB 4 for the digital-input interface (`bebob_maudio.c:461-462, 514`) |
 | `UNIT_INFO` (`0x30`) | **No** | not sent by Linux, FFADO, or the vendor kext |
 | `SUBUNIT_INFO` (`0x31`) | **No** | as above; vendor kext has it compiled but unreferenced |
 | `PLUG_INFO` (`0x02`) | **No** | as above |

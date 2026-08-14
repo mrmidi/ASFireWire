@@ -108,14 +108,13 @@ void MAudioSpecialProtocol::InitializeClock(std::function<void(IOReturn)> comple
         return;
     }
 
-    // Internal, not the digital-mute variant. The two references differ here and
-    // both pick an internal clock: Linux sends 3 ("Internal") at discovery,
-    // while the vendor kext's SetBlankSlateClockSource sends 0 ("Internal with
-    // Digital Mute"). Taking Linux's, because Linux is the stack that
-    // demonstrably streams these devices and a muted variant is the wrong
-    // default for a playback path.
+    // Reproduce SetBlankSlateClockSource, not Linux's shorter discover-time
+    // approximation. The vendor driver maps its 0x40000003 blank-slate word to
+    // clock-source operand 0 ("Internal with Digital Mute"). The FireBug trace
+    // confirms that exact operand on the 1814 in the initialization sequence
+    // whose device-output runs reach full-size packets.
     const auto frame = BuildMAudioClockCommand(
-        MAudioClockSource::Internal,
+        MAudioClockSource::InternalDigitalMute,
         captureFormat_ == MAudioDigitalFormat::ADAT
             ? MAudioClockDigitalFormat::ADAT : MAudioClockDigitalFormat::SPDIF,
         playbackFormat_ == MAudioDigitalFormat::ADAT
@@ -127,10 +126,10 @@ void MAudioSpecialProtocol::InitializeClock(std::function<void(IOReturn)> comple
     std::memcpy(command.data.data(), frame.data(), frame.size());
 
     ASFW_LOG(Audio,
-             "[BeBoB] %{public}s: setting clock source=internal digIn=%u digOut=%u, "
-             "then settling %ums",
+             "[BeBoB] %{public}s: setting blank-slate clock source=internal-mute "
+             "digIn=%u digOut=%u",
              DeviceName(), static_cast<unsigned>(captureFormat_),
-             static_cast<unsigned>(playbackFormat_), kMAudioClockSettleMs);
+             static_cast<unsigned>(playbackFormat_));
 
     const auto handle = fcpTransport_->SubmitCommand(
         command,
@@ -157,24 +156,82 @@ void MAudioSpecialProtocol::InitializeClock(std::function<void(IOReturn)> comple
                 return;
             }
 
-            if (!timerScheduler_) {
-                completion(kIOReturnSuccess);
-                return;
-            }
-            // 2500 ms, from the vendor kext. Asynchronous for the same reason
-            // every other wait here is: one dispatch queue serves every stage.
+            // The vendor implementation does not return after this frame. It
+            // waits 300 ms, sends selector FB 4/value 0 through its generic
+            // Audio-subunit clock path, waits another 300 ms, and only then
+            // begins the outer 2500 ms blank-slate settle. The selector is not
+            // optional mixer decoration: it is the second half of the original
+            // driver's clock-source operation and selects the digital-input
+            // interface used by the asserted capture formation.
             const uint64_t epoch = ++signalFormatEpoch_;
-            // Token deliberately dropped: the epoch is what makes a late firing
-            // a no-op, and teardown bumps it. Nothing here needs to cancel the
-            // wakeup itself.
-            (void)timerScheduler_->ScheduleAfter(
-                static_cast<uint64_t>(kMAudioClockSettleMs) * 1000ULL * 1000ULL,
+            auto sendSelector =
                 [this, epoch, completion = std::move(completion)]() mutable {
                     if (signalFormatEpoch_ != epoch) return;
-                    ASFW_LOG(Audio, "[BeBoB] %{public}s: clock settle complete",
-                             DeviceName());
-                    completion(kIOReturnSuccess);
-                });
+
+                    ASFW_LOG(Audio,
+                             "[BeBoB] %{public}s: applying digital-input selector "
+                             "fb=%u value=%u",
+                             DeviceName(),
+                             static_cast<unsigned>(
+                                 kMAudioDigitalInputSelectorBlockId),
+                             static_cast<unsigned>(
+                                 kMAudioDefaultDigitalInputInterface));
+                    SetSelectorBlock(
+                        kMAudioDigitalInputSelectorBlockId,
+                        kMAudioDefaultDigitalInputInterface,
+                        [this, epoch, completion = std::move(completion)](
+                            IOReturn selectorStatus) mutable {
+                            if (signalFormatEpoch_ != epoch) return;
+                            if (selectorStatus != kIOReturnSuccess) {
+                                ASFW_LOG_ERROR(
+                                    Audio,
+                                    "[BeBoB] blank-slate input selector failed: "
+                                    "0x%08x",
+                                    selectorStatus);
+                                completion(selectorStatus);
+                                return;
+                            }
+
+                            auto finish =
+                                [this, epoch,
+                                 completion = std::move(completion)]() mutable {
+                                    if (signalFormatEpoch_ != epoch) return;
+                                    ASFW_LOG(
+                                        Audio,
+                                        "[BeBoB] %{public}s: blank-slate clock "
+                                        "settle complete",
+                                        DeviceName());
+                                    completion(kIOReturnSuccess);
+                                };
+
+                            if (!timerScheduler_) {
+                                finish();
+                                return;
+                            }
+
+                            // No command separates the vendor's second 300 ms
+                            // wait from SetBlankSlateClockSource's 2500 ms wait.
+                            // Coalescing them preserves the wire timeline while
+                            // avoiding a redundant timer callback.
+                            (void)timerScheduler_->ScheduleAfter(
+                                static_cast<uint64_t>(
+                                    kMAudioPostSelectorSettleMs) *
+                                    1000ULL * 1000ULL,
+                                std::move(finish));
+                        });
+                };
+
+            if (!timerScheduler_) {
+                sendSelector();
+                return;
+            }
+
+            // Token deliberately dropped: the epoch makes a late firing inert,
+            // and teardown bumps it.
+            (void)timerScheduler_->ScheduleAfter(
+                static_cast<uint64_t>(kMAudioClockToSelectorInterlockMs) *
+                    1000ULL * 1000ULL,
+                std::move(sendSelector));
         });
 
     // No failure branch on the handle. SubmitCommand invokes the completion on

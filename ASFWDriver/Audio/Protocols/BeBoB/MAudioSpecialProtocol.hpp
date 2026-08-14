@@ -15,13 +15,12 @@
 //  - **Capture and playback shapes are chosen independently**, by dig_in_fmt and
 //    dig_out_fmt in the vendor clock command, so DeviceCaps() depends on runtime
 //    state rather than being a constant like Phase88Caps().
-//  - **Only five AV/C frame shapes may ever be sent to it.** The permitted-frame
+//  - **Only six AV/C frame shapes may ever be sent to it.** The permitted-frame
 //    table in Protocols/AVC/AVCCommandFilter.hpp refuses everything else at
 //    submit, including anything this class might send by mistake.
 //
-// The inverted start choreography (H8) is deliberately NOT here yet: the base
-// programs signal format before CMP, and this device needs it re-sent after DMA
-// start. That needs a new hook on BeBoBProtocol and lands separately.
+// The inverted start choreography (H8) is implemented by ConfirmDuplexStart:
+// after host DMA is armed, this device receives the signal-format pair again.
 
 #pragma once
 
@@ -56,11 +55,10 @@ public:
     /// Tell the device which clock to run on and which digital formats are
     /// selected, then wait out its settle. Must complete before streaming.
     ///
-    /// This is the analogue of Linux's discover-time
-    /// avc_maudio_set_special_clk(bebob, 0x03, 0, 0, 0), and it lives here
-    /// rather than in ApplyClockConfig because the settle is 2500 ms — long
-    /// enough that paying it inside the stream-start path would blow the 4 s
-    /// initial-ZTS budget on its own. See kMAudioClockSettleMs.
+    /// This reproduces the vendor driver's SetBlankSlateClockSource: the
+    /// M-Audio clock/formation frame, 300 ms, Audio selector FB 4, 300 ms, then
+    /// the outer 2500 ms blank-slate settle. It lives here rather than in
+    /// ApplyClockConfig because that sequence must finish before publication.
     void InitializeClock(std::function<void(IOReturn)> completion);
 
 protected:
@@ -70,10 +68,10 @@ protected:
     void ReadClockHealth(HealthCallback callback) override;
 
     /// This firmware fails the INPUT signal-format command when it lands
-    /// immediately after the OUTPUT one. Linux waits 100 ms; the vendor kext
-    /// waits 300 around its own rate set, and the vendor driver is authoritative
-    /// for what the hardware needs. See H8.
-    [[nodiscard]] uint32_t SignalFormatInterlockMs() const override { return 300; }
+    /// immediately after the OUTPUT one. Linux's special_set_rate() waits
+    /// exactly 100 ms. The vendor kext's 300 ms waits surround a different
+    /// operation (its clock/selector pair), so they do not apply here.
+    [[nodiscard]] uint32_t SignalFormatInterlockMs() const override { return 100; }
 
     /// The start choreography is inverted here: signal format must be re-sent
     /// *after* host DMA is running, not only before CMP. See the definition.
@@ -89,9 +87,9 @@ private:
     // them, so they must only ever change alongside a vendor clock command that
     // actually succeeded.
     //
-    // Both default to S/PDIF because that is what Linux's own initialisation
-    // sets: avc_maudio_set_special_clk(bebob, 0x03, 0x00, 0x00, 0x00) at
-    // bebob_maudio.c:276 — clk_src 0x03, dig_in_fmt 0, dig_out_fmt 0.
+    // Both default to S/PDIF because the vendor blank-slate frame and Linux's
+    // discover-time frame agree on dig_in_fmt=0 and dig_out_fmt=0, despite
+    // differing on clk_src (vendor 0, Linux 3).
     MAudioDigitalFormat captureFormat_{MAudioDigitalFormat::SPDIF};
     MAudioDigitalFormat playbackFormat_{MAudioDigitalFormat::SPDIF};
 
