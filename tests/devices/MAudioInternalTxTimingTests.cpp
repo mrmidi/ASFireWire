@@ -14,6 +14,9 @@ using namespace ASFW::Audio::Families::BeBoB::MAudio;
 
 constexpr StartEpoch kEpoch{91};
 
+/// Cycles between an OUTPUT_LAST completion and the re-anchor target.
+constexpr uint32_t kEffectiveLeadCycles = kInternalTxLeadCycles;
+
 [[nodiscard]] constexpr uint32_t CycleTimer(uint32_t seconds,
                                              uint32_t cycle,
                                              uint32_t offset = 0) {
@@ -41,7 +44,12 @@ TEST(MAudioInternalTxTimingTests, StartsAtZeroAndRepeatsTheVendorThreeDataOneNoD
                            kInternalTxSytInterval));
 
     constexpr bool expectedData[] = {true, true, true, false, true};
-    constexpr uint16_t expectedSyt[] = {0x1000, 0x2000, 0x3000, 0xFFFF, 0x4000};
+    // 4096 ticks per DATA packet, carried at the 3072-tick cycle modulus, so
+    // the offset runs 1024, 2048, 0 and the cycle field reaches 1, 2, 4.
+    // Linux derives the same 4096 as TICKS_PER_SECOND * syt_interval / rate
+    // (amdtp-stream.c:306) and emits the identical 0/1024/2048/NO_INFO phase
+    // sequence from calculate_syt_offset() (amdtp-stream.c:425-461).
+    constexpr uint16_t expectedSyt[] = {0x1400, 0x2800, 0x4000, 0xFFFF, 0x5400};
     for (uint64_t index = 0; index < std::size(expectedData); ++index) {
         InternalTxPacketPlan plan{};
         ASSERT_TRUE(timing.PreviewNextPacket(plan));
@@ -52,33 +60,43 @@ TEST(MAudioInternalTxTimingTests, StartsAtZeroAndRepeatsTheVendorThreeDataOneNoD
         EXPECT_EQ(plan.syt, expectedSyt[index]);
         EXPECT_TRUE(timing.CommitPacket(plan, plan.isData));
     }
-    EXPECT_EQ(timing.RunningCycleTimer(), CycleTimer(0, 4));
+    // Four committed DATA packets: 4 * 4096 = 16384 ticks = 5 cycles + 1024.
+    EXPECT_EQ(timing.RunningCycleTimer(), CycleTimer(0, 5, 1'024));
 }
 
-TEST(MAudioInternalTxTimingTests, SafeNoDataFallbackConsumesCadenceButNotSyt) {
+TEST(MAudioInternalTxTimingTests, SafeNoDataFallbackConsumesCadenceAndStillAdvancesTheClock) {
     InternalTxTiming timing;
     ASSERT_TRUE(timing.Arm(kEpoch, kInternalTxTimingRateHz,
                            kInternalTxSytInterval));
 
+    // Degrading a planned DATA packet withholds fabricated PCM but must not
+    // stall the timestamp base, or the group advances 2 * 4096 ticks across
+    // four cycles of real time and every later SYT inherits the deficit.
+    constexpr uint16_t expectedSyt[] = {0x1400, 0x2800, 0x4000};
+    const uint32_t expectedRunning[] = {
+        CycleTimer(0, 1, 1'024), CycleTimer(0, 2, 2'048), CycleTimer(0, 4, 0)};
     for (uint32_t index = 0; index < 3; ++index) {
         InternalTxPacketPlan plan{};
         ASSERT_TRUE(timing.PreviewNextPacket(plan));
         ASSERT_TRUE(plan.isData);
-        EXPECT_EQ(plan.syt, 0x1000U);
+        EXPECT_EQ(plan.syt, expectedSyt[index]);
         EXPECT_TRUE(timing.CommitPacket(plan, false));
-        EXPECT_EQ(timing.RunningCycleTimer(), 0U);
+        EXPECT_EQ(timing.RunningCycleTimer(), expectedRunning[index]);
     }
 
+    // The cadence NO-DATA packet is the one that genuinely holds the clock:
+    // it occupies a cycle the vendor accumulator never advances across.
     InternalTxPacketPlan noData{};
     ASSERT_TRUE(timing.PreviewNextPacket(noData));
     EXPECT_FALSE(noData.isData);
     EXPECT_EQ(noData.syt, 0xFFFFU);
     EXPECT_TRUE(timing.CommitPacket(noData, false));
+    EXPECT_EQ(timing.RunningCycleTimer(), CycleTimer(0, 4, 0));
 
     InternalTxPacketPlan retry{};
     ASSERT_TRUE(timing.PreviewNextPacket(retry));
     EXPECT_TRUE(retry.isData);
-    EXPECT_EQ(retry.syt, 0x1000U);
+    EXPECT_EQ(retry.syt, 0x5400U);
 }
 
 TEST(MAudioInternalTxTimingTests, RejectsStalePreviewAndDuplicateCompletionStamp) {
@@ -105,13 +123,20 @@ TEST(MAudioInternalTxTimingTests, PreservesTheVendorThreeToFiveCyclePhaseWindowE
         int32_t expectedPhase;
         bool reanchored;
     };
-    // With the zero seed, target = completion + 683.  These completion cycles
-    // make target land at 7997, 7996, 7995, and 7998 respectively.
-    constexpr Case cases[] = {
-        {7'314, 3, false},
-        {7'313, 4, false},
-        {7'312, 5, false},
-        {7'315, 2, true},
+    // Phase is measured from the zero-seeded running timer against
+    // target = completion + effective lead, so choosing a phase pins the
+    // completion cycle exactly.  Deriving it keeps this a test of the [3, 6)
+    // window rather than of the lead constant's current value; the four cases
+    // make the target land at 7997, 7996, 7995, and 7998 either way.
+    const auto completionFor = [](int32_t phase) {
+        return ASFW::Timing::kCyclesPerSecond - static_cast<uint32_t>(phase) -
+               kEffectiveLeadCycles;
+    };
+    const Case cases[] = {
+        {completionFor(3), 3, false},
+        {completionFor(4), 4, false},
+        {completionFor(5), 5, false},
+        {completionFor(2), 2, true},
     };
 
     for (const auto& item : cases) {
@@ -146,17 +171,19 @@ TEST(MAudioInternalTxTimingTests, ReanchorsFromActualCompletionAtLeadPlusFourAcr
     const auto fields = ASFW::Timing::decodeCycleTimer(observed.runningCycleTimer);
     EXPECT_EQ(fields.seconds, 0U);
     EXPECT_EQ(fields.cycle,
-              (7'999U + kInternalTxLeadCycles +
+              (7'999U + kEffectiveLeadCycles +
                kInternalTxReanchorExtraCycles) %
                   ASFW::Timing::kCyclesPerSecond);
 
     InternalTxPacketPlan plan{};
     ASSERT_TRUE(timing.PreviewNextPacket(plan));
     EXPECT_TRUE(plan.isData);
-    // Re-anchor established completion+683+4 as the running base; the vendor
-    // advances once more before writing a DATA packet header.
+    // Re-anchor established completion+683+4 as the running base with the old
+    // zero offset preserved; the vendor advances one 4096-tick SYT increment
+    // more before writing a DATA packet header, so the offset lands at 1024.
     EXPECT_EQ(plan.syt,
-              static_cast<uint16_t>(CycleTimer(0, fields.cycle + 1) & 0xFFFFU));
+              static_cast<uint16_t>(
+                  CycleTimer(0, fields.cycle + 1, 1'024) & 0xFFFFU));
 }
 
 TEST(MAudioInternalTxTimingTests, DisarmMakesFurtherPacketAndCompletionEventsInert) {

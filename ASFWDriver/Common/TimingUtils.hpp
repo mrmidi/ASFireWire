@@ -107,6 +107,27 @@ constexpr uint32_t kCycleTimerOffsetMask = 0x00000FFF;   // bits 11:0
     return encodeCycleTimer(nextSeconds, nextCycle, current.offset);
 }
 
+/// Advance an OHCI cycle-timer value by 24.576 MHz ticks, carrying the
+/// sub-cycle offset into the cycle field at the 3072-tick modulus and the cycle
+/// field into the seconds field at 8000.  Unlike AddCyclesToCycleTimer this
+/// does not pin the offset, so a step that is not a whole number of cycles --
+/// an AMDTP SYT increment, say -- accumulates instead of being discarded.
+[[nodiscard]] constexpr uint32_t AddTicksToCycleTimer(
+    uint32_t cycleTimer, uint32_t ticks) noexcept {
+    const CycleTimerFields current = decodeCycleTimer(cycleTimer);
+    const uint64_t totalTicks = static_cast<uint64_t>(current.offset) + ticks;
+    const uint64_t totalCycles = static_cast<uint64_t>(current.cycle) +
+                                 totalTicks / kTicksPerCycle;
+    const uint32_t nextSeconds = static_cast<uint32_t>(
+        (static_cast<uint64_t>(current.seconds) +
+         totalCycles / kCyclesPerSecond) %
+        kFWTimeWrapSeconds);
+    return encodeCycleTimer(
+        nextSeconds,
+        static_cast<uint32_t>(totalCycles % kCyclesPerSecond),
+        static_cast<uint32_t>(totalTicks % kTicksPerCycle));
+}
+
 /// Collapse an already-decoded FireWire cycle timer to the 24.576 MHz offset domain.
 [[nodiscard]] inline int64_t tstampToOffsets(CycleTimerFields timestamp) noexcept {
     return tstampToOffsets(timestamp.seconds, timestamp.cycle, timestamp.offset);

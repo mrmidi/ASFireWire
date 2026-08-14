@@ -69,8 +69,15 @@ bool InternalTxTiming::PreviewNextPacket(
         nextAccumulator = static_cast<uint8_t>(nextAccumulator - 4U);
     }
 
+    // 8 frames at 48 kHz is 4096 ticks, not one whole 3072-tick cycle.  Adding
+    // cycles here pinned the sub-cycle offset and advanced SYT by only 3/4 of
+    // real time, so the timestamps implied a 64 kHz stream
+    // (vendor kext m_audio_b_FWDCLProgram::SetPacketParameters @ 0x272f4 maps
+    // 48000 -> SYT increment 4096; OutputDCLCallback @ 0x263c2 adds it as
+    // 2048 + 2048 + (increment & 1) through a helper that carries the offset).
     const uint32_t dataCycleTimer = isData
-        ? ASFW::Timing::AddCyclesToCycleTimer(runningCycleTimer_, 1)
+        ? ASFW::Timing::AddTicksToCycleTimer(runningCycleTimer_,
+                                             kInternalTxSytIncrementTicks)
         : runningCycleTimer_;
     outPlan = {
         .sequence = nextSequence_,
@@ -98,11 +105,21 @@ bool InternalTxTiming::CommitPacket(const InternalTxPacketPlan& plan,
     }
 
     // A planned DATA packet may safely degrade to NO-DATA when CoreAudio has
-    // not made a complete immutable PCM range available.  It still consumes
-    // the protocol cadence, but SYT advances only for bytes actually emitted.
-    if (emittedData) {
-        runningCycleTimer_ = plan.dataCycleTimer;
-    }
+    // not made a complete immutable PCM range available.  The timestamp base
+    // still advances: it tracks elapsed time, not bytes emitted.
+    //
+    // The vendor has no degrade path -- OutputDCLCallback @ 0x263c2 always has
+    // PCM from its own ring -- so its SYT accumulator advances on exactly the
+    // three cadence-DATA packets of every four-cycle group, i.e. 3 * 4096 =
+    // 12288 ticks per 4 cycles, exactly real time.  Skipping the advance on a
+    // degraded packet breaks that invariant and retards the base by 4096 ticks
+    // permanently, corrupting every later packet's SYT, not just this one.
+    // Linux keeps the same invariant a different way: calculate_syt_offset()
+    // (amdtp-stream.c:425) is driven by cycles, never by payload.
+    //
+    // plan.dataCycleTimer already equals plan.baseCycleTimer for a cadence
+    // NO-DATA plan, so this advances only where the cadence says DATA.
+    runningCycleTimer_ = plan.dataCycleTimer;
     noDataAccumulator_ = plan.noDataAccumulatorAfter;
     ++nextSequence_;
     return true;

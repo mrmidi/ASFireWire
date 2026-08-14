@@ -25,6 +25,24 @@ inline constexpr uint32_t kInternalTxSytIncrementTicks = 4'096;
 inline constexpr uint32_t kInternalTxLeadCycles = 683;
 inline constexpr uint32_t kInternalTxReanchorExtraCycles = 4;
 
+/// 683 is the vendor's own quantity -- SetupCIP @ 0x27102 computes it as the
+/// number of cycles spanned by 4096 audio frames at the current rate, i.e. the
+/// depth of its 4096-frame DCL ring (683 at 48 kHz, 743 at 44.1 kHz).
+///
+/// Do not "correct" the resulting SYT lead.  Measured on vendor captures, the
+/// lead of the SYT over the packet's own transmit time is:
+///
+///   vendor host->device, 44.1 kHz   ~6.0 cycles
+///   vendor host->device, 48 kHz     ~8.5 cycles
+///   device->host,        48 kHz    ~12.3 cycles
+///   ASFW   host->device, 48 kHz    ~11.8 cycles
+///
+/// It is rate-dependent, and the device itself transmits at ~12.3, so ASFW's
+/// ~11.8 is an ordinary lead on this link rather than an error.  In particular
+/// a lead past 8 is not ambiguous in practice: the vendor's own host already
+/// exceeds the 16-cycle window's midpoint, so receivers here round up the way
+/// Linux does (amdtp-stream.c:492) rather than treating the field as signed.
+
 /// The vendor callback treats phase deltas 3, 4, and 5 as already aligned.
 inline constexpr int32_t kInternalTxPhaseWindowStartCycles = 3;
 inline constexpr int32_t kInternalTxPhaseWindowEndCycles = 6;
@@ -46,10 +64,10 @@ using InternalTxTimingState = std::variant<InternalTxTimingStopped,
                                            InternalTxTimingFailed>;
 
 /// A preview is immutable until CommitPacket() succeeds.  A caller may turn a
-/// planned DATA packet into NO-DATA when the PCM snapshot is unavailable; in
-/// that case CommitPacket(plan, false) advances the D,D,D,N cadence but does
-/// not advance the running SYT.  That prevents ASFW from fabricating DATA from
-/// placeholder PCM during the M-Audio bootstrap.
+/// planned DATA packet into NO-DATA when the PCM snapshot is unavailable, which
+/// prevents ASFW from fabricating DATA from placeholder PCM during the M-Audio
+/// bootstrap.  The running SYT still advances in that case: it is a clock, so
+/// it tracks elapsed time rather than bytes emitted.
 struct InternalTxPacketPlan final {
     uint64_t sequence{0};
     bool isData{false};
@@ -74,7 +92,10 @@ struct InternalTxPhaseObservation final {
 ///   * ResetPort(0) seeds the full running SYT at zero.
 ///   * Packet decisions repeat DATA, DATA, DATA, NO-DATA.
 ///   * A DATA decision advances the full SYT by 4096 ticks before it is
-///     emitted, yielding the first zero-seeded SYT 0x1000.
+///     emitted, yielding the first zero-seeded SYT 0x1400.  4096 is not a
+///     whole cycle: the offset carries at the 3072-tick modulus, so three DATA
+///     packets advance the cycle field by 1, 1, then 2 -- exactly the four
+///     cycles the DATA,DATA,DATA,NO-DATA group occupies.
 ///   * An actual TX completion re-anchors only when the phase is outside
 ///     [3, 6), to completion + 683 + 4 cycles while preserving the old
 ///     sub-cycle offset.
