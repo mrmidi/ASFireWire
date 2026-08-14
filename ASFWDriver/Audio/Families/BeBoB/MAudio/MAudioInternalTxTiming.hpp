@@ -14,6 +14,8 @@
 
 #include "MAudioDuplexChoreography.hpp"
 
+#include "../../../../Common/TimingUtils.hpp"
+
 #include <cstdint>
 #include <variant>
 
@@ -22,30 +24,64 @@ namespace ASFW::Audio::Families::BeBoB::MAudio {
 inline constexpr uint32_t kInternalTxTimingRateHz = 48'000;
 inline constexpr uint8_t kInternalTxSytInterval = 8;
 inline constexpr uint32_t kInternalTxSytIncrementTicks = 4'096;
-inline constexpr uint32_t kInternalTxLeadCycles = 683;
-inline constexpr uint32_t kInternalTxReanchorExtraCycles = 4;
 
-/// 683 is the vendor's own quantity -- SetupCIP @ 0x27102 computes it as the
-/// number of cycles spanned by 4096 audio frames at the current rate, i.e. the
-/// depth of its 4096-frame DCL ring (683 at 48 kHz, 743 at 44.1 kHz).
+/// IEC 61883-6 transfer delay, derived exactly as Linux does
+/// (amdtp-stream.c:303-307): the device's default input buffering
+/// (TRANSFER_DELAY_TICKS - TICKS_PER_CYCLE) plus, for CIP_BLOCKING, the extra
+/// buffering that absorbs the cadence NO-DATA packets
+/// (TICKS_PER_SECOND * syt_interval / rate).  12800 ticks at 48 kHz, so a SYT
+/// leads its own packet's transmit cycle by 4.17 to 5.17 cycles.
 ///
-/// Do not "correct" the resulting SYT lead.  Measured on vendor captures, the
-/// lead of the SYT over the packet's own transmit time is:
-///
-///   vendor host->device, 44.1 kHz   ~6.0 cycles
-///   vendor host->device, 48 kHz     ~8.5 cycles
-///   device->host,        48 kHz    ~12.3 cycles
-///   ASFW   host->device, 48 kHz    ~11.8 cycles
-///
-/// It is rate-dependent, and the device itself transmits at ~12.3, so ASFW's
-/// ~11.8 is an ordinary lead on this link rather than an error.  In particular
-/// a lead past 8 is not ambiguous in practice: the vendor's own host already
-/// exceeds the 16-cycle window's midpoint, so receivers here round up the way
-/// Linux does (amdtp-stream.c:492) rather than treating the field as signed.
+/// Anchoring SYT to the transmit cycle is the point of this constant.  A
+/// previous revision ran a free-running SYT accumulator and reconciled it
+/// against `completion + 683 + 4` cycles, where 683 is the *vendor's* DCL ring
+/// depth (4096 frames at 48 kHz, SetupCIP @ 0x27102) and not ours.  Measured on
+/// a bus capture, our transmit pipeline is ~676 cycles deep, so the borrowed
+/// constant overshot by ~7 cycles and every SYT went out 12.00 to 12.67 cycles
+/// ahead -- stable, no drift, so not a clock error but a fixed offset.  The SYT
+/// cycle field is 4 bits: that left ~3 cycles of headroom in a 16-cycle window
+/// before the timestamp aliases to "due now", and the re-anchor itself supplied
+/// the jitter to cross it.  For reference the vendor measures ~8.5 cycles and
+/// Linux 4.17 to 5.17.
+inline constexpr uint32_t kInternalTxTransferDelayTicks =
+    ASFW::Timing::kTransferDelayTicks - ASFW::Timing::kTicksPerCycle +
+    kInternalTxSytIncrementTicks;
 
-/// The vendor callback treats phase deltas 3, 4, and 5 as already aligned.
-inline constexpr int32_t kInternalTxPhaseWindowStartCycles = 3;
-inline constexpr int32_t kInternalTxPhaseWindowEndCycles = 6;
+static_assert(kInternalTxTransferDelayTicks == 12'800,
+              "48 kHz blocking transfer delay must match Linux's derivation");
+
+/// Phase the cadence NO-DATA packet holds, and so the value Arm seeds in order
+/// that a group's first DATA packet emits phase 0.
+///
+/// The phase advances 1024 modulo 3072 per DATA packet while the transmit cycle
+/// advances 1, so the three DATA packets of a group must emit 0, 1024, 2048 and
+/// the 2048 -> 0 wrap must fall across the NO-DATA.  Only that two-cycle gap
+/// makes the wrap worth 4096 ticks like every other step; between two
+/// consecutive DATA packets the same wrap is worth 1024, which would understate
+/// the stream's rate by a factor of four for one packet in every group.
+///
+/// This invariant is specific to anchoring SYT on the physical transmit cycle.
+/// The superseded free-accumulator model could seed any phase, because its
+/// cycle field came from the same accumulator as its offset and so absorbed the
+/// wrap automatically.
+inline constexpr uint32_t kInternalTxSytPhaseSeedTicks = 2'048;
+
+static_assert((kInternalTxSytPhaseSeedTicks + kInternalTxSytIncrementTicks) %
+                      ASFW::Timing::kTicksPerCycle ==
+                  0,
+              "seed must make the first DATA packet of a group emit phase 0");
+
+/// Build a packet's 16-bit SYT from its own transmit cycle, mirroring Linux
+/// compute_syt (amdtp-stream.c:1019-1028).  `sytPhaseTicks` is the sub-cycle
+/// phase carried by InternalTxTiming, always in [0, 3072).
+[[nodiscard]] constexpr uint16_t ComputeInternalTxSyt(
+    const uint32_t sytPhaseTicks, const uint32_t transmitCycle) noexcept {
+    const uint32_t total = sytPhaseTicks + kInternalTxTransferDelayTicks;
+    return static_cast<uint16_t>(
+        (((transmitCycle + total / ASFW::Timing::kTicksPerCycle) & 0x0FU)
+         << 12U) |
+        (total % ASFW::Timing::kTicksPerCycle));
+}
 
 struct InternalTxTimingStopped final {
     StartEpoch epoch{};
@@ -72,36 +108,32 @@ struct InternalTxPacketPlan final {
     uint64_t sequence{0};
     bool isData{false};
     uint8_t dataBlocks{0};
-    uint16_t syt{0xFFFF};
-    uint32_t baseCycleTimer{0};
-    uint32_t dataCycleTimer{0};
+    /// Sub-cycle phase before this packet, in [0, 3072).  CommitPacket rejects
+    /// a plan whose base no longer matches, so a stale preview cannot advance
+    /// the phase twice.
+    uint32_t basePhaseTicks{0};
+    /// Phase this packet's SYT carries, in [0, 3072).  Equal to basePhaseTicks
+    /// for a cadence NO-DATA packet, which emits no timestamp at all.
+    uint32_t sytPhaseTicks{0};
     uint8_t noDataAccumulatorAfter{0};
 };
 
-struct InternalTxPhaseObservation final {
-    bool accepted{false};
-    bool reanchored{false};
-    uint64_t stampCount{0};
-    uint32_t completionCycleTimer{0};
-    int32_t phaseCycles{0};
-    uint32_t runningCycleTimer{0};
-};
-
-/// Reproduces the M-Audio output callback's 48 kHz timing decisions:
+/// Owns the M-Audio output callback's 48 kHz cadence and SYT phase:
 ///
-///   * ResetPort(0) seeds the full running SYT at zero.
 ///   * Packet decisions repeat DATA, DATA, DATA, NO-DATA.
-///   * A DATA decision advances the full SYT by 4096 ticks before it is
-///     emitted, yielding the first zero-seeded SYT 0x1400.  4096 is not a
-///     whole cycle: the offset carries at the 3072-tick modulus, so three DATA
-///     packets advance the cycle field by 1, 1, then 2 -- exactly the four
-///     cycles the DATA,DATA,DATA,NO-DATA group occupies.
-///   * An actual TX completion re-anchors only when the phase is outside
-///     [3, 6), to completion + 683 + 4 cycles while preserving the old
-///     sub-cycle offset.
+///   * A DATA decision advances the phase by 4096 ticks modulo 3072, so
+///     successive DATA packets carry 0, 1024, 2048 and the wrap back to 0
+///     falls across the cadence NO-DATA -- the two-cycle gap that keeps the
+///     inter-packet SYT delta at exactly 4096 ticks, i.e. real time.
+///     Linux generates the same sequence in calculate_syt_offset
+///     (amdtp-stream.c:425-461) from a 1024-tick state.
 ///
-/// The cycle timestamp must originate from OUTPUT_LAST completion status, not
-/// an RX DMA/raw receive timestamp and not a newly read cycle register.
+/// It deliberately does *not* know where in bus time a packet will transmit.
+/// The caller pairs the phase with that packet's own transmit cycle through
+/// ComputeInternalTxSyt, exactly as Linux pairs seq->syt_offset with
+/// desc->cycle (amdtp-stream.c:1049).  That keeps the SYT lead pinned to the
+/// transfer delay instead of to a pipeline depth this driver would have to
+/// guess.
 class InternalTxTiming final {
 public:
     InternalTxTiming() noexcept = default;
@@ -113,26 +145,21 @@ public:
 
     [[nodiscard]] bool IsArmed() const noexcept;
     [[nodiscard]] const InternalTxTimingState& State() const noexcept;
-    [[nodiscard]] uint32_t RunningCycleTimer() const noexcept;
+    [[nodiscard]] uint32_t SytPhaseTicks() const noexcept;
 
     [[nodiscard]] bool PreviewNextPacket(
         InternalTxPacketPlan& outPlan) const noexcept;
     [[nodiscard]] bool CommitPacket(const InternalTxPacketPlan& plan,
                                     bool emittedData) noexcept;
 
-    [[nodiscard]] InternalTxPhaseObservation ObserveTxCompletion(
-        uint64_t stampCount,
-        uint32_t completionCycleTimer) noexcept;
-
 private:
     [[nodiscard]] static StartEpoch StateEpoch(
         const InternalTxTimingState& state) noexcept;
 
     InternalTxTimingState state_{InternalTxTimingStopped{}};
-    uint32_t runningCycleTimer_{0};
+    uint32_t sytPhaseTicks_{0};
     uint8_t noDataAccumulator_{1};
     uint64_t nextSequence_{0};
-    uint64_t lastCompletionStampCount_{0};
 };
 
 } // namespace ASFW::Audio::Families::BeBoB::MAudio

@@ -269,20 +269,46 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             mAudioPacketPlanActive = true;
             timing.replayValid = false;
             timing.hasExplicitPacketSchedule = true;
-            timing.explicitDataBlocks = mAudioPacketPlan.dataBlocks;
-            timing.disposition = mAudioPacketPlan.isData
+
+            // A SYT must lead its own packet's transmit cycle by the IEC
+            // 61883-6 transfer delay, so pair the cadence phase with that
+            // packet's scheduled cycle exactly as Linux pairs seq->syt_offset
+            // with desc->cycle (amdtp-stream.c:1049).  Until the first
+            // OUTPUT_LAST stamp lands there is no cycle to pair with, so the
+            // packet degrades to NO-DATA rather than carrying a guessed
+            // timestamp; Linux's own MEMO (bebob_stream.c:637) notes the device
+            // expects NO-DATA in the early stage of streaming.
+            int64_t transmitTicks = 0;
+            const bool haveTransmitCycle =
+                ivars.runtime.txExecutionTimeline.AnchorForPacket(
+                    nextPacketToPrepare, transmitTicks);
+            const bool emitData =
+                mAudioPacketPlan.isData && haveTransmitCycle;
+
+            timing.explicitDataBlocks =
+                emitData ? mAudioPacketPlan.dataBlocks : uint16_t{0};
+            timing.disposition = emitData
                 ? ASFW::Protocols::Audio::AMDTP::
                       AmdtpPacketDisposition::Data
                 : ASFW::Protocols::Audio::AMDTP::
                       AmdtpPacketDisposition::NoData;
-            timing.txClockValid = mAudioPacketPlan.isData;
-            timing.nextDataSyt = mAudioPacketPlan.syt;
+            timing.txClockValid = emitData;
+            timing.nextDataSyt =
+                emitData
+                    ? ASFW::Audio::Families::BeBoB::MAudio::
+                          ComputeInternalTxSyt(
+                              mAudioPacketPlan.sytPhaseTicks,
+                              static_cast<uint32_t>(
+                                  (transmitTicks /
+                                   ASFW::Timing::kTicksPerCycle) %
+                                  ASFW::Timing::kCyclesPerSecond))
+                    : uint16_t{0xFFFF};
 
             // The first M-Audio DATA packet derives its audio cursor from the
             // same TX-originated start epoch as the HAL clock.  Frame zero is
             // the exact ideal origin; SelectCompletePcmPacket safely clamps to
             // a complete retained packet if startup already passed it.
-            if (mAudioPacketPlan.isData &&
+            if (emitData &&
                 !ivars.runtime.txStreamEngine.IsFrameCursorAligned()) {
                 const auto& txConfig =
                     ivars.runtime.txStreamEngine.StreamConfig();
@@ -1126,40 +1152,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             }
         }
     }
-    if (useMAudioInternalTiming) {
-        const uint64_t stampCount =
-            txControl->completionStampCount.load(std::memory_order_acquire);
-        if (stampCount != 0) {
-            uint64_t completedPacketIndex = 0;
-            uint32_t completionCycleTimer = 0;
-            if (txControl->ReadCompletionStamp(
-                    stampCount - 1,
-                    completedPacketIndex,
-                    completionCycleTimer)) {
-                const auto observation =
-                    ivars->runtime.mAudioInternalTxTiming
-                        .ObserveTxCompletion(
-                            stampCount, completionCycleTimer);
-                if (observation.reanchored) {
-                    // Anomaly/startup evidence only.  Healthy phase-window
-                    // observations do not log on the producer hot path.
-                    ASFW_LOG_RING_ONLY_RL(
-                        DirectAudio,
-                        "maudio-tx-phase-reanchor",
-                        1000u,
-                        ::ASFW::Logging::LogLevel::Warning,
-                        "[MAudioTxPhase] reanchor stamp=%llu packet=%llu completion=0x%08x phase=%d lead=%u running=0x%08x",
-                        observation.stampCount,
-                        completedPacketIndex,
-                        observation.completionCycleTimer,
-                        observation.phaseCycles,
-                        ASFW::Audio::Families::BeBoB::MAudio::
-                            kInternalTxLeadCycles,
-                        observation.runningCycleTimer);
-                }
-            }
-        }
-    }
+    // No completion-driven phase re-anchor: each SYT is now built from its own
+    // packet's transmit cycle, so there is no free-running accumulator left to
+    // pull back into agreement with bus time.
     const bool replayEstablished =
         directControl && directControl->rxSequenceReplay.IsEstablished();
     const uint64_t audioRequested = directControl
