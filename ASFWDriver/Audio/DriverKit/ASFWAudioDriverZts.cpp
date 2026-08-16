@@ -304,6 +304,55 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                                   ASFW::Timing::kCyclesPerSecond))
                     : uint16_t{0xFFFF};
 
+            // Bounded SYT seed trace: the first DATA packet after the transmit
+            // anchor lands, plus the next few. Without a packet analyzer this
+            // is the only view of the seed and its increment. `delta` is the
+            // diagnostic — it must equal the rate's exact SYT step, 4096 ticks
+            // at 48 kHz; anything else means the phase is not tracking the
+            // transmit cycle. Stops after kSytSeedTracePackets.
+            if (emitData && ivars.runtime.sytSeedTraceRemaining > 0) {
+                const uint32_t transmitCycle = static_cast<uint32_t>(
+                    (transmitTicks / ASFW::Timing::kTicksPerCycle) %
+                    ASFW::Timing::kCyclesPerSecond);
+                const uint16_t syt = timing.nextDataSyt;
+                const uint32_t sytTicks =
+                    ((syt >> 12) & 0x0FU) * ASFW::Timing::kTicksPerCycle +
+                    (syt & 0x0FFFU);
+
+                if (!ivars.runtime.sytSeedTraceHavePrev) {
+                    ASFW_LOG_INFO(
+                        Audio,
+                        "[TxSytSeed] anchor cycle=%u phase=%u delay=%u "
+                        "-> syt=0x%04x (cyc %u off %u) pkt=%llu",
+                        transmitCycle, mAudioPacketPlan.sytPhaseTicks,
+                        ASFW::Audio::Families::BeBoB::MAudio::
+                            kInternalTxTransferDelayTicks,
+                        syt, (syt >> 12) & 0x0FU, syt & 0x0FFFU,
+                        static_cast<unsigned long long>(nextPacketToPrepare));
+                } else {
+                    const uint32_t prevTicks =
+                        ((ivars.runtime.sytSeedTracePrevSyt >> 12) & 0x0FU) *
+                            ASFW::Timing::kTicksPerCycle +
+                        (ivars.runtime.sytSeedTracePrevSyt & 0x0FFFU);
+                    // The SYT field spans 16 cycles = 49152 ticks, which is not
+                    // a power of two, so this must wrap by modulo, not a mask.
+                    constexpr uint32_t kSytDomain =
+                        16U * ASFW::Timing::kTicksPerCycle;
+                    const uint32_t delta =
+                        (sytTicks + kSytDomain - prevTicks) % kSytDomain;
+                    ASFW_LOG_INFO(
+                        Audio,
+                        "[TxSytSeed] cycle=%u phase=%u syt=0x%04x delta=%u "
+                        "ticks pkt=%llu",
+                        transmitCycle, mAudioPacketPlan.sytPhaseTicks, syt,
+                        delta,
+                        static_cast<unsigned long long>(nextPacketToPrepare));
+                }
+                ivars.runtime.sytSeedTracePrevSyt = syt;
+                ivars.runtime.sytSeedTraceHavePrev = true;
+                --ivars.runtime.sytSeedTraceRemaining;
+            }
+
             // The first M-Audio DATA packet derives its audio cursor from the
             // same TX-originated start epoch as the HAL clock.  Frame zero is
             // the exact ideal origin; SelectCompletePcmPacket safely clamps to

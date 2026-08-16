@@ -418,6 +418,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                                "ArmMAudioInternalTxTiming");
                 return;
             }
+            // Arm the one-shot SYT seed trace for this stream. It prints the
+            // seed and the next few increments once the transmit anchor lands,
+            // then goes quiet; see AudioDriverRuntimeState.
+            ivars.runtime.sytSeedTraceRemaining =
+                ivars.runtime.kSytSeedTracePackets;
+            ivars.runtime.sytSeedTraceHavePrev = false;
         }
         ivars.runtime.txActive.store(true, std::memory_order_release);
         // A failed start can still leave a partially-started backend. Mark the

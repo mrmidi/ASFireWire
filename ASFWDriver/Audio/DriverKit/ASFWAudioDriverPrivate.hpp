@@ -281,6 +281,17 @@ struct AudioDriverRuntimeState {
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngineSecondary;
     DextTxSlotProvider txSlotProviderSecondary;
     bool txSecondaryActive{false};
+
+    // One-shot SYT seed trace for the M-Audio internal-clock path. The first
+    // DATA packet after the transmit anchor lands prints the seed; the next few
+    // print their own SYT and the tick delta from the previous one, which is
+    // the whole diagnostic — it must equal the rate's exact SYT step (4096 at
+    // 48 kHz). Then it goes quiet for the life of the stream, so this is a
+    // bounded burst rather than hot-path logging. Rearmed by StartIO.
+    static constexpr uint32_t kSytSeedTracePackets = 8;
+    uint32_t sytSeedTraceRemaining{0};
+    uint16_t sytSeedTracePrevSyt{0};
+    bool sytSeedTraceHavePrev{false};
 };
 
 struct ASFWAudioDriver_IVars {
