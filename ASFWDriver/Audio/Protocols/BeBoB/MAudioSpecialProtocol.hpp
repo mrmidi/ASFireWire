@@ -32,6 +32,12 @@
 
 namespace ASFW::Audio::BeBoB {
 
+/// M-Audio special-firmware parameter window, 0xffc700700000. Write-only: the
+/// firmware answers no read here, so the host must assert every register.
+/// Register map in FFADO bebob/maudio/special_avdevice.h:47-134.
+inline constexpr uint16_t kMAudioParamAddressHi = 0xFFC7;
+inline constexpr uint32_t kMAudioParamAddressLo = 0x0070'0000;
+
 /// Which of the two personas this instance is driving. They share geometry and
 /// control; only the offered rate list differs.
 enum class MAudioSpecialModel : uint8_t {
@@ -78,6 +84,20 @@ protected:
     void ConfirmDuplexStart(ConfirmCallback callback) override;
 
 private:
+    /// Assert the whole 0x00-0x9c parameter window in one block write.
+    ///
+    /// These registers are write-only: the firmware answers no read for them,
+    /// so their power-on state is indeterminate and every quadlet must be
+    /// stated. FFADO does exactly this at startup (Mixer::initialize,
+    /// bebob/maudio/special_mixer.cpp:74-106) and drives this device; the
+    /// vendor kext reaches the same end state through 42 individual per-control
+    /// writes, which is its control API, not a wire requirement.
+    ///
+    /// Runs as the last step of InitializeClock, mirroring the vendor's
+    /// non-blank-slate pass, where the equivalent register push happens
+    /// (FWSettingsLevels::SendToDevice).
+    void SendParameterBlock(std::function<void(IOReturn)> completion);
+
     [[nodiscard]] AudioStreamRuntimeCaps CapsForCurrentFormation() const noexcept;
 
     const MAudioSpecialModel model_;

@@ -139,6 +139,11 @@ protected:
     [[nodiscard]] CMP::CMPDevice CurrentCMPDevice() const noexcept;
     [[nodiscard]] IOReturn ResetEpochIfNeeded() noexcept;
 
+    // Raw async access, needed by device families whose control surface is a
+    // write-only register window rather than AV/C — the M-Audio special
+    // firmware's 0xffc700700000 parameter block is the first such user.
+    // Declared before busInfo_ so the constructor's init order matches.
+    Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     Discovery::DeviceRouteToken route_{};
     IRM::IRMClient* irmClient_{nullptr};

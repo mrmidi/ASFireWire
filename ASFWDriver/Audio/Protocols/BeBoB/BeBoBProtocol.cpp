@@ -82,10 +82,8 @@ BeBoBProtocol::BeBoBProtocol(Protocols::Ports::FireWireBusOps& busOps,
                              IRM::IRMClient* irmClient,
                              CMP::CMPClient* cmpClient,
                              Scheduling::ITimerScheduler* timerScheduler) noexcept
-    : busInfo_(busInfo), route_(route), irmClient_(irmClient), cmpClient_(cmpClient),
-      timerScheduler_(timerScheduler) {
-    (void)busOps;
-}
+    : busOps_(busOps), busInfo_(busInfo), route_(route), irmClient_(irmClient),
+      cmpClient_(cmpClient), timerScheduler_(timerScheduler) {}
 
 IOReturn BeBoBProtocol::Initialize() {
     return (irmClient_ && cmpClient_ && route_ && timerScheduler_ != nullptr)

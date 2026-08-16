@@ -12,7 +12,9 @@
 
 #include "../../../Logging/Logging.hpp"
 
+#include <array>
 #include <cstring>
+#include <span>
 
 namespace ASFW::Audio::BeBoB {
 
@@ -201,7 +203,12 @@ void MAudioSpecialProtocol::InitializeClock(std::function<void(IOReturn)> comple
                                         "[BeBoB] %{public}s: blank-slate clock "
                                         "settle complete",
                                         DeviceName());
-                                    completion(kIOReturnSuccess);
+                                    // The vendor's blank-slate pass stops here,
+                                    // but its non-blank-slate pass follows with
+                                    // FWSettingsLevels::SendToDevice. Without
+                                    // that the write-only parameter window is
+                                    // never asserted at all.
+                                    SendParameterBlock(std::move(completion));
                                 };
 
                             if (!timerScheduler_) {
@@ -299,6 +306,70 @@ void MAudioSpecialProtocol::ReadClockHealth(HealthCallback callback) {
                                 .sourceLocked = inputConnected_ && outputConnected_,
                                 .clockReferenceHealthy = true,
                                 .nominalRateHz = currentRateHz_});
+}
+
+void MAudioSpecialProtocol::SendParameterBlock(
+    std::function<void(IOReturn)> completion) {
+    // FFADO's Mixer::initialize (special_mixer.cpp:74-106) asserts all 40
+    // quadlets of 0x00-0x9c: gains and aux sends at unity/zero, the nine LR
+    // balance registers hard-panned, and the four routing registers cleared.
+    static constexpr size_t kQuadletCount = 40;              // 0x00..0x9c
+    static constexpr size_t kBalanceFirst = 16;              // 0x40
+    static constexpr size_t kBalanceLast = 24;               // 0x60
+    static constexpr uint32_t kBalanceHardPanned = 0x7FFE8000U;
+
+    std::array<uint8_t, kQuadletCount * 4> payload{};
+    for (size_t i = 0; i < kQuadletCount; ++i) {
+        const uint32_t value =
+            (i >= kBalanceFirst && i <= kBalanceLast) ? kBalanceHardPanned : 0U;
+        // IEEE 1394 payloads are big-endian regardless of host order.
+        payload[(i * 4) + 0] = static_cast<uint8_t>(value >> 24);
+        payload[(i * 4) + 1] = static_cast<uint8_t>(value >> 16);
+        payload[(i * 4) + 2] = static_cast<uint8_t>(value >> 8);
+        payload[(i * 4) + 3] = static_cast<uint8_t>(value);
+    }
+
+    const auto operationalNode = Discovery::TryOperationalNodeId(route_.nodeId);
+    if (!operationalNode) {
+        ASFW_LOG_ERROR(Audio,
+                       "[BeBoB] parameter window skipped: node 0x%04x is not "
+                       "operational",
+                       static_cast<unsigned>(route_.nodeId));
+        completion(kIOReturnSuccess);
+        return;
+    }
+
+    const Async::FWAddress address{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = kMAudioParamAddressHi,
+        .addressLo = kMAudioParamAddressLo,
+        .nodeID = route_.nodeId}};
+
+    ASFW_LOG(Audio,
+             "[BeBoB] %{public}s: asserting parameter window +0x00..0x9c "
+             "(%zu quadlets) node=0x%04x gen=%u",
+             DeviceName(), kQuadletCount,
+             static_cast<unsigned>(route_.nodeId),
+             static_cast<unsigned>(route_.generation.value));
+
+    (void)busOps_.WriteBlock(
+        route_.generation, FW::NodeId{*operationalNode}, address, payload,
+        // A control write, not a stream: the slowest universally supported
+        // speed carries 160 bytes without depending on a negotiated rate.
+        FW::FwSpeed::S100,
+        [this, completion = std::move(completion)](
+            Async::AsyncStatus status, std::span<const uint8_t>) mutable {
+            if (status != Async::AsyncStatus::kSuccess) {
+                // Not fatal to publication: the device still streams, it just
+                // keeps whatever mixer state it powered up with.
+                ASFW_LOG_ERROR(Audio,
+                               "[BeBoB] parameter window write failed "
+                               "status=%u — mixer state left indeterminate",
+                               static_cast<unsigned>(status));
+            } else {
+                ASFW_LOG(Audio, "[BeBoB] parameter window asserted");
+            }
+            completion(kIOReturnSuccess);
+        });
 }
 
 } // namespace ASFW::Audio::BeBoB
