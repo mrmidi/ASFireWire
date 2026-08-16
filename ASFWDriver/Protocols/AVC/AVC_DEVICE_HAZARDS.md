@@ -96,8 +96,9 @@ Not "no AV/C". The safe surface is narrower *and* wider than a blanket ban:
 | Vendor-dependent with company ID `04 00 04` (clock/format) | **Yes** | `bebob_maudio.c:187-189` |
 | Vendor-dependent with company ID `03 00 01` (LED) | **Yes** | `maudio/special.rs:127`; matches the vendor kext |
 | Audio-subunit selector FB `0x04`, value `0x00` (`00 08 B8 80 04 10 02 00 01`) | **Yes, exact frame only** | vendor `SetClockSourceInternal` calls `AVCSelectorCommand(4, 0)` after the `04 00 04` frame; Linux independently uses FB 4 for the digital-input interface (`bebob_maudio.c:461-462, 514`) |
-| `UNIT_INFO` (`0x30`) | **No** | not sent by Linux, FFADO, or the vendor kext |
-| `SUBUNIT_INFO` (`0x31`) | **No** | as above; vendor kext has it compiled but unreferenced |
+| Audio-subunit Processing FB `0x82`, control selector `0x03` (mixer) | **Observed safe** | 32 frames in the vendor-kext capture, every one `ACCEPTED` — see *Measured from the vendor kext, 2026-08-16* |
+| `UNIT_INFO` (`0x30`) | **Observed safe** | answered `IMPLEMENTED/STABLE` in the vendor-kext capture; the earlier "not sent by anyone" premise was wrong — see below |
+| `SUBUNIT_INFO` (`0x31`) | **No** | not sent by Linux or FFADO; vendor kext has it compiled but unreferenced, and it does **not** appear in the vendor capture either |
 | `PLUG_INFO` (`0x02`) | **No** | as above |
 | AV/C extended stream format (`0x2F` + `0xC0`/`0xC1`) | **No** | `maudio/special.rs:100`; and the vendor kext binds `FWRev1AudioDevice::AVCControlPlugSignalFormat` (blind `0x18`/`0x19` CONTROL) into the 1814's vtable at `0x37510`, never the `FWRev2AudioDevice` builder that queries the `0xC1` list |
 | AV/C SIGNAL SOURCE (`0x1A`) | **No** | vendor kext calls it only from Audiophile/FW410/Solo/Lightbridge `SetClockSourceInternal`; the 1814 uses the `04 00 04` vendor command |
@@ -135,6 +136,61 @@ Two cautions on reading that result:
 The refusal half is covered by `tests/protocols/AVCCommandFilterTests.cpp` but has
 **not** been exercised against a live filtered transport — no unlisted frame has yet
 been offered to real hardware.
+
+### Measured from the vendor kext, 2026-08-16
+
+`tools/1814/firebug.txt` is a FireBug capture of a **macOS host running M-Audio's own
+kext** against a 1814 (GUID `000d6c0400da3d9a`, HW model `0x83` rev 1, firmware build
+`20070713080440`). Decode it with `tools/1814/firebug_parse.py`. Two rows above moved
+because of it, and both moved on *observation of the shipping driver's own session* —
+a stronger class of evidence than "no reference sends it".
+
+**`UNIT_INFO` is answered.** The premise behind the old **No** — "not sent by Linux,
+FFADO, or the vendor kext" — is contradicted on the wire:
+
+```
+069:0607:2041  host->1814  AV/C STATUS unit UNIT INFO  [query]
+                 -> IMPLEMENTED/STABLE  [unit_type audio, unit_id 7, company 0x000d6c (M-Audio)]  (+1.9 ms)
+```
+
+The device answered in 1.9 ms and kept working: it accepted the `03 00 01` LED and
+`04 00 04` clock/format commands afterwards and streamed. One caveat the capture
+cannot resolve — a bus trace shows the frame, not which host driver emitted it. The
+static analysis above (kext compiles `AVCGetAudioSubUnitInfo`, zero cross-references)
+suggests the emitter is Apple's `IOFireWireAVC` probe rather than M-Audio's binary.
+That does not weaken the safety result; it only means "the vendor kext sends this" is
+still unproven, while "this device is sent this, and survives it" is now proven.
+
+**The Processing function block drives a real mixer.** 32 frames, all `ACCEPTED`,
+programming a 4x4 crosspoint matrix to a unity diagonal:
+
+```
+00 08 b8 82 01 10 04 00 01 01 03 02 00 00
+            │  │  │  │  │  │  │  │  └──┴── mixer setting: 0x0000 = 0 dB (0x8000 = mute)
+            │  │  │  │  │  │  │  └── control_data_length = 2
+            │  │  │  │  │  │  └── control_selector = 0x03 Mixer
+            │  │  │  │  │  └── output_audio_channel = 1
+            │  │  │  │  └── input_audio_channel = 1
+            │  │  │  └── fb_input_plug_number = 0
+            │  │  └── selector_length = 4
+            │  └── control_attribute = 0x10 CURRENT
+            └── function_block_ID = 1, function_block_type = 0x82 Processing
+```
+
+Layout confirmed against FFADO `FunctionBlockProcessing::serialize`
+(`libavc/audiosubunit/avc_function_block.cpp:513-530`) and the control-selector
+encoding at `avc_function_block.h:202-206`. Linux never emits this — its BeBoB driver
+only ever sends function block type `0x80` (Selector), and for special firmware it
+drives the mixer through the register window instead.
+
+**Both mixer paths are used together.** The same session also issues 42 writes into
+the `0xffc700700000` parameter window and polls the `0xffc700600000` meter block 67
+times. So the FFADO register map is not a reverse-engineered alternative to AV/C that
+the vendor abandoned — the shipping driver uses both at once.
+
+**None of this is authorized yet.** `AVCCommandFilter.hpp` still refuses `UNIT_INFO`
+and the Processing FB, correctly: nothing in the driver sends them. These rows say
+*if* we ever need them, the hardware evidence exists.
 
 ---
 
@@ -444,6 +500,35 @@ authoritative for what the hardware needs.
 
 ASFW's `BeBoBProtocol` base does sig-fmt *before* CMP, so this needs a post-start
 hook, not a reordering of the existing one.
+
+### What the vendor kext actually does (2026-08-16)
+
+The vendor does **not** re-send the pair. It sends each plug's format exactly once,
+immediately after that plug's own CMP lock — and input before output, the reverse of
+`special_set_rate`. From `tools/1814/firebug.txt` against our `tools/1814/last.txt`:
+
+```
+VENDOR                                    ASFW
+  LOCK iPCR[0]                              OUT signal format
+  IN  signal format                         IN  signal format   (+117 ms, our interlock)
+  LOCK oPCR[0]                              LOCK iPCR[0]
+  OUT signal format  (+0.5 ms)              LOCK oPCR[0]
+  isoch ACTIVE                              isoch ch0 ACTIVE
+                                            OUT signal format   <- the H8 re-send
+                                            IN  signal format
+                                            isoch ch1 ACTIVE
+```
+
+So the *principle* holds — signal format must land after connection establishment —
+but the two drivers reach it differently. Our double-send comes from Linux
+(`bebob_stream.c:648-659`), not from the vendor. It works, so nothing needs changing.
+If the post-DMA re-send is ever implicated in a fault, the vendor's per-plug ordering
+is the alternative that has hardware evidence behind it.
+
+Two details worth keeping: the vendor leaves ~509 ms between the IN format and the
+oPCR lock, but only ~0.5 ms between the oPCR lock and the OUT format — the settle it
+needs is *before* the connection, not between the two format commands. And it sets
+the format for a plug only after that plug is connected, never both up front.
 
 ---
 
