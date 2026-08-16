@@ -95,14 +95,149 @@ CSR_REGISTERS = {
 }
 
 # M-Audio "special" firmware vendor window (bebob_maudio.c:51-53).
+# The meter window is polled continuously by the host for level display, so it
+# swamps the trace; it is classified as its own category and suppressed from the
+# default output (see classify() and main()).
 MAUDIO_ADDR_HI = 0xFFC7
+MAUDIO_METER_WINDOW = 0x00600000
+MAUDIO_PARAM_WINDOW = 0x00700000
 MAUDIO_WINDOWS = {
-    0x00600000: "MAUDIO_METER",
-    0x00700000: "MAUDIO_PARAM",
+    MAUDIO_METER_WINDOW: "MAUDIO_METER",
+    MAUDIO_PARAM_WINDOW: "MAUDIO_PARAM",
 }
 
 CONFIG_ROM_BASE = 0xF0000400
 CONFIG_ROM_END = 0xF0000800
+
+# BridgeCo DM1000/DM1100/DM1500 register file, Linux bebob/bebob.h:38-39.
+# Quadlets in this window are LITTLE-endian, unlike everything else on the bus:
+# Linux reads them raw and uses them as host u32 (bebob.c:91-115), and the GUID
+# only reads back as the M-Audio OUI 0x000d6c that way.
+BEBOB_REG_INFO = 0xC8020000
+BEBOB_REG_REQ = 0xC8021000
+
+# Field offsets inside the info register block (bebob.c:35-38,
+# bebob_maudio.c:38).  Anything not named here is undocumented by any reference.
+BEBOB_INFO_FIELDS: list[tuple[int, int, str]] = [
+    (0x00, 8, "magic"),
+    (0x08, 4, "BeBoB version"),
+    (0x10, 8, "GUID"),
+    (0x18, 4, "HW model ID"),
+    (0x1C, 4, "HW model revision"),
+    (0x20, 16, "SW build date"),
+]
+
+# The three cue quadlets that tell a BeBoB bootloader to load firmware from
+# flash and reset configuration to factory settings (bebob_maudio.c:41-49,
+# written little-endian at :119-126).
+MAUDIO_BOOTLOADER_CUE = bytes.fromhex("010000000000110100000000")
+
+
+def decode_bebob_info(payload: bytes) -> list[str]:
+    """Name the fields of the BeBoB info register block."""
+    out: list[str] = []
+    for offset, size, label in BEBOB_INFO_FIELDS:
+        chunk = payload[offset:offset + size]
+        if len(chunk) < size:
+            continue
+        if label in ("magic", "SW build date"):
+            text = chunk.split(b"\x00")[0].decode("ascii", "replace")
+            # Linux gates firmware support on this date being >= 20070401,
+            # i.e. version 5058 or later (bebob_maudio.c:105-113).
+            if label == "SW build date" and text[:8].isdigit():
+                era = "fw 5058+" if text[:8] >= "20070401" else "PRE-5058, unsupported"
+                text = f"{text} ({era})"
+        elif size == 8:
+            text = (f"{int.from_bytes(chunk[0:4], 'little'):08x}"
+                    f"{int.from_bytes(chunk[4:8], 'little'):08x}")
+        else:
+            text = f"0x{int.from_bytes(chunk, 'little'):08x}"
+        out.append(f"+0x{offset:02x} {label}: {text}")
+    return out
+
+# The M-Audio parameter window is a write-only register file -- the firmware
+# answers no AV/C for any of it, so the register map is the only documentation
+# there is.  Transcribed from FFADO, which names both the offsets
+# (bebob/maudio/special_avdevice.h:55-134) and what each one drives
+# (bebob/maudio/special_mixer.cpp:109-116, :202-237, :307-319, :375-380).
+#
+# Every entry is one stereo pair packed into a quadlet: upper 16 bits are the
+# first channel of the pair, lower 16 the second.
+_MAUDIO_GAIN_LABELS = [
+    "Stream 1/2 in", "Stream 3/4 in", "Analog 1/2 out", "Analog 3/4 out",
+    "Analog 1/2 in", "Analog 3/4 in", "Analog 5/6 in", "Analog 7/8 in",
+    "S/PDIF 1/2 in", "ADAT 1/2 in", "ADAT 3/4 in", "ADAT 5/6 in",
+    "ADAT 7/8 in", "Aux 1/2 out", "HP 1/2 out", "HP 3/4 out",
+]
+_MAUDIO_BALANCE_LABELS = [
+    "Analog 1/2 in", "Analog 3/4 in", "Analog 5/6 in", "Analog 7/8 in",
+    "S/PDIF 1/2 in", "ADAT 1/2 in", "ADAT 3/4 in", "ADAT 5/6 in", "ADAT 7/8 in",
+]
+_MAUDIO_AUX_LABELS = [
+    "Stream 1/2 in", "Stream 3/4 in", "Analog 1/2 in", "Analog 3/4 in",
+    "Analog 5/6 in", "Analog 7/8 in", "S/PDIF 1/2 in", "ADAT 1/2 in",
+    "ADAT 3/4 in", "ADAT 5/6 in", "ADAT 7/8 in",
+]
+
+MAUDIO_PARAM_REGISTERS: dict[int, tuple[str, str]] = {}
+for _i, _label in enumerate(_MAUDIO_GAIN_LABELS):
+    MAUDIO_PARAM_REGISTERS[0x00 + _i * 4] = ("gain", _label)
+for _i, _label in enumerate(_MAUDIO_BALANCE_LABELS):
+    MAUDIO_PARAM_REGISTERS[0x40 + _i * 4] = ("balance", _label)
+for _i, _label in enumerate(_MAUDIO_AUX_LABELS):
+    MAUDIO_PARAM_REGISTERS[0x64 + _i * 4] = ("aux send", _label)
+MAUDIO_PARAM_REGISTERS[0x90] = ("routing", "analog/digital in -> mixer")
+MAUDIO_PARAM_REGISTERS[0x94] = ("routing", "stream in -> mixer")
+MAUDIO_PARAM_REGISTERS[0x98] = ("source", "headphone out")
+MAUDIO_PARAM_REGISTERS[0x9C] = ("source", "analog out")
+
+# Bit positions in the two mixer-enable registers, from the shift arithmetic in
+# FFADO Processing::setValue (special_mixer.cpp:411-481).
+_MIX_IN_BITS = (
+    [(b, f"Ana {1 + 2 * b}/{2 + 2 * b} -> Mix 1/2") for b in range(4)] +
+    [(4 + b, f"Ana {1 + 2 * b}/{2 + 2 * b} -> Mix 3/4") for b in range(4)] +
+    [(8 + b, f"ADAT {1 + 2 * b}/{2 + 2 * b} -> Mix 1/2") for b in range(4)] +
+    [(12 + b, f"ADAT {1 + 2 * b}/{2 + 2 * b} -> Mix 3/4") for b in range(4)] +
+    [(16, "S/PDIF 1/2 -> Mix 1/2"), (17, "S/PDIF 1/2 -> Mix 3/4")]
+)
+_MIX_STM_BITS = [(0, "Stm 1/2 -> Mix 1/2"), (1, "Stm 1/2 -> Mix 3/4"),
+                 (2, "Stm 3/4 -> Mix 1/2"), (3, "Stm 3/4 -> Mix 3/4")]
+_HP_SOURCE = {0x01: "Mix 1/2", 0x02: "Mix 3/4", 0x04: "Aux 1/2"}
+
+
+def decode_maudio_param(offset: int, value: int) -> str:
+    """Human-readable meaning of one write into the M-Audio parameter window."""
+    entry = MAUDIO_PARAM_REGISTERS.get(offset)
+    if entry is None:
+        return ""
+    kind, label = entry
+
+    if kind in ("gain", "aux send", "balance"):
+        first, second = value >> 16, value & 0xFFFF
+        is_balance = kind == "balance"
+        text = (f"{kind} {label}: "
+                f"ch1 {avc_level(first, mute_at_min=not is_balance)}, "
+                f"ch2 {avc_level(second, mute_at_min=not is_balance)}")
+        # Opposite signs at near-full deflection is the hard-panned stereo
+        # default FFADO also writes at init (special_mixer.cpp:88-89).
+        if is_balance:
+            a, b = avc_signed(first), avc_signed(second)
+            if a * b < 0 and min(abs(a), abs(b)) >= 0x7F00:
+                text += "  (hard-panned pair)"
+        return text
+
+    if kind == "routing":
+        bits = _MIX_IN_BITS if offset == 0x90 else _MIX_STM_BITS
+        on = [name for bit, name in bits if (value >> bit) & 1]
+        return f"mixer inputs ({label}): " + (", ".join(on) if on else "all off")
+
+    if offset == 0x98:
+        lo, hi = value & 0xFFFF, value >> 16
+        return (f"HP 1/2 from {_HP_SOURCE.get(lo, f'0x{lo:x}')}, "
+                f"HP 3/4 from {_HP_SOURCE.get(hi, f'0x{hi:x}')}")
+
+    return (f"Analog 1/2 from {'Aux 1/2' if value & 1 else 'Mix 1/2'}, "
+            f"Analog 3/4 from {'Aux 1/2' if value & 2 else 'Mix 3/4'}")
 
 
 def decode_address(addr_hi: int, addr_lo: int) -> str:
@@ -119,6 +254,12 @@ def decode_address(addr_hi: int, addr_lo: int) -> str:
 
     if addr_lo in CSR_REGISTERS:
         return CSR_REGISTERS[addr_lo]
+    if BEBOB_REG_INFO <= addr_lo < BEBOB_REG_INFO + 0x1000:
+        delta = addr_lo - BEBOB_REG_INFO
+        return "BEBOB_INFO" if delta == 0 else f"BEBOB_INFO+0x{delta:x}"
+    if BEBOB_REG_REQ <= addr_lo < BEBOB_REG_REQ + 0x1000:
+        delta = addr_lo - BEBOB_REG_REQ
+        return "BEBOB_REQ" if delta == 0 else f"BEBOB_REQ+0x{delta:x}"
     # Connection Management Procedures plug registers (IEC 61883-1 sec 6).
     if 0xF0000904 <= addr_lo < 0xF0000980 and addr_lo % 4 == 0:
         return f"oPCR[{(addr_lo - 0xF0000904) // 4}]"
@@ -322,20 +463,93 @@ CONTROL_ATTRIBUTE = {
 }
 
 
+# Control selectors, per function block type.
+# FFADO libavc/audiosubunit/avc_function_block.h:126-127, :151-163, :202-206.
+SELECTOR_CONTROL_SELECTOR = {0x01: "selector"}
+FEATURE_CONTROL_SELECTOR = {
+    0x01: "mute", 0x02: "volume", 0x03: "LR balance", 0x04: "FR balance",
+    0x05: "bass", 0x06: "mid", 0x07: "treble", 0x08: "graphic EQ",
+    0x09: "AGC", 0x0A: "delay", 0x0B: "bass boost", 0x0C: "loudness",
+}
+PROCESSING_CONTROL_SELECTOR = {
+    0x01: "enable", 0x02: "mode", 0x03: "mixer", 0xF1: "enhanced mixer",
+}
+
+
+def avc_signed(value: int) -> int:
+    """A 16-bit AV/C control value as its signed 1/256 dB integer."""
+    return value - 0x10000 if value & 0x8000 else value
+
+
+def avc_level(value: int, *, mute_at_min: bool = True) -> str:
+    """An AV/C audio level: signed 16-bit in 1/256 dB.
+
+    'AV/C Audio Subunit Specification 1.0' (1394TA 1999008) section 10.3.  For
+    a gain, 0x8000 is the reserved "negative infinity" code and means mute; for
+    a balance it is an ordinary endpoint (full deflection to one side), which is
+    what FFADO writes at init -- 0x7ffe8000 -- to hard-pan a pair
+    (special_mixer.cpp:88-89).  Callers must say which they have.
+    """
+    if value == 0x8000 and mute_at_min:
+        return "mute"
+    return f"{avc_signed(value) / 256:+.2f} dB"
+
+
 def decode_function_block(operands: bytes) -> str:
-    """AV/C Audio Subunit: fb_type, fb_ID, control_attribute, selector_length,
-    then selector_length bytes of selector/data."""
+    """AV/C Audio Subunit FUNCTION BLOCK (opcode 0xB8), section 10.1.
+
+        fb_type, fb_ID, control_attribute, selector_length,
+        <selector_length bytes of selector>, control_selector,
+        control_data_length, <control_data>
+
+    The selector's shape depends on fb_type, which is why selector_length is on
+    the wire at all: Selector and Feature carry two bytes, Processing four.
+    Cross-checked against Linux avc_audio_set_selector (bebob_command.c:20-28)
+    and FFADO FunctionBlockProcessing::serialize (avc_function_block.cpp:513-530).
+    """
     if len(operands) < 3:
         return ""
     fb_type, fb_id, attribute = operands[0], operands[1], operands[2]
     name = FUNCTION_BLOCK_TYPE.get(fb_type, f"fb 0x{fb_type:02x}")
     attr_name = CONTROL_ATTRIBUTE.get(attribute, f"0x{attribute:02x}")
     text = f"{name} id {fb_id} {attr_name}"
-    if len(operands) >= 4:
-        length = operands[3]
-        body = operands[4:4 + max(length, 0)]
-        if body:
-            text += " sel " + " ".join(f"{b:02x}" for b in body)
+
+    if len(operands) < 4:
+        return text
+    length = operands[3]
+    selector = operands[4:4 + max(length, 0)]
+    tail = operands[4 + max(length, 0):]
+
+    # The last selector byte is the control_selector; what precedes it addresses
+    # the point inside the function block that the control applies to.
+    if fb_type == 0x82 and len(selector) >= 4:
+        control_selector = selector[3]
+        names = PROCESSING_CONTROL_SELECTOR
+        where = (f"in plug {selector[0]} ch {selector[1]}"
+                 f" -> out ch {selector[2]}")
+    elif len(selector) >= 2:
+        control_selector = selector[1]
+        names = FEATURE_CONTROL_SELECTOR if fb_type == 0x81 else SELECTOR_CONTROL_SELECTOR
+        where = (f"in plug {selector[0]}" if fb_type == 0x80
+                 else f"ch {selector[0]}")
+    else:
+        return text + " sel " + " ".join(f"{b:02x}" for b in selector)
+
+    control_name = names.get(control_selector, f"control 0x{control_selector:02x}")
+    text += f": {control_name}, {where}"
+
+    # control_data_length then control_data.  A 2-byte payload is a level for
+    # every control that carries one.
+    if len(tail) >= 2:
+        data = tail[1:1 + tail[0]]
+        if len(data) == 2:
+            # Only a Feature balance treats 0x8000 as an endpoint; everything
+            # else here is a gain, where it is the mute code.
+            balance = fb_type == 0x81 and control_selector in (0x03, 0x04)
+            level = avc_level(int.from_bytes(data, "big"), mute_at_min=not balance)
+            text += f" = {level}"
+        elif data:
+            text += " = " + " ".join(f"{b:02x}" for b in data)
     return text
 
 
@@ -357,6 +571,28 @@ def decode_vendor_dependent(operands: bytes) -> str:
     return name
 
 
+OUI_NAMES = {0x000D6C: "M-Audio", 0x0007F5: "BridgeCo"}
+
+
+def decode_unit_info(operands: bytes) -> str:
+    """AV/C UNIT INFO (opcode 0x30), AV/C General Specification section 9.1.
+
+    A query fills every operand with 0xff; the response carries a constant 0x07,
+    then unit_type/unit_id packed into one byte, then a 24-bit company ID.
+    """
+    if len(operands) < 5:
+        return ""
+    if all(b == 0xFF for b in operands[:5]):
+        return "query"
+    unit_type = (operands[1] >> 3) & 0x1F
+    unit_id = operands[1] & 0x07
+    company = int.from_bytes(operands[2:5], "big")
+    name = AVC_SUBUNIT_TYPE.get(unit_type, f"type-0x{unit_type:02x}")
+    vendor = OUI_NAMES.get(company)
+    text = f"unit_type {name}, unit_id {unit_id}, company 0x{company:06x}"
+    return f"{text} ({vendor})" if vendor else text
+
+
 def decode_avc(payload: bytes) -> str | None:
     """Render one AV/C frame. Returns None if the payload is too short."""
     if len(payload) < 3:
@@ -376,6 +612,8 @@ def decode_avc(payload: bytes) -> str | None:
         detail = decode_function_block(operands)
     elif opcode == 0x00:
         detail = decode_vendor_dependent(operands)
+    elif opcode == 0x30:
+        detail = decode_unit_info(operands)
     elif opcode == 0x02 and operands:
         detail = f"subfunction 0x{operands[0]:02x}"
     elif operands:
@@ -634,7 +872,9 @@ def classify(ev: Event) -> str:
         return "irm"
     if name.startswith("ConfigROM"):
         return "rom"
-    if name.startswith("MAUDIO"):
+    if name.startswith("MAUDIO_METER"):
+        return "meter"
+    if name.startswith(("MAUDIO", "BEBOB_")):
         return "vendor"
     return "csr"
 
@@ -685,12 +925,73 @@ def pair_transactions(events: list[Event]) -> None:
 # Rendering
 # ---------------------------------------------------------------------------
 
+def format_elision(packets: int, gaps: int) -> str:
+    """One line for an elided stretch.
+
+    FireBug emits a separate marker per gap, and once the high-rate polling
+    categories are suppressed those markers land next to each other; the run is
+    summed so the reader sees one hole, not twenty.
+    """
+    text = f"{'':>14}  ... {packets} packets not shown"
+    if gaps > 1:
+        text += f" ({gaps} gaps)"
+    return text
+
+
+ROM_RUN_MIN = 3
+ROM_RUN_OFFSETS_SHOWN = 6
+BLOCK_PARAM_LINES = 8
+
+
+def summarize_rom_run(run: list[Event], show_payload: bool) -> list[str]:
+    """Collapse a run of consecutive Config ROM reads into one line.
+
+    A node polling our ROM header re-reads the same two or three quadlets
+    forever, which buries the choreography.  A real ROM *scan* walks increasing
+    offsets once each, and its detail is worth keeping -- so the run is only
+    collapsed when reads outnumber distinct offsets at least two to one.
+    """
+    distinct = {ev.addr_lo for ev in run}
+    if len(run) < ROM_RUN_MIN or len(distinct) * 2 > len(run):
+        out: list[str] = []
+        for ev in run:
+            out.extend(render(ev, show_payload))
+        return out
+
+    counts: dict[str, int] = {}
+    values: dict[str, set[int]] = {}
+    for ev in run:
+        name = decode_address(ev.addr_hi or 0, ev.addr_lo or 0)
+        counts[name] = counts.get(name, 0) + 1
+        if ev.response is not None and ev.response.value is not None:
+            values.setdefault(name, set()).add(ev.response.value)
+
+    ordered = sorted(counts, key=lambda n: (-counts[n], n))
+    parts = []
+    for name in ordered[:ROM_RUN_OFFSETS_SHOWN]:
+        text = f"{name} x{counts[name]}"
+        seen = values.get(name)
+        if seen and len(seen) == 1:
+            text += f" = {next(iter(seen)):08x}"
+        elif len(seen or ()) > 1:
+            text += " (varies)"
+        parts.append(text)
+    if len(ordered) > ROM_RUN_OFFSETS_SHOWN:
+        parts.append(f"+{len(ordered) - ROM_RUN_OFFSETS_SHOWN} more offsets")
+
+    first = run[0]
+    arrow = f"{first.src or '????'}->{first.dst or '????'}"
+    span = elapsed_ms(first.ts, run[-1].ts)
+    return [f"{first.ts}  {arrow}  READ  Config ROM x{len(run)} over {span:.0f} ms"
+            f"  [{'; '.join(parts)}]"]
+
+
 def render(ev: Event, show_payload: bool) -> list[str]:
     out: list[str] = []
     stamp = str(ev.ts)
 
     if ev.category == "elision":
-        return [f"{'':>14}  ... {ev.size} packets not shown"]
+        return [format_elision(ev.size or 0, 1)]
     if ev.category == "idle":
         return [f"{'':>14}  === idle for {ev.line} ==="]
     if ev.category == "isoch":
@@ -759,6 +1060,10 @@ def render(ev: Event, show_payload: bool) -> list[str]:
 
     if ev.kind == "Qwrite":
         out.append(f"{stamp}  {arrow}  WRITE {register} = {ev.value:08x}")
+        if ev.addr_hi == MAUDIO_ADDR_HI and ev.value is not None:
+            detail = decode_maudio_param(ev.addr_lo - MAUDIO_PARAM_WINDOW, ev.value)
+            if detail:
+                out.append(f"{'':>14}  {'':>10}  {detail}")
         if ev.response is not None:
             rc = ev.response.rcode
             name = RCODE_NAMES.get(rc, "?")
@@ -768,13 +1073,38 @@ def render(ev: Event, show_payload: bool) -> list[str]:
 
     if ev.kind == "Bread":
         out.append(f"{stamp}  {arrow}  BLOCK READ {register} [{ev.size} bytes]")
-        if ev.response is not None and show_payload and ev.response.payload:
-            out.append(f"{'':>14}  raw: " + " ".join(f"{b:02x}" for b in ev.response.payload[:64]))
+        data = ev.response.payload if ev.response is not None else b""
+        if register.startswith("BEBOB_INFO") and data:
+            for field in decode_bebob_info(bytes(data)):
+                out.append(f"{'':>14}  {'':>10}  {field}")
+        elif show_payload and data:
+            out.append(f"{'':>14}  raw: " + " ".join(f"{b:02x}" for b in data[:64]))
         return out
 
     if ev.kind == "Bwrite":
         out.append(f"{stamp}  {arrow}  BLOCK WRITE {register} [{ev.size} bytes]")
-        if show_payload and ev.payload:
+        if register.startswith("BEBOB_REQ"):
+            if bytes(ev.payload) == MAUDIO_BOOTLOADER_CUE:
+                out.append(f"{'':>14}  {'':>10}  bootloader cue: load firmware "
+                           f"from flash + reset config to factory settings")
+            elif ev.payload:
+                out.append(f"{'':>14}  {'':>10}  unrecognised cue: " +
+                           " ".join(f"{b:02x}" for b in ev.payload[:12]))
+            return out
+        if ev.addr_hi == MAUDIO_ADDR_HI and ev.payload:
+            base = ev.addr_lo - MAUDIO_PARAM_WINDOW
+            quadlets = len(ev.payload) // 4
+            shown = quadlets if show_payload else min(quadlets, BLOCK_PARAM_LINES)
+            for i in range(shown):
+                word = int.from_bytes(ev.payload[i * 4:i * 4 + 4], "big")
+                detail = decode_maudio_param(base + i * 4, word)
+                if detail:
+                    out.append(f"{'':>14}  {'':>10}  +0x{base + i * 4:02x} = "
+                               f"{word:08x}  {detail}")
+            if quadlets > shown:
+                out.append(f"{'':>14}  {'':>10}  ... {quadlets - shown} more "
+                           f"quadlets (--payloads to expand)")
+        elif show_payload and ev.payload:
             out.append(f"{'':>14}  raw: " + " ".join(f"{b:02x}" for b in ev.payload[:64]))
         return out
 
@@ -874,11 +1204,17 @@ CATEGORY_ALIASES = {
     "irm": {"irm"},
     "rom": {"rom"},
     "vendor": {"vendor"},
+    "meter": {"meter"},
     "isoch": {"isoch"},
     "bus": {"bus"},
     "csr": {"csr"},
     "setup": {"avc", "cmp", "irm", "vendor", "isoch", "bus"},
 }
+
+# Categories dropped from the default view because they are high-rate polling
+# with no bearing on the choreography.  Still counted by --stats, and still
+# printable by naming them explicitly in --only.
+NOISY_CATEGORIES = {"meter"}
 
 
 def main() -> int:
@@ -922,11 +1258,61 @@ def main() -> int:
             token = token.strip()
             wanted |= CATEGORY_ALIASES.get(token, {token})
 
-    for ev in events:
-        if wanted is not None and ev.category not in wanted:
-            continue
-        for line in render(ev, args.payloads):
+    elided_packets = 0
+    elided_gaps = 0
+    rom_run: list[Event] = []
+
+    def emit(lines: list[str]) -> None:
+        """Print lines, flushing any elision run that accumulated before them."""
+        nonlocal elided_packets, elided_gaps
+        if not lines:
+            return
+        if elided_gaps:
+            print(format_elision(elided_packets, elided_gaps))
+            elided_packets = elided_gaps = 0
+        for line in lines:
             print(line)
+
+    def flush_rom() -> None:
+        nonlocal rom_run
+        if rom_run:
+            run, rom_run = rom_run, []
+            emit(summarize_rom_run(run, args.payloads))
+
+    for ev in events:
+        if wanted is None:
+            if ev.category in NOISY_CATEGORIES:
+                continue
+        elif ev.category not in wanted:
+            continue
+
+        # Accumulate a run of elision markers and emit it as one line when the
+        # next real event arrives.
+        if ev.category == "elision":
+            elided_packets += ev.size or 0
+            elided_gaps += 1
+            continue
+
+        # Likewise for Config ROM reads, broken when the conversation changes
+        # node pair.
+        if ev.category == "rom" and ev.addr_hi is not None:
+            if rom_run and (ev.src, ev.dst) != (rom_run[0].src, rom_run[0].dst):
+                flush_rom()
+            rom_run.append(ev)
+            continue
+
+        # Many events render to nothing (responses are printed beneath their
+        # request), and those must not break up either run.
+        lines = render(ev, args.payloads)
+        if not lines:
+            continue
+
+        flush_rom()
+        emit(lines)
+
+    flush_rom()
+    if elided_gaps:
+        print(format_elision(elided_packets, elided_gaps))
 
     if args.unparsed and unparsed:
         print("\n--- unparsed lines ---", file=sys.stderr)
