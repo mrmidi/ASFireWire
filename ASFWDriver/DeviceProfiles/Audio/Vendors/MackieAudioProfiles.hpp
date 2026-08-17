@@ -7,7 +7,9 @@
 // Status: recognition-only. The documented Onyx family models (Onyx-i Oxford run,
 // Onyx 1640i in both runs, Onyx Blackbird) are recognized from libffado 2.5.0 device
 // database ids — the same recognition-without-hardware policy as the PreSonus StudioLive
-// siblings. No Onyx model is audio-enabled. The Onyx-i mixers were shipped with two
+// siblings. No Onyx model is audio-enabled. A live capture (2026-08-17) confirmed an
+// Oxford-run Onyx 820i in the field reporting the shared 0x081216 id with a 1394TA AV/C
+// unit — see the provenance block in AudioDeviceIds.hpp. The Onyx-i mixers were shipped with two
 // different FireWire implementations over the production run (see AudioDeviceIds.hpp for
 // the split), and the DICE-run model ids (820i/1220i/1620i) are published nowhere, so for
 // a DICE-run unit the first capture must answer two questions:
