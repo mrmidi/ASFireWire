@@ -4,12 +4,12 @@
 // MackieAudioProfiles.hpp - Mackie (LOUD Technologies) Onyx-i FireWire mixer knowledge.
 // Knows ONLY Mackie/LOUD devices; performs no runtime protocol construction.
 //
-// Status: recognition-only. The documented Onyx family models (Onyx-i Oxford run,
-// Onyx 1640i in both runs, Onyx Blackbird) are recognized from libffado 2.5.0 device
-// database ids — the same recognition-without-hardware policy as the PreSonus StudioLive
-// siblings. No Onyx model is audio-enabled. A live capture (2026-08-17) confirmed an
-// Oxford-run Onyx 820i in the field reporting the shared 0x081216 id with a 1394TA AV/C
-// unit — see the provenance block in AudioDeviceIds.hpp. The Onyx-i mixers were shipped with two
+// Status: the Onyx-i Oxford run (shared id 0x081216) is audio-enabled as
+// {Oxford, kAVCDriven}, geometry-verified against a real Onyx 820i (identity capture +
+// AV/C stream-format capture, 2026-08-17 — see the provenance block in
+// AudioDeviceIds.hpp and the wire-format block below). Onyx 1640i (both runs) and
+// Onyx Blackbird remain recognition-only from libffado 2.5.0 database ids — the same
+// recognition-without-hardware policy as the PreSonus StudioLive siblings. The Onyx-i mixers were shipped with two
 // different FireWire implementations over the production run (see AudioDeviceIds.hpp for
 // the split), and the DICE-run model ids (820i/1220i/1620i) are published nowhere, so for
 // a DICE-run unit the first capture must answer two questions:
@@ -106,20 +106,25 @@ LookupIdentity(const DeviceProfileQuery& query) noexcept {
 
 [[nodiscard]] constexpr std::optional<AudioProfileHint>
 LookupAudioProfile(const DeviceProfileQuery& query) noexcept {
-    // Intentionally never matches yet. Even after the model id is captured and
-    // LookupIdentity starts returning a hint, audio must stay disabled until the stream
-    // geometry is verified against the real unit — a wrong data-block size means the
-    // device never locks to the host stream (same policy as the PreSonus StudioLive
-    // siblings). Expected shape once verified:
-    //   - DICE variant    -> AudioProfileHint{AudioProtocolFamily::DICE,
-    //                                         AudioIntegrationMode::kHardcodedNub, ...}
-    //     (geometry from the DICE GLOBAL/TX/RX sections at capture time; note the LOUD
-    //     category quirk 0x10 if DICE detection checks the GUID category byte)
-    //   - OXFW971 variant -> AudioProfileHint{AudioProtocolFamily::Oxford,
-    //                                         AudioIntegrationMode::kAVCDriven, ...}
-    //     (formats via AV/C stream-format reads; expect the LOUD quirks documented in
-    //     Linux snd-oxfw)
-    (void)query;
+    if (query.vendorId != kMackieVendorId) {
+        return std::nullopt;
+    }
+    // Onyx-i (Oxford run, shared id 0x081216): AV/C-driven, geometry verified against a
+    // real 820i (stream-format capture in the header of this file). Wire geometry lives
+    // in the ADK profile (Audio/DriverKit/Config/AVC/MackieOnyx820iProfile). Streaming
+    // additionally requires the runtime duplex control, which intentionally does not
+    // exist yet — DeviceProtocolFactory has no Mackie clause, so StartStreaming fails
+    // cleanly while CoreAudio can already publish the device.
+    if (query.modelId == kOnyxIOxfwModelId) {
+        return AudioProfileHint{.family = AudioProtocolFamily::Oxford,
+                                .mode = AudioIntegrationMode::kAVCDriven,
+                                .source = MatchSource::VendorModel};
+    }
+    // Onyx 1640i (both runs) and Onyx Blackbird stay recognition-only: no stream
+    // geometry has been verified against their hardware (same policy as the PreSonus
+    // StudioLive siblings). A DICE-run device would take
+    // {AudioProtocolFamily::DICE, kHardcodedNub} once captured — note the LOUD DICE
+    // category quirk (0x10) documented in Linux snd-dice.
     return std::nullopt;
 }
 
