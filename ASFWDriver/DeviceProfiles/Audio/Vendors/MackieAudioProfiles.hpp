@@ -4,10 +4,13 @@
 // MackieAudioProfiles.hpp - Mackie (LOUD Technologies) Onyx-i FireWire mixer knowledge.
 // Knows ONLY Mackie/LOUD devices; performs no runtime protocol construction.
 //
-// Status: scaffold pending a Config-ROM capture from real hardware. The Onyx-i mixers
-// were shipped with two different FireWire implementations over the production run (see
-// AudioDeviceIds.hpp for the split and the Linux reference anchors), so the first capture
-// must answer two questions before anything can be enabled:
+// Status: recognition-only. The documented Onyx family models (Onyx-i Oxford run,
+// Onyx 1640i in both runs, Onyx Blackbird) are recognized from libffado 2.5.0 device
+// database ids — the same recognition-without-hardware policy as the PreSonus StudioLive
+// siblings. No Onyx model is audio-enabled. The Onyx-i mixers were shipped with two
+// different FireWire implementations over the production run (see AudioDeviceIds.hpp for
+// the split), and the DICE-run model ids (820i/1220i/1620i) are published nowhere, so for
+// a DICE-run unit the first capture must answer two questions:
 //
 //   1. Which variant is the unit?
 //      - DICE variant: unit directory carries the TCAT/DICE interface version and the
@@ -27,12 +30,16 @@
 //
 // Audio enablement is a separate, later step (see LookupAudioProfile).
 //
-// References consulted (behavioral only, no code copied):
-//   - Linux sound/firewire/Kconfig — "Onyx 820i/1220i/1620i/1640i (latter models)" under
-//     SND_DICE; "Onyx-i series (former models)" under SND_OXFW.
-//   - Linux sound/firewire/oxfw/oxfw.c — VENDOR_LOUD 0x000ff2, detect_loud_models(),
-//     LOUD stream quirks (WRONG_DBS, blocking transmission, 1640i NO-INFO packets).
-//   - Linux sound/firewire/dice/dice.c — OUI_LOUD, LOUD_CATEGORY_ID 0x10.
+// References consulted (behavioral only, no code copied; all in references/ locally):
+//   - references/linux-sound-firewire-stack/Kconfig — "Onyx 820i/1220i/1620i/1640i
+//     (latter models)" under SND_DICE; "Onyx-i series (former models)" under SND_OXFW.
+//   - references/linux-sound-firewire-stack/oxfw/oxfw.c — VENDOR_LOUD 0x000ff2,
+//     detect_loud_models(), LOUD stream quirks (WRONG_DBS, blocking transmission,
+//     1640i NO-INFO packets).
+//   - references/linux-sound-firewire-stack/dice/dice.c — OUI_LOUD, LOUD_CATEGORY_ID 0x10.
+//   - references/libffado-2.5.0/configuration — Loud device_definitions (the ids above).
+//   - references/alsa-userspace-control-protocols-impl — runtime/dice model.rs Blackbird
+//     mapping; runtime/oxfw loud_model.rs + protocols::loud (future OXFW controls).
 //   - FFADO-user thread "Mackie Onyx 820i and module snd_dice" (2016) — confirms
 //     DICE-variant 820i units exist in the wild.
 
@@ -48,22 +55,40 @@ namespace ASFW::DeviceProfiles::Audio::Mackie {
 
 [[nodiscard]] constexpr std::optional<DeviceIdentityHint>
 LookupIdentity(const DeviceProfileQuery& query) noexcept {
-    if constexpr (kOnyx820iModelId == kMackieModelIdPendingCapture) {
-        // Placeholder still unset: no Config-ROM capture from a real 820i exists yet, so
-        // this provider intentionally matches nothing. Replace kOnyx820iModelId in
-        // AudioDeviceIds.hpp with the captured value to activate recognition.
-        (void)query;
+    if (query.vendorId != kMackieVendorId) {
         return std::nullopt;
-    } else {
-        if (query.vendorId == kMackieVendorId && query.modelId == kOnyx820iModelId) {
+    }
+    // Documented family models: recognition only, ids from the libffado 2.5.0 device
+    // database (see AudioDeviceIds.hpp for per-id provenance). Audio stays off for all
+    // of them until stream geometry is captured — see LookupAudioProfile.
+    const char* modelName = nullptr;
+    switch (query.modelId) {
+    case kOnyxIOxfwModelId:     modelName = kOnyxIOxfwModelName; break;
+    case kOnyx1640iOxfwModelId:
+    case kOnyx1640iDiceModelId: modelName = kOnyx1640iModelName; break;
+    case kOnyxBlackbirdModelId: modelName = kOnyxBlackbirdModelName; break;
+    default: break;
+    }
+    if (modelName != nullptr) {
+        return DeviceIdentityHint{.vendorId = query.vendorId,
+                                  .modelId = query.modelId,
+                                  .vendorName = kMackieVendorName,
+                                  .modelName = modelName,
+                                  .source = MatchSource::VendorModel};
+    }
+    if constexpr (kOnyx820iModelId != kMackieModelIdPendingCapture) {
+        // Activated once a Config-ROM capture from a real 820i replaces the sentinel in
+        // AudioDeviceIds.hpp. (A DICE-run 820i reports a model id nobody has published;
+        // an OXFW-run unit should already match the shared 0x081216 entry above.)
+        if (query.modelId == kOnyx820iModelId) {
             return DeviceIdentityHint{.vendorId = query.vendorId,
                                       .modelId = query.modelId,
                                       .vendorName = kMackieVendorName,
                                       .modelName = kOnyx820iModelName,
                                       .source = MatchSource::VendorModel};
         }
-        return std::nullopt;
     }
+    return std::nullopt;
 }
 
 [[nodiscard]] constexpr std::optional<AudioProfileHint>

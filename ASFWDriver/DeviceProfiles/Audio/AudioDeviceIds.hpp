@@ -70,12 +70,26 @@ inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 //   - latter production: TCAT DICE with the LOUD category quirk (0x10 in the GUID
 //     category byte instead of the standard 0x04) — Linux snd-dice check_dice_category();
 //     its Kconfig lists "Onyx 820i/1220i/1620i/1640i (latter models)".
-// Neither ALSA nor libffado publishes a model id for the 820i (both match Loud
-// vendor-wide), so recognition is gated on a Config-ROM capture from a real unit. Replace
-// the placeholder below with the captured model id (ASFW app -> device details) to
-// activate identity matching in MackieAudioProfiles.hpp.
+// Documented family identities, recognition-only (same policy as the PreSonus StudioLive
+// siblings: identity from the libffado 2.5.0 device database; audio stays off until the
+// stream geometry is captured from hardware). Provenance per id, from
+// references/libffado-2.5.0/configuration device_definitions:
+//   0x081216 "Onyx-i"          OXFORD driver (H. Dehnhardt entry) — the shared model id of
+//                              the OXFW971 production run; units differ by name string
+//   0x001640 "Onyx 1640i"      OXFORD driver (S. Tonge entry; matches Linux snd-oxfw
+//                              MODEL_ONYX_1640I)
+//   0x000006 "Onyx 1640i"      DICE driver (T. Kepley entry)
+//   0x000007 "Onyx Blackbird"  DICE driver (M. Bernkopf entry; cross-checked with
+//                              snd-firewire-ctl-services runtime/dice/src/model.rs:122)
+// The DICE-run 820i/1220i/1620i model ids are not published anywhere (ALSA and libffado
+// match them vendor-wide/generically), so the 820i stays sentinel-gated until captured
+// from a real unit (ASFW app -> device details).
 inline constexpr uint32_t kMackieVendorId              = 0x000ff2;
 inline constexpr uint32_t kMackieModelIdPendingCapture = 0xffffffff;  // sentinel; real model ids are 24-bit
+inline constexpr uint32_t kOnyxIOxfwModelId            = 0x081216;
+inline constexpr uint32_t kOnyx1640iOxfwModelId        = 0x001640;
+inline constexpr uint32_t kOnyx1640iDiceModelId        = 0x000006;
+inline constexpr uint32_t kOnyxBlackbirdModelId        = 0x000007;
 inline constexpr uint32_t kOnyx820iModelId             = kMackieModelIdPendingCapture;  // TODO(capture): from real 820i
 
 // ---- PreSonus (DICE / TCAT family) ----
@@ -118,6 +132,9 @@ inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
 inline constexpr const char* kMidasVendorName         = "Midas";
 inline constexpr const char* kMidasVeniceModelName    = "Venice F32";
 inline constexpr const char* kMackieVendorName        = "Mackie";
+inline constexpr const char* kOnyxIOxfwModelName      = "Onyx-i (Oxford)";
+inline constexpr const char* kOnyx1640iModelName      = "Onyx 1640i";
+inline constexpr const char* kOnyxBlackbirdModelName  = "Onyx Blackbird";
 inline constexpr const char* kOnyx820iModelName       = "Onyx 820i";
 inline constexpr const char* kPreSonusVendorName      = "PreSonus";
 inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
