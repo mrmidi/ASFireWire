@@ -32,6 +32,17 @@
 //
 // Audio enablement is a separate, later step (see LookupAudioProfile).
 //
+// Live AV/C stream-format capture (2026-08-17, same Oxford-run 820i, via the MCP
+// control plane, STATUS-class FCP only — EXTENDED STREAM FORMAT INFORMATION 0xBF):
+//   PLUG INFO: 1 isoch input plug, 1 isoch output plug, 1 external in, 1 external out.
+//   Output plug 0 (capture, device->host):  8ch MBLA (0x06), compound AM824 (0x90 0x40),
+//     supported rates 44.1/48/88.2/96 kHz (codes 0x03/0x04/0x0A/0x05); current 44.1 kHz.
+//   Input plug 0 (playback, host->device):  2ch MBLA, same four rates; current 44.1 kHz.
+//   No IEC60958 or MIDI (0x0D) fields in any entry. Raw frames recorded in the local
+//   runbook. Enablement implications: asymmetric duplex (8 in / 2 out), and the Loud
+//   quirks from Linux snd-oxfw apply (unreliable CIP DBS -> derive stride from the
+//   format, and blocking-mode transmission expected by the device).
+//
 // References consulted (behavioral only, no code copied; all in references/ locally):
 //   - references/linux-sound-firewire-stack/Kconfig — "Onyx 820i/1220i/1620i/1640i
 //     (latter models)" under SND_DICE; "Onyx-i series (former models)" under SND_OXFW.
