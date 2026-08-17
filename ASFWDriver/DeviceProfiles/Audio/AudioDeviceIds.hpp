@@ -81,9 +81,15 @@ inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 //   0x000006 "Onyx 1640i"      DICE driver (T. Kepley entry)
 //   0x000007 "Onyx Blackbird"  DICE driver (M. Bernkopf entry; cross-checked with
 //                              snd-firewire-ctl-services runtime/dice/src/model.rs:122)
-// The DICE-run 820i/1220i/1620i model ids are not published anywhere (ALSA and libffado
-// match them vendor-wide/generically), so the 820i stays sentinel-gated until captured
-// from a real unit (ASFW app -> device details).
+// Live capture (2026-08-17, Onyx 820i on an Apple TB->FW643 chain, ASFW enumeration):
+//   GUID 0x000FF20400003AFC, vendor 0x000FF2, model 0x081216, unit specifier 0x00A02D
+//   version 0x010001 (1394TA AV/C), ROM strings "Loud Technologies Inc." / "Onyx-i".
+//   Confirms an Oxford-run 820i reports the shared 0x081216 id; the GUID category byte
+//   is 0x04, not the 0x10 Linux snd-dice requires for Loud DICE units, so the DICE gate
+//   rejects it and snd-oxfw's name match ("Onyx-i") claims it — consistent on all axes.
+// The DICE-run 820i/1220i/1620i model ids remain unpublished (ALSA and libffado match
+// them vendor-wide/generically), so the DICE-run 820i placeholder below stays
+// sentinel-gated until captured from a real DICE-run unit.
 inline constexpr uint32_t kMackieVendorId              = 0x000ff2;
 inline constexpr uint32_t kMackieModelIdPendingCapture = 0xffffffff;  // sentinel; real model ids are 24-bit
 inline constexpr uint32_t kOnyxIOxfwModelId            = 0x081216;
