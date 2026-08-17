@@ -38,6 +38,7 @@ public:
         if (auto hint = Weiss::LookupIdentity(query)) { return hint; }
         if (auto hint = Apogee::LookupIdentity(query)) { return hint; }
         if (auto hint = Alesis::LookupIdentity(query)) { return hint; }
+        if (auto hint = Mackie::LookupIdentity(query)) { return hint; }
         if (auto hint = Midas::LookupIdentity(query)) { return hint; }
         if (auto hint = PreSonus::LookupIdentity(query)) { return hint; }
         if (auto hint = TerraTec::LookupIdentity(query)) { return hint; }
@@ -55,6 +56,7 @@ public:
         if (auto hint = Weiss::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Apogee::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Alesis::LookupAudioProfile(query)) { return hint; }
+        if (auto hint = Mackie::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Midas::LookupAudioProfile(query)) { return hint; }
         if (auto hint = PreSonus::LookupAudioProfile(query)) { return hint; }
         if (auto hint = TerraTec::LookupAudioProfile(query)) { return hint; }
