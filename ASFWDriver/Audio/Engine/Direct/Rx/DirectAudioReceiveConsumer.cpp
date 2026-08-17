@@ -175,7 +175,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     const auto result = processor_.ProcessPacket(
         packet.payload.data(), packet.payload.size(), absoluteFrameCursor_, channels,
         inputView_.deviceToHostAm824Slots, configuration_.wireFormat,
-        configuration_.channelOffset, !configuration_.isSecondary);
+        configuration_.channelOffset, !configuration_.isSecondary,
+        configuration_.trustConfiguredStride);
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {

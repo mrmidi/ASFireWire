@@ -1137,7 +1137,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
             const kern_return_t prepareReceiveStatus =
                 hostTransport_.PrepareReceive(channels.CaptureChannel(0), hardware_, bindingSource,
                                               streamProfile.captureWireFormat,
-                                              masterCapture.am824Slots, masterCapture.pcmChannels);
+                                              masterCapture.am824Slots, masterCapture.pcmChannels,
+                                              streamProfile.captureTrustConfiguredStride);
             if (prepareReceiveStatus != kIOReturnSuccess) {
                 return rollbackToFailure(prepareReceiveStatus,
                                          DuplexRestartPhase::kStartingHostReceive,
@@ -1159,7 +1160,8 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                 const kern_return_t status = hostTransport_.PrepareReceiveStream(
                     i, channels.CaptureChannel(i), hardware_, bindingSource,
                     captureStream.pcmChannelOffset, captureStream.pcmChannels,
-                    streamProfile.captureWireFormat, captureStream.am824Slots);
+                    streamProfile.captureWireFormat, captureStream.am824Slots,
+                    streamProfile.captureTrustConfiguredStride);
                 if (status != kIOReturnSuccess) {
                     return rollbackToFailure(status, DuplexRestartPhase::kStartingHostReceive,
                                              DuplexRestartFailureCause::kStartReceive);

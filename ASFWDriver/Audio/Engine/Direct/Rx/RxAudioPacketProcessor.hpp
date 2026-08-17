@@ -32,6 +32,10 @@ public:
     // full interleave width (stride) is owned by the writer's binding.
     // `publishTimeline` advances the producer cursor/frame counters — only the
     // master stream does this; secondary slices write PCM only.
+    // `trustConfiguredStride`: Loud OXFW units stamp an unreliable dbs in
+    // device->host packets; when set, `am824Slots` is the stride authority and
+    // the header dbs is surfaced in the result for telemetry only (Linux
+    // snd-oxfw SND_OXFW_QUIRK_WRONG_DBS; amdtp-stream.c:766-769).
     [[nodiscard]] RxAudioPacketProcessorResult ProcessPacket(const uint8_t* payload,
                                                              size_t length,
                                                              uint64_t absoluteFrame,
@@ -39,7 +43,8 @@ public:
                                                              uint32_t am824Slots,
                                                              ASFW::Encoding::AudioWireFormat format,
                                                              uint32_t channelOffset = 0,
-                                                             bool publishTimeline = true) noexcept;
+                                                             bool publishTimeline = true,
+                                                             bool trustConfiguredStride = false) noexcept;
 
 private:
     DirectInputWriter& writer_;
