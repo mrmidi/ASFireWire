@@ -34,6 +34,11 @@ using ASFW::Audio::DICE::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
+// Onyx-i (Oxford run): pinned to the device's captured current rate until the
+// AV/C rate transition is validated on this hardware (M4). Without a pin, a
+// first-ever start has no session clock and falls back to the coordinator's
+// 48 kHz default, which the 44.1-only Onyx protocol correctly refuses.
+constexpr uint32_t kOnyxIFixedSampleRateHz = 44100U;
 
 // The Duet format-control path is deliberately start-time only for now.  Do
 // not resurrect a rate retained in a restart session: the host geometry and
@@ -45,6 +50,10 @@ constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
     if (record.vendorId == DeviceProfiles::Audio::kApogeeVendorId &&
         record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
         return AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz};
+    }
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
+        return AudioClockConfig{.sampleRateHz = kOnyxIFixedSampleRateHz};
     }
     return requestedClock;
 }
