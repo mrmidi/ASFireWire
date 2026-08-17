@@ -18,6 +18,7 @@
 #include "Vendors/ApogeeAudioProfiles.hpp"
 #include "Vendors/BeBoBDeviceProfiles.hpp"
 #include "Vendors/FocusriteAudioProfiles.hpp"
+#include "Vendors/MackieAudioProfiles.hpp"
 #include "Vendors/MidasAudioProfiles.hpp"
 #include "Vendors/PreSonusAudioProfiles.hpp"
 #include "Vendors/TerraTecAudioProfiles.hpp"
