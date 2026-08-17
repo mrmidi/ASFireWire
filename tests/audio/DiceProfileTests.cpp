@@ -17,6 +17,7 @@
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/PreSonusStudioLiveProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/Isoch/Profiles/WeissIntProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/ApogeeDuetProfile.hpp"
+#include "Audio/DriverKit/Config/AVC/MackieOnyx820iProfile.hpp"
 #include "Audio/DriverKit/Config/AVC/Phase88Profile.hpp"
 #include "Audio/Protocols/BeBoB/BeBoBPlug0StreamDiscovery.hpp"
 
@@ -376,6 +377,48 @@ TEST(DiceProfileTests, DynamicBeBoBProfileServesUncuratedBeBoBDevices) {
         AudioProfileRegistry::FindProfile(0x0089AB, 0x000042, kUnknownBeBoBGuid);
     ASSERT_NE(fallback, nullptr);
     EXPECT_STREQ(fallback->Name(), "Generic DICE");
+}
+
+TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {
+    const uint32_t kMackieVendorId = 0x000FF2;
+    const uint32_t kOnyxIOxfwModelId = 0x081216;
+    const auto* profile =
+        AudioProfileRegistry::FindProfile(kMackieVendorId, kOnyxIOxfwModelId, 0);
+
+    ASSERT_NE(profile, nullptr);
+    // Falling through to "Generic DICE" would hand the device a symmetric 2x2
+    // geometry that the RX path rejects on every 8-channel packet.
+    EXPECT_STREQ(profile->Name(), "Onyx-i (Oxford)");
+
+    // Asymmetric duplex captured from a real 820i: 8-in (device->host), 2-out.
+    EXPECT_EQ(profile->TxChannelCount(), 2);
+    EXPECT_EQ(profile->RxChannelCount(), 8);
+    EXPECT_EQ(profile->TxMidiSlots(), 0);
+    EXPECT_EQ(profile->RxMidiSlots(), 0);
+
+    // Stream-config builders live on the DICE profile interface; exercise the
+    // concrete class for the wire geometry.
+    const AVC::Profiles::MackieOnyx820iProfile concrete{};
+
+    DiceStreamConfig tx{};
+    ASSERT_TRUE(concrete.BuildDefaultTxStreamConfig(tx));
+    EXPECT_EQ(tx.pcmChannels, 2u);
+    EXPECT_EQ(tx.dbs, 2u);
+    EXPECT_EQ(tx.sampleRate, 44100u);
+    EXPECT_EQ(tx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
+
+    DiceStreamConfig rx{};
+    ASSERT_TRUE(concrete.BuildDefaultRxStreamConfig(rx));
+    EXPECT_EQ(rx.pcmChannels, 8u);
+    EXPECT_EQ(rx.dbs, 8u);
+    EXPECT_EQ(rx.sampleRate, 44100u);
+    EXPECT_EQ(rx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
+
+    // Only the captured current rate is offered until the AV/C rate transition
+    // is wired for this device (M4).
+    const auto rates = concrete.SupportedSampleRates();
+    ASSERT_EQ(rates.size(), 1u);
+    EXPECT_EQ(rates.front(), 44100u);
 }
 
 } // namespace

@@ -51,6 +51,14 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
               AudioIntegrationMode::kAVCDriven);
     EXPECT_EQ(ModeFor(ids::kTerraTecVendorId, ids::kPhase88RackFwModelId),
               AudioIntegrationMode::kAVCDriven);
+    EXPECT_EQ(ModeFor(ids::kMackieVendorId, ids::kOnyxIOxfwModelId),
+              AudioIntegrationMode::kAVCDriven);
+    EXPECT_EQ(ModeFor(ids::kMackieVendorId, ids::kOnyx1640iOxfwModelId),
+              AudioIntegrationMode::kNone);
+    EXPECT_EQ(ModeFor(ids::kMackieVendorId, ids::kOnyx1640iDiceModelId),
+              AudioIntegrationMode::kNone);
+    EXPECT_EQ(ModeFor(ids::kMackieVendorId, ids::kOnyxBlackbirdModelId),
+              AudioIntegrationMode::kNone);
     EXPECT_EQ(ModeFor(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId),
               AudioIntegrationMode::kHardcodedNub);
     EXPECT_EQ(ModeFor(ids::kMidasVendorId, ids::kMidasVeniceModelId),
@@ -240,6 +248,37 @@ TEST(AudioProfileRegistryTests, RecognizesWeissIntDevicesButKeepsOtherModelsDisa
                         .has_value());
         EXPECT_EQ(ModeFor(ids::kWeissVendorId, modelId), AudioIntegrationMode::kNone);
     }
+}
+
+TEST(AudioProfileRegistryTests, RecognizesMackieOnyxFamilyAndEnablesOxfordRunOnly) {
+    // Onyx-i Oxford run (shared id, geometry verified on a real 820i): AVC-driven.
+    const auto onyxI = AudioProfileRegistry::LookupIdentity(
+        ByVendorModel(ids::kMackieVendorId, ids::kOnyxIOxfwModelId));
+    ASSERT_TRUE(onyxI.has_value());
+    EXPECT_STREQ(onyxI->vendorName, ids::kMackieVendorName);
+    EXPECT_STREQ(onyxI->modelName, ids::kOnyxIOxfwModelName);
+    const auto profile = AudioProfileRegistry::LookupBestAudioProfile(
+        ByVendorModel(ids::kMackieVendorId, ids::kOnyxIOxfwModelId));
+    ASSERT_TRUE(profile.has_value());
+    EXPECT_EQ(profile->family, AudioProtocolFamily::Oxford);
+    EXPECT_EQ(profile->mode, AudioIntegrationMode::kAVCDriven);
+
+    // 1640i (both runs) and Blackbird: recognized by name, audio disabled.
+    for (const auto [modelId, modelName] :
+         {std::pair{ids::kOnyx1640iOxfwModelId, ids::kOnyx1640iModelName},
+          std::pair{ids::kOnyx1640iDiceModelId, ids::kOnyx1640iModelName},
+          std::pair{ids::kOnyxBlackbirdModelId, ids::kOnyxBlackbirdModelName}}) {
+        const auto identity = AudioProfileRegistry::LookupIdentity(
+            ByVendorModel(ids::kMackieVendorId, modelId));
+        ASSERT_TRUE(identity.has_value());
+        EXPECT_STREQ(identity->modelName, modelName);
+        EXPECT_EQ(ModeFor(ids::kMackieVendorId, modelId), AudioIntegrationMode::kNone);
+    }
+
+    // The DICE-run 820i model id is unpublished; the capture sentinel must not match.
+    EXPECT_FALSE(AudioProfileRegistry::LookupIdentity(
+                     ByVendorModel(ids::kMackieVendorId, 0x000820))
+                     .has_value());
 }
 
 } // namespace
