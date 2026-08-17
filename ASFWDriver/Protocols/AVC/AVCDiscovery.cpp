@@ -348,6 +348,17 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
                 avcUnit->IsInitialized() ? 2 : 0,  // Placeholder
                 avcUnit->IsInitialized() ? 2 : 0); // Placeholder
 
+    // The OXFW971's Music subunit implements no descriptor mechanism (standard
+    // descriptor access and the non-standard direct read both refuse on real
+    // hardware; Linux snd-oxfw never consults the Music subunit either), so the
+    // generic descriptor-driven path below can never publish this device.
+    // Publish the hardware-verified profile-owned configuration instead — same
+    // pattern as the BeBoB bypass in OnAVCUnitCreated.
+    if (IsMackieOnyxIOxford(*device)) {
+        PublishMackieOnyxIProfileOwnedConfig(guid, *device);
+        return;
+    }
+
     auto* musicSubunit = FindAudioMusicSubunit(*avcUnit);
     if (!musicSubunit) {
         os_log_debug(log_,
@@ -440,6 +451,42 @@ void AVCDiscovery::PublishBeBoBAudioConfig(uint64_t guid,
              "[BeBoB] publishing BeBoB audio nub GUID=0x%016llx pcm=%u midiSlots=%u dbs=%u rate=%u mode=%{public}s",
              guid, static_cast<unsigned>(kPcmChannels), static_cast<unsigned>(kMidiSlots),
              static_cast<unsigned>(kPcmChannels + kMidiSlots), kSampleRateHz, "blocking");
+    PublishReadyAudioConfig(guid, config);
+}
+
+void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
+                                                        const Discovery::FWDevice& device) {
+    // Wire geometry captured live from an Onyx 820i (AV/C unit-level EXTENDED
+    // STREAM FORMAT INFORMATION, 2026-08-17): capture 8ch MBLA / playback 2ch
+    // MBLA, compound AM824, one isoch plug per direction, no MIDI. Only the
+    // captured current rate is offered until the AV/C rate transition is wired
+    // for this device (M4) — same policy as MackieOnyx820iProfile, which owns
+    // the matching isoch geometry.
+    constexpr uint32_t kCaptureChannels = 8;   // device -> host (CoreAudio input)
+    constexpr uint32_t kPlaybackChannels = 2;  // host -> device (CoreAudio output)
+    constexpr uint32_t kSampleRateHz = 44100;
+
+    ::ASFW::Audio::Model::ASFWAudioDevice config{};
+    config.guid = guid;
+    config.vendorId = device.GetVendorID();
+    config.modelId = device.GetModelID();
+    config.deviceName =
+        std::string(::ASFW::Audio::DeviceProtocolFactory::kMackieVendorName) + " " +
+        ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelName;
+    config.channelCount = kCaptureChannels;
+    config.inputChannelCount = kCaptureChannels;
+    config.outputChannelCount = kPlaybackChannels;
+    config.sampleRates = {kSampleRateHz};
+    config.currentSampleRate = kSampleRateHz;
+    config.inputPlugName = "Onyx Capture";
+    config.outputPlugName = "Onyx Monitor Return";
+    // LOUD vendor-wide rule (Linux snd-oxfw oxfw.c:189-196); also forced in
+    // DeviceStreamModeQuirks so every downstream mode resolution agrees.
+    config.streamMode = ::ASFW::Audio::Model::StreamMode::kBlocking;
+
+    ASFW_LOG(Audio,
+             "[Onyx] publishing profile-owned audio nub GUID=0x%016llx in=%u out=%u rate=%u mode=blocking",
+             guid, kCaptureChannels, kPlaybackChannels, kSampleRateHz);
     PublishReadyAudioConfig(guid, config);
 }
 
@@ -1401,6 +1448,11 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
     return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeVendorId &&
            device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kApogeeDuetModelId;
+}
+
+bool AVCDiscovery::IsMackieOnyxIOxford(const Discovery::FWDevice& device) const noexcept {
+    return device.GetVendorID() == ::ASFW::Audio::DeviceProtocolFactory::kMackieVendorId &&
+           device.GetModelID() == ::ASFW::Audio::DeviceProtocolFactory::kOnyxIOxfwModelId;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {
