@@ -67,6 +67,23 @@ std::vector<uint32_t> MackieOnyx820iProfile::SupportedSampleRates() const {
     return {44100u};
 }
 
+AudioStreamTxPolicy MackieOnyx820iProfile::TxStreamPolicy() const noexcept {
+    // Field-verified 2026-08-17: with the default policy (no empty packets), a
+    // record-only session leaves the output ring unfed and the TX prep deficit
+    // grows monotonically (~3.3k -> 5.7k frames) until the session collapses —
+    // five start/stop cycles in a row. Phase88 (the working BeBoB precedent on
+    // this same AV/C+CMP base) sends CIP NO-DATA packets while output is idle;
+    // the Onyx needs the identical policy.
+    return AudioStreamTxPolicy{
+        .hostToDevicePcmEncoding = Encoding::AudioWireFormat::kAM824,
+        .variableDbs = false,
+        .defaultNonAudioSlotWord = 0x80000000,
+        .initializeNonAudioSlots = true,
+        .preserveFdfInNoDataPackets = false,
+        .emptyPacketsDuringIdle = true
+    };
+}
+
 // Safety-offset and latency figures mirror the Duet profile's validated values as
 // placeholders; they are unvalidated for the Onyx until real streaming (M2/M3)
 // and must be re-measured then.

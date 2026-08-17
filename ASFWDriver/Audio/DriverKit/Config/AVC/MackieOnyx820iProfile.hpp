@@ -41,6 +41,8 @@ public:
 
     [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override;
 
+    [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override;
+
     [[nodiscard]] uint32_t TxSafetyOffsetFrames(double sampleRate) const noexcept override;
     [[nodiscard]] uint32_t RxSafetyOffsetFrames(double sampleRate) const noexcept override;
     [[nodiscard]] uint32_t TxReportedLatencyFrames(double sampleRate) const noexcept override;
