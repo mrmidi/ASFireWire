@@ -17,7 +17,8 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
                                                                    uint32_t am824Slots,
                                                                    ASFW::Encoding::AudioWireFormat format,
                                                                    uint32_t channelOffset,
-                                                                   bool publishTimeline) noexcept {
+                                                                   bool publishTimeline,
+                                                                   bool trustConfiguredStride) noexcept {
     RxAudioPacketProcessorResult result{};
 
     if (length < kIsochHeaderSize + 8) {
@@ -45,8 +46,15 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     result.dbs = cip->dataBlockSize;
     result.dbc = cip->dataBlockCounter;
 
+    // Loud OXFW units stamp an unreliable dbs in device->host packets. With the
+    // quirk, the configured slot count is the stride authority; the header dbs
+    // stays in result.dbs for telemetry. Cross-validated with Linux
+    // amdtp-stream.c:766-769 (CIP_WRONG_DBS substitutes data_block_quadlets).
+    const uint32_t strideQuadlets =
+        trustConfiguredStride ? am824Slots : cip->dataBlockSize;
+
     const size_t payloadBytes = length - kIsochHeaderSize - 8;
-    const size_t dbsBytes = static_cast<size_t>(cip->dataBlockSize) * 4u;
+    const size_t dbsBytes = static_cast<size_t>(strideQuadlets) * 4u;
     if (dbsBytes == 0) {
         result.status = DirectRxWriteStatus::kZeroDataBlockSize;
         return result;
@@ -66,10 +74,11 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
         return result;
     }
 
-    // Geometry validation
+    // Geometry validation. With the stride quirk, the header dbs is not part of
+    // the contract; the configured stride must still cover the stream's channels.
     if (channels == 0 ||
-        cip->dataBlockSize < channels ||
-        am824Slots != cip->dataBlockSize) {
+        strideQuadlets < channels ||
+        (!trustConfiguredStride && am824Slots != cip->dataBlockSize)) {
         result.status = DirectRxWriteStatus::kGeometryMismatch;
         return result;
     }
@@ -83,10 +92,10 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
             return result;
         }
 
-        const uint32_t* frameIn = dataBlocks + (i * cip->dataBlockSize);
+        const uint32_t* frameIn = dataBlocks + (i * strideQuadlets);
         // Write this stream's slice at its channel offset into the interleaved
         // frame; the writer stride covers the buffer's full channel width.
-        DecodeDirectRxFrame(frameIn, channels, cip->dataBlockSize, format,
+        DecodeDirectRxFrame(frameIn, channels, strideQuadlets, format,
                             frameOut + channelOffset);
     }
 
