@@ -414,11 +414,12 @@ TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {
     EXPECT_EQ(rx.sampleRate, 44100u);
     EXPECT_EQ(rx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
 
-    // Only the captured current rate is offered until the AV/C rate transition
-    // is wired for this device (M4).
+    // 44.1 + 48 kHz (M4); 88.2/96 stay unoffered pending the driver-wide clock
+    // gate and SYT_INTERVAL-16 validation.
     const auto rates = concrete.SupportedSampleRates();
-    ASSERT_EQ(rates.size(), 1u);
-    EXPECT_EQ(rates.front(), 44100u);
+    ASSERT_EQ(rates.size(), 2u);
+    EXPECT_EQ(rates[0], 44100u);
+    EXPECT_EQ(rates[1], 48000u);
 }
 
 } // namespace
