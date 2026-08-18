@@ -60,11 +60,13 @@ bool MackieOnyx820iProfile::BuildDefaultRxStreamConfig(
 }
 
 std::vector<uint32_t> MackieOnyx820iProfile::SupportedSampleRates() const {
-    // 44.1 and 48 kHz, matching the runtime protocol's rate set (the AV/C
-    // SIGNAL FORMAT transition handles the switch). The device also advertises
-    // 88.2/96 kHz; those stay unoffered until the driver-wide clock gate and
-    // SYT_INTERVAL-16 geometry are validated.
-    return {44100u, 48000u};
+    // 44.1 kHz only until the ADK transport reconfiguration supports rate
+    // changes for AV/C static-profile devices — offering 48 kHz lets CoreAudio
+    // attempt a change that fails at reconfig and leaves a stale
+    // session.pendingClock behind (see MackieOnyxProtocol::SupportedRates for
+    // the field-verified failure chain). Must stay in lockstep with the
+    // runtime protocol's rate set and the published nub config.
+    return {44100u};
 }
 
 AudioStreamTxPolicy MackieOnyx820iProfile::TxStreamPolicy() const noexcept {

@@ -43,12 +43,19 @@ MackieOnyxProtocol::MackieOnyxProtocol(Protocols::Ports::FireWireBusOps& busOps,
 }
 
 std::vector<uint32_t> MackieOnyxProtocol::SupportedRates() const {
-    // 44.1 and 48 kHz via the base's INPUT/OUTPUT PLUG SIGNAL FORMAT
-    // transition — the same 0x18/0x19 command snd-oxfw uses for OXFW rate
-    // control. The unit also advertises 88.2/96 kHz (AV/C EXTENDED STREAM
-    // FORMAT capture); those remain behind AudioClockConfig's driver-wide
-    // gate pending SYT_INTERVAL-16 validation.
-    return {44100U, 48000U};
+    // 44.1 kHz only, deliberately, until the ADK transport reconfiguration
+    // supports rate changes for AV/C static-profile devices. Field-verified
+    // regression 2026-08-17: with 48 kHz in this list, a FAILED ADK rate
+    // change (HandleChangeSampleRate -> transport reconfig kIOReturnUnsupported)
+    // leaves session.pendingClock=48000 behind (RequestClockConfig persists it
+    // before execution and the failure path does not scrub it), and the next
+    // session start then programs the device to 48 kHz via SIGNAL FORMAT while
+    // the host graph runs 44.1 -> audible periodic dropouts. Keeping 48 kHz
+    // out of this list makes ApplyClockConfig refuse the stale pending clock.
+    // The device itself supports 44.1/48/88.2/96 kHz (AV/C EXTENDED STREAM
+    // FORMAT capture); the 0x18/0x19 transition machinery in the base is ready
+    // when the reconfig path lands.
+    return {44100U};
 }
 
 void MackieOnyxProtocol::ReadClockHealth(HealthCallback callback) {

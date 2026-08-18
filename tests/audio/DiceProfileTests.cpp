@@ -414,12 +414,12 @@ TEST(DiceProfileTests, ResolvesMackieOnyx820iAsymmetricProfileNotGenericDice) {
     EXPECT_EQ(rx.sampleRate, 44100u);
     EXPECT_EQ(rx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
 
-    // 44.1 + 48 kHz (M4); 88.2/96 stay unoffered pending the driver-wide clock
-    // gate and SYT_INTERVAL-16 validation.
+    // 44.1 kHz only until the ADK reconfig path supports AV/C rate changes —
+    // offering 48 kHz re-arms the stale-pendingClock regression (see
+    // MackieOnyxProtocol::SupportedRates).
     const auto rates = concrete.SupportedSampleRates();
-    ASSERT_EQ(rates.size(), 2u);
-    EXPECT_EQ(rates[0], 44100u);
-    EXPECT_EQ(rates[1], 48000u);
+    ASSERT_EQ(rates.size(), 1u);
+    EXPECT_EQ(rates.front(), 44100u);
 }
 
 } // namespace
