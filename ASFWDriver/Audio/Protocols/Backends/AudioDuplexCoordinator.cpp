@@ -51,6 +51,17 @@ constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
         record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
         return AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz};
     }
+    // Onyx-i: pinned again (defense in depth). A failed idle rate change leaves
+    // session.pendingClock behind (RequestClockConfig persists it before
+    // execution; the failure path does not scrub it), and a later start would
+    // otherwise consume the stale value and program the device away from the
+    // rate the host graph runs at. Field-verified on an 820i 2026-08-17.
+    // Remove together with the rate-list widening once the ADK reconfig path
+    // supports AV/C rate changes and the pending-clock hygiene is fixed.
+    if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
+        record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
+        return AudioClockConfig{.sampleRateHz = kOnyxIDefaultStartRateHz};
+    }
     return requestedClock;
 }
 
