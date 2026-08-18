@@ -60,6 +60,44 @@ inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
 inline constexpr uint32_t kMidasVendorId       = 0x10c73f;
 inline constexpr uint32_t kMidasVeniceModelId  = 0x000001;
 
+// ---- Mackie / LOUD Technologies (Onyx-i family — production-run variant split) ----
+// OUI 0x000ff2 is registered to LOUD Technologies (Mackie's parent company); Linux names
+// it VENDOR_LOUD (sound/firewire/oxfw/oxfw.c) and OUI_LOUD (sound/firewire/dice/dice.c).
+// Mackie shipped the Onyx-i mixers with two different FireWire implementations:
+//   - former production: Oxford OXFW971, AV/C driven (Linux snd-oxfw). Published anchors:
+//     Onyx 1640i = model 0x001640, Onyx Satellite = 0x00200f; the vendor-wide oxfw entry
+//     otherwise disambiguates by model-name string ("Onyxi" / "Onyx-i").
+//   - latter production: TCAT DICE with the LOUD category quirk (0x10 in the GUID
+//     category byte instead of the standard 0x04) — Linux snd-dice check_dice_category();
+//     its Kconfig lists "Onyx 820i/1220i/1620i/1640i (latter models)".
+// Documented family identities, recognition-only (same policy as the PreSonus StudioLive
+// siblings: identity from the libffado 2.5.0 device database; audio stays off until the
+// stream geometry is captured from hardware). Provenance per id, from
+// references/libffado-2.5.0/configuration device_definitions:
+//   0x081216 "Onyx-i"          OXFORD driver (H. Dehnhardt entry) — the shared model id of
+//                              the OXFW971 production run; units differ by name string
+//   0x001640 "Onyx 1640i"      OXFORD driver (S. Tonge entry; matches Linux snd-oxfw
+//                              MODEL_ONYX_1640I)
+//   0x000006 "Onyx 1640i"      DICE driver (T. Kepley entry)
+//   0x000007 "Onyx Blackbird"  DICE driver (M. Bernkopf entry; cross-checked with
+//                              snd-firewire-ctl-services runtime/dice/src/model.rs:122)
+// Live capture (2026-08-17, Onyx 820i on an Apple TB->FW643 chain, ASFW enumeration):
+//   GUID 0x000FF20400003AFC, vendor 0x000FF2, model 0x081216, unit specifier 0x00A02D
+//   version 0x010001 (1394TA AV/C), ROM strings "Loud Technologies Inc." / "Onyx-i".
+//   Confirms an Oxford-run 820i reports the shared 0x081216 id; the GUID category byte
+//   is 0x04, not the 0x10 Linux snd-dice requires for Loud DICE units, so the DICE gate
+//   rejects it and snd-oxfw's name match ("Onyx-i") claims it — consistent on all axes.
+// The DICE-run 820i/1220i/1620i model ids remain unpublished (ALSA and libffado match
+// them vendor-wide/generically), so the DICE-run 820i placeholder below stays
+// sentinel-gated until captured from a real DICE-run unit.
+inline constexpr uint32_t kMackieVendorId              = 0x000ff2;
+inline constexpr uint32_t kMackieModelIdPendingCapture = 0xffffffff;  // sentinel; real model ids are 24-bit
+inline constexpr uint32_t kOnyxIOxfwModelId            = 0x081216;
+inline constexpr uint32_t kOnyx1640iOxfwModelId        = 0x001640;
+inline constexpr uint32_t kOnyx1640iDiceModelId        = 0x000006;
+inline constexpr uint32_t kOnyxBlackbirdModelId        = 0x000007;
+inline constexpr uint32_t kOnyx820iModelId             = kMackieModelIdPendingCapture;  // TODO(capture): from real 820i
+
 // ---- PreSonus (DICE / TCAT family) ----
 // The OUI is shared with PreSonus BeBoB-era devices (FireBox/FP10/Inspire) and the
 // DICE FireStudio (model 0x000008); only exact vendor+model pairs may match.
@@ -99,6 +137,11 @@ inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
 inline constexpr const char* kMidasVendorName         = "Midas";
 inline constexpr const char* kMidasVeniceModelName    = "Venice F32";
+inline constexpr const char* kMackieVendorName        = "Mackie";
+inline constexpr const char* kOnyxIOxfwModelName      = "Onyx-i (Oxford)";
+inline constexpr const char* kOnyx1640iModelName      = "Onyx 1640i";
+inline constexpr const char* kOnyxBlackbirdModelName  = "Onyx Blackbird";
+inline constexpr const char* kOnyx820iModelName       = "Onyx 820i";
 inline constexpr const char* kPreSonusVendorName      = "PreSonus";
 inline constexpr const char* kStudioLive1602ModelName = "StudioLive 16.0.2";
 inline constexpr const char* kStudioLive1642ModelName = "StudioLive 16.4.2";

@@ -137,6 +137,40 @@ TEST(RxAudioPacketProcessorTests, ZeroDataBlockSizeIsItsOwnStatus) {
     EXPECT_TRUE(result.hasValidCip);
 }
 
+TEST(RxAudioPacketProcessorTests, WrongDbsQuirkTakesStrideFromConfiguration) {
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+
+    // Loud OXFW case (snd-oxfw SND_OXFW_QUIRK_WRONG_DBS): the device lays out
+    // data blocks at the negotiated width (kSlots) but stamps a wrong dbs in
+    // the CIP header. With the quirk, the configured stride is the authority
+    // and the packet decodes; the lying header value stays visible in
+    // result.dbs for telemetry.
+    constexpr uint8_t kLyingHeaderDbs = 16;
+    constexpr uint32_t kDataBlocks = 2;
+    const auto packet = MakePacket(MakeQuadlet0(kLyingHeaderDbs), MakeQuadlet1(0x1000),
+                                   kSlots, kDataBlocks);
+
+    const auto trusted = processor.ProcessPacket(
+        packet.data(), packet.size(), /*absoluteFrame=*/0, kSlots, kSlots,
+        ASFW::Encoding::AudioWireFormat::kAM824,
+        /*channelOffset=*/0, /*publishTimeline=*/true, /*trustConfiguredStride=*/true);
+    EXPECT_EQ(trusted.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_EQ(trusted.framesDecoded, kDataBlocks);
+    EXPECT_EQ(trusted.dbs, kLyingHeaderDbs);
+
+    // Without the quirk, the same packet is the stalled-capture illusion this
+    // quirk exists to fix: the oversized header stride swallows the payload and
+    // the packet decodes as zero events — indistinguishable from a device that
+    // went quiet. Pin that symptom so the quirk's value stays visible.
+    const auto untrusted = processor.ProcessPacket(
+        packet.data(), packet.size(), /*absoluteFrame=*/0, kSlots, kSlots,
+        ASFW::Encoding::AudioWireFormat::kAM824,
+        /*channelOffset=*/0, /*publishTimeline=*/true, /*trustConfiguredStride=*/false);
+    EXPECT_EQ(untrusted.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_EQ(untrusted.framesDecoded, 0U);
+}
+
 TEST(RxAudioPacketProcessorTests, GeometryDisagreementReportsGeometryMismatch) {
     Fixture fixture;
     RxAudioPacketProcessor processor(fixture.writer);

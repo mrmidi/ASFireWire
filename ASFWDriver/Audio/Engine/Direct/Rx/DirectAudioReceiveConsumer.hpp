@@ -28,6 +28,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         uint32_t channelOffset{0};
         uint32_t streamChannels{0};
         bool isSecondary{false};
+        // Loud OXFW quirk: take the RX stride from the configured slot count,
+        // not the packet's CIP dbs field (snd-oxfw SND_OXFW_QUIRK_WRONG_DBS).
+        bool trustConfiguredStride{false};
     };
 
     using TimingLossCallback = std::function<void()>;

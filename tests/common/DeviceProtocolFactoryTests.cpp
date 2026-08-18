@@ -193,4 +193,17 @@ TEST(DeviceProtocolFactoryTests, RecognizesPreSonusStudioLive1602DiceProfile) {
     EXPECT_STREQ(studioLive->modelName, DeviceProtocolFactory::kStudioLive1602ModelName);
 }
 
+TEST(DeviceProtocolFactoryTests, RecognizesMackieOnyxIOxfordAsAvcDriven) {
+    const auto onyxI = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kMackieVendorId, DeviceProtocolFactory::kOnyxIOxfwModelId);
+    ASSERT_TRUE(onyxI.has_value());
+    EXPECT_EQ(onyxI->integrationMode, DeviceIntegrationMode::kAVCDriven);
+    EXPECT_STREQ(onyxI->vendorName, DeviceProtocolFactory::kMackieVendorName);
+    EXPECT_STREQ(onyxI->modelName, DeviceProtocolFactory::kOnyxIOxfwModelName);
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kMackieVendorId,
+                  DeviceProtocolFactory::kOnyxIOxfwModelId),
+              DeviceIntegrationMode::kAVCDriven);
+}
+
 } // namespace

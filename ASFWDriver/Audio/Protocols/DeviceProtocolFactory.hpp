@@ -77,6 +77,8 @@ public:
     static constexpr uint32_t kPreSonusVendorId = DeviceProfiles::Audio::kPreSonusVendorId;
     static constexpr uint32_t kStudioLive1602ModelId =
         DeviceProfiles::Audio::kStudioLive1602ModelId;
+    static constexpr uint32_t kMackieVendorId = DeviceProfiles::Audio::kMackieVendorId;
+    static constexpr uint32_t kOnyxIOxfwModelId = DeviceProfiles::Audio::kOnyxIOxfwModelId;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 =
         DeviceProfiles::Audio::kFocusriteGuidModelSPro40Tcd3070;
     static constexpr const char* kFocusriteVendorName = DeviceProfiles::Audio::kFocusriteVendorName;
@@ -97,6 +99,9 @@ public:
     static constexpr const char* kAlesisMultiMixModelName =
         DeviceProfiles::Audio::kAlesisMultiMixModelName;
     static constexpr const char* kMidasVendorName = DeviceProfiles::Audio::kMidasVendorName;
+    static constexpr const char* kMackieVendorName = DeviceProfiles::Audio::kMackieVendorName;
+    static constexpr const char* kOnyxIOxfwModelName =
+        DeviceProfiles::Audio::kOnyxIOxfwModelName;
     static constexpr const char* kMidasVeniceModelName =
         DeviceProfiles::Audio::kMidasVeniceModelName;
     static constexpr const char* kPreSonusVendorName = DeviceProfiles::Audio::kPreSonusVendorName;
