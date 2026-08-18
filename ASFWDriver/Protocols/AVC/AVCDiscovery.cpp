@@ -464,7 +464,8 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     // the matching isoch geometry.
     constexpr uint32_t kCaptureChannels = 8;   // device -> host (CoreAudio input)
     constexpr uint32_t kPlaybackChannels = 2;  // host -> device (CoreAudio output)
-    constexpr uint32_t kSampleRateHz = 44100;
+    constexpr uint32_t kSampleRateHz = 44100;   // captured current rate
+    constexpr uint32_t kAltSampleRateHz = 48000;  // via AV/C SIGNAL FORMAT (M4)
 
     ::ASFW::Audio::Model::ASFWAudioDevice config{};
     config.guid = guid;
@@ -476,7 +477,7 @@ void AVCDiscovery::PublishMackieOnyxIProfileOwnedConfig(uint64_t guid,
     config.channelCount = kCaptureChannels;
     config.inputChannelCount = kCaptureChannels;
     config.outputChannelCount = kPlaybackChannels;
-    config.sampleRates = {kSampleRateHz};
+    config.sampleRates = {kSampleRateHz, kAltSampleRateHz};
     config.currentSampleRate = kSampleRateHz;
     config.inputPlugName = "Onyx Capture";
     config.outputPlugName = "Onyx Monitor Return";

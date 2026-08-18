@@ -34,11 +34,11 @@ using ASFW::Audio::DICE::HasRestartIntent;
 
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 constexpr uint32_t kDuetFixedSampleRateHz = 48000U;
-// Onyx-i (Oxford run): pinned to the device's captured current rate until the
-// AV/C rate transition is validated on this hardware (M4). Without a pin, a
-// first-ever start has no session clock and falls back to the coordinator's
-// 48 kHz default, which the 44.1-only Onyx protocol correctly refuses.
-constexpr uint32_t kOnyxIFixedSampleRateHz = 44100U;
+// Onyx-i (Oxford run): the device's captured current rate, used as the START
+// DEFAULT when a session carries no clock (a naked first-ever start). Unlike
+// the Duet's fixed-rate pin, this is only a default — explicit user rate
+// selections arrive via the session clocks and take precedence.
+constexpr uint32_t kOnyxIDefaultStartRateHz = 44100U;
 
 // The Duet format-control path is deliberately start-time only for now.  Do
 // not resurrect a rate retained in a restart session: the host geometry and
@@ -51,11 +51,20 @@ constexpr uint32_t kOnyxIFixedSampleRateHz = 44100U;
         record.modelId == DeviceProfiles::Audio::kApogeeDuetModelId) {
         return AudioClockConfig{.sampleRateHz = kDuetFixedSampleRateHz};
     }
+    return requestedClock;
+}
+
+// The coordinator's historical fallback for a start with no session clock is
+// 48 kHz. For a device whose current rate differs, that default would program
+// the wire away from the rate CoreAudio is running at on a first-ever start.
+// Resolve the default from the device instead; explicit user selections still
+// arrive via the session clocks and win at the call sites.
+[[nodiscard]] uint32_t DefaultStartRateForRecord(const Discovery::DeviceRecord& record) noexcept {
     if (record.vendorId == DeviceProfiles::Audio::kMackieVendorId &&
         record.modelId == DeviceProfiles::Audio::kOnyxIOxfwModelId) {
-        return AudioClockConfig{.sampleRateHz = kOnyxIFixedSampleRateHz};
+        return kOnyxIDefaultStartRateHz;
     }
-    return requestedClock;
+    return 48000U;
 }
 
 [[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
@@ -483,7 +492,7 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     // drops the selected rate and forces 48 kHz, leaving the device clocked at
     // 48k while the host runs at the picked rate.
     AudioClockConfig desiredClock{
-        .sampleRateHz = 48000U,
+        .sampleRateHz = DefaultStartRateForRecord(*record),
     };
     if (IsSupportedAudioClockConfig(session.pendingClock)) {
         desiredClock = session.pendingClock;
@@ -679,7 +688,7 @@ IOReturn AudioDuplexCoordinator::RunRecoveryStreaming(uint64_t guid,
             : ((session.appliedClock.sampleRateHz != 0)
                    ? session.appliedClock
                    : AudioClockConfig{
-                         .sampleRateHz = 48000U,
+                         .sampleRateHz = DefaultStartRateForRecord(*record),
                      });
 
     if (HasAnyRestartState(session) || session.phase == DuplexRestartPhase::kRunning) {

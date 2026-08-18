@@ -43,12 +43,12 @@ MackieOnyxProtocol::MackieOnyxProtocol(Protocols::Ports::FireWireBusOps& busOps,
 }
 
 std::vector<uint32_t> MackieOnyxProtocol::SupportedRates() const {
-    // The unit advertises 44.1/48/88.2/96 kHz (AV/C EXTENDED STREAM FORMAT
-    // capture), and the base's ApplyClockConfig speaks the same 0x18/0x19
-    // signal-format command snd-oxfw uses for OXFW rate changes — but only the
-    // captured current rate ships until a live rate transition is validated on
-    // this hardware (M4). Same conservative policy as the ADK profile.
-    return {44100U};
+    // 44.1 and 48 kHz via the base's INPUT/OUTPUT PLUG SIGNAL FORMAT
+    // transition — the same 0x18/0x19 command snd-oxfw uses for OXFW rate
+    // control. The unit also advertises 88.2/96 kHz (AV/C EXTENDED STREAM
+    // FORMAT capture); those remain behind AudioClockConfig's driver-wide
+    // gate pending SYT_INTERVAL-16 validation.
+    return {44100U, 48000U};
 }
 
 void MackieOnyxProtocol::ReadClockHealth(HealthCallback callback) {

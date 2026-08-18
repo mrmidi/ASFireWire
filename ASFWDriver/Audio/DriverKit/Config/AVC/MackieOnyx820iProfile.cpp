@@ -60,11 +60,11 @@ bool MackieOnyx820iProfile::BuildDefaultRxStreamConfig(
 }
 
 std::vector<uint32_t> MackieOnyx820iProfile::SupportedSampleRates() const {
-    // The device advertises 44.1/48/88.2/96 kHz, but until the AV/C SIGNAL FORMAT
-    // rate transition is wired for this device (M4), only the captured current
-    // rate is offered — same policy as the Duet profile: do not let CoreAudio
-    // construct a device the bring-up path must then move underneath it.
-    return {44100u};
+    // 44.1 and 48 kHz, matching the runtime protocol's rate set (the AV/C
+    // SIGNAL FORMAT transition handles the switch). The device also advertises
+    // 88.2/96 kHz; those stay unoffered until the driver-wide clock gate and
+    // SYT_INTERVAL-16 geometry are validated.
+    return {44100u, 48000u};
 }
 
 AudioStreamTxPolicy MackieOnyx820iProfile::TxStreamPolicy() const noexcept {
