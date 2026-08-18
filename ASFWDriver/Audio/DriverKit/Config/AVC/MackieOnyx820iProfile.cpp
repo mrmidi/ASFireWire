@@ -84,27 +84,30 @@ AudioStreamTxPolicy MackieOnyx820iProfile::TxStreamPolicy() const noexcept {
     };
 }
 
-// Safety-offset and latency figures mirror the Duet profile's validated values as
-// placeholders; they are unvalidated for the Onyx until real streaming (M2/M3)
-// and must be re-measured then.
+// Safety offsets and latencies, field-tuned 2026-08-17. The Duet placeholder
+// values (64/128/128/128) produced audible in-and-out playback on an 8 GB M3:
+// sessions stayed up (200 TxPrepFrame starvation markers, no faults, no
+// restarts) but host callback latency spiked to ~922 us against a 64-frame
+// (~1.45 ms) TX safety offset, with prep margin dipping to 120 frames. The
+// widened values trade ~3 ms of reported latency for jitter headroom.
 uint32_t MackieOnyx820iProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
     (void)sampleRate;
-    return 64;
+    return 192;
 }
 
 uint32_t MackieOnyx820iProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
     (void)sampleRate;
-    return 128;
+    return 256;
 }
 
 uint32_t MackieOnyx820iProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
     (void)sampleRate;
-    return 128;
+    return 256;
 }
 
 uint32_t MackieOnyx820iProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
     (void)sampleRate;
-    return 128;
+    return 256;
 }
 
 } // namespace ASFW::Isoch::Audio::AVC::Profiles
