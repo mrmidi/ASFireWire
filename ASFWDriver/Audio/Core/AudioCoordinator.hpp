@@ -52,6 +52,16 @@ public:
         IsochDuplexHostTransport::ClockAnchorReadyCallback callback) noexcept;
     using SessionStreamingCallback =
         std::function<bool(EndpointId endpointId, bool streaming)>;
+
+    // Installed by ASFWAudioNub. Fires an OSAction so the blocking recovery
+    // runs on ASFWAudioDriver's queue; see HandleTxTransportFault.
+    using TxTransportFaultDispatch =
+        std::function<void(uint32_t statusRaw, uint64_t streamGeneration)>;
+    void SetTxTransportFaultDispatch(TxTransportFaultDispatch dispatch) noexcept;
+    // Called by ASFWAudioNub from ASFWAudioDriver's queue once the OSAction hop
+    // has landed. Blocks in RecoverStreaming(); never call it from the isoch
+    // poll thread — that is the whole point of the hop.
+    void RecoverAfterTxTransportFault(EndpointId endpointId) noexcept;
     void SetSessionStreamingCallback(SessionStreamingCallback callback) noexcept;
 
     // IAudioSessionSink. Calls arrive in strict session-manager teardown order.
@@ -126,6 +136,8 @@ private:
     [[nodiscard]] kern_return_t StopHostTransport(
         const char* reason, bool generationInvalidated = false) noexcept;
     void HandleHostTimingLoss(EndpointId endpointId) noexcept;
+    void HandleTxTransportFault(EndpointId endpointId, uint32_t statusRaw,
+                                uint64_t streamGeneration) noexcept;
     [[nodiscard]] bool NotifySessionStreaming(EndpointId endpointId,
                                               bool streaming) noexcept;
 
@@ -138,6 +150,7 @@ private:
     IOLock* lock_{nullptr};
     EndpointId activeEndpoint_{};
     SessionStreamingCallback sessionStreamingCallback_{};
+    TxTransportFaultDispatch txTransportFaultDispatch_{};
     std::unordered_set<EndpointId, Devices::AudioEndpointIdHash>
         invalidatedEndpoints_{};
 };

@@ -269,6 +269,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
             return kIOReturnNoMemory;
         }
         isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
+        isochTransmitContext_->SetTxTransportFaultCallback(txTransportFaultCallback_);
     }
 
     const kern_return_t kr = isochTransmitContext_->Configure(channel, sid);
@@ -448,6 +449,14 @@ void IsochService::SetTxPreparationCallback(TxPreparationCallback callback) noex
     txPreparationCallback_ = std::move(callback);
     if (isochTransmitContext_) {
         isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
+    }
+}
+
+void IsochService::SetTxTransportFaultCallback(
+    TxTransportFaultCallback callback) noexcept {
+    txTransportFaultCallback_ = std::move(callback);
+    if (isochTransmitContext_) {
+        isochTransmitContext_->SetTxTransportFaultCallback(txTransportFaultCallback_);
     }
 }
 

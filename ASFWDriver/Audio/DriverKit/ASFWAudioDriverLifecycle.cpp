@@ -42,11 +42,13 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         if (ivars->device.audioNub) {
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
+            (void)ivars->device.audioNub->RegisterTxTransportFaultAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceConfigurationRequestedAction(nullptr);
         }
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
+        ivars->txTransportFaultAction.reset();
         ivars->txPreparationQueue.reset();
         TearDownAudioGraph(*this, *ivars, &graphState);
         (void)Stop(provider, SUPERDISPATCH);
@@ -90,6 +92,24 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     if (error != kIOReturnSuccess) {
         ivars->txPreparationAction.reset();
         return failStart(error, "RegisterTxPreparationAction");
+    }
+
+    // Terminal TX transport faults land on the default queue, not the
+    // TxPreparation queue: the handler blocks in recovery.
+    OSAction* rawTxTransportFaultAction = nullptr;
+    error = CreateActionTxTransportFaultReady(0, &rawTxTransportFaultAction);
+    if (error != kIOReturnSuccess || !rawTxTransportFaultAction) {
+        return failStart(
+            error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+            "CreateActionTxTransportFaultReady");
+    }
+    ivars->txTransportFaultAction =
+        ASFW::Common::AdoptRetained(rawTxTransportFaultAction);
+    error = ivars->device.audioNub->RegisterTxTransportFaultAction(
+        ivars->txTransportFaultAction.get());
+    if (error != kIOReturnSuccess) {
+        ivars->txTransportFaultAction.reset();
+        return failStart(error, "RegisterTxTransportFaultAction");
     }
 
     IODispatchQueue* rawZtsQueue = nullptr;
@@ -158,6 +178,45 @@ void IMPL(ASFWAudioDriver, DeviceConfigurationRequested)
     }
 }
 
+// Landing point for a terminal TX transport fault, on ASFWAudioDriver's default
+// queue. The fault was raised on the isoch watchdog/poll thread, which must not
+// block; the blocking recovery belongs here.
+//
+// Stop the producer first so nothing keeps preparing packets into a context
+// that has already cleared RUN, then hand the endpoint back to the core side
+// for recovery.
+void IMPL(ASFWAudioDriver, TxTransportFaultReady)
+{
+    (void)action;
+    if (!ivars) {
+        return;
+    }
+
+    const bool wasActive =
+        ivars->runtime.txActive.exchange(false, std::memory_order_acq_rel);
+
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: TX transport fault status=%u streamGeneration=%llu "
+             "txWasActive=%d — recovering",
+             statusRaw, streamGeneration, wasActive ? 1 : 0);
+
+    if (!ivars->device.audioNub) {
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioDriver: TX transport fault with no nub; "
+                       "recovery skipped");
+        return;
+    }
+
+    const kern_return_t kr =
+        ivars->device.audioNub->RecoverAudioStreamingAfterTxFault();
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioDriver: RecoverAudioStreamingAfterTxFault "
+                       "failed kr=0x%x",
+                       kr);
+    }
+}
+
 kern_return_t IMPL(ASFWAudioDriver, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
@@ -170,10 +229,12 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
                 ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x", stopKr);
             }
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
+            (void)ivars->device.audioNub->RegisterTxTransportFaultAction(nullptr);
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceConfigurationRequestedAction(nullptr);
         }
         ivars->txPreparationAction.reset();
+        ivars->txTransportFaultAction.reset();
         ivars->txPreparationQueue.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();

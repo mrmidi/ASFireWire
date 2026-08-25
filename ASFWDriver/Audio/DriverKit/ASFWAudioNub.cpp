@@ -190,6 +190,10 @@ void ASFWAudioNub::free()
             ivars->txPreparationAction->release();
             ivars->txPreparationAction = nullptr;
         }
+        if (ivars->txTransportFaultAction) {
+            ivars->txTransportFaultAction->release();
+            ivars->txTransportFaultAction = nullptr;
+        }
         if (ivars->ztsAnchorAction) {
             ivars->ztsAnchorAction->release();
             ivars->ztsAnchorAction = nullptr;
@@ -239,11 +243,16 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
     if (ivars) {
         if (auto* coordinator = GetAudioCoordinator(ivars)) {
             coordinator->SetTxPreparationCallback({});
+            coordinator->SetTxTransportFaultDispatch({});
             coordinator->SetClockAnchorReadyCallback({});
         }
         if (ivars->txPreparationAction) {
             ivars->txPreparationAction->release();
             ivars->txPreparationAction = nullptr;
+        }
+        if (ivars->txTransportFaultAction) {
+            ivars->txTransportFaultAction->release();
+            ivars->txTransportFaultAction = nullptr;
         }
         if (ivars->ztsAnchorAction) {
             ivars->ztsAnchorAction->release();
@@ -320,6 +329,59 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
     return kIOReturnSuccess;
 }
 
+kern_return_t IMPL(ASFWAudioNub, RegisterTxTransportFaultAction)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
+        return kIOReturnNotReady;
+    }
+
+    if (action) {
+        action->retain();
+    }
+    OSAction* oldAction = ivars->txTransportFaultAction;
+    ivars->txTransportFaultAction = action;
+
+    if (action) {
+        // Runs on the isoch watchdog/poll thread. Firing the action is the
+        // whole body on purpose: it must not block that thread.
+        coordinator->SetTxTransportFaultDispatch(
+            [this](uint32_t statusRaw, uint64_t streamGeneration) {
+                if (ivars && ivars->txTransportFaultAction) {
+                    TxTransportFaultReady(ivars->txTransportFaultAction,
+                                          statusRaw, streamGeneration);
+                }
+            });
+    } else {
+        coordinator->SetTxTransportFaultDispatch({});
+    }
+
+    if (oldAction) {
+        oldAction->release();
+    }
+    return kIOReturnSuccess;
+}
+
+kern_return_t IMPL(ASFWAudioNub, RecoverAudioStreamingAfterTxFault)
+{
+    if (!ivars || ivars->endpointId == 0) {
+        return kIOReturnNotReady;
+    }
+
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
+        return kIOReturnNotReady;
+    }
+
+    coordinator->RecoverAfterTxTransportFault(
+        ASFW::Audio::Devices::AudioEndpointId{ivars->endpointId});
+    return kIOReturnSuccess;
+}
+
 kern_return_t IMPL(ASFWAudioNub, RequestTxPreparation)
 {
     if (!ivars || !ivars->txPreparationAction) {
@@ -333,6 +395,15 @@ void IMPL(ASFWAudioNub, TxPreparationReady)
 {
     (void)action;
     (void)generation;
+}
+
+// Required by the generated dispatch table. The nub only originates this
+// action; ASFWAudioDriver's override is what actually handles it.
+void IMPL(ASFWAudioNub, TxTransportFaultReady)
+{
+    (void)action;
+    (void)statusRaw;
+    (void)streamGeneration;
 }
 
 kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)

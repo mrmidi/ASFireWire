@@ -94,6 +94,11 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
   public:
     using TimingLossCallback = std::function<void(EndpointId endpointId)>;
     using ClockAnchorReadyCallback = std::function<void(uint64_t generation)>;
+    // Terminal TX transport fault, tagged with the active endpoint. Delivered
+    // on the isoch watchdog/poll thread — the callee must not block.
+    using TxTransportFaultCallback =
+        std::function<void(EndpointId endpointId, uint32_t statusRaw,
+                           uint64_t streamGeneration)>;
 
     explicit IsochDuplexHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
 
@@ -101,6 +106,7 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     void SetTxPreparationCallback(
         Driver::IsochService::TxPreparationCallback callback) noexcept;
     void SetClockAnchorReadyCallback(ClockAnchorReadyCallback callback) noexcept;
+    void SetTxTransportFaultCallback(TxTransportFaultCallback callback) noexcept;
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(EndpointId endpointId) noexcept override;
     [[nodiscard]] kern_return_t ReservePlaybackResources(EndpointId endpointId,
@@ -162,6 +168,7 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
     EndpointId activeEndpoint_{};
     TimingLossCallback timingLossCallback_{};
     ClockAnchorReadyCallback clockAnchorReadyCallback_{};
+    TxTransportFaultCallback txTransportFaultCallback_{};
 };
 
 } // namespace ASFW::Audio

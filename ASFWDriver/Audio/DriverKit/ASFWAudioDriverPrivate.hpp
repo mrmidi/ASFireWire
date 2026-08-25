@@ -320,6 +320,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryMap> txMetadataMapSecondary;
     OSSharedPtr<IOMemoryMap> txControlMapSecondary;
     OSSharedPtr<OSAction> txPreparationAction;
+    OSSharedPtr<OSAction> txTransportFaultAction;
     OSSharedPtr<IODispatchQueue> txPreparationQueue;
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<OSAction> deviceConfigurationRequestedAction;

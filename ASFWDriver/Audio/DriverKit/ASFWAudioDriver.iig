@@ -47,6 +47,14 @@ public:
         TYPE(ASFWAudioNub::ZtsAnchorReady)
         QUEUENAME(Zts);
 
+    // Deliberately on the default queue, not TxPreparation: the handler blocks
+    // in RecoverStreaming(), and the TxPreparation queue must stay free to
+    // drain. Mirrors DeviceConfigurationRequested, the other blocking action.
+    virtual void TxTransportFaultReady(OSAction* action,
+                                       uint32_t statusRaw,
+                                       uint64_t streamGeneration)
+        TYPE(ASFWAudioNub::TxTransportFaultReady);
+
     virtual void DeviceConfigurationRequested(
         OSAction* action, uint32_t sampleRateHz, uint32_t opticalInput,
         uint32_t opticalOutput)

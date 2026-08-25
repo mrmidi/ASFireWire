@@ -94,6 +94,18 @@ public:
     // queue rather than on the CoreAudio real-time callback.
     virtual kern_return_t RequestTxPreparation(uint64_t generation);
 
+    // Terminal TX transport fault. The core side raises this on the isoch
+    // watchdog/poll thread; the action moves it to ASFWAudioDriver's default
+    // queue so the blocking recovery never runs on the thread that also
+    // carries the RX drain.
+    virtual void TxTransportFaultReady(OSAction* action TARGET,
+                                       uint32_t statusRaw,
+                                       uint64_t streamGeneration);
+    virtual kern_return_t RegisterTxTransportFaultAction(
+        OSAction* action TYPE(TxTransportFaultReady));
+    // Called back from ASFWAudioDriver's queue once the hop has landed.
+    virtual kern_return_t RecoverAudioStreamingAfterTxFault();
+
     virtual void ZtsAnchorReady(OSAction* action TARGET,
                                 uint64_t generation);
     virtual kern_return_t RegisterZtsAnchorAction(
@@ -200,6 +212,7 @@ struct ASFWAudioNub_IVars {
     uint32_t currentSampleRateHz{48000};
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
     OSAction* txPreparationAction{nullptr};
+    OSAction* txTransportFaultAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
     OSAction* deviceConfigurationRequestedAction{nullptr};

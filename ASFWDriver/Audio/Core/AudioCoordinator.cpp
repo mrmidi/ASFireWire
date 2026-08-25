@@ -37,6 +37,11 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
         [this](EndpointId endpointId) {
             HandleHostTimingLoss(endpointId);
         });
+    hostTransport_.SetTxTransportFaultCallback(
+        [this](EndpointId endpointId, uint32_t statusRaw,
+               uint64_t streamGeneration) {
+            HandleTxTransportFault(endpointId, statusRaw, streamGeneration);
+        });
 }
 
 AudioCoordinator::~AudioCoordinator() noexcept {
@@ -556,6 +561,82 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
     }
 }
 
+void AudioCoordinator::SetTxTransportFaultDispatch(
+    TxTransportFaultDispatch dispatch) noexcept {
+    txTransportFaultDispatch_ = std::move(dispatch);
+}
+
+// Arrives on the isoch watchdog/poll thread, straight out of
+// IsochTransmitContext::StopImmediatelyForTxFault(). Everything here must stay
+// non-blocking: that thread also carries the RX drain, which in the
+// interrupt-stall failure is the only thing still moving audio.
+//
+// The hop is an OSAction fired by ASFWAudioNub, landing on ASFWAudioDriver's
+// default queue, which then calls back in through the nub to
+// RecoverAfterTxTransportFault(). That is the same shape as the existing
+// TxPreparationReady/DeviceConfigurationRequested actions.
+//
+// Two cheaper wirings were considered and rejected. If the OSAction hop proves
+// troublesome (action registration races on teardown, or the fault arriving
+// while the audio driver's queue is already blocked in a stop), they are the
+// fallbacks, in order:
+//
+//   (b) Call AudioDuplexCoordinator::RecoverStreaming() inline from here, the
+//       way HandleHostTimingLoss() already does for RX
+//       (DirectAudioReceiveConsumer.cpp fires its callback inline from the RX
+//       drain). ~30 lines, symmetric with shipping behaviour, and wrong for
+//       this path: RecoverStreaming() IOSleep-polls for the endpoint claim up
+//       to kSyncBridgeTimeoutMs, so it would stall the RX drain for up to that
+//       long. Acceptable only as a stopgap, and only if the poll thread is
+//       ever split so TX and RX no longer share it.
+//
+//   (c) Give AudioCoordinator (or AudioDuplexCoordinator) its own
+//       IODispatchQueue and make RecoverStreaming() async for both RX and TX.
+//       This is the right long-term answer — it also fixes the latent RX case
+//       in (b) — but it changes recovery execution for every caller, so it
+//       belongs in its own change with its own test pass. Note that
+//       Driver::Scheduler is NOT a shortcut here: it is bound to
+//       ctx.workQueue (DriverContext.cpp:327), which is also the interrupt
+//       dispatch source's queue (DriverContext.cpp:371), so dispatching a
+//       blocking recovery onto it would stall interrupt delivery and the
+//       watchdog — a strictly worse version of the bug being fixed.
+void AudioCoordinator::HandleTxTransportFault(
+    EndpointId endpointId, uint32_t statusRaw,
+    uint64_t streamGeneration) noexcept {
+    if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) {
+        return;
+    }
+    ASFW_LOG(Audio,
+             "AudioCoordinator: TX transport fault endpoint=%llx status=%u "
+             "streamGeneration=%llu — dispatching recovery",
+             endpointId.value, statusRaw, streamGeneration);
+    if (txTransportFaultDispatch_) {
+        txTransportFaultDispatch_(statusRaw, streamGeneration);
+    } else {
+        // No audio driver is attached to hop through. Report it rather than
+        // silently leaving the HAL believing the stream is alive.
+        ASFW_LOG_ERROR(Audio,
+                       "AudioCoordinator: TX transport fault endpoint=%llx has "
+                       "no dispatch target; recovery not scheduled",
+                       endpointId.value);
+    }
+}
+
+void AudioCoordinator::RecoverAfterTxTransportFault(
+    EndpointId endpointId) noexcept {
+    if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (lock_) {
+        IOLockLock(lock_);
+        const bool invalidated = invalidatedEndpoints_.contains(endpointId);
+        IOLockUnlock(lock_);
+        if (invalidated) return;
+    }
+    (void)duplexCoordinator_.RecoverStreaming(
+        endpointId, DuplexRestartReason::kRecoverAfterTxFault);
+}
+
 void AudioCoordinator::HandleHostTimingLoss(EndpointId endpointId) noexcept {
     if (!endpointId) return;
     if (lock_) {
@@ -571,6 +652,8 @@ void AudioCoordinator::HandleHostTimingLoss(EndpointId endpointId) noexcept {
 void AudioCoordinator::BeginTeardown() noexcept {
     if (teardownRequested_.exchange(true, std::memory_order_acq_rel)) return;
     hostTransport_.SetTimingLossCallback({});
+    hostTransport_.SetTxTransportFaultCallback({});
+    txTransportFaultDispatch_ = {};
     hostTransport_.SetTxPreparationCallback({});
     hostTransport_.SetClockAnchorReadyCallback({});
     (void)StopHostTransport("service-teardown", false);

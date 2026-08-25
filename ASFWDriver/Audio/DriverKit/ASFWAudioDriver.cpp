@@ -63,6 +63,7 @@ void ASFWAudioDriver::free()
         ivars->controlBuffer.reset();
         ivars->audioDevice.reset();
         ivars->txPreparationAction.reset();
+        ivars->txTransportFaultAction.reset();
         ivars->txPreparationQueue.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();

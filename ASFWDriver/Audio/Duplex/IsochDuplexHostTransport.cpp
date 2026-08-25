@@ -68,6 +68,22 @@ void IsochDuplexHostTransport::SetTimingLossCallback(
     timingLossCallback_ = std::move(callback);
 }
 
+void IsochDuplexHostTransport::SetTxTransportFaultCallback(
+    TxTransportFaultCallback callback) noexcept {
+    txTransportFaultCallback_ = std::move(callback);
+    if (txTransportFaultCallback_) {
+        isoch_.SetTxTransportFaultCallback(
+            [this](uint32_t statusRaw, uint64_t streamGeneration) {
+                if (txTransportFaultCallback_ && activeEndpoint_) {
+                    txTransportFaultCallback_(activeEndpoint_, statusRaw,
+                                              streamGeneration);
+                }
+            });
+    } else {
+        isoch_.SetTxTransportFaultCallback({});
+    }
+}
+
 void IsochDuplexHostTransport::SetTxPreparationCallback(
     Driver::IsochService::TxPreparationCallback callback) noexcept {
     isoch_.SetTxPreparationCallback(std::move(callback));

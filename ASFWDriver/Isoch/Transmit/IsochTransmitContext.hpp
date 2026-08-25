@@ -54,6 +54,20 @@ public:
     using State = ITState;
     using TxPreparationCallback = std::function<void(uint64_t generation)>;
 
+    // Terminal transport fault notification. Fired once per fatal stop, after
+    // the terminal state is published to the seam, so the consumer above the
+    // seam learns that TX is dead instead of discovering it whenever it next
+    // happens to stop the stream. Before this existed, the 2026-08-25 stall
+    // left the consumer believing the stream was running for 63 s after the
+    // context had already stopped.
+    //
+    // CONTRACT: this fires on the isoch watchdog/poll thread, which also
+    // carries the RX drain. The callee MUST NOT block: it must hand the fault
+    // to another queue and return. See AudioCoordinator::HandleTxTransportFault
+    // for the hop and for why the two cheaper wirings were rejected.
+    using TxTransportFaultCallback =
+        std::function<void(uint32_t statusRaw, uint64_t streamGeneration)>;
+
     // ==========================================================================
     // Public interface
     // ==========================================================================
@@ -93,6 +107,7 @@ public:
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
+    void SetTxTransportFaultCallback(TxTransportFaultCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }
     
@@ -188,6 +203,7 @@ private:
     std::atomic<uint32_t> maxRefillLatencyUs_{0};
     std::atomic<uint64_t> irqWatchdogKicks_{0};
     TxPreparationCallback txPreparationCallback_{};
+    TxTransportFaultCallback txTransportFaultCallback_{};
 
     // Shared transport memory regions
     OSSharedPtr<IOMemoryMap> payloadMap_{nullptr};

@@ -650,6 +650,11 @@ void IsochTransmitContext::SetTxPreparationCallback(
     txPreparationCallback_ = std::move(callback);
 }
 
+void IsochTransmitContext::SetTxTransportFaultCallback(
+    TxTransportFaultCallback callback) noexcept {
+    txTransportFaultCallback_ = std::move(callback);
+}
+
 #ifdef ASFW_HOST_TEST
 void IsochTransmitContext::SetProgressThresholdsForTesting(
     const Core::IsochProgressThresholds thresholds) noexcept {
@@ -704,6 +709,19 @@ void IsochTransmitContext::StopImmediatelyForTxFault(
     }
     state_ = State::Stopped;
     ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked");
+
+    // Publishing the terminal state into the control block is not a
+    // notification: nothing polls it. Push the fault across the seam so the
+    // consumer can act on it in this cycle rather than discovering it whenever
+    // it next stops the stream on its own. The early return above makes this
+    // one-shot per running->stopped edge.
+    if (txTransportFaultCallback_) {
+        const uint64_t generation =
+            controlBlock_
+                ? controlBlock_->streamGeneration.load(std::memory_order_acquire)
+                : 0;
+        txTransportFaultCallback_(static_cast<uint32_t>(status), generation);
+    }
 }
 
 void IsochTransmitContext::Poll() noexcept {

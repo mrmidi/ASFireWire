@@ -23,6 +23,11 @@ class HardwareInterface;
 class IsochService {
   public:
     using TxPreparationCallback = std::function<void(uint64_t generation)>;
+    // Mirrors Isoch::IsochTransmitContext::TxTransportFaultCallback. Spelled
+    // out rather than aliased so this header does not depend on the context's
+    // full type.
+    using TxTransportFaultCallback =
+        std::function<void(uint32_t statusRaw, uint64_t streamGeneration)>;
 
     IsochService() = default;
     ~IsochService() = default;
@@ -77,6 +82,8 @@ class IsochService {
     void SetReceiveConsumer(uint32_t streamIndex,
                             ASFW::Isoch::IIsochReceiveConsumer* consumer) noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
+    // Fires on the isoch watchdog/poll thread; the callee must not block.
+    void SetTxTransportFaultCallback(TxTransportFaultCallback callback) noexcept;
 
     /**
      * @brief Allocates the shared payload slab, metadata ring, and control block.
@@ -151,6 +158,7 @@ class IsochService {
     OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_[kMaxStreamsPerDirection]{};
 
     TxPreparationCallback txPreparationCallback_{};
+    TxTransportFaultCallback txTransportFaultCallback_{};
     uint32_t interruptInterval_{8};
 
     HardwareInterface* hardware_{nullptr};
