@@ -738,10 +738,20 @@ void IsochTransmitContext::Poll() noexcept {
                 // Watchdog-carried streaming can re-transmit stale descriptor
                 // laps between kicks when the interrupt path dies. Sustained
                 // interrupt silence is a transport fault, not jitter.
-                auto access = hardware_ ? hardware_->TryBeginAccess() : Driver::HardwareAccessScope{};
-                const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
-                    DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
-                const uint32_t latchedIntEvents = access ? access.Read(Register32::kIntEvent) : 0;
+                // The gate is a non-recursive IOLock and
+                // StopImmediatelyForTxFault() opens its own scope, so this
+                // diagnostic lease must be released before the stop call
+                // below. Holding it across the call recursively locks the
+                // gate and aborts the dext.
+                uint32_t ctrl = 0;
+                uint32_t latchedIntEvents = 0;
+                if (hardware_) {
+                    if (auto access = hardware_->TryBeginAccess()) {
+                        ctrl = access.Read(static_cast<Register32>(
+                            DMAContextHelpers::IsoXmitContextControl(contextIndex_)));
+                        latchedIntEvents = access.Read(Register32::kIntEvent);
+                    }
+                }
                 ASFW_LOG(Isoch,
                          "IT FATAL: interrupt path silent across %u "
                          "consecutive watchdog kicks; stopping context "
