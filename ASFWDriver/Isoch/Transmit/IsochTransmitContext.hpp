@@ -144,6 +144,30 @@ private:
     static constexpr uint32_t kIrqSilentKickFatalThreshold = 16;
     uint32_t irqSilentKickStreak_{0};
 
+    // Interrupt-delivery re-arm attempts, taken before the fatal above.
+    //
+    // The observed 2026-08-25 stall left IntEvent with isochTx|isochRx|RQPkt
+    // latched, IntMask master-enabled, and no handler entry: events pending,
+    // delivery dead. The host controller is an Agere FW643 (PCI 0x11C1/0x5901)
+    // driven by MSI ("IOPCIMSIMode" = Yes), and MSI is a message per interrupt
+    // condition rather than a level: a message that is lost, or never
+    // re-asserted after the handler cleared IntEvent, is never retried by the
+    // hardware. Toggling masterIntEnable off and on rebuilds the 0->1
+    // interrupt condition over the still-latched events, which should emit a
+    // fresh message.
+    //
+    // This is NOT taken from a reference stack. Linux's answer for this chip is
+    // QUIRK_NO_MSI (ohci.c:344) — fall back to level-triggered INTx — which
+    // Apple Silicon does not offer, and Apple's own AppleFWOHCI predates it.
+    // Treat the re-arm as an unproven, hardware-validated-only remedy: it is
+    // cheap, it cannot lose latched events (IntEvent latches regardless of
+    // mask), and the fatal below still backstops it.
+    static constexpr uint32_t kIrqSilentFirstReArmKick = 2;
+    static constexpr uint32_t kIrqSilentSecondReArmKick = 8;
+    std::atomic<uint64_t> irqReArmAttempts_{0};
+    std::atomic<uint64_t> irqReArmRecoveries_{0};
+    bool irqReArmPendingOutcome_{false};
+
     // A callback is not DMA progress. This independent cursor monitor catches
     // stale/repeated IT events and watchdog refills whose CommandPtr retires no
     // packet. Thresholds are wall-clock durations converted once at Start().

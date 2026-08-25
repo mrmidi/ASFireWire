@@ -734,6 +734,31 @@ void IsochTransmitContext::Poll() noexcept {
                          ctrl,
                          latchedIntEvents);
             }
+            // Before declaring the path dead, try to rebuild the interrupt
+            // condition so the controller re-emits a message for the events it
+            // has already latched. See kIrqSilentFirstReArmKick for why this is
+            // unproven and why it is still worth attempting here.
+            if ((irqSilentKickStreak_ == kIrqSilentFirstReArmKick ||
+                 irqSilentKickStreak_ == kIrqSilentSecondReArmKick) &&
+                hardware_) {
+                if (auto access = hardware_->TryBeginAccess()) {
+                    const uint32_t before = access.Read(Register32::kIntEvent);
+                    access.WriteAndFlush(Register32::kIntMaskClear,
+                                         IntMaskBits::kMasterIntEnable);
+                    access.WriteAndFlush(Register32::kIntMaskSet,
+                                         IntMaskBits::kMasterIntEnable);
+                    const uint64_t attempt =
+                        irqReArmAttempts_.fetch_add(1, std::memory_order_relaxed) + 1;
+                    irqReArmPendingOutcome_ = true;
+                    ASFW_LOG(Isoch,
+                             "IT: interrupt re-arm attempt=%llu at kick=%u "
+                             "(masterIntEnable toggled; intEvent=0x%08x)",
+                             attempt,
+                             irqSilentKickStreak_,
+                             before);
+                }
+            }
+
             if (irqSilentKickStreak_ >= kIrqSilentKickFatalThreshold) {
                 // Watchdog-carried streaming can re-transmit stale descriptor
                 // laps between kicks when the interrupt path dies. Sustained
