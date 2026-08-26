@@ -168,8 +168,25 @@ struct AudioTimingGeometry final {
         8 * kTxHardwareRingPackets;
     static constexpr uint32_t kTxCommittedMargin16xFloorPackets =
         16 * kTxHardwareRingPackets;
-    static constexpr uint32_t kTxPreparationSlackPackets =
-        2 * kTxHardwareRingPackets;
+    // Refill-latency budget: how late the producer may be and still find its
+    // slots committed. This is a property of scheduling jitter, NOT of ring
+    // depth — a deeper hardware ring buys runway, it does not require more
+    // look-ahead.
+    //
+    // It was previously written as `2 * kTxHardwareRingPackets`, which made the
+    // required look-ahead scale with the ring: kTxCoverageLeadPackets = 3 * ring.
+    // Deepening the ring then *raised* the amount of future the producer had to
+    // materialise, and preparation is fed by RX replay observations that are
+    // inherently ~now, so it could not. asfw_sim bisected the ceiling at ring
+    // 312 (39 ms); at ring 800 the producer would have had to run 117 ms ahead
+    // of hardware and the stream collapsed to 0% written — with every
+    // static_assert still passing. See
+    // tools/asfw_sim/scenarios/slack-scales-with-ring.yaml.
+    //
+    // 96 is exactly the value the old expression produced at the shipping ring
+    // of 48, so this is a no-op today and unblocks every deeper ring. 96 packets
+    // = 12 ms of producer lateness.
+    static constexpr uint32_t kTxPreparationSlackPackets = 96;
     static constexpr uint32_t kTxCoverageLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
     // Covers one full client write plus the retained historical recovery
