@@ -1,0 +1,34 @@
+name: rx-drain-granularity
+description: >
+  TX-IRQ-001 step 4. IsochReceiveContext::Poll() drains unconditionally on the
+  1 ms watchdog tick, so the isochRx interrupt is a second, redundant drain
+  trigger on a path already being polled -- a double path costing half of all
+  MSI traffic. Dropping it moves RX from ~6-packet interrupt-driven bursts to
+  ~8-packet timer-driven ones.
+
+  Claim: RX publication burstiness is harmless while the burst stays under
+  RxSequenceReplay::kReadDelay (256 packets / 32 ms), because the replay reader
+  always lags the producer by exactly that much, so TX preparation cannot ask
+  for an entry that has not been published yet.
+
+  Swept 2026-08-26: identical at batch 1..256; AHEAD_OF_PRODUCER first appears
+  at 288 (36 ms) and collapses at 512 (64 ms) -- i.e. the knob demonstrably
+  bites, just not anywhere near where we operate. This scenario pins Apple's
+  own RX cadence (160 packets / 20 ms), which is 8x coarser than the 1 ms tick
+  we would actually move to and still leaves 96 packets of margin.
+
+  NOTE this models publication DELAY only. Coarsening the drain does not
+  quantise packet timestamps: source_cycle_timer comes from the isoch header
+  quadlet (IsochRxTiming.hpp), not from when we drained.
+base: driver
+rate: 48000
+
+scenario:
+  duration_s: 30
+  rx_drain_batch_cycles: 160
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.99
+  max_replay_failures: 0
+  max_align_count: 1

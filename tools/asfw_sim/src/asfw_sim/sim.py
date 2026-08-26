@@ -68,6 +68,22 @@ class SimConfig:
     zts_mode: str = "correlated"
     #: SimpleIIR smoothing coefficient per ZTS period (correlated mode only).
     iir_alpha: float = 0.25
+    #: How many cycles of RX observations become visible at once.
+    #:
+    #: 1 = publish as each packet arrives (this model's original behaviour, and
+    #: not what the driver does). IsochReceiveContext::Poll() runs
+    #: rxRing_.DrainCompleted() over every packet the controller has completed
+    #: since the last drain, so observations appear in BURSTS: ~6 packets when
+    #: the drain is interrupt-driven (kPacketsPerInterrupt) and ~8 when it is
+    #: driven by the 1 ms watchdog tick.
+    #:
+    #: This models publication delay only. Each entry still carries its own
+    #: per-packet source_cycle_timer, because that comes from the isoch header
+    #: quadlet (IsochRxTiming.hpp) and not from when we happened to drain -- so
+    #: coarsening the drain does NOT quantise packet timestamps. What it can do
+    #: is make TX preparation ask for a replay entry that has not been published
+    #: yet, which shows up as ReplayFailure.AHEAD_OF_PRODUCER.
+    rx_drain_batch_cycles: int = 1
 
 
 @dataclass
@@ -219,6 +235,8 @@ def run(config: SimConfig) -> SimResult:
 
     pending_wake_at: int | None = None
     min_distance = 0
+    #: RX observations completed by the controller but not yet drained.
+    pending_rx: list[ReplayEntry] = []
 
     for cycle in range(config.duration_cycles):
         # Sampled first: any `continue` below would otherwise alias the trace
@@ -248,19 +266,24 @@ def run(config: SimConfig) -> SimResult:
             rx_frame_cursor += data_blocks
             result.rx_dropped += 1
         else:
-            replay.publish(
-                ReplayEntry(
-                    first_audio_frame=rx_frame_cursor,
-                    source_cycle_timer=cycle,
-                    syt_offset=0 if data_blocks else 0xFFFF_FFFF,
-                    data_blocks=data_blocks,
-                    valid_syt=bool(data_blocks),
-                )
+            entry = ReplayEntry(
+                first_audio_frame=rx_frame_cursor,
+                source_cycle_timer=cycle,
+                syt_offset=0 if data_blocks else 0xFFFF_FFFF,
+                data_blocks=data_blocks,
+                valid_syt=bool(data_blocks),
             )
             rx_frame_cursor += data_blocks
-            result.replay_entries_published += 1
-            if not replay.established:
-                replay.mark_established()
+            # The controller completed this packet, but the driver only sees it
+            # at the next drain. Hold it until the batch boundary.
+            pending_rx.append(entry)
+            if (cycle + 1) % config.rx_drain_batch_cycles == 0:
+                for held in pending_rx:
+                    replay.publish(held)
+                    result.replay_entries_published += 1
+                    if not replay.established:
+                        replay.mark_established()
+                pending_rx.clear()
 
         # 2. The IT context transmits one packet per cycle.
         completion_cursor = cycle

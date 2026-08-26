@@ -67,6 +67,7 @@ _SCENARIO_KEYS = {
     "wake_latency_cycles",
     "unbounded_replay_history",
     "rx_drop_every_cycles",
+    "rx_drain_batch_cycles",
     "trace_every_cycles",
     "self_heal",
     "bus_drift_ppm",
@@ -146,6 +147,7 @@ class Scenario:
                 merged.get("unbounded_replay_history", False)
             ),
             rx_drop_every_cycles=int(merged.get("rx_drop_every_cycles", 0)),
+            rx_drain_batch_cycles=int(merged.get("rx_drain_batch_cycles", 1)),
             trace_every_cycles=int(merged.get("trace_every_cycles", 0)),
             self_heal=bool(merged.get("self_heal", True)),
             bus_drift_ppm=float(merged.get("bus_drift_ppm", 0)),
