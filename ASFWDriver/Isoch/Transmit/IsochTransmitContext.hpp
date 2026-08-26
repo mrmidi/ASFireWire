@@ -151,13 +151,43 @@ private:
     uint64_t lastInterruptCountSeen_{0};
     uint32_t irqStallTicks_{0};
 
-    // Consecutive watchdog kicks with zero interrupts observed. The watchdog
-    // bridges interrupt-delivery jitter only: its cadence is far coarser than
-    // the 48-packet descriptor ring, so a stream carried by the watchdog
-    // re-transmits stale ring laps between kicks. A sustained silent streak
-    // is a dead interrupt path and the context must stop honestly.
-    static constexpr uint32_t kIrqSilentKickFatalThreshold = 16;
+    // Ticks of interrupt silence per diagnostic "kick". The watchdog runs at
+    // kAsyncWatchdogPeriodUsec (1 ms) and interrupts arrive every
+    // kPacketsPerInterrupt packets (750 us at 6), so a single silent tick means
+    // nothing: hysteresis is required before *reporting*. Refill deliberately
+    // does NOT wait for it — see Poll().
+    static constexpr uint32_t kIrqStallTicksPerKick = 5;
+
+    // Consecutive watchdog kicks with zero interrupts observed.
+    //
+    // This used to fatal the context at 16 kicks (~80 ms). It no longer does.
+    // Interrupt silence is not the same fault as no DMA progress, and the two
+    // were conflated:
+    //
+    //   * The watchdog carries the stream. Poll() now refills on EVERY silent
+    //     tick (1 ms) rather than every 5th, so the refill cadence is well
+    //     inside the descriptor ring's drain time and stale-lap re-transmission
+    //     — the 2026-07-19 all-zero-stream failure this fatal was added for —
+    //     cannot occur through mere interrupt loss.
+    //   * Genuine stalls are still caught, independently and by direct
+    //     observation rather than inference: IsochProgressMonitor fatals at
+    //     kProgressFatalAfterNanos (100 ms) when the DMA cursor stops advancing,
+    //     with kTransportProgressStall. That is the honest backstop; it watches
+    //     progress, not interrupts.
+    //
+    // Per TX-IRQ-001 the interrupt path can wedge node-wide while the device and
+    // the chip stay healthy, and killing the stream there loses audio for a
+    // condition we can carry. Report it loudly instead: this threshold now
+    // raises a one-shot error and a counter, and the stream keeps running.
+    // See documentation/TX_IRQ_001_INTERRUPT_STALL.md sections 8 and 10.
+    static constexpr uint32_t kIrqSilentKickErrorThreshold = 16;
     uint32_t irqSilentKickStreak_{0};
+    //: One-shot latch so a wedged path logs once, not 1000x/s.
+    bool irqSilenceReported_{false};
+    //: Times the error threshold was crossed, and ticks spent carrying the
+    //: stream without interrupts. Both surface in LogStatistics().
+    std::atomic<uint64_t> irqSilenceEvents_{0};
+    std::atomic<uint64_t> irqCarriedTicks_{0};
 
     // Interrupt-delivery re-arm attempts, taken before the fatal above.
     //

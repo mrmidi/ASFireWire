@@ -287,6 +287,9 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     lastInterruptCountSeen_ = 0;
     irqStallTicks_ = 0;
     irqSilentKickStreak_ = 0;
+    irqSilenceReported_ = false;
+    irqSilenceEvents_.store(0, std::memory_order_relaxed);
+    irqCarriedTicks_.store(0, std::memory_order_relaxed);
     refillInProgress_.clear(std::memory_order_release);
 
     progressMonitor_.Configure(Core::IsochProgressThresholds{
@@ -731,7 +734,28 @@ void IsochTransmitContext::Poll() noexcept {
     const uint64_t currentInterrupts = interruptCount_.load(std::memory_order_relaxed);
     if (currentInterrupts == lastInterruptCountSeen_) {
         irqStallTicks_++;
-        if (irqStallTicks_ >= 5) {
+
+        // Carry the stream on EVERY silent tick, not once per kick.
+        //
+        // This block used to sit behind the kick hysteresis below, which made
+        // the fallback refill at one per 5 ms against a descriptor ring holding
+        // Layout::kNumPackets * 125 us of runway (6 ms at 48 packets). One late
+        // tick and the ring holed — which is what made watchdog-carried
+        // streaming look unsafe and motivated the old fatal. The hysteresis
+        // exists to avoid *reporting* a stall on jitter; it was never a reason
+        // to delay refilling. DoRefillOnce is the same work the ISR does and is
+        // gated by refillInProgress_, so an extra call costs a compare.
+        irqCarriedTicks_.fetch_add(1, std::memory_order_relaxed);
+        if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+            // Stop() may have acquired the gate after the first state check.
+            // Re-check while holding it before touching the slab.
+            if (state_ == State::Running) {
+                DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/false);
+            }
+            refillInProgress_.clear(std::memory_order_release);
+        }
+
+        if (irqStallTicks_ >= kIrqStallTicksPerKick) {
             irqStallTicks_ = 0;
             irqWatchdogKicks_.fetch_add(1, std::memory_order_relaxed);
             ++irqSilentKickStreak_;
@@ -777,15 +801,15 @@ void IsochTransmitContext::Poll() noexcept {
                 }
             }
 
-            if (irqSilentKickStreak_ >= kIrqSilentKickFatalThreshold) {
-                // Watchdog-carried streaming can re-transmit stale descriptor
-                // laps between kicks when the interrupt path dies. Sustained
-                // interrupt silence is a transport fault, not jitter.
-                // The gate is a non-recursive IOLock and
-                // StopImmediatelyForTxFault() opens its own scope, so this
-                // diagnostic lease must be released before the stop call
-                // below. Holding it across the call recursively locks the
-                // gate and aborts the dext.
+            // Sustained silence is reported, not acted on. The stream is being
+            // carried by the refill above; the DMA cursor is watched
+            // independently by IsochProgressMonitor, which fatals at
+            // kProgressFatalAfterNanos if progress actually stops. One-shot so
+            // a wedged path does not log per kick forever.
+            if (irqSilentKickStreak_ >= kIrqSilentKickErrorThreshold &&
+                !irqSilenceReported_) {
+                irqSilenceReported_ = true;
+                irqSilenceEvents_.fetch_add(1, std::memory_order_relaxed);
                 uint32_t ctrl = 0;
                 uint32_t latchedIntEvents = 0;
                 if (hardware_) {
@@ -795,26 +819,25 @@ void IsochTransmitContext::Poll() noexcept {
                         latchedIntEvents = access.Read(Register32::kIntEvent);
                     }
                 }
-                ASFW_LOG(Isoch,
-                         "IT FATAL: interrupt path silent across %u "
-                         "consecutive watchdog kicks; stopping context "
-                         "(ctrl=0x%08x intEvent=0x%08x)",
-                         irqSilentKickStreak_,
-                         ctrl,
-                         latchedIntEvents);
-                StopImmediatelyForTxFault();
-                return;
-            }
-            if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
-                // Stop() may have acquired the gate after the first state
-                // check. Re-check while holding it before touching the slab.
-                if (state_ == State::Running) {
-                    DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/false);
-                }
-                refillInProgress_.clear(std::memory_order_release);
+                ASFW_LOG_ERROR(Isoch,
+                               "IT: interrupt path silent across %u consecutive "
+                               "watchdog kicks — carrying the stream on the "
+                               "watchdog refill (ctrl=0x%08x intEvent=0x%08x). "
+                               "See TX-IRQ-001.",
+                               irqSilentKickStreak_,
+                               ctrl,
+                               latchedIntEvents);
             }
         }
     } else {
+        if (irqSilenceReported_) {
+            irqSilenceReported_ = false;
+            ASFW_LOG_ERROR(Isoch,
+                           "IT: interrupt delivery resumed after %u silent "
+                           "kicks (carriedTicks=%llu)",
+                           irqSilentKickStreak_,
+                           irqCarriedTicks_.load(std::memory_order_relaxed));
+        }
         lastInterruptCountSeen_ = currentInterrupts;
         irqStallTicks_ = 0;
         irqSilentKickStreak_ = 0;
@@ -876,7 +899,7 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     ASFW_LOG_RING_ONLY(
         Isoch,
         ::ASFW::Logging::LogLevel::Notice,
-        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu",
+        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carried=%llu",
         contextIndex_,
         tickCount_,
         interruptCount_.load(std::memory_order_relaxed),
@@ -886,7 +909,16 @@ void IsochTransmitContext::LogStatistics() const noexcept {
         progressSnapshots_.load(std::memory_order_relaxed),
         progressWakeSuccesses_.load(std::memory_order_relaxed),
         progressWakeAttempts_.load(std::memory_order_relaxed),
-        progressFatalStops_.load(std::memory_order_relaxed));
+        progressFatalStops_.load(std::memory_order_relaxed),
+        // irqSilence: times the path went silent past the error threshold. This
+        //   IS 0 on a healthy run — any non-zero value is TX-IRQ-001.
+        // carried: ticks the watchdog refilled with no new interrupt. Interrupts
+        //   arrive at ~1333/s against a 1000/s tick, so an occasional tick sees
+        //   none; expect a small, slowly-growing value when healthy. What
+        //   matters is the RATE: during an outage it climbs at ~1000/s, i.e. in
+        //   lockstep with poll=.
+        irqSilenceEvents_.load(std::memory_order_relaxed),
+        irqCarriedTicks_.load(std::memory_order_relaxed));
 }
 
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
