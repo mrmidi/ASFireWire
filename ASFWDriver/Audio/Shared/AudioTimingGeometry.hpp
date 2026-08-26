@@ -296,26 +296,49 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
 // 32 @192k  (== our kFramesPerDataPacket and AudioGeometryPolicy::FramesPerPacket).
 //
 // --- Apple AppleFWAudio.kext  (AM824DCLWrite / AM824NuDCLWrite, x86 IDA) ------
+// Full reference: documentation/APPLE_FWAUDIO_ISOCH_GEOMETRY.md (2026-08-26).
+// NOTE the binary carries TWO lineages; they differ by 100x in IRQ rate, so
+// always say which one you mean.
 //   fNumBufferGroups          = 100        backing DCL ring depth (~100 ms)
-//   fNumPacketsPerBufferGroup = 8          => HW interrupt every 8 pkt = 1.0 ms
-//   48k cadence               = D,D,D,N    => 6 frames/cycle avg, 8-frame DATA
+//   fNumPacketsPerBufferGroup = 8          bookkeeping chunk, NOT the IRQ stride
+//   kCallbackTimeoutInMSec    = 20
+//   legacy DCL (non-blocking): CallProc per group => IRQ every  8 pkt (1000/s)
+//   NuDCL RX   (blocking):     every 20th group   => IRQ every 160 pkt (  50/s)
+//   NuDCL TX   (blocking):     once per ring lap  => IRQ every 800 pkt (  10/s)
+//     NuDCL RX divisor is derived from a TIME budget, not a packet count:
+//     buffersPerCallback = 20000us / (125us * packetsPerGroup) = 20.
+//   Per-packet timing survives the coarse IRQ because every packet carries
+//   setTimeStampPtr -- DMA writes the timestamp, no interrupt needed to read
+//   it. Apple answers "is there work?" and "what time is it?" with two
+//   different mechanisms; we answer both with the completion interrupt.
+//   TX refill is driven by the CoreAudio clip path + an IOTimerEventSource
+//   (AppleFWAudioIsocEngine::scheduleDelayedWork), so a lost isoch interrupt
+//   costs a lap marker, not the stream. See linux-apple-irq-silence-guards.
+//   48k cadence (legacy)      = D,D,D,N    => 6 frames/cycle avg, 8-frame DATA
 //   CheckSYT target latency   = 2-3 cycles (~250-375 us) device presentation
 //                                          -- this is a SYT/presentation lead
 //                                          (cf. our TxTransferDelayTicks/SYT),
 //                                          NOT the CoreAudio safety offset.
 //   servo update              = gated groupIndex==0 => ~100 ms / ring wrap
 //                                          (100 groups * 8 pkt * 125 us)
-//   our analogues: 8-pkt group ~ kTimingGroupPackets(6, 0.75 ms); 100*8=800-pkt
-//     backing ring ~ kTxSharedSlotPackets / kTimelineSlots.
-//   *** CAVEAT (load-bearing) ***  This is OS 9 / early-OS-X lineage code: the
-//   buffer routines are literally the classic-Mac "DV" (Digital Video FireWire)
-//   streaming path -- DVAllocatePlayBufferGroup / DVCreatePlayBufferGroupUpdate-
-//   List, IOMallocAligned + fixed 100x8 rings, written ~2000-2003 and rarely
-//   touched since. Its constants were tuned for that era's low-performance CPUs
-//   and almost certainly for INTERRUPT-RATE / JITTER reduction (1 ms IRQ,
-//   once-per-wrap servo to minimize interrupt-context work), not for 2026
-//   latency. Take the ratios and the clock-domain discipline as the lesson, not
-//   the absolute counts.
+//   our analogues: Apple's 8-pkt group is a BOOKKEEPING chunk and has no
+//     analogue here -- it exists to precompute a DCLUpdateDCLList and a
+//     callback refcon so the ISR does no pointer-chasing through a linked
+//     list. Our descriptors are a flat array (index % ringSize), so all three
+//     of its jobs are free. Do NOT port buffer groups. What IS transferable:
+//     Apple keeps chunk size (8) and IRQ stride (160/800) as DIFFERENT
+//     numbers, where kPacketsPerCompletionGroup fuses IRQ stride, ZTS timing
+//     stride and refill quantum into one constant.
+//   100*8=800-pkt backing ring ~ kTxSharedSlotPackets / kTimelineSlots.
+//   *** CAVEAT (load-bearing) ***  The LEGACY DCL path is OS 9 / early-OS-X
+//   lineage code: the buffer routines are literally the classic-Mac "DV"
+//   (Digital Video FireWire) streaming path -- DVAllocatePlayBufferGroup /
+//   DVCreatePlayBufferGroupUpdateList, IOMallocAligned + fixed 100x8 rings,
+//   written ~2000-2003 and rarely touched since. Its 1 ms IRQ was tuned for
+//   that era's CPUs. The NuDCL path is the later one and is the relevant
+//   comparison for us, because it is BLOCKING like ours (legacy is
+//   non-blocking 5/6). Take the ratios and the clock-domain discipline as the
+//   lesson, not the absolute counts.
 //
 // --- Linux ALSA  sound/firewire/amdtp-stream.c -------------------------------
 //   syt_interval @48k         = 8 frames/DATA packet
@@ -336,8 +359,15 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
 //                  => ~4-8 pkt (0.5-1.0 ms) for a 64-frame period
 //
 // TAKEAWAYS for our geometry:
-//   * Everyone services DMA far more often than a deep batch: 0.75-1.375 ms IRQ
-//     (6-11 pkt). Ours kTimingGroupPackets = 6 (0.75 ms) is in range.
+//   * IRQ cadence is NOT converged across stacks, and the earlier claim here
+//     that "everyone services DMA every 0.75-1.375 ms, ours is in range" was
+//     wrong: it generalised from Apple's LEGACY path only. Actual spread is
+//     10/s (Apple NuDCL TX) .. 50/s (Apple NuDCL RX) .. ~1000-1300/s (legacy
+//     Apple, Linux, ffado) .. 1333/s (ours). The two stacks closest to our
+//     model -- blocking AMDTP -- are the two slowest ones.
+//   * What the fast stacks have that we lack is a NON-IRQ path into the same
+//     completion code (Linux flush_completions from the PCM period; Apple's
+//     work timer). Cadence is a consequence of that, not the design choice.
 //   * Everyone keeps SYT/presentation in the 1394 tick domain, not host time.
 //   * Backing ring depth (Apple ~800 pkt, ffado 128) is decoupled from the
 //     active near-wire lead -- matches our capacity-is-not-latency rule. None of
