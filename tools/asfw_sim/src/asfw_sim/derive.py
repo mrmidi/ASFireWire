@@ -40,6 +40,9 @@ class DerivedGeometry:
     frame_ring_frames: int
     zts_period_frames: int
 
+    hardware_ring_packets: int
+    packets_per_group: int
+
     exposure_lead_frames: int
     exposure_lead_packets: int
     coverage_lead_packets: int
@@ -69,15 +72,30 @@ def derive(
     shared_slot_packets: int | None = None,
     timeline_slots: int | None = None,
     data_horizon_packets: int | None = None,
+    hardware_ring_packets: int | None = None,
+    packets_per_group: int | None = None,
 ) -> DerivedGeometry:
-    """Recompute the TX chain for a candidate IO budget and check the asserts."""
+    """Recompute the TX chain for a candidate IO budget and check the asserts.
+
+    ``hardware_ring_packets`` and ``packets_per_group`` exist so TX-IRQ-001 work
+    can cost a deeper OHCI ring and a coarser interrupt stride *before* editing
+    ``IsochQueueGeometry.hpp``.  Note the header fuses the interrupt stride, the
+    ZTS timing stride and the refill quantum into one constant
+    (``kPacketsPerCompletionGroup``); this parameter moves all three at once,
+    which is exactly the coupling documented in
+    ``documentation/TX_IRQ_001_INTERRUPT_STALL.md`` section 7.
+    """
     t = headers.timing
     sample_rate = t["kSampleRateHz"]
     cad_pkts = t["kMinAvgCadencePackets"]
     cad_frames = t["kMinAvgCadenceFrames"]
-    group = t["kTxPacketsPerGroup"]
+    group = packets_per_group if packets_per_group is not None else t["kTxPacketsPerGroup"]
     cadence_block = t["kCadenceBlockPackets"]
-    hw_ring = t["kTxHardwareRingPackets"]
+    hw_ring = (
+        hardware_ring_packets
+        if hardware_ring_packets is not None
+        else t["kTxHardwareRingPackets"]
+    )
     jitter = t["kSchedulingJitterFrames"]
     horizon_packets = (
         data_horizon_packets
@@ -158,12 +176,31 @@ def derive(
             "ring >= ioBudget", ring >= io_budget_frames, f"{ring} >= {io_budget_frames}"
         ),
         ConstraintResult("zts % 32 == 0", zts % 32 == 0, f"{zts} % 32"),
+        # AudioTimingGeometry.hpp:246-256 -- the OHCI ring must hold whole
+        # interrupt groups and must preserve blocking-cadence phase on wrap.
+        ConstraintResult(
+            "hwRing % group == 0", hw_ring % group == 0, f"{hw_ring} % {group}"
+        ),
+        ConstraintResult(
+            "hwRing % cadenceBlock == 0",
+            hw_ring % cadence_block == 0,
+            f"{hw_ring} % {cadence_block}",
+        ),
+        # IsochQueueGeometry.hpp:17-20 -- kTransmitInFlightPackets is the same
+        # number as kTxHardwareRingPackets and carries this assert too.
+        ConstraintResult(
+            "zts % framesPerDataPacket == 0",
+            zts % t["kFramesPerDataPacket"] == 0,
+            f"{zts} % {t['kFramesPerDataPacket']}",
+        ),
     ]
 
     return DerivedGeometry(
         io_budget_frames=io_budget_frames,
         frame_ring_frames=ring,
         zts_period_frames=zts,
+        hardware_ring_packets=hw_ring,
+        packets_per_group=group,
         exposure_lead_frames=exposure_lead_frames,
         exposure_lead_packets=exposure_lead_packets,
         coverage_lead_packets=coverage_lead,

@@ -1,0 +1,32 @@
+name: slack-scales-with-ring
+description: >
+  TX-IRQ-001 defect, pinned deliberately as a FAILING geometry. The header
+  defines kTxPreparationSlackPackets = 2 * kTxHardwareRingPackets, so
+  kTxCoverageLeadPackets = 3 * ring: the required producer look-ahead SCALES
+  with ring depth. Deepening the ring should buy runway; instead it demands
+  more look-ahead, and preparation is fed by RX replay observations that are
+  inherently ~now. At ring 800 the producer would have to run 117 ms ahead of
+  hardware, which it cannot. The static_asserts all pass -- only behaviour
+  fails, which is why derive() alone could not catch this.
+
+  Bisected ceiling under this policy: 312 packets (39 ms).
+
+  This scenario asserts the COLLAPSE. If someone changes the slack policy to a
+  constant, this scenario will start failing -- that is the intended signal, not
+  a regression. Delete it when the policy changes, and keep
+  apple-geometry-fixed-slack as the replacement.
+base: driver
+rate: 48000
+require_valid: false
+
+geometry:
+  tx_hardware_ring_packets: 800
+  tx_coverage_lead_packets: 2400      # 3 * 800, today's formula
+  tx_preparation_lead_packets: 2934   # coverage + kTxFrameExposureWindowPackets
+  tx_shared_slot_packets: 3744
+
+scenario:
+  duration_s: 20
+
+expect:
+  collapsed: true

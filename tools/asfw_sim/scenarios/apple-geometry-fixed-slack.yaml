@@ -1,0 +1,33 @@
+name: apple-geometry-fixed-slack
+description: >
+  TX-IRQ-001 proposal. Hold kTxPreparationSlackPackets at the constant 96
+  packets it ALREADY IS today (2 * 48), instead of expressing it as a multiple
+  of ring depth. Slack is a refill-latency budget -- "how late may the producer
+  be" -- which has nothing to do with how deep the hardware ring is.
+
+  With that one change, Apple's full TX geometry becomes reachable: an
+  800-packet (100 ms) ring at 10 interrupts/s, versus our 48-packet (6 ms) ring
+  at 1333/s. It also needs LESS shared memory than the 3x policy demanded for
+  the same ring (2232 vs 3744 slots).
+
+  100 ms of runway is the point: an interrupt outage becomes a survivable
+  degradation instead of a dead stream.
+base: driver
+rate: 48000
+require_valid: false
+
+geometry:
+  tx_hardware_ring_packets: 800
+  tx_packets_per_group: 800           # Apple's per-lap TX interrupt cadence
+  tx_coverage_lead_packets: 896       # ring + fixed 96 slack
+  tx_preparation_lead_packets: 1430   # coverage + kTxFrameExposureWindowPackets
+  tx_shared_slot_packets: 2232
+  timeline_slots: 4096
+
+scenario:
+  duration_s: 20
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.98
+  max_replay_failures: 0

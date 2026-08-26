@@ -1,0 +1,23 @@
+name: apple-interrupt-cadence
+description: >
+  TX-IRQ-001. Apple's NuDCL TX path takes ONE isoch interrupt per 800-packet
+  ring lap (10/s) where we take one every 6 packets (1333/s). Claim: at our
+  current ring depth the interrupt cadence is nearly irrelevant to preparation,
+  because the CoreAudio IO callback is already a second producer wake source
+  firing every 85 cycles (10.67 ms) -- more often than Apple's TX interrupt.
+  If that holds, 133x fewer interrupts costs almost nothing, and the interrupt
+  rate is a free variable we can spend on TX-IRQ-001 survivability.
+  See documentation/APPLE_FWAUDIO_ISOCH_GEOMETRY.md section 3.
+base: driver
+rate: 48000
+
+geometry:
+  tx_packets_per_group: 800     # wake cadence only; budgets left at driver values
+
+scenario:
+  duration_s: 20
+
+expect:
+  collapsed: false
+  written_fraction_min: 0.98
+  max_replay_failures: 0

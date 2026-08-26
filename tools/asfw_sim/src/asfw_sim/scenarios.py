@@ -297,6 +297,8 @@ def _check_geometry_validity(
         shared_slot_packets=geometry.tx_shared_slot_packets,
         timeline_slots=geometry.timeline_slots,
         data_horizon_packets=geometry.tx_data_horizon_packets,
+        hardware_ring_packets=geometry.tx_hardware_ring_packets,
+        packets_per_group=geometry.tx_packets_per_group,
     )
     return [f"{c.name} ({c.detail})" for c in derived.failures]
 
