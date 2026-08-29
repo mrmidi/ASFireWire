@@ -66,6 +66,12 @@ _RAW_PROFILE_DEFAULT = re.compile(
     re.DOTALL,
 )
 
+# V3 collapsed the multi-profile selector into a single aliased profile.
+_ACTIVE_PROFILE_ALIAS = re.compile(
+    r"kActiveAudioHalBufferProfile\s*=\s*(\w+)\s*;",
+    re.DOTALL,
+)
+
 
 def _strip_comments(text: str) -> str:
     return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
@@ -267,15 +273,23 @@ def _parse_active_profile(text: str) -> tuple[str, dict[str, int]]:
             (
                 label,
                 {
-                    "frameRingFrames": int(parts[1]),
-                    "clientIoBudgetFrames": int(parts[2]),
-                    "zeroTimestampPeriodFrames": int(parts[3]),
+                    "frameRingFrames": int(parts[1].replace("'", "")),
+                    "clientIoBudgetFrames": int(parts[2].replace("'", "")),
+                    "zeroTimestampPeriodFrames": int(parts[3].replace("'", "")),
                 },
             )
         )
 
     if not profiles:
         raise CppEvalError("no AudioHalBufferProfile definitions found")
+
+    alias = _ACTIVE_PROFILE_ALIAS.search(text)
+    if alias is not None:
+        wanted = alias.group(1)
+        by_symbol = dict(zip([n for n, _ in _PROFILE.findall(text)], profiles))
+        if wanted not in by_symbol:
+            raise CppEvalError(f"kActiveAudioHalBufferProfile names unknown {wanted}")
+        return by_symbol[wanted]
 
     match = _RAW_PROFILE_DEFAULT.search(text)
     if match is None:
