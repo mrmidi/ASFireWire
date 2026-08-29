@@ -163,6 +163,10 @@ add_audio_test(HardwareSampleTimelineTests
     HardwareSampleTimelineTests.cpp
 )
 
+add_audio_test(TxCycleAnchorTests
+    TxCycleAnchorTests.cpp
+)
+
 add_audio_test(ResolvedAudioStreamProfileTests
     ResolvedAudioStreamProfileTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/ResolvedAudioStreamProfile.cpp"

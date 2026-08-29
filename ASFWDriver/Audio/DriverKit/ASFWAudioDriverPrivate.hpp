@@ -16,6 +16,7 @@
 #include "../Families/BeBoB/MAudio/MAudioPresentationObserver.hpp"
 #include "../Runtime/PcmPublicationCache.hpp"
 #include "../Shared/Configuration/DeviceConfigurationStateMachine.hpp"
+#include "../Shared/TxCycleAnchor.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 #include "../../Shared/Isoch/TxPayloadSeal.hpp"
 #include "../../Logging/Logging.hpp"
@@ -85,20 +86,18 @@ public:
         }
 
         // Linux consumes OHCI's 16-bit OUTPUT_LAST status timestamp at
-        // firewire/ohci.c:3055. The core expands that stamp at publication
-        // with the same refill's CYCLE_TIMER subcycle, yielding the full
-        // timestamp Saffire's transmit path passes to tstampToOffsets() at 0xe9bf.
-        const auto completed = ASFW::Timing::decodeCycleTimer(timestamp);
-        const uint64_t packetDistance = packetIndex - completedPacketIndex;
+        // firewire/ohci.c:3055. That stamp carries only sec[2:0], so it is
+        // lifted here against the full CYCLE_TIMER read the same refill pass
+        // published, yielding a transmit time in the same 128-second bus
+        // domain the hardware timeline's RX observations use.
+        ASFW::Isoch::IsochTxClockPairSample pair{};
+        if (!queueControl->clockPair.TryRead(pair)) {
+            return false;
+        }
 
-        outTicks = ASFW::Timing::normalizeOffsetDomain(
-            ASFW::Timing::tstampToOffsets(completed.seconds,
-                                          completed.cycle %
-                                              ASFW::Timing::kCyclesPerSecond,
-                                          completed.offset) +
-            static_cast<int64_t>(packetDistance) *
-                static_cast<int64_t>(ASFW::Timing::kTicksPerCycle));
-        return true;
+        return ASFW::Audio::Shared::TransmitPacketBusTicks(
+            timestamp, pair.cycleTimer32,
+            packetIndex - completedPacketIndex, outTicks);
     }
 };
 
@@ -247,6 +246,12 @@ struct AudioDriverRuntimeState {
     uint64_t lastTxPlanBusTicks{0};
     bool txObservationBusTicksValid{false};
     uint64_t lastTxObservationBusTicks{0};
+
+    // Silent-NO-DATA attribution. A plan that never reaches the PCM cache
+    // leaves every copy counter at zero, so the two paths that can drop a
+    // DATA decision before the cache is consulted count themselves here.
+    uint64_t txNoCycleAnchorEvents{0};
+    uint64_t txNoPresentationOriginEvents{0};
 
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;

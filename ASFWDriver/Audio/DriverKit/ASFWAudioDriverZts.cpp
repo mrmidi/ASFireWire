@@ -482,6 +482,17 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 ivars.runtime.lastTxPlanBusTicks,
                 transmitBusTicks);
 
+        if (!haveCycle) {
+            const uint64_t events = ++ivars.runtime.txNoCycleAnchorEvents;
+            if (IsPowerOfTwo(events)) {
+                ASFW_LOG_ERROR(
+                    DirectAudio,
+                    "[BackendTiming] noCycleAnchor=%llu packet=%llu raw=%lld lastPlanBus=%llu",
+                    events, packetIndex, normalizedTransmitTicks,
+                    ivars.runtime.lastTxPlanBusTicks);
+            }
+        }
+
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
         timing.disposition = AmdtpDisposition::NoData;
         uint64_t presentationBusTicks = haveCycle ? transmitBusTicks : 0;
@@ -576,6 +587,21 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     epoch, presentationBusTicks, plan.frameCount, range)) {
                 // No observed hardware origin yet. This physical cycle is an
                 // ordinary startup NO-DATA slot and consumes no content time.
+                // Sustained counts mean the plan's bus time never reconciles
+                // with the timeline's observations -- a domain fault, not a
+                // startup transient -- so attribute it rather than dropping it
+                // silently before the PCM cache is ever consulted.
+                const uint64_t events =
+                    ++ivars.runtime.txNoPresentationOriginEvents;
+                if (IsPowerOfTwo(events)) {
+                    ASFW_LOG_ERROR(
+                        DirectAudio,
+                        "[BackendTiming] noPresentationOrigin=%llu packet=%llu presentBus=%llu frames=%u source=%u",
+                        events, packetIndex, presentationBusTicks,
+                        plan.frameCount,
+                        static_cast<uint32_t>(
+                            control->hardwareTimeline.Source()));
+                }
                 plan.disposition = AmdtpDisposition::NoData;
                 plan.frameCount = 0;
                 wireBlocks = 0;
@@ -781,13 +807,15 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
         control->txHeartbeatLastHostTicks.store(now,
                                                 std::memory_order_relaxed);
         ASFW_LOG(DirectAudio,
-                 "[TxV3] epoch=%llu source=%u completion=%llu committed=%llu margin=%llu prepared=%u nextFrame=%llu cache=[%llu,%llu)",
+                 "[TxV3] epoch=%llu source=%u completion=%llu committed=%llu margin=%llu prepared=%u nextFrame=%llu cache=[%llu,%llu) noCycle=%llu noOrigin=%llu",
                  control->hardwareTimeline.Epoch(),
                  static_cast<uint32_t>(control->hardwareTimeline.Source()),
                  completion, committedAfter, margin, prepared,
                  control->hardwareTimeline.NextTxFrame(),
                  ivars->runtime.pcmPublicationCache.OldestValidFrame(),
-                 ivars->runtime.pcmPublicationCache.PublishedEndFrame());
+                 ivars->runtime.pcmPublicationCache.PublishedEndFrame(),
+                 ivars->runtime.txNoCycleAnchorEvents,
+                 ivars->runtime.txNoPresentationOriginEvents);
     }
     if (committedAfter < target) {
         const uint64_t shortageCount =
