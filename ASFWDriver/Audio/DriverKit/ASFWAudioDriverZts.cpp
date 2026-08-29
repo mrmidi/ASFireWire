@@ -471,24 +471,29 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     while (packetIndex < requiredPacketIndex &&
            prepared < ASFW::Audio::Shared::AudioTimingGeometry::
                kTxPreparedTargetCycleSlots) {
+        // Kept as three separate outcomes so a rejection says which stage
+        // produced it: no completion anchor at all, a negative anchor, or the
+        // unwrapper refusing a backwards step against its high-water mark.
         int64_t normalizedTransmitTicks = 0;
         uint64_t transmitBusTicks = 0;
-        const bool haveCycle = ivars.runtime.txExecutionTimeline.AnchorForPacket(
-            packetIndex, normalizedTransmitTicks) &&
-            normalizedTransmitTicks >= 0 &&
+        const bool anchored = ivars.runtime.txExecutionTimeline.AnchorForPacket(
+            packetIndex, normalizedTransmitTicks);
+        const bool unwrapped = anchored && normalizedTransmitTicks >= 0 &&
             UnwrapBusTicks(
                 static_cast<uint64_t>(normalizedTransmitTicks),
                 ivars.runtime.txPlanBusTicksValid,
                 ivars.runtime.lastTxPlanBusTicks,
                 transmitBusTicks);
+        const bool haveCycle = unwrapped;
 
         if (!haveCycle) {
             const uint64_t events = ++ivars.runtime.txNoCycleAnchorEvents;
             if (IsPowerOfTwo(events)) {
                 ASFW_LOG_ERROR(
                     DirectAudio,
-                    "[BackendTiming] noCycleAnchor=%llu packet=%llu raw=%lld lastPlanBus=%llu",
-                    events, packetIndex, normalizedTransmitTicks,
+                    "[BackendTiming] noCycleAnchor=%llu packet=%llu anchored=%u raw=%lld lastPlanBus=%llu",
+                    events, packetIndex, anchored ? 1u : 0u,
+                    normalizedTransmitTicks,
                     ivars.runtime.lastTxPlanBusTicks);
             }
         }
@@ -594,10 +599,17 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 const uint64_t events =
                     ++ivars.runtime.txNoPresentationOriginEvents;
                 if (IsPowerOfTwo(events)) {
+                    const uint64_t observedBus =
+                        control->hardwareTimeline.LastObservationBusTicks();
                     ASFW_LOG_ERROR(
                         DirectAudio,
-                        "[BackendTiming] noPresentationOrigin=%llu packet=%llu presentBus=%llu frames=%u source=%u",
-                        events, packetIndex, presentationBusTicks,
+                        "[BackendTiming] noPresentationOrigin=%llu packet=%llu presentBus=%llu observedBus=%llu lead=%lld obsValid=%u txCursor=%u obsFrame=%llu frames=%u source=%u",
+                        events, packetIndex, presentationBusTicks, observedBus,
+                        static_cast<int64_t>(presentationBusTicks) -
+                            static_cast<int64_t>(observedBus),
+                        control->hardwareTimeline.ObservationValid() ? 1u : 0u,
+                        control->hardwareTimeline.TxCursorInitialized() ? 1u : 0u,
+                        control->hardwareTimeline.LastObservationFrame(),
                         plan.frameCount,
                         static_cast<uint32_t>(
                             control->hardwareTimeline.Source()));

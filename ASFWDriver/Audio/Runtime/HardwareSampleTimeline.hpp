@@ -165,6 +165,25 @@ public:
         return discontinuity_.load(std::memory_order_acquire);
     }
 
+    // Read-only views of the observation state PreviewTxRange decides on.
+    // Without them a rejected TX plan can only report its own half of the
+    // comparison, which is what made a permanent NO-DATA stream unattributable.
+    [[nodiscard]] bool ObservationValid() const noexcept {
+        return observationValid_.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] uint64_t LastObservationFrame() const noexcept {
+        return lastObservationFrame_.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] uint64_t LastObservationBusTicks() const noexcept {
+        return lastPresentationBusTicks_.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] bool TxCursorInitialized() const noexcept {
+        return txCursorInitialized_.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] uint64_t LastPublishedBoundary() const noexcept {
         return boundaryValid_.load(std::memory_order_acquire)
             ? lastPublishedBoundary_.load(std::memory_order_relaxed) : 0;

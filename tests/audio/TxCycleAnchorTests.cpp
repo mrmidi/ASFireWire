@@ -108,4 +108,37 @@ TEST(TxCycleAnchorTests, ResultIsComparableWithReceiveObservationBusTicks) {
               static_cast<int64_t>(144) * kTicksPerCycle);
 }
 
+TEST(TxCycleAnchorTests, MicrosecondCompletionLeadIsARaceNotAWindowWrap) {
+    // IsochTxDmaRing publishes clockPair at the top of a refill pass and the
+    // pass's completion stamps at the bottom, so a reader can legitimately see
+    // a stamp that leads its correlation by the width of one pass. Treating
+    // that as an eight-second wrap threw the plan 8 s into the past, and the
+    // unwrapper -- which only stores on success -- then rejected every later
+    // sample against a high-water mark it could no longer reach.
+    const uint32_t completion = CompletionStamp(45, 1001);
+    const uint32_t correlation = encodeCycleTimer(45, 1000, 0);
+
+    int64_t ticks = 0;
+    ASSERT_TRUE(TransmitPacketBusTicks(completion, correlation, 0, ticks));
+    EXPECT_EQ(ticks, BusTicks(45, 1001, 0));
+}
+
+TEST(TxCycleAnchorTests, SuccessiveAnchorsStayMonotonicAcrossThePublishRace) {
+    // What the unwrapper actually needs: never a backwards step, whichever
+    // pass's correlation happens to be paired with a given stamp.
+    int64_t previous = -1;
+    for (uint32_t cycle = 1000; cycle < 1040; ++cycle) {
+        // Alternate a fresh correlation with a stale one from the pass before.
+        const uint32_t correlation = (cycle & 1u)
+            ? encodeCycleTimer(45, cycle - 1, 0)
+            : encodeCycleTimer(45, cycle + 1, 0);
+        int64_t ticks = 0;
+        ASSERT_TRUE(TransmitPacketBusTicks(
+            CompletionStamp(45, cycle), correlation, 0, ticks));
+        EXPECT_EQ(ticks, BusTicks(45, cycle, 0));
+        EXPECT_GT(ticks, previous);
+        previous = ticks;
+    }
+}
+
 } // namespace

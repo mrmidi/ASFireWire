@@ -18,6 +18,19 @@ inline constexpr int64_t kBusDomainTicks =
 inline constexpr int64_t kCompletionStampDomainTicks =
     8 * static_cast<int64_t>(ASFW::Timing::kTicksPerSecond);
 
+/// How far a completion stamp may appear to lead its correlation before the
+/// lift concludes it belongs to the previous eight-second window.
+///
+/// IsochTxDmaRing publishes clockPair at the top of a refill pass and pushes
+/// that pass's completion stamps at the bottom, so a reader can pair a newer
+/// pass's stamp with an older pass's correlation and see the completion lead by
+/// the width of one pass -- microseconds. A stamp that genuinely belongs to the
+/// previous window leads by nearly the full eight seconds instead, because a
+/// harvested completion is only milliseconds old. One second sits far outside
+/// the first and far inside the second.
+inline constexpr int64_t kCompletionLeadToleranceTicks =
+    static_cast<int64_t>(ASFW::Timing::kTicksPerSecond);
+
 /// Lift an OHCI transmit completion stamp into the controller's full
 /// 128-second cycle-timer domain, then project it forward by `packetDistance`
 /// isochronous cycles to give the transmit time of a later packet.
@@ -54,7 +67,7 @@ inline constexpr int64_t kCompletionStampDomainTicks =
         liftedSeconds,
         completion.cycle % ASFW::Timing::kCyclesPerSecond,
         completion.offset);
-    if (completionTicks > correlationTicks) {
+    if (completionTicks - correlationTicks > kCompletionLeadToleranceTicks) {
         completionTicks -= kCompletionStampDomainTicks;
     }
 
