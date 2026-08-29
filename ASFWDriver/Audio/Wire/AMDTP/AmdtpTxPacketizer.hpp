@@ -33,6 +33,21 @@ public:
         const PreparedTxPacket& packet,
         uint8_t wireDataBlocks) noexcept;
 
+    /// Re-encode an already-armed DATA packet with real PCM, byte-identical to
+    /// the armed image except for the sample words.
+    ///
+    /// The armed image is encoded with silence at plan time so transport always
+    /// has a valid packet for the slot; this fills the same wire geometry with
+    /// content that arrived later. It is side-effect-free in the same sense as
+    /// PrepareDataPacket, and additionally does not consult dbcCounter_ at all:
+    /// by the time content arrives the counter has advanced well past this
+    /// packet, so the DBC and SYT are taken from the armed packet rather than
+    /// re-derived. Cadence, DBC and disposition were decided at arm time and
+    /// must not be committed twice.
+    [[nodiscard]] bool RefillPcm(TxPacketSlotView slot,
+                                 const PreparedTxPacket& armed,
+                                 const TxPcmSnapshotView& pcm) noexcept;
+
     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
 

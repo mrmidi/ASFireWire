@@ -118,6 +118,157 @@ TEST(AmdtpDirectTxTests, PacketizerEncodesSuppliedAbsoluteFrame) {
     EXPECT_EQ(timeline.FinalizedFrameEnd(), 42'008U);
 }
 
+// --- Late PCM fill (freeze = mapping frontier) -------------------------------
+//
+// A packet is armed with silence at plan time so transport always has a valid
+// image for the slot, then re-encoded with real PCM if content arrives before
+// the slot is mapped into a descriptor. The two images must agree everywhere
+// except the sample words, so a fill that loses the race to freeze is
+// indistinguishable from never having happened.
+
+struct RefillFixture {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> slots{};
+    AmdtpTxPacketizer packetizer{};
+
+    bool Setup() {
+        if (!timeline.AttachSlots(slots.data(), slots.size())) return false;
+        AmdtpStreamConfig config{};
+        config.sampleRate = 48'000;
+        config.dbs = 2;
+        config.pcmChannels = 2;
+        config.framesPerDataPacket = 8;
+        config.maxPacketBytes = 128;
+        packetizer.BindTimeline(&timeline);
+        return packetizer.Configure(config, {});
+    }
+};
+
+TEST(AmdtpDirectTxTests, RefillPcmMatchesEncodingThePcmUpFront) {
+    RefillFixture armFixture{};
+    RefillFixture directFixture{};
+    ASSERT_TRUE(armFixture.Setup());
+    ASSERT_TRUE(directFixture.Setup());
+
+    std::array<float, 16> silence{};
+    std::array<float, 16> content{};
+    for (size_t i = 0; i < content.size(); ++i) {
+        content[i] = -1.0f + static_cast<float>(i) * 0.05f;
+    }
+
+    // Path A: arm with silence, then fill with content.
+    std::array<uint8_t, 128> armed{};
+    PreparedTxPacket armedPacket{};
+    ASSERT_TRUE(armFixture.packetizer.PrepareDataPacket(
+        {5, armed.data(), static_cast<uint32_t>(armed.size())},
+        DataPlan(42'000), 8, 0x1234, {silence.data(), 8, 2}, armedPacket));
+    std::array<uint8_t, 128> filled = armed;
+    ASSERT_TRUE(armFixture.packetizer.RefillPcm(
+        {5, filled.data(), static_cast<uint32_t>(filled.size())},
+        armedPacket, {content.data(), 8, 2}));
+
+    // Path B: encode the content directly, as today's one-shot path does.
+    std::array<uint8_t, 128> direct{};
+    PreparedTxPacket directPacket{};
+    ASSERT_TRUE(directFixture.packetizer.PrepareDataPacket(
+        {5, direct.data(), static_cast<uint32_t>(direct.size())},
+        DataPlan(42'000), 8, 0x1234, {content.data(), 8, 2}, directPacket));
+
+    EXPECT_EQ(filled, direct);
+    EXPECT_EQ(armedPacket.dbc, directPacket.dbc);
+    EXPECT_EQ(armedPacket.syt, directPacket.syt);
+    EXPECT_EQ(armedPacket.byteCount, directPacket.byteCount);
+}
+
+TEST(AmdtpDirectTxTests, RefillPcmChangesOnlyTheSampleWords) {
+    RefillFixture fixture{};
+    ASSERT_TRUE(fixture.Setup());
+
+    std::array<float, 16> silence{};
+    std::array<float, 16> content{};
+    for (auto& value : content) value = 0.5f;
+
+    std::array<uint8_t, 128> armed{};
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(fixture.packetizer.PrepareDataPacket(
+        {5, armed.data(), static_cast<uint32_t>(armed.size())},
+        DataPlan(42'000), 8, 0x1234, {silence.data(), 8, 2}, packet));
+
+    std::array<uint8_t, 128> filled = armed;
+    ASSERT_TRUE(fixture.packetizer.RefillPcm(
+        {5, filled.data(), static_cast<uint32_t>(filled.size())},
+        packet, {content.data(), 8, 2}));
+
+    // The CIP header carries DBC and SYT; both were decided at arm time.
+    for (uint32_t index = 0; index < 8; ++index) {
+        EXPECT_EQ(armed[index], filled[index]) << "CIP byte " << index;
+    }
+    // Nothing beyond the packet may be touched in either image.
+    for (uint32_t index = packet.byteCount;
+         index < static_cast<uint32_t>(armed.size()); ++index) {
+        EXPECT_EQ(armed[index], 0u) << "past end " << index;
+        EXPECT_EQ(filled[index], 0u) << "past end " << index;
+    }
+    EXPECT_NE(armed, filled);
+}
+
+TEST(AmdtpDirectTxTests, RefillPcmDoesNotAdvanceCadenceOrDbc) {
+    RefillFixture fixture{};
+    ASSERT_TRUE(fixture.Setup());
+
+    std::array<float, 16> pcm{};
+    std::array<uint8_t, 128> bytes{};
+    PreparedTxPacket first{};
+    ASSERT_TRUE(fixture.packetizer.PrepareDataPacket(
+        {5, bytes.data(), static_cast<uint32_t>(bytes.size())},
+        DataPlan(42'000), 8, 0x1234, {pcm.data(), 8, 2}, first));
+
+    // Many fills between arm and commit must leave the counter untouched.
+    for (int i = 0; i < 4; ++i) {
+        std::array<uint8_t, 128> image{};
+        ASSERT_TRUE(fixture.packetizer.RefillPcm(
+            {5, image.data(), static_cast<uint32_t>(image.size())},
+            first, {pcm.data(), 8, 2}));
+    }
+    EXPECT_EQ(fixture.timeline.FinalizedFrameEnd(), 0U);
+
+    PreparedTxPacket second{};
+    ASSERT_TRUE(fixture.packetizer.PrepareDataPacket(
+        {5, bytes.data(), static_cast<uint32_t>(bytes.size())},
+        DataPlan(42'000), 8, 0x1234, {pcm.data(), 8, 2}, second));
+    EXPECT_EQ(second.dbc, first.dbc);
+}
+
+TEST(AmdtpDirectTxTests, RefillPcmRejectsAMismatchedOrNonDataArm) {
+    RefillFixture fixture{};
+    ASSERT_TRUE(fixture.Setup());
+
+    std::array<float, 16> pcm{};
+    std::array<uint8_t, 128> bytes{};
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(fixture.packetizer.PrepareDataPacket(
+        {5, bytes.data(), static_cast<uint32_t>(bytes.size())},
+        DataPlan(42'000), 8, 0x1234, {pcm.data(), 8, 2}, packet));
+
+    std::array<uint8_t, 128> image{};
+    const TxPacketSlotView wrongIndex{
+        6, image.data(), static_cast<uint32_t>(image.size())};
+    EXPECT_FALSE(fixture.packetizer.RefillPcm(
+        wrongIndex, packet, {pcm.data(), 8, 2}));
+
+    const TxPacketSlotView good{
+        5, image.data(), static_cast<uint32_t>(image.size())};
+    // Frame count must match the armed geometry: a fill may not change it.
+    EXPECT_FALSE(fixture.packetizer.RefillPcm(
+        good, packet, {pcm.data(), 4, 2}));
+    EXPECT_FALSE(fixture.packetizer.RefillPcm(good, packet, {nullptr, 8, 2}));
+
+    PreparedTxPacket noData = packet;
+    noData.isData = false;
+    EXPECT_FALSE(fixture.packetizer.RefillPcm(
+        good, noData, {pcm.data(), 8, 2}));
+}
+
 TEST(AmdtpDirectTxTests, EngineReadsMatchingEpochAndAbsoluteRange) {
     TestProfile profile{};
     DiceTxStreamEngine engine{};

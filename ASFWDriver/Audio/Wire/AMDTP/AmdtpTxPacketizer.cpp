@@ -122,6 +122,31 @@ bool AmdtpTxPacketizer::PrepareDataPacket(
     return true;
 }
 
+bool AmdtpTxPacketizer::RefillPcm(
+    TxPacketSlotView slot,
+    const PreparedTxPacket& armed,
+    const TxPcmSnapshotView& pcm) noexcept {
+    if (!slot.bytes || !armed.isData || armed.byteCount == 0) return false;
+    if (slot.packetIndex != armed.packetIndex) return false;
+    if (slot.capacityBytes < armed.byteCount) return false;
+    if (!pcm.interleavedFloat32 ||
+        pcm.frameCount != armed.framesInPacket ||
+        pcm.channels < streamConfig_.pcmChannels) {
+        return false;
+    }
+
+    const uint32_t payloadBytes = armed.byteCount - kCipHeaderBytes;
+    // Rebuild the identical header from the armed packet's own DBC/SYT rather
+    // than the live counter, then lay down defaults and the sample words. The
+    // result must be byte-for-byte the armed packet wherever PCM does not
+    // reach, so a fill that loses the race to freeze is indistinguishable from
+    // never having happened.
+    WriteCipHeader(slot.bytes, cipBuilder_.BuildData(armed.dbc, armed.syt));
+    WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
+    WritePcmSnapshot(slot.bytes, armed, pcm);
+    return true;
+}
+
 bool AmdtpTxPacketizer::CommitPreparedPacket(
     const PreparedTxPacket& packet,
     uint8_t wireDataBlocks) noexcept {
