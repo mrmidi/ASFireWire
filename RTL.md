@@ -1097,20 +1097,29 @@ anchors on TX completion, so everything after transmission — including those 1
 frames — falls outside the safety offset and must be reported. The reference
 split is not transferable without matching the anchor.
 
-### The next lever is the anchor, not another constant
+### The whole remaining gap is the safety offsets
 
-Remaining gap to Apple is 450 frames, and the largest single piece of it is
-structural rather than a tuning value:
+Remaining gap to Apple is 450 frames, and 412 of it -- 92% -- is the two safety
+offsets. Input *latency* is already at parity (40). There is no accounting trick
+available: what a safety offset measures is how early content must be final, and
+the only way to shrink one is to make content final closer to the wire.
 
-1. **Anchor on presentation instead of transmit.** Folds the 105-frame lead into
-   the zero timestamp instead of reporting it. Worth ~105 frames and makes our
-   split directly comparable to the reference's for the first time.
-2. **Gate A proper** — freeze closer than the mapping frontier. Still worth ~250
-   frames and still needs the nonce experiment. Prerequisite A1 (splitting the
+Note in particular that **moving the anchor is not a latency win.** Logic shows
+safety + latency + buffer, and that sum must equal physical reality wherever the
+anchor sits: anchoring on presentation would place the anchor 105 frames later,
+so safety would have to grow by the same 105 to keep content final at the same
+physical instant. It is worth doing to make our split directly comparable to the
+reference's -- right now the two cannot be compared term by term -- but it buys
+no milliseconds.
+1. **Gate A proper** — freeze closer than the mapping frontier. The single
+   largest item at ~280 frames, and the only one that shrinks output safety at
+   all. Content is currently final one descriptor runway (48 slots) plus one
+   refill batch (6) before transmission; Apple's 50-frame safety means theirs is
+   final ~6-8 packets out. Still needs the nonce experiment. Prerequisite A1 (splitting the
    descriptor at an opaque payload prefix so re-pointing an image is a single
    aligned store rather than two) is written and parked, unmerged, because it is
    wire-observable and would confound an open audio-quality investigation.
-3. **Input safety, 128.** The derived floor is 104 — one 40-frame interrupt batch
+2. **Input safety, 128.** Worth 78 frames. The derived floor is 104 — one 40-frame interrupt batch
    (observed acquisition ages 15–30) plus a 64-frame cushion — which 32-frame ring
    alignment rounds back to 128. Lowering it needs RX-side jitter numbers that do
    not exist yet; `[TxPrep]`'s 8 ms outliers are the only tail measurement we
