@@ -53,7 +53,7 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 104U);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
     EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 8192U);
-    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 192U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 168U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(Geometry::kTxPreparationLatencyHistogramBuckets, 6U);
     EXPECT_EQ(Geometry::kTxCommittedMarginHistogramBuckets, 5U);
@@ -61,9 +61,9 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kTxPreparationLatency1500Us, 1500U);
     EXPECT_EQ(Geometry::kTxCommittedMargin2xFloorPackets, 96U);
     EXPECT_EQ(Geometry::kTxCommittedMargin16xFloorPackets, 768U);
-    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 96U);
-    EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 144U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 144U);
+    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 72U);
+    EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 120U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 120U);
 
     // DMA completion cadence and the ZTS grid are intentionally independent.
     EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,

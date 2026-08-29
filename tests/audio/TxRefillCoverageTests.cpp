@@ -255,12 +255,14 @@ TEST(TxRefillCoverage, LeadSizedForMaxCoalesceIsHoleFree) {
               kNoMiss);
 }
 
-// The refill-coverage sub-budget (lead 144, slack 96) covers the captured
-// hardware worst case and sixteen groups without a producer wake.
-TEST(TxRefillCoverage, CurrentGeometryCoversSixteenGroupsWithoutProducer) {
+// The refill-coverage sub-budget (lead 120, slack 72) covers the captured
+// hardware worst case and twelve groups without a producer wake. Was sixteen
+// until the slack went 96 -> 72 to buy back output latency; twelve is still
+// ~1.7x the observed 40-42 packet DriverKit dispatch stalls.
+TEST(TxRefillCoverage, CurrentGeometryCoversTwelveGroupsWithoutProducer) {
     EXPECT_EQ(DriveSteady(kCoverageLead, kHwRing, 13, /*cycles=*/8000),
               kNoMiss);
-    for (uint32_t groups = 1; groups <= 16; ++groups) {
+    for (uint32_t groups = 1; groups <= 12; ++groups) {
         EXPECT_EQ(
             DriveSteady(
                 kCoverageLead, kHwRing, groups * kGroup, /*cycles=*/4000),
@@ -268,7 +270,7 @@ TEST(TxRefillCoverage, CurrentGeometryCoversSixteenGroupsWithoutProducer) {
             << "groups=" << groups;
     }
     // Still holes one group beyond the slack budget — the bound stays tight.
-    EXPECT_NE(DriveSteady(kCoverageLead, kHwRing, 17 * kGroup, /*cycles=*/8),
+    EXPECT_NE(DriveSteady(kCoverageLead, kHwRing, 13 * kGroup, /*cycles=*/8),
               kNoMiss);
 }
 
@@ -279,8 +281,8 @@ TEST(TxRefillCoverage, CoverageBoundMatchesGeometryConstants) {
     EXPECT_EQ(kLead - kHwRing,
               AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets);
     EXPECT_EQ(kLead, kCoverageLead);
-    // Current geometry tolerates sixteen groups without a producer wake.
-    EXPECT_EQ((kCoverageLead - kHwRing) / kGroup, 16u);
+    // Current geometry tolerates twelve groups without a producer wake.
+    EXPECT_EQ((kCoverageLead - kHwRing) / kGroup, 12u);
     EXPECT_EQ(kLead + kHwRing, kNumSlots);
 }
 

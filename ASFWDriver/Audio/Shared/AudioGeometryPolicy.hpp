@@ -146,8 +146,8 @@ static_assert(AudioGeometryPolicy::RxSafetyOffsetFrames(48000.0) == 128,
 static_assert(AudioGeometryPolicy::ReportedLatencyFrames(48000.0) == 29,
               "48k reported latency must be 29 frames");
 static_assert(AudioGeometryPolicy::RequiredOutputSafetyFrames(
-                  48, 48'000, 12'800) == 928,
-              "48k V3 output safety must reflect 18 ms scheduling lead");
+                  48, 48'000, 12'800) == 768,
+              "48k V3 output safety must reflect 15 ms scheduling lead");
 
 } // namespace ASFW::Audio::Shared
 

@@ -129,12 +129,21 @@ struct AudioTimingGeometry final {
     // static_assert still passing. See
     // tools/asfw_sim/scenarios/slack-scales-with-ring.yaml.
     //
-    // 96 is exactly the value the old expression produced at the shipping ring
-    // of 48, so this is a no-op today and unblocks every deeper ring. 96 packets
-    // = 12 ms of producer lateness.
+    // Was 96 (12 ms) -- the value the old ring-scaled expression produced at the
+    // shipping ring of 48. Reduced to 72 (9 ms) on 2026-08-29, because the slack
+    // is carried as *committed* DMA lead and therefore lands in the CoreAudio
+    // output safety offset: at 96 the Duet reported 928 safety frames, i.e.
+    // 24.7 ms of output latency in Logic, of which 18 ms was this budget.
+    //
+    // 72 still covers the observed 40-42 packet DriverKit dispatch stalls with
+    // ~1.7x margin (see the COVERAGE assert below, relaxed from 16 groups to 12
+    // in the same change). It is not taken lower: at 48 the margin over those
+    // stalls would be 1.14x, and overrunning this budget holes the descriptor
+    // ring, which silence substitution does not rescue -- that is a transport
+    // failure (IT FATAL: slot not committed), not a content gap.
     static constexpr uint32_t kTxOwnershipGuardCycleSlots =
         kTxHardwareRingPackets;
-    static constexpr uint32_t kTxDispatchSlackCycleSlots = 96;
+    static constexpr uint32_t kTxDispatchSlackCycleSlots = 72;
     static constexpr uint32_t kTxPreparedTargetCycleSlots =
         kTxOwnershipGuardCycleSlots + kTxDispatchSlackCycleSlots;
     // Compatibility spelling while the remaining call sites are migrated to
@@ -145,9 +154,9 @@ struct AudioTimingGeometry final {
         kTxPreparedTargetCycleSlots;
     static constexpr uint32_t kTxPreparationLeadPackets =
         kTxPreparedTargetCycleSlots;
-    // 24 ms of durable packet storage: 18 ms prepared plus the 6 ms ownership
+    // 21 ms of durable packet storage: 15 ms prepared plus the 6 ms ownership
     // guard. Storage capacity is not presentation latency.
-    static constexpr uint32_t kTxSharedSlotPackets = 192;
+    static constexpr uint32_t kTxSharedSlotPackets = 168;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
     static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =
         kTxPreparedTargetCycleSlots - kTxOwnershipGuardCycleSlots;
@@ -180,11 +189,15 @@ static_assert(AudioTimingGeometry::kRxPacketsPerGroup ==
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
               AudioTimingGeometry::kTxPreparationLeadPackets,
               "TX shared slot ring must hold the full preparation lead");
-// COVERAGE: tolerate 16 six-packet groups without a producer wake. This covers
-// the observed 40-42 packet DriverKit dispatch stalls with more than 2x margin.
+// COVERAGE: tolerate 12 six-packet groups without a producer wake, ~1.7x the
+// observed 40-42 packet DriverKit dispatch stalls. Relaxed from 16 groups when
+// the dispatch slack went 96 -> 72; the margin bought latency, since this budget
+// is committed lead and is reported to CoreAudio as output safety. Do not take
+// it below 12: overrunning it holes the descriptor ring, and unlike a PCM gap
+// that is a transport failure silence substitution cannot cover.
 static_assert(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets >=
-                  16 * AudioTimingGeometry::kTxPacketsPerGroup,
-              "TX preparation headroom must cover at least 12 ms of producer "
+                  12 * AudioTimingGeometry::kTxPacketsPerGroup,
+              "TX preparation headroom must cover at least 9 ms of producer "
               "dispatch latency at the current six-packet cadence");
 static_assert(AudioTimingGeometry::kTxCoverageLeadPackets ==
                   AudioTimingGeometry::kTxHardwareRingPackets +

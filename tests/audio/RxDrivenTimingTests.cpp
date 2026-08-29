@@ -232,10 +232,10 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
             .zeroTimestampPeriodFrames);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
-    EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 144U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 192U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 72U);
+    EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 120U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 120U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 168U);
 }
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
@@ -253,11 +253,11 @@ TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
 TEST(RxDrivenTimingTests, OutputSafetyUsesPhysicalSchedulingNotRingCapacity) {
     using Policy = ASFW::Audio::Shared::AudioGeometryPolicy;
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 48'000, 12'800),
-              928U);
+              768U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000, 12'800),
-              1824U);
+              1536U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000, 12'800),
-              3616U);
+              3040U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100, 12'800),
               0U);
 }
