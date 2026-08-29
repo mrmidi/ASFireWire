@@ -600,6 +600,32 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         }
 
         if (plan.frameCount != 0) {
+            // The presentation lead this packet carries: how far after its own
+            // transmit time the device is told to present it. This is the only
+            // part of the reported output latency the driver can measure -- the
+            // remainder is the device's analogue delay -- so it is recorded
+            // rather than assumed by the profile that reports it.
+            if (haveCycle && plan.presentationBusTicks >= transmitBusTicks) {
+                const int64_t leadTicks =
+                    static_cast<int64_t>(plan.presentationBusTicks) -
+                    static_cast<int64_t>(transmitBusTicks);
+                control->txLastLeadTicks.store(leadTicks,
+                                               std::memory_order_relaxed);
+                int64_t seen = control->txMinimumLeadTicks.load(
+                    std::memory_order_relaxed);
+                while (leadTicks < seen &&
+                       !control->txMinimumLeadTicks.compare_exchange_weak(
+                           seen, leadTicks, std::memory_order_relaxed,
+                           std::memory_order_relaxed)) {
+                }
+                seen = control->txMaximumLeadTicks.load(
+                    std::memory_order_relaxed);
+                while (leadTicks > seen &&
+                       !control->txMaximumLeadTicks.compare_exchange_weak(
+                           seen, leadTicks, std::memory_order_relaxed,
+                           std::memory_order_relaxed)) {
+                }
+            }
             range = {
                 .epoch = plan.epoch,
                 .firstAudioFrame = plan.firstAudioFrame,
@@ -856,6 +882,23 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                  ivars->runtime.txNoPresentationOriginEvents,
                  ivars->runtime.txReplayResyncs);
 
+        {
+            const int64_t leadTicks =
+                control->txLastLeadTicks.load(std::memory_order_relaxed);
+            const int64_t minLead =
+                control->txMinimumLeadTicks.load(std::memory_order_relaxed);
+            const int64_t maxLead =
+                control->txMaximumLeadTicks.load(std::memory_order_relaxed);
+            const uint32_t rate = control->hardwareTimeline.SampleRateHz();
+            const int64_t ticksPerFrame = rate != 0
+                ? static_cast<int64_t>(24'576'000U / rate) : 512;
+            ASFW_LOG(DirectAudio,
+                     "[TxLead] ticks=%lld min=%lld max=%lld frames=%lld rate=%u",
+                     leadTicks, minLead == INT64_MAX ? 0 : minLead,
+                     maxLead == INT64_MIN ? 0 : maxLead,
+                     ticksPerFrame != 0 ? leadTicks / ticksPerFrame : 0,
+                     rate);
+        }
         {
             const auto& fill = ivars->runtime.txStreamEngine.Counters();
             ASFW_LOG(DirectAudio,
