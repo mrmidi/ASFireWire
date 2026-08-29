@@ -141,4 +141,68 @@ TEST(TxCycleAnchorTests, SuccessiveAnchorsStayMonotonicAcrossThePublishRace) {
     }
 }
 
+TEST(TxCycleAnchorTests, StampJustPastTheWindowBoundaryIsNotThrownBackEightSeconds) {
+    // The mirror of StampAheadOfCorrelationBelongsToThePreviousWindow, and the
+    // case observed on hardware as `[BackendTiming] noCycleAnchor` bursts:
+    // clockPair is published at the TOP of a refill pass and the pass's
+    // completion stamps at the BOTTOM, so the stamp legitimately leads its
+    // correlation. When that lead straddles an eight-second boundary the
+    // correlation still carries the OLD window, and OR-ing the stamp's low
+    // three bits into it selects the window BELOW the truth.
+    const uint32_t completion = CompletionStamp(48, 1);
+    const uint32_t correlation = encodeCycleTimer(47, 7999, 0);
+
+    int64_t ticks = 0;
+    ASSERT_TRUE(TransmitPacketBusTicks(completion, correlation, 0, ticks));
+    EXPECT_EQ(ticks, BusTicks(48, 1, 0));
+    // The symptom: an anchor exactly one eight-second window early, which
+    // UnwrapBusTicks then refuses against its high-water mark.
+    EXPECT_NE(ticks, BusTicks(40, 1, 0));
+}
+
+TEST(TxCycleAnchorTests, WindowChoiceIsNearestInBothDirections) {
+    // Sweep a stamp across an eight-second boundary against a correlation
+    // pinned just below it. Every sample must resolve to its true second.
+    const uint32_t correlationSecond = 47;
+    for (uint32_t offsetCycles = 0; offsetCycles < 8; ++offsetCycles) {
+        const uint32_t second = 48;
+        int64_t ticks = 0;
+        ASSERT_TRUE(TransmitPacketBusTicks(
+            CompletionStamp(second, offsetCycles),
+            encodeCycleTimer(correlationSecond, 7999, 0), 0, ticks))
+            << "cycle " << offsetCycles;
+        EXPECT_EQ(ticks, BusTicks(second, offsetCycles, 0))
+            << "cycle " << offsetCycles;
+    }
+}
+
+TEST(TxCycleAnchorTests, BoundaryStraddleStaysMonotonicForTheUnwrapper) {
+    // End to end: the sequence UnwrapBusTicks actually sees while a refill pass
+    // spans the boundary. A single backwards step here is one noCycleAnchor
+    // burst on hardware.
+    int64_t previous = -1;
+    for (int step = -4; step <= 4; ++step) {
+        const int64_t absoluteCycle =
+            static_cast<int64_t>(48) * kCyclesPerSecond + step;
+        const uint32_t second =
+            static_cast<uint32_t>(absoluteCycle / kCyclesPerSecond);
+        const uint32_t cycle =
+            static_cast<uint32_t>(absoluteCycle % kCyclesPerSecond);
+        // Correlation lags the stamp by one cycle: the publish race.
+        const int64_t correlationCycle = absoluteCycle - 1;
+        const uint32_t correlationSecond =
+            static_cast<uint32_t>(correlationCycle / kCyclesPerSecond);
+        int64_t ticks = 0;
+        ASSERT_TRUE(TransmitPacketBusTicks(
+            CompletionStamp(second, cycle),
+            encodeCycleTimer(
+                correlationSecond,
+                static_cast<uint32_t>(correlationCycle % kCyclesPerSecond), 0),
+            0, ticks)) << "step " << step;
+        EXPECT_EQ(ticks, BusTicks(second, cycle, 0)) << "step " << step;
+        EXPECT_GT(ticks, previous) << "step " << step;
+        previous = ticks;
+    }
+}
+
 } // namespace

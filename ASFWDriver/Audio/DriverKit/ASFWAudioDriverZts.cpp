@@ -135,40 +135,32 @@ void TraceCycle(ASFW::Audio::Runtime::AudioTransportControlBlock& control,
     uint32_t correlationCycleTimer,
     uint64_t& completionBusTicks,
     uint64_t& correlationBusTicks) noexcept {
-    const auto completion = ASFW::Timing::decodeCycleTimer(
-        completionCycleTimer);
-    const auto correlation = ASFW::Timing::decodeCycleTimer(
-        correlationCycleTimer);
-    const uint64_t correlationRaw =
-        static_cast<uint64_t>(correlation.seconds) *
-            ASFW::Timing::kTicksPerSecond +
-        static_cast<uint64_t>(correlation.cycle) *
-            ASFW::Timing::kTicksPerCycle + correlation.offset;
-    if (!UnwrapBusTicks(correlationRaw,
+    // One implementation of the OUTPUT_LAST seconds[2:0] lift, shared with the
+    // TX plan path. This used to carry its own copy whose only correction was
+    // `completionRaw > correlationRaw`, with no tolerance at all -- so the
+    // ordinary publish race (clockPair from the top of a refill pass, the
+    // stamp from its bottom) could push an observation a full eight seconds
+    // into the past.
+    int64_t completionTicks = 0;
+    int64_t correlationTicks = 0;
+    ASFW::Audio::Shared::LiftCompletionAgainstCorrelation(
+        completionCycleTimer, correlationCycleTimer,
+        completionTicks, correlationTicks);
+
+    if (!UnwrapBusTicks(static_cast<uint64_t>(correlationTicks),
                         ivars.runtime.txObservationBusTicksValid,
                         ivars.runtime.lastTxObservationBusTicks,
                         correlationBusTicks)) {
         return false;
     }
 
-    // OUTPUT_LAST exposes only seconds[2:0]. Lift it to the latest matching
-    // eight-second window not later than the correlated controller read.
-    uint32_t completionSeconds =
-        (correlation.seconds & ~0x7U) | (completion.seconds & 0x7U);
-    uint64_t completionRaw =
-        static_cast<uint64_t>(completionSeconds) *
-            ASFW::Timing::kTicksPerSecond +
-        static_cast<uint64_t>(completion.cycle) *
-            ASFW::Timing::kTicksPerCycle + completion.offset;
-    constexpr uint64_t kEightSeconds =
-        8ULL * ASFW::Timing::kTicksPerSecond;
-    if (completionRaw > correlationRaw) {
-        if (completionRaw < kEightSeconds) return false;
-        completionRaw -= kEightSeconds;
-    }
-    const uint64_t age = correlationRaw - completionRaw;
-    if (correlationBusTicks < age) return false;
-    completionBusTicks = correlationBusTicks - age;
+    // `age` is signed: a completion may sit microseconds AFTER its correlation
+    // when the stamp comes from a newer pass than the clockPair read.
+    const int64_t age = correlationTicks - completionTicks;
+    const int64_t completionSigned =
+        static_cast<int64_t>(correlationBusTicks) - age;
+    if (completionSigned < 0) return false;
+    completionBusTicks = static_cast<uint64_t>(completionSigned);
     // The next callback is ordered by completion, not by the slightly later
     // controller correlation read.
     ivars.runtime.lastTxObservationBusTicks = completionBusTicks;
