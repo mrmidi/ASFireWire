@@ -120,6 +120,13 @@ public:
     /// Lowest packet index that may still be worth filling.
     [[nodiscard]] uint64_t FreezeFrontier() const noexcept;
 
+    /// Record that an armed DATA packet reached freeze with no content, so it
+    /// transmits the silence it was armed with. Only the caller knows this: it
+    /// happens when the freeze frontier moves past a packet the fill pass never
+    /// reached, and transport cannot report it without learning what silence
+    /// means.
+    void NoteFrozenWithoutContent(uint32_t packetIndex) noexcept;
+
     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
     [[nodiscard]] const AMDTP::AmdtpStreamConfig& StreamConfig() const noexcept;

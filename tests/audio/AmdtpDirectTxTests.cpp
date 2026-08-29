@@ -482,6 +482,48 @@ TEST(AmdtpDirectTxTests, FillIsRefusedOnceTransportHasFrozenTheSlot) {
     EXPECT_EQ(slots.latePublished, 1U);
 }
 
+TEST(AmdtpDirectTxTests, FrozenWithoutContentIsCountedOncePerArmedDataPacket) {
+    TestProfile profile{};
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);
+    std::array<float, 32> host{};
+    ASSERT_EQ(cache.Publish({host.data(), 3, 100, 16,
+                             static_cast<uint32_t>(host.size() / 2), 2}),
+              PcmPublishResult::Published);
+    engine.BindPcmSource(&cache);
+    engine.ResetForStart(0);
+
+    ASSERT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+    auto noData = DataPlan(108);
+    noData.disposition = AmdtpPacketDisposition::NoData;
+    noData.frameCount = 0;
+    ASSERT_EQ(engine.PrepareTransmitSlot(8, noData, 0, 0xFFFF),
+              TxSlotPrepareResult::Prepared);
+    ASSERT_EQ(engine.PrepareTransmitSlot(9, DataPlan(108), 8, 0x4569),
+              TxSlotPrepareResult::Prepared);
+    ASSERT_EQ(engine.FillTransmitSlot(9), TxSlotFillResult::Filled);
+    ASSERT_TRUE(engine.CommitFill(9));
+
+    // Packet 7 was armed and never filled: it goes out as silence.
+    engine.NoteFrozenWithoutContent(7);
+    engine.NoteFrozenWithoutContent(7);   // idempotent
+    // Packet 8 is cadence NO-DATA -- it carries no samples to be missing.
+    engine.NoteFrozenWithoutContent(8);
+    // Packet 9 carries real content.
+    engine.NoteFrozenWithoutContent(9);
+    EXPECT_EQ(engine.Counters().pcmSilenceSubstitutions.load(), 1U);
+
+    // A packet this engine never armed is not attributed to it either.
+    engine.NoteFrozenWithoutContent(42);
+    EXPECT_EQ(engine.Counters().pcmSilenceSubstitutions.load(), 1U);
+}
+
 TEST(AmdtpDirectTxTests, FillIsRefusedForCadenceNoDataAndForARepeatFill) {
     TestProfile profile{};
     DiceTxStreamEngine engine{};

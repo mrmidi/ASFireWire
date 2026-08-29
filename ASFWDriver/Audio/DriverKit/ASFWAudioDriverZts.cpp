@@ -772,8 +772,19 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
     // first packet whose range is not yet available ends the pass.
     {
         const uint64_t frozen = queue->mappedEnd.load(std::memory_order_acquire);
-        if (ivars->runtime.txFillCursor < frozen) {
-            ivars->runtime.txFillCursor = frozen;
+        // Everything the frontier passed that this loop never filled now
+        // transmits the silence it was armed with. Attribute it before the
+        // cursor skips over it: a stream that plays but is quietly half silence
+        // must not look identical to one that is not.
+        while (ivars->runtime.txFillCursor < frozen) {
+            const auto packet =
+                static_cast<uint32_t>(ivars->runtime.txFillCursor);
+            ivars->runtime.txStreamEngine.NoteFrozenWithoutContent(packet);
+            if (ivars->runtime.txSecondaryActive) {
+                ivars->runtime.txStreamEngineSecondary
+                    .NoteFrozenWithoutContent(packet);
+            }
+            ++ivars->runtime.txFillCursor;
         }
         while (ivars->runtime.txFillCursor < committedAfter) {
             const auto packet =
@@ -844,6 +855,19 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                  ivars->runtime.txNoCycleAnchorEvents,
                  ivars->runtime.txNoPresentationOriginEvents,
                  ivars->runtime.txReplayResyncs);
+
+        {
+            const auto& fill = ivars->runtime.txStreamEngine.Counters();
+            ASFW_LOG(DirectAudio,
+                     "[TxFill] filled=%llu tooLate=%llu unavailable=%llu silentData=%llu cursor=%llu frozen=%llu committed=%llu",
+                     fill.lateFillsPublished.load(std::memory_order_relaxed),
+                     fill.lateFillsTooLate.load(std::memory_order_relaxed),
+                     fill.lateFillsUnavailable.load(std::memory_order_relaxed),
+                     fill.pcmSilenceSubstitutions.load(std::memory_order_relaxed),
+                     ivars->runtime.txFillCursor,
+                     queue->mappedEnd.load(std::memory_order_relaxed),
+                     committedAfter);
+        }
 
         // [TxPrep] is the scheduling half of the heartbeat: how late the
         // preparation pass ran behind the CoreAudio request that asked for it,

@@ -189,6 +189,24 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
     return TxSlotPrepareResult::Prepared;
 }
 
+void DiceTxStreamEngine::NoteFrozenWithoutContent(
+    uint32_t packetIndex) noexcept {
+    if (!slotProvider_) return;
+    const uint32_t retention = std::min<uint32_t>(
+        slotProvider_->SlotCount(),
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots);
+    if (retention == 0) return;
+    const uint32_t index = packetIndex % retention;
+    // Only a DATA packet this engine armed and never filled. A cadence NO-DATA
+    // packet carries no samples, and a filled one carries content.
+    if (armedFilled_[index] || !armedPackets_[index].isData ||
+        armedPackets_[index].packetIndex != packetIndex) {
+        return;
+    }
+    armedFilled_[index] = true;  // do not count the same packet twice
+    counters_.pcmSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
+}
+
 uint64_t DiceTxStreamEngine::FreezeFrontier() const noexcept {
     return slotProvider_ ? slotProvider_->MappedEnd() : 0;
 }
