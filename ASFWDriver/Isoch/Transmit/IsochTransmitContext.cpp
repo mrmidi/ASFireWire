@@ -234,13 +234,17 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     }
 
     const uint32_t numSlots = static_cast<uint32_t>(metadataLen / sizeof(IsochTxPacketMeta));
-    if (numSlots == 0 || payloadLen == 0 || payloadLen % numSlots != 0) {
+    const uint64_t imagesTotal =
+        static_cast<uint64_t>(numSlots) * kTxPayloadImagesPerSlot;
+    if (numSlots == 0 || payloadLen == 0 || imagesTotal == 0 ||
+        payloadLen % imagesTotal != 0) {
         ASFW_LOG(Isoch,
-                 "IT: Invalid TX queue geometry payloadBytes=%llu slots=%u",
-                 payloadLen, numSlots);
+                 "IT: Invalid TX queue geometry payloadBytes=%llu slots=%u images=%u",
+                 payloadLen, numSlots, kTxPayloadImagesPerSlot);
         return kIOReturnBadArgument;
     }
-    const uint32_t maxPacketBytes = static_cast<uint32_t>(payloadLen / numSlots);
+    const uint32_t maxPacketBytes =
+        static_cast<uint32_t>(payloadLen / imagesTotal);
 
     controlBlock_->abiVersion = kTxQueueAbiVersion;
     controlBlock_->numSlots = numSlots;
@@ -329,7 +333,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     const uint64_t preFillCount = controlBlock_->committedEnd.load(std::memory_order_relaxed);
     const auto primeStats =
-        ring_.Prime(payloadDmaMap_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, preFillCount);
+        ring_.Prime(payloadDmaMap_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, controlBlock_, payloadBase_, preFillCount);
     if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
         ASFW_LOG(Isoch, "IT: Failed to prime descriptor ring against shared payload slab");
         return kIOReturnInternalError;

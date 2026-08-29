@@ -20,6 +20,7 @@ using AmdtpDisposition =
 using TxPlan = ASFW::Protocols::Audio::AMDTP::TxPresentationPlan;
 using PrepareResult = ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
 using Timeline = ASFW::Audio::Runtime::HardwareSampleTimeline;
+using FillResult = ASFW::Protocols::Audio::DICE::TxSlotFillResult;
 
 constexpr uint64_t kBusWrapTicks =
     static_cast<uint64_t>(ASFW::Timing::kFWTimeWrapSeconds) *
@@ -165,90 +166,6 @@ void TraceCycle(ASFW::Audio::Runtime::AudioTransportControlBlock& control,
     // controller correlation read.
     ivars.runtime.lastTxObservationBusTicks = completionBusTicks;
     return true;
-}
-
-[[nodiscard]] bool IsPcmRetryable(PrepareResult result) noexcept {
-    return result == PrepareResult::PcmNotYetPublished ||
-           result == PrepareResult::PcmConcurrentRewrite;
-}
-
-[[nodiscard]] bool IsPcmFailure(PrepareResult result) noexcept {
-    return result == PrepareResult::PcmNotYetPublished ||
-           result == PrepareResult::PcmExpired ||
-           result == PrepareResult::PcmWrongEpoch ||
-           result == PrepareResult::PcmConcurrentRewrite ||
-           result == PrepareResult::PcmInvalidRequest ||
-           result == PrepareResult::PcmSourceUnavailable;
-}
-
-[[nodiscard]] ASFW::Audio::Runtime::TxContentFaultReason
-ContentFaultReasonFor(PrepareResult result) noexcept {
-    using Fault = ASFW::Audio::Runtime::TxContentFaultReason;
-    switch (result) {
-        case PrepareResult::PcmNotYetPublished:
-            return Fault::kNotYetPublishedAtDeadline;
-        case PrepareResult::PcmExpired:
-            return Fault::kExpired;
-        case PrepareResult::PcmConcurrentRewrite:
-            return Fault::kConcurrentRewriteAtDeadline;
-        case PrepareResult::PcmWrongEpoch:
-        case PrepareResult::PcmInvalidRequest:
-        case PrepareResult::PcmSourceUnavailable:
-            return Fault::kInvalidSource;
-        default:
-            return Fault::kInvalidSource;
-    }
-}
-
-void RecordMissedRange(ASFW::Audio::Runtime::AudioTransportControlBlock& control,
-                       uint64_t packetIndex,
-                       const TxPlan& plan,
-                       PrepareResult reason,
-                       uint64_t completionCursor,
-                       uint64_t committedEnd) noexcept {
-    const uint64_t count = control.txContentDeadlineNoData.fetch_add(
-        1, std::memory_order_relaxed) + 1;
-    control.counters.txPreparationDeadlineFaults.fetch_add(
-        1, std::memory_order_relaxed);
-    control.counters.txUnderruns.fetch_add(1, std::memory_order_relaxed);
-    control.txMissedFrames.fetch_add(plan.frameCount,
-                                     std::memory_order_relaxed);
-    control.txContentFaultEvents.fetch_add(1, std::memory_order_relaxed);
-    const auto faultReason = ContentFaultReasonFor(reason);
-    uint32_t expected = static_cast<uint32_t>(
-        ASFW::Audio::Runtime::TxContentFaultReason::kNone);
-    if (control.txContentFirstFaultReason.compare_exchange_strong(
-            expected,
-            static_cast<uint32_t>(faultReason),
-            std::memory_order_release, std::memory_order_relaxed)) {
-        control.txContentFirstFaultPacket.store(packetIndex,
-                                                 std::memory_order_relaxed);
-        control.txContentFirstFaultAudioFrame.store(
-            plan.firstAudioFrame, std::memory_order_relaxed);
-        control.txContentFirstFaultOldestFrame.store(
-            control.pcmPublicationTelemetry.oldestValidFrame.load(
-                std::memory_order_relaxed), std::memory_order_relaxed);
-        control.txContentFirstFaultWrittenEndFrame.store(
-            control.pcmPublicationTelemetry.publishedEndFrame.load(
-                std::memory_order_relaxed), std::memory_order_relaxed);
-        control.txContentFirstFaultCompletionCursor.store(
-            completionCursor, std::memory_order_relaxed);
-        control.txContentFirstFaultCommittedEnd.store(
-            committedEnd, std::memory_order_relaxed);
-    }
-    if (IsPowerOfTwo(count)) {
-        ASFW_LOG_ERROR(
-            DirectAudio,
-            "[PcmCache] deadlineFailure=%llu result=%u epoch=%llu range=[%llu,%llu)",
-            count, static_cast<uint32_t>(reason), plan.epoch,
-            plan.firstAudioFrame, plan.firstAudioFrame + plan.frameCount);
-        ASFW_LOG_ERROR(
-            DirectAudio,
-            "[TxDeadline] missed=%llu packet=%llu range=[%llu,%llu) pcm=%u cycle=%llu",
-            count, packetIndex, plan.firstAudioFrame,
-            plan.firstAudioFrame + plan.frameCount,
-            static_cast<uint32_t>(reason), plan.cycleOrdinal);
-    }
 }
 
 [[nodiscard]] bool PublishTimelineBoundary(
@@ -662,41 +579,18 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 
         const uint64_t completionCursor = queue->completionCursor.load(
             std::memory_order_acquire);
-        PrepareResult result = ivars.runtime.txStreamEngine.PrepareTransmitSlot(
-            static_cast<uint32_t>(packetIndex), plan, wireBlocks, syt);
+        // Arming cannot fail for content reasons any more: the packet is
+        // encoded from silence and content, if it arrives in time, replaces the
+        // sample words later. The deferral / convert-to-NO-DATA branch that
+        // used to live here is gone with the contract that needed it -- a
+        // planned DATA packet now always transmits as DATA, carrying either
+        // real content or the silence it was armed with, and its absolute frame
+        // range is consumed either way.
+        const PrepareResult result =
+            ivars.runtime.txStreamEngine.PrepareTransmitSlot(
+                static_cast<uint32_t>(packetIndex), plan, wireBlocks, syt);
         const PrepareResult initialResult = result;
-        if (IsPcmFailure(result) && plan.frameCount != 0) {
-            const uint64_t completion = queue->completionCursor.load(
-                std::memory_order_acquire);
-            const uint64_t headroom = packetIndex > completion
-                ? packetIndex - completion : 0;
-            const bool deadlineExpired = headroom <=
-                ASFW::Audio::Shared::AudioTimingGeometry::
-                    kTxOwnershipGuardCycleSlots;
-            if (IsPcmRetryable(result) && !deadlineExpired) {
-                control->txContentDeferrals.fetch_add(
-                    1, std::memory_order_relaxed);
-                TraceCycle(*control, plan, result, completionCursor);
-                break;
-            }
-            const PrepareResult pcmFailure = result;
-            TxPlan missed = plan;
-            missed.disposition = AmdtpDisposition::NoData;
-            result = ivars.runtime.txStreamEngine.PrepareTransmitSlot(
-                static_cast<uint32_t>(packetIndex), missed, 0, 0xFFFF);
-            if (result != PrepareResult::Prepared) break;
-            if (ivars.runtime.txSecondaryActive &&
-                ivars.runtime.txStreamEngineSecondary.PrepareTransmitSlot(
-                    static_cast<uint32_t>(packetIndex), missed, 0, 0xFFFF) !=
-                    PrepareResult::Prepared) {
-                break;
-            }
-            plan = missed;
-            RecordMissedRange(
-                *control, packetIndex, plan, pcmFailure,
-                completionCursor,
-                queue->committedEnd.load(std::memory_order_acquire));
-        } else if (result != PrepareResult::Prepared) {
+        if (result != PrepareResult::Prepared) {
             break;
         } else if (ivars.runtime.txSecondaryActive &&
                    ivars.runtime.txStreamEngineSecondary.PrepareTransmitSlot(
@@ -771,6 +665,7 @@ void RepublishTxRingForRestart(ASFWAudioDriver_IVars& ivars) noexcept {
     if (auto* queue2 = ivars.runtime.txSlotProviderSecondary.queueControl) {
         queue2->ResetProducerForStart();
     }
+    ivars.runtime.txFillCursor = 0;
     ivars.runtime.txStreamEngine.ResetForStart(0);
     if (ivars.runtime.txSecondaryActive) {
         ivars.runtime.txStreamEngineSecondary.ResetForStart(0);
@@ -868,6 +763,44 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
             useMAudio && ivars->runtime.mAudioInternalTxTiming.IsArmed());
     const uint64_t committedAfter = queue->committedEnd.load(
         std::memory_order_acquire);
+
+    // Content pass. Arming above fixed the wire geometry for a deep horizon;
+    // this fills in the samples for the packets transport has not bound yet.
+    // The distance between mappedEnd and where this stops is the content lead,
+    // and it -- not the arm horizon -- is what CoreAudio is told to stay ahead
+    // of. Filling in index order matters: content is published in order, so the
+    // first packet whose range is not yet available ends the pass.
+    {
+        const uint64_t frozen = queue->mappedEnd.load(std::memory_order_acquire);
+        if (ivars->runtime.txFillCursor < frozen) {
+            ivars->runtime.txFillCursor = frozen;
+        }
+        while (ivars->runtime.txFillCursor < committedAfter) {
+            const auto packet =
+                static_cast<uint32_t>(ivars->runtime.txFillCursor);
+            const ASFW::Audio::DriverKit::FillResult primary =
+                ivars->runtime.txStreamEngine.FillTransmitSlot(packet);
+            if (primary == ASFW::Audio::DriverKit::FillResult::ContentUnavailable) break;
+            if (primary == ASFW::Audio::DriverKit::FillResult::Filled) {
+                // Streams sharing one presentation plan commit together or not
+                // at all: real content on one and silence on its sibling for
+                // the same frame range is worse than silence on both.
+                const bool secondaryReady =
+                    !ivars->runtime.txSecondaryActive ||
+                    ivars->runtime.txStreamEngineSecondary.FillTransmitSlot(
+                        packet) ==
+                        ASFW::Audio::DriverKit::FillResult::Filled;
+                if (secondaryReady) {
+                    if (ivars->runtime.txStreamEngine.CommitFill(packet) &&
+                        ivars->runtime.txSecondaryActive) {
+                        (void)ivars->runtime.txStreamEngineSecondary.CommitFill(
+                            packet);
+                    }
+                }
+            }
+            ++ivars->runtime.txFillCursor;
+        }
+    }
     const uint64_t margin = committedAfter > completion
         ? committedAfter - completion : 0;
     ASFW::Audio::DriverKit::UpdateMaximum(

@@ -26,8 +26,18 @@ struct DiceTxEngineCounters final {
     std::atomic<uint64_t> pcmCopiesWrongEpoch{0};
     std::atomic<uint64_t> pcmCopiesConcurrentRewrite{0};
     std::atomic<uint64_t> pcmCopiesInvalid{0};
-    /// DATA packets whose PCM range was unavailable and encoded as silence.
+    /// DATA packets that reached the wire as silence because no content was
+    /// ever accepted for them. Every planned DATA packet is armed with silence,
+    /// so this counts arms that no fill replaced -- not encode failures.
     std::atomic<uint64_t> pcmSilenceSubstitutions{0};
+    /// Late fills accepted by the producer seam (transport may still bind the
+    /// armed image if it maps the slot first; that race is normal).
+    std::atomic<uint64_t> lateFillsPublished{0};
+    /// Fills refused because the slot was already frozen -- transport had bound
+    /// it. This is the distribution that sets the content lead.
+    std::atomic<uint64_t> lateFillsTooLate{0};
+    /// Fills skipped because the content still was not available.
+    std::atomic<uint64_t> lateFillsUnavailable{0};
 };
 
 enum class TxSlotPrepareResult : uint8_t {
@@ -43,6 +53,17 @@ enum class TxSlotPrepareResult : uint8_t {
     PacketizerRejected,
     SlotPublishFailed,
     CommitRejected,
+};
+
+enum class TxSlotFillResult : uint8_t {
+    Filled = 0,
+    /// Transport already bound the slot: the armed silence transmits.
+    TooLate,
+    /// Content is not available for this range (yet, or ever).
+    ContentUnavailable,
+    /// Nothing to do: the packet is cadence NO-DATA, or was never armed.
+    NotFillable,
+    Rejected,
 };
 
 class DiceStreamConfigMapper final {
@@ -75,11 +96,29 @@ public:
         AMDTP::TxPresentationPlan& outPlan,
         uint8_t& outWireDataBlocks,
         uint16_t& outSyt) const noexcept;
+    /// Arm a packet: fix cadence, DBC, SYT and disposition, and publish a
+    /// complete silent image so transport always has something to transmit.
+    /// Content is not consulted here -- see FillTransmitSlot.
     [[nodiscard]] TxSlotPrepareResult PrepareTransmitSlot(
         uint32_t packetIndex,
         const AMDTP::TxPresentationPlan& plan,
         uint8_t wireDataBlocks,
         uint16_t syt) noexcept;
+
+    /// Encode real PCM for an already-armed packet into its late image.
+    /// Succeeds only while the slot is still writable. The image is NOT offered
+    /// to transport until CommitFill, so a caller driving several streams can
+    /// encode them all and then publish only if every one succeeded -- a device
+    /// whose streams share one presentation plan must not put content on one
+    /// stream and silence on its sibling for the same frame range.
+    [[nodiscard]] TxSlotFillResult FillTransmitSlot(uint32_t packetIndex) noexcept;
+
+    /// Offer the encoded late image to transport. Transport still takes it only
+    /// if it maps the slot afterwards; losing that race is normal.
+    [[nodiscard]] bool CommitFill(uint32_t packetIndex) noexcept;
+
+    /// Lowest packet index that may still be worth filling.
+    [[nodiscard]] uint64_t FreezeFrontier() const noexcept;
 
     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
@@ -105,6 +144,16 @@ private:
     AMDTP::IAmdtpTxSlotProvider* slotProvider_{nullptr};
     ASFW::Audio::Ports::ITxPcmSource* pcmSource_{nullptr};
     std::array<float, kMaxPcmSnapshotSamples> pcmScratch_{};
+    /// Always zero. Arming encodes from this so the armed image is a valid
+    /// silent packet without consulting the content source at all.
+    std::array<float, kMaxPcmSnapshotSamples> silenceScratch_{};
+    /// The armed packet for each producer slot, so a later fill can reproduce
+    /// its exact wire geometry -- DBC and SYT above all, which the live counter
+    /// can no longer supply by the time content arrives.
+    AMDTP::PreparedTxPacket armedPackets_[
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots]{};
+    bool armedFilled_[
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots]{};
     DiceTxEngineCounters counters_{};
 };
 

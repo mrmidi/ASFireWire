@@ -1,5 +1,7 @@
 #include "DiceTxStreamEngine.hpp"
 
+#include <algorithm>
+
 #include <iterator>
 
 namespace ASFW::Protocols::Audio::DICE {
@@ -125,74 +127,22 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
     uint16_t syt) noexcept {
     if (!slotProvider_) return TxSlotPrepareResult::SlotProviderUnavailable;
 
+    // Arming never consults the content source. A planned DATA packet is
+    // encoded from silence so transport always has a complete, valid image for
+    // the slot; real content arrives later through FillTransmitSlot, if it
+    // arrives in time at all. This is what lets the arm lead stay deep -- deep
+    // enough to absorb a producer stall -- while the content lead stays short,
+    // which is the only part of the two that CoreAudio pays for as latency.
     AMDTP::TxPcmSnapshotView pcm{};
     if (plan.disposition == AMDTP::AmdtpPacketDisposition::Data) {
-        if (!pcmSource_) return TxSlotPrepareResult::PcmSourceUnavailable;
         const uint64_t sampleCount = static_cast<uint64_t>(plan.frameCount) *
             packetizer_.StreamConfig().pcmChannels;
-        if (sampleCount > pcmScratch_.size()) {
+        if (sampleCount > silenceScratch_.size()) {
             counters_.pcmCopiesInvalid.fetch_add(1, std::memory_order_relaxed);
             return TxSlotPrepareResult::PcmInvalidRequest;
         }
-        const auto result = pcmSource_->CopyExact(
-            {
-                .epoch = plan.epoch,
-                .firstFrame = plan.firstAudioFrame,
-                .frameCount = plan.frameCount,
-                .sourceChannelOffset =
-                    packetizer_.StreamConfig().sourceChannelOffset,
-                .channelCount = packetizer_.StreamConfig().pcmChannels,
-            },
-            pcmScratch_.data(), static_cast<uint32_t>(pcmScratch_.size()));
-        using CopyResult = ASFW::Audio::Ports::PcmCopyResult;
-        // A failed copy is only fatal to this packet when the profile has no
-        // silence substitution. Otherwise the range is encoded as silence and
-        // still transmitted: withholding the packet starves the IT descriptor
-        // ring, and neither Linux nor AppleFWAudio ever lets that happen.
-        const bool substitute =
-            packetizer_.TxPolicy().substituteSilenceOnPcmUnavailable;
-        switch (result) {
-            case CopyResult::Ready:
-                counters_.pcmCopiesReady.fetch_add(1, std::memory_order_relaxed);
-                break;
-            case CopyResult::NotYetPublished:
-                counters_.pcmCopiesNotYetPublished.fetch_add(
-                    1, std::memory_order_relaxed);
-                if (!substitute) return TxSlotPrepareResult::PcmNotYetPublished;
-                break;
-            case CopyResult::Expired:
-                counters_.pcmCopiesExpired.fetch_add(1,
-                                                      std::memory_order_relaxed);
-                if (!substitute) return TxSlotPrepareResult::PcmExpired;
-                break;
-            case CopyResult::WrongEpoch:
-                counters_.pcmCopiesWrongEpoch.fetch_add(
-                    1, std::memory_order_relaxed);
-                if (!substitute) return TxSlotPrepareResult::PcmWrongEpoch;
-                break;
-            case CopyResult::ConcurrentRewrite:
-                counters_.pcmCopiesConcurrentRewrite.fetch_add(
-                    1, std::memory_order_relaxed);
-                if (!substitute) return TxSlotPrepareResult::PcmConcurrentRewrite;
-                break;
-            case CopyResult::InvalidRequest:
-                counters_.pcmCopiesInvalid.fetch_add(1,
-                                                      std::memory_order_relaxed);
-                // An out-of-range request is a programming fault, not a content
-                // gap; substituting silence would hide it.
-                return TxSlotPrepareResult::PcmInvalidRequest;
-        }
-        if (result != CopyResult::Ready) {
-            // Zero samples through the configured slot encoding. For AM824 MBLA
-            // that is exactly Linux's write_pcm_silence() word, 0x40000000.
-            for (uint64_t index = 0; index < sampleCount; ++index) {
-                pcmScratch_[index] = 0.0f;
-            }
-            counters_.pcmSilenceSubstitutions.fetch_add(
-                1, std::memory_order_relaxed);
-        }
         pcm = {
-            .interleavedFloat32 = pcmScratch_.data(),
+            .interleavedFloat32 = silenceScratch_.data(),
             .frameCount = plan.frameCount,
             .channels = packetizer_.StreamConfig().pcmChannels,
         };
@@ -214,6 +164,16 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
     if (!packetizer_.CommitPreparedPacket(packet, wireDataBlocks)) {
         return TxSlotPrepareResult::CommitRejected;
     }
+
+    const uint32_t retention = std::min<uint32_t>(
+        slotProvider_->SlotCount(),
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots);
+    if (retention != 0) {
+        const uint32_t index = packetIndex % retention;
+        armedPackets_[index] = packet;
+        armedFilled_[index] = false;
+    }
+
     cadence_->AdvanceCycle();
     counters_.packetsPrepared.fetch_add(1, std::memory_order_relaxed);
     if (packet.isData) {
@@ -222,6 +182,113 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
         counters_.noDataPacketsPrepared.fetch_add(1, std::memory_order_relaxed);
     }
     return TxSlotPrepareResult::Prepared;
+}
+
+uint64_t DiceTxStreamEngine::FreezeFrontier() const noexcept {
+    return slotProvider_ ? slotProvider_->MappedEnd() : 0;
+}
+
+TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
+    uint32_t packetIndex) noexcept {
+    if (!slotProvider_ || !pcmSource_) {
+        return TxSlotFillResult::NotFillable;
+    }
+    const uint32_t retention = std::min<uint32_t>(
+        slotProvider_->SlotCount(),
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots);
+    if (retention == 0) return TxSlotFillResult::NotFillable;
+    const uint32_t index = packetIndex % retention;
+    const AMDTP::PreparedTxPacket& armed = armedPackets_[index];
+
+    // Only a DATA packet this engine actually armed, and only once. A cadence
+    // NO-DATA packet carries no samples and must keep the geometry it was
+    // planned with.
+    if (armedFilled_[index] || !armed.isData ||
+        armed.packetIndex != packetIndex || armed.framesInPacket == 0) {
+        return TxSlotFillResult::NotFillable;
+    }
+
+    const uint64_t sampleCount = static_cast<uint64_t>(armed.framesInPacket) *
+        packetizer_.StreamConfig().pcmChannels;
+    if (sampleCount > pcmScratch_.size()) {
+        counters_.pcmCopiesInvalid.fetch_add(1, std::memory_order_relaxed);
+        return TxSlotFillResult::Rejected;
+    }
+
+    const auto result = pcmSource_->CopyExact(
+        {
+            .epoch = armed.epoch,
+            .firstFrame = armed.firstAudioFrame,
+            .frameCount = armed.framesInPacket,
+            .sourceChannelOffset = packetizer_.StreamConfig().sourceChannelOffset,
+            .channelCount = packetizer_.StreamConfig().pcmChannels,
+        },
+        pcmScratch_.data(), static_cast<uint32_t>(pcmScratch_.size()));
+    using CopyResult = ASFW::Audio::Ports::PcmCopyResult;
+    switch (result) {
+        case CopyResult::Ready:
+            counters_.pcmCopiesReady.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case CopyResult::NotYetPublished:
+            counters_.pcmCopiesNotYetPublished.fetch_add(
+                1, std::memory_order_relaxed);
+            counters_.lateFillsUnavailable.fetch_add(
+                1, std::memory_order_relaxed);
+            return TxSlotFillResult::ContentUnavailable;
+        case CopyResult::Expired:
+            counters_.pcmCopiesExpired.fetch_add(1, std::memory_order_relaxed);
+            counters_.lateFillsUnavailable.fetch_add(
+                1, std::memory_order_relaxed);
+            return TxSlotFillResult::ContentUnavailable;
+        case CopyResult::WrongEpoch:
+            counters_.pcmCopiesWrongEpoch.fetch_add(
+                1, std::memory_order_relaxed);
+            counters_.lateFillsUnavailable.fetch_add(
+                1, std::memory_order_relaxed);
+            return TxSlotFillResult::ContentUnavailable;
+        case CopyResult::ConcurrentRewrite:
+            counters_.pcmCopiesConcurrentRewrite.fetch_add(
+                1, std::memory_order_relaxed);
+            counters_.lateFillsUnavailable.fetch_add(
+                1, std::memory_order_relaxed);
+            return TxSlotFillResult::ContentUnavailable;
+        case CopyResult::InvalidRequest:
+            counters_.pcmCopiesInvalid.fetch_add(1, std::memory_order_relaxed);
+            return TxSlotFillResult::Rejected;
+    }
+
+    AMDTP::TxPacketSlotView slot{};
+    if (!slotProvider_->AcquireLatePayloadSlot(packetIndex, slot)) {
+        // Frozen. The armed silence transmits, and the range is consumed --
+        // content is never retried into a later packet.
+        counters_.lateFillsTooLate.fetch_add(1, std::memory_order_relaxed);
+        return TxSlotFillResult::TooLate;
+    }
+    const AMDTP::TxPcmSnapshotView pcm{
+        .interleavedFloat32 = pcmScratch_.data(),
+        .frameCount = armed.framesInPacket,
+        .channels = packetizer_.StreamConfig().pcmChannels,
+    };
+    if (!packetizer_.RefillPcm(slot, armed, pcm)) {
+        return TxSlotFillResult::Rejected;
+    }
+    return TxSlotFillResult::Filled;
+}
+
+bool DiceTxStreamEngine::CommitFill(uint32_t packetIndex) noexcept {
+    if (!slotProvider_) return false;
+    const uint32_t retention = std::min<uint32_t>(
+        slotProvider_->SlotCount(),
+        ASFW::Audio::Shared::AudioTimingGeometry::kTimelineSlots);
+    if (retention == 0) return false;
+    const uint32_t index = packetIndex % retention;
+    if (armedFilled_[index] || armedPackets_[index].packetIndex != packetIndex) {
+        return false;
+    }
+    if (!slotProvider_->PublishLatePayload(packetIndex)) return false;
+    armedFilled_[index] = true;
+    counters_.lateFillsPublished.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 AMDTP::AmdtpPacketTimeline& DiceTxStreamEngine::Timeline() noexcept {

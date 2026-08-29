@@ -13,6 +13,21 @@ using namespace ASFW::Async::HW;
 using namespace ASFW::Driver;
 
 namespace {
+
+/// Pick the payload image the descriptor will address.
+///
+/// Image 1 wins only when the producer has marked it ready for exactly this
+/// packet's commit generation. Anything else -- never written, or a stale
+/// marker left by an earlier lap through the slot -- falls back to the armed
+/// image 0, which is always complete. Read with acquire so the image's bytes
+/// are visible if the marker is.
+[[nodiscard]] uint32_t SelectPayloadImage(const IsochTxPacketMeta& meta,
+                                          uint64_t expectedGeneration) noexcept {
+    const uint64_t ready =
+        meta.pcmGeneration.load(std::memory_order_acquire);
+    return (ready != 0 && ready == expectedGeneration) ? 1u : 0u;
+}
+
 // Replace the channel field [13:8] of a little-endian OHCI isoch transmit header
 // quadlet with the channel owned by this ring. Linux queue_iso_transmit() likewise
 // takes the channel from the isoch context, never from content-layer metadata
@@ -134,7 +149,9 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
     const TxPayloadDmaMap& payloadDmaMap,
     const uint32_t numSlots,
     const uint32_t slotStrideBytes,
-    const IsochTxPacketMeta* metadataRing,
+    IsochTxPacketMeta* metadataRing,
+    IsochTxQueueControl* controlBlock,
+    uint8_t* payloadBase,
     const uint64_t preFillCount) noexcept {
     PrimeStats stats{};
     if (!slab_.IsValid()) {
@@ -142,7 +159,8 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         return stats;
     }
     if (!payloadDmaMap.IsValid() ||
-        numSlots == 0 || slotStrideBytes == 0 || metadataRing == nullptr) {
+        numSlots == 0 || slotStrideBytes == 0 || metadataRing == nullptr ||
+        controlBlock == nullptr || payloadBase == nullptr) {
         ASFW_LOG(Isoch,
                  "IT: Prime failed - invalid shared payload contract segments=%zu slots=%u stride=%u meta=%p",
                  payloadDmaMap.SegmentCount(), numSlots, slotStrideBytes, metadataRing);
@@ -167,7 +185,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
 
         // Fetch pre-filled metadata for this slot.
         const uint32_t producerSlot = pktIdx % numSlots;
-        const auto& meta = metadataRing[producerSlot];
+        auto& meta = metadataRing[producerSlot];
         const uint64_t expectedGen =
             ExpectedTxCommitGeneration(pktIdx, numSlots);
         if (meta.commitGeneration.load(std::memory_order_acquire) != expectedGen) {
@@ -190,8 +208,13 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         }
 
         std::array<TxPayloadDmaFragment, 2> payloadFragments{};
-        const uint64_t payloadOffset =
-            static_cast<uint64_t>(producerSlot) * slotStrideBytes;
+        const uint32_t selectedImage =
+            SelectPayloadImage(meta, expectedGen);
+        meta.selectedPayloadImage = selectedImage;
+        const uint64_t payloadOffset = TxPayloadImageOffset(
+            producerSlot, selectedImage, slotStrideBytes);
+        meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
+            payloadBase + payloadOffset, meta.payloadLength);
         if (!payloadDmaMap.ResolveTwoFragments(
                 payloadOffset, meta.payloadLength, payloadFragments)) {
             ASFW_LOG(
@@ -276,6 +299,8 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
     // we just primed, ensuring it fetches the next packet in the sequence.
     softwareFillAbsIdx_ = numPackets;
     ringPacketsAhead_ = numPackets;
+    controlBlock->mappedEnd.store(softwareFillAbsIdx_,
+                                  std::memory_order_release);
 
     stats.packetsAssembled = numPackets;
     ASFW_LOG(Isoch, "IT: Dynamic descriptor ring primed. numPackets=%u softwareFillIdx=%llu",
@@ -474,8 +499,10 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             return out;
         }
         const uint8_t* completedPayload =
-            payloadBase + static_cast<uint64_t>(producerSlot) *
-                              controlBlock->slotStrideBytes;
+            payloadBase + TxPayloadImageOffset(
+                              producerSlot,
+                              completedMeta.selectedPayloadImage,
+                              controlBlock->slotStrideBytes);
         const uint64_t observedSeal =
             ASFW::Shared::Isoch::SealTxPayload(
                 completedPayload, completedLength);
@@ -631,8 +658,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         }
 
         const uint32_t hwSlot = static_cast<uint32_t>(fillAbsIdx % Layout::kNumPackets);
-        const uint64_t payloadOffset =
-            static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
+        uint64_t payloadOffset = 0;  // assigned once the image is selected
 
         const uint32_t payloadLength = meta.payloadLength;
 
@@ -655,6 +681,17 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         }
 
         std::array<TxPayloadDmaFragment, 2> payloadFragments{};
+        // Freeze happens here: the slot is about to be addressed by a live
+        // descriptor, so this is the last instant an alternative image can win.
+        // Transport is the only writer of the descriptor, so it never binds a
+        // half-written image -- a producer that misses this point simply loses
+        // and the armed image transmits unchanged.
+        const uint32_t selectedImage = SelectPayloadImage(meta, expectedGen);
+        meta.selectedPayloadImage = selectedImage;
+        payloadOffset = TxPayloadImageOffset(
+            pktSlot, selectedImage, controlBlock->slotStrideBytes);
+        meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
+            payloadBase + payloadOffset, payloadLength);
         if (!payloadDmaMap.ResolveTwoFragments(
                 payloadOffset, payloadLength, payloadFragments)) {
             counters_.fatalPayloadMapping.fetch_add(1, std::memory_order_relaxed);
@@ -726,8 +763,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         // Publish the shared producer slot before exposing descriptor changes.
         if (dmaMemory_) {
             const auto* payloadSlot =
-                reinterpret_cast<const std::byte*>(
-                    payloadBase + static_cast<size_t>(pktSlot) * controlBlock->slotStrideBytes);
+                reinterpret_cast<const std::byte*>(payloadBase + payloadOffset);
             dmaMemory_->PublishToDevice(payloadSlot, payloadLength);
             dmaMemory_->PublishBarrier();
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(immDesc), sizeof(OHCIDescriptorImmediate));
@@ -740,6 +776,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
     if (packetsFilled > 0) {
         CommitRefill(packetsFilled);
+        // Publish the freeze frontier after the descriptors are visible, so a
+        // producer that sees the new value can never still be racing a bind it
+        // was told had not happened.
+        controlBlock->mappedEnd.store(softwareFillAbsIdx_,
+                                      std::memory_order_release);
     }
 
     out.ok = true;

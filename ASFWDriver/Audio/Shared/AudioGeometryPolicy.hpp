@@ -73,9 +73,14 @@ struct AudioGeometryPolicy final {
         if (!AudioTimingGeometry::IsV3SampleRate(sampleRateHz)) {
             return 0;
         }
+        // The content lead, not the arm horizon. Packets are armed with silence
+        // far ahead so a producer stall cannot hole the descriptor ring, but
+        // samples may be written until transport binds the slot -- so what the
+        // host must stay ahead of is the freeze frontier: the hardware ring
+        // plus the refill batch that advances it in one step.
         const uint64_t scheduledFrames =
             (static_cast<uint64_t>(sampleRateHz) *
-                 AudioTimingGeometry::kTxPreparedTargetCycleSlots +
+                 AudioTimingGeometry::kTxContentFreezeCycleSlots +
              7'999U) /
             8'000U;
         const uint32_t ticksPerFrame = 24'576'000U / sampleRateHz;
@@ -145,9 +150,16 @@ static_assert(AudioGeometryPolicy::RxSafetyOffsetFrames(48000.0) == 128,
               "48k RX safety must be 16 packets x 8 frames");
 static_assert(AudioGeometryPolicy::ReportedLatencyFrames(48000.0) == 29,
               "48k reported latency must be 29 frames");
+// 54 cycle slots of content lead (48 hardware ring + one 6-packet refill
+// batch) = 324 frames, plus 25 frames of backend transfer delay and one
+// 8-frame DATA packet, rounded to the 32-frame ring alignment.
+//
+// Was 768, derived from the 120-slot ARM horizon back when publishing a packet
+// also made its samples final. It no longer does: arming and freezing are
+// separate, and only the freeze frontier is latency.
 static_assert(AudioGeometryPolicy::RequiredOutputSafetyFrames(
-                  48, 48'000, 12'800) == 768,
-              "48k V3 output safety must reflect 15 ms scheduling lead");
+                  48, 48'000, 12'800) == 384,
+              "48k V3 output safety must reflect the content freeze frontier");
 
 } // namespace ASFW::Audio::Shared
 

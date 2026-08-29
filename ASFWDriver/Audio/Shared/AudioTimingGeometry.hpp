@@ -163,6 +163,17 @@ struct AudioTimingGeometry final {
         kTxPreparedTargetCycleSlots;
     // 21 ms of durable packet storage: 15 ms prepared plus the 6 ms ownership
     // guard. Storage capacity is not presentation latency.
+    // Freeze frontier: how far ahead of the hardware a packet's samples stop
+    // being writable. Transport binds a slot to a descriptor at most one
+    // hardware ring ahead, and advances that frontier one completion group at a
+    // time, so a fill must land this far ahead to be certain of winning.
+    //
+    // This is the ONLY TX depth that becomes CoreAudio output latency. The arm
+    // horizon above may grow freely to absorb scheduling stalls: an armed
+    // packet already holds a valid silent image, so a late producer costs
+    // content, never a holed descriptor ring.
+    static constexpr uint32_t kTxContentFreezeCycleSlots =
+        kTxHardwareRingPackets + kTxPacketsPerGroup;
     static constexpr uint32_t kTxSharedSlotPackets = 168;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
     static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =

@@ -14,18 +14,51 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 6;
+inline constexpr uint32_t kTxQueueAbiVersion = 7;
+
+/// Payload images per producer slot.
+///
+/// A planned packet is armed with a complete, valid image (image 0) so the
+/// consumer always has something to transmit for the slot. A producer that
+/// obtains better content before the slot is mapped into a descriptor writes it
+/// as a second complete image (image 1) and marks it ready; the consumer picks
+/// whichever is ready at map time. The consumer is the only writer of the
+/// descriptor, so it never observes a partially written image, and a late
+/// second image simply loses -- it is never blended with the first.
+///
+/// This is a neutral producer/consumer facility. It carries no notion of what
+/// makes one image better than another.
+inline constexpr uint32_t kTxPayloadImagesPerSlot = 2;
+
+[[nodiscard]] constexpr uint64_t TxPayloadImageOffset(
+    uint32_t slotIndex, uint32_t imageIndex,
+    uint32_t slotStrideBytes) noexcept {
+    return (static_cast<uint64_t>(slotIndex) * kTxPayloadImagesPerSlot +
+            imageIndex) *
+           slotStrideBytes;
+}
 
 /// Producer fills the plain fields, then release-stores commitGeneration.
 /// Consumer acquire-loads it and accepts only ExpectedTxCommitGeneration().
 struct alignas(64) IsochTxPacketMeta final {
     uint32_t immediateHeader[2];  ///< Opaque OUTPUT_MORE_IMMEDIATE quadlets.
     uint32_t payloadLength;       ///< Opaque payload byte count.
-    uint32_t reserved0;
+    /// Which payload image the consumer bound to the descriptor. Consumer-owned:
+    /// written when the slot is mapped, re-read when it completes so the seal is
+    /// verified against the image that was actually transmitted.
+    uint32_t selectedPayloadImage;
     uint64_t packetIndex;         ///< Absolute packet index.
     std::atomic<uint64_t> commitGeneration{0};
-    uint64_t payloadSeal;         ///< Hash of opaque payload at release commit.
-    uint8_t reserved1[64 - 40];
+    /// Hash of the opaque payload the consumer bound, written at map time.
+    /// Producer-written commit no longer implies payload finality, so the seal
+    /// belongs to whoever froze the bytes.
+    uint64_t payloadSeal;
+    /// Producer -> consumer: image 1 holds a complete alternative payload for
+    /// this packet. Accepted only when it equals ExpectedTxCommitGeneration for
+    /// the slot; any other value means "no alternative", including a stale one
+    /// left by an earlier lap.
+    std::atomic<uint64_t> pcmGeneration{0};
+    uint8_t reserved1[64 - 48];
 };
 
 static_assert(sizeof(IsochTxPacketMeta) == 64);
@@ -34,7 +67,9 @@ static_assert(offsetof(IsochTxPacketMeta, immediateHeader) == 0);
 static_assert(offsetof(IsochTxPacketMeta, payloadLength) == 8);
 static_assert(offsetof(IsochTxPacketMeta, packetIndex) == 16);
 static_assert(offsetof(IsochTxPacketMeta, commitGeneration) == 24);
+static_assert(offsetof(IsochTxPacketMeta, selectedPayloadImage) == 12);
 static_assert(offsetof(IsochTxPacketMeta, payloadSeal) == 32);
+static_assert(offsetof(IsochTxPacketMeta, pcmGeneration) == 40);
 static_assert(std::atomic<uint64_t>::is_always_lock_free);
 
 [[nodiscard]] constexpr uint32_t TxQueueSlotIndexFor(
@@ -143,6 +178,11 @@ struct IsochTxQueueControl final {
     std::atomic<uint32_t> startCycleMatch{0};
     std::atomic<uint64_t> startFirstPacketIndex{0};
     std::atomic<uint64_t> completionCursor{0};
+    /// End-exclusive packet index the consumer has bound to descriptors. At or
+    /// beyond this cursor a producer may still publish an alternative payload
+    /// image; below it the bytes are frozen and any write is a contract
+    /// violation. It only ever advances within a stream generation.
+    std::atomic<uint64_t> mappedEnd{0};
     std::atomic<uint64_t> completionStampCount{0};
     IsochTxCompletionStamp completionStamps[kIsochTxCompletionStampSlots]{};
     std::atomic<uint64_t> refillRequestGeneration{0};
@@ -168,6 +208,7 @@ struct IsochTxQueueControl final {
         startCycleMatch.store(0, std::memory_order_relaxed);
         startFirstPacketIndex.store(0, std::memory_order_relaxed);
         completionCursor.store(0, std::memory_order_relaxed);
+        mappedEnd.store(0, std::memory_order_relaxed);
         completionStampCount.store(0, std::memory_order_relaxed);
         refillRequestGeneration.store(0, std::memory_order_relaxed);
         refillHandledGeneration.store(0, std::memory_order_relaxed);

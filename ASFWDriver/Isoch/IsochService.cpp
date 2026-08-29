@@ -482,7 +482,10 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
     txControlBlock_[streamIndex] = nullptr;
 
     // 1. Allocate payload slab (page-aligned)
-    const size_t payloadSlabBytes = static_cast<size_t>(numSlots) * maxPacketBytes;
+    // Two complete payload images per slot: the consumer binds whichever the
+    // producer has readied when it maps the slot. See kTxPayloadImagesPerSlot.
+    const size_t payloadSlabBytes = static_cast<size_t>(numSlots) *
+        ASFW::Isoch::kTxPayloadImagesPerSlot * maxPacketBytes;
     IOBufferMemoryDescriptor* payloadDescriptor = nullptr;
     kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, payloadSlabBytes,
                                                         4096, &payloadDescriptor);

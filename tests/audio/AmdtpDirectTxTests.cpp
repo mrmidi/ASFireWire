@@ -17,6 +17,7 @@ using ASFW::Isoch::Audio::AudioStreamDirection;
 using ASFW::Isoch::Audio::IAudioStreamProfile;
 using ASFW::Protocols::Audio::DICE::DiceTxStreamEngine;
 using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
+using ASFW::Protocols::Audio::DICE::TxSlotFillResult;
 
 class TestProfile final : public IAudioStreamProfile {
 public:
@@ -73,6 +74,28 @@ public:
         return true;
     }
     uint32_t SlotCount() const noexcept override { return 192; }
+
+    // Late-payload seam. mappedEnd defaults to 0, so every packet is fillable
+    // unless a test freezes it.
+    uint64_t mappedEnd{0};
+    std::array<uint8_t, 256> lateBytes{};
+    uint32_t latePublished{0};
+    bool lateAcquireAllowed{true};
+
+    uint64_t MappedEnd() const noexcept override { return mappedEnd; }
+
+    bool AcquireLatePayloadSlot(uint32_t packetIndex,
+                                TxPacketSlotView& out) noexcept override {
+        if (!lateAcquireAllowed || packetIndex < mappedEnd) return false;
+        out = {packetIndex, lateBytes.data(),
+               static_cast<uint32_t>(lateBytes.size())};
+        return true;
+    }
+
+    bool PublishLatePayload(uint32_t) noexcept override {
+        ++latePublished;
+        return true;
+    }
 };
 
 bool Configure(DiceTxStreamEngine& engine, const TestProfile& profile) {
@@ -369,9 +392,38 @@ TEST(AmdtpDirectTxTests, DiceStreamsConsumeIdenticalPlanCoordinates) {
 // write_pcm_silence() (sound/firewire/amdtp-am824.c:358-363) and Apple's
 // AppleFWAudio has no availability check at all.
 
-TEST(AmdtpDirectTxTests, UnavailablePcmIsWithheldWhenPolicyDisallowsSilence) {
+// Arming no longer consults content at all, so neither of these outcomes --
+// withholding a packet, or "substituting" silence -- is reachable from
+// PrepareTransmitSlot any more. Silence is the armed state, not a fallback.
+// What replaces them is the arm/fill pair below.
+
+TEST(AmdtpDirectTxTests, ArmingNeverFailsForMissingContent) {
+    for (const bool substitute : {false, true}) {
+        TestProfile profile{};
+        profile.substituteSilence = substitute;
+        DiceTxStreamEngine engine{};
+        SlotProvider slots{};
+        ASSERT_TRUE(Configure(engine, profile));
+        engine.BindSlotProvider(&slots);
+        PcmPublicationCache cache{};
+        ASSERT_TRUE(cache.Configure(2, 8192));
+        cache.BeginEpoch(3);   // nothing published for [100,108)
+        engine.BindPcmSource(&cache);
+        engine.ResetForStart(0);
+
+        // Transport must have a complete image for the slot regardless of
+        // whether content exists, so withholding is not an option and the
+        // policy cannot change the outcome.
+        EXPECT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+                  TxSlotPrepareResult::Prepared)
+            << "substituteSilence=" << substitute;
+        EXPECT_TRUE(slots.packet.isData);
+        EXPECT_EQ(slots.packet.framesInPacket, 8U);
+    }
+}
+
+TEST(AmdtpDirectTxTests, FillReportsContentUnavailableAndLeavesTheArmedSilence) {
     TestProfile profile{};
-    profile.substituteSilence = false;
     DiceTxStreamEngine engine{};
     SlotProvider slots{};
     ASSERT_TRUE(Configure(engine, profile));
@@ -382,12 +434,94 @@ TEST(AmdtpDirectTxTests, UnavailablePcmIsWithheldWhenPolicyDisallowsSilence) {
     engine.BindPcmSource(&cache);
     engine.ResetForStart(0);
 
-    EXPECT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
-              TxSlotPrepareResult::PcmNotYetPublished);
-    EXPECT_EQ(engine.Counters().pcmSilenceSubstitutions.load(), 0U);
+    ASSERT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+    const auto armed = slots.bytes;
+
+    EXPECT_EQ(engine.FillTransmitSlot(7), TxSlotFillResult::ContentUnavailable);
+    EXPECT_EQ(engine.Counters().lateFillsUnavailable.load(), 1U);
+    EXPECT_EQ(engine.Counters().lateFillsPublished.load(), 0U);
+    // The armed image is untouched: no late image was offered.
+    EXPECT_EQ(slots.bytes, armed);
+    EXPECT_EQ(slots.latePublished, 0U);
 }
 
-TEST(AmdtpDirectTxTests, UnavailablePcmBecomesSilentDataWhenPolicyAllows) {
+TEST(AmdtpDirectTxTests, FillIsRefusedOnceTransportHasFrozenTheSlot) {
+    TestProfile profile{};
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);
+    std::array<float, 32> host{};
+    for (size_t i = 0; i < host.size(); ++i) host[i] = 0.25f;
+    // Cover both packets: [100,108) and [108,116).
+    ASSERT_EQ(cache.Publish({host.data(), 3, 100, 16,
+                             static_cast<uint32_t>(host.size() / 2), 2}),
+              PcmPublishResult::Published);
+    engine.BindPcmSource(&cache);
+    engine.ResetForStart(0);
+
+    ASSERT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+
+    // Transport has bound packet 7: the content lead has run out.
+    slots.mappedEnd = 8;
+    EXPECT_EQ(engine.FillTransmitSlot(7), TxSlotFillResult::TooLate);
+    EXPECT_EQ(engine.Counters().lateFillsTooLate.load(), 1U);
+    EXPECT_EQ(slots.latePublished, 0U);
+
+    // One packet further on is still writable.
+    ASSERT_EQ(engine.PrepareTransmitSlot(8, DataPlan(108), 8, 0x4568),
+              TxSlotPrepareResult::Prepared);
+    EXPECT_EQ(engine.FillTransmitSlot(8), TxSlotFillResult::Filled);
+    EXPECT_EQ(slots.latePublished, 0U) << "encode must not publish on its own";
+    EXPECT_TRUE(engine.CommitFill(8));
+    EXPECT_EQ(slots.latePublished, 1U);
+}
+
+TEST(AmdtpDirectTxTests, FillIsRefusedForCadenceNoDataAndForARepeatFill) {
+    TestProfile profile{};
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);
+    std::array<float, 32> host{};
+    ASSERT_EQ(cache.Publish({host.data(), 3, 100, 8,
+                             static_cast<uint32_t>(host.size() / 2), 2}),
+              PcmPublishResult::Published);
+    engine.BindPcmSource(&cache);
+    engine.ResetForStart(0);
+
+    // Never armed.
+    EXPECT_EQ(engine.FillTransmitSlot(3), TxSlotFillResult::NotFillable);
+
+    auto noData = DataPlan(100);
+    noData.disposition = AmdtpPacketDisposition::NoData;
+    noData.frameCount = 0;
+    ASSERT_EQ(engine.PrepareTransmitSlot(3, noData, 0, 0xFFFF),
+              TxSlotPrepareResult::Prepared);
+    // A cadence NO-DATA packet carries no samples and keeps its planned
+    // geometry: filling it would move the data-block cadence.
+    EXPECT_EQ(engine.FillTransmitSlot(3), TxSlotFillResult::NotFillable);
+
+    ASSERT_EQ(engine.PrepareTransmitSlot(4, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+    EXPECT_EQ(engine.FillTransmitSlot(4), TxSlotFillResult::Filled);
+    EXPECT_TRUE(engine.CommitFill(4));
+    // Content is offered once per arm; a second attempt is not an error but
+    // must not republish.
+    EXPECT_EQ(engine.FillTransmitSlot(4), TxSlotFillResult::NotFillable);
+    EXPECT_FALSE(engine.CommitFill(4));
+    EXPECT_EQ(slots.latePublished, 1U);
+}
+
+TEST(AmdtpDirectTxTests, ArmedDataPacketCarriesTheExactAm824SilenceWord) {
     TestProfile profile{};
     profile.substituteSilence = true;
     DiceTxStreamEngine engine{};
@@ -408,7 +542,6 @@ TEST(AmdtpDirectTxTests, UnavailablePcmBecomesSilentDataWhenPolicyAllows) {
     EXPECT_EQ(slots.packet.framesInPacket, 8U);
     EXPECT_EQ(slots.packet.firstAudioFrame, 100U);
     EXPECT_EQ(slots.packet.syt, 0x4567U);
-    EXPECT_EQ(engine.Counters().pcmSilenceSubstitutions.load(), 1U);
 
     // Every PCM slot carries Linux's exact AM824 MBLA silence word.
     for (uint32_t frame = 0; frame < 8; ++frame) {

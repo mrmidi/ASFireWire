@@ -135,8 +135,56 @@ public:
         }
         const uint32_t slotIdx = packetIndex % numSlots;
         outSlot.packetIndex = packetIndex;
-        outSlot.bytes = payloadBase + (slotIdx * slotStrideBytes);
+        outSlot.bytes = payloadBase +
+            ASFW::Isoch::TxPayloadImageOffset(slotIdx, 0, slotStrideBytes);
         outSlot.capacityBytes = slotStrideBytes;
+        return true;
+    }
+
+    [[nodiscard]] uint64_t MappedEnd() const noexcept override {
+        if (!queueControl) return 0;
+        return queueControl->mappedEnd.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] bool AcquireLatePayloadSlot(
+        uint32_t packetIndex,
+        ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot)
+        noexcept override {
+        if (!payloadBase || !queueControl || numSlots == 0 ||
+            slotStrideBytes == 0) {
+            return false;
+        }
+        // The packet must already be armed -- a late image only ever replaces
+        // bytes for a packet whose geometry transport has accepted.
+        const uint64_t committedEnd =
+            queueControl->committedEnd.load(std::memory_order_acquire);
+        if (packetIndex >= committedEnd) return false;
+        // ...and must not be frozen. mappedEnd only advances, so a value read
+        // here can go stale in the safe direction only: the write may be
+        // wasted, never torn, because transport chooses the image before it
+        // binds and never re-reads the bytes afterwards.
+        if (packetIndex <
+            queueControl->mappedEnd.load(std::memory_order_acquire)) {
+            return false;
+        }
+        const uint32_t slotIdx = packetIndex % numSlots;
+        outSlot.packetIndex = packetIndex;
+        outSlot.bytes = payloadBase +
+            ASFW::Isoch::TxPayloadImageOffset(slotIdx, 1, slotStrideBytes);
+        outSlot.capacityBytes = slotStrideBytes;
+        return true;
+    }
+
+    [[nodiscard]] bool PublishLatePayload(uint32_t packetIndex) noexcept override {
+        if (!metadataRing || !queueControl || numSlots == 0) return false;
+        const uint32_t slotIdx = packetIndex % numSlots;
+        auto& meta = metadataRing[slotIdx];
+        if (meta.packetIndex != packetIndex) return false;
+        // Release-store the marker last: transport acquire-loads it, so seeing
+        // the marker implies seeing the complete image.
+        meta.pcmGeneration.store(
+            ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, numSlots),
+            std::memory_order_release);
         return true;
     }
 
@@ -182,8 +230,13 @@ public:
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
-        const uint8_t* const payload =
-            payloadBase + static_cast<uint64_t>(slotIdx) * slotStrideBytes;
+        const uint8_t* const payload = payloadBase +
+            ASFW::Isoch::TxPayloadImageOffset(slotIdx, 0, slotStrideBytes);
+        // A previous lap through this slot may have left a late-payload marker.
+        // Clear it before the commit that republishes the slot, so transport
+        // cannot mistake stale bytes for this packet's content. The generation
+        // tag would reject it anyway; this keeps the invariant local.
+        meta.pcmGeneration.store(0, std::memory_order_relaxed);
 
         // Content inspection belongs to Audio and runs immediately before the
         // release commit. Transport receives only opaque bytes and metadata.
@@ -208,12 +261,12 @@ public:
             }
         }
 
-        // Seal opaque bytes immediately before the release commit. Transport
-        // re-hashes the same slot at completion, before publishing ownership
-        // back to the producer. Any post-commit writer is therefore named
-        // instead of presenting as unexplained all-zero PCM.
-        meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
-            payload, packet.byteCount);
+        // The seal is no longer taken here. Commit publishes geometry, not
+        // payload finality: a late image may still replace these bytes until
+        // transport binds the slot. Transport seals whichever image it bound,
+        // at the instant it binds it, and re-hashes that same image at
+        // completion -- so a post-freeze writer is still named rather than
+        // presenting as unexplained all-zero PCM.
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =
@@ -253,6 +306,11 @@ struct AudioDriverRuntimeState {
     uint64_t txNoCycleAnchorEvents{0};
     uint64_t txNoPresentationOriginEvents{0};
     uint64_t txReplayResyncs{0};
+    /// Lowest packet whose content has not been settled yet. It advances past
+    /// packets that were filled, frozen, or carry no samples, and stops at the
+    /// first whose content has not been published -- content arrives in order,
+    /// so there is nothing beyond it worth trying this pass.
+    uint64_t txFillCursor{0};
 
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;

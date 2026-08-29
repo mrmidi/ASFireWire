@@ -250,14 +250,17 @@ TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
     EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(200, 40, 64), 224U);
 }
 
-TEST(RxDrivenTimingTests, OutputSafetyUsesPhysicalSchedulingNotRingCapacity) {
+TEST(RxDrivenTimingTests, OutputSafetyIsTheContentFreezeLeadNotTheArmHorizon) {
     using Policy = ASFW::Audio::Shared::AudioGeometryPolicy;
+    // 54 content-freeze slots, not the 120-slot arm horizon: a packet is armed
+    // with silence long before its samples stop being writable, and only the
+    // latter is latency. Halving these is the whole point of the split.
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 48'000, 12'800),
-              768U);
+              384U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000, 12'800),
-              1536U);
+              736U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000, 12'800),
-              3040U);
+              1440U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100, 12'800),
               0U);
 }

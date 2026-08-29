@@ -119,10 +119,15 @@ public:
 
     void DebugFillDescriptorSlab(uint8_t pattern) noexcept { slab_.DebugFillDescriptorSlab(pattern); }
 
+    /// Binds the first physical lap. The metadata ring is no longer const: the
+    /// ring selects each slot's payload image and seals the bytes it bound, so
+    /// priming is a write to the shared contract, not just a read of it.
     [[nodiscard]] PrimeStats Prime(const TxPayloadDmaMap& payloadDmaMap,
                                    uint32_t numSlots,
                                    uint32_t slotStrideBytes,
-                                   const IsochTxPacketMeta* metadataRing,
+                                   IsochTxPacketMeta* metadataRing,
+                                   IsochTxQueueControl* controlBlock,
+                                   uint8_t* payloadBase,
                                    uint64_t preFillCount) noexcept;
 
     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
