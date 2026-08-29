@@ -56,15 +56,28 @@ BuildProfile(const Devices::ProfileBuildContext& context) noexcept {
         // writing earlier. It is not a scheduling budget, and it was 128 in
         // both directions purely as a placeholder.
         //
-        // Output: the presentation lead this driver stamps is
-        // txTransferDelayTicks = 12800 ticks = 25 frames at 48 kHz (see
-        // ASFWAudioDriverZts.cpp, presentationBusTicks = transmitBusTicks +
-        // transfer). The rest is the device's own analogue delay, which no
-        // host-side measurement can reach. Apple's shipping override for this
-        // exact hardware reports 67 total, so ~42 frames belong to the device.
-        // Both terms are checked on hardware: [TxLead] reports the stamped lead
-        // so the 25 is measured rather than assumed.
-        profile.timing[i].outputLatencyFrames = 67;
+        // Output: measured, not assumed. [TxLead] reports the presentation
+        // lead this driver actually stamps -- 53876 ticks, 105 frames at
+        // 48 kHz, min 105 / max 111 on the Duet.
+        //
+        // It is NOT the 25 frames of txTransferDelayTicks alone. The duplex
+        // path stamps transmitBusTicks + replayEntry.sytOffset + transfer, and
+        // the recovered sytOffset carries a full 16-cycle modulus whenever the
+        // device's raw SYT offset falls below the transfer delay. Linux does
+        // the identical thing (amdtp-stream.c:483-487, "Subtract transfer delay
+        // so that the synchronization offset is not so large at transmission"),
+        // so this is ordinary AMDTP behaviour rather than a defect, and our
+        // 12800-tick transfer delay matches its blocking-mode derivation at
+        // :288-292 exactly.
+        //
+        // It has to be reported because HardwareSampleTimeline anchors on TX
+        // completion -- transmit time -- so everything after transmission falls
+        // outside the safety offset. The device's own analogue delay sits on
+        // top and is not claimed here; Apple reports 67 total for this
+        // hardware, which their anchor must place differently, so their split
+        // is not transferable to ours. Moving our anchor to presentation time
+        // would fold these 105 frames into it and is the real lever.
+        profile.timing[i].outputLatencyFrames = 105;
         // Input: acquisition-to-delivery is device ADC plus wire; our own
         // decode latency lives inside the interrupt batch that inputSafety
         // already covers, so it must not be counted twice. Reference value for
