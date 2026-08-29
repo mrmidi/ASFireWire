@@ -21,6 +21,12 @@ using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
 class TestProfile final : public IAudioStreamProfile {
 public:
     uint8_t sourceOffset{0};
+    bool substituteSilence{false};
+    ASFW::Isoch::Audio::AudioStreamTxPolicy TxStreamPolicy() const noexcept override {
+        ASFW::Isoch::Audio::AudioStreamTxPolicy policy{};
+        policy.substituteSilenceOnPcmUnavailable = substituteSilence;
+        return policy;
+    }
     const char* Name() const noexcept override { return "v3-test"; }
     AudioWireFormat TxWireFormat() const noexcept override {
         return AudioWireFormat::kAM824;
@@ -205,3 +211,65 @@ TEST(AmdtpDirectTxTests, DiceStreamsConsumeIdenticalPlanCoordinates) {
 }
 
 } // namespace
+
+// Content availability must not gate packet production. Withholding the packet
+// starves the IT descriptor ring, which is what faulted the context on hardware
+// ("IT FATAL: slot 175 not committed"). Linux fills the gap with
+// write_pcm_silence() (sound/firewire/amdtp-am824.c:358-363) and Apple's
+// AppleFWAudio has no availability check at all.
+
+TEST(AmdtpDirectTxTests, UnavailablePcmIsWithheldWhenPolicyDisallowsSilence) {
+    TestProfile profile{};
+    profile.substituteSilence = false;
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);   // nothing published for [100,108)
+    engine.BindPcmSource(&cache);
+    engine.ResetForStart(0);
+
+    EXPECT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::PcmNotYetPublished);
+    EXPECT_EQ(engine.Counters().pcmSilenceSubstitutions.load(), 0U);
+}
+
+TEST(AmdtpDirectTxTests, UnavailablePcmBecomesSilentDataWhenPolicyAllows) {
+    TestProfile profile{};
+    profile.substituteSilence = true;
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);   // nothing published for [100,108)
+    engine.BindPcmSource(&cache);
+    engine.ResetForStart(0);
+
+    EXPECT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+    // Still a DATA packet consuming its planned range: a NO-DATA packet
+    // consumes no frames and would stall the data-block cadence.
+    EXPECT_TRUE(slots.packet.isData);
+    EXPECT_EQ(slots.packet.framesInPacket, 8U);
+    EXPECT_EQ(slots.packet.firstAudioFrame, 100U);
+    EXPECT_EQ(slots.packet.syt, 0x4567U);
+    EXPECT_EQ(engine.Counters().pcmSilenceSubstitutions.load(), 1U);
+
+    // Every PCM slot carries Linux's exact AM824 MBLA silence word.
+    for (uint32_t frame = 0; frame < 8; ++frame) {
+        for (uint32_t channel = 0; channel < 2; ++channel) {
+            const size_t offset = 8 + (frame * 2 + channel) * 4;
+            const uint32_t word =
+                (static_cast<uint32_t>(slots.bytes[offset]) << 24) |
+                (static_cast<uint32_t>(slots.bytes[offset + 1]) << 16) |
+                (static_cast<uint32_t>(slots.bytes[offset + 2]) << 8) |
+                static_cast<uint32_t>(slots.bytes[offset + 3]);
+            EXPECT_EQ(word, 0x40000000U)
+                << "frame " << frame << " channel " << channel;
+        }
+    }
+}

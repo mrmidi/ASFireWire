@@ -145,6 +145,12 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
             },
             pcmScratch_.data(), static_cast<uint32_t>(pcmScratch_.size()));
         using CopyResult = ASFW::Audio::Ports::PcmCopyResult;
+        // A failed copy is only fatal to this packet when the profile has no
+        // silence substitution. Otherwise the range is encoded as silence and
+        // still transmitted: withholding the packet starves the IT descriptor
+        // ring, and neither Linux nor AppleFWAudio ever lets that happen.
+        const bool substitute =
+            packetizer_.TxPolicy().substituteSilenceOnPcmUnavailable;
         switch (result) {
             case CopyResult::Ready:
                 counters_.pcmCopiesReady.fetch_add(1, std::memory_order_relaxed);
@@ -152,23 +158,38 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareTransmitSlot(
             case CopyResult::NotYetPublished:
                 counters_.pcmCopiesNotYetPublished.fetch_add(
                     1, std::memory_order_relaxed);
-                return TxSlotPrepareResult::PcmNotYetPublished;
+                if (!substitute) return TxSlotPrepareResult::PcmNotYetPublished;
+                break;
             case CopyResult::Expired:
                 counters_.pcmCopiesExpired.fetch_add(1,
                                                       std::memory_order_relaxed);
-                return TxSlotPrepareResult::PcmExpired;
+                if (!substitute) return TxSlotPrepareResult::PcmExpired;
+                break;
             case CopyResult::WrongEpoch:
                 counters_.pcmCopiesWrongEpoch.fetch_add(
                     1, std::memory_order_relaxed);
-                return TxSlotPrepareResult::PcmWrongEpoch;
+                if (!substitute) return TxSlotPrepareResult::PcmWrongEpoch;
+                break;
             case CopyResult::ConcurrentRewrite:
                 counters_.pcmCopiesConcurrentRewrite.fetch_add(
                     1, std::memory_order_relaxed);
-                return TxSlotPrepareResult::PcmConcurrentRewrite;
+                if (!substitute) return TxSlotPrepareResult::PcmConcurrentRewrite;
+                break;
             case CopyResult::InvalidRequest:
                 counters_.pcmCopiesInvalid.fetch_add(1,
                                                       std::memory_order_relaxed);
+                // An out-of-range request is a programming fault, not a content
+                // gap; substituting silence would hide it.
                 return TxSlotPrepareResult::PcmInvalidRequest;
+        }
+        if (result != CopyResult::Ready) {
+            // Zero samples through the configured slot encoding. For AM824 MBLA
+            // that is exactly Linux's write_pcm_silence() word, 0x40000000.
+            for (uint64_t index = 0; index < sampleCount; ++index) {
+                pcmScratch_[index] = 0.0f;
+            }
+            counters_.pcmSilenceSubstitutions.fetch_add(
+                1, std::memory_order_relaxed);
         }
         pcm = {
             .interleavedFloat32 = pcmScratch_.data(),
@@ -232,6 +253,8 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     policy.emptyPacketsDuringIdle = streamPolicy.emptyPacketsDuringIdle;
     policy.cadencePacketsCarryDataBlocks =
         streamPolicy.cadencePacketsCarryDataBlocks;
+    policy.substituteSilenceOnPcmUnavailable =
+        streamPolicy.substituteSilenceOnPcmUnavailable;
     policy.playbackChannelMap = streamPolicy.playbackChannelMap;
     return policy;
 }

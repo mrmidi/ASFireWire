@@ -292,6 +292,15 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     irqCarriedTicks_.store(0, std::memory_order_relaxed);
     refillInProgress_.clear(std::memory_order_release);
 
+    // Every arm resets consumer state, not just the first one after Prepare. A
+    // recovery restart re-arms this already-prepared context, and a completion
+    // cursor carried over from the dead stream would sit ahead of the
+    // producer's republished prefill -- blocking CanAcquireTxProducerSlot for
+    // every packet past the ring, and seeding the progress monitor from a
+    // cursor that is about to move backwards. The producer's committedEnd is
+    // untouched here: it republishes its own prefill before this call.
+    controlBlock_->ResetConsumerForArm();
+
     progressMonitor_.Configure(Core::IsochProgressThresholds{
         .wakeAfterTicks = HostTicksForDuration(kProgressWakeAfterNanos),
         .snapshotAfterTicks =

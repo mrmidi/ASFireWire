@@ -26,6 +26,12 @@ BuildProfile(const Devices::ProfileBuildContext& context) noexcept {
     profile.startPolicy.postDeviceEnableDelayMs = 0;
     profile.stopPolicy.disconnectPlaybackThenStopTransmitThenDisconnectCaptureThenStopReceive = true;
     profile.facets.push_back({Devices::FacetKind::Parameters, 0x44554554});
+    // Content availability must not gate packet production: an unavailable PCM
+    // range is transmitted as silence rather than withheld. Attested for this
+    // device class by Linux (sound/firewire/amdtp-am824.c:358-363, via
+    // snd-oxfw/snd-bebob) and by Apple's AppleFWAudio, whose AM824DCLWrite
+    // refill has no availability check at all.
+    profile.txPacketPolicy.substituteSilenceOnPcmUnavailable = true;
     if (context.staticPlan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet) {
         // The Duet's host-selectable formations are the two base rates.  Its
         // AV/C control path has no optical selector, so the absent selectors

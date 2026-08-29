@@ -55,6 +55,8 @@ struct TxPacketPolicy final {
     bool initializeNonAudioSlots{true};
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
+    /// See AmdtpTxPolicy::substituteSilenceOnPcmUnavailable.
+    bool substituteSilenceOnPcmUnavailable{false};
 
     /// Send cadence packets full-size, carrying data blocks whose audio slots
     /// hold a no-audio label, rather than header-only. Required by the M-Audio

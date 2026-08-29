@@ -39,6 +39,11 @@ struct AudioStreamTxPolicy final {
     bool preserveFdfInNoDataPackets{false};
     bool emptyPacketsDuringIdle{false};
     bool cadencePacketsCarryDataBlocks{false};
+    /// See AmdtpTxPolicy::substituteSilenceOnPcmUnavailable. Scoped per profile
+    /// because it is only cross-checked against references for the AV/C class
+    /// so far; a DICE profile keeps the previous behaviour until its own
+    /// vendor driver is checked.
+    bool substituteSilenceOnPcmUnavailable{false};
     /// Logical host PCM channel -> AM824 slot mapping for playback. This is
     /// content framing data; transport only sees the completed packet.
     ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};

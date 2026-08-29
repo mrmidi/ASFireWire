@@ -85,6 +85,24 @@ struct AmdtpTxPolicy final {
     /// `cadencePacketsCarryDataBlocks` is set.
     uint32_t cadenceSlotWord{0xCF000000};
 
+    /// When the PCM cache cannot satisfy a planned DATA range, encode silence
+    /// for that range instead of withholding the packet.
+    ///
+    /// Content availability must not gate packet production. Linux fills an
+    /// unavailable range with `write_pcm_silence()` and transmits the packet
+    /// anyway (sound/firewire/amdtp-am824.c:358-363, shared by snd-bebob and
+    /// snd-dice alike); Apple's AppleFWAudio has no availability check at all --
+    /// AM824DCLWrite::HandleDCLCallback unconditionally refills the next buffer
+    /// group and FillSendBufferRawAudioNoMIDI reads the client ring wherever its
+    /// index lands. Withholding the packet instead starves the IT descriptor
+    /// ring and the context faults on an uncommitted slot.
+    ///
+    /// Silence is encoded as a zero sample through the configured slot
+    /// encoding, which yields Linux's exact 0x40000000 for AM824 MBLA. A
+    /// NO-DATA packet is *not* a substitute: it consumes no frames, so it
+    /// stalls the data-block cadence the device is clocked on.
+    bool substituteSilenceOnPcmUnavailable{false};
+
     /// Logical host PCM channel -> AM824 slot mapping, selected by the
     /// device-family profile and consumed solely by the packetizer.
     ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};

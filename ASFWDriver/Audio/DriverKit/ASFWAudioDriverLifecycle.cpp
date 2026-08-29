@@ -206,6 +206,8 @@ void IMPL(ASFWAudioDriver, TxTransportFaultReady)
         return;
     }
 
+    ASFW::Audio::DriverKit::RepublishTxRingForRestart(*ivars);
+
     const kern_return_t kr =
         ivars->device.audioNub->RecoverAudioStreamingAfterTxFault();
     if (kr != kIOReturnSuccess) {

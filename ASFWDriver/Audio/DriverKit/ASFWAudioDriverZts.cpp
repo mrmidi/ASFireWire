@@ -710,6 +710,34 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     return prepared;
 }
 
+void RepublishTxRingForRestart(ASFWAudioDriver_IVars& ivars) noexcept {
+    // A recovery restart re-arms the already-prepared transmit context, so the
+    // StartIO prefill does not run again. Without this the producer's committed
+    // cursor still holds the dead stream's high-water mark and the descriptor
+    // prime rejects it ("committed prefill=751 must cover 48 descriptors within
+    // 192 slots"), turning one TX fault into a stream that can never restart.
+    //
+    // Runs before ASFWAudioNub::RecoverAudioStreamingAfterTxFault() so the ring
+    // is republished by the time the coordinator re-arms the context.
+    if (auto* queue = ivars.runtime.txSlotProvider.queueControl) {
+        queue->ResetProducerForStart();
+    }
+    if (auto* queue2 = ivars.runtime.txSlotProviderSecondary.queueControl) {
+        queue2->ResetProducerForStart();
+    }
+    ivars.runtime.txStreamEngine.ResetForStart(0);
+    if (ivars.runtime.txSecondaryActive) {
+        ivars.runtime.txStreamEngineSecondary.ResetForStart(0);
+    }
+    // The new stream re-derives its bus-time origin; carrying the old
+    // high-water mark would reject every anchor until it caught up.
+    ivars.runtime.txPlanBusTicksValid = false;
+    ivars.runtime.lastTxPlanBusTicks = 0;
+    ivars.runtime.txObservationBusTicksValid = false;
+    ivars.runtime.lastTxObservationBusTicks = 0;
+    PrefillTxRingBeforeStart(ivars);
+}
+
 void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     const uint32_t slots = ivars.runtime.txSlotProvider.numSlots;
     auto* control = ivars.runtime.directAudioGraph.control;
@@ -818,6 +846,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
             5'000'000'000ULL) {
         control->txHeartbeatLastHostTicks.store(now,
                                                 std::memory_order_relaxed);
+        // The engine owns the per-packet count; mirror it into the shared
+        // block once per heartbeat so telemetry and STOPIO report it without
+        // touching the hot path.
+        control->counters.txSilenceSubstitutions.store(
+            ivars->runtime.txStreamEngine.Counters()
+                .pcmSilenceSubstitutions.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
         ASFW_LOG(DirectAudio,
                  "[TxV3] epoch=%llu source=%u completion=%llu committed=%llu margin=%llu prepared=%u nextFrame=%llu cache=[%llu,%llu) noCycle=%llu noOrigin=%llu",
                  control->hardwareTimeline.Epoch(),

@@ -412,6 +412,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets
 // before the IT DMA context starts, so the first refill finds committed slots.
 void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept;
+/// Producer-side republish of the transmit prefill for a restart that re-arms
+/// an already-prepared context. See the definition for why StartIO's prefill is
+/// not enough.
+void RepublishTxRingForRestart(ASFWAudioDriver_IVars& ivars) noexcept;
 
 
 void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;

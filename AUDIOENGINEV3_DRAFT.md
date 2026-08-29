@@ -185,9 +185,29 @@ These are policy values, not derived truths. Telemetry measures actual
 headroom, ownership, store high-water, and completion latency so the values can
 be tuned from hardware evidence.
 
-A construction failure may retry while the physical transport deadline remains
-schedulable without consuming cadence, DBC, or frame state. Once the deadline
-passes:
+Content availability never gates packet production. When the cache cannot
+satisfy a planned DATA range and the profile sets
+`substituteSilenceOnPcmUnavailable`, the range is encoded as silence (a zero
+sample through the configured slot encoding, which is `0x40000000` for AM824
+MBLA) and transmitted as an ordinary DATA packet that consumes its frames.
+
+This replaces the original "retry while the physical transport deadline remains
+schedulable" rule, which starved the IT descriptor ring on hardware until the
+context faulted on an uncommitted slot. Both reference stacks fill rather than
+withhold: Linux `sound/firewire/amdtp-am824.c:358-363` calls
+`write_pcm_silence()` when no PCM is available (a path shared by snd-bebob and
+snd-dice), and Apple's `AppleFWAudio` has no availability check at all —
+`AM824DCLWrite::HandleDCLCallback` unconditionally refills the next buffer group.
+A NO-DATA packet is not a substitute: it consumes no frames, so it stalls the
+data-block cadence the device is clocked on.
+
+The policy is per-profile. It is enabled for the AV/C class, where both
+references attest it; DICE keeps the previous behaviour until its own vendor
+driver is checked.
+
+For a profile without silence substitution, a construction failure may still
+retry while the physical transport deadline remains schedulable without
+consuming cadence, DBC, or frame state. Once the deadline passes:
 
 - the old PCM range is never transmitted later;
 - the exact missed `{epoch, firstFrame, frameCount}` is recorded;

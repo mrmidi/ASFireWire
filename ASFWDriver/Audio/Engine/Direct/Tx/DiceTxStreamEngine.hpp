@@ -26,6 +26,8 @@ struct DiceTxEngineCounters final {
     std::atomic<uint64_t> pcmCopiesWrongEpoch{0};
     std::atomic<uint64_t> pcmCopiesConcurrentRewrite{0};
     std::atomic<uint64_t> pcmCopiesInvalid{0};
+    /// DATA packets whose PCM range was unavailable and encoded as silence.
+    std::atomic<uint64_t> pcmSilenceSubstitutions{0};
 };
 
 enum class TxSlotPrepareResult : uint8_t {

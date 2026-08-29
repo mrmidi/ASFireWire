@@ -130,6 +130,8 @@ ResolvedAudioStreamProfile::TxStreamPolicy() const noexcept {
         .emptyPacketsDuringIdle = profile_.txPacketPolicy.emptyPacketsDuringIdle,
         .cadencePacketsCarryDataBlocks =
             profile_.txPacketPolicy.cadencePacketsCarryDataBlocks,
+        .substituteSilenceOnPcmUnavailable =
+            profile_.txPacketPolicy.substituteSilenceOnPcmUnavailable,
         .playbackChannelMap = profile_.playbackChannelMap,
     };
 }
