@@ -146,7 +146,7 @@ kern_return_t IsochReceiveContext::Stop() {
     }
 
     const uint32_t contextMask = 1u << contextIndex_;
-    if (auto access = hardware_->TryBeginAccess()) {
+    if (auto access = hardware_->TryBeginTeardownAccess()) {
         access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskClear, contextMask);
         access.WriteAndFlush(registers_.ContextControlClear, Driver::ContextControl::kRun);
     } else {

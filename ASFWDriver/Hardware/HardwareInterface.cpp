@@ -219,6 +219,28 @@ HardwareAccessScope HardwareInterface::TryBeginAccess() noexcept {
     return accessGate_.TryBeginAccess(*this);
 }
 
+HardwareAccessScope HardwareInterface::TryBeginTeardownAccess() noexcept {
+    auto scope = accessGate_.TryBeginAccess(*this);
+    if (!scope) {
+        return {};
+    }
+    // kHCControl is the one register IsProviderPresenceProbe accepts; an
+    // all-ones result latches HardwareGone() and closes the gate from inside
+    // this admitted scope. Reading before the caller's first write is the whole
+    // point: a write issued first is already fatal by the time anything can
+    // observe that the controller left.
+    (void)scope.Read(Register32::kHCControl);
+    if (HardwareGone()) {
+        // Releasing the scope here also drains it for the gate.
+        return {};
+    }
+    return scope;
+}
+
+bool HardwareInterface::ProbePresence() noexcept {
+    return static_cast<bool>(TryBeginTeardownAccess());
+}
+
 HardwareAccessScope::~HardwareAccessScope() { Release(); }
 
 HardwareAccessScope::HardwareAccessScope(HardwareAccessScope&& other) noexcept

@@ -176,7 +176,7 @@ void ConfigROMStager::Teardown(HardwareInterface& hw) {
         ASFW_LOG(Hardware,
                  "ConfigROMStager: Tearing down - clearing ConfigROMMap and BIBimageValid");
         hw.ClearHCControlBits(HCControlBits::kBibImageValid);
-        if (auto access = hw.TryBeginAccess()) {
+        if (auto access = hw.TryBeginTeardownAccess()) {
             access.WriteAndFlush(Register32::kConfigROMMap, 0);
         }
     }

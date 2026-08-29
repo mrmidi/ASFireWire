@@ -390,6 +390,20 @@ IOReturn AudioDuplexCoordinator::RecoverStreaming(EndpointId endpointId,
     if (IsStopRequested(endpointId)) {
         return kIOReturnAborted;
     }
+    // A surprise removal reaches us as a recovery trigger -- losing host timing
+    // is exactly what an unplugged controller looks like from here. Probe
+    // before restarting anything: every step below ends in OHCI MMIO, and a
+    // posted write to a controller that has left the bus is an unrecoverable
+    // fabric error on Apple silicon rather than a failed transaction. The probe
+    // also latches HardwareGone(), so the teardown that follows skips its own
+    // final register cleanup.
+    if (!hardware_.ProbePresence()) {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioDuplexCoordinator: RecoverStreaming abandoned, controller gone "
+                       "endpoint=%llx reason=%u",
+                       endpointId.value, static_cast<uint32_t>(reason));
+        return kIOReturnNoDevice;
+    }
 
     const DuplexRestartSession session = LoadSession(endpointId);
     LogFsmEvent("recover", endpointId, session.restartId, session.topologyGeneration, session.state,

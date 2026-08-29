@@ -97,6 +97,32 @@ class HardwareInterface {
     /// cross an asynchronous boundary or be held while waiting.
     [[nodiscard]] HardwareAccessScope TryBeginAccess() noexcept;
 
+    /**
+     * Starts an MMIO batch for a teardown, stop, or fault path, probing the
+     * controller's presence before the caller can issue its first write.
+     *
+     * A posted write to a removed controller is an unrecoverable fabric error
+     * on Apple silicon, and the error is reported against whatever later forces
+     * that write to retire -- so the presence probe has to precede the write
+     * rather than follow it. On a removed controller this latches
+     * HardwareGone(), closes the gate, and returns an empty scope, which routes
+     * the caller into its own hardware-gone branch.
+     *
+     * Every stop/teardown/fault path must use this instead of TryBeginAccess().
+     */
+    [[nodiscard]] HardwareAccessScope TryBeginTeardownAccess() noexcept;
+
+    /**
+     * Presence probe with no MMIO batch attached.
+     *
+     * False means the controller has left the bus or the gate is closed, and
+     * HardwareGone() is latched as a side effect so a later teardown skips its
+     * final register cleanup. Recovery paths must consult this before they
+     * restart anything: restarting into a removed controller is what turns a
+     * surprise removal into a fatal posted write.
+     */
+    [[nodiscard]] bool ProbePresence() noexcept;
+
     void SetInterruptMask(uint32_t mask, bool enable);
     [[nodiscard]] InterruptSnapshot CaptureInterruptSnapshot(uint64_t timestamp) const noexcept;
     void SetLinkControlBits(uint32_t bits);

@@ -110,6 +110,22 @@ HardwareAccessScope HardwareInterface::TryBeginAccess() noexcept {
     return accessGate_.TryBeginAccess(*this);
 }
 
+HardwareAccessScope HardwareInterface::TryBeginTeardownAccess() noexcept {
+    auto scope = accessGate_.TryBeginAccess(*this);
+    if (!scope) {
+        return {};
+    }
+    (void)scope.Read(Register32::kHCControl);
+    if (HardwareGone()) {
+        return {};
+    }
+    return scope;
+}
+
+bool HardwareInterface::ProbePresence() noexcept {
+    return static_cast<bool>(TryBeginTeardownAccess());
+}
+
 HardwareAccessScope::~HardwareAccessScope() { Release(); }
 
 HardwareAccessScope::HardwareAccessScope(HardwareAccessScope&& other) noexcept
@@ -156,13 +172,19 @@ uint32_t HardwareInterface::ReadScoped(Register32 reg) const noexcept {
     if (HardwareGone()) {
         return 0xFFFFFFFFu;
     }
-    return WithState(this, [reg](HardwareTestState& state) -> uint32_t {
+    const uint32_t value = WithState(this, [reg](HardwareTestState& state) -> uint32_t {
         if (!state.available) {
             return 0;
         }
         const auto it = state.registers.find(KeyFor(reg));
         return (it != state.registers.end()) ? it->second : 0U;
     });
+    // Same sentinel as production: kHCControl is the only register whose
+    // all-ones value means "the controller left the bus".
+    if (value == 0xFFFFFFFFu && reg == Register32::kHCControl) {
+        LatchHardwareGoneFromPresenceProbe(reg);
+    }
+    return value;
 }
 
 void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexcept {

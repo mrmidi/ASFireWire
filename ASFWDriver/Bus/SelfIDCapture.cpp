@@ -179,7 +179,7 @@ void SelfIDCapture::Disarm(HardwareInterface& hw) {
     if (armed_) {
         // Per OHCI §11.1: Writing 0 to SelfIDBuffer disables Self-ID DMA
         // Do NOT write to SelfIDCount - it's hardware-managed per §11.2
-        if (auto access = hw.TryBeginAccess()) {
+        if (auto access = hw.TryBeginTeardownAccess()) {
             access.WriteAndFlush(Register32::kSelfIDBuffer, 0);
         }
     }

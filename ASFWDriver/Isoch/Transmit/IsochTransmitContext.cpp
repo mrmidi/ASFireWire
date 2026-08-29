@@ -390,7 +390,7 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         const Register32 ctrlSetReg =
             static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
 
-        auto access = hardware_->TryBeginAccess();
+        auto access = hardware_->TryBeginTeardownAccess();
         if (!access) {
             if (hardware_->HardwareGone()) {
                 if (controlBlock_) {
@@ -679,7 +679,7 @@ void IsochTransmitContext::StopImmediatelyForTxFault(
         const Register32 ctrlClrReg =
             static_cast<Register32>(
                 DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
-        if (auto access = hardware_->TryBeginAccess()) {
+        if (auto access = hardware_->TryBeginTeardownAccess()) {
             access.Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
             // This is the terminal anomaly path: do not leave RUN clear in a
             // posted-write queue while the controller can keep replaying the
@@ -783,7 +783,7 @@ void IsochTransmitContext::Poll() noexcept {
             if ((irqSilentKickStreak_ == kIrqSilentFirstReArmKick ||
                  irqSilentKickStreak_ == kIrqSilentSecondReArmKick) &&
                 hardware_) {
-                if (auto access = hardware_->TryBeginAccess()) {
+                if (auto access = hardware_->TryBeginTeardownAccess()) {
                     const uint32_t before = access.Read(Register32::kIntEvent);
                     access.WriteAndFlush(Register32::kIntMaskClear,
                                          IntMaskBits::kMasterIntEnable);

@@ -356,4 +356,55 @@ TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffTrueSetsRhbPreservingGap) {
     hardware_.SetRootHoldOff(true);
 }
 
+// --- Surprise-removal guard ------------------------------------------------
+//
+// A posted MMIO write to a controller that has left the PCIe bus is an
+// unrecoverable fabric error on Apple silicon (LLC bus error), and it is
+// charged to whatever later forces the write to retire -- typically the flush
+// read on the next line. A teardown path must therefore establish presence
+// *before* its first write, not after.
+
+TEST_F(HardwareInterfaceOrderTests, TeardownAccessProbesPresenceBeforeAnyWrite) {
+    InSequence seq;
+    // The probe is the whole batch: presence must be known before the caller
+    // is handed a scope it can write through.
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0x00000000u; });
+
+    auto access = hardware_.TryBeginTeardownAccess();
+    EXPECT_TRUE(static_cast<bool>(access));
+    EXPECT_FALSE(hardware_.HardwareGone());
+}
+
+TEST_F(HardwareInterfaceOrderTests, TeardownAccessOnRemovedControllerIssuesNoWrite) {
+    ON_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
+        .WillByDefault([](uint8_t, uint64_t, uint32_t* val) { *val = 0xFFFFFFFFu; });
+    // The point of the guard: not one register write escapes to a controller
+    // that has already left the bus.
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+
+    auto access = hardware_.TryBeginTeardownAccess();
+    EXPECT_FALSE(static_cast<bool>(access));
+    EXPECT_TRUE(hardware_.HardwareGone());
+    EXPECT_EQ(hardware_.GoneReason(), HardwareGoneReason::kMmioPresenceProbeAllOnes);
+
+    // A caller that ignores the empty scope still cannot reach the BAR: the
+    // probe closed the gate, so the write is dropped rather than posted.
+    access.Write(Register32::kIsoXmitIntMaskClear, 1u);
+}
+
+TEST_F(HardwareInterfaceOrderTests, ProbePresenceReportsRemovalAndLatchesItForTeardown) {
+    EXPECT_TRUE(hardware_.ProbePresence());
+
+    ON_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
+        .WillByDefault([](uint8_t, uint64_t, uint32_t* val) { *val = 0xFFFFFFFFu; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+
+    EXPECT_FALSE(hardware_.ProbePresence());
+    // Latched, so the runtime teardown that follows skips its final MMIO.
+    EXPECT_TRUE(hardware_.HardwareGone());
+    // Still false once the gate is shut, and still without touching the BAR.
+    EXPECT_FALSE(hardware_.ProbePresence());
+}
+
 } // namespace
