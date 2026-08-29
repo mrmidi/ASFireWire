@@ -259,6 +259,76 @@ boundary and rejected during runtime configuration.
 - Device/stream latency remains a separate handoff↔presentation or
   acquisition↔delivery measurement.
 
+## Measured latency targets (Apogee Duet)
+
+Reference numbers for the one device measured so far. Captured 2026-08-29 from
+Logic on an Intel Mac running Apple's original FireWire audio driver, with the
+same Apogee Duet (GUID `0x0003DB0A0000D112`) later used on macOS 27.
+
+Logic reports `output = (reportedLatency + safetyOffset + ioBuffer) / rate`, so
+the buffer-independent cost is recovered as `output_ms x rate - buffer`. At each
+rate the three buffer sizes (512/128/32) solve to the same value to the last
+decimal, which is what makes these trustworthy rather than eyeballed:
+
+| rate | Apple output fixed | Apple input fixed | output in cycles | output ms |
+|---|---:|---:|---:|---:|
+| 44.1 kHz | 101 frames | 91 frames | 18.3 | 2.29 |
+| 48 kHz | **117 frames** | **88 frames** | 19.5 | 2.43 |
+| 96 kHz | 160 frames | 218 frames | 13.3 | 1.67 |
+
+Against V3 as it stands at 48 kHz:
+
+| | Apple | ASFW (`7ca8d6e3`) | ratio |
+|---|---:|---:|---:|
+| output fixed | 117 frames (19.5 cycles) | 896 frames (149 cycles) | 7.6x |
+| input fixed | 88 frames (14.7 cycles) | 256 frames (42.7 cycles) | 2.9x |
+
+Matching the output figure would put Logic at **5.1 ms output / 9.6 ms
+roundtrip** at 48 kHz / 128 frames — which is exactly what Apple's driver
+reports, and level with a modern USB interface (Audient iD14: 9.0 ms).
+
+### What the numbers constrain
+
+720 of our 768 safety frames are *committed DMA lead*: PCM is fixed at
+preparation time, `kTxPreparedTargetCycleSlots` = 120 packets ahead, and the
+safety offset must cover it or we would be lying to CoreAudio about what we can
+still honour.
+
+Apple reaches 19.5 cycles **on the same OHCI silicon**. Subtracting the IEC
+61883-6 transfer delay (12800 ticks, ~4.2 cycles) leaves ~15 cycles of driver
+and DMA lead. Our ownership guard alone is 48 packets. So the guard is a policy
+choice, not a hardware floor, and roughly 3x more conservative than what is
+demonstrably sufficient.
+
+The other half of the evidence points the same way: Apple runs a *deep* IT ring
+(~800 packets, 100 ms TX interrupt cadence) with this *small* content lead.
+Ring depth and content lead are independent quantities. V3 currently makes them
+the same number, which is why the safety offset is large.
+
+The implied change is to split them:
+
+- keep a long **cadence** lead — plan, DBC, SYT, descriptors — sized by the
+  producer-lateness budget, which is what dispatch stalls actually threaten;
+- write **PCM payload** as late as the DMA allows, back-filling prepared but
+  unfetched slots when fresher content arrives;
+- report only the content lead as output safety.
+
+The unknown is where the true content boundary sits — how far ahead OHCI has
+actually fetched payload. Apple's ~15 cycles is the empirical upper bound on how
+conservative it needs to be. That is measurable rather than derivable, and it
+touches the transport/audio seam, so it wants its own instrumented step.
+
+### Caveats
+
+- One device. Other devices are not captured yet; DICE in particular may differ,
+  and its TX policy is deliberately still on the pre-`59f3b501` behaviour.
+- The reference machine is Intel, on an OS old enough to use IOAudioFamily
+  rather than AudioDriverKit. The *semantics* of the safety offset are the same
+  so the frame counts compare directly, but Apple's scheduling headroom was
+  chosen against a kext-era dispatch model, not DriverKit's.
+- The 96 kHz input figure (218 frames) is nearly 2.5x the 48 kHz one while
+  output moves the other way. Recorded as measured; not explained.
+
 ## Instrumentation
 
 Audio telemetry wire version 6 is 1,072 bytes per endpoint. The C++ snapshot,
