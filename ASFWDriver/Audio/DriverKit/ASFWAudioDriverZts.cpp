@@ -25,6 +25,32 @@ constexpr uint64_t kBusWrapTicks =
     static_cast<uint64_t>(ASFW::Timing::kFWTimeWrapSeconds) *
     ASFW::Timing::kTicksPerSecond;
 
+// A replay read that fails because the reader and the producer have lost their
+// shared frame of reference is recoverable by reseating the cursor, but the
+// reader never deactivates itself, and Begin() is only attempted while it is
+// inactive. Left alone the reader fails forever, every plan silently degrades
+// to NO-DATA, and the stream stays up transmitting a frozen DBC.
+//
+// kAheadOfProducer is deliberately excluded: that is the ordinary case of TX
+// running ahead of RX for a cycle, and it resolves itself on the next wake.
+[[nodiscard]] bool IsRecoverableReplayDesync(
+    ASFW::Audio::Runtime::RxSequenceReplayReadFailure failure) noexcept {
+    using Failure = ASFW::Audio::Runtime::RxSequenceReplayReadFailure;
+    switch (failure) {
+    case Failure::kEpochChanged:
+    case Failure::kHistoryOverwritten:
+    case Failure::kSlotSequenceMismatch:
+    case Failure::kSlotEpochMismatch:
+    case Failure::kSlotChanged:
+        return true;
+    case Failure::kNone:
+    case Failure::kReaderInactive:
+    case Failure::kAheadOfProducer:
+        return false;
+    }
+    return false;
+}
+
 [[nodiscard]] bool IsPowerOfTwo(uint64_t value) noexcept {
     return value != 0 && (value & (value - 1)) == 0;
 }
@@ -530,8 +556,27 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 (void)ivars.runtime.txReplayReader.Begin(
                     control->rxSequenceReplay);
             }
-            if (ivars.runtime.txReplayReader.TryPeek(
-                    control->rxSequenceReplay, replayEntry)) {
+            ASFW::Audio::Runtime::RxSequenceReplayReadDiagnostic replayDiag{};
+            const bool peeked = ivars.runtime.txReplayReader.TryPeek(
+                control->rxSequenceReplay, replayEntry, &replayDiag);
+            if (!peeked && IsRecoverableReplayDesync(replayDiag.failure) &&
+                control->rxSequenceReplay.IsEstablished() &&
+                ivars.runtime.txReplayReader.Begin(control->rxSequenceReplay)) {
+                // This packet stays NO-DATA; the reseated cursor serves the
+                // next one. One cadence packet per resync is not observable.
+                const uint64_t resyncs = ++ivars.runtime.txReplayResyncs;
+                if (IsPowerOfTwo(resyncs)) {
+                    ASFW_LOG_ERROR(
+                        DirectAudio,
+                        "[BackendTiming] replayResync=%llu packet=%llu failure=%{public}s reader=%llu producer=%llu readerEpoch=%u replayEpoch=%u",
+                        resyncs, packetIndex,
+                        ASFW::Audio::Runtime::RxSequenceReplayReadFailureName(
+                            replayDiag.failure),
+                        replayDiag.readerCursor, replayDiag.producerCursor,
+                        replayDiag.readerEpoch, replayDiag.replayEpoch);
+                }
+            }
+            if (peeked) {
                 replayPeeked = true;
                 control->txReplayEntries.fetch_add(1,
                                                     std::memory_order_relaxed);
@@ -854,7 +899,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                 .pcmSilenceSubstitutions.load(std::memory_order_relaxed),
             std::memory_order_relaxed);
         ASFW_LOG(DirectAudio,
-                 "[TxV3] epoch=%llu source=%u completion=%llu committed=%llu margin=%llu prepared=%u nextFrame=%llu cache=[%llu,%llu) noCycle=%llu noOrigin=%llu",
+                 "[TxV3] epoch=%llu source=%u completion=%llu committed=%llu margin=%llu prepared=%u nextFrame=%llu cache=[%llu,%llu) noCycle=%llu noOrigin=%llu resync=%llu",
                  control->hardwareTimeline.Epoch(),
                  static_cast<uint32_t>(control->hardwareTimeline.Source()),
                  completion, committedAfter, margin, prepared,
@@ -862,7 +907,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                  ivars->runtime.pcmPublicationCache.OldestValidFrame(),
                  ivars->runtime.pcmPublicationCache.PublishedEndFrame(),
                  ivars->runtime.txNoCycleAnchorEvents,
-                 ivars->runtime.txNoPresentationOriginEvents);
+                 ivars->runtime.txNoPresentationOriginEvents,
+                 ivars->runtime.txReplayResyncs);
     }
     if (committedAfter < target) {
         const uint64_t shortageCount =

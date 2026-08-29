@@ -314,3 +314,80 @@ TEST(RxDrivenTimingTests, ReaderReBeginReanchorsAfterHistoryOverwritten) {
         replay.ProducerCursor() - RxSequenceReplayState::kReadDelay;
     EXPECT_EQ(entry.firstAudioFrame, expectedCycle * 6);
 }
+
+
+// A replay epoch reset leaves the reader active but permanently unable to read:
+// TryPeek reports kEpochChanged forever, and the TX planner only calls Begin()
+// while the reader is inactive. Observed on hardware 2026-08-29 -- an Apogee
+// Duet streamed real audio for ~2 minutes, then Logic changed the I/O buffer,
+// the reader wedged, and every packet silently became NO-DATA: the wire showed
+// a frozen DBC of 0xd8 while the device kept transmitting normally.
+
+TEST(RxDrivenTimingTests, EpochResetWedgesTheReaderUntilItIsReseated) {
+    RxSequenceReplayState replay{};
+    for (uint32_t cycle = 0; cycle < RxSequenceReplayState::kCapacity; ++cycle) {
+        replay.Publish({.firstAudioFrame = cycle * 8,
+                        .sytOffset = 100,
+                        .dataBlocks = 8,
+                        .flags = ASFW::Audio::Runtime::RxSequenceFlags::kValidCip |
+                                 ASFW::Audio::Runtime::RxSequenceFlags::kValidSyt});
+    }
+    ASSERT_TRUE(replay.MarkEstablished());
+
+    RxSequenceReplayReader reader{};
+    ASSERT_TRUE(reader.Begin(replay));
+    ASFW::Audio::Runtime::RxSequenceEntry entry{};
+    ASSERT_TRUE(reader.TryPeek(replay, entry));
+    reader.Advance();
+
+    // An RX discontinuity resets the replay, bumping its epoch.
+    replay.Reset();
+    for (uint32_t cycle = 0; cycle < RxSequenceReplayState::kCapacity; ++cycle) {
+        replay.Publish({.firstAudioFrame = 100'000 + cycle * 8,
+                        .sytOffset = 100,
+                        .dataBlocks = 8,
+                        .flags = ASFW::Audio::Runtime::RxSequenceFlags::kValidCip |
+                                 ASFW::Audio::Runtime::RxSequenceFlags::kValidSyt});
+    }
+    ASSERT_TRUE(replay.MarkEstablished());
+
+    RxSequenceReplayReadDiagnostic diagnostic{};
+    EXPECT_FALSE(reader.TryPeek(replay, entry, &diagnostic));
+    EXPECT_EQ(diagnostic.failure, RxSequenceReplayReadFailure::kEpochChanged);
+    // The wedge: still active, so a planner that only reseats an inactive
+    // reader never recovers.
+    EXPECT_TRUE(reader.IsActive());
+
+    // Reseating is what recovers it, and it lands half a ring behind.
+    ASSERT_TRUE(reader.Begin(replay));
+    ASSERT_TRUE(reader.TryPeek(replay, entry, &diagnostic));
+    EXPECT_EQ(diagnostic.failure, RxSequenceReplayReadFailure::kNone);
+    EXPECT_EQ(reader.NextCursor(),
+              replay.ProducerCursor() - RxSequenceReplayState::kReadDelay);
+    EXPECT_GE(entry.firstAudioFrame, 100'000U);
+}
+
+TEST(RxDrivenTimingTests, HistoryOverwriteIsAlsoRecoverableByReseating) {
+    RxSequenceReplayState replay{};
+    for (uint32_t cycle = 0; cycle < RxSequenceReplayState::kCapacity; ++cycle) {
+        replay.Publish({.firstAudioFrame = cycle * 8, .dataBlocks = 8});
+    }
+    ASSERT_TRUE(replay.MarkEstablished());
+    RxSequenceReplayReader reader{};
+    ASSERT_TRUE(reader.Begin(replay));
+
+    // The producer laps the reader by more than the ring.
+    for (uint32_t cycle = 0; cycle < RxSequenceReplayState::kCapacity * 2; ++cycle) {
+        replay.Publish({.firstAudioFrame = 900'000 + cycle * 8, .dataBlocks = 8});
+    }
+
+    ASFW::Audio::Runtime::RxSequenceEntry entry{};
+    RxSequenceReplayReadDiagnostic diagnostic{};
+    EXPECT_FALSE(reader.TryPeek(replay, entry, &diagnostic));
+    EXPECT_EQ(diagnostic.failure,
+              RxSequenceReplayReadFailure::kHistoryOverwritten);
+    EXPECT_TRUE(reader.IsActive());
+
+    ASSERT_TRUE(reader.Begin(replay));
+    EXPECT_TRUE(reader.TryPeek(replay, entry, &diagnostic));
+}

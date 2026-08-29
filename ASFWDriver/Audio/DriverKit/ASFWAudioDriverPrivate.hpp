@@ -252,6 +252,7 @@ struct AudioDriverRuntimeState {
     // DATA decision before the cache is consulted count themselves here.
     uint64_t txNoCycleAnchorEvents{0};
     uint64_t txNoPresentationOriginEvents{0};
+    uint64_t txReplayResyncs{0};
 
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;
