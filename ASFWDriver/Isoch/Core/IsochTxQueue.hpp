@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 7;
+inline constexpr uint32_t kTxQueueAbiVersion = 8;
 
 /// Payload images per producer slot.
 ///
@@ -46,7 +46,15 @@ struct alignas(64) IsochTxPacketMeta final {
     /// Which payload image the consumer bound to the descriptor. Consumer-owned:
     /// written when the slot is mapped, re-read when it completes so the seal is
     /// verified against the image that was actually transmitted.
-    uint32_t selectedPayloadImage;
+    uint16_t selectedPayloadImage;
+    /// Leading bytes that are identical in every image of this packet. Opaque:
+    /// the consumer does not know what they mean, only that they never differ,
+    /// so it can address them once and point a single descriptor field at
+    /// whichever image supplies the rest. That makes switching images a single
+    /// aligned store rather than two, which is the difference between a
+    /// deterministic swap and one the hardware can catch half-done.
+    /// Zero means "no such prefix"; the consumer then splits wherever it likes.
+    uint16_t payloadPrefixBytes;
     uint64_t packetIndex;         ///< Absolute packet index.
     std::atomic<uint64_t> commitGeneration{0};
     /// Hash of the opaque payload the consumer bound, written at map time.
@@ -68,6 +76,7 @@ static_assert(offsetof(IsochTxPacketMeta, payloadLength) == 8);
 static_assert(offsetof(IsochTxPacketMeta, packetIndex) == 16);
 static_assert(offsetof(IsochTxPacketMeta, commitGeneration) == 24);
 static_assert(offsetof(IsochTxPacketMeta, selectedPayloadImage) == 12);
+static_assert(offsetof(IsochTxPacketMeta, payloadPrefixBytes) == 14);
 static_assert(offsetof(IsochTxPacketMeta, payloadSeal) == 32);
 static_assert(offsetof(IsochTxPacketMeta, pcmGeneration) == 40);
 static_assert(std::atomic<uint64_t>::is_always_lock_free);

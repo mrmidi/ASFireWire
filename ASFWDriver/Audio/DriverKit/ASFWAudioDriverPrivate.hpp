@@ -101,6 +101,10 @@ public:
     }
 };
 
+/// Leading bytes of an AMDTP payload that never differ between images of the
+/// same packet: the CIP header.
+inline constexpr uint16_t kAmdtpCipHeaderBytes = 8;
+
 class DextTxSlotProvider final : public ASFW::Protocols::Audio::AMDTP::IAmdtpTxSlotProvider {
 public:
     uint8_t* payloadBase{nullptr};
@@ -207,6 +211,14 @@ public:
 
         meta.packetIndex = packet.packetIndex;
         meta.payloadLength = packet.byteCount;
+        // The CIP header leads every AMDTP payload and is identical in both
+        // images of a packet -- RefillPcm reproduces it from the armed packet's
+        // own DBC and SYT rather than re-deriving it. Declaring it as the
+        // invariant prefix lets transport address the sample words through a
+        // single descriptor field. Transport is told a byte count, not what the
+        // bytes are.
+        meta.payloadPrefixBytes = packet.byteCount >= kAmdtpCipHeaderBytes
+            ? kAmdtpCipHeaderBytes : uint16_t{0};
 
         // immediateData[0] = isoch packet header: spd=2 (S400) at [18:16],
         // tag=1 (standard CIP) at [15:14], tcode=0xA (isoch data block

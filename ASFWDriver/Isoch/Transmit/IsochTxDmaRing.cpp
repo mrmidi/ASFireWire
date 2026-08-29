@@ -210,13 +210,14 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         std::array<TxPayloadDmaFragment, 2> payloadFragments{};
         const uint32_t selectedImage =
             SelectPayloadImage(meta, expectedGen);
-        meta.selectedPayloadImage = selectedImage;
+        meta.selectedPayloadImage = static_cast<uint16_t>(selectedImage);
         const uint64_t payloadOffset = TxPayloadImageOffset(
             producerSlot, selectedImage, slotStrideBytes);
         meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
             payloadBase + payloadOffset, meta.payloadLength);
         if (!payloadDmaMap.ResolveTwoFragments(
-                payloadOffset, meta.payloadLength, payloadFragments)) {
+                payloadOffset, meta.payloadLength, payloadFragments,
+                meta.payloadPrefixBytes)) {
             ASFW_LOG(
                 Isoch,
                 "IT: Prime payload mapping failed packet=%u slot=%u offset=%llu len=%u segments=%zu",
@@ -687,13 +688,14 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         // half-written image -- a producer that misses this point simply loses
         // and the armed image transmits unchanged.
         const uint32_t selectedImage = SelectPayloadImage(meta, expectedGen);
-        meta.selectedPayloadImage = selectedImage;
+        meta.selectedPayloadImage = static_cast<uint16_t>(selectedImage);
         payloadOffset = TxPayloadImageOffset(
             pktSlot, selectedImage, controlBlock->slotStrideBytes);
         meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
             payloadBase + payloadOffset, payloadLength);
         if (!payloadDmaMap.ResolveTwoFragments(
-                payloadOffset, payloadLength, payloadFragments)) {
+                payloadOffset, payloadLength, payloadFragments,
+                meta.payloadPrefixBytes)) {
             counters_.fatalPayloadMapping.fetch_add(1, std::memory_order_relaxed);
             ASFW_LOG(
                 Isoch,

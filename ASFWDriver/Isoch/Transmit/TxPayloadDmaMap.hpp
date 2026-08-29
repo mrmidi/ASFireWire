@@ -98,10 +98,20 @@ public:
         return index < segmentCount_ ? &segments_[index] : nullptr;
     }
 
+    /// Split a payload across the two descriptor entries an isoch packet
+    /// program carries.
+    ///
+    /// `prefixLength` is an opaque count of leading bytes the producer says are
+    /// identical in every image of this payload. When it is usable, the split
+    /// lands exactly there, so the second entry addresses only the bytes that
+    /// can differ -- and re-pointing the payload at another image becomes a
+    /// single aligned store. When it is not (zero, or the whole payload), the
+    /// split is arbitrary and the halving below is as good as anything.
     [[nodiscard]] bool ResolveTwoFragments(
         std::uint64_t slabOffset,
         std::uint32_t length,
-        std::array<TxPayloadDmaFragment, 2>& fragments) const noexcept {
+        std::array<TxPayloadDmaFragment, 2>& fragments,
+        std::uint32_t prefixLength = 0) const noexcept {
         fragments = {};
         if (length == 0) {
             return true;
@@ -143,7 +153,12 @@ public:
         }
 
         if (fragmentCount == 1) {
-            const auto firstLength = fragments[0].length / 2;
+            // Both entries must carry bytes, so a prefix that would leave the
+            // second empty is not usable.
+            const bool prefixUsable =
+                prefixLength != 0 && prefixLength < fragments[0].length;
+            const auto firstLength = prefixUsable
+                ? prefixLength : (fragments[0].length / 2);
             const auto secondLength = fragments[0].length - firstLength;
             fragments[1] = TxPayloadDmaFragment{
                 .deviceAddress = fragments[0].deviceAddress + firstLength,

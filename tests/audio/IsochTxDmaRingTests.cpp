@@ -291,6 +291,56 @@ TEST_F(IsochTxDmaRingTest, PrimeUsesMappedIOVAOnBothSidesOfPageBoundary) {
     EXPECT_EQ(firstPacketOnSecondPage->dataAddress, kRemainingPagesIOVA);
 }
 
+TEST_F(IsochTxDmaRingTest, PrefixSplitPutsTheMutableTailInOneDescriptorField) {
+    // With a prefix declared, the first entry addresses exactly the invariant
+    // bytes and the second addresses the rest. That is what lets an image swap
+    // be a single aligned store to desc3->dataAddress instead of two stores the
+    // hardware could catch half-done.
+    auto metadataRing = MakeMetadataRing();
+    for (auto& meta : metadataRing) {
+        meta.payloadLength = 72;        // 8-byte prefix + 64 bytes of samples
+        meta.payloadPrefixBytes = 8;
+    }
+    const auto prime = ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), &primeControl_, sharedPayload_.data(),
+        Layout::kNumPackets);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+
+    const uint32_t descBase = 3 * Layout::kBlocksPerPacket;
+    const auto* desc2 =
+        ring_.Slab().GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
+    const auto* desc3 =
+        ring_.Slab().GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+    EXPECT_EQ(desc2->control & 0xffffu, 8u);
+    EXPECT_EQ(desc2->dataAddress, ImageIOVA(3));
+    EXPECT_EQ(desc3->control & 0xffffu, 64u);
+    EXPECT_EQ(desc3->dataAddress, ImageIOVA(3) + 8);
+}
+
+TEST_F(IsochTxDmaRingTest, PrefixIsIgnoredWhenItWouldEmptyTheSecondEntry) {
+    // A cadence NO-DATA packet is nothing but the prefix. Both descriptor
+    // entries must still carry bytes, so the split falls back to halving.
+    auto metadataRing = MakeMetadataRing();
+    for (auto& meta : metadataRing) {
+        meta.payloadLength = 8;
+        meta.payloadPrefixBytes = 8;
+    }
+    const auto prime = ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), &primeControl_, sharedPayload_.data(),
+        Layout::kNumPackets);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+
+    const uint32_t descBase = 3 * Layout::kBlocksPerPacket;
+    const auto* desc2 =
+        ring_.Slab().GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
+    const auto* desc3 =
+        ring_.Slab().GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+    EXPECT_EQ(desc2->control & 0xffffu, 4u);
+    EXPECT_EQ(desc3->control & 0xffffu, 4u);
+}
+
 TEST_F(IsochTxDmaRingTest, PrimeProgramsPayloadCrossingDmaSegment) {
     const uint64_t kBoundaryOffset =
         ASFW::Isoch::TxPayloadImageOffset(7, 0, kSharedPayloadStride) + 256;
