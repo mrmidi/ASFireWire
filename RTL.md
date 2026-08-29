@@ -1027,10 +1027,38 @@ this machine, read back through Logic or the driver log ring.
 | latency corrected to measurement | 489 | 168 | 657 | `72204b91` |
 | Apple's driver, same hardware | 117 | 90 | 207 | — |
 
-Logic confirmed each stage to the frame: 25.3 ms round trip at a 32-sample
-buffer became 17.3, then 18.2 at 128 (12.1 ms output). The predicted and
-observed fixed costs agreed exactly at every buffer size, which validates the
-model in *Timing-property model after the split* end to end.
+Logic confirmed each stage to the frame. At a 32-sample buffer the round trip
+went 25.3 ms -> 17.3 -> 14.2 -> **15.0** (output 19.3 -> 11.3 -> 10.1 -> **10.9**),
+the last step being the correction upward described below. Predicted and observed
+fixed costs agreed exactly at every buffer size and every stage.
+
+**That agreement validates the model against itself, and nothing more.** Every
+figure above is derived from ASFW's own timing model and confirmed by Logic
+displaying what ASFW told it. No measurement in this record establishes the
+*actual* delay between a sample being written and being heard.
+
+### The reported numbers are known to be incomplete
+
+Reported latency claims only the part the driver can prove. Specifically it
+claims **zero** for the device's own analogue delay in both directions -- the DAC
+after transmission and the ADC before acquisition -- because nothing host-side
+can observe them. Apple's 67 output / 40 input presumably include those terms.
+So ASFW under-reports by at least the converter delay, in a direction that makes
+Logic align recorded material early.
+
+Consistent with that, the developer reports that at 15.0 ms the perceived delay
+is larger than the displayed figure. That is an unquantified subjective
+impression, not a measurement, and it is recorded here as such -- but it points
+the same way as the known omission, so it should not be dismissed either.
+
+**The outstanding gap in the evidence chain is a loopback measurement**: a
+physical cable from a Duet output to a Duet input, an impulse recorded with
+Logic's Recording Delay at zero, and the offset read in samples. That single
+number gives the true round trip, and true-minus-reported gives the unclaimed
+delay, which can then be attributed instead of guessed. Until it exists, the
+gap-to-Apple arithmetic below compares two possibly-incomplete numbers, and no
+optimisation target derived from it is trustworthy to better than the size of
+the omission.
 
 ### The contract change
 
