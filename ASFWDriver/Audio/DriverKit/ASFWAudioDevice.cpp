@@ -292,6 +292,23 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             }
 
             uint8_t* payloadBase = reinterpret_cast<uint8_t*>(ivars.txPayloadMap->GetAddress());
+            // The slab must hold every payload image, not just one per slot.
+            // Both sides derive this from the same constant, so a mismatch is a
+            // build-time inconsistency -- but it would present as an
+            // out-of-bounds write into whatever follows the mapping, so it is
+            // checked rather than assumed.
+            const uint64_t requiredPayloadBytes =
+                static_cast<uint64_t>(numSlots) *
+                ASFW::Isoch::kTxPayloadImagesPerSlot * maxPacketBytes;
+            if (ivars.txPayloadMap->GetLength() < requiredPayloadBytes) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioDevice: TX payload slab too small mapped=%llu required=%llu slots=%u images=%u stride=%u",
+                         ivars.txPayloadMap->GetLength(), requiredPayloadBytes,
+                         numSlots, ASFW::Isoch::kTxPayloadImagesPerSlot,
+                         maxPacketBytes);
+                kr = failStart(kIOReturnNoSpace, "ValidateTxPayloadSlab");
+                return;
+            }
             auto* metadataRing = reinterpret_cast<ASFW::Isoch::IsochTxPacketMeta*>(ivars.txMetadataMap->GetAddress());
             auto* queueControl = reinterpret_cast<ASFW::Isoch::IsochTxQueueControl*>(ivars.txControlMap->GetAddress());
 

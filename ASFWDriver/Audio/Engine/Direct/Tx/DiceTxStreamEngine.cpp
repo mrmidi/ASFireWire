@@ -81,6 +81,11 @@ void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc) noexcept {
     timeline_.Reset();
     packetizer_.Reset(initialDbc);
     if (cadence_) cadence_->Reset();
+    // Packet indices restart at zero, so retention from the previous run would
+    // match by index while describing a different epoch's frames. Clear it: a
+    // fill must never be attempted against an arm this run did not make.
+    for (auto& armed : armedPackets_) armed = {};
+    for (auto& filled : armedFilled_) filled = false;
 }
 
 bool DiceTxStreamEngine::PreviewPresentationPlan(
