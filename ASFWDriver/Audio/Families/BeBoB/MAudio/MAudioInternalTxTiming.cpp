@@ -22,7 +22,10 @@ bool InternalTxTiming::Arm(const StartEpoch epoch, const uint32_t sampleRateHz,
     // Device capabilities still gate which rates can be selected. This only
     // verifies that the supplied packet geometry matches that rate's IEC
     // 61883-6 family, instead of silently retaining a 48 kHz cadence.
-    if (!geometry || geometry->sytIntervalFrames != sytInterval ||
+    if (!geometry ||
+        (sampleRateHz != 48'000 && sampleRateHz != 96'000 &&
+         sampleRateHz != 192'000) ||
+        geometry->sytIntervalFrames != sytInterval ||
         !cadence_.Configure(sampleRateHz, sytInterval, 0)) {
         state_ = InternalTxTimingFailed{epoch};
         return false;
@@ -76,7 +79,7 @@ bool InternalTxTiming::CommitPacket(const InternalTxPacketPlan& plan,
 
     // A PCM-starved DATA decision is emitted as NO-DATA, but it still consumed
     // a physical isochronous cycle. Advance unconditionally so a producer
-    // fault cannot shift the rational 44.1/48 kHz schedule.
+    // fault cannot shift the backend wire cadence.
     cadence_.AdvanceCycle();
     ++nextSequence_;
     return true;

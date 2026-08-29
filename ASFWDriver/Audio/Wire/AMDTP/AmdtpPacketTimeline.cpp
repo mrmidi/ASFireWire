@@ -14,7 +14,11 @@ void AmdtpPacketTimeline::Reset() noexcept {
         slot.isData = false;
         slot.firstAudioFrame = 0;
         slot.framesInPacket = 0;
+        slot.plannedFrameCount = 0;
         slot.dbs = 0;
+        slot.epoch = 0;
+        slot.cycleOrdinal = 0;
+        slot.presentationBusTicks = 0;
         slot.state.store(PacketSlotState::Empty, std::memory_order_relaxed);
     }
 }
@@ -42,7 +46,11 @@ bool AmdtpPacketTimeline::MarkDataPacketFinalized(
     slot.isData = true;
     slot.firstAudioFrame = packet.firstAudioFrame;
     slot.framesInPacket = packet.framesInPacket;
+    slot.plannedFrameCount = packet.plannedFrameCount;
     slot.dbs = packet.dbs;
+    slot.epoch = packet.epoch;
+    slot.cycleOrdinal = packet.cycleOrdinal;
+    slot.presentationBusTicks = packet.presentationBusTicks;
     slot.state.store(PacketSlotState::Finalized, std::memory_order_release);
 
     const uint64_t frameEnd =
@@ -55,17 +63,22 @@ bool AmdtpPacketTimeline::MarkDataPacketFinalized(
     return true;
 }
 
-void AmdtpPacketTimeline::MarkNoDataPacket(uint32_t packetIndex) noexcept {
+void AmdtpPacketTimeline::MarkNoDataPacket(
+    const PreparedTxPacket& packet) noexcept {
     if (!slots_) {
         return;
     }
-    auto& slot = slots_[packetIndex % slotCount_];
-    slot.packetIndex = packetIndex;
-    slot.packetSizeBytes = 0;
+    auto& slot = slots_[packet.packetIndex % slotCount_];
+    slot.packetIndex = packet.packetIndex;
+    slot.packetSizeBytes = packet.byteCount;
     slot.isData = false;
-    slot.firstAudioFrame = 0;
+    slot.firstAudioFrame = packet.firstAudioFrame;
     slot.framesInPacket = 0;
-    slot.dbs = 0;
+    slot.plannedFrameCount = packet.plannedFrameCount;
+    slot.dbs = packet.dbs;
+    slot.epoch = packet.epoch;
+    slot.cycleOrdinal = packet.cycleOrdinal;
+    slot.presentationBusTicks = packet.presentationBusTicks;
     slot.state.store(PacketSlotState::Finalized, std::memory_order_release);
 }
 

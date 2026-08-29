@@ -4,9 +4,11 @@
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
 #include "TxSytTrace.hpp"
+#include "TxCycleTrace.hpp"
 #include "TxWirePayloadTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
-#include "../../Runtime/TxPcmStagingRing.hpp"
+#include "../../Runtime/HardwareSampleTimeline.hpp"
+#include "../../Runtime/PcmPublicationCache.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
 #include "../../Shared/AudioTimingGeometry.hpp"
@@ -73,9 +75,9 @@ enum class TxProducerFaultReason : uint32_t {
 
 enum class TxContentFaultReason : uint32_t {
     kNone = 0,
-    kNotYetWrittenAtDeadline,
-    kStaleOverwritten,
-    kSnapshotBusyAtDeadline,
+    kNotYetPublishedAtDeadline,
+    kExpired,
+    kConcurrentRewriteAtDeadline,
     kInvalidSource,
     kSecondaryStreamFailure,
 };
@@ -84,12 +86,11 @@ enum class TxContentFaultReason : uint32_t {
     TxContentFaultReason reason) noexcept {
     switch (reason) {
         case TxContentFaultReason::kNone: return "none";
-        case TxContentFaultReason::kNotYetWrittenAtDeadline:
-            return "not-yet-written-at-deadline";
-        case TxContentFaultReason::kStaleOverwritten:
-            return "stale-overwritten";
-        case TxContentFaultReason::kSnapshotBusyAtDeadline:
-            return "snapshot-busy-at-deadline";
+        case TxContentFaultReason::kNotYetPublishedAtDeadline:
+            return "not-yet-published-at-deadline";
+        case TxContentFaultReason::kExpired: return "expired";
+        case TxContentFaultReason::kConcurrentRewriteAtDeadline:
+            return "concurrent-rewrite-at-deadline";
         case TxContentFaultReason::kInvalidSource: return "invalid-source";
         case TxContentFaultReason::kSecondaryStreamFailure:
             return "secondary-stream-failure";
@@ -107,34 +108,6 @@ enum class TxContentFaultReason : uint32_t {
         case TxProducerFaultReason::kSlotUnavailable: return "slot-unavailable";
         case TxProducerFaultReason::kPacketizerRejected: return "packetizer-rejected";
         case TxProducerFaultReason::kSlotPublishFailed: return "slot-publish-failed";
-    }
-    return "unknown";
-}
-
-/// Legacy classification from the removed post-commit payload-writer design.
-/// Numeric values and fields remain for old debug-snapshot decoders. In the
-/// current design E is populated with immutable finalized content F and this
-/// reason stays Healthy; TxContentFaultReason is authoritative.
-enum class TxExposureReason : uint32_t {
-    kUnknown = 0,
-    /// Legacy healthy classification. E now mirrors finalized content F.
-    kHealthy,
-    /// Legacy producer-stall classification.
-    kStall,
-    /// Legacy replay-miss classification.
-    kReplayMiss,
-    /// Legacy cadence-underproduction classification.
-    kRateMismatch,
-};
-
-[[nodiscard]] inline const char* TxExposureReasonName(
-    TxExposureReason reason) noexcept {
-    switch (reason) {
-        case TxExposureReason::kUnknown: return "unknown";
-        case TxExposureReason::kHealthy: return "healthy";
-        case TxExposureReason::kStall: return "stall";
-        case TxExposureReason::kReplayMiss: return "replay-miss";
-        case TxExposureReason::kRateMismatch: return "rate-mismatch";
     }
     return "unknown";
 }
@@ -393,19 +366,13 @@ struct TxPreparationRequestState final {
     std::atomic<uint64_t> handledGeneration{0};
     std::atomic<uint64_t> requestHostTicks{0};
     std::atomic<uint64_t> handledHostTicks{0};
-    // Audio-owned target: the packetizer must expose content through this
-    // absolute host frame before the request is considered drained. Transport
-    // only carries packet cursors and never interprets or resets this value.
-    std::atomic<uint64_t> requestedTargetFrameEnd{0};
     // CoreAudio can publish every IO period while TxPreparation runs on a
     // different queue. This latch makes action delivery edge-triggered and
     // coalesces those writes into one follow-up action.
     std::atomic<bool> wakeScheduled{false};
 
-    [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks,
-                                          uint64_t targetFrameEnd = 0) noexcept {
+    [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks) noexcept {
         requestHostTicks.store(hostTicks, std::memory_order_relaxed);
-        requestedTargetFrameEnd.store(targetFrameEnd, std::memory_order_relaxed);
         return requestedGeneration.fetch_add(1, std::memory_order_release) + 1;
     }
 
@@ -441,7 +408,6 @@ struct TxPreparationRequestState final {
         handledGeneration.store(0, std::memory_order_relaxed);
         requestHostTicks.store(0, std::memory_order_relaxed);
         handledHostTicks.store(0, std::memory_order_relaxed);
-        requestedTargetFrameEnd.store(0, std::memory_order_relaxed);
         wakeScheduled.store(false, std::memory_order_relaxed);
     }
 };
@@ -508,13 +474,19 @@ struct AudioTransportControlBlock final {
 
     // TX control block members
     TxWirePayloadTelemetry txWirePayloadTelemetry{};
-    TxPcmStagingTelemetry txPcmStagingTelemetry{};
+    HardwareSampleTimeline hardwareTimeline{};
+    // Zero means no request; otherwise stores discontinuity enum + 1 so
+    // StartIO (enum value zero) remains representable. The RX service requests
+    // and the serialized TX preparation queue consumes the transition.
+    std::atomic<uint32_t> timelineEpochRequest{0};
+    PcmPublicationTelemetry pcmPublicationTelemetry{};
 
     // Latest-value trace of the live replay TX SYT decision (diagnostics).
     TxSytTraceLatest txSytTrace{};
     TxPreparationRequestState txPreparationRequests{};
     TxFatalSnapshot txFatalSnapshot{};
     TxProducerFaultSnapshot txProducerFault{};
+    TxCycleTraceRing txCycleTrace{};
 
     std::atomic<uint64_t> outputConsumedEndFrame{0};
     std::atomic<uint64_t> outputUnderruns{0};
@@ -527,11 +499,9 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingOverruns{0};
     std::atomic<uint64_t> txScheduledSampleFrame{0};
     std::atomic<uint64_t> txCompletedSampleFrame{0};
-    std::atomic<uint64_t> txContentFinalizedFrameEnd{0};
     std::atomic<uint64_t> txContentDeferrals{0};
     std::atomic<uint64_t> txContentDeadlineNoData{0};
-    std::atomic<uint64_t> txContentStaleXruns{0};
-    std::atomic<uint64_t> txContentRebases{0};
+    std::atomic<uint64_t> txMissedFrames{0};
     // Value-owned mirrors of the neutral transport queue. The preparation
     // queue refreshes these while the direct binding is alive so diagnostics
     // never need to retain or dereference the transport-owned queue mapping.
@@ -569,9 +539,8 @@ struct AudioTransportControlBlock final {
     /// transmit deadline; they have no term for how far ahead the writer is.
     /// That is why a deadline xrun can occur while margin reads healthy: the
     /// two are independent, and only this one can go to zero when the host
-    /// callback is late. A `kNotYetWrittenAtDeadline` fault is by definition
-    /// this value reaching 0, so its interval minimum is the leading
-    /// indicator for that fault.
+    /// callback is late. A `kNotYetPublishedAtDeadline` fault is the matching
+    /// immutable-cache outcome.
     std::atomic<uint32_t> txIntervalProducerHeadroomMinFrames{UINT32_MAX};
     std::atomic<uint32_t> txMinimumProducerHeadroomFrames{UINT32_MAX};
     std::atomic<uint64_t> txIntervalPreparationLatencyMaxTicks{0};
@@ -606,23 +575,40 @@ struct AudioTransportControlBlock final {
     std::atomic<int64_t> txLastLeadTicks{0};
     std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
     std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
+    std::atomic<uint64_t> txPacketStoreHighWaterPackets{0};
+    std::atomic<uint64_t> txCompletionLatencyMaxCycles{0};
+    std::array<std::atomic<uint64_t>,
+               ASFW::Audio::Shared::AudioTimingGeometry::
+                   kTxDeadlineHeadroomHistogramBuckets>
+        txDeadlineHeadroomHistogram{};
+    std::array<std::atomic<uint64_t>,
+               ASFW::Audio::Shared::AudioTimingGeometry::
+                   kTxCompletionLatencyHistogramBuckets>
+        txCompletionLatencyHistogram{};
+    std::atomic<uint64_t> backendDbcDiscontinuities{0};
+    std::atomic<uint64_t> backendSytDiscontinuities{0};
+    std::atomic<uint64_t> backendObservationConversions{0};
+    std::atomic<uint64_t> backendObservationConversionFailures{0};
+    std::atomic<uint64_t> mAudioWarmupGroups{0};
+    std::atomic<uint64_t> mAudioTxDerivedObservations{0};
+    std::atomic<uint64_t> mAudioCaptureTransitions{0};
+    std::atomic<uint64_t> mAudioPostStartConfirmations{0};
 
-    // --- Legacy TX exposure snapshot ---------------------------------------
-    // Retained for debug-snapshot wire compatibility. `ExposedFrame` now means
-    // finalized immutable content F. W-F is ordinary pending work; the staging
-    // read outcomes and TxContent first-fault tuple above identify real loss.
-    std::atomic<uint64_t> txExposureSampleHostTicks{0};
-    std::atomic<uint64_t> txExposureSampleWriteFrame{0};
-    std::atomic<uint64_t> txExposureSampleExposedFrame{0};
-    std::atomic<uint64_t> txExposureSampleMisses{0};
-    //! Frames of deficit attributed to replay misses since stream start.
-    std::atomic<uint64_t> txExposureDebtReplayFrames{0};
-    //! Frames of deficit no replay miss can account for (the F9 residue).
-    std::atomic<uint64_t> txExposureDebtUnexplainedFrames{0};
-    //! Last classified TxExposureReason; 0 until the first classification.
-    std::atomic<uint32_t> txExposureReason{0};
-    //! Legacy field; zero in the finalized-content design.
-    std::atomic<int32_t> txExposurePpm{0};
+    void RequestTimelineEpoch(
+        HardwareTimelineDiscontinuity reason) noexcept {
+        timelineEpochRequest.store(
+            static_cast<uint32_t>(reason) + 1U,
+            std::memory_order_release);
+    }
+
+    [[nodiscard]] bool ConsumeTimelineEpochRequest(
+        HardwareTimelineDiscontinuity& reason) noexcept {
+        const uint32_t encoded = timelineEpochRequest.exchange(
+            0, std::memory_order_acq_rel);
+        if (encoded == 0) return false;
+        reason = static_cast<HardwareTimelineDiscontinuity>(encoded - 1U);
+        return true;
+    }
 
     // RX control block members
     ASFW::Driver::RxSytCadence rxSytCadence{};
@@ -711,11 +697,16 @@ struct AudioTransportControlBlock final {
 
         // Reset TX members
         txWirePayloadTelemetry.Reset();
-        txPcmStagingTelemetry.Reset();
+        // Preserve the epoch counter across StartIO cycles. BeginEpoch() below
+        // clears all per-epoch state while monotonically changing the identity
+        // seen by the cache, packet plans, and telemetry.
+        pcmPublicationTelemetry.Reset();
         txSytTrace.Reset();
         txPreparationRequests.Reset();
         txFatalSnapshot.Reset();
         txProducerFault.Reset();
+        txCycleTrace.Reset();
+        timelineEpochRequest.store(0, std::memory_order_relaxed);
 
         outputConsumedEndFrame.store(0, std::memory_order_relaxed);
         outputUnderruns.store(0, std::memory_order_relaxed);
@@ -728,11 +719,9 @@ struct AudioTransportControlBlock final {
         playbackRingOverruns.store(0, std::memory_order_relaxed);
         txScheduledSampleFrame.store(0, std::memory_order_relaxed);
         txCompletedSampleFrame.store(0, std::memory_order_relaxed);
-        txContentFinalizedFrameEnd.store(0, std::memory_order_relaxed);
         txContentDeferrals.store(0, std::memory_order_relaxed);
         txContentDeadlineNoData.store(0, std::memory_order_relaxed);
-        txContentStaleXruns.store(0, std::memory_order_relaxed);
-        txContentRebases.store(0, std::memory_order_relaxed);
+        txMissedFrames.store(0, std::memory_order_relaxed);
         txTransportCompletionCursor.store(0, std::memory_order_relaxed);
         txTransportCommittedEnd.store(0, std::memory_order_relaxed);
         txTransportStatus.store(0, std::memory_order_relaxed);
@@ -786,6 +775,23 @@ struct AudioTransportControlBlock final {
         txLastLeadTicks.store(0, std::memory_order_relaxed);
         txMinimumLeadTicks.store(INT64_MAX, std::memory_order_relaxed);
         txMaximumLeadTicks.store(INT64_MIN, std::memory_order_relaxed);
+        txPacketStoreHighWaterPackets.store(0, std::memory_order_relaxed);
+        txCompletionLatencyMaxCycles.store(0, std::memory_order_relaxed);
+        for (auto& bucket : txDeadlineHeadroomHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        for (auto& bucket : txCompletionLatencyHistogram) {
+            bucket.store(0, std::memory_order_relaxed);
+        }
+        backendDbcDiscontinuities.store(0, std::memory_order_relaxed);
+        backendSytDiscontinuities.store(0, std::memory_order_relaxed);
+        backendObservationConversions.store(0, std::memory_order_relaxed);
+        backendObservationConversionFailures.store(
+            0, std::memory_order_relaxed);
+        mAudioWarmupGroups.store(0, std::memory_order_relaxed);
+        mAudioTxDerivedObservations.store(0, std::memory_order_relaxed);
+        mAudioCaptureTransitions.store(0, std::memory_order_relaxed);
+        mAudioPostStartConfirmations.store(0, std::memory_order_relaxed);
 
         // Reset RX members
         rxSytCadence.Reset();

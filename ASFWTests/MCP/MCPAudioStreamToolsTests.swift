@@ -12,11 +12,11 @@ struct MCPAudioStreamToolsTests {
 
     private func cursor(
         streaming: Bool = true,
-        stagedOldest: UInt64 = 10_000,
-        stagedWrittenEnd: UInt64 = 14_096,
-        finalizedEnd: UInt64 = 13_984,
+        pcmOldest: UInt64 = 10_000,
+        pcmPublishedEnd: UInt64 = 14_096,
+        scheduledEnd: UInt64 = 13_984,
         deadlineNoData: UInt64 = 0,
-        staleXruns: UInt64 = 0,
+        wrongEpoch: UInt64 = 0,
         firstFaultReason: UInt32 = 0,
         transportStatus: UInt32 = 1
     ) -> ASFWMCPAudioCursorSnapshot {
@@ -28,31 +28,31 @@ struct MCPAudioStreamToolsTests {
             streaming: streaming,
             sampleRateHz: 48_000,
             outputChannels: 2,
-            stagedOldestFrame: stagedOldest,
-            stagedWrittenEndFrame: stagedWrittenEnd,
-            finalizedFrameEnd: finalizedEnd,
+            pcmOldestValidFrame: pcmOldest,
+            pcmPublishedEndFrame: pcmPublishedEnd,
+            scheduledFrameEnd: scheduledEnd,
             completionPacket: 8_000,
             committedPacketEnd: 8_678,
             transportStatus: transportStatus,
-            stagingWrites: 11,
-            stagingFrames: 5_632,
-            stagingDiscontinuities: 0,
-            stagingOverwrittenFrames: 0,
-            readsReady: 1_748,
-            readsNotYetWritten: 3,
-            readsStaleOverwritten: staleXruns,
-            readsSnapshotBusy: 0,
-            readsInvalid: 0,
+            pcmPublications: 11,
+            pcmFramesPublished: 5_632,
+            pcmDiscontinuities: 0,
+            pcmExpiredFrames: 0,
+            copiesReady: 1_748,
+            copiesNotYetPublished: 3,
+            copiesExpired: 0,
+            copiesConcurrentRewrite: 0,
+            copiesInvalid: 0,
             deferrals: 3,
             deadlineNoData: deadlineNoData,
-            staleXruns: staleXruns,
-            rebases: staleXruns,
-            faultEvents: deadlineNoData + staleXruns,
+            copiesWrongEpoch: wrongEpoch,
+            missedFrames: deadlineNoData * 8,
+            faultEvents: deadlineNoData + wrongEpoch,
             firstFaultReason: firstFaultReason,
             firstFaultPacket: 8_679,
-            firstFaultAudioFrame: finalizedEnd,
-            firstFaultOldestFrame: stagedOldest,
-            firstFaultWrittenEndFrame: stagedWrittenEnd,
+            firstFaultAudioFrame: scheduledEnd,
+            firstFaultOldestFrame: pcmOldest,
+            firstFaultWrittenEndFrame: pcmPublishedEnd,
             firstFaultCompletionPacket: 8_000,
             firstFaultCommittedPacketEnd: 8_678
         )
@@ -83,7 +83,7 @@ struct MCPAudioStreamToolsTests {
         #expect(endpoint["bindingReady"] == .bool(true))
         #expect(endpoint["verdict"] == .string("healthyPendingContent"))
         #expect(frames["units"] == .string("absoluteHostFrames"))
-        #expect(frames["pendingStagedFrames"] == .uint64(112))
+        #expect(frames["publishedAheadFrames"] == .uint64(112))
         #expect(packets["units"] == .string("absoluteIsochPackets"))
         #expect(packets["committedMargin"] == .uint64(678))
         #expect(await driver.unexpectedWriteAttemptCount() == 0)
@@ -94,11 +94,11 @@ struct MCPAudioStreamToolsTests {
         #expect(cursor(deadlineNoData: 1, firstFaultReason: 1).verdict ==
                 "deadlineNoData")
         #expect(cursor(
-            stagedOldest: 14_000,
-            finalizedEnd: 13_984,
-            staleXruns: 1,
+            pcmOldest: 14_000,
+            scheduledEnd: 13_984,
+            wrongEpoch: 0,
             firstFaultReason: 2
-        ).verdict == "staleXrun")
+        ).verdict == "expiredRange")
         #expect(cursor(firstFaultReason: 4).verdict == "fatal")
         #expect(cursor(transportStatus: 2).verdict == "fatal")
         #expect(cursor(transportStatus: 4).verdict == "fatal")

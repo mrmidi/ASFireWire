@@ -1,30 +1,16 @@
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
-#include "Audio/Runtime/TxContentRecoveryPolicy.hpp"
-#include "Audio/Runtime/TxPcmStagingRing.hpp"
-#include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
-#include "Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp"
-#include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
+#include "Audio/Runtime/PcmPublicationCache.hpp"
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <array>
-#include <atomic>
-#include <bit>
-#include <cstdint>
-#include <vector>
 
 namespace {
-
 using namespace ASFW::Protocols::Audio::AMDTP;
-using ASFW::Audio::Ports::TxPcmReadRequest;
-using ASFW::Audio::Ports::TxPcmReadResult;
-using ASFW::Audio::Runtime::TxPcmHostRingView;
-using ASFW::Audio::Runtime::TxPcmStagingRing;
-using ASFW::Audio::Runtime::TxContentShortageAction;
-using ASFW::Audio::Runtime::TxContentShortageKind;
+using ASFW::Audio::Runtime::PcmPublicationCache;
+using ASFW::Audio::Runtime::PcmPublishResult;
 using ASFW::Encoding::AudioWireFormat;
 using ASFW::Isoch::Audio::AudioStreamConfig;
 using ASFW::Isoch::Audio::AudioStreamDirection;
@@ -32,34 +18,30 @@ using ASFW::Isoch::Audio::IAudioStreamProfile;
 using ASFW::Protocols::Audio::DICE::DiceTxStreamEngine;
 using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
 
-class TestAudioStreamProfile final : public IAudioStreamProfile {
+class TestProfile final : public IAudioStreamProfile {
 public:
-    uint8_t pcmChannels{2};
-    uint8_t dbs{2};
-    uint8_t sourceChannelOffset{0};
-
-    const char* Name() const noexcept override { return "TX ownership test"; }
+    uint8_t sourceOffset{0};
+    const char* Name() const noexcept override { return "v3-test"; }
     AudioWireFormat TxWireFormat() const noexcept override {
         return AudioWireFormat::kAM824;
     }
     AudioWireFormat RxWireFormat() const noexcept override {
         return AudioWireFormat::kAM824;
     }
-    bool BuildDefaultTxStreamConfig(
-        AudioStreamConfig& out) const noexcept override {
+    bool BuildDefaultTxStreamConfig(AudioStreamConfig& out) const noexcept override {
         out = {};
         out.direction = AudioStreamDirection::HostToDevice;
-        out.pcmChannels = pcmChannels;
-        out.dbs = dbs;
-        out.sourceChannelOffset = sourceChannelOffset;
+        out.sampleRate = 48'000;
+        out.streamMode = ASFW::Encoding::StreamMode::kBlocking;
+        out.pcmChannels = 2;
+        out.dbs = 2;
+        out.framesPerDataPacket = 8;
+        out.sourceChannelOffset = sourceOffset;
         return true;
     }
-    bool BuildDefaultRxStreamConfig(
-        AudioStreamConfig& out) const noexcept override {
+    bool BuildDefaultRxStreamConfig(AudioStreamConfig& out) const noexcept override {
         out = {};
         out.direction = AudioStreamDirection::DeviceToHost;
-        out.pcmChannels = pcmChannels;
-        out.dbs = dbs;
         return true;
     }
     uint32_t TxSafetyOffsetFrames(double) const noexcept override { return 0; }
@@ -68,688 +50,158 @@ public:
     uint32_t RxReportedLatencyFrames(double) const noexcept override { return 0; }
 };
 
-class TestTxSlotProvider final : public IAmdtpTxSlotProvider {
+class SlotProvider final : public IAmdtpTxSlotProvider {
 public:
-    bool allowAcquire{true};
-    bool allowPublish{true};
+    bool publishAllowed{true};
     std::array<uint8_t, 256> bytes{};
-    std::array<uint8_t, 256> publishedBytes{};
-    PreparedTxPacket publishedPacket{};
-    uint32_t publishCount{0};
-    uint32_t unfinalizedDataAttempts{0};
+    PreparedTxPacket packet{};
 
     bool AcquireWritableSlot(uint32_t packetIndex,
                              TxPacketSlotView& out) noexcept override {
-        if (!allowAcquire) return false;
-        out = {packetIndex, bytes.data(),
-               static_cast<uint32_t>(bytes.size())};
+        out = {packetIndex, bytes.data(), static_cast<uint32_t>(bytes.size())};
         return true;
     }
-
-    bool PublishSlot(const PreparedTxPacket& packet) noexcept override {
-        if (!allowPublish || packet.byteCount > bytes.size()) return false;
-        if (packet.isData && !packet.pcmFinalized) {
-            ++unfinalizedDataAttempts;
-            return false;
-        }
-        publishedPacket = packet;
-        publishedBytes.fill(0);
-        std::copy_n(bytes.begin(), packet.byteCount,
-                    publishedBytes.begin());
-        ++publishCount;
+    bool PublishSlot(const PreparedTxPacket& value) noexcept override {
+        if (!publishAllowed) return false;
+        packet = value;
         return true;
     }
-
-    uint32_t SlotCount() const noexcept override { return 1; }
+    uint32_t SlotCount() const noexcept override { return 192; }
 };
 
-AmdtpStreamConfig BlockingStereoConfig() {
-    AmdtpStreamConfig config{};
-    config.streamMode = StreamMode::Blocking;
-    config.dbs = 2;
-    config.pcmChannels = 2;
-    config.framesPerDataPacket = 8;
-    config.maxPacketBytes = 128;
-    return config;
-}
-
-AmdtpTimingState DataTiming(uint16_t syt = 0x1234) {
-    AmdtpTimingState timing{};
-    timing.txClockValid = true;
-    timing.disposition = AmdtpPacketDisposition::Data;
-    timing.nextDataSyt = syt;
-    timing.replayValid = true;
-    timing.replayDataBlocks = 8;
-    return timing;
-}
-
-TxPcmSnapshotView StereoSnapshot(std::array<float, 16>& pcm) {
-    return {pcm.data(), 8, 2};
-}
-
-bool ConfigureEngine(DiceTxStreamEngine& engine,
-                     const TestAudioStreamProfile& profile) {
+bool Configure(DiceTxStreamEngine& engine, const TestProfile& profile) {
     AudioStreamConfig config{};
     return profile.BuildDefaultTxStreamConfig(config) &&
            engine.Configure(profile, config);
 }
 
-uint32_t ReadBE32(const uint8_t* bytes) {
-    return (static_cast<uint32_t>(bytes[0]) << 24) |
-           (static_cast<uint32_t>(bytes[1]) << 16) |
-           (static_cast<uint32_t>(bytes[2]) << 8) |
-           static_cast<uint32_t>(bytes[3]);
+TxPresentationPlan DataPlan(uint64_t first = 100, uint64_t cycle = 7) {
+    return {
+        .epoch = 3,
+        .cycleOrdinal = cycle,
+        .firstAudioFrame = first,
+        .frameCount = 8,
+        .presentationBusTicks = 1'000'000 + cycle * 3'072,
+        .disposition = AmdtpPacketDisposition::Data,
+    };
 }
 
-TEST(AmdtpDirectTxTests, Int32EncodingUsesHighSigned24Bits) {
-    EXPECT_EQ(PcmSlotCodec::EncodeInt32(
-                  INT32_MAX, PcmSlotEncoding::RawSigned24In32BE),
-              0x007FFFFFu);
-    EXPECT_EQ(PcmSlotCodec::EncodeInt32(
-                  INT32_MIN, PcmSlotEncoding::RawSigned24In32BE),
-              0xFF800000u);
-    EXPECT_EQ(PcmSlotCodec::EncodeInt32(
-                  INT32_MAX, PcmSlotEncoding::Am824MBLA),
-              0x407FFFFFu);
-}
-
-TEST(AmdtpDirectTxTests, DataRequiresCompletePcmBeforeStateAdvances) {
+TEST(AmdtpDirectTxTests, PacketizerEncodesSuppliedAbsoluteFrame) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 8> slots{};
     ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(
-        BlockingStereoConfig(), AmdtpTxPolicy{}));
-
-    std::array<uint8_t, 128> bytes{};
-    PreparedTxPacket packet{};
-    const auto timing = DataTiming();
-    EXPECT_FALSE(packetizer.PrepareNextPacket(
-        {0, bytes.data(), bytes.size()}, timing, packet));
-    EXPECT_EQ(packetizer.TelemetrySnapshot().nextAudioFrame, 0U);
-    EXPECT_EQ(timeline.FinalizedFrameEnd(), 0U);
-
-    std::array<float, 16> pcm{};
-    pcm[0] = 1.0f;
-    pcm[1] = -1.0f;
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {0, bytes.data(), bytes.size()}, timing,
-        StereoSnapshot(pcm), packet));
-    EXPECT_TRUE(packet.isData);
-    EXPECT_TRUE(packet.pcmFinalized);
-    EXPECT_EQ(packet.firstAudioFrame, 0U);
-    EXPECT_EQ(packetizer.TelemetrySnapshot().nextAudioFrame, 8U);
-    EXPECT_EQ(timeline.FinalizedFrameEnd(), 8U);
-    EXPECT_EQ(ReadBE32(bytes.data() + 8), 0x407FFFFFu);
-    EXPECT_EQ(ReadBE32(bytes.data() + 12), 0x40800001u);
-}
-
-TEST(AmdtpDirectTxTests, PlaybackMapWritesLogicalChannelsToAdvertisedSlots) {
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 8> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-
-    auto config = BlockingStereoConfig();
-    config.dbs = 3; // slot 2 is a MIDI/control slot.
-    AmdtpTxPolicy policy{};
-    constexpr std::array<uint8_t, 2> kPlanarSlots{1, 0};
-    ASSERT_TRUE(policy.playbackChannelMap.SetSlots(kPlanarSlots));
-    policy.playbackChannelMap.channelCount = 2;
-
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(config, policy));
-
-    std::array<uint8_t, 128> bytes{};
-    std::array<float, 16> pcm{};
-    pcm[0] = 1.0f;
-    pcm[1] = -1.0f;
-    PreparedTxPacket packet{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {0, bytes.data(), bytes.size()}, DataTiming(), StereoSnapshot(pcm), packet));
-
-    // The host's first channel occupies advertised AM824 slot 1, not slot 0.
-    EXPECT_EQ(ReadBE32(bytes.data() + 8), 0x40800001u);
-    EXPECT_EQ(ReadBE32(bytes.data() + 12), 0x407FFFFFu);
-    EXPECT_EQ(ReadBE32(bytes.data() + 16), 0x80000000u);
-}
-
-TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 8> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(
-        BlockingStereoConfig(), AmdtpTxPolicy{}));
-
-    std::array<std::array<uint8_t, 128>, 3> bytes{};
-    std::array<float, 16> pcm{};
-    PreparedTxPacket first{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {0, bytes[0].data(), bytes[0].size()}, DataTiming(),
-        StereoSnapshot(pcm), first));
-    ASSERT_TRUE(first.isData);
-
-    AmdtpTimingState noData{};
-    noData.replayValid = true;
-    noData.disposition = AmdtpPacketDisposition::NoData;
-    PreparedTxPacket forced{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {1, bytes[1].data(), bytes[1].size()}, noData, forced));
-    EXPECT_FALSE(forced.isData);
-    EXPECT_EQ(forced.dbc, 8U);
-    EXPECT_EQ(packetizer.TelemetrySnapshot().nextAudioFrame, 8U);
-
-    PreparedTxPacket second{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {2, bytes[2].data(), bytes[2].size()}, DataTiming(),
-        StereoSnapshot(pcm), second));
-    EXPECT_EQ(second.dbc, 8U);
-    EXPECT_EQ(second.firstAudioFrame, 8U);
-}
-
-// The M-Audio 1814 / ProjectMix special firmware is the family Linux tags with
-// SND_BEBOB_QUIRK_WRONG_DBC, but that quirk describes what the device
-// *transmits* and is consumed only as a receive-side tolerance
-// (amdtp-stream.h: "Only for in-stream", parse_ir_ctx_header at
-// amdtp-stream.c:789).  Our transmit side must still hold DBC across the
-// cadence NO-DATA like every other endpoint, or every DATA packet after one
-// looks to the device like 8 lost data blocks.
-TEST(AmdtpDirectTxTests,
-     ExplicitPacketScheduleHoldsDbcAcrossHeaderOnlyCadencePacket) {
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 8> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    AmdtpTxPolicy policy{};
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), policy));
-
-    std::array<std::array<uint8_t, 128>, 9> bytes{};
-    std::array<float, 16> pcm{};
-
-    AmdtpTimingState noData{};
-    noData.disposition = AmdtpPacketDisposition::NoData;
-    noData.hasExplicitPacketSchedule = true;
-
-    AmdtpTimingState data{};
-    data.txClockValid = true;
-    data.disposition = AmdtpPacketDisposition::Data;
-    data.nextDataSyt = 0x1234;
-    data.hasExplicitPacketSchedule = true;
-    data.explicitDataBlocks = 8;
-
-    // Two full 48 kHz blocking groups.  DBC advances by the data blocks the
-    // packet carries; a header-only cadence packet carries none, so it repeats
-    // the DBC the next DATA packet will use.  Linux's generate_rx_packet_descs
-    // (amdtp-stream.c:1053-1061) advances by desc->data_blocks and
-    // pool_blocking_data_blocks (:377) makes that 0 for its empty.
-    //
-    // This is the default policy, not the M-Audio one -- see
-    // FullSizeCadencePacketCarriesBlocksAndAdvancesDbc for the case where the
-    // cadence packet is not empty and the same rule therefore yields +8.
-    constexpr bool kIsData[] = {true, true,  true, false, true,
-                                true, true,  false, true};
-    constexpr uint8_t kExpectedDbc[] = {0, 8, 16, 24, 24, 32, 40, 48, 48};
-
-    for (size_t index = 0; index < std::size(kIsData); ++index) {
-        PreparedTxPacket packet{};
-        const uint32_t slotIndex = static_cast<uint32_t>(index);
-        if (kIsData[index]) {
-            ASSERT_TRUE(packetizer.PrepareNextPacket(
-                {slotIndex, bytes[index].data(),
-                 static_cast<uint32_t>(bytes[index].size())}, data,
-                StereoSnapshot(pcm), packet))
-                << "at packet " << index;
-            EXPECT_TRUE(packet.isData) << "at packet " << index;
-            EXPECT_EQ(packet.syt, 0x1234U) << "at packet " << index;
-        } else {
-            ASSERT_TRUE(packetizer.PrepareNextPacket(
-                {slotIndex, bytes[index].data(),
-                 static_cast<uint32_t>(bytes[index].size())}, noData,
-                packet))
-                << "at packet " << index;
-            EXPECT_FALSE(packet.isData) << "at packet " << index;
-        }
-        EXPECT_EQ(packet.dbc, kExpectedDbc[index]) << "at packet " << index;
-    }
-}
-
-TEST(AmdtpDirectTxTests, FullSizeCadencePacketCarriesBlocksAndAdvancesDbc) {
-    // The M-Audio "special" policy. Its own driver never sends this firmware a
-    // header-only packet: in tools/1814/12.txt every host->device packet is
-    // full size, and the cadence ones differ from DATA only in FDF, SYT and the
-    // audio-slot label. DBC then advances by 8 under the ordinary rule, because
-    // eight data blocks really are on the wire.
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 4> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    // The real playback geometry: 6 PCM + 1 non-audio slot, so the two slot
-    // classes are actually distinguishable. A stereo config would not be --
-    // dbs == pcmChannels leaves no non-audio slot to check.
     AmdtpStreamConfig config{};
-    config.streamMode = StreamMode::Blocking;
-    config.dbs = 7;
-    config.pcmChannels = 6;
-    config.framesPerDataPacket = 8;
-    config.maxPacketBytes = 232;
-
-    AmdtpTxPolicy policy{};
-    policy.cadencePacketsCarryDataBlocks = true;
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(config, policy));
-
-    std::array<uint8_t, 232> bytes{};
-    AmdtpTimingState timing{};
-    timing.disposition = AmdtpPacketDisposition::NoData;
-    PreparedTxPacket packet{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {0, bytes.data(), bytes.size()}, timing, packet));
-
-    EXPECT_FALSE(packet.isData);
-    EXPECT_EQ(packet.syt, 0xFFFFU); // NO-INFO
-
-    // 8 blocks x 7 slots x 4 B + 8 B CIP == 232, the size the vendor puts on
-    // the wire for every host->device packet.
-    EXPECT_EQ(packet.byteCount, 232U);
-
-    // No audio frames were consumed even though blocks were emitted.
-    EXPECT_EQ(packet.framesInPacket, 0U);
-
-    // Audio slots take the cadence label; the non-audio slot keeps the word a
-    // DATA packet gives it, so the block layout matches tools/1814/12.txt.
-    for (uint32_t block = 0; block < 8; ++block) {
-        const uint8_t* base = bytes.data() + 8 + (block * 7 * 4);
-        for (uint32_t slot = 0; slot < 6; ++slot) {
-            EXPECT_EQ(base[slot * 4], 0xCFU)
-                << "block " << block << " slot " << slot;
-        }
-        EXPECT_EQ(base[6 * 4], 0x80U) << "block " << block;
-    }
-
-    // The next packet's DBC reflects the eight blocks just transmitted.
-    PreparedTxPacket second{};
-    std::array<uint8_t, 232> secondBytes{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {1, secondBytes.data(), secondBytes.size()}, timing, second));
-    EXPECT_EQ(second.dbc, 8U);
-}
-
-TEST(AmdtpDirectTxTests, NoDataFdfCanUseCompatibilityQuirk) {
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 4> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    AmdtpTxPolicy policy{};
-    policy.preserveFdfInNoDataPackets = true;
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), policy));
-
-    std::array<uint8_t, 128> bytes{};
-    AmdtpTimingState timing{};
-    timing.disposition = AmdtpPacketDisposition::NoData;
-    PreparedTxPacket packet{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {0, bytes.data(), bytes.size()}, timing, packet));
-    EXPECT_EQ(bytes[4], 0x90);
-    EXPECT_EQ(bytes[5], 0x02);
-    EXPECT_EQ(bytes[6], 0xFF);
-    EXPECT_EQ(bytes[7], 0xFF);
-}
-
-TEST(AmdtpDirectTxTests, MissingSourceCannotReachReleaseCommit) {
-    TestAudioStreamProfile profile{};
-    DiceTxStreamEngine engine{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    TestTxSlotProvider provider{};
-    engine.BindSlotProvider(&provider);
-
-    EXPECT_EQ(engine.PrepareNextTransmitSlot(0, DataTiming()),
-              TxSlotPrepareResult::kPcmSourceUnavailable);
-    EXPECT_EQ(provider.publishCount, 0U);
-    EXPECT_EQ(provider.unfinalizedDataAttempts, 0U);
-    EXPECT_EQ(engine.PacketizerTelemetrySnapshot().nextAudioFrame, 0U);
-}
-
-TEST(AmdtpDirectTxTests, HostWriteBeforePacketIsBackfilledAtCommit) {
-    TestAudioStreamProfile profile{};
-    DiceTxStreamEngine engine{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    TestTxSlotProvider provider{};
-    engine.BindSlotProvider(&provider);
-
-    TxPcmStagingRing staging{};
-    ASSERT_TRUE(staging.Configure(2, 64));
-    engine.BindPcmSource(&staging);
-
-    std::array<float, 16> host{};
-    for (size_t index = 0; index < host.size(); ++index) {
-        host[index] = (index & 1U) == 0 ? 0.5f : -0.5f;
-    }
-    ASSERT_EQ(staging.Stage({host.data(), 0, 8, 8, 2}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kStaged);
-
-    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, DataTiming()),
-              TxSlotPrepareResult::kPrepared);
-    ASSERT_EQ(provider.publishCount, 1U);
-    ASSERT_TRUE(provider.publishedPacket.isData);
-    ASSERT_TRUE(provider.publishedPacket.pcmFinalized);
-    EXPECT_EQ(ReadBE32(provider.publishedBytes.data() + 8), 0x40400000u);
-    EXPECT_EQ(ReadBE32(provider.publishedBytes.data() + 12), 0x40C00000u);
-}
-
-TEST(AmdtpDirectTxTests, PacketWaitsForPcmAndRetriesSameFrame) {
-    TestAudioStreamProfile profile{};
-    DiceTxStreamEngine engine{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    TestTxSlotProvider provider{};
-    engine.BindSlotProvider(&provider);
-    TxPcmStagingRing staging{};
-    ASSERT_TRUE(staging.Configure(2, 64));
-    engine.BindPcmSource(&staging);
-
-    EXPECT_EQ(engine.PrepareNextTransmitSlot(91, DataTiming()),
-              TxSlotPrepareResult::kPcmNotYetWritten);
-    EXPECT_EQ(provider.publishCount, 0U);
-    EXPECT_EQ(engine.PacketizerTelemetrySnapshot().nextAudioFrame, 0U);
-
-    std::array<float, 16> host{};
-    host.fill(0.25f);
-    ASSERT_EQ(staging.Stage({host.data(), 0, 8, 8, 2}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kStaged);
-    EXPECT_EQ(engine.PrepareNextTransmitSlot(91, DataTiming()),
-              TxSlotPrepareResult::kPrepared);
-    EXPECT_EQ(provider.publishedPacket.firstAudioFrame, 0U);
-    EXPECT_EQ(engine.PacketizerTelemetrySnapshot().nextAudioFrame, 8U);
-}
-
-TEST(AmdtpDirectTxTests,
-     HardFutureShortageHoldsCursorUntilMissingSuffixIsPublished) {
-    using ASFW::Audio::Runtime::DecideTxContentShortageAction;
-
-    TestAudioStreamProfile profile{};
-    DiceTxStreamEngine engine{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    TestTxSlotProvider provider{};
-    engine.BindSlotProvider(&provider);
-    TxPcmStagingRing staging{};
-    ASSERT_TRUE(staging.Configure(2, 64));
-    engine.BindPcmSource(&staging);
-    ASSERT_TRUE(engine.AlignFrameCursorOnce(960));
-
-    // Model the live failure exactly: DATA needs [960, 968), while WriteEnd
-    // has published only [940, 964), leaving four of eight frames available.
-    std::array<float, 48> prefix{};
-    prefix.fill(0.25f);
-    ASSERT_EQ(staging.Stage({prefix.data(), 940, 24, 24, 2}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kStaged);
-    ASSERT_EQ(engine.PrepareNextTransmitSlot(37, DataTiming()),
-              TxSlotPrepareResult::kPcmNotYetWritten);
-    ASSERT_EQ(
-        DecideTxContentShortageAction(
-            TxContentShortageKind::kNotYetWritten, true),
-        TxContentShortageAction::kEmitNoDataHoldCursor);
-
-    AmdtpTimingState noData{};
-    noData.replayValid = true;
-    noData.disposition = AmdtpPacketDisposition::NoData;
-    ASSERT_EQ(engine.PrepareNextTransmitSlot(37, noData),
-              TxSlotPrepareResult::kPrepared);
-    EXPECT_FALSE(provider.publishedPacket.isData);
-    EXPECT_TRUE(engine.IsFrameCursorAligned());
-    EXPECT_EQ(engine.PacketizerTelemetrySnapshot().nextAudioFrame, 960U);
-    EXPECT_FALSE(engine.AlignFrameCursorOnce(4'096));
-
-    std::array<float, 16> suffix{};
-    suffix.fill(-0.25f);
-    ASSERT_EQ(staging.Stage({suffix.data(), 964, 8, 8, 2}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kStaged);
-    ASSERT_EQ(engine.PrepareNextTransmitSlot(38, DataTiming()),
-              TxSlotPrepareResult::kPrepared);
-    EXPECT_TRUE(provider.publishedPacket.isData);
-    EXPECT_EQ(provider.publishedPacket.firstAudioFrame, 960U);
-    EXPECT_EQ(engine.PacketizerTelemetrySnapshot().nextAudioFrame, 968U);
-}
-
-TEST(AmdtpDirectTxTests, ContentShortagePolicyRebasesOnlyStalePcm) {
-    using ASFW::Audio::Runtime::DecideTxContentShortageAction;
-
-    EXPECT_EQ(DecideTxContentShortageAction(
-                  TxContentShortageKind::kNotYetWritten, false),
-              TxContentShortageAction::kDefer);
-    EXPECT_EQ(DecideTxContentShortageAction(
-                  TxContentShortageKind::kSnapshotBusy, false),
-              TxContentShortageAction::kDefer);
-    EXPECT_EQ(DecideTxContentShortageAction(
-                  TxContentShortageKind::kNotYetWritten, true),
-              TxContentShortageAction::kEmitNoDataHoldCursor);
-    EXPECT_EQ(DecideTxContentShortageAction(
-                  TxContentShortageKind::kSnapshotBusy, true),
-              TxContentShortageAction::kEmitNoDataHoldCursor);
-    EXPECT_EQ(DecideTxContentShortageAction(
-                  TxContentShortageKind::kStaleOverwritten, false),
-              TxContentShortageAction::kEmitNoDataRebaseCursor);
-    EXPECT_EQ(DecideTxContentShortageAction(
-                  TxContentShortageKind::kStaleOverwritten, true),
-              TxContentShortageAction::kEmitNoDataRebaseCursor);
-}
-
-TEST(AmdtpDirectTxTests, AlignmentSelectsACompleteRetainedPacket) {
-    using ASFW::Audio::Runtime::SelectCompletePcmPacket;
-
-    // Exact geometry captured from the dirty hardware run: projected DATA
-    // starts four frames below W, so that projected 8-frame block is partial.
-    const auto live = SelectCompletePcmPacket(
-        6'213'896, 6'197'516, 6'213'900, 8);
-    ASSERT_TRUE(live.available);
-    EXPECT_EQ(live.firstFrame, 6'213'888U);
-    EXPECT_GE(live.firstFrame, 6'197'516U);
-    EXPECT_LE(live.firstFrame + 8, 6'213'900U);
-
-    const auto exact =
-        SelectCompletePcmPacket(960, 900, 1'024, 8);
-    ASSERT_TRUE(exact.available);
-    EXPECT_EQ(exact.firstFrame, 960U);
-
-    EXPECT_FALSE(
-        SelectCompletePcmPacket(960, 960, 964, 8).available);
-    EXPECT_FALSE(
-        SelectCompletePcmPacket(960, 968, 960, 8).available);
-    EXPECT_FALSE(
-        SelectCompletePcmPacket(960, 0, 1'024, 0).available);
-}
-
-TEST(AmdtpDirectTxTests, PostCommitHostWritesCannotMutatePacketImage) {
-    TestAudioStreamProfile profile{};
-    DiceTxStreamEngine engine{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    TestTxSlotProvider provider{};
-    engine.BindSlotProvider(&provider);
-    TxPcmStagingRing staging{};
-    ASSERT_TRUE(staging.Configure(2, 64));
-    engine.BindPcmSource(&staging);
-
-    std::array<float, 16> host{};
-    host.fill(0.5f);
-    ASSERT_EQ(staging.Stage({host.data(), 0, 8, 8, 2}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kStaged);
-    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, DataTiming()),
-              TxSlotPrepareResult::kPrepared);
-    const auto packetAtCommit = provider.bytes;
-
-    host.fill(-0.75f);
-    EXPECT_EQ(staging.Stage({host.data(), 0, 8, 8, 2}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kDuplicate);
-    EXPECT_EQ(provider.bytes, packetAtCommit);
-    EXPECT_EQ(provider.publishedBytes, packetAtCommit);
-}
-
-TEST(AmdtpDirectTxTests, StaleCursorIsExplicitAndDoesNotPublish) {
-    TestAudioStreamProfile profile{};
-    DiceTxStreamEngine engine{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    TestTxSlotProvider provider{};
-    engine.BindSlotProvider(&provider);
-    TxPcmStagingRing staging{};
-    ASSERT_TRUE(staging.Configure(2, 16));
-    engine.BindPcmSource(&staging);
-
-    std::array<float, 32> host{};
-    host.fill(0.5f);
-    ASSERT_EQ(staging.Stage({host.data(), 100, 16, 16, 2}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kStaged);
-    EXPECT_EQ(engine.PrepareNextTransmitSlot(0, DataTiming()),
-              TxSlotPrepareResult::kPcmStaleOverwritten);
-    EXPECT_EQ(provider.publishCount, 0U);
-    EXPECT_EQ(engine.PacketizerTelemetrySnapshot().nextAudioFrame, 0U);
-}
-
-TEST(AmdtpDirectTxTests, StreamChannelOffsetIsAppliedBeforeCommit) {
-    TestAudioStreamProfile profile{};
-    profile.sourceChannelOffset = 2;
-    DiceTxStreamEngine engine{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    TestTxSlotProvider provider{};
-    engine.BindSlotProvider(&provider);
-    TxPcmStagingRing staging{};
-    ASSERT_TRUE(staging.Configure(4, 16));
-    engine.BindPcmSource(&staging);
-
-    std::array<float, 32> host{};
-    for (uint32_t frame = 0; frame < 8; ++frame) {
-        host[frame * 4 + 0] = 0.1f;
-        host[frame * 4 + 1] = 0.2f;
-        host[frame * 4 + 2] = 0.5f;
-        host[frame * 4 + 3] = -0.5f;
-    }
-    ASSERT_EQ(staging.Stage({host.data(), 0, 8, 8, 4}),
-              ASFW::Audio::Runtime::TxPcmStageResult::kStaged);
-    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, DataTiming()),
-              TxSlotPrepareResult::kPrepared);
-    EXPECT_EQ(ReadBE32(provider.publishedBytes.data() + 8), 0x40400000u);
-    EXPECT_EQ(ReadBE32(provider.publishedBytes.data() + 12), 0x40C00000u);
-}
-
-TEST(AmdtpDirectTxTests, AlignFrameCursorIsAcceptedOnlyOncePerReset) {
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 8> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(
-        BlockingStereoConfig(), AmdtpTxPolicy{}));
-    EXPECT_TRUE(packetizer.AlignFrameCursorOnce(960));
-    EXPECT_FALSE(packetizer.AlignFrameCursorOnce(2'000));
-    packetizer.Reset(0, 0);
-    EXPECT_TRUE(packetizer.AlignFrameCursorOnce(3'000));
-}
-
-TEST(AmdtpDirectTxTests,
-     ExplicitRecoveryCanRebaseNextDataWithoutConsumingDbcOrOldPcm) {
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 8> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(
-        BlockingStereoConfig(), AmdtpTxPolicy{}));
-    ASSERT_TRUE(packetizer.AlignFrameCursorOnce(960));
-
-    std::array<float, 16> pcm{};
-    std::array<std::array<uint8_t, 128>, 3> bytes{};
-    PreparedTxPacket first{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {0, bytes[0].data(), bytes[0].size()}, DataTiming(),
-        StereoSnapshot(pcm), first));
-    ASSERT_TRUE(first.isData);
-    ASSERT_EQ(first.dbc, 0U);
-    ASSERT_EQ(first.firstAudioFrame, 960U);
-
-    AmdtpTimingState noData{};
-    noData.replayValid = true;
-    noData.disposition = AmdtpPacketDisposition::NoData;
-    PreparedTxPacket missed{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {1, bytes[1].data(), bytes[1].size()}, noData, missed));
-    EXPECT_FALSE(missed.isData);
-    EXPECT_EQ(missed.dbc, 8U);
-    EXPECT_EQ(packetizer.TelemetrySnapshot().nextAudioFrame, 968U);
-
-    packetizer.ReArmFrameCursorAlignment();
-    ASSERT_TRUE(packetizer.AlignFrameCursorOnce(4'096));
-    PreparedTxPacket recovered{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {2, bytes[2].data(), bytes[2].size()}, DataTiming(),
-        StereoSnapshot(pcm), recovered));
-    EXPECT_TRUE(recovered.isData);
-    EXPECT_EQ(recovered.dbc, 8U);
-    EXPECT_EQ(recovered.firstAudioFrame, 4'096U);
-    EXPECT_EQ(packetizer.TelemetrySnapshot().nextAudioFrame, 4'104U);
-}
-
-TEST(AmdtpDirectTxTests,
-     PacketizerTelemetryTracksFinalizedRangeAndRearmEpoch) {
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 8> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
-    AmdtpTxPacketizer packetizer{};
-    packetizer.BindTimeline(&timeline);
-    ASSERT_TRUE(packetizer.Configure(
-        BlockingStereoConfig(), AmdtpTxPolicy{}));
-    ASSERT_TRUE(packetizer.AlignFrameCursorOnce(960));
-
-    std::array<float, 16> pcm{};
-    std::array<uint8_t, 128> bytes{};
-    PreparedTxPacket packet{};
-    ASSERT_TRUE(packetizer.PrepareNextPacket(
-        {37, bytes.data(), bytes.size()}, DataTiming(),
-        StereoSnapshot(pcm), packet));
-
-    const auto snapshot = packetizer.TelemetrySnapshot();
-    EXPECT_TRUE(snapshot.frameCursorAligned);
-    EXPECT_TRUE(snapshot.hasLastDataPacket);
-    EXPECT_EQ(snapshot.nextAudioFrame, 968U);
-    EXPECT_EQ(snapshot.lastDataFirstAudioFrame, 960U);
-    EXPECT_EQ(snapshot.lastDataEndAudioFrame, 968U);
-    EXPECT_EQ(snapshot.lastDataPacketIndex, 37U);
-    EXPECT_EQ(timeline.FinalizedFrameEnd(), 968U);
-
-    packetizer.ReArmFrameCursorAlignment();
-    const auto rearmed = packetizer.TelemetrySnapshot();
-    EXPECT_FALSE(rearmed.frameCursorAligned);
-    EXPECT_GT(rearmed.cursorEpoch, snapshot.cursorEpoch);
-}
-
-TEST(AmdtpDirectTxTests, PacketizerRejectsPcmGeometryBeyondDbs) {
-    auto config = BlockingStereoConfig();
-    config.pcmChannels = 3;
+    config.sampleRate = 48'000;
     config.dbs = 2;
-    AmdtpPacketTimeline timeline{};
-    std::array<PacketTimelineSlot, 4> slots{};
-    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
+    config.pcmChannels = 2;
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 128;
     AmdtpTxPacketizer packetizer{};
     packetizer.BindTimeline(&timeline);
-    EXPECT_FALSE(packetizer.Configure(config, AmdtpTxPolicy{}));
+    ASSERT_TRUE(packetizer.Configure(config, {}));
+
+    std::array<uint8_t, 128> bytes{};
+    std::array<float, 16> pcm{};
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareDataPacket(
+        {5, bytes.data(), static_cast<uint32_t>(bytes.size())},
+        DataPlan(42'000), 8, 0x1234, {pcm.data(), 8, 2}, packet));
+    EXPECT_EQ(packet.firstAudioFrame, 42'000U);
+    EXPECT_EQ(timeline.FinalizedFrameEnd(), 0U);
+    ASSERT_TRUE(packetizer.CommitPreparedPacket(packet, 8));
+    EXPECT_EQ(timeline.FinalizedFrameEnd(), 42'008U);
 }
 
-TEST(AmdtpDirectTxTests, EngineReportsProviderAndPacketizerFailures) {
+TEST(AmdtpDirectTxTests, EngineReadsMatchingEpochAndAbsoluteRange) {
+    TestProfile profile{};
     DiceTxStreamEngine engine{};
-    AmdtpTimingState timing{};
-    EXPECT_EQ(engine.PrepareNextTransmitSlot(192, timing),
-              TxSlotPrepareResult::kSlotProviderUnavailable);
-    TestTxSlotProvider provider{};
-    provider.allowAcquire = false;
-    engine.BindSlotProvider(&provider);
-    EXPECT_EQ(engine.PrepareNextTransmitSlot(192, timing),
-              TxSlotPrepareResult::kPacketizerRejected);
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);
+    std::array<float, 32> host{};
+    ASSERT_EQ(cache.Publish({host.data(), 3, 96, 16, 16, 2}),
+              PcmPublishResult::Published);
+    engine.BindPcmSource(&cache);
+    engine.ResetForStart(0);
+    EXPECT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+    EXPECT_EQ(slots.packet.firstAudioFrame, 100U);
+    EXPECT_TRUE(slots.packet.pcmFinalized);
+}
 
-    TestAudioStreamProfile profile{};
-    ASSERT_TRUE(ConfigureEngine(engine, profile));
-    EXPECT_EQ(engine.PrepareNextTransmitSlot(192, timing),
-              TxSlotPrepareResult::kSlotAcquireFailed);
+TEST(AmdtpDirectTxTests, FailedPublicationDoesNotCommitTimeline) {
+    TestProfile profile{};
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);
+    std::array<float, 16> host{};
+    ASSERT_EQ(cache.Publish({host.data(), 3, 0, 8, 8, 2}),
+              PcmPublishResult::Published);
+    engine.BindPcmSource(&cache);
+    slots.publishAllowed = false;
+    EXPECT_EQ(engine.PrepareTransmitSlot(0, DataPlan(0), 8, 0x1111),
+              TxSlotPrepareResult::SlotPublishFailed);
+    EXPECT_EQ(engine.Timeline().FinalizedFrameEnd(), 0U);
+    slots.publishAllowed = true;
+    EXPECT_EQ(engine.PrepareTransmitSlot(0, DataPlan(0), 8, 0x1111),
+              TxSlotPrepareResult::Prepared);
+    EXPECT_EQ(engine.Timeline().FinalizedFrameEnd(), 8U);
+}
+
+TEST(AmdtpDirectTxTests, MissedNoDataRetainsExactPlannedRange) {
+    TestProfile profile{};
+    DiceTxStreamEngine engine{};
+    SlotProvider provider{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&provider);
+    auto plan = DataPlan(8'192, 99);
+    plan.disposition = AmdtpPacketDisposition::NoData;
+    ASSERT_EQ(engine.PrepareTransmitSlot(99, plan, 0, 0xFFFF),
+              TxSlotPrepareResult::Prepared);
+    const auto* slot = engine.Timeline().SlotByIndex(99);
+    ASSERT_NE(slot, nullptr);
+    EXPECT_FALSE(slot->isData);
+    EXPECT_EQ(slot->firstAudioFrame, 8'192U);
+    EXPECT_EQ(slot->plannedFrameCount, 8U);
+}
+
+TEST(AmdtpDirectTxTests, DiceStreamsConsumeIdenticalPlanCoordinates) {
+    TestProfile firstProfile{};
+    TestProfile secondProfile{};
+    secondProfile.sourceOffset = 2;
+    DiceTxStreamEngine first{};
+    DiceTxStreamEngine second{};
+    SlotProvider firstSlots{};
+    SlotProvider secondSlots{};
+    ASSERT_TRUE(Configure(first, firstProfile));
+    ASSERT_TRUE(Configure(second, secondProfile));
+    first.BindSlotProvider(&firstSlots);
+    second.BindSlotProvider(&secondSlots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(4, 8192));
+    cache.BeginEpoch(3);
+    std::array<float, 32> host{};
+    ASSERT_EQ(cache.Publish({host.data(), 3, 0, 8, 8, 4}),
+              PcmPublishResult::Published);
+    first.BindPcmSource(&cache);
+    second.BindPcmSource(&cache);
+    const auto plan = DataPlan(0, 55);
+    ASSERT_EQ(first.PrepareTransmitSlot(55, plan, 8, 0x2222),
+              TxSlotPrepareResult::Prepared);
+    ASSERT_EQ(second.PrepareTransmitSlot(55, plan, 8, 0x2222),
+              TxSlotPrepareResult::Prepared);
+    EXPECT_EQ(firstSlots.packet.firstAudioFrame,
+              secondSlots.packet.firstAudioFrame);
+    EXPECT_EQ(firstSlots.packet.presentationBusTicks,
+              secondSlots.packet.presentationBusTicks);
+    EXPECT_EQ(firstSlots.packet.syt, secondSlots.packet.syt);
 }
 
 } // namespace

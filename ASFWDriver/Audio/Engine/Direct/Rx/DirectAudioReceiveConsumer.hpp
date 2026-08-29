@@ -75,7 +75,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         kReceiveCycleGap,
         kSytCadenceRejected,
         kClockAnchorRejected,
-        kTxDerivedClockRebase,
     };
 
     struct ReplayResetContext final {
@@ -107,13 +106,6 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void LogReceivedWirePayload(
         const ::ASFW::Isoch::IsochReceivePacket& packet,
         const RxAudioPacketProcessorResult& result) noexcept;
-    // Gives the frame cursor the same origin as the HAL's read timeline on the
-    // families where TX, not RX, publishes the host clock anchor. No-op after
-    // the first successful anchor and on every RX-anchored family.
-    void AnchorCursorToHostClockTimeline(
-        const ::ASFW::Isoch::IsochReceivePacket& packet,
-        const RxAudioPacketProcessorResult& result,
-        uint64_t packetHostTicks) noexcept;
     void DrainReceiveTelemetry(uint32_t maxRecords);
     void LogTransmitTimingTrace();
 
@@ -128,10 +120,9 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     bool secondaryAnchored_{false};
     uint64_t secondaryAnchorEpoch_{0};
     uint64_t absoluteFrameCursor_{0};
-    bool cursorInitialized_{false};
-    // Set whenever the frame cursor gains a new origin (stream start, or the
-    // TX-derived-clock rebase), so the next decoded packet primes the head of
-    // the capture delay line instead of inheriting the previous epoch's audio.
+    // Set whenever a new stream/timeline epoch begins, so the next decoded
+    // packet primes the head of the capture delay line instead of inheriting
+    // the previous epoch's audio.
     bool primeCaptureDelayLine_{true};
     uint64_t ztsPublishCount_{0};
     uint64_t timestampValidCount_{0};
@@ -176,6 +167,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         kHeaderOnlyNoDataTransitionLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
+    bool busTicksInitialized_{false};
+    uint64_t lastUnwrappedBusTicks_{0};
     uint8_t lastDbc_{0};
     bool dbcInitialized_{false};
     ::ASFW::Audio::Runtime::ZtsTelemetryLogGate ztsTelemetryLogGate_{};

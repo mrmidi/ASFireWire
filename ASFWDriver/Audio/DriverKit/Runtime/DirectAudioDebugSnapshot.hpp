@@ -64,10 +64,7 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txNoDataPackets{0};
     uint64_t txEmptyPackets{0};
     uint64_t txPostLockNoDataPackets{0};
-    uint64_t txPhaseRebases{0};
-    uint64_t txSilenceFallback{0};
-    uint64_t txStaleOverwrittenReads{0};
-    uint64_t txProducerAheadUnderruns{0};
+    uint64_t txPreparedTargetShortfalls{0};
     uint64_t txPcmNonzeroPackets{0};
     uint64_t txPcmAllZeroPackets{0};
     uint64_t txPreparedPcmSlots{0};
@@ -238,14 +235,9 @@ struct DirectAudioDebugLogState final {
     snapshot.txPostLockNoDataPackets =
         control.counters.txPostLockNoDataPackets.load(
             std::memory_order_relaxed);
-    snapshot.txPhaseRebases =
-        control.counters.txPhaseRebases.load(std::memory_order_relaxed);
-    snapshot.txSilenceFallback =
-        control.counters.txSilenceFallback.load(std::memory_order_relaxed);
-    snapshot.txStaleOverwrittenReads =
-        control.counters.txStaleOverwrittenReads.load(std::memory_order_relaxed);
-    snapshot.txProducerAheadUnderruns =
-        control.counters.txProducerAheadUnderruns.load(std::memory_order_relaxed);
+    snapshot.txPreparedTargetShortfalls =
+        control.counters.txPreparedTargetShortfalls.load(
+            std::memory_order_relaxed);
     snapshot.txPcmNonzeroPackets =
         control.counters.txPcmNonzeroPackets.load(std::memory_order_relaxed);
     snapshot.txPcmAllZeroPackets =

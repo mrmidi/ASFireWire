@@ -55,11 +55,11 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let rxTotalStarvedFrames: UInt64
     let rxCompletedOccupancyHistogram: [UInt64]
     let inputFrameCapacityFrames: UInt32
-    // Wire v5 bring-up attribution. Read as a combination: all-zero means no
+    // Wire v6 bring-up attribution. Read as a combination: all-zero means no
     // packet reached the consumer at all; packetsSeen == noDataPackets means the
     // device really is sending only CIP NO-DATA; a non-zero reject counter means
     // ASFW rejected packets the device did send (geometryMismatch in particular
-    // means our profile and the device disagree on channels/DBS). Wire v5 retains
+    // means our profile and the device disagree on channels/DBS). Wire v6 retains
     // explicit status-only/zero-length completion attribution at the tail.
     let rxPacketsSeen: UInt64
     let rxDataPackets: UInt64
@@ -68,28 +68,28 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let rxInvalidCipHeaders: UInt64
     let rxZeroDataBlockSize: UInt64
     let rxGeometryMismatch: UInt64
-    // Wire v5 TX content ownership. All values are copied by the driver while
+    // Wire v6 TX content ownership. All values are copied by the driver while
     // the endpoint owns its binding; no MCP caller receives a buffer pointer.
     let txPlaybackWriteFrame: UInt64
     let txPlaybackOldestValidFrame: UInt64
-    let txContentFinalizedFrameEnd: UInt64
-    let txStagingOldestValidFrame: UInt64
-    let txStagingWrittenEndFrame: UInt64
+    let txScheduledFrameEnd: UInt64
+    let txPcmOldestValidFrame: UInt64
+    let txPcmPublishedEndFrame: UInt64
     let txTransportCompletionCursor: UInt64
     let txTransportCommittedEnd: UInt64
-    let txStagingWrites: UInt64
-    let txStagingFrames: UInt64
-    let txStagingDiscontinuities: UInt64
-    let txStagingOverwrittenFrames: UInt64
-    let txStagingReadsReady: UInt64
-    let txStagingReadsNotYetWritten: UInt64
-    let txStagingReadsStaleOverwritten: UInt64
-    let txStagingReadsSnapshotBusy: UInt64
-    let txStagingReadsInvalid: UInt64
+    let txPcmPublications: UInt64
+    let txPcmFramesPublished: UInt64
+    let txPcmDiscontinuities: UInt64
+    let txPcmExpiredFrames: UInt64
+    let txPcmCopiesReady: UInt64
+    let txPcmCopiesNotYetPublished: UInt64
+    let txPcmCopiesExpired: UInt64
+    let txPcmCopiesConcurrentRewrite: UInt64
+    let txPcmCopiesInvalid: UInt64
     let txContentDeferrals: UInt64
     let txContentDeadlineNoData: UInt64
-    let txContentStaleXruns: UInt64
-    let txContentRebases: UInt64
+    let txPcmCopiesWrongEpoch: UInt64
+    let txMissedFrames: UInt64
     let txContentFaultEvents: UInt64
     let txContentFirstFaultPacket: UInt64
     let txContentFirstFaultAudioFrame: UInt64
@@ -100,6 +100,39 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     let txContentFirstFaultReason: UInt32
     let txTransportStatus: UInt32
     let rxEmptyCompletions: UInt64
+    let timelineEpoch: UInt64
+    let timelineEpochTransitions: UInt64
+    let timelineSourceChanges: UInt64
+    let timelineObservations: UInt64
+    let timelineRejectedObservations: UInt64
+    let timelineZtsPublications: UInt64
+    let timelineDuplicateBoundaries: UInt64
+    let timelineSource: UInt32
+    let timelineDiscontinuityReason: UInt32
+    let pcmEpoch: UInt64
+    let pcmDuplicateFrames: UInt64
+    let pcmMaximumPublicationFrames: UInt64
+    let pcmMaximumPublicationDurationTicks: UInt64
+    let txPacketStoreHighWaterPackets: UInt64
+    let txCompletionLatencyMaxCycles: UInt64
+    let backendReplayEntries: UInt64
+    let backendReplayUnderflows: UInt64
+    let backendInvalidSyt: UInt64
+    let backendObservationConversions: UInt64
+    let mAudioWarmupGroups: UInt64
+    let mAudioTxDerivedObservations: UInt64
+    let mAudioCaptureTransitions: UInt64
+    let mAudioPostStartConfirmations: UInt64
+    let txCycleTraceWriteCount: UInt64
+    let pcmPublicationSpanHistogram: [UInt64]
+    let pcmPublicationDurationHistogram: [UInt64]
+    let txDeadlineHeadroomHistogram: [UInt64]
+    let txCompletionLatencyHistogram: [UInt64]
+    let backendObservationConversionFailures: UInt64
+    let backendDataPackets: UInt64
+    let backendNoDataPackets: UInt64
+    let backendDbcDiscontinuities: UInt64
+    let backendSytDiscontinuities: UInt64
 
     var id: AudioEndpointID { endpointId }
     var isBindingReady: Bool { (flags & (1 << 0)) != 0 }
@@ -137,9 +170,9 @@ extension ASFWDriverConnector {
 }
 
 enum AudioTelemetryWireDecoder {
-    private static let version: UInt16 = 5
+    private static let version: UInt16 = 6
     private static let headerBytes = 16
-    private static let endpointBytes = 688
+    private static let endpointBytes = 1072
     private static let maximumEndpoints = 8
 
     static func decode(_ data: Data) -> AudioTelemetrySnapshot? {
@@ -227,24 +260,24 @@ enum AudioTelemetryWireDecoder {
               let rxGeometryMismatch = u64(448),
               let txPlaybackWriteFrame = u64(456),
               let txPlaybackOldestValidFrame = u64(464),
-              let txContentFinalizedFrameEnd = u64(472),
-              let txStagingOldestValidFrame = u64(480),
-              let txStagingWrittenEndFrame = u64(488),
+              let txScheduledFrameEnd = u64(472),
+              let txPcmOldestValidFrame = u64(480),
+              let txPcmPublishedEndFrame = u64(488),
               let txTransportCompletionCursor = u64(496),
               let txTransportCommittedEnd = u64(504),
-              let txStagingWrites = u64(512),
-              let txStagingFrames = u64(520),
-              let txStagingDiscontinuities = u64(528),
-              let txStagingOverwrittenFrames = u64(536),
-              let txStagingReadsReady = u64(544),
-              let txStagingReadsNotYetWritten = u64(552),
-              let txStagingReadsStaleOverwritten = u64(560),
-              let txStagingReadsSnapshotBusy = u64(568),
-              let txStagingReadsInvalid = u64(576),
+              let txPcmPublications = u64(512),
+              let txPcmFramesPublished = u64(520),
+              let txPcmDiscontinuities = u64(528),
+              let txPcmExpiredFrames = u64(536),
+              let txPcmCopiesReady = u64(544),
+              let txPcmCopiesNotYetPublished = u64(552),
+              let txPcmCopiesExpired = u64(560),
+              let txPcmCopiesConcurrentRewrite = u64(568),
+              let txPcmCopiesInvalid = u64(576),
               let txContentDeferrals = u64(584),
               let txContentDeadlineNoData = u64(592),
-              let txContentStaleXruns = u64(600),
-              let txContentRebases = u64(608),
+              let txPcmCopiesWrongEpoch = u64(600),
+              let txMissedFrames = u64(608),
               let txContentFaultEvents = u64(616),
               let txContentFirstFaultPacket = u64(624),
               let txContentFirstFaultAudioFrame = u64(632),
@@ -254,15 +287,52 @@ enum AudioTelemetryWireDecoder {
               let txContentFirstFaultCommittedEnd = u64(664),
               let txContentFirstFaultReason = u32(672),
               let txTransportStatus = u32(676),
-              let rxEmptyCompletions = u64(680) else {
+              let rxEmptyCompletions = u64(680),
+              let timelineEpoch = u64(688),
+              let timelineEpochTransitions = u64(696),
+              let timelineSourceChanges = u64(704),
+              let timelineObservations = u64(712),
+              let timelineRejectedObservations = u64(720),
+              let timelineZtsPublications = u64(728),
+              let timelineDuplicateBoundaries = u64(736),
+              let timelineSource = u32(744),
+              let timelineDiscontinuityReason = u32(748),
+              let pcmEpoch = u64(752),
+              let pcmDuplicateFrames = u64(760),
+              let pcmMaximumPublicationFrames = u64(768),
+              let pcmMaximumPublicationDurationTicks = u64(776),
+              let txPacketStoreHighWaterPackets = u64(784),
+              let txCompletionLatencyMaxCycles = u64(792),
+              let backendReplayEntries = u64(800),
+              let backendReplayUnderflows = u64(808),
+              let backendInvalidSyt = u64(816),
+              let backendObservationConversions = u64(824),
+              let mAudioWarmupGroups = u64(832),
+              let mAudioTxDerivedObservations = u64(840),
+              let mAudioCaptureTransitions = u64(848),
+              let mAudioPostStartConfirmations = u64(856),
+              let txCycleTraceWriteCount = u64(864),
+              let backendObservationConversionFailures = u64(1032),
+              let backendDataPackets = u64(1040),
+              let backendNoDataPackets = u64(1048),
+              let backendDbcDiscontinuities = u64(1056),
+              let backendSytDiscontinuities = u64(1064) else {
             return nil
         }
         let latencyHistogram = (0..<6).compactMap { u64(120 + $0 * 8) }
         let marginHistogram = (0..<5).compactMap { u64(168 + $0 * 8) }
         let rxOccupancyHistogram = (0..<5).compactMap { u64(352 + $0 * 8) }
+        let pcmPublicationSpanHistogram = (0..<5).compactMap { u64(872 + $0 * 8) }
+        let pcmPublicationDurationHistogram = (0..<5).compactMap { u64(912 + $0 * 8) }
+        let txDeadlineHeadroomHistogram = (0..<5).compactMap { u64(952 + $0 * 8) }
+        let txCompletionLatencyHistogram = (0..<5).compactMap { u64(992 + $0 * 8) }
         guard latencyHistogram.count == 6,
               marginHistogram.count == 5,
-              rxOccupancyHistogram.count == 5 else { return nil }
+              rxOccupancyHistogram.count == 5,
+              pcmPublicationSpanHistogram.count == 5,
+              pcmPublicationDurationHistogram.count == 5,
+              txDeadlineHeadroomHistogram.count == 5,
+              txCompletionLatencyHistogram.count == 5 else { return nil }
         return AudioTelemetryEndpoint(
             endpointId: AudioEndpointID(rawValue: endpointRaw),
             deviceInstanceId: DeviceInstanceID(rawValue: deviceInstanceRaw),
@@ -314,24 +384,24 @@ enum AudioTelemetryWireDecoder {
             rxGeometryMismatch: rxGeometryMismatch,
             txPlaybackWriteFrame: txPlaybackWriteFrame,
             txPlaybackOldestValidFrame: txPlaybackOldestValidFrame,
-            txContentFinalizedFrameEnd: txContentFinalizedFrameEnd,
-            txStagingOldestValidFrame: txStagingOldestValidFrame,
-            txStagingWrittenEndFrame: txStagingWrittenEndFrame,
+            txScheduledFrameEnd: txScheduledFrameEnd,
+            txPcmOldestValidFrame: txPcmOldestValidFrame,
+            txPcmPublishedEndFrame: txPcmPublishedEndFrame,
             txTransportCompletionCursor: txTransportCompletionCursor,
             txTransportCommittedEnd: txTransportCommittedEnd,
-            txStagingWrites: txStagingWrites,
-            txStagingFrames: txStagingFrames,
-            txStagingDiscontinuities: txStagingDiscontinuities,
-            txStagingOverwrittenFrames: txStagingOverwrittenFrames,
-            txStagingReadsReady: txStagingReadsReady,
-            txStagingReadsNotYetWritten: txStagingReadsNotYetWritten,
-            txStagingReadsStaleOverwritten: txStagingReadsStaleOverwritten,
-            txStagingReadsSnapshotBusy: txStagingReadsSnapshotBusy,
-            txStagingReadsInvalid: txStagingReadsInvalid,
+            txPcmPublications: txPcmPublications,
+            txPcmFramesPublished: txPcmFramesPublished,
+            txPcmDiscontinuities: txPcmDiscontinuities,
+            txPcmExpiredFrames: txPcmExpiredFrames,
+            txPcmCopiesReady: txPcmCopiesReady,
+            txPcmCopiesNotYetPublished: txPcmCopiesNotYetPublished,
+            txPcmCopiesExpired: txPcmCopiesExpired,
+            txPcmCopiesConcurrentRewrite: txPcmCopiesConcurrentRewrite,
+            txPcmCopiesInvalid: txPcmCopiesInvalid,
             txContentDeferrals: txContentDeferrals,
             txContentDeadlineNoData: txContentDeadlineNoData,
-            txContentStaleXruns: txContentStaleXruns,
-            txContentRebases: txContentRebases,
+            txPcmCopiesWrongEpoch: txPcmCopiesWrongEpoch,
+            txMissedFrames: txMissedFrames,
             txContentFaultEvents: txContentFaultEvents,
             txContentFirstFaultPacket: txContentFirstFaultPacket,
             txContentFirstFaultAudioFrame: txContentFirstFaultAudioFrame,
@@ -341,7 +411,40 @@ enum AudioTelemetryWireDecoder {
             txContentFirstFaultCommittedEnd: txContentFirstFaultCommittedEnd,
             txContentFirstFaultReason: txContentFirstFaultReason,
             txTransportStatus: txTransportStatus,
-            rxEmptyCompletions: rxEmptyCompletions
+            rxEmptyCompletions: rxEmptyCompletions,
+            timelineEpoch: timelineEpoch,
+            timelineEpochTransitions: timelineEpochTransitions,
+            timelineSourceChanges: timelineSourceChanges,
+            timelineObservations: timelineObservations,
+            timelineRejectedObservations: timelineRejectedObservations,
+            timelineZtsPublications: timelineZtsPublications,
+            timelineDuplicateBoundaries: timelineDuplicateBoundaries,
+            timelineSource: timelineSource,
+            timelineDiscontinuityReason: timelineDiscontinuityReason,
+            pcmEpoch: pcmEpoch,
+            pcmDuplicateFrames: pcmDuplicateFrames,
+            pcmMaximumPublicationFrames: pcmMaximumPublicationFrames,
+            pcmMaximumPublicationDurationTicks: pcmMaximumPublicationDurationTicks,
+            txPacketStoreHighWaterPackets: txPacketStoreHighWaterPackets,
+            txCompletionLatencyMaxCycles: txCompletionLatencyMaxCycles,
+            backendReplayEntries: backendReplayEntries,
+            backendReplayUnderflows: backendReplayUnderflows,
+            backendInvalidSyt: backendInvalidSyt,
+            backendObservationConversions: backendObservationConversions,
+            mAudioWarmupGroups: mAudioWarmupGroups,
+            mAudioTxDerivedObservations: mAudioTxDerivedObservations,
+            mAudioCaptureTransitions: mAudioCaptureTransitions,
+            mAudioPostStartConfirmations: mAudioPostStartConfirmations,
+            txCycleTraceWriteCount: txCycleTraceWriteCount,
+            pcmPublicationSpanHistogram: pcmPublicationSpanHistogram,
+            pcmPublicationDurationHistogram: pcmPublicationDurationHistogram,
+            txDeadlineHeadroomHistogram: txDeadlineHeadroomHistogram,
+            txCompletionLatencyHistogram: txCompletionLatencyHistogram,
+            backendObservationConversionFailures: backendObservationConversionFailures,
+            backendDataPackets: backendDataPackets,
+            backendNoDataPackets: backendNoDataPackets,
+            backendDbcDiscontinuities: backendDbcDiscontinuities,
+            backendSytDiscontinuities: backendSytDiscontinuities
         )
     }
 }

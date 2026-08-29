@@ -34,10 +34,10 @@ namespace {
 using ASFW::Audio::Shared::AudioTimingGeometry;
 using ASFW::Isoch::ExpectedTxCommitGeneration;
 
-constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 912
+constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 192
 constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 48
 constexpr uint32_t kCoverageLead = AudioTimingGeometry::kTxCoverageLeadPackets; // 144
-constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 678
+constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 144
 constexpr uint32_t kGroup = AudioTimingGeometry::kTxPacketsPerGroup;          // 6
 
 // The historical pre-fix lead (slack == 2*group) the hardware IT FATAL was
@@ -278,12 +278,10 @@ TEST(TxRefillCoverage, CoverageBoundMatchesGeometryConstants) {
               AudioTimingGeometry::kTxPreparationSlackPackets);
     EXPECT_EQ(kLead - kHwRing,
               AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets);
-    EXPECT_EQ(kLead - kCoverageLead,
-              AudioTimingGeometry::kTxFrameExposureWindowPackets);
+    EXPECT_EQ(kLead, kCoverageLead);
     // Current geometry tolerates sixteen groups without a producer wake.
     EXPECT_EQ((kCoverageLead - kHwRing) / kGroup, 16u);
-    EXPECT_LE(kLead + kHwRing, kNumSlots);
-    EXPECT_GE(kNumSlots, 2 * AudioTimingGeometry::kTxExposureLeadPackets);
+    EXPECT_EQ(kLead + kHwRing, kNumSlots);
 }
 
 } // namespace

@@ -32,12 +32,6 @@ inline constexpr uint32_t kAudioIoPeriodFrames =
 inline constexpr uint32_t kAudioOutputRingFrames =
     ::ASFW::Audio::Shared::AudioTimingGeometry::kFrameRingFrames;
 
-// Target gap (writtenEnd - consumer cursor) the isoch TX consumer maintains.
-inline constexpr uint32_t kOutputConsumerLeadFrames = 384; // ~0.75 period (~8ms @48k)
-
-// Deadband: rebase the consumer cursor only when |lead - target| exceeds this.
-inline constexpr uint32_t kOutputCursorResyncDeadbandFrames = 64; // ~0.125 period
-
 static_assert(kTxQueueCapacityFrames != 0 && ((kTxQueueCapacityFrames & (kTxQueueCapacityFrames - 1)) == 0),
               "TX queue capacity must be power-of-two");
 static_assert(kRxQueueCapacityFrames != 0 && ((kRxQueueCapacityFrames & (kRxQueueCapacityFrames - 1)) == 0),
@@ -55,10 +49,5 @@ static_assert((kAudioRingBufferFrames % kAudioIoPeriodFrames) == 0,
 static_assert((kAudioRingBufferFrames %
                ::ASFW::Audio::Shared::AudioTimingGeometry::kFrameAlignment) == 0,
               "Frame ring must be divisible by 32 frames");
-
-static_assert(kOutputConsumerLeadFrames < kAudioOutputRingFrames,
-              "Consumer lead must stay within the output ring");
-static_assert(kOutputConsumerLeadFrames + kOutputCursorResyncDeadbandFrames < kAudioOutputRingFrames,
-              "Lead plus deadband must stay within the output ring");
 
 } // namespace ASFW::Audio::Config

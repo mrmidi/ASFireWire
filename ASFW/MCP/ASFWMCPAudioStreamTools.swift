@@ -1,7 +1,7 @@
 import Foundation
 
 // Audio stream health: read-only projection of the driver's per-endpoint RX
-// bring-up attribution and TX cursor ownership (AudioTelemetrySnapshot v5).
+// bring-up attribution and TX cursor ownership (AudioTelemetrySnapshot v6).
 //
 // This exists because a stream that never establishes used to be one
 // indistinguishable silence. Every RX outcome now lands in exactly one counter,
@@ -14,7 +14,7 @@ import Foundation
 extension ASFWMCPToolCatalog {
     static let audioStreamTools: [ASFWMCPToolDefinition] = [
         ASFWMCPToolDefinition(name: "asfw_get_audio_stream_health", group: "audio_streams", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Per-endpoint RX bring-up attribution: what the device sent and what we did with it. No transaction."),
-        ASFWMCPToolDefinition(name: "asfw_get_audio_cursors", group: "audio_streams", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Value-owned TX staging, finalized-content, and transport cursor snapshots with first-fault attribution. No buffer pointer or transaction.")
+        ASFWMCPToolDefinition(name: "asfw_get_audio_cursors", group: "audio_streams", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Value-owned TX PCM-publication, planned-frame, and transport cursor snapshots with first-fault attribution. No buffer pointer or transaction.")
     ]
 }
 
@@ -110,7 +110,7 @@ struct ASFWMCPAudioStreamHealth: Equatable {
         case "dataNotAccepted":
             return "Data-bearing packets with valid SYT arrived but no replay entry was published. Inspect the SYT cadence detector rather than the device."
         case "framesNotReachingReader":
-            return "Packets are decoding and being accepted, but the reader is being zero-filled: decoded audio is not landing where CoreAudio reads. Compare the RX write cursor's origin against the HAL sampleTime (driver ring, [RxRead] and [RxClockRebase]) before suspecting the device or the wire."
+            return "Packets are decoding and being accepted, but the reader is being zero-filled: decoded audio is not landing where CoreAudio reads. Compare the RX write coordinate against the hardware-derived HAL sample coordinate before suspecting the device or the wire."
         default:
             return "Data-bearing packets are arriving and being accepted."
         }
@@ -191,7 +191,7 @@ extension AudioTelemetryEndpoint {
 }
 
 /// One value-owned TX ownership snapshot. The three domains intentionally stay
-/// separate: CoreAudio stages frames, audio finalizes immutable packet content,
+/// separate: CoreAudio publishes immutable frames, audio plans packet content,
 /// and transport owns packet completion. Their units are named in the wire
 /// response so a caller cannot accidentally subtract frames from packets.
 struct ASFWMCPAudioCursorSnapshot: Equatable {
@@ -202,25 +202,25 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
     let streaming: Bool
     let sampleRateHz: UInt32
     let outputChannels: UInt32
-    let stagedOldestFrame: UInt64
-    let stagedWrittenEndFrame: UInt64
-    let finalizedFrameEnd: UInt64
+    let pcmOldestValidFrame: UInt64
+    let pcmPublishedEndFrame: UInt64
+    let scheduledFrameEnd: UInt64
     let completionPacket: UInt64
     let committedPacketEnd: UInt64
     let transportStatus: UInt32
-    let stagingWrites: UInt64
-    let stagingFrames: UInt64
-    let stagingDiscontinuities: UInt64
-    let stagingOverwrittenFrames: UInt64
-    let readsReady: UInt64
-    let readsNotYetWritten: UInt64
-    let readsStaleOverwritten: UInt64
-    let readsSnapshotBusy: UInt64
-    let readsInvalid: UInt64
+    let pcmPublications: UInt64
+    let pcmFramesPublished: UInt64
+    let pcmDiscontinuities: UInt64
+    let pcmExpiredFrames: UInt64
+    let copiesReady: UInt64
+    let copiesNotYetPublished: UInt64
+    let copiesExpired: UInt64
+    let copiesConcurrentRewrite: UInt64
+    let copiesInvalid: UInt64
     let deferrals: UInt64
     let deadlineNoData: UInt64
-    let staleXruns: UInt64
-    let rebases: UInt64
+    let copiesWrongEpoch: UInt64
+    let missedFrames: UInt64
     let faultEvents: UInt64
     let firstFaultReason: UInt32
     let firstFaultPacket: UInt64
@@ -230,9 +230,9 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
     let firstFaultCompletionPacket: UInt64
     let firstFaultCommittedPacketEnd: UInt64
 
-    var pendingStagedFrames: UInt64 {
-        stagedWrittenEndFrame >= finalizedFrameEnd
-            ? stagedWrittenEndFrame - finalizedFrameEnd
+    var publishedAheadFrames: UInt64 {
+        pcmPublishedEndFrame >= scheduledFrameEnd
+            ? pcmPublishedEndFrame - scheduledFrameEnd
             : 0
     }
 
@@ -242,16 +242,16 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
             : 0
     }
 
-    var finalizedCursorIsStale: Bool {
-        finalizedFrameEnd < stagedOldestFrame
+    var scheduledRangeExpired: Bool {
+        scheduledFrameEnd < pcmOldestValidFrame
     }
 
     var firstFaultName: String {
         switch firstFaultReason {
         case 0: return "none"
-        case 1: return "notYetWrittenAtDeadline"
-        case 2: return "staleOverwritten"
-        case 3: return "snapshotBusyAtDeadline"
+        case 1: return "notYetPublishedAtDeadline"
+        case 2: return "expired"
+        case 3: return "concurrentRewriteAtDeadline"
         case 4: return "invalidSource"
         case 5: return "secondaryStreamFailure"
         default: return "unknown"
@@ -269,25 +269,28 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
         }
     }
 
-    /// Names only states that the snapshot proves. A positive pending frame
-    /// count is normal because CoreAudio is expected to lead finalization.
+    /// Names only states that the snapshot proves. Published PCM normally leads
+    /// the next range selected by the physical presentation planner.
     var verdict: String {
         if !bindingReady { return "bindingNotReady" }
         if !streaming { return "idle" }
         if transportStatus == 2 || transportStatus == 3 || transportStatus == 4 ||
-            firstFaultReason == 4 || firstFaultReason == 5 || readsInvalid > 0 {
+            firstFaultReason == 4 || firstFaultReason == 5 || copiesInvalid > 0 {
             return "fatal"
         }
-        if staleXruns > 0 || finalizedCursorIsStale {
-            return "staleXrun"
+        if copiesWrongEpoch > 0 {
+            return "wrongEpoch"
         }
         if deadlineNoData > 0 {
             return "deadlineNoData"
         }
-        if stagedWrittenEndFrame == 0 {
+        if pcmPublishedEndFrame == 0 {
             return "awaitingHostWrite"
         }
-        if pendingStagedFrames > 0 {
+        if scheduledRangeExpired {
+            return "expiredRange"
+        }
+        if publishedAheadFrames > 0 {
             return "healthyPendingContent"
         }
         return "healthy"
@@ -306,11 +309,11 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
             "verdict": .string(verdict),
             "frameCursors": .object([
                 "units": .string("absoluteHostFrames"),
-                "stagedOldest": .uint64(stagedOldestFrame),
-                "stagedWrittenEnd": .uint64(stagedWrittenEndFrame),
-                "finalizedEnd": .uint64(finalizedFrameEnd),
-                "pendingStagedFrames": .uint64(pendingStagedFrames),
-                "finalizedCursorIsStale": .bool(finalizedCursorIsStale)
+                "pcmOldestValid": .uint64(pcmOldestValidFrame),
+                "pcmPublishedEnd": .uint64(pcmPublishedEndFrame),
+                "scheduledFrameEnd": .uint64(scheduledFrameEnd),
+                "publishedAheadFrames": .uint64(publishedAheadFrames),
+                "scheduledRangeExpired": .bool(scheduledRangeExpired)
             ]),
             "transportCursors": .object([
                 "units": .string("absoluteIsochPackets"),
@@ -320,27 +323,27 @@ struct ASFWMCPAudioCursorSnapshot: Equatable {
                 "status": .string(transportStatusName)
             ]),
             "counters": .object([
-                "stagingWrites": .uint64(stagingWrites),
-                "stagingFrames": .uint64(stagingFrames),
-                "stagingDiscontinuities": .uint64(stagingDiscontinuities),
-                "stagingOverwrittenFrames": .uint64(stagingOverwrittenFrames),
-                "readsReady": .uint64(readsReady),
-                "readsNotYetWritten": .uint64(readsNotYetWritten),
-                "readsStaleOverwritten": .uint64(readsStaleOverwritten),
-                "readsSnapshotBusy": .uint64(readsSnapshotBusy),
-                "readsInvalid": .uint64(readsInvalid),
+                "pcmPublications": .uint64(pcmPublications),
+                "pcmFramesPublished": .uint64(pcmFramesPublished),
+                "pcmDiscontinuities": .uint64(pcmDiscontinuities),
+                "pcmExpiredFrames": .uint64(pcmExpiredFrames),
+                "copiesReady": .uint64(copiesReady),
+                "copiesNotYetPublished": .uint64(copiesNotYetPublished),
+                "copiesExpired": .uint64(copiesExpired),
+                "copiesConcurrentRewrite": .uint64(copiesConcurrentRewrite),
+                "copiesInvalid": .uint64(copiesInvalid),
                 "deferrals": .uint64(deferrals),
                 "deadlineNoData": .uint64(deadlineNoData),
-                "staleXruns": .uint64(staleXruns),
-                "rebases": .uint64(rebases),
+                "copiesWrongEpoch": .uint64(copiesWrongEpoch),
+                "missedFrames": .uint64(missedFrames),
                 "faultEvents": .uint64(faultEvents)
             ]),
             "firstFault": .object([
                 "reason": .string(firstFaultName),
                 "packet": .uint64(firstFaultPacket),
                 "audioFrame": .uint64(firstFaultAudioFrame),
-                "stagedOldest": .uint64(firstFaultOldestFrame),
-                "stagedWrittenEnd": .uint64(firstFaultWrittenEndFrame),
+                "pcmOldestValid": .uint64(firstFaultOldestFrame),
+                "pcmPublishedEnd": .uint64(firstFaultWrittenEndFrame),
                 "completionPacket": .uint64(firstFaultCompletionPacket),
                 "committedPacketEnd": .uint64(firstFaultCommittedPacketEnd)
             ])
@@ -358,25 +361,25 @@ extension AudioTelemetryEndpoint {
             streaming: isStreaming,
             sampleRateHz: sampleRateHz,
             outputChannels: outputChannels,
-            stagedOldestFrame: txStagingOldestValidFrame,
-            stagedWrittenEndFrame: txStagingWrittenEndFrame,
-            finalizedFrameEnd: txContentFinalizedFrameEnd,
+            pcmOldestValidFrame: txPcmOldestValidFrame,
+            pcmPublishedEndFrame: txPcmPublishedEndFrame,
+            scheduledFrameEnd: txScheduledFrameEnd,
             completionPacket: txTransportCompletionCursor,
             committedPacketEnd: txTransportCommittedEnd,
             transportStatus: txTransportStatus,
-            stagingWrites: txStagingWrites,
-            stagingFrames: txStagingFrames,
-            stagingDiscontinuities: txStagingDiscontinuities,
-            stagingOverwrittenFrames: txStagingOverwrittenFrames,
-            readsReady: txStagingReadsReady,
-            readsNotYetWritten: txStagingReadsNotYetWritten,
-            readsStaleOverwritten: txStagingReadsStaleOverwritten,
-            readsSnapshotBusy: txStagingReadsSnapshotBusy,
-            readsInvalid: txStagingReadsInvalid,
+            pcmPublications: txPcmPublications,
+            pcmFramesPublished: txPcmFramesPublished,
+            pcmDiscontinuities: txPcmDiscontinuities,
+            pcmExpiredFrames: txPcmExpiredFrames,
+            copiesReady: txPcmCopiesReady,
+            copiesNotYetPublished: txPcmCopiesNotYetPublished,
+            copiesExpired: txPcmCopiesExpired,
+            copiesConcurrentRewrite: txPcmCopiesConcurrentRewrite,
+            copiesInvalid: txPcmCopiesInvalid,
             deferrals: txContentDeferrals,
             deadlineNoData: txContentDeadlineNoData,
-            staleXruns: txContentStaleXruns,
-            rebases: txContentRebases,
+            copiesWrongEpoch: txPcmCopiesWrongEpoch,
+            missedFrames: txMissedFrames,
             faultEvents: txContentFaultEvents,
             firstFaultReason: txContentFirstFaultReason,
             firstFaultPacket: txContentFirstFaultPacket,

@@ -71,7 +71,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.expectedIoBufferFrameSize,
              snapshot.outputReaderAvailableAtWriteEnd);
     ASFW_LOG(DirectAudio,
-             "ADK snapshot/ring playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu rebase=%llu fallback=%llu stale=%llu ahead=%llu pcmNZ=%llu pcmZero=%llu prep=%llu startup=%llu)",
+             "ADK snapshot/ring playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu targetShort=%llu)",
              snapshot.playbackRingWriteFrame,
              snapshot.playbackRingReadFrame,
              snapshot.playbackRingOldestValidFrame,
@@ -80,27 +80,15 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.playbackRingOverruns,
              snapshot.txScheduledSampleFrame,
              snapshot.txCompletedSampleFrame,
-             snapshot.txPhaseRebases,
-             snapshot.txSilenceFallback,
-             snapshot.txStaleOverwrittenReads,
-             snapshot.txProducerAheadUnderruns,
-             snapshot.txPcmNonzeroPackets,
-             snapshot.txPcmAllZeroPackets,
-             snapshot.txPreparedPcmSlots,
-             snapshot.txStartupSilenceSlots);
+             snapshot.txPreparedTargetShortfalls);
     ASFW_LOG(DirectAudio,
-             "ADK snapshot/tx faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu stops=%llu fatal=%u/%llu pkt=%u dist=%u audioFrame=%llu phase=%lld valid=[%llu,%llu)) capture(wr=%llu rd=%llu avail=%llu overrun=%llu starve=%llu rxFrames=%llu) txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
-             snapshot.txReadAheadFaults,
-             snapshot.txSourceOverwrittenFaults,
+             "ADK snapshot/tx v3(deadline=%llu fatal=%u/%llu pkt=%u dist=%u audioFrame=%llu range=[%llu,%llu)) capture(wr=%llu rd=%llu avail=%llu overrun=%llu starve=%llu rxFrames=%llu) packets=%llu data=%llu noData=%llu underruns=%llu",
              snapshot.txPreparationDeadlineFaults,
-             snapshot.txSlotOwnershipFaults,
-             snapshot.txImmediateStops,
              static_cast<uint32_t>(snapshot.fatalReason),
              snapshot.fatalGeneration,
              snapshot.fatalPacketIndex,
              snapshot.fatalDistanceToHardware,
              snapshot.fatalAudioFrame,
-             snapshot.fatalOutputPhaseTicks,
              snapshot.fatalOldestValidFrame,
              snapshot.fatalWrittenEndFrame,
              snapshot.captureRingWriteFrame,
@@ -110,14 +98,9 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.captureRingStarvations,
              snapshot.rxDecodedFrames,
              snapshot.directTxPackets,
-             snapshot.directTxUnderruns,
-             snapshot.directTxSilenceSubstitutions,
-             snapshot.txValidPhasePcmPackets,
-             snapshot.txValidPhaseSilencePackets,
-             snapshot.txNoPhaseSilencePackets,
-             snapshot.txUnderrunSilencePackets,
-             snapshot.txStaleSyncPackets,
-             snapshot.txInvalidGeometryPackets);
+             snapshot.txDataPackets,
+             snapshot.txNoDataPackets,
+             snapshot.directTxUnderruns);
     ASFW_LOG(DirectAudio,
              "ADK TX PREP WAKE requested=%llu handled=%llu pending=%llu requestTicks=%llu handledTicks=%llu requests=%llu dispatches=%llu coalesced=%llu drainPasses=%llu",
              snapshot.txPreparationRequestedGeneration,
@@ -173,25 +156,25 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         snapshot.txMinimumCommittedMarginPackets);
 
     if (directControl) {
-        const auto& staging = directControl->txPcmStagingTelemetry;
+        const auto& cache = directControl->pcmPublicationTelemetry;
         ASFW_LOG(
             DirectAudio,
-            "ADK tx-content staged=[%llu,%llu) finalized=%llu writes=%llu frames=%llu reads=%llu/%llu/%llu/%llu defers=%llu deadlineNoData=%llu staleXrun=%llu rebases=%llu firstFault=%u packet=%llu frame=%llu",
-            staging.oldestValidFrame.load(std::memory_order_relaxed),
-            staging.writtenEndFrame.load(std::memory_order_relaxed),
-            directControl->txContentFinalizedFrameEnd.load(
+            "ADK tx-content cache=[%llu,%llu) scheduled=%llu publications=%llu frames=%llu copies=%llu/%llu/%llu/%llu defers=%llu deadlineNoData=%llu wrongEpoch=%llu missedFrames=%llu firstFault=%u packet=%llu frame=%llu",
+            cache.oldestValidFrame.load(std::memory_order_relaxed),
+            cache.publishedEndFrame.load(std::memory_order_relaxed),
+            directControl->txScheduledSampleFrame.load(
                 std::memory_order_relaxed),
-            staging.writes.load(std::memory_order_relaxed),
-            staging.framesStaged.load(std::memory_order_relaxed),
-            staging.readsReady.load(std::memory_order_relaxed),
-            staging.readsNotYetWritten.load(std::memory_order_relaxed),
-            staging.readsStaleOverwritten.load(std::memory_order_relaxed),
-            staging.readsSnapshotBusy.load(std::memory_order_relaxed),
+            cache.publications.load(std::memory_order_relaxed),
+            cache.framesPublished.load(std::memory_order_relaxed),
+            cache.copiesReady.load(std::memory_order_relaxed),
+            cache.copiesNotYetPublished.load(std::memory_order_relaxed),
+            cache.copiesExpired.load(std::memory_order_relaxed),
+            cache.copiesConcurrentRewrite.load(std::memory_order_relaxed),
             directControl->txContentDeferrals.load(std::memory_order_relaxed),
             directControl->txContentDeadlineNoData.load(
                 std::memory_order_relaxed),
-            directControl->txContentStaleXruns.load(std::memory_order_relaxed),
-            directControl->txContentRebases.load(std::memory_order_relaxed),
+            cache.copiesWrongEpoch.load(std::memory_order_relaxed),
+            directControl->txMissedFrames.load(std::memory_order_relaxed),
             directControl->txContentFirstFaultReason.load(
                 std::memory_order_acquire),
             directControl->txContentFirstFaultPacket.load(

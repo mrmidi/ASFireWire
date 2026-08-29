@@ -7,6 +7,7 @@
 
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../Runtime/PlaybackRingRange.hpp"
+#include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/DriverKit.h>
@@ -91,12 +92,32 @@ std::atomic<uint32_t> gCaptureReadVerdict{
 constexpr uint32_t kCaptureReadTransitionBudget = 24;
 std::atomic<uint32_t> gCaptureReadTransitionBudget{kCaptureReadTransitionBudget};
 
-// Entry-level evidence. An absent [RxRead] record has four indistinguishable
-// causes: the HAL never calls us, `running` is false, `skeletonBound` is false,
-// or BeginRead is rejected by the ring-capacity guard before any work happens.
-// Logging at the top of the handler, before every gate, separates them.
-constexpr uint32_t kIoCallbackLogBudget = 24;
-std::atomic<uint32_t> gIoCallbackLogBudget{kIoCallbackLogBudget};
+void UpdateMaximum(std::atomic<uint64_t>& target, uint64_t value) noexcept {
+    uint64_t previous = target.load(std::memory_order_relaxed);
+    while (value > previous &&
+           !target.compare_exchange_weak(previous, value,
+                                         std::memory_order_relaxed,
+                                         std::memory_order_relaxed)) {
+    }
+}
+
+void RecordPcmPublicationCost(
+    ASFW::Audio::Runtime::PcmPublicationTelemetry& telemetry,
+    uint32_t frames,
+    uint64_t durationTicks) noexcept {
+    UpdateMaximum(telemetry.maximumPublicationFrames, frames);
+    UpdateMaximum(telemetry.maximumPublicationDurationTicks, durationTicks);
+    const uint32_t spanBucket = frames <= 32 ? 0 : frames <= 128 ? 1
+        : frames <= 512 ? 2 : frames <= 4'096 ? 3 : 4;
+    telemetry.publicationSpanHistogram[spanBucket].fetch_add(
+        1, std::memory_order_relaxed);
+    const uint64_t nanos = ASFW::Timing::hostTicksToNanos(durationTicks);
+    const uint32_t durationBucket = nanos <= 50'000 ? 0
+        : nanos <= 100'000 ? 1 : nanos <= 250'000 ? 2
+        : nanos <= 500'000 ? 3 : 4;
+    telemetry.publicationDurationHistogram[durationBucket].fetch_add(
+        1, std::memory_order_relaxed);
+}
 
 bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                                     ASFW::Audio::Runtime::AudioTransportControlBlock& control,
@@ -175,7 +196,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                               std::memory_order_relaxed);
     gCaptureReadTransitionBudget.store(kCaptureReadTransitionBudget,
                                        std::memory_order_relaxed);
-    gIoCallbackLogBudget.store(kIoCallbackLogBudget, std::memory_order_relaxed);
     auto* driverIvars = &ivars;
     const kern_return_t error = audioDevice.SetIOOperationHandler(
         ^kern_return_t(IOUserAudioObjectID           objectID,
@@ -229,17 +249,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
         const bool skeletonBound =
             driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
 
-        if (gIoCallbackLogBudget.load(std::memory_order_relaxed) != 0) {
-            gIoCallbackLogBudget.fetch_sub(1, std::memory_order_relaxed);
-            ASFW_LOG(DirectAudio,
-                     "[IoCall] op=%u frames=%u sampleTime=%llu running=%d "
-                     "skeletonBound=%d control=%d inCap=%u",
-                     static_cast<uint32_t>(operation), ioBufferFrameSize,
-                     sampleTime, running ? 1 : 0, skeletonBound ? 1 : 0,
-                     graphControl != nullptr ? 1 : 0,
-                     driverIvars->runtime.directAudioGraph.memory.inputFrameCapacity);
-        }
-
         if (!running) {
             driverIvars->runtime.ioCallbacksOutsideRun.fetch_add(
                 1, std::memory_order_relaxed);
@@ -275,50 +284,48 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 }
                 const auto& memory =
                     driverIvars->runtime.directAudioGraph.memory;
-                const auto stageResult =
-                    driverIvars->runtime.txPcmStagingRing.Stage({
+                const uint64_t publicationStart = mach_absolute_time();
+                const auto publishResult =
+                    driverIvars->runtime.pcmPublicationCache.Publish({
                         .interleavedFloat32 = memory.outputBase,
+                        .epoch = control->hardwareTimeline.Epoch(),
                         .firstFrame = sampleTime,
                         .frameCount = ioBufferFrameSize,
                         .frameCapacity = memory.outputFrameCapacity,
                         .channels = memory.outputChannels,
                     });
-                if (stageResult ==
-                        ASFW::Audio::Runtime::TxPcmStageResult::kInvalidView ||
-                    stageResult ==
-                        ASFW::Audio::Runtime::TxPcmStageResult::kNotConfigured) {
+                RecordPcmPublicationCost(
+                    control->pcmPublicationTelemetry, ioBufferFrameSize,
+                    mach_absolute_time() - publicationStart);
+                if (publishResult ==
+                        ASFW::Audio::Runtime::PcmPublishResult::InvalidView ||
+                    publishResult ==
+                        ASFW::Audio::Runtime::PcmPublishResult::NotConfigured ||
+                    publishResult ==
+                        ASFW::Audio::Runtime::PcmPublishResult::WrongEpoch) {
                     return returnError(kIOReturnNotReady);
                 }
-                if (stageResult ==
-                    ASFW::Audio::Runtime::TxPcmStageResult::kDuplicate) {
-                    // A retried/out-of-order callback must not move W backward
-                    // or reinterpret an old HAL span as newly writable PCM.
+                if (publishResult ==
+                    ASFW::Audio::Runtime::PcmPublishResult::Duplicate) {
+                    // Diagnose a duplicate final-publication callback without
+                    // moving hardware time or any packet cursor.
                     control->counters.CountWriteEnd();
                     return kIOReturnSuccess;
                 }
 
                 // Publish W only after the complete callback range has been
-                // copied into durable staging. An acquire-reader that observes
-                // this frontier can therefore always snapshot every frame below
-                // it unless the bounded staging ring explicitly reports stale.
+                // copied into the immutable publication cache.
                 control->client.PublishWriteEnd(
                     sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(
                     driverIvars->runtime.directAudioGraph, *control);
 
-                // Keep packet preparation driven by the CoreAudio write
-                // frontier as well as the OHCI refill path. The target is a
-                // completed host-write frontier, not a request for transport
-                // to manipulate audio cursors. Future PCM does not exist and
-                // must never be represented by release-committed zero-filled
-                // DATA placeholders. The
-                // coalescing latch ensures this RT callback produces at most
-                // one outstanding action.
-                const uint64_t writeEndFrame = sampleTime + ioBufferFrameSize;
-                const uint64_t targetFrameEnd = writeEndFrame;
+                // Wake the physical scheduler after bytes become visible. The
+                // write frontier is deliberately not a preparation horizon or
+                // a timing coordinate.
                 const uint64_t requestGeneration =
                     control->txPreparationRequests.PublishRequest(
-                        hostTime, targetFrameEnd);
+                        hostTime);
                 if (driverIvars->device.audioNub &&
                     control->txPreparationRequests.TryScheduleWake()) {
                     const kern_return_t requestKr =

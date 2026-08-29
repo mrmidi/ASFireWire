@@ -6,7 +6,6 @@
 #include "ASFWAudioDriverPrivate.hpp"
 #include "ASFWAudioDevice.h"
 #include "../../Logging/Logging.hpp"
-#include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include <DriverKit/DriverKit.h>
 

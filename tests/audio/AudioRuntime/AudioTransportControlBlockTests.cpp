@@ -20,12 +20,11 @@ TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalesci
     TxPreparationRequestState requests{};
 
     EXPECT_FALSE(requests.NeedsHandling());
-    EXPECT_EQ(requests.PublishRequest(100, 600), 1U);
-    EXPECT_EQ(requests.PublishRequest(200, 1200), 2U);
+    EXPECT_EQ(requests.PublishRequest(100), 1U);
+    EXPECT_EQ(requests.PublishRequest(200), 2U);
     EXPECT_TRUE(requests.NeedsHandling());
     EXPECT_EQ(requests.RequestedGeneration(), 2U);
     EXPECT_EQ(requests.requestHostTicks.load(std::memory_order_relaxed), 200U);
-    EXPECT_EQ(requests.requestedTargetFrameEnd.load(std::memory_order_acquire), 1200U);
     EXPECT_TRUE(requests.TryScheduleWake());
     EXPECT_FALSE(requests.TryScheduleWake());
 
@@ -37,8 +36,18 @@ TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalesci
     EXPECT_TRUE(requests.TryScheduleWake());
     requests.FinishWake();
 
-    EXPECT_EQ(requests.PublishRequest(300, 1800), 3U);
+    EXPECT_EQ(requests.PublishRequest(300), 3U);
     EXPECT_TRUE(requests.NeedsHandling());
+}
+
+TEST(AudioTransportControlBlockTests, TimelineEpochRequestIsOneShot) {
+    using Reason = ASFW::Audio::Runtime::HardwareTimelineDiscontinuity;
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.RequestTimelineEpoch(Reason::PresentationLoss);
+    Reason reason = Reason::StartIO;
+    ASSERT_TRUE(control.ConsumeTimelineEpochRequest(reason));
+    EXPECT_EQ(reason, Reason::PresentationLoss);
+    EXPECT_FALSE(control.ConsumeTimelineEpochRequest(reason));
 }
 
 TEST(AudioTransportControlBlockTests, ProducerFaultDetailIsAudioOwnedAndResettable) {
@@ -105,15 +114,15 @@ TEST(AudioTransportControlBlockTests,
     control.playbackRingWriteFrame.store(14'096, std::memory_order_relaxed);
     control.playbackRingOldestValidFrame.store(12'560,
                                                std::memory_order_relaxed);
-    control.txContentFinalizedFrameEnd.store(13'984,
-                                             std::memory_order_relaxed);
-    control.txPcmStagingTelemetry.oldestValidFrame.store(
+    control.txScheduledSampleFrame.store(13'984,
+                                         std::memory_order_relaxed);
+    control.pcmPublicationTelemetry.oldestValidFrame.store(
         10'000, std::memory_order_relaxed);
-    control.txPcmStagingTelemetry.writtenEndFrame.store(
+    control.pcmPublicationTelemetry.publishedEndFrame.store(
         14'096, std::memory_order_release);
-    control.txPcmStagingTelemetry.readsReady.store(
+    control.pcmPublicationTelemetry.copiesReady.store(
         1'748, std::memory_order_relaxed);
-    control.txPcmStagingTelemetry.readsNotYetWritten.store(
+    control.pcmPublicationTelemetry.copiesNotYetPublished.store(
         3, std::memory_order_relaxed);
     control.txTransportCompletionCursor.store(8'000,
                                               std::memory_order_relaxed);
@@ -138,7 +147,7 @@ TEST(AudioTransportControlBlockTests,
     control.txContentFirstFaultReason.store(
         static_cast<uint32_t>(
             ASFW::Audio::Runtime::TxContentFaultReason::
-                kNotYetWrittenAtDeadline),
+                kNotYetPublishedAtDeadline),
         std::memory_order_release);
     control.rxEmptyCompletions.store(2, std::memory_order_relaxed);
 
@@ -147,11 +156,11 @@ TEST(AudioTransportControlBlockTests,
 
     EXPECT_EQ(snapshot.txPlaybackWriteFrame, 14'096U);
     EXPECT_EQ(snapshot.txPlaybackOldestValidFrame, 12'560U);
-    EXPECT_EQ(snapshot.txContentFinalizedFrameEnd, 13'984U);
-    EXPECT_EQ(snapshot.txStagingOldestValidFrame, 10'000U);
-    EXPECT_EQ(snapshot.txStagingWrittenEndFrame, 14'096U);
-    EXPECT_EQ(snapshot.txStagingReadsReady, 1'748U);
-    EXPECT_EQ(snapshot.txStagingReadsNotYetWritten, 3U);
+    EXPECT_EQ(snapshot.txScheduledFrameEnd, 13'984U);
+    EXPECT_EQ(snapshot.txPcmOldestValidFrame, 10'000U);
+    EXPECT_EQ(snapshot.txPcmPublishedEndFrame, 14'096U);
+    EXPECT_EQ(snapshot.txPcmCopiesReady, 1'748U);
+    EXPECT_EQ(snapshot.txPcmCopiesNotYetPublished, 3U);
     EXPECT_EQ(snapshot.txTransportCompletionCursor, 8'000U);
     EXPECT_EQ(snapshot.txTransportCommittedEnd, 8'678U);
     EXPECT_EQ(snapshot.txTransportStatus, 1U);
@@ -275,10 +284,8 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.txLastLeadTicks.store(40, std::memory_order_relaxed);
     control.txMinimumLeadTicks.store(10, std::memory_order_relaxed);
     control.txMaximumLeadTicks.store(70, std::memory_order_relaxed);
-    control.counters.txPhaseRebases.store(1, std::memory_order_relaxed);
-    control.counters.txSilenceFallback.store(2, std::memory_order_relaxed);
-    control.counters.txStaleOverwrittenReads.store(3, std::memory_order_relaxed);
-    control.counters.txProducerAheadUnderruns.store(4, std::memory_order_relaxed);
+    control.counters.txPreparedTargetShortfalls.store(
+        4, std::memory_order_relaxed);
     control.counters.txPcmNonzeroPackets.store(6, std::memory_order_relaxed);
     control.counters.txPcmAllZeroPackets.store(7, std::memory_order_relaxed);
     control.counters.txPreparedPcmSlots.store(9, std::memory_order_relaxed);
@@ -369,10 +376,9 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
               INT64_MAX);
     EXPECT_EQ(control.txMaximumLeadTicks.load(std::memory_order_acquire),
               INT64_MIN);
-    EXPECT_EQ(control.counters.txPhaseRebases.load(std::memory_order_relaxed), 0U);
-    EXPECT_EQ(control.counters.txSilenceFallback.load(std::memory_order_relaxed), 0U);
-    EXPECT_EQ(control.counters.txStaleOverwrittenReads.load(std::memory_order_relaxed), 0U);
-    EXPECT_EQ(control.counters.txProducerAheadUnderruns.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txPreparedTargetShortfalls.load(
+                  std::memory_order_relaxed),
+              0U);
     EXPECT_EQ(control.counters.txPcmNonzeroPackets.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txPcmAllZeroPackets.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txPreparedPcmSlots.load(std::memory_order_relaxed), 0U);

@@ -270,12 +270,12 @@ add_device_test(MAudioDuplexChoreographyTests
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
 )
 
-# M-Audio's TX-derived CoreAudio anchor projection is a pure clock-policy
-# adapter, independently testable from DriverKit and the OHCI transport.
-add_device_test(MAudioTxClockAdapterTests
-    MAudioTxClockAdapterTests.cpp
+# M-Audio's completion-to-presentation conversion is a pure backend observer,
+# independently testable from DriverKit and the OHCI transport.
+add_device_test(MAudioPresentationObserverTests
+    MAudioPresentationObserverTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioTxClockAdapter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
 )
 
 # The output SYT seed/cadence/re-anchor policy is pure and deliberately tested

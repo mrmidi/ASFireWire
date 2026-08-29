@@ -10,9 +10,9 @@ struct AudioTelemetryWireParsingTests {
         }
     }
 
-    private func fixture(version: UInt16 = 5) -> Data {
+    private func fixture(version: UInt16 = 6) -> Data {
         let headerBytes = 16
-        let endpointBytes = 688
+        let endpointBytes = 1072
         var wire = Data(repeating: 0, count: headerBytes + 2 * endpointBytes)
         setLE(version, at: 0, in: &wire)
         setLE(UInt16(headerBytes), at: 2, in: &wire)
@@ -21,7 +21,7 @@ struct AudioTelemetryWireParsingTests {
         setLE(UInt32(endpointBytes), at: 12, in: &wire)
 
         let first = headerBytes
-        setLE(UInt16(5), at: first, in: &wire)
+        setLE(UInt16(6), at: first, in: &wire)
         setLE(UInt16(endpointBytes), at: first + 2, in: &wire)
         setLE(UInt64(9), at: first + 8, in: &wire)
         setLE(UInt64(72), at: first + 16, in: &wire)
@@ -32,7 +32,7 @@ struct AudioTelemetryWireParsingTests {
         setLE(UInt32(8), at: first + 220, in: &wire)
 
         let second = headerBytes + endpointBytes
-        setLE(UInt16(5), at: second, in: &wire)
+        setLE(UInt16(6), at: second, in: &wire)
         setLE(UInt16(endpointBytes), at: second + 2, in: &wire)
         setLE(UInt64(3), at: second + 8, in: &wire)
         setLE(UInt64(91), at: second + 16, in: &wire)
@@ -55,18 +55,18 @@ struct AudioTelemetryWireParsingTests {
 
     @Test func decodesAnEmptyInlineSnapshot() throws {
         var wire = Data(repeating: 0, count: 16)
-        setLE(UInt16(5), at: 0, in: &wire)
+        setLE(UInt16(6), at: 0, in: &wire)
         setLE(UInt16(16), at: 2, in: &wire)
         setLE(UInt32(wire.count), at: 4, in: &wire)
         setLE(UInt32(0), at: 8, in: &wire)
-        setLE(UInt32(688), at: 12, in: &wire)
+        setLE(UInt32(1072), at: 12, in: &wire)
 
         let snapshot = try #require(AudioTelemetryWireDecoder.decode(wire))
         #expect(snapshot.endpoints.isEmpty)
     }
 
     @Test func rejectsUnknownVersionTruncationAndInvalidStrongIdentity() {
-        #expect(AudioTelemetryWireDecoder.decode(fixture(version: 4)) == nil)
+        #expect(AudioTelemetryWireDecoder.decode(fixture(version: 5)) == nil)
         #expect(AudioTelemetryWireDecoder.decode(Data(fixture().dropLast())) == nil)
         var trailing = fixture()
         trailing.append(0)

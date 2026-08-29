@@ -7,6 +7,7 @@
 #include "ASFWDriver/Common/TimingUtils.hpp"
 
 #include <variant>
+#include <utility>
 
 namespace {
 
@@ -31,15 +32,15 @@ constexpr uint32_t kSytWindowTicks = 16U * ASFW::Timing::kTicksPerCycle;
 TEST(MAudioInternalTxTimingTests, ArmsOnlyWhenGeometryMatchesTheRateFamily) {
     InternalTxTiming timing;
 
-    EXPECT_FALSE(timing.Arm(kEpoch, 44'100, 16));
+    EXPECT_FALSE(timing.Arm(kEpoch, 44'100, 8));
     EXPECT_TRUE(std::holds_alternative<InternalTxTimingFailed>(timing.State()));
     EXPECT_FALSE(timing.IsArmed());
 
-    EXPECT_TRUE(timing.Arm(kEpoch, 44'100, kInternalTxSytInterval));
-    EXPECT_TRUE(std::holds_alternative<InternalTxTimingRunning>(timing.State()));
-    EXPECT_EQ(timing.TransferDelayTicks(), 13'162U);
-
     EXPECT_TRUE(timing.Arm(kEpoch, 48'000, kInternalTxSytInterval));
+    EXPECT_EQ(timing.TransferDelayTicks(), 12'800U);
+    EXPECT_TRUE(timing.Arm(kEpoch, 96'000, 16));
+    EXPECT_EQ(timing.TransferDelayTicks(), 12'800U);
+    EXPECT_TRUE(timing.Arm(kEpoch, 192'000, 32));
     EXPECT_EQ(timing.TransferDelayTicks(), 12'800U);
 }
 
@@ -63,46 +64,12 @@ TEST(MAudioInternalTxTimingTests, FortyEightKRetainsThePriorThreeDataOneNoDataCa
     }
 }
 
-TEST(MAudioInternalTxTimingTests, FortyFourKUsesExactRationalPacketCadence) {
-    InternalTxTiming timing;
-    ASSERT_TRUE(timing.Arm(kEpoch, 44'100, kInternalTxSytInterval));
-
-    uint32_t dataPackets = 0;
-    bool havePreviousSyt = false;
-    uint32_t previousSytTicks = 0;
-    for (uint32_t cycle = 0; cycle < 640; ++cycle) {
-        InternalTxPacketPlan plan{};
-        ASSERT_TRUE(timing.PreviewNextPacket(plan));
-        ASSERT_EQ(plan.cadenceCycle, cycle);
-        if (plan.isData) {
-            ASSERT_EQ(plan.dataBlocks, kInternalTxSytInterval);
-            ASSERT_NE(plan.sytOffsetTicks,
-                      ::ASFW::Protocols::Audio::AMDTP::kNoSytOffset);
-            const uint32_t sytTicks = SytTicks(ComputeInternalTxSyt(
-                plan.sytOffsetTicks, cycle, timing.TransferDelayTicks()));
-            if (havePreviousSyt) {
-                const uint32_t delta =
-                    (sytTicks + kSytWindowTicks - previousSytTicks) % kSytWindowTicks;
-                EXPECT_TRUE(delta == 4'458U || delta == 4'459U)
-                    << "cycle " << cycle << " delta=" << delta;
-            }
-            previousSytTicks = sytTicks;
-            havePreviousSyt = true;
-            ++dataPackets;
-        } else {
-            EXPECT_EQ(plan.dataBlocks, 0U);
-            EXPECT_EQ(plan.sytOffsetTicks,
-                      ::ASFW::Protocols::Audio::AMDTP::kNoSytOffset);
-        }
-        ASSERT_TRUE(timing.CommitPacket(plan, plan.isData));
-    }
-    EXPECT_EQ(dataPackets, 441U);
-}
-
 TEST(MAudioInternalTxTimingTests, SytLeadUsesTheRateDependentTransferDelay) {
-    for (const uint32_t rate : {44'100U, 48'000U}) {
+    for (const auto [rate, interval] :
+         {std::pair{48'000U, uint8_t{8}}, std::pair{96'000U, uint8_t{16}},
+          std::pair{192'000U, uint8_t{32}}}) {
         InternalTxTiming timing;
-        ASSERT_TRUE(timing.Arm(kEpoch, rate, kInternalTxSytInterval));
+        ASSERT_TRUE(timing.Arm(kEpoch, rate, interval));
         for (uint32_t transmitCycle : {0U, 7U, 15U, 16U, 4'383U}) {
             InternalTxPacketPlan plan{};
             ASSERT_TRUE(timing.PreviewNextPacket(plan));
@@ -120,8 +87,8 @@ TEST(MAudioInternalTxTimingTests, SytLeadUsesTheRateDependentTransferDelay) {
 TEST(MAudioInternalTxTimingTests, NoDataFallbackStillAdvancesTheSharedCadence) {
     InternalTxTiming fallback;
     InternalTxTiming reference;
-    ASSERT_TRUE(fallback.Arm(kEpoch, 44'100, kInternalTxSytInterval));
-    ASSERT_TRUE(reference.Arm(kEpoch, 44'100, kInternalTxSytInterval));
+    ASSERT_TRUE(fallback.Arm(kEpoch, 96'000, 16));
+    ASSERT_TRUE(reference.Arm(kEpoch, 96'000, 16));
 
     for (uint32_t cycle = 0; cycle < 128; ++cycle) {
         InternalTxPacketPlan fallbackPlan{};

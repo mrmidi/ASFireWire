@@ -67,12 +67,10 @@ TEST(RxDrivenTimingTests, RxRingWrapPreservesCadenceAndFramePhase) {
     EXPECT_EQ(absoluteFrame, 3096U);
 }
 
-TEST(RxDrivenTimingTests, ZtsGridIsObservedAtDataPacketStartWithoutProjection) {
+TEST(RxDrivenTimingTests, V3ZtsGridRemainsReachableAcrossBlockingCadence) {
     constexpr std::array<uint32_t, 4> cadence{8, 8, 8, 0};
     constexpr uint64_t period =
         AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
-    static_assert(period % AudioTimingGeometry::kCadenceBlockFrames == 0);
-
     uint64_t absoluteFrame = 0;
     std::vector<uint64_t> observedFrames;
     for (uint64_t packet = 0; observedFrames.size() < 2; ++packet) {
@@ -236,12 +234,8 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
     EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
-    // 400-cycle content horizon at worst-case 44.1k cadence, plus one full
-    // 512-frame client write window.
-    EXPECT_EQ(AudioTimingGeometry::kTxExposureLeadPackets, 438U);
-    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 534U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 678U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 912U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 144U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 192U);
 }
 
 TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
@@ -254,6 +248,18 @@ TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
     EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(0, 40, 64), 128U);
     //   a larger profile floor is honored, aligned: 200 -> 224.
     EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(200, 40, 64), 224U);
+}
+
+TEST(RxDrivenTimingTests, OutputSafetyUsesPhysicalSchedulingNotRingCapacity) {
+    using Policy = ASFW::Audio::Shared::AudioGeometryPolicy;
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 48'000, 12'800),
+              928U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000, 12'800),
+              1824U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000, 12'800),
+              3616U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100, 12'800),
+              0U);
 }
 
 } // namespace

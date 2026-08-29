@@ -507,15 +507,10 @@ TEST(IsochRxTimingTests, PacketProcessorCanDecodeRawPcm24In32CaptureWhenExplicit
     EXPECT_FLOAT_EQ(input[1], -1.0f);
 }
 
-// The families whose HAL clock is published by TX (M-Audio BeBoB) leave RX's
-// frame cursor with no shared origin: TX arms its epoch at StartIO while
-// OnReceiveActivated() resets the cursor to 0, and the device only starts
-// sending DATA after a NO-DATA warm-up. The cursor therefore began hundreds of
-// milliseconds behind the sampleTime the HAL reads at, so every requested frame
-// fell outside [write-capacity, write) and capture was silent on every channel
-// while packet counters stayed green. The cursor must re-base onto the
-// TX-published anchor instead.
-TEST(IsochRxTimingTests, TxDerivedClockRebasesReceiveCursorOntoHostClockTimeline) {
+// RX replay/capture never owns or rebases the HAL coordinate, including on the
+// M-Audio path where qualified TX observations publish the hardware timeline.
+// The backend's explicit channel/skew policy handles capture placement.
+TEST(IsochRxTimingTests, TxDerivedClockDoesNotRebaseReceiveCursor) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;
     constexpr uint64_t kAnchorSampleFrame = 20'000;
@@ -529,7 +524,8 @@ TEST(IsochRxTimingTests, TxDerivedClockRebasesReceiveCursorOntoHostClockTimeline
     packet[0] = static_cast<uint8_t>(receiveTimestamp & 0xFFu);
     packet[1] = static_cast<uint8_t>(receiveTimestamp >> 8);
     FillTwoChannelAmdtpPacket(packet, 0x40000000u, 0x407FFFFFu);
-    // A real SYT: the rebase deliberately ignores NO-DATA packets.
+    // A real SYT: RX may establish replay/capture timing, but cannot move the
+    // TX-owned absolute HAL coordinate.
     WriteBE32(packet.data() + 12, 0x90021000u);
 
     std::array<float, 8> input{};
@@ -569,18 +565,13 @@ TEST(IsochRxTimingTests, TxDerivedClockRebasesReceiveCursorOntoHostClockTimeline
     consumer.OnReceiveActivated();
     consumer.BeginReceiveBatch(batch);
 
-    // First DATA packet: its own PCM is written at the pre-anchor cursor and is
-    // orphaned, but the cursor re-bases so everything after it is on the HAL's
-    // timeline.
     consumer.ConsumePacket(batch, isochPacket);
     consumer.ConsumePacket(batch, isochPacket);
 
-    // Anchor host time equals the packet host time, so the projection is the
-    // anchor's own sample frame; the second packet is the first to land there.
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire),
-              kAnchorSampleFrame + kFrames + kFrames);
+              kFrames + kFrames);
     EXPECT_EQ(control.captureRingWriteFrame.load(std::memory_order_acquire),
-              kAnchorSampleFrame + kFrames + kFrames);
+              kFrames + kFrames);
 }
 
 // The RX-anchored families publish the host clock anchor from this same cursor,

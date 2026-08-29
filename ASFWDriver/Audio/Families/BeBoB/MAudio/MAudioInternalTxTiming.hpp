@@ -35,8 +35,8 @@ inline constexpr uint8_t kInternalTxSytInterval = 8;
 
 static_assert(InternalTxTransferDelayTicks(48'000, 8) == 12'800,
               "48 kHz blocking transfer delay must match Linux's derivation");
-static_assert(InternalTxTransferDelayTicks(44'100, 8) == 13'162,
-              "44.1 kHz blocking transfer delay must retain fractional remainder");
+static_assert(InternalTxTransferDelayTicks(96'000, 16) == 12'800);
+static_assert(InternalTxTransferDelayTicks(192'000, 32) == 12'800);
 
 /// Compose a 16-bit SYT from the generic cadence offset and the actual cycle
 /// in which this OHCI packet will transmit. The M-Audio-specific part is the
@@ -76,8 +76,8 @@ struct InternalTxPacketPlan final {
 };
 
 /// Retains only the special firmware's completion-cycle anchoring. Packet
-/// cadence, fractional 44.1 kHz arithmetic, and NO-DATA placement are owned by
-/// RationalBlockingCadence, the shared IEC 61883-6 AMDTP implementation.
+/// cadence and NO-DATA placement are owned by RationalBlockingCadence, the
+/// shared IEC 61883-6 AMDTP implementation. V3 accepts only 48/96/192 kHz.
 class InternalTxTiming final {
 public:
     InternalTxTiming() noexcept = default;

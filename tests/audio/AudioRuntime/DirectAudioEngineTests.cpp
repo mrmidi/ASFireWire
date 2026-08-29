@@ -6,9 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <atomic>
 #include <cstdint>
-#include <limits>
 
 namespace {
 
@@ -43,15 +41,6 @@ AudioGraphBinding MakeDuplexBinding(AudioTransportControlBlock& control,
     };
 }
 
-void PublishPlaybackWriteEnd(AudioTransportControlBlock& control,
-                             uint64_t sampleFrame,
-                             uint64_t hostTime,
-                             uint32_t frameCount) {
-    control.client.PublishWriteEnd(sampleFrame, hostTime, frameCount);
-    control.playbackRingWriteFrame.store(control.client.OutputWrittenEndFrame(),
-                                         std::memory_order_release);
-}
-
 TEST(DirectAudioEngineTests, BindValidGraphBindsSubcomponents) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
@@ -64,9 +53,7 @@ TEST(DirectAudioEngineTests, BindValidGraphBindsSubcomponents) {
     EXPECT_TRUE(engine.Bind(binding));
     EXPECT_TRUE(engine.IsBound());
     EXPECT_TRUE(engine.InputWriter().IsBound());
-    EXPECT_TRUE(engine.OutputReader().IsBound());
     EXPECT_EQ(engine.InputWriter().Frame(1), input.data() + 2);
-    EXPECT_EQ(engine.OutputReader().Frame(1), output.data() + 2);
 }
 
 TEST(DirectAudioEngineTests, BindInvalidGraphClearsState) {
@@ -85,7 +72,6 @@ TEST(DirectAudioEngineTests, BindInvalidGraphClearsState) {
     EXPECT_FALSE(engine.Bind(invalid));
     EXPECT_FALSE(engine.IsBound());
     EXPECT_FALSE(engine.InputWriter().IsBound());
-    EXPECT_FALSE(engine.OutputReader().IsBound());
 }
 
 TEST(DirectAudioEngineTests, UnbindClearsState) {
@@ -102,40 +88,6 @@ TEST(DirectAudioEngineTests, UnbindClearsState) {
 
     EXPECT_FALSE(engine.IsBound());
     EXPECT_FALSE(engine.InputWriter().IsBound());
-    EXPECT_FALSE(engine.OutputReader().IsBound());
-}
-
-TEST(DirectAudioEngineTests, OutputReaderUsesPlaybackRingCursorAvailability) {
-    AudioTransportControlBlock control{};
-    IOUserAudioDevice audioDevice{};
-    std::array<float, 16> input{};
-    std::array<float, 16> output{};
-    FireWireAudioEngine engine{};
-
-    const auto binding = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
-    ASSERT_TRUE(engine.Bind(binding));
-
-    EXPECT_FALSE(engine.OutputReader().IsFrameRangeAvailable(1000, 128));
-
-    PublishPlaybackWriteEnd(control, 1000, 55, 128);
-
-    EXPECT_TRUE(engine.OutputReader().IsFrameRangeAvailable(1000, 128));
-    EXPECT_FALSE(engine.OutputReader().IsFrameRangeAvailable(1100, 64));
-}
-
-TEST(DirectAudioEngineTests, OutputReaderRejectsOverflowingFrameRange) {
-    AudioTransportControlBlock control{};
-    IOUserAudioDevice audioDevice{};
-    std::array<float, 16> input{};
-    std::array<float, 16> output{};
-    FireWireAudioEngine engine{};
-
-    const auto binding = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
-    ASSERT_TRUE(engine.Bind(binding));
-
-    constexpr uint64_t kMaxFrame = std::numeric_limits<uint64_t>::max();
-
-    EXPECT_FALSE(engine.OutputReader().IsFrameRangeAvailable(kMaxFrame - 1, 4));
 }
 
 } // namespace

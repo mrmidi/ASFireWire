@@ -10,7 +10,6 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 
@@ -182,7 +181,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             if (ivars.txPreparationQueue) {
                 ivars.txPreparationQueue->DispatchSync(^{ });
             }
-            ivars.runtime.mAudioTxClockAdapter.Disarm();
+            ivars.runtime.mAudioPresentationObserver.Disarm();
             ivars.runtime.mAudioInternalTxTiming.Disarm();
             if (streamingStarted && ivars.device.audioNub) {
                 const kern_return_t stopKr =
@@ -216,7 +215,11 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             return;
         }
         control->ResetForStart();
-        ivars.runtime.mAudioTxClockAdapter.Disarm();
+        ivars.runtime.txPlanBusTicksValid = false;
+        ivars.runtime.lastTxPlanBusTicks = 0;
+        ivars.runtime.txObservationBusTicksValid = false;
+        ivars.runtime.lastTxObservationBusTicks = 0;
+        ivars.runtime.mAudioPresentationObserver.Disarm();
         ivars.runtime.mAudioInternalTxTiming.Disarm();
         ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
         ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
@@ -314,25 +317,44 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                      ivars.device.endpointId, txConfig.sampleRate, txConfig.pcmChannels,
                      txConfig.dbs, txConfig.fdf, txConfig.framesPerDataPacket,
                      maxPacketBytes);
-            ivars.runtime.txPcmStagingRing.BindTelemetry(
-                &control->txPcmStagingTelemetry);
-            if (!ivars.runtime.txPcmStagingRing.Configure(
+            ivars.runtime.pcmPublicationCache.BindTelemetry(
+                &control->pcmPublicationTelemetry);
+            if (!ivars.runtime.pcmPublicationCache.Configure(
                     ivars.runtime.directAudioGraph.memory.outputChannels,
                     ASFW::Audio::Shared::AudioTimingGeometry::
-                        kTxPcmStagingFrames)) {
+                        kPcmPublicationCacheFrames)) {
                 ASFW_LOG(
                     Audio,
-                    "ASFWAudioDevice: TX PCM staging allocation failed channels=%u frames=%u",
+                    "ASFWAudioDevice: PCM publication cache allocation failed channels=%u frames=%u",
                     ivars.runtime.directAudioGraph.memory.outputChannels,
                     ASFW::Audio::Shared::AudioTimingGeometry::
-                        kTxPcmStagingFrames);
-                kr = failStart(kIOReturnNoMemory, "ConfigureTxPcmStaging");
+                        kPcmPublicationCacheFrames);
+                kr = failStart(kIOReturnNoMemory, "ConfigurePcmPublicationCache");
                 return;
             }
+            const auto timelineSource =
+                (useMAudioTxClock || ivars.device.inputChannelCount == 0)
+                    ? ASFW::Audio::Runtime::HardwareTimelineSource::Transmit
+                    : ASFW::Audio::Runtime::HardwareTimelineSource::Receive;
+            const uint64_t timelineEpoch = control->hardwareTimeline.BeginEpoch(
+                timelineSource,
+                ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO,
+                txConfig.sampleRate,
+                0);
+            if (timelineEpoch == 0) {
+                kr = failStart(kIOReturnUnsupported, "BeginHardwareTimeline");
+                return;
+            }
+            ASFW_LOG(
+                DirectAudio,
+                "[TimelineEpoch] epoch=%llu reason=start-io source=%u base=0 rate=%u",
+                timelineEpoch, static_cast<uint32_t>(timelineSource),
+                txConfig.sampleRate);
+            ivars.runtime.pcmPublicationCache.BeginEpoch(timelineEpoch);
             ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
             ivars.runtime.txStreamEngine.BindPcmSource(
-                &ivars.runtime.txPcmStagingRing);
-            ivars.runtime.txStreamEngine.ResetForStart(0, 0);
+                &ivars.runtime.pcmPublicationCache);
+            ivars.runtime.txStreamEngine.ResetForStart(0);
             ivars.runtime.txReplayReader.Reset();
 
             const uint32_t timingRateHz =
@@ -414,8 +436,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             }
             ivars.runtime.txStreamEngineSecondary.BindSlotProvider(&ivars.runtime.txSlotProviderSecondary);
             ivars.runtime.txStreamEngineSecondary.BindPcmSource(
-                &ivars.runtime.txPcmStagingRing);
-            ivars.runtime.txStreamEngineSecondary.ResetForStart(0, 0);
+                &ivars.runtime.pcmPublicationCache);
+            ivars.runtime.txStreamEngineSecondary.ResetForStart(0);
             ivars.runtime.txSecondaryActive = true;
 
             ASFW_LOG(Audio,
@@ -453,14 +475,18 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     .value = ++ivars.runtime.mAudioTxClockEpoch};
             const auto& txStreamConfig =
                 ivars.runtime.txStreamEngine.StreamConfig();
-            if (!ivars.runtime.mAudioTxClockAdapter.Arm(
+            if (!ivars.runtime.mAudioPresentationObserver.Arm(
                     startEpoch,
+                    control->hardwareTimeline.Epoch(),
                     txStreamConfig.sampleRate,
-                    GetZeroTimestampPeriod())) {
+                    ASFW::Audio::Families::BeBoB::MAudio::
+                        InternalTxTransferDelayTicks(
+                            txStreamConfig.sampleRate,
+                            txStreamConfig.framesPerDataPacket))) {
                 ASFW_LOG(Audio,
-                         "ASFWAudioDevice: StartIO failed - M-Audio TX clock arm failed rate=%u period=%u",
+                         "ASFWAudioDevice: StartIO failed - M-Audio presentation observer arm failed rate=%u sytInterval=%u",
                          txStreamConfig.sampleRate,
-                         GetZeroTimestampPeriod());
+                         txStreamConfig.framesPerDataPacket);
                 kr = failStart(kIOReturnNotReady, "ArmMAudioTxClock");
                 return;
             }
@@ -561,24 +587,6 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 std::memory_order_acquire),
             initialZtsHostTicks,
             ztsWaitMs);
-
-        // --- Log timing policy ---
-        const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
-            static_cast<uint32_t>(ivars.device.currentSampleRate));
-        const auto policySnap = policy.Snapshot();
-        ASFW_LOG(Audio,
-                 "TimingCursorPolicy rate=%u mode=blocking framesPerPacket=%u outCursorOffset=%u inCursorOffset=%u reportedOutLatency=%u reportedInLatency=%u outSafety=%u inSafety=%u outLead=%u inLead=%u ztsPeriod=%u",
-                 policySnap.sampleRateHz,
-                 policySnap.framesPerPacketMax,
-                 policySnap.outputCursorOffsetFrames,
-                 policySnap.inputCursorOffsetFrames,
-                 policySnap.reportedOutputLatencyFrames,
-                 policySnap.reportedInputLatencyFrames,
-                 policySnap.outputSafetyOffsetFrames,
-                 policySnap.inputSafetyOffsetFrames,
-                 policySnap.outputPacketLeadFrames,
-                 policySnap.inputPacketLeadFrames,
-                 policySnap.ztsPeriodFrames);
 
         // Hardware-specific setup must finish before super::StartIO updates
         // ADK's IO state. Open the RT gate first so callbacks arriving as part
@@ -712,7 +720,7 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         if (ivars.txPreparationQueue) {
             ivars.txPreparationQueue->DispatchSync(^{ });
         }
-        ivars.runtime.mAudioTxClockAdapter.Disarm();
+        ivars.runtime.mAudioPresentationObserver.Disarm();
         ivars.runtime.mAudioInternalTxTiming.Disarm();
 
         if (ivars.runtime.directAudioGraph.control) {
@@ -770,7 +778,7 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.txSlotProviderSecondary.audioControl = nullptr;
         ivars.runtime.txSlotProviderSecondary.numSlots = 0;
         ivars.runtime.txStreamEngineSecondary.BindPcmSource(nullptr);
-        ivars.runtime.txPcmStagingRing.ResetForStart();
+        ivars.runtime.pcmPublicationCache.BeginEpoch(0);
 
         if (ivars.device.audioNub) {
             ivars.device.audioNub->FreeTxIsochResources();
@@ -842,6 +850,8 @@ OpticalModeFromWire(uint32_t raw) noexcept {
     if (!capability || inputChannels != capability->runtimeCaps.hostInputPcmChannels ||
         outputChannels != capability->runtimeCaps.hostOutputPcmChannels ||
         capability->runtimeCaps.sampleRateHz != configuration.sampleRate ||
+        !ASFW::Audio::Shared::AudioTimingGeometry::IsV3SampleRate(
+            configuration.sampleRate) ||
         !ASFW::Encoding::AmdtpRateGeometryForSampleRate(configuration.sampleRate).has_value() ||
         driverIvars.runtime.isRunning.load(std::memory_order_acquire)) {
         return kIOReturnBadArgument;
@@ -877,6 +887,8 @@ OpticalModeFromWire(uint32_t raw) noexcept {
             candidate.configuration.opticalOutput != configuration.opticalOutput ||
             candidate.runtimeCaps.hostInputPcmChannels != inputChannels ||
             candidate.runtimeCaps.hostOutputPcmChannels != outputChannels ||
+            !ASFW::Audio::Shared::AudioTimingGeometry::IsV3SampleRate(
+                candidate.configuration.sampleRate) ||
             formatCount == inputFormats.size()) {
             continue;
         }

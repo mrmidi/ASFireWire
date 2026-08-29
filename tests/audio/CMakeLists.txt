@@ -95,9 +95,7 @@ add_audio_test(AudioDirectRuntimeTests
 
 
 
-# RX packet decode outcome split. NOTE: the other files under AudioEngineDirect/
-# (DirectTxProbeTests, TxAudioPacketProcessorTests, TxAudioPacketWriterTests) are
-# not registered in any CMakeLists and therefore never run.
+# RX packet decode outcome split.
 add_audio_test(RxAudioPacketProcessorTests
     AudioEngineDirect/RxAudioPacketProcessorTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
@@ -144,9 +142,9 @@ add_audio_test(IsochServiceTxPreparationTests
 
 add_audio_test(AmdtpDirectTxTests
     AmdtpDirectTxTests.cpp
-    TxPcmStagingRingTests.cpp
+    PcmPublicationCacheTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Runtime/TxPcmStagingRing.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Runtime/PcmPublicationCache.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
@@ -161,13 +159,13 @@ add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
 )
 
+add_audio_test(HardwareSampleTimelineTests
+    HardwareSampleTimelineTests.cpp
+)
+
 add_audio_test(ResolvedAudioStreamProfileTests
     ResolvedAudioStreamProfileTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/ResolvedAudioStreamProfile.cpp"
-)
-
-add_audio_test(TimingCursorPolicyTests
-    TimingCursorPolicyTests.cpp
 )
 
 # Links the catalog so the wire validator can be checked against every builder a

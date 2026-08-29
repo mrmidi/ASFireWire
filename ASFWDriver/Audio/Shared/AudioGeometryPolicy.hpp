@@ -56,12 +56,40 @@ struct AudioGeometryPolicy final {
         return 29u;
     }
 
-    // Minimum TX retention/catch-up span: one client IO window plus scheduling
-    // jitter. The producer still finalizes only through W; this value sizes how
-    // much already-written work must remain recoverable.
-    static constexpr uint32_t RequiredOutputExposureFrames(
+    // Minimum completed-content publication span: one client operation plus
+    // scheduling jitter. It sizes byte retention only and is not a scheduler.
+    static constexpr uint32_t RequiredOutputPublicationFrames(
         uint32_t maxClientIoFrames, uint32_t jitterFrames) {
         return maxClientIoFrames + jitterFrames;
+    }
+
+    // Conservative hardware-relative output lead. It is deliberately derived
+    // from the physical scheduling policy, backend transfer delay, and one
+    // DATA-packet quantum. Ring/cache capacity is not an input.
+    static constexpr uint32_t RequiredOutputSafetyFrames(
+        uint32_t profileFloorFrames,
+        uint32_t sampleRateHz,
+        uint32_t backendTransferTicks) noexcept {
+        if (!AudioTimingGeometry::IsV3SampleRate(sampleRateHz)) {
+            return 0;
+        }
+        const uint64_t scheduledFrames =
+            (static_cast<uint64_t>(sampleRateHz) *
+                 AudioTimingGeometry::kTxPreparedTargetCycleSlots +
+             7'999U) /
+            8'000U;
+        const uint32_t ticksPerFrame = 24'576'000U / sampleRateHz;
+        const uint64_t transferFrames =
+            (static_cast<uint64_t>(backendTransferTicks) +
+             ticksPerFrame - 1U) /
+            ticksPerFrame;
+        const uint64_t physicalLead = scheduledFrames + transferFrames +
+            FramesPerPacket(sampleRateHz);
+        const uint64_t raw = physicalLead > profileFloorFrames
+            ? physicalLead : profileFloorFrames;
+        constexpr uint32_t alignment = AudioTimingGeometry::kFrameAlignment;
+        return static_cast<uint32_t>(
+            ((raw + alignment - 1U) / alignment) * alignment);
     }
 };
 
@@ -94,10 +122,11 @@ constexpr bool ValidAtRate(double rate) {
         return false;
     }
     // One callback plus jitter must be retainable within the host ring.
-    const uint32_t exposure = AudioGeometryPolicy::RequiredOutputExposureFrames(
+    const uint32_t publication =
+        AudioGeometryPolicy::RequiredOutputPublicationFrames(
         AudioTimingGeometry::kHalIoPeriodFrames,
         AudioTimingGeometry::kSchedulingJitterFrames);
-    if (exposure >= AudioTimingGeometry::kFrameRingFrames) {
+    if (publication >= AudioTimingGeometry::kFrameRingFrames) {
         return false;
     }
     return true;
@@ -116,6 +145,9 @@ static_assert(AudioGeometryPolicy::RxSafetyOffsetFrames(48000.0) == 128,
               "48k RX safety must be 16 packets x 8 frames");
 static_assert(AudioGeometryPolicy::ReportedLatencyFrames(48000.0) == 29,
               "48k reported latency must be 29 frames");
+static_assert(AudioGeometryPolicy::RequiredOutputSafetyFrames(
+                  48, 48'000, 12'800) == 928,
+              "48k V3 output safety must reflect 18 ms scheduling lead");
 
 } // namespace ASFW::Audio::Shared
 

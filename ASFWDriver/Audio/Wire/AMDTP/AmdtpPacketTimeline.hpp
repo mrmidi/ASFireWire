@@ -21,7 +21,11 @@ struct PacketTimelineSlot final {
     bool isData{false};
     uint64_t firstAudioFrame{0};
     uint32_t framesInPacket{0};
+    uint32_t plannedFrameCount{0};
     uint32_t dbs{0};
+    uint64_t epoch{0};
+    uint64_t cycleOrdinal{0};
+    uint64_t presentationBusTicks{0};
 
     std::atomic<PacketSlotState> state{PacketSlotState::Empty};
 };
@@ -37,7 +41,7 @@ public:
 
     bool MarkDataPacketFinalized(const PreparedTxPacket& packet) noexcept;
 
-    void MarkNoDataPacket(uint32_t packetIndex) noexcept;
+    void MarkNoDataPacket(const PreparedTxPacket& packet) noexcept;
     void MarkPublished(uint32_t packetIndex) noexcept;
 
     PacketTimelineSlot* SlotByIndex(uint32_t packetIndex) noexcept;

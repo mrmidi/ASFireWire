@@ -13,8 +13,8 @@
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Families/BeBoB/MAudio/MAudioDuplexPolicy.hpp"
 #include "../Families/BeBoB/MAudio/MAudioInternalTxTiming.hpp"
-#include "../Families/BeBoB/MAudio/MAudioTxClockAdapter.hpp"
-#include "../Runtime/TxPcmStagingRing.hpp"
+#include "../Families/BeBoB/MAudio/MAudioPresentationObserver.hpp"
+#include "../Runtime/PcmPublicationCache.hpp"
 #include "../Shared/Configuration/DeviceConfigurationStateMachine.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
 #include "../../Shared/Isoch/TxPayloadSeal.hpp"
@@ -243,6 +243,10 @@ struct AudioDriverRuntimeState {
 
     uint64_t metricsLogCounter{0};
     bool rxStartupDrained{false};
+    bool txPlanBusTicksValid{false};
+    uint64_t lastTxPlanBusTicks{0};
+    bool txObservationBusTicksValid{false};
+    uint64_t lastTxObservationBusTicks{0};
 
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;
@@ -254,17 +258,16 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txActive{false};
     // Owned by the serial TxPreparation queue while active. StartIO arms it
     // before TX DMA starts; StopIO drains that queue before disarming it.
-    ASFW::Audio::Families::BeBoB::MAudio::TxClockAdapter
-        mAudioTxClockAdapter;
-    // Shares the same serialized owner as mAudioTxClockAdapter but produces
+    ASFW::Audio::Families::BeBoB::MAudio::PresentationObserver
+        mAudioPresentationObserver;
+    // Shares the same serialized owner as mAudioPresentationObserver but produces
     // wire packet timing from actual OUTPUT_LAST completion stamps.
     ASFW::Audio::Families::BeBoB::MAudio::InternalTxTiming
         mAudioInternalTxTiming;
 
-    // Audio-owned retention between the CoreAudio WriteEnd producer and the
-    // independent TX preparation consumer. Both DICE streams read the same
-    // immutable snapshots with different channel offsets.
-    ASFW::Audio::Runtime::TxPcmStagingRing txPcmStagingRing;
+    // Audio-owned immutable publication boundary between CoreAudio WriteEnd
+    // and physical TX planning. It retains bytes only and owns no clock.
+    ASFW::Audio::Runtime::PcmPublicationCache pcmPublicationCache;
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
@@ -394,24 +397,11 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
                                                                                            const char* reason,
                                                                                            bool logSuccess,
                                                                                            bool countAsRx = true) noexcept;
-// Prepares transmit slots from startPacketIndex until both producer invariants
-// are true or limitPacketIndex is reached:
-//   * requiredPacketIndex covers the core refill / commit-generation invariant.
-//   * targetFrameEnd covers immutable AMDTP DATA through the staged WriteEnd.
-// Returns the number of slots prepared. With an unseeded transmit clock the
-// normal AMDTP cadence is preserved but every packet carries NO_INFO
-// (SYT=0xffff), matching the reference Saffire seed behavior. Set
-// allowRecoveredClock only after HAL has accepted the first real RX anchor.
-// M-Audio special firmware instead supplies a profile-scoped internal TX
-// schedule from OUTPUT_LAST completion timestamps; it never falls through to
-// capture replay for packet timing.
+// Prepares explicit physical presentation plans through requiredPacketIndex.
+// WriteEnd does not provide a frame horizon and cannot move this scheduler.
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               uint64_t startPacketIndex,
                               uint64_t requiredPacketIndex,
-                              uint64_t limitPacketIndex,
-                              uint32_t maxToPrepare,
-                              uint64_t targetFrameEnd,
-                              bool allowRecoveredClock,
                               bool useMAudioInternalTiming) noexcept;
 
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets

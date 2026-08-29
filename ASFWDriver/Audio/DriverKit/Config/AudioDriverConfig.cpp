@@ -2,6 +2,7 @@
 
 #include "../../Devices/AudioEndpointProfileWire.hpp"
 #include "../../Model/AudioPropertyKeys.hpp"
+#include "../../Shared/AudioTimingGeometry.hpp"
 
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSData.h>
@@ -133,10 +134,26 @@ bool ParseAudioDriverConfigFromProperties(
     config.hasExplicitOutputChannelCount = true;
     config.channelCount = std::max(config.inputChannelCount,
                                    config.outputChannelCount);
-    config.currentSampleRate = parsed->currentSampleRateHz;
-    config.sampleRateCount = parsed->supportedRateCount;
+    config.currentSampleRate = 0;
+    config.sampleRateCount = 0;
     for (uint8_t i = 0; i < parsed->supportedRateCount; ++i) {
-        config.sampleRates[i] = parsed->supportedRates[i];
+        const uint32_t rate = parsed->supportedRates[i];
+        if (!ASFW::Audio::Shared::AudioTimingGeometry::IsV3SampleRate(rate)) {
+            continue;
+        }
+        config.sampleRates[config.sampleRateCount++] = rate;
+        if (rate == parsed->currentSampleRateHz) {
+            config.currentSampleRate = rate;
+        }
+    }
+    if (config.sampleRateCount == 0 || config.currentSampleRate == 0) {
+        return false;
+    }
+    config.resolvedProfile.supportedRateCount = config.sampleRateCount;
+    config.resolvedProfile.supportedRates.fill(0);
+    for (uint8_t i = 0; i < config.sampleRateCount; ++i) {
+        config.resolvedProfile.supportedRates[i] =
+            static_cast<uint32_t>(config.sampleRates[i]);
     }
     config.streamMode = parsed->streamMode ==
             ASFW::Audio::Devices::StreamModePolicy::Blocking

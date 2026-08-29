@@ -1,147 +1,58 @@
 #pragma once
 
-#include "AmdtpCadence.hpp"
 #include "AmdtpPacketTimeline.hpp"
 #include "AmdtpTypes.hpp"
 #include "../IEC61883/CipHeader.hpp"
 #include "../IEC61883/DbcCounter.hpp"
 
-#include <atomic>
 #include <cstdint>
-#include <memory>
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
-// Lock-free, best-effort view for the CoreAudio callback / diagnostic drain.
-// Packet preparation owns the mutable cursor; diagnostics must not read that
-// state directly across the queue boundary.
-struct AmdtpTxPacketizerTelemetrySnapshot final {
-    uint64_t nextAudioFrame{0};
-    uint64_t lastDataFirstAudioFrame{0};
-    uint64_t lastDataEndAudioFrame{0};
-    uint64_t lastDataPacketIndex{0};
-    uint64_t cursorEpoch{0};
-    bool frameCursorAligned{false};
-    bool hasLastDataPacket{false};
-};
-
-struct AmdtpNextPacketPlan final {
-    bool isData{false};
-    uint8_t framesInPacket{0};
-    uint32_t byteCount{0};
-    uint64_t firstAudioFrame{0};
-
-    /// Data blocks the packet puts on the wire. Equal to `framesInPacket` for a
-    /// DATA packet, but non-zero and independent of it for a full-size cadence
-    /// packet, which carries blocks without consuming audio frames. DBC follows
-    /// this, never `framesInPacket`.
-    uint8_t blocksInPacket{0};
-};
-
+// Pure wire encoder plus transactional DBC state. Absolute content time and
+// cadence are supplied by TxPresentationPlan; this class owns neither.
 class AmdtpTxPacketizer final {
 public:
     AmdtpTxPacketizer() noexcept = default;
 
-    bool Configure(const AmdtpStreamConfig& streamConfig,
-                   const AmdtpTxPolicy& txPolicy) noexcept;
-
+    [[nodiscard]] bool Configure(const AmdtpStreamConfig& streamConfig,
+                                 const AmdtpTxPolicy& txPolicy) noexcept;
     void BindTimeline(AmdtpPacketTimeline* timeline) noexcept;
+    void Reset(uint8_t initialDbc = 0) noexcept;
 
-    void Reset(uint8_t initialDbc = 0,
-               uint64_t initialAudioFrame = 0) noexcept;
-
-    // Timing may reacquire during a running stream. Content-frame ownership
-    // must not reacquire with it, so alignment is accepted only once after
-    // Reset().
-    [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
-
-    // Re-arm the one-shot frame-cursor alignment WITHOUT resetting DBC/cadence.
-    // Used when the RX replay the frame cursor rides went unavailable (epoch
-    // reset / underrun during aggregate churn): the cursor would otherwise stay
-    // frozen at its pre-stall frame while CoreAudio's write cursor advances,
-    // and once it falls more than a playback ring behind, TX transmits the
-    // overwritten (silent) region forever. Re-arming lets the first DATA packet
-    // after replay recovers re-project the cursor to the live frame. It may
-    // also follow an unrecoverably stale PCM range. A future/busy PCM snapshot
-    // is recoverable and must never re-arm this cursor: doing so creates an
-    // align/miss/re-arm feedback loop.
-    void ReArmFrameCursorAlignment() noexcept;
-
-    [[nodiscard]] bool IsFrameCursorAligned() const noexcept { return frameCursorAligned_; }
-
-    [[nodiscard]] bool PreviewNextPacket(
-        const AmdtpTimingState& timing,
-        AmdtpNextPacketPlan& outPlan) const noexcept;
-
-    bool PrepareNextPacket(TxPacketSlotView slot,
-                           const AmdtpTimingState& timing,
-                           const TxPcmSnapshotView& pcm,
-                           PreparedTxPacket& outPacket) noexcept;
-
-    // Convenience for a packet known to carry no DATA (startup/recovery
-    // NO-DATA). If the current decision requires PCM this overload rejects it.
-    bool PrepareNextPacket(TxPacketSlotView slot,
-                           const AmdtpTimingState& timing,
-                           PreparedTxPacket& outPacket) noexcept {
-        return PrepareNextPacket(slot, timing, {}, outPacket);
-    }
+    // Encoding is side-effect-free. CommitPreparedPacket is called only after
+    // the durable transport slot has been release-published.
+    [[nodiscard]] bool PrepareDataPacket(
+        TxPacketSlotView slot,
+        const TxPresentationPlan& plan,
+        uint8_t wireDataBlocks,
+        uint16_t syt,
+        const TxPcmSnapshotView& pcm,
+        PreparedTxPacket& outPacket) noexcept;
+    [[nodiscard]] bool CommitPreparedPacket(
+        const PreparedTxPacket& packet,
+        uint8_t wireDataBlocks) noexcept;
 
     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
-    [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
-
-    [[nodiscard]] AmdtpTxPacketizerTelemetrySnapshot
-    TelemetrySnapshot() const noexcept;
 
 private:
-    void PublishTelemetrySnapshot() noexcept;
-
     void WriteDataPacketDefaults(uint8_t* packetBytes,
                                  uint32_t packetCapacityBytes,
                                  uint32_t payloadBytes) noexcept;
-
-    /// Fill a full-size cadence packet's data blocks: audio slots take the
-    /// cadence label, non-audio slots the same word a DATA packet gives them.
     void WriteCadencePacketFill(uint8_t* packetBytes,
                                 uint32_t payloadBytes) noexcept;
-
     void WritePcmSnapshot(uint8_t* packetBytes,
                           const PreparedTxPacket& packet,
                           const TxPcmSnapshotView& pcm) noexcept;
-
     void WriteCipHeader(uint8_t* packetBytes,
                         const IEC61883::CipHeaderWords& header) noexcept;
 
-    [[nodiscard]] uint32_t DataPacketBytes() const noexcept;
-    [[nodiscard]] uint32_t PayloadBytes() const noexcept;
-
     AmdtpStreamConfig streamConfig_{};
     AmdtpTxPolicy txPolicy_{};
-
     IEC61883::CipHeaderBuilder cipBuilder_{};
     IEC61883::DbcCounter dbcCounter_{};
-
-    Blocking48kCadence blocking48kCadence_{};
-    NonBlocking48kCadence nonBlocking48kCadence_{};
-    IAmdtpCadence* cadence_{nullptr};
-
     AmdtpPacketTimeline* timeline_{nullptr};
-
-    uint64_t nextAudioFrame_{0};
-    bool frameCursorAligned_{false};
-    uint64_t cursorEpoch_{0};
-    uint64_t lastDataFirstAudioFrame_{0};
-    uint64_t lastDataEndAudioFrame_{0};
-    uint64_t lastDataPacketIndex_{0};
-    bool hasLastDataPacket_{false};
-
-    std::atomic<uint64_t> telemetryNextAudioFrame_{0};
-    std::atomic<uint64_t> telemetryLastDataFirstAudioFrame_{0};
-    std::atomic<uint64_t> telemetryLastDataEndAudioFrame_{0};
-    std::atomic<uint64_t> telemetryLastDataPacketIndex_{0};
-    std::atomic<uint64_t> telemetryCursorEpoch_{0};
-    std::atomic<bool> telemetryFrameCursorAligned_{false};
-    std::atomic<bool> telemetryHasLastDataPacket_{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

@@ -19,20 +19,22 @@ namespace ASFW::Audio::Shared {
 //   ...Blocks   OHCI descriptor blocks (4 per TX packet, Z=4)
 //   ...Ticks    24.576 MHz FireWire ticks (3072/cycle)
 // Never compare a *Packets value to a *Frames value without an explicit
-// conversion (the cadence is the only bridge: 6 frames/packet average at 48k,
-// 5.5125 at 44.1k -- budgets use the worst case, kMinAvgCadence*).
+// conversion. V3 supports only the exact 48 kHz family (48/96/192 kHz).
 //
-// CURSOR MODEL (TX): F is the finalized-content frontier. DATA may be committed
-// only after its full frame range exists in the audio-owned staging ring, so
-// F <= W (CoreAudio write frontier) by construction. Every DATA packet handed
-// to transport contains only frames below F; when host content misses the hard
-// packet-coverage deadline, the producer emits explicit NO-DATA without
-// consuming PCM and records XRUN attribution. See DICE_REGRESSION.md.
+// CURSOR MODEL (TX): the hardware timeline supplies every packet's absolute
+// frame. WriteEnd only publishes immutable PCM for that coordinate. Missing
+// content at the physical deadline becomes backend NO-DATA while hardware time
+// advances; content is never retried late, clamped, or rebased.
 //
 // Rate-DEPENDENT geometry (safety offsets, frames-per-packet at 96/192 kHz,
 // reported latency) lives in AudioGeometryPolicy.hpp, not here.
 // -----------------------------------------------------------------------------
 struct AudioTimingGeometry final {
+    [[nodiscard]] static constexpr bool IsV3SampleRate(
+        uint32_t sampleRateHz) noexcept {
+        return sampleRateHz == 48'000 || sampleRateHz == 96'000 ||
+               sampleRateHz == 192'000;
+    }
     static constexpr uint32_t kSampleRateHz = 48000;
 
     // Blocking AMDTP cadence at 48k: D,D,D,N over 4 packets, 8 frames per
@@ -40,14 +42,6 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kFramesPerDataPacket = 8;
     static constexpr uint32_t kCadenceBlockPackets = 4;
     static constexpr uint32_t kCadenceBlockFrames = 24;
-
-    // Worst-case average cadence across supported 1x rates: the 44.1k family
-    // carries 441 frames per 80 packets (5.5125 frames/packet average), fewer
-    // than 48k's 6. Packet budgets that must cover a frame requirement are
-    // sized with this ratio so they hold at every supported rate
-    // (tools/amdtp_blocking_cadence_sim.py, production wiring item 4).
-    static constexpr uint32_t kMinAvgCadencePackets = 80;
-    static constexpr uint32_t kMinAvgCadenceFrames = 441;
 
     // DMA completion cadence is deliberately independent from the HAL ZTS
     // grid. Six FireWire cycles give 0.75 ms refill latency. Depending on the
@@ -87,65 +81,15 @@ struct AudioTimingGeometry final {
 
     static constexpr uint32_t kFrameAlignment = 32;
 
-    // === TX PCM retention horizon ===========================================
-    // Historical content-horizon tuning value retained for staging-retention
-    // sizing and comparison with AppleFWAudio. It no longer authorizes future DATA
-    // placeholders: finalized content is bounded by the host write frontier.
-    // AppleFWAudio's AM824NuDCLWrite keeps its CIP insertion target roughly
-    // 400 FireWire cycles ahead of the client write frontier at 48 kHz.  This
-    // is content lead, not the much smaller OHCI descriptor/refill lead. Keep
-    // the invariant in packet time so it remains a 50 ms horizon at every 1x
-    // sample rate (the runtime converts it to frames for the active stream).
-    // See AVC_RECOVERY_AND_SYNC_ALGO_AND_BUGS.md, "Apple reference target".
-    static constexpr uint32_t kTxDataHorizonPackets = 400;
-    // Legacy name retained for callers that report the historical tuning
-    // value. This is not an authorization to finalize beyond W.
-    static constexpr uint32_t kTxExposureLeadFrames =
-        (kTxDataHorizonPackets * kSampleRateHz) / 8000; // 2,400 @ 48 kHz
+    // Exactly one HAL revolution of immutable, epoch-keyed PCM. This is byte
+    // retention only; it has no scheduling or latency meaning.
+    static constexpr uint32_t kPcmPublicationCacheFrames = 8'192;
 
-    [[nodiscard]] static constexpr uint32_t TxDataHorizonFrames(
-        uint32_t sampleRateHz) noexcept {
-        return (kTxDataHorizonPackets * sampleRateHz + 7999) / 8000;
-    }
-
-    // Durable PCM retention must survive the largest supported 50 ms horizon
-    // plus two complete 1536-frame HAL-ring laps at 192 kHz. Power-of-two
-    // sizing makes modulo behavior easy to stress and leaves margin for a
-    // delayed preparation queue without retaining pointers into HAL memory.
-    static constexpr uint32_t kTxPcmStagingFrames = 16'384;
-    static_assert(
-        kTxPcmStagingFrames >=
-                                   (kTxDataHorizonPackets * 192'000 + 7'999) /
-                                       8'000 +
-                                   2 * kFrameRingFrames);
-    // Packet lead deep enough to cover that many frames at the worst-case
-    // (44.1k) average cadence: ceil(2400 / 5.5125) = 436 packets, rounded up
-    // to a whole interrupt group (108) so every budget derived from it keeps
-    // the group- and cadence-block-aligned ring-wrap asserts below.
-    static constexpr uint32_t kTxExposureLeadPacketsRaw =
-        (kTxExposureLeadFrames * kMinAvgCadencePackets +
-         kMinAvgCadenceFrames - 1) /
-        kMinAvgCadenceFrames;
-    static constexpr uint32_t kTxExposureLeadPackets =
-        ((kTxExposureLeadPacketsRaw + kTxPacketsPerGroup - 1) /
-         kTxPacketsPerGroup) *
-        kTxPacketsPerGroup;
-
-    // Packet-domain TX ownership: 48 descriptors on hardware, plus two
-    // independent producer budgets:
-    //
-    // 1. Refill coverage: packets that keep the core from holing the OHCI
-    //    refill when the producer action is delayed.
-    // 2. Frame catch-up: a bounded packet scan that can finalize a retained
-    //    W-F backlog after a deferred preparation wake. It never permits DATA
-    //    beyond W.
-    //
-    // COVERAGE INVARIANT (hardware-confirmed). The IT refill ISR checks slots
-    //   [completion + hardwareRing, completion + hardwareRing + deltaConsumed)
-    // and FATALs if any is not yet committed. The coverage target stays
-    // hardwareRing + slack (144 packets), but the total preparation limit is
-    // larger so a retained frame backlog can be repaired without reusing
-    // hardware-owned shared slots.
+    // Packet-domain TX policy. The 48-slot ownership guard protects descriptors
+    // already visible to OHCI. The 96-slot dispatch allowance keeps a measured
+    // scheduling stall from emptying the prepared queue. Their sum is the V3
+    // physical-time preparation target; neither value exposes PCM or changes
+    // the absolute sample timeline.
     static constexpr uint32_t kTxHardwareRingPackets =
         ::ASFW::Shared::Isoch::IsochQueueGeometry::kTransmitInFlightPackets;
     // [TxPrep] telemetry buckets intentionally track the immutable hardware
@@ -153,6 +97,8 @@ struct AudioTimingGeometry final {
     // captured distribution meaningful if the lead changes during tuning.
     static constexpr uint32_t kTxPreparationLatencyHistogramBuckets = 6;
     static constexpr uint32_t kTxCommittedMarginHistogramBuckets = 5;
+    static constexpr uint32_t kTxDeadlineHeadroomHistogramBuckets = 5;
+    static constexpr uint32_t kTxCompletionLatencyHistogramBuckets = 5;
     static constexpr uint32_t kRxCaptureOccupancyHistogramBuckets = 5;
     static constexpr uint64_t kNanosecondsPerMicrosecond = 1'000;
     static constexpr uint64_t kTxPreparationLatency250Us = 250;
@@ -186,36 +132,29 @@ struct AudioTimingGeometry final {
     // 96 is exactly the value the old expression produced at the shipping ring
     // of 48, so this is a no-op today and unblocks every deeper ring. 96 packets
     // = 12 ms of producer lateness.
-    static constexpr uint32_t kTxPreparationSlackPackets = 96;
+    static constexpr uint32_t kTxOwnershipGuardCycleSlots =
+        kTxHardwareRingPackets;
+    static constexpr uint32_t kTxDispatchSlackCycleSlots = 96;
+    static constexpr uint32_t kTxPreparedTargetCycleSlots =
+        kTxOwnershipGuardCycleSlots + kTxDispatchSlackCycleSlots;
+    // Compatibility spelling while the remaining call sites are migrated to
+    // physical presentation plans.
+    static constexpr uint32_t kTxPreparationSlackPackets =
+        kTxDispatchSlackCycleSlots;
     static constexpr uint32_t kTxCoverageLeadPackets =
-        kTxHardwareRingPackets + kTxPreparationSlackPackets;
-    // Covers one full client write plus the retained historical recovery
-    // horizon. This is catch-up capacity, not speculative future content.
-    // Round to an interrupt group:
-    // ceil((512 + 2400) / 5.5125) = 529 -> 534 packets.
-    static constexpr uint32_t kTxFrameExposureWindowPacketsRaw =
-        ((kHalIoPeriodFrames + kTxExposureLeadFrames) *
-             kMinAvgCadencePackets +
-         kMinAvgCadenceFrames - 1) /
-        kMinAvgCadenceFrames;
-    static constexpr uint32_t kTxFrameExposureWindowPackets =
-        ((kTxFrameExposureWindowPacketsRaw + kTxPacketsPerGroup - 1) /
-         kTxPacketsPerGroup) *
-        kTxPacketsPerGroup;
+        kTxPreparedTargetCycleSlots;
     static constexpr uint32_t kTxPreparationLeadPackets =
-        kTxCoverageLeadPackets + kTxFrameExposureWindowPackets;
-    // A 912-packet (114 ms) backing ring holds the worst bounded catch-up scan
-    // plus ownership slack before reuse. The 48-packet hardware descriptor
-    // ring remains a separate low-latency transport concern.
-    static constexpr uint32_t kTxSharedSlotPackets =
-        912;
+        kTxPreparedTargetCycleSlots;
+    // 24 ms of durable packet storage: 18 ms prepared plus the 6 ms ownership
+    // guard. Storage capacity is not presentation latency.
+    static constexpr uint32_t kTxSharedSlotPackets = 192;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
     static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =
-        kTxPreparationLeadPackets - kTxHardwareRingPackets;
+        kTxPreparedTargetCycleSlots - kTxOwnershipGuardCycleSlots;
 
     // Backing packet-ring / timeline slot array length
     // (AmdtpPacketTimeline, DiceTxStreamEngine::timelineSlots_). Packets.
-    static constexpr uint32_t kTimelineSlots = 1024;
+    static constexpr uint32_t kTimelineSlots = kTxSharedSlotPackets;
 };
 
 static_assert(AudioTimingGeometry::kFrameRingFrames %
@@ -251,11 +190,10 @@ static_assert(AudioTimingGeometry::kTxCoverageLeadPackets ==
                   AudioTimingGeometry::kTxHardwareRingPackets +
                       AudioTimingGeometry::kTxPreparationSlackPackets,
               "TX coverage lead must remain the refill-safety sub-budget");
-static_assert(AudioTimingGeometry::kTxPreparationLeadPackets <=
-                  AudioTimingGeometry::kTxSharedSlotPackets -
-                      AudioTimingGeometry::kTxHardwareRingPackets,
-              "TX preparation must leave one hardware-ring depth before "
-              "shared-slot reuse");
+static_assert(AudioTimingGeometry::kTxSharedSlotPackets ==
+                  AudioTimingGeometry::kTxPreparedTargetCycleSlots +
+                      AudioTimingGeometry::kTxOwnershipGuardCycleSlots,
+              "TX store must hold prepared slots plus the ownership guard");
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets %
                   AudioTimingGeometry::kTxPacketsPerGroup ==
               0,
@@ -273,25 +211,6 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets %
               0,
               "TX shared slot wrap must preserve blocking-cadence phase");
 
-// --- TX retained-content/catch-up capacity ----------------------------------
-static_assert(AudioTimingGeometry::kTxExposureLeadFrames >=
-                  AudioTimingGeometry::kHalIoPeriodFrames +
-                      AudioTimingGeometry::kSchedulingJitterFrames,
-              "TX retention horizon must cover one full IO window plus "
-              "scheduling jitter");
-static_assert(AudioTimingGeometry::kTxExposureLeadPackets <=
-                  AudioTimingGeometry::kTxSharedSlotPackets,
-              "TX packet scan must fit the shared queue");
-static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
-                  2 * AudioTimingGeometry::kTxExposureLeadPackets,
-              "TX backing ring must keep catch-up capacity below half ring");
-static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets *
-                  AudioTimingGeometry::kMinAvgCadenceFrames >=
-              (AudioTimingGeometry::kHalIoPeriodFrames +
-               AudioTimingGeometry::kTxExposureLeadFrames) *
-                  AudioTimingGeometry::kMinAvgCadencePackets,
-              "TX catch-up packet window must cover one callback plus the "
-              "retention horizon at the worst-case (44.1k) cadence");
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
                   AudioTimingGeometry::kTimelineSlots,
               "shared packet ring must fit inside the timeline slot array");
@@ -389,5 +308,5 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
 //   * Backing ring depth (Apple ~800 pkt, ffado 128) is decoupled from the
 //     active near-wire lead -- matches our capacity-is-not-latency rule. None of
 //     these exposes a direct AudioDriverKit ZTS analogue (see §9.F), so
-//     kTxExposureLeadFrames and the ZTS period are OURS to justify, not inherited.
+//     the ZTS period is ours to justify, not inherited.
 // =============================================================================

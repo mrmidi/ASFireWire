@@ -17,10 +17,10 @@
 
 namespace ASFW::Audio::Runtime {
 
-constexpr uint32_t kAudioTelemetryWireVersion = 5;
+constexpr uint32_t kAudioTelemetryWireVersion = 6;
 constexpr uint32_t kAudioTelemetryMaxEndpoints = 8;
 constexpr uint16_t kAudioTelemetryHeaderBytes = 16;
-constexpr uint16_t kAudioTelemetryEndpointBytes = 688;
+constexpr uint16_t kAudioTelemetryEndpointBytes = 1072;
 
 [[nodiscard]] constexpr uint32_t AudioTelemetryWireByteSize(
     uint32_t endpointCount) noexcept {
@@ -109,31 +109,28 @@ struct AudioTelemetryEndpointSnapshot final {
     uint64_t rxZeroDataBlockSize{0};
     uint64_t rxGeometryMismatch{0};
 
-    // Wire v4 TX content-ownership attribution. These are copied values, never
-    // cross-service views: W is the latest staged CoreAudio frame, F is the
-    // immutable content frontier, and [completion, committed) is the neutral
-    // transport-owned packet range. The first-fault tuple is latched so a
-    // transient Heisenbug remains diagnosable after the live cursors move on.
+    // Value-owned TX content attribution. The PCM cache is publication-only;
+    // none of these fields is a scheduling or hardware-time coordinate.
     uint64_t txPlaybackWriteFrame{0};
     uint64_t txPlaybackOldestValidFrame{0};
-    uint64_t txContentFinalizedFrameEnd{0};
-    uint64_t txStagingOldestValidFrame{0};
-    uint64_t txStagingWrittenEndFrame{0};
+    uint64_t txScheduledFrameEnd{0};
+    uint64_t txPcmOldestValidFrame{0};
+    uint64_t txPcmPublishedEndFrame{0};
     uint64_t txTransportCompletionCursor{0};
     uint64_t txTransportCommittedEnd{0};
-    uint64_t txStagingWrites{0};
-    uint64_t txStagingFrames{0};
-    uint64_t txStagingDiscontinuities{0};
-    uint64_t txStagingOverwrittenFrames{0};
-    uint64_t txStagingReadsReady{0};
-    uint64_t txStagingReadsNotYetWritten{0};
-    uint64_t txStagingReadsStaleOverwritten{0};
-    uint64_t txStagingReadsSnapshotBusy{0};
-    uint64_t txStagingReadsInvalid{0};
+    uint64_t txPcmPublications{0};
+    uint64_t txPcmFramesPublished{0};
+    uint64_t txPcmDiscontinuities{0};
+    uint64_t txPcmExpiredFrames{0};
+    uint64_t txPcmCopiesReady{0};
+    uint64_t txPcmCopiesNotYetPublished{0};
+    uint64_t txPcmCopiesExpired{0};
+    uint64_t txPcmCopiesConcurrentRewrite{0};
+    uint64_t txPcmCopiesInvalid{0};
     uint64_t txContentDeferrals{0};
     uint64_t txContentDeadlineNoData{0};
-    uint64_t txContentStaleXruns{0};
-    uint64_t txContentRebases{0};
+    uint64_t txPcmCopiesWrongEpoch{0};
+    uint64_t txMissedFrames{0};
     uint64_t txContentFaultEvents{0};
     uint64_t txContentFirstFaultPacket{0};
     uint64_t txContentFirstFaultAudioFrame{0};
@@ -144,10 +141,52 @@ struct AudioTelemetryEndpointSnapshot final {
     uint32_t txContentFirstFaultReason{0};
     uint32_t txTransportStatus{0};
     uint64_t rxEmptyCompletions{0};
+
+    // Wire v6: hardware-timeline, immutable-publication, backend conversion,
+    // and cycle-trace instrumentation. Appended to preserve prefix offsets.
+    uint64_t timelineEpoch{0};
+    uint64_t timelineEpochTransitions{0};
+    uint64_t timelineSourceChanges{0};
+    uint64_t timelineObservations{0};
+    uint64_t timelineRejectedObservations{0};
+    uint64_t timelineZtsPublications{0};
+    uint64_t timelineDuplicateBoundaries{0};
+    uint32_t timelineSource{0};
+    uint32_t timelineDiscontinuityReason{0};
+    uint64_t pcmEpoch{0};
+    uint64_t pcmDuplicateFrames{0};
+    uint64_t pcmMaximumPublicationFrames{0};
+    uint64_t pcmMaximumPublicationDurationTicks{0};
+    uint64_t txPacketStoreHighWaterPackets{0};
+    uint64_t txCompletionLatencyMaxCycles{0};
+    uint64_t backendReplayEntries{0};
+    uint64_t backendReplayUnderflows{0};
+    uint64_t backendInvalidSyt{0};
+    uint64_t backendObservationConversions{0};
+    uint64_t mAudioWarmupGroups{0};
+    uint64_t mAudioTxDerivedObservations{0};
+    uint64_t mAudioCaptureTransitions{0};
+    uint64_t mAudioPostStartConfirmations{0};
+    uint64_t txCycleTraceWriteCount{0};
+    std::array<uint64_t, PcmPublicationTelemetry::kHistogramBuckets>
+        pcmPublicationSpanHistogram{};
+    std::array<uint64_t, PcmPublicationTelemetry::kHistogramBuckets>
+        pcmPublicationDurationHistogram{};
+    std::array<uint64_t,
+               Shared::AudioTimingGeometry::kTxDeadlineHeadroomHistogramBuckets>
+        txDeadlineHeadroomHistogram{};
+    std::array<uint64_t,
+               Shared::AudioTimingGeometry::kTxCompletionLatencyHistogramBuckets>
+        txCompletionLatencyHistogram{};
+    uint64_t backendObservationConversionFailures{0};
+    uint64_t backendDataPackets{0};
+    uint64_t backendNoDataPackets{0};
+    uint64_t backendDbcDiscontinuities{0};
+    uint64_t backendSytDiscontinuities{0};
 };
 
 static_assert(sizeof(AudioTelemetryEndpointSnapshot) == kAudioTelemetryEndpointBytes);
-// Swift decodes this ABI by fixed offsets. Lock the v5 strong-identity prefix
+// Swift decodes this ABI by fixed offsets. Lock the v6 strong-identity prefix
 // and the existing diagnostic tails so a harmless-looking insertion fails the
 // driver build instead of silently relabelling MCP diagnostics.
 static_assert(offsetof(AudioTelemetryEndpointSnapshot, endpointId) == 8);
@@ -160,6 +199,13 @@ static_assert(offsetof(AudioTelemetryEndpointSnapshot,
                        txContentFirstFaultReason) == 672);
 static_assert(offsetof(AudioTelemetryEndpointSnapshot, rxEmptyCompletions) ==
               680);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot, timelineEpoch) == 688);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot,
+                       txCycleTraceWriteCount) == 864);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot,
+                       pcmPublicationSpanHistogram) == 872);
+static_assert(offsetof(AudioTelemetryEndpointSnapshot,
+                       backendSytDiscontinuities) == 1064);
 
 struct AudioTelemetrySnapshot final {
     uint16_t version{kAudioTelemetryWireVersion};
@@ -204,42 +250,43 @@ inline void CopyAudioTelemetrySnapshot(
         control.playbackRingWriteFrame.load(memoryOrder);
     out.txPlaybackOldestValidFrame =
         control.playbackRingOldestValidFrame.load(memoryOrder);
-    out.txContentFinalizedFrameEnd =
-        control.txContentFinalizedFrameEnd.load(memoryOrder);
-    // writtenEndFrame is the release publication for the paired staging range.
-    out.txStagingWrittenEndFrame =
-        control.txPcmStagingTelemetry.writtenEndFrame.load(
+    out.txScheduledFrameEnd =
+        control.txScheduledSampleFrame.load(memoryOrder);
+    // publishedEndFrame is the release publication for the immutable cache.
+    out.txPcmPublishedEndFrame =
+        control.pcmPublicationTelemetry.publishedEndFrame.load(
             std::memory_order_acquire);
-    out.txStagingOldestValidFrame =
-        control.txPcmStagingTelemetry.oldestValidFrame.load(memoryOrder);
+    out.txPcmOldestValidFrame =
+        control.pcmPublicationTelemetry.oldestValidFrame.load(memoryOrder);
     out.txTransportCompletionCursor =
         control.txTransportCompletionCursor.load(memoryOrder);
     out.txTransportCommittedEnd =
         control.txTransportCommittedEnd.load(memoryOrder);
     out.txTransportStatus = control.txTransportStatus.load(memoryOrder);
-    out.txStagingWrites =
-        control.txPcmStagingTelemetry.writes.load(memoryOrder);
-    out.txStagingFrames =
-        control.txPcmStagingTelemetry.framesStaged.load(memoryOrder);
-    out.txStagingDiscontinuities =
-        control.txPcmStagingTelemetry.discontinuities.load(memoryOrder);
-    out.txStagingOverwrittenFrames =
-        control.txPcmStagingTelemetry.overwrittenFrames.load(memoryOrder);
-    out.txStagingReadsReady =
-        control.txPcmStagingTelemetry.readsReady.load(memoryOrder);
-    out.txStagingReadsNotYetWritten =
-        control.txPcmStagingTelemetry.readsNotYetWritten.load(memoryOrder);
-    out.txStagingReadsStaleOverwritten =
-        control.txPcmStagingTelemetry.readsStaleOverwritten.load(memoryOrder);
-    out.txStagingReadsSnapshotBusy =
-        control.txPcmStagingTelemetry.readsSnapshotBusy.load(memoryOrder);
-    out.txStagingReadsInvalid =
-        control.txPcmStagingTelemetry.readsInvalid.load(memoryOrder);
+    out.txPcmPublications =
+        control.pcmPublicationTelemetry.publications.load(memoryOrder);
+    out.txPcmFramesPublished =
+        control.pcmPublicationTelemetry.framesPublished.load(memoryOrder);
+    out.txPcmDiscontinuities =
+        control.pcmPublicationTelemetry.discontinuities.load(memoryOrder);
+    out.txPcmExpiredFrames =
+        control.pcmPublicationTelemetry.expiredFrames.load(memoryOrder);
+    out.txPcmCopiesReady =
+        control.pcmPublicationTelemetry.copiesReady.load(memoryOrder);
+    out.txPcmCopiesNotYetPublished =
+        control.pcmPublicationTelemetry.copiesNotYetPublished.load(memoryOrder);
+    out.txPcmCopiesExpired =
+        control.pcmPublicationTelemetry.copiesExpired.load(memoryOrder);
+    out.txPcmCopiesConcurrentRewrite =
+        control.pcmPublicationTelemetry.copiesConcurrentRewrite.load(memoryOrder);
+    out.txPcmCopiesInvalid =
+        control.pcmPublicationTelemetry.copiesInvalid.load(memoryOrder);
     out.txContentDeferrals = control.txContentDeferrals.load(memoryOrder);
     out.txContentDeadlineNoData =
         control.txContentDeadlineNoData.load(memoryOrder);
-    out.txContentStaleXruns = control.txContentStaleXruns.load(memoryOrder);
-    out.txContentRebases = control.txContentRebases.load(memoryOrder);
+    out.txPcmCopiesWrongEpoch =
+        control.pcmPublicationTelemetry.copiesWrongEpoch.load(memoryOrder);
+    out.txMissedFrames = control.txMissedFrames.load(memoryOrder);
     out.txContentFaultEvents = control.txContentFaultEvents.load(memoryOrder);
     out.txContentFirstFaultPacket =
         control.txContentFirstFaultPacket.load(memoryOrder);
@@ -257,6 +304,71 @@ inline void CopyAudioTelemetrySnapshot(
     out.txContentFirstFaultReason =
         control.txContentFirstFaultReason.load(std::memory_order_acquire);
     out.rxEmptyCompletions = control.rxEmptyCompletions.load(memoryOrder);
+    out.timelineEpoch = control.hardwareTimeline.Epoch();
+    out.timelineEpochTransitions =
+        control.hardwareTimeline.epochTransitions_.load(memoryOrder);
+    out.timelineSourceChanges =
+        control.hardwareTimeline.sourceChanges_.load(memoryOrder);
+    out.timelineObservations =
+        control.hardwareTimeline.observations_.load(memoryOrder);
+    out.timelineRejectedObservations =
+        control.hardwareTimeline.rejectedObservations_.load(memoryOrder);
+    out.timelineZtsPublications =
+        control.hardwareTimeline.ztsPublications_.load(memoryOrder);
+    out.timelineDuplicateBoundaries =
+        control.hardwareTimeline.duplicateBoundaries_.load(memoryOrder);
+    out.timelineSource = static_cast<uint32_t>(
+        control.hardwareTimeline.Source());
+    out.timelineDiscontinuityReason = static_cast<uint32_t>(
+        control.hardwareTimeline.DiscontinuityReason());
+    out.pcmEpoch = control.pcmPublicationTelemetry.epoch.load(memoryOrder);
+    out.pcmDuplicateFrames =
+        control.pcmPublicationTelemetry.duplicateFrames.load(memoryOrder);
+    out.pcmMaximumPublicationFrames =
+        control.pcmPublicationTelemetry.maximumPublicationFrames.load(memoryOrder);
+    out.pcmMaximumPublicationDurationTicks =
+        control.pcmPublicationTelemetry.maximumPublicationDurationTicks.load(
+            memoryOrder);
+    out.txPacketStoreHighWaterPackets =
+        control.txPacketStoreHighWaterPackets.load(memoryOrder);
+    out.txCompletionLatencyMaxCycles =
+        control.txCompletionLatencyMaxCycles.load(memoryOrder);
+    out.backendReplayEntries = control.txReplayEntries.load(memoryOrder);
+    out.backendReplayUnderflows = control.txReplayUnderflows.load(memoryOrder);
+    out.backendInvalidSyt = control.txReplayInvalidSyt.load(memoryOrder);
+    out.backendObservationConversions =
+        control.backendObservationConversions.load(memoryOrder);
+    out.mAudioWarmupGroups = control.mAudioWarmupGroups.load(memoryOrder);
+    out.mAudioTxDerivedObservations =
+        control.mAudioTxDerivedObservations.load(memoryOrder);
+    out.mAudioCaptureTransitions =
+        control.mAudioCaptureTransitions.load(memoryOrder);
+    out.mAudioPostStartConfirmations =
+        control.mAudioPostStartConfirmations.load(memoryOrder);
+    out.txCycleTraceWriteCount = control.txCycleTrace.writeCount.load(
+        memoryOrder);
+    for (size_t i = 0; i < out.pcmPublicationSpanHistogram.size(); ++i) {
+        out.pcmPublicationSpanHistogram[i] =
+            control.pcmPublicationTelemetry.publicationSpanHistogram[i].load(
+                memoryOrder);
+        out.pcmPublicationDurationHistogram[i] =
+            control.pcmPublicationTelemetry.publicationDurationHistogram[i].load(
+                memoryOrder);
+        out.txDeadlineHeadroomHistogram[i] =
+            control.txDeadlineHeadroomHistogram[i].load(memoryOrder);
+        out.txCompletionLatencyHistogram[i] =
+            control.txCompletionLatencyHistogram[i].load(memoryOrder);
+    }
+    out.backendObservationConversionFailures =
+        control.backendObservationConversionFailures.load(memoryOrder);
+    out.backendDataPackets =
+        control.counters.txDataPackets.load(memoryOrder);
+    out.backendNoDataPackets =
+        control.counters.txNoDataPackets.load(memoryOrder);
+    out.backendDbcDiscontinuities =
+        control.backendDbcDiscontinuities.load(memoryOrder);
+    out.backendSytDiscontinuities =
+        control.backendSytDiscontinuities.load(memoryOrder);
     out.currentCommittedMarginPackets =
         control.txCurrentCommittedMarginPackets.load(memoryOrder);
     out.minimumCommittedMarginPackets =

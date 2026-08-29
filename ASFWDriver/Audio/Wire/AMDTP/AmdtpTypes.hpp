@@ -115,7 +115,11 @@ struct PreparedTxPacket final {
 
     uint64_t firstAudioFrame{0};
     uint32_t framesInPacket{0};
+    uint32_t plannedFrameCount{0};
     uint32_t dbs{0};
+    uint64_t epoch{0};
+    uint64_t cycleOrdinal{0};
+    uint64_t presentationBusTicks{0};
 
     // Load-bearing publication invariant. Every DATA packet must have copied a
     // complete, stable PCM snapshot before IAmdtpTxSlotProvider::PublishSlot.
@@ -125,6 +129,17 @@ struct PreparedTxPacket final {
 enum class AmdtpPacketDisposition : uint8_t {
     NoData = 0,
     Data = 1,
+};
+
+// Physical-time plan owned by the shared hardware timeline and backend cadence.
+// The packetizer encodes this value and never invents or advances a HAL frame.
+struct TxPresentationPlan final {
+    uint64_t epoch{0};
+    uint64_t cycleOrdinal{0};
+    uint64_t firstAudioFrame{0};
+    uint32_t frameCount{0};
+    uint64_t presentationBusTicks{0};
+    AmdtpPacketDisposition disposition{AmdtpPacketDisposition::NoData};
 };
 
 struct AmdtpTimingState final {
@@ -143,7 +158,6 @@ struct AmdtpTimingState final {
     // packetizer seam: it carries no M-Audio identity or transport detail.
     bool hasExplicitPacketSchedule{false};
     uint16_t explicitDataBlocks{0};
-    uint64_t nextAudioFrame{0};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

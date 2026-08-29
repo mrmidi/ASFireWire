@@ -68,10 +68,8 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.txPreparationLatencySamples.store(100, std::memory_order_relaxed);
     control.txPreparationAtMost750Us.store(99, std::memory_order_relaxed);
     control.txPreparationAtLeast1500Us.store(0, std::memory_order_relaxed);
-    control.counters.txPhaseRebases.store(4, std::memory_order_relaxed);
-    control.counters.txSilenceFallback.store(5, std::memory_order_relaxed);
-    control.counters.txStaleOverwrittenReads.store(6, std::memory_order_relaxed);
-    control.counters.txProducerAheadUnderruns.store(7, std::memory_order_relaxed);
+    control.counters.txPreparedTargetShortfalls.store(
+        7, std::memory_order_relaxed);
     control.counters.txPcmNonzeroPackets.store(9, std::memory_order_relaxed);
     control.counters.txPcmAllZeroPackets.store(10, std::memory_order_relaxed);
     control.counters.txPreparedPcmSlots.store(12, std::memory_order_relaxed);
@@ -155,10 +153,7 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.txPreparationLatencySamples, 100U);
     EXPECT_EQ(snapshot.txPreparationAtMost750Us, 99U);
     EXPECT_EQ(snapshot.txPreparationAtLeast1500Us, 0U);
-    EXPECT_EQ(snapshot.txPhaseRebases, 4U);
-    EXPECT_EQ(snapshot.txSilenceFallback, 5U);
-    EXPECT_EQ(snapshot.txStaleOverwrittenReads, 6U);
-    EXPECT_EQ(snapshot.txProducerAheadUnderruns, 7U);
+    EXPECT_EQ(snapshot.txPreparedTargetShortfalls, 7U);
     EXPECT_EQ(snapshot.txPcmNonzeroPackets, 9U);
     EXPECT_EQ(snapshot.txPcmAllZeroPackets, 10U);
     EXPECT_EQ(snapshot.txPreparedPcmSlots, 12U);

@@ -9,7 +9,6 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../Config/InputSafetyPolicy.hpp"
-#include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../Shared/AudioTimingGeometry.hpp"
@@ -651,8 +650,6 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return error;
     }
     const double currentSampleRate = ivars.device.currentSampleRate;
-    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice1xBlocking(
-        static_cast<uint32_t>(currentSampleRate));
     const auto* profile = &ivars.resolvedProfile;
 
     uint32_t outLatency = 0;
@@ -664,6 +661,30 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     inLatency = profile->RxReportedLatencyFrames(currentSampleRate);
     outSafety = profile->TxSafetyOffsetFrames(currentSampleRate);
     inSafety = profile->RxSafetyOffsetFrames(currentSampleRate);
+
+    const uint32_t profileOutputSafety = outSafety;
+    outSafety = ASFW::Audio::Shared::AudioGeometryPolicy::
+        RequiredOutputSafetyFrames(
+            outSafety, static_cast<uint32_t>(currentSampleRate),
+            profile->TxTransferDelayTicks(currentSampleRate));
+    if (outSafety == 0) {
+        ASFW_LOG_ERROR(
+            Audio,
+            "ASFWAudioDriver: unsupported V3 safety rate=%.0f",
+            currentSampleRate);
+        return kIOReturnUnsupported;
+    }
+    if (outSafety != profileOutputSafety) {
+        ASFW_LOG(
+            Audio,
+            "ASFWAudioDriver: output safety %u -> %u (preparedSlots=%u transferTicks=%u packetFrames=%u)",
+            profileOutputSafety, outSafety,
+            ASFW::Audio::Shared::AudioTimingGeometry::
+                kTxPreparedTargetCycleSlots,
+            profile->TxTransferDelayTicks(currentSampleRate),
+            ASFW::Audio::Shared::AudioGeometryPolicy::FramesPerPacket(
+                currentSampleRate));
+    }
 
     constexpr uint32_t kSchedulingJitterFrames = 64;
     // Data-visibility margin only; the IO buffer size is NOT folded in (see
@@ -713,11 +734,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     const uint32_t configuredZtsPeriod =
         ivars.audioDevice->GetZeroTimestampPeriod();
-    if (configuredZtsPeriod != policy.HalZeroTimestampPeriodFrames()) {
+    constexpr uint32_t kExpectedZtsPeriod =
+        ASFW::Audio::Shared::AudioTimingGeometry::
+            kHalZeroTimestampPeriodFrames;
+    if (configuredZtsPeriod != kExpectedZtsPeriod) {
         ASFW_LOG(
             Audio,
             "ADK FATAL graph op=device.GetZeroTimestampPeriod expected=%u actual=%u",
-            policy.HalZeroTimestampPeriodFrames(),
+            kExpectedZtsPeriod,
             configuredZtsPeriod);
         return kIOReturnUnsupported;
     }

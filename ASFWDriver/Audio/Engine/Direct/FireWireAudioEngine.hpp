@@ -2,7 +2,6 @@
 
 #include "AudioClockPublisher.hpp"
 #include "DirectInputWriter.hpp"
-#include "DirectOutputReader.hpp"
 
 #include "../../DriverKit/Runtime/AudioGraphBinding.hpp"
 
@@ -22,7 +21,6 @@ public:
         bound_ = true;
 
         inputWriter_.Bind(&binding_);
-        outputReader_.Bind(&binding_);
         clockPublisher_.Bind(&binding_);
 
         return true;
@@ -32,7 +30,6 @@ public:
         bound_ = false;
 
         inputWriter_.Unbind();
-        outputReader_.Unbind();
         clockPublisher_.Unbind();
 
         binding_ = {};
@@ -50,10 +47,6 @@ public:
         return inputWriter_;
     }
 
-    [[nodiscard]] DirectOutputReader& OutputReader() noexcept {
-        return outputReader_;
-    }
-
     [[nodiscard]] AudioClockPublisher& ClockPublisher() noexcept {
         return clockPublisher_;
     }
@@ -63,7 +56,6 @@ private:
     bool bound_{false};
 
     DirectInputWriter inputWriter_{};
-    DirectOutputReader outputReader_{};
     AudioClockPublisher clockPublisher_{};
 };
 

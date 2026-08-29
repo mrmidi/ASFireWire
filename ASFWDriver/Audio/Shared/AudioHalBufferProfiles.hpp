@@ -4,12 +4,6 @@
 
 namespace ASFW::Audio::Shared {
 
-enum class AudioHalBufferProfileId : uint8_t {
-    Aligned512 = 0,
-    PreDiceZts192 = 1,
-    DiceWorking1536 = 2,
-};
-
 struct AudioHalBufferProfile final {
     const char* name;
     uint32_t frameRingFrames;
@@ -17,36 +11,18 @@ struct AudioHalBufferProfile final {
     uint32_t zeroTimestampPeriodFrames;
 };
 
-// Historical aligned geometry. Retained as a compile-time fallback.
-inline constexpr AudioHalBufferProfile kAudioHalBufferProfileAligned512{
-    "aligned-512",
+// V3 exposes one HAL contract for every backend. Device protocol families may
+// vary their wire cadence and transfer delay, but never CoreAudio ring geometry.
+inline constexpr AudioHalBufferProfile kAudioHalBufferProfileV3{
+    "audio-engine-v3",
+    8'192,
     512,
-    512,
-    512,
+    8'192,
 };
 
-// Pre-DICE geometry retained for comparison.
-inline constexpr AudioHalBufferProfile kAudioHalBufferProfilePreDiceZts192{
-    "pre-dice-zts-192",
-    1536,
-    512,
-    192,
-};
-
-// Working DICE baseline from e28f1a4 (tag: adk-duplex-working).
-inline constexpr AudioHalBufferProfile kAudioHalBufferProfileDiceWorking1536{
-    "dice-working-1536",
-    1536,
-    512,
-    1536,
-};
-
-// Largest blocking-mode frames-per-data-packet across the IEC 61883-6 rate
-// ladder: the SYT interval is 8 @1x, 16 @2x, 32 @4x. ZTS anchors are only
-// published when a boundary lands on a packet-first frame, so the period must
-// be a multiple of every tier's frames-per-packet (all divide 32). A period
-// that is not silently thins anchors ~4x at 4x rates
-// (tools/amdtp_blocking_cadence_sim.py, 1544-period counterexample).
+// Largest blocking-mode frames-per-data-packet in V3: 8 @1x, 16 @2x,
+// 32 @4x. Boundaries inside packets are projected by HardwareSampleTimeline;
+// divisibility still keeps the shared HAL geometry exact at every rate.
 inline constexpr uint32_t kMaxBlockingFramesPerDataPacket = 32;
 
 [[nodiscard]] constexpr bool IsValidAudioHalBufferProfile(
@@ -62,42 +38,8 @@ inline constexpr uint32_t kMaxBlockingFramesPerDataPacket = 32;
                0;
 }
 
-static_assert(IsValidAudioHalBufferProfile(kAudioHalBufferProfileAligned512));
-static_assert(IsValidAudioHalBufferProfile(
-    kAudioHalBufferProfilePreDiceZts192));
-static_assert(IsValidAudioHalBufferProfile(
-    kAudioHalBufferProfileDiceWorking1536));
-
-[[nodiscard]] constexpr AudioHalBufferProfile SelectAudioHalBufferProfile(
-    AudioHalBufferProfileId id) noexcept {
-    switch (id) {
-        case AudioHalBufferProfileId::Aligned512:
-            return kAudioHalBufferProfileAligned512;
-        case AudioHalBufferProfileId::PreDiceZts192:
-            return kAudioHalBufferProfilePreDiceZts192;
-        case AudioHalBufferProfileId::DiceWorking1536:
-        default:
-            return kAudioHalBufferProfileDiceWorking1536;
-    }
-}
-
-// Override with -DASFW_AUDIO_HAL_BUFFER_PROFILE=0, 1, or 2. Buffer geometry is
-// compile-time because it sizes shared memory exported across driver processes.
-#if defined(ASFW_AUDIO_HAL_BUFFER_PROFILE)
-inline constexpr uint8_t kAudioHalBufferProfileRaw =
-    ASFW_AUDIO_HAL_BUFFER_PROFILE;
-#else
-inline constexpr uint8_t kAudioHalBufferProfileRaw = 2;
-#endif
-
-static_assert(
-    kAudioHalBufferProfileRaw <= 2,
-    "Invalid ASFW_AUDIO_HAL_BUFFER_PROFILE; use 0 (aligned-512), "
-    "1 (pre-dice-zts-192), or 2 (dice-working-1536)");
-
-inline constexpr AudioHalBufferProfileId kActiveAudioHalBufferProfileId =
-    static_cast<AudioHalBufferProfileId>(kAudioHalBufferProfileRaw);
+static_assert(IsValidAudioHalBufferProfile(kAudioHalBufferProfileV3));
 inline constexpr AudioHalBufferProfile kActiveAudioHalBufferProfile =
-    SelectAudioHalBufferProfile(kActiveAudioHalBufferProfileId);
+    kAudioHalBufferProfileV3;
 
 } // namespace ASFW::Audio::Shared
