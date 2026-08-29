@@ -24,20 +24,115 @@ TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalesci
     EXPECT_EQ(requests.PublishRequest(200), 2U);
     EXPECT_TRUE(requests.NeedsHandling());
     EXPECT_EQ(requests.RequestedGeneration(), 2U);
-    EXPECT_EQ(requests.requestHostTicks.load(std::memory_order_relaxed), 200U);
+    // Coalesced requests keep the OLDEST stamp: the latency that matters is
+    // how long the first unserved request waited, not the newest one.
+    EXPECT_EQ(requests.requestHostTicks.load(std::memory_order_relaxed), 100U);
     EXPECT_TRUE(requests.TryScheduleWake());
     EXPECT_FALSE(requests.TryScheduleWake());
 
-    requests.MarkHandled(2, 250);
+    EXPECT_EQ(requests.MarkHandled(2, 250), 100U);
     EXPECT_FALSE(requests.NeedsHandling());
     EXPECT_EQ(requests.handledGeneration.load(std::memory_order_acquire), 2U);
     EXPECT_EQ(requests.handledHostTicks.load(std::memory_order_relaxed), 250U);
+    // Serving the pending request clears the stamp, so a wake with nothing
+    // outstanding produces no latency sample rather than a bogus one.
+    EXPECT_EQ(requests.requestHostTicks.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(requests.MarkHandled(2, 260), 0U);
     requests.FinishWake();
     EXPECT_TRUE(requests.TryScheduleWake());
     requests.FinishWake();
 
     EXPECT_EQ(requests.PublishRequest(300), 3U);
     EXPECT_TRUE(requests.NeedsHandling());
+    EXPECT_EQ(requests.requestHostTicks.load(std::memory_order_relaxed), 300U);
+}
+
+TEST(AudioTransportControlBlockTests, PreparationLatencyBucketsSpanTheLadder) {
+    using Block = ASFW::Audio::Runtime::AudioTransportControlBlock;
+    EXPECT_EQ(Block::PreparationLatencyBucket(0), 0U);
+    EXPECT_EQ(Block::PreparationLatencyBucket(250), 0U);
+    EXPECT_EQ(Block::PreparationLatencyBucket(251), 1U);
+    EXPECT_EQ(Block::PreparationLatencyBucket(500), 1U);
+    EXPECT_EQ(Block::PreparationLatencyBucket(750), 2U);
+    EXPECT_EQ(Block::PreparationLatencyBucket(1000), 3U);
+    EXPECT_EQ(Block::PreparationLatencyBucket(1500), 4U);
+    EXPECT_EQ(Block::PreparationLatencyBucket(1501), 5U);
+}
+
+TEST(AudioTransportControlBlockTests, CommittedMarginBucketsResolveRingFractions) {
+    using Block = ASFW::Audio::Runtime::AudioTransportControlBlock;
+    // The failure this must resolve is running out of committed slots, so the
+    // resolution is at the low end: a full ring collapses into the top bucket.
+    EXPECT_EQ(Block::CommittedMarginBucket(0), 0U);
+    EXPECT_EQ(Block::CommittedMarginBucket(12), 0U);
+    EXPECT_EQ(Block::CommittedMarginBucket(13), 1U);
+    EXPECT_EQ(Block::CommittedMarginBucket(24), 1U);
+    EXPECT_EQ(Block::CommittedMarginBucket(36), 2U);
+    EXPECT_EQ(Block::CommittedMarginBucket(48), 3U);
+    EXPECT_EQ(Block::CommittedMarginBucket(49), 4U);
+    EXPECT_EQ(Block::CommittedMarginBucket(168), 4U);
+}
+
+TEST(AudioTransportControlBlockTests, TxIntervalRotationPublishesAndRearms) {
+    AudioTransportControlBlock control{};
+
+    control.RecordPreparationLatency(1234, 300);
+    control.RecordPreparationLatency(9999, 2000);
+    control.RecordCommittedMargin(20);
+    control.RecordCommittedMargin(120);
+    control.RecordProducerHeadroom(512);
+    control.RecordProducerHeadroom(64);
+
+    EXPECT_EQ(control.txPreparationLatencySamples.load(
+                  std::memory_order_relaxed), 2U);
+    EXPECT_EQ(control.txPreparationAtMost750Us.load(
+                  std::memory_order_relaxed), 1U);
+    EXPECT_EQ(control.txPreparationAtLeast1500Us.load(
+                  std::memory_order_relaxed), 1U);
+    EXPECT_EQ(control.txMaxPreparationLatencyTicks.load(
+                  std::memory_order_relaxed), 9999U);
+    EXPECT_EQ(control.txMinimumProducerHeadroomFrames.load(
+                  std::memory_order_relaxed), 64U);
+
+    control.CompleteTxInterval();
+
+    // The sequence is even once the completed fields are stable.
+    EXPECT_EQ(control.txCompletedIntervalSequence.load(
+                  std::memory_order_acquire) % 2U, 0U);
+    EXPECT_EQ(control.txCompletedIntervalPreparationLatencyMaxTicks.load(
+                  std::memory_order_relaxed), 9999U);
+    EXPECT_EQ(control.txCompletedIntervalPreparationLatencyHistogram[1].load(
+                  std::memory_order_relaxed), 1U);
+    EXPECT_EQ(control.txCompletedIntervalPreparationLatencyHistogram[5].load(
+                  std::memory_order_relaxed), 1U);
+    EXPECT_EQ(control.txCompletedIntervalMarginMinPackets.load(
+                  std::memory_order_relaxed), 20U);
+    EXPECT_EQ(control.txCompletedIntervalMarginMaxPackets.load(
+                  std::memory_order_relaxed), 120U);
+    EXPECT_EQ(control.txCompletedIntervalCommittedMarginHistogram[1].load(
+                  std::memory_order_relaxed), 1U);
+    EXPECT_EQ(control.txCompletedIntervalCommittedMarginHistogram[4].load(
+                  std::memory_order_relaxed), 1U);
+    EXPECT_EQ(control.txCompletedIntervalProducerHeadroomMinFrames.load(
+                  std::memory_order_relaxed), 64U);
+
+    // The interval accumulators are re-armed; the since-start watermarks are not.
+    EXPECT_EQ(control.txIntervalPreparationLatencyMaxTicks.load(
+                  std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.txIntervalCommittedMarginMinPackets.load(
+                  std::memory_order_relaxed), UINT32_MAX);
+    EXPECT_EQ(control.txIntervalProducerHeadroomMinFrames.load(
+                  std::memory_order_relaxed), UINT32_MAX);
+    EXPECT_EQ(control.txMinimumProducerHeadroomFrames.load(
+                  std::memory_order_relaxed), 64U);
+    EXPECT_EQ(control.txMaxPreparationLatencyTicks.load(
+                  std::memory_order_relaxed), 9999U);
+
+    control.CompleteTxInterval();
+    EXPECT_EQ(control.txCompletedIntervalProducerHeadroomMinFrames.load(
+                  std::memory_order_relaxed), UINT32_MAX);
+    EXPECT_EQ(control.txMinimumProducerHeadroomFrames.load(
+                  std::memory_order_relaxed), 64U);
 }
 
 TEST(AudioTransportControlBlockTests, TimelineEpochRequestIsOneShot) {

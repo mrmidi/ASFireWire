@@ -323,9 +323,14 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 // Wake the physical scheduler after bytes become visible. The
                 // write frontier is deliberately not a preparation horizon or
                 // a timing coordinate.
+                // Stamp wall-clock, NOT the operation's `hostTime`: the
+                // latter is the HAL's timestamp for the IO range and can sit
+                // ahead of the preparation pass that serves it, which makes a
+                // difference against mach_absolute_time() meaningless (and,
+                // when it is in the future, no sample at all).
                 const uint64_t requestGeneration =
                     control->txPreparationRequests.PublishRequest(
-                        hostTime);
+                        mach_absolute_time());
                 if (driverIvars->device.audioNub &&
                     control->txPreparationRequests.TryScheduleWake()) {
                     const kern_return_t requestKr =

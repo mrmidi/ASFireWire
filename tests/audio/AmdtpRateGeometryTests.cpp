@@ -59,8 +59,13 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kTxCommittedMarginHistogramBuckets, 5U);
     EXPECT_EQ(Geometry::kTxPreparationLatency250Us, 250U);
     EXPECT_EQ(Geometry::kTxPreparationLatency1500Us, 1500U);
-    EXPECT_EQ(Geometry::kTxCommittedMargin2xFloorPackets, 96U);
-    EXPECT_EQ(Geometry::kTxCommittedMargin16xFloorPackets, 768U);
+    // Committed-margin buckets resolve fractions of the hardware ring: the
+    // shared store is 168 packets, so the old 2x/4x/8x/16x-ring ladder put
+    // every sample in one bucket.
+    EXPECT_EQ(Geometry::kTxCommittedMarginQuarterRingPackets, 12U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginHalfRingPackets, 24U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginThreeQuarterRingPackets, 36U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginOneRingPackets, 48U);
     EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 72U);
     EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 120U);
     EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 120U);

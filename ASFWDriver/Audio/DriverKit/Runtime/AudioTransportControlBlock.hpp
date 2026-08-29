@@ -371,8 +371,17 @@ struct TxPreparationRequestState final {
     // coalesces those writes into one follow-up action.
     std::atomic<bool> wakeScheduled{false};
 
+    /// Stamp only the OLDEST unhandled request. CoreAudio can publish several
+    /// IO periods before the preparation queue runs, and a last-writer-wins
+    /// stamp would then measure the delay of the newest request instead of the
+    /// queueing delay actually incurred -- exactly the quantity that decides
+    /// how late content may arrive. Zero means "no request outstanding".
     [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks) noexcept {
-        requestHostTicks.store(hostTicks, std::memory_order_relaxed);
+        uint64_t expected = 0;
+        const uint64_t stamp = hostTicks != 0 ? hostTicks : 1;
+        requestHostTicks.compare_exchange_strong(
+            expected, stamp, std::memory_order_relaxed,
+            std::memory_order_relaxed);
         return requestedGeneration.fetch_add(1, std::memory_order_release) + 1;
     }
 
@@ -393,7 +402,11 @@ struct TxPreparationRequestState final {
         wakeScheduled.store(false, std::memory_order_release);
     }
 
-    void MarkHandled(uint64_t generation, uint64_t hostTicks) noexcept {
+    /// Returns the host-tick stamp of the oldest request this pass served, or
+    /// 0 when the wake was not request-driven. The caller turns it into a
+    /// latency sample; this type owns the handshake, not the statistics.
+    [[nodiscard]] uint64_t MarkHandled(uint64_t generation,
+                                       uint64_t hostTicks) noexcept {
         uint64_t handled = handledGeneration.load(std::memory_order_relaxed);
         while (handled < generation &&
                !handledGeneration.compare_exchange_weak(
@@ -401,6 +414,7 @@ struct TxPreparationRequestState final {
                    std::memory_order_relaxed)) {
         }
         handledHostTicks.store(hostTicks, std::memory_order_relaxed);
+        return requestHostTicks.exchange(0, std::memory_order_relaxed);
     }
 
     void Reset() noexcept {
@@ -558,6 +572,8 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> txCompletedIntervalSequence{0};
     std::atomic<uint32_t> txCompletedIntervalMarginMinPackets{UINT32_MAX};
     std::atomic<uint32_t> txCompletedIntervalMarginMaxPackets{0};
+    std::atomic<uint32_t> txCompletedIntervalProducerHeadroomMinFrames{
+        UINT32_MAX};
     std::atomic<uint64_t> txCompletedIntervalPreparationLatencyMaxTicks{0};
     std::array<std::atomic<uint64_t>,
                ASFW::Audio::Shared::AudioTimingGeometry::
@@ -593,6 +609,166 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> mAudioTxDerivedObservations{0};
     std::atomic<uint64_t> mAudioCaptureTransitions{0};
     std::atomic<uint64_t> mAudioPostStartConfirmations{0};
+
+    // -------------------------------------------------------------------
+    // [TxPrep] interval accumulators.
+    //
+    // These fields, their completed-interval mirrors, and the whole export
+    // path already existed; the V3 preparation rewrite dropped the writers, so
+    // every reader has been showing zeros. Restoring them is a prerequisite
+    // for deriving output safety from measured scheduling behaviour instead of
+    // from the plan horizon (see RTL.md, "Instrumentation required before
+    // tuning"). Nothing here changes TX behaviour.
+    // -------------------------------------------------------------------
+
+    /// One preparation wake that served a pending CoreAudio request.
+    /// `latencyMicros` is the caller's timebase conversion of `latencyTicks`;
+    /// this header stays free of mach_timebase so it remains host-testable.
+    void RecordPreparationLatency(uint64_t latencyTicks,
+                                  uint64_t latencyMicros) noexcept {
+        using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
+        txLastPreparationLatencyTicks.store(latencyTicks,
+                                            std::memory_order_relaxed);
+        RaiseMaximum64(txMaxPreparationLatencyTicks, latencyTicks);
+        RaiseMaximum64(txIntervalPreparationLatencyMaxTicks, latencyTicks);
+        txPreparationLatencySamples.fetch_add(1, std::memory_order_relaxed);
+        if (latencyMicros <= Geometry::kTxPreparationLatency750Us) {
+            txPreparationAtMost750Us.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (latencyMicros >= Geometry::kTxPreparationLatency1500Us) {
+            txPreparationAtLeast1500Us.fetch_add(1, std::memory_order_relaxed);
+        }
+        txIntervalPreparationLatencyHistogram[
+            PreparationLatencyBucket(latencyMicros)]
+            .fetch_add(1, std::memory_order_relaxed);
+    }
+
+    /// Committed packets ahead of the transport completion cursor, sampled
+    /// once per preparation pass.
+    void RecordCommittedMargin(uint64_t marginPackets) noexcept {
+        const uint32_t margin = marginPackets > UINT32_MAX
+            ? UINT32_MAX : static_cast<uint32_t>(marginPackets);
+        LowerMinimum32(txIntervalCommittedMarginMinPackets, margin);
+        RaiseMaximum32(txIntervalCommittedMarginMaxPackets, margin);
+        LowerMinimum32(txMinimumCommittedMarginPackets, margin);
+        txIntervalCommittedMarginHistogram[CommittedMarginBucket(margin)]
+            .fetch_add(1, std::memory_order_relaxed);
+    }
+
+    /// Frames the CoreAudio writer has staged beyond the frame this packet
+    /// consumes. This is the only field that can go to zero when the host
+    /// callback is late; committed margin measures our headroom against our
+    /// own deadline and has no term for the writer at all.
+    void RecordProducerHeadroom(uint64_t headroomFrames) noexcept {
+        const uint32_t headroom = headroomFrames > UINT32_MAX
+            ? UINT32_MAX : static_cast<uint32_t>(headroomFrames);
+        LowerMinimum32(txIntervalProducerHeadroomMinFrames, headroom);
+        LowerMinimum32(txMinimumProducerHeadroomFrames, headroom);
+    }
+
+    /// Publish the interval just closed and re-arm the accumulators. Readers
+    /// only ever observe a value-owned snapshot: the sequence is odd while the
+    /// completed fields are being replaced, even when they are stable.
+    void CompleteTxInterval() noexcept {
+        const uint64_t sequence =
+            txCompletedIntervalSequence.load(std::memory_order_relaxed);
+        txCompletedIntervalSequence.store(sequence + 1,
+                                          std::memory_order_release);
+
+        txCompletedIntervalMarginMinPackets.store(
+            txIntervalCommittedMarginMinPackets.exchange(
+                UINT32_MAX, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        txCompletedIntervalMarginMaxPackets.store(
+            txIntervalCommittedMarginMaxPackets.exchange(
+                0, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        txCompletedIntervalPreparationLatencyMaxTicks.store(
+            txIntervalPreparationLatencyMaxTicks.exchange(
+                0, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        for (size_t index = 0;
+             index < txIntervalPreparationLatencyHistogram.size(); ++index) {
+            txCompletedIntervalPreparationLatencyHistogram[index].store(
+                txIntervalPreparationLatencyHistogram[index].exchange(
+                    0, std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+        for (size_t index = 0;
+             index < txIntervalCommittedMarginHistogram.size(); ++index) {
+            txCompletedIntervalCommittedMarginHistogram[index].store(
+                txIntervalCommittedMarginHistogram[index].exchange(
+                    0, std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+        txCompletedIntervalProducerHeadroomMinFrames.store(
+            txIntervalProducerHeadroomMinFrames.exchange(
+                UINT32_MAX, std::memory_order_relaxed),
+            std::memory_order_relaxed);
+
+        txCompletedIntervalSequence.store(sequence + 2,
+                                          std::memory_order_release);
+    }
+
+    static void RaiseMaximum64(std::atomic<uint64_t>& target,
+                               uint64_t candidate) noexcept {
+        uint64_t seen = target.load(std::memory_order_relaxed);
+        while (candidate > seen &&
+               !target.compare_exchange_weak(seen, candidate,
+                                             std::memory_order_relaxed,
+                                             std::memory_order_relaxed)) {
+        }
+    }
+
+    static void RaiseMaximum32(std::atomic<uint32_t>& target,
+                               uint32_t candidate) noexcept {
+        uint32_t seen = target.load(std::memory_order_relaxed);
+        while (candidate > seen &&
+               !target.compare_exchange_weak(seen, candidate,
+                                             std::memory_order_relaxed,
+                                             std::memory_order_relaxed)) {
+        }
+    }
+
+    static void LowerMinimum32(std::atomic<uint32_t>& target,
+                               uint32_t candidate) noexcept {
+        uint32_t seen = target.load(std::memory_order_relaxed);
+        while (candidate < seen &&
+               !target.compare_exchange_weak(seen, candidate,
+                                             std::memory_order_relaxed,
+                                             std::memory_order_relaxed)) {
+        }
+    }
+
+    [[nodiscard]] static size_t PreparationLatencyBucket(
+        uint64_t micros) noexcept {
+        using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
+        if (micros <= Geometry::kTxPreparationLatency250Us)  return 0;
+        if (micros <= Geometry::kTxPreparationLatency500Us)  return 1;
+        if (micros <= Geometry::kTxPreparationLatency750Us)  return 2;
+        if (micros <= Geometry::kTxPreparationLatency1000Us) return 3;
+        if (micros <= Geometry::kTxPreparationLatency1500Us) return 4;
+        return 5;
+    }
+
+    [[nodiscard]] static size_t CommittedMarginBucket(
+        uint32_t marginPackets) noexcept {
+        using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
+        if (marginPackets <= Geometry::kTxCommittedMarginQuarterRingPackets) {
+            return 0;
+        }
+        if (marginPackets <= Geometry::kTxCommittedMarginHalfRingPackets) {
+            return 1;
+        }
+        if (marginPackets <=
+            Geometry::kTxCommittedMarginThreeQuarterRingPackets) {
+            return 2;
+        }
+        if (marginPackets <= Geometry::kTxCommittedMarginOneRingPackets) {
+            return 3;
+        }
+        return 4;
+    }
 
     void RequestTimelineEpoch(
         HardwareTimelineDiscontinuity reason) noexcept {
@@ -763,6 +939,8 @@ struct AudioTransportControlBlock final {
         txCompletedIntervalMarginMinPackets.store(
             UINT32_MAX, std::memory_order_relaxed);
         txCompletedIntervalMarginMaxPackets.store(0, std::memory_order_relaxed);
+        txCompletedIntervalProducerHeadroomMinFrames.store(
+            UINT32_MAX, std::memory_order_relaxed);
         txCompletedIntervalPreparationLatencyMaxTicks.store(
             0, std::memory_order_relaxed);
         for (auto& bucket : txCompletedIntervalPreparationLatencyHistogram) {

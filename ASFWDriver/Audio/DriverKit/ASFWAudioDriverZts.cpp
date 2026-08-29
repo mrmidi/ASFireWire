@@ -721,9 +721,18 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 .presentationBusTicks = plan.presentationBusTicks,
             };
             if (!control->hardwareTimeline.CommitTxRange(range)) break;
+            const uint64_t nextTxFrame =
+                control->hardwareTimeline.NextTxFrame();
             control->txScheduledSampleFrame.store(
-                control->hardwareTimeline.NextTxFrame(),
-                std::memory_order_release);
+                nextTxFrame, std::memory_order_release);
+            // How far the CoreAudio writer is staged beyond the frame the next
+            // packet will consume. Committed margin cannot see this: it
+            // measures our headroom against our own transmit deadline, so it
+            // can read healthy while the writer has nothing left to give.
+            const uint64_t publishedEnd =
+                ivars.runtime.pcmPublicationCache.PublishedEndFrame();
+            control->RecordProducerHeadroom(
+                publishedEnd > nextTxFrame ? publishedEnd - nextTxFrame : 0);
         }
         if (mAudioPlanActive &&
             !ivars.runtime.mAudioInternalTxTiming.CommitPacket(
@@ -878,6 +887,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
     control->txCurrentCommittedMarginPackets.store(
         margin > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(margin),
         std::memory_order_relaxed);
+    control->RecordCommittedMargin(margin);
     control->counters.txPreparationWakeDispatches.fetch_add(
         1, std::memory_order_relaxed);
     control->counters.txPreparationDrainPasses.fetch_add(
@@ -909,6 +919,67 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                  ivars->runtime.txNoCycleAnchorEvents,
                  ivars->runtime.txNoPresentationOriginEvents,
                  ivars->runtime.txReplayResyncs);
+
+        // [TxPrep] is the scheduling half of the heartbeat: how late the
+        // preparation pass ran behind the CoreAudio request that asked for it,
+        // and how much runway that left. Output safety must be derived from
+        // this distribution rather than from the plan horizon, so it stays on
+        // the coarse 5 s heartbeat rather than being anomaly-gated.
+        control->CompleteTxInterval();
+        const uint64_t latencyMaxTicks =
+            control->txCompletedIntervalPreparationLatencyMaxTicks.load(
+                std::memory_order_relaxed);
+        const uint32_t marginMin =
+            control->txCompletedIntervalMarginMinPackets.load(
+                std::memory_order_relaxed);
+        // Interval minimum, re-armed by CompleteTxInterval above. The
+        // since-start watermark latches 0 during startup -- before the first
+        // WriteEnd there is nothing staged -- and never recovers, so it says
+        // nothing about the running stream.
+        const uint32_t headroomMin =
+            control->txCompletedIntervalProducerHeadroomMinFrames.load(
+                std::memory_order_relaxed);
+        const uint32_t headroomRunMin =
+            control->txMinimumProducerHeadroomFrames.load(
+                std::memory_order_relaxed);
+        ASFW_LOG(DirectAudio,
+                 "[TxPrep] wakes=%llu maxLatUs=%llu le750=%llu ge1500=%llu lat=[%llu,%llu,%llu,%llu,%llu,%llu] marginMin=%u marginMax=%u margin=[%llu,%llu,%llu,%llu,%llu] headroomMin=%u headroomRunMin=%u",
+                 control->txPreparationLatencySamples.load(
+                     std::memory_order_relaxed),
+                 ASFW::Timing::hostTicksToNanos(latencyMaxTicks) /
+                     ASFW::Audio::Shared::AudioTimingGeometry::
+                         kNanosecondsPerMicrosecond,
+                 control->txPreparationAtMost750Us.load(
+                     std::memory_order_relaxed),
+                 control->txPreparationAtLeast1500Us.load(
+                     std::memory_order_relaxed),
+                 control->txCompletedIntervalPreparationLatencyHistogram[0]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalPreparationLatencyHistogram[1]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalPreparationLatencyHistogram[2]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalPreparationLatencyHistogram[3]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalPreparationLatencyHistogram[4]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalPreparationLatencyHistogram[5]
+                     .load(std::memory_order_relaxed),
+                 marginMin == UINT32_MAX ? 0u : marginMin,
+                 control->txCompletedIntervalMarginMaxPackets.load(
+                     std::memory_order_relaxed),
+                 control->txCompletedIntervalCommittedMarginHistogram[0]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalCommittedMarginHistogram[1]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalCommittedMarginHistogram[2]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalCommittedMarginHistogram[3]
+                     .load(std::memory_order_relaxed),
+                 control->txCompletedIntervalCommittedMarginHistogram[4]
+                     .load(std::memory_order_relaxed),
+                 headroomMin == UINT32_MAX ? 0u : headroomMin,
+                 headroomRunMin == UINT32_MAX ? 0u : headroomRunMin);
     }
     if (committedAfter < target) {
         const uint64_t shortageCount =
@@ -925,7 +996,16 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
     queue->MarkRefillHandled(requested);
     const uint64_t audioGeneration =
         control->txPreparationRequests.RequestedGeneration();
-    control->txPreparationRequests.MarkHandled(audioGeneration, now);
+    const uint64_t pendingRequestTicks =
+        control->txPreparationRequests.MarkHandled(audioGeneration, now);
+    if (pendingRequestTicks != 0 && now > pendingRequestTicks) {
+        const uint64_t latencyTicks = now - pendingRequestTicks;
+        control->RecordPreparationLatency(
+            latencyTicks,
+            ASFW::Timing::hostTicksToNanos(latencyTicks) /
+                ASFW::Audio::Shared::AudioTimingGeometry::
+                    kNanosecondsPerMicrosecond);
+    }
     control->txPreparationRequests.FinishWake();
     if (control->txPreparationRequests.NeedsHandling() &&
         control->txPreparationRequests.TryScheduleWake() &&

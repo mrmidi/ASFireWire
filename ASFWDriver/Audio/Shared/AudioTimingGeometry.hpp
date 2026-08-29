@@ -106,14 +106,21 @@ struct AudioTimingGeometry final {
     static constexpr uint64_t kTxPreparationLatency750Us = 750;
     static constexpr uint64_t kTxPreparationLatency1000Us = 1'000;
     static constexpr uint64_t kTxPreparationLatency1500Us = 1'500;
-    static constexpr uint32_t kTxCommittedMargin2xFloorPackets =
-        2 * kTxHardwareRingPackets;
-    static constexpr uint32_t kTxCommittedMargin4xFloorPackets =
-        4 * kTxHardwareRingPackets;
-    static constexpr uint32_t kTxCommittedMargin8xFloorPackets =
-        8 * kTxHardwareRingPackets;
-    static constexpr uint32_t kTxCommittedMargin16xFloorPackets =
-        16 * kTxHardwareRingPackets;
+    // Committed-margin histogram ceilings, in packets. The bucket that matters
+    // is "how close did we come to holing the descriptor ring", so the ladder
+    // resolves fractions of the hardware ring, not multiples of it: the shared
+    // store is 168 packets, so a 2x/4x/8x/16x-ring ladder put every sample in
+    // one bucket and resolved nothing. Overrunning the ring is a transport
+    // failure (IT FATAL: slot not committed), not a recoverable content gap,
+    // which is why the resolution belongs at the low end.
+    static constexpr uint32_t kTxCommittedMarginQuarterRingPackets =
+        kTxHardwareRingPackets / 4;
+    static constexpr uint32_t kTxCommittedMarginHalfRingPackets =
+        kTxHardwareRingPackets / 2;
+    static constexpr uint32_t kTxCommittedMarginThreeQuarterRingPackets =
+        (kTxHardwareRingPackets * 3) / 4;
+    static constexpr uint32_t kTxCommittedMarginOneRingPackets =
+        kTxHardwareRingPackets;
     // Refill-latency budget: how late the producer may be and still find its
     // slots committed. This is a property of scheduling jitter, NOT of ring
     // depth — a deeper hardware ring buys runway, it does not require more
