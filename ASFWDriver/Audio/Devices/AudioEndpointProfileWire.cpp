@@ -94,7 +94,7 @@ template <typename T>
 
 [[nodiscard]] constexpr bool ValidFlagsAndReserved(
     const AudioEndpointProfileWireV3& header) noexcept {
-    return (header.txPacketFlags & ~0x1FU) == 0 &&
+    return (header.txPacketFlags & ~0x3FU) == 0 &&
            (header.recoveryFlags & ~0x07U) == 0 &&
            (header.clockFlags & ~0x01U) == 0 &&
            (header.startFlags & ~0x07U) == 0 &&
@@ -296,8 +296,10 @@ Serialize(const ResolvedAudioEndpointProfile& profile) noexcept {
     header.playbackFdf = profile.playbackFdf;
     header.captureFmt = profile.captureFmt;
     header.playbackFmt = profile.playbackFmt;
-    // Bit 0x10 was already inside ValidFlagsAndReserved's ~0x1FU mask and
-    // unused, so it does not require a flag-mask change in this V2 layout.
+    // Every bit added here must also be admitted by ValidFlagsAndReserved's
+    // txPacketFlags mask, or Parse() rejects the whole profile as an invalid
+    // header and no CoreAudio device is published. Bit 0x20
+    // (substituteSilenceOnPcmUnavailable) widened that mask to ~0x3FU.
     header.txPacketFlags = (profile.txPacketPolicy.variableDbs ? 1U : 0U) |
                            (profile.txPacketPolicy.initializeNonAudioSlots ? 2U : 0U) |
                            (profile.txPacketPolicy.preserveFdfInNoDataPackets ? 4U : 0U) |

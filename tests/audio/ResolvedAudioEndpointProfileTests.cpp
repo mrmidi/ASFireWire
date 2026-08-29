@@ -146,6 +146,39 @@ TEST(AudioEndpointProfileWire, AcceptsEveryProfileBuilderTheCatalogCanEmit) {
     EXPECT_GT(checked, 0U) << "no Supported definitions found to check";
 }
 
+TEST(AudioEndpointProfileWire, EveryTxPacketPolicyFlagSurvivesTheRoundTrip) {
+    // Regression, 2026-08-29: substituteSilenceOnPcmUnavailable was packed into
+    // txPacketFlags bit 0x20 without widening ValidFlagsAndReserved's ~0x1FU
+    // mask. Parse() then rejected every OXFW profile as an invalid header, so
+    // ASFWAudioDriver::Start() failed at BuildAudioGraph and no CoreAudio
+    // device appeared at all.
+    //
+    // AcceptsEveryProfileBuilderTheCatalogCanEmit did not catch it: it sets
+    // only the builder *id* on a synthetic profile and never round-trips the
+    // policy bits a builder actually emits. Setting every flag at once fails
+    // the moment a new one is packed outside the accepted mask.
+    auto profile = MakeProfile();
+    profile.txPacketPolicy.variableDbs = true;
+    profile.txPacketPolicy.initializeNonAudioSlots = true;
+    profile.txPacketPolicy.preserveFdfInNoDataPackets = true;
+    profile.txPacketPolicy.emptyPacketsDuringIdle = true;
+    profile.txPacketPolicy.cadencePacketsCarryDataBlocks = true;
+    profile.txPacketPolicy.substituteSilenceOnPcmUnavailable = true;
+
+    const auto encoded = Audio::Devices::Wire::Serialize(profile);
+    ASSERT_TRUE(encoded.has_value());
+    const auto decoded = Audio::Devices::Wire::Parse(*encoded);
+    ASSERT_TRUE(decoded.has_value())
+        << "a txPacketFlags bit is packed outside ValidFlagsAndReserved's mask";
+
+    EXPECT_TRUE(decoded->txPacketPolicy.variableDbs);
+    EXPECT_TRUE(decoded->txPacketPolicy.initializeNonAudioSlots);
+    EXPECT_TRUE(decoded->txPacketPolicy.preserveFdfInNoDataPackets);
+    EXPECT_TRUE(decoded->txPacketPolicy.emptyPacketsDuringIdle);
+    EXPECT_TRUE(decoded->txPacketPolicy.cadencePacketsCarryDataBlocks);
+    EXPECT_TRUE(decoded->txPacketPolicy.substituteSilenceOnPcmUnavailable);
+}
+
 TEST(AudioEndpointProfileWire, LastValidAliasTracksTheRealLastMember) {
     // The alias is what the three range checks now key on. If someone appends a
     // member below it, this fails rather than the device failing at Start().
