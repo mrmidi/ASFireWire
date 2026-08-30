@@ -407,7 +407,8 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
 
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
-            std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);
+            std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology,
+                                                     deps_.speedPolicy.get());
         ASFW_LOG(Controller, "✅ FireWireBusImpl facade created");
         bmPolicyCoordinator_ = std::make_unique<Bus::BusManagerPolicyCoordinator>(
             Bus::BusManagerPolicyCoordinator::Deps{

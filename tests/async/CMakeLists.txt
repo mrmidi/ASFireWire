@@ -97,6 +97,22 @@ add_async_test(LabelAllocatorTests
 )
 
 # Async Bus Contract Tests
+# Link speed: Self-ID advertisement clamped by observed evidence
+add_async_test(LinkSpeedClampTests
+    LinkSpeedClampTests.cpp
+    "../support/AsyncSubsystemContractStub.cpp"
+    "${ASFW_DRIVER_DIR}/Async/FireWireBusImpl.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDTopologyNormalizer.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/PayloadRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/Transaction.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/TransactionManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+)
+
 add_async_test(AsyncBusContractTests
     AsyncBusContractTests.cpp
     "../support/AsyncSubsystemContractStub.cpp"

@@ -9,6 +9,8 @@ class TopologyManager;
 
 namespace ASFW::Async {
 
+class ILinkSpeedSource;
+
 /**
  * @brief Concrete implementation of IFireWireBus using an async controller port.
  *
@@ -25,8 +27,12 @@ class FireWireBusImpl final : public IFireWireBus {
      *
      * @param async Reference to async controller port (must outlive this object)
      * @param topo Reference to topology manager (for speed/hop queries)
+     * @param observedSpeeds Optional source of empirically observed link speeds
+     *        (must outlive this object). When null, GetSpeed reports the Self-ID
+     *        advertised speed unchanged, which is the pre-existing behaviour.
      */
-    FireWireBusImpl(IAsyncControllerPort& async, Driver::TopologyManager& topo);
+    FireWireBusImpl(IAsyncControllerPort& async, Driver::TopologyManager& topo,
+                    const ILinkSpeedSource* observedSpeeds = nullptr);
 
     // IFireWireBusOps implementation (virtual methods only)
     AsyncHandle ReadBlock(FW::Generation gen, FW::NodeId node, FWAddress addr, uint32_t length,
@@ -47,8 +53,12 @@ class FireWireBusImpl final : public IFireWireBus {
     FW::NodeId GetLocalNodeID() const override;
 
   private:
+    // Self-ID advertised speed for a node, ignoring observed evidence.
+    [[nodiscard]] FW::FwSpeed AdvertisedSpeed(FW::NodeId nodeId) const;
+
     IAsyncControllerPort& async_;
     Driver::TopologyManager& topo_;
+    const ILinkSpeedSource* observedSpeeds_{nullptr};
 };
 
 } // namespace ASFW::Async
