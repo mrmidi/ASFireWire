@@ -60,7 +60,7 @@ protected:
 TEST_F(V3ReviewDmaTest, PointerAdvancesInsidePublicationButRebindStillSucceeds) {
     auto meta=MakeMetadataRing(); PrimeForReview(meta);
     PointAt(6);
-    meta[8].pcmGeneration.store(1,std::memory_order_release);
+    ASSERT_TRUE(OfferLateImage(meta,8));
     bool advanced=false;
     interleaved->onPublish=[&](const std::byte* p,size_t) {
         if(p==reinterpret_cast<const std::byte*>(ImageBytes(8,1))) {
@@ -76,29 +76,12 @@ TEST_F(V3ReviewDmaTest, PointerAdvancesInsidePublicationButRebindStillSucceeds) 
     std::puts("REPRO: live command advanced to packet 8 before its address store; rebind accepted and reports distance 2");
 }
 
-TEST_F(V3ReviewDmaTest, PublicationCanWinProducerCheckAfterSelectorHasSkippedPacket) {
-    auto meta=MakeMetadataRing(); PrimeForReview(meta);
-    PointAt(6);
-    // Scan skips packet 8, then reaches packet 9. Interleave the producer
-    // publication while the transport is publishing 9. This uses the exact
-    // release-marker/frontier test of DextTxSlotProvider::PublishLatePayload.
-    meta[9].pcmGeneration.store(1,std::memory_order_release);
-    bool producerAccepted=false;
-    interleaved->onPublish=[&](const std::byte* p,size_t) {
-        if(p==reinterpret_cast<const std::byte*>(ImageBytes(9,1))) {
-            meta[8].pcmGeneration.store(1,std::memory_order_release);
-            producerAccepted=8>=primeControl_.finalizedEnd.load(std::memory_order_acquire);
-        }
-    };
-    auto first=Refill(meta);
-    ASSERT_TRUE(first.ok);
-    ASSERT_TRUE(producerAccepted);
-    EXPECT_EQ(primeControl_.finalizedEnd.load(),14);
-    EXPECT_EQ(meta[8].selectedPayloadImage,0);
-    interleaved->onPublish={};
-    PointAt(12);
-    auto second=Refill(meta);
-    ASSERT_TRUE(second.ok);
-    EXPECT_EQ(meta[8].selectedPayloadImage,0);
-    std::puts("REPRO: producer reports packet 8 accepted; finality advances to 14; next completion retires packet 8 as silence");
-}
+// The lost-publication reproduction that lived here is fixed and is now a
+// permanent regression test, so it is not duplicated as a review artifact:
+// see IsochTxPayloadArbitrationTest in tests/audio/IsochTxDmaRingTests.cpp
+// (OfferLandingDuringTheScanIsBoundNotSilentlyDropped,
+// OfferForAnAlreadySealedPacketIsRefused, and
+// ImageDiscardedInsideTheGuardIsCountedAsALostPublication).
+//
+// The first reproduction above is retained: finding 1, the stale CommandPtr at
+// rebind, is still open.

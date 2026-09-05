@@ -183,17 +183,15 @@ public:
         const uint32_t slotIdx = packetIndex % numSlots;
         auto& meta = metadataRing[slotIdx];
         if (meta.packetIndex != packetIndex) return false;
-        // Release-store the marker last: transport acquire-loads it, so seeing
-        // the marker implies seeing the complete image.
-        meta.pcmGeneration.store(
-            ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, numSlots),
-            std::memory_order_release);
-        // Transport may have crossed the packet while image 1 was being
-        // encoded. The marker is harmless in that case, but report the lost
-        // race so the engine accounts the packet as silence rather than real
-        // content.
-        return packetIndex >=
-            queueControl->finalizedEnd.load(std::memory_order_acquire);
+        // Offer image 1 and learn whether we won, as one operation. The CAS
+        // releases the bytes written above and fails if transport has already
+        // sealed this packet -- which it does per packet, before it moves the
+        // frontier. Comparing against that frontier instead would let this
+        // return success for a packet transport had already passed, because the
+        // skip and the frontier advance are not the same instant.
+        return ASFW::Isoch::OfferLateTxPayload(
+            meta,
+            ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, numSlots));
     }
 
     [[nodiscard]] bool PublishSlot(
@@ -248,11 +246,18 @@ public:
 
         const uint8_t* const payload = payloadBase +
             ASFW::Isoch::TxPayloadImageOffset(slotIdx, 0, slotStrideBytes);
-        // A previous lap through this slot may have left a late-payload marker.
-        // Clear it before the commit that republishes the slot, so transport
-        // cannot mistake stale bytes for this packet's content. The generation
-        // tag would reject it anyway; this keeps the invariant local.
-        meta.pcmGeneration.store(0, std::memory_order_relaxed);
+        // Arm this lap's arbitration before the commit that republishes the
+        // slot. A previous lap's terminal phase must not survive into this
+        // packet: the generation tag would reject it anyway, but leaving it
+        // would make the slot permanently unclaimable rather than merely stale.
+        // Ordered by the release-store of commitGeneration below, which is what
+        // transport acquires before it reads this word.
+        meta.payloadArbitration.store(
+            ASFW::Isoch::MakeTxPayloadArbitration(
+                ASFW::Isoch::ExpectedTxCommitGeneration(packet.packetIndex,
+                                                        numSlots),
+                ASFW::Isoch::TxPayloadArbitration::kNoAlternative),
+            std::memory_order_relaxed);
 
         // Content inspection belongs to Audio and runs immediately before the
         // release commit. Transport receives only opaque bytes and metadata.

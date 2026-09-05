@@ -16,16 +16,18 @@ namespace {
 
 /// Pick the payload image the descriptor will address.
 ///
-/// Image 1 wins only when the producer has marked it ready for exactly this
-/// packet's commit generation. Anything else -- never written, or a stale
-/// marker left by an earlier lap through the slot -- falls back to the armed
-/// image 0, which is always complete. Read with acquire so the image's bytes
-/// are visible if the marker is.
-[[nodiscard]] uint32_t SelectPayloadImage(const IsochTxPacketMeta& meta,
+/// Image 1 wins only when the producer offered it for exactly this packet's
+/// commit generation and no one has claimed it yet. Anything else -- never
+/// offered, already claimed, or a state left by an earlier lap through the
+/// slot -- falls back to the armed image 0, which is always complete.
+///
+/// This is a claim, not a peek: it moves the arbitration word, so the producer
+/// can no longer observe this packet as undecided. Binding is still not
+/// finality -- a packet bound to image 0 here may be repointed later -- which
+/// is why it never seals.
+[[nodiscard]] uint32_t SelectPayloadImage(IsochTxPacketMeta& meta,
                                           uint64_t expectedGeneration) noexcept {
-    const uint64_t ready =
-        meta.pcmGeneration.load(std::memory_order_acquire);
-    return (ready != 0 && ready == expectedGeneration) ? 1u : 0u;
+    return ClaimLateTxPayload(meta, expectedGeneration) ? 1u : 0u;
 }
 
 // Replace the channel field [13:8] of a little-endian OHCI isoch transmit header
@@ -145,6 +147,134 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
     counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
 }
 
+void IsochTxDmaRing::SealOnArmedImage(
+    IsochTxPacketMeta& meta,
+    const uint64_t generation,
+    IsochTxQueueControl* controlBlock,
+    RefillOutcome& out) noexcept {
+    if (!FinalizeTxPayloadOnArmedImage(meta, generation)) {
+        return;
+    }
+    // The producer published an image the wire will not carry. Counting it
+    // here, at the only place that can know, is what lets the engine correct
+    // an optimistic fill count into a truthful one.
+    ++out.latePayloadLostPublications;
+    controlBlock->latePayloadLostPublicationCount.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+void IsochTxDmaRing::TryBindLatePayload(
+    const uint64_t packetAbs,
+    const uint64_t hardwareAbsIdx,
+    IsochTxPacketMeta* metadataRing,
+    IsochTxQueueControl* controlBlock,
+    const uint32_t numSlots,
+    uint8_t* payloadBase,
+    const TxPayloadDmaMap& payloadDmaMap,
+    RefillOutcome& out) noexcept {
+    const uint32_t producerSlot = static_cast<uint32_t>(packetAbs % numSlots);
+    auto& meta = metadataRing[producerSlot];
+    const uint64_t expectedGeneration =
+        ExpectedTxCommitGeneration(packetAbs, numSlots);
+    if (meta.packetIndex != packetAbs ||
+        meta.commitGeneration.load(std::memory_order_acquire) !=
+            expectedGeneration ||
+        meta.selectedPayloadImage == 1) {
+        return;
+    }
+    // A peek, only to avoid validating a packet that has nothing on offer. It
+    // is not the decision -- the decision is the claim below.
+    if (meta.payloadArbitration.load(std::memory_order_acquire) !=
+        MakeTxPayloadArbitration(expectedGeneration,
+                                 TxPayloadArbitration::kLateImageReady)) {
+        return;
+    }
+
+    const uint32_t payloadLength = meta.payloadLength;
+    const uint64_t payloadOffset = TxPayloadImageOffset(
+        producerSlot, 1, controlBlock->slotStrideBytes);
+    std::array<TxPayloadDmaFragment, 2> fragments{};
+
+    // A late rebind is legal only when image 1 preserves every descriptor field
+    // except the mutable tail address. Every rejection below is a property of
+    // this packet's geometry, not a transient condition, so a rejected packet
+    // is sealed immediately: retrying it on later passes could only reject it
+    // again, once per pass, which is how a single bad packet used to inflate
+    // the rejection count.
+    const bool mappable =
+        payloadLength != 0 && meta.payloadPrefixBytes != 0 &&
+        meta.payloadPrefixBytes < payloadLength &&
+        payloadDmaMap.ResolveTwoFragments(
+            payloadOffset, payloadLength, fragments, meta.payloadPrefixBytes);
+
+    const uint32_t hardwareSlot =
+        static_cast<uint32_t>(packetAbs % Layout::kNumPackets);
+    auto* prefixDescriptor = slab_.GetDescriptorPtr(
+        hardwareSlot * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+    auto* tailDescriptor = slab_.GetDescriptorPtr(
+        hardwareSlot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+    const uint32_t prefixLength = prefixDescriptor->control & 0xffffu;
+    const uint32_t tailLength = tailDescriptor->control & 0xffffu;
+    const uint64_t armedPayloadOffset = TxPayloadImageOffset(
+        producerSlot, 0, controlBlock->slotStrideBytes);
+
+    const bool shapePreserved = mappable &&
+        fragments[0].length == prefixLength &&
+        fragments[1].length == tailLength &&
+        std::memcmp(payloadBase + armedPayloadOffset,
+                    payloadBase + payloadOffset,
+                    meta.payloadPrefixBytes) == 0;
+
+    if (!shapePreserved) {
+        ++out.latePayloadRebindRejected;
+        controlBlock->latePayloadRebindRejectedCount.fetch_add(
+            1, std::memory_order_relaxed);
+        SealOnArmedImage(meta, expectedGeneration, controlBlock, out);
+        return;
+    }
+
+    // Single linearization point for "transport chose image 1". After it
+    // succeeds no producer can still be told it owns this packet.
+    if (!ClaimLateTxPayload(meta, expectedGeneration)) {
+        return;
+    }
+
+    const auto* payload = reinterpret_cast<const std::byte*>(
+        payloadBase + payloadOffset);
+    if (dmaMemory_) {
+        dmaMemory_->PublishToDevice(payload, payloadLength);
+        dmaMemory_->PublishBarrier();
+    }
+
+    meta.selectedPayloadImage = 1;
+    meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
+        payloadBase + payloadOffset, payloadLength);
+    std::atomic_thread_fence(std::memory_order_release);
+    tailDescriptor->dataAddress = fragments[1].deviceAddress;
+    if (dmaMemory_) {
+        dmaMemory_->PublishToDevice(
+            reinterpret_cast<const std::byte*>(&tailDescriptor->dataAddress),
+            sizeof(tailDescriptor->dataAddress));
+        dmaMemory_->PublishBarrier();
+    } else {
+        ASFW::Driver::WriteBarrier();
+    }
+
+    const uint32_t distance =
+        static_cast<uint32_t>(packetAbs - hardwareAbsIdx);
+    uint32_t previous = controlBlock->minimumLatePayloadRebindDistance.load(
+        std::memory_order_relaxed);
+    while (distance < previous &&
+           !controlBlock->minimumLatePayloadRebindDistance
+                .compare_exchange_weak(previous, distance,
+                                       std::memory_order_relaxed,
+                                       std::memory_order_relaxed)) {
+    }
+    ++out.latePayloadRebinds;
+    controlBlock->latePayloadRebindCount.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
 void IsochTxDmaRing::RefreshLatePayloadBindings(
     const uint64_t hardwareAbsIdx,
     IsochTxPacketMeta* metadataRing,
@@ -161,111 +291,17 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
         Geometry::kPayloadRepointGuardPackets;
 
     // Only transport mutates live descriptor addresses. The producer writes a
-    // complete second image and release-publishes its generation; this pass
-    // acquire-checks it, makes the image DMA-visible, then performs the single
-    // aligned store enabled by the invariant-prefix split. This is the ASFW
-    // equivalent of keeping content position separate from descriptor/DMA
-    // position; it does not depend on Apple's high-level DCL representation.
+    // complete second image and offers it; this pass claims what it can, makes
+    // the image DMA-visible, then performs the single aligned store enabled by
+    // the invariant-prefix split. This is the ASFW equivalent of keeping
+    // content position separate from descriptor/DMA position; it does not
+    // depend on Apple's high-level DCL representation.
     for (uint64_t packetAbs = firstRepointable;
          packetAbs < mappedEnd;
          ++packetAbs) {
-        const uint32_t producerSlot =
-            static_cast<uint32_t>(packetAbs % numSlots);
-        auto& meta = metadataRing[producerSlot];
-        const uint64_t expectedGeneration =
-            ExpectedTxCommitGeneration(packetAbs, numSlots);
-        if (meta.packetIndex != packetAbs ||
-            meta.commitGeneration.load(std::memory_order_acquire) !=
-                expectedGeneration ||
-            meta.selectedPayloadImage == 1 ||
-            meta.pcmGeneration.load(std::memory_order_acquire) !=
-                expectedGeneration) {
-            continue;
-        }
-
-        const uint32_t payloadLength = meta.payloadLength;
-        const uint64_t payloadOffset = TxPayloadImageOffset(
-            producerSlot, 1, controlBlock->slotStrideBytes);
-        std::array<TxPayloadDmaFragment, 2> fragments{};
-        if (payloadLength == 0 || meta.payloadPrefixBytes == 0 ||
-            meta.payloadPrefixBytes >= payloadLength ||
-            !payloadDmaMap.ResolveTwoFragments(
-                payloadOffset, payloadLength, fragments,
-                meta.payloadPrefixBytes)) {
-            ++out.latePayloadRebindRejected;
-            controlBlock->latePayloadRebindRejectedCount.fetch_add(
-                1, std::memory_order_relaxed);
-            continue;
-        }
-
-        const uint32_t hardwareSlot =
-            static_cast<uint32_t>(packetAbs % Layout::kNumPackets);
-        auto* prefixDescriptor = slab_.GetDescriptorPtr(
-            hardwareSlot * Layout::kBlocksPerPacket +
-            Layout::kFirstPayloadBlock);
-        auto* tailDescriptor = slab_.GetDescriptorPtr(
-            hardwareSlot * Layout::kBlocksPerPacket +
-            Layout::kCompletionBlock);
-        const uint32_t prefixLength = prefixDescriptor->control & 0xffffu;
-        const uint32_t tailLength = tailDescriptor->control & 0xffffu;
-
-        // A late rebind is legal only when image 1 preserves every descriptor
-        // field except the mutable tail address. If the DMA segmentation or
-        // packet shape violates A1, keep the already-valid armed image.
-        const uint64_t armedPayloadOffset = TxPayloadImageOffset(
-            producerSlot, 0, controlBlock->slotStrideBytes);
-        if (fragments[0].length != prefixLength ||
-            fragments[1].length != tailLength) {
-            ++out.latePayloadRebindRejected;
-            controlBlock->latePayloadRebindRejectedCount.fetch_add(
-                1, std::memory_order_relaxed);
-            continue;
-        }
-        if (std::memcmp(
-                payloadBase + armedPayloadOffset,
-                payloadBase + payloadOffset,
-                meta.payloadPrefixBytes) != 0) {
-            ++out.latePayloadRebindRejected;
-            controlBlock->latePayloadRebindRejectedCount.fetch_add(
-                1, std::memory_order_relaxed);
-            continue;
-        }
-
-        const auto* payload = reinterpret_cast<const std::byte*>(
-            payloadBase + payloadOffset);
-        if (dmaMemory_) {
-            dmaMemory_->PublishToDevice(payload, payloadLength);
-            dmaMemory_->PublishBarrier();
-        }
-
-        meta.selectedPayloadImage = 1;
-        meta.payloadSeal = ASFW::Shared::Isoch::SealTxPayload(
-            payloadBase + payloadOffset, payloadLength);
-        std::atomic_thread_fence(std::memory_order_release);
-        tailDescriptor->dataAddress = fragments[1].deviceAddress;
-        if (dmaMemory_) {
-            dmaMemory_->PublishToDevice(
-                reinterpret_cast<const std::byte*>(
-                    &tailDescriptor->dataAddress),
-                sizeof(tailDescriptor->dataAddress));
-            dmaMemory_->PublishBarrier();
-        } else {
-            ASFW::Driver::WriteBarrier();
-        }
-
-        const uint32_t distance = static_cast<uint32_t>(
-            packetAbs - hardwareAbsIdx);
-        uint32_t previous = controlBlock->minimumLatePayloadRebindDistance.load(
-            std::memory_order_relaxed);
-        while (distance < previous &&
-               !controlBlock->minimumLatePayloadRebindDistance
-                    .compare_exchange_weak(
-                        previous, distance, std::memory_order_relaxed,
-                        std::memory_order_relaxed)) {
-        }
-        ++out.latePayloadRebinds;
-        controlBlock->latePayloadRebindCount.fetch_add(
-            1, std::memory_order_relaxed);
+        TryBindLatePayload(packetAbs, hardwareAbsIdx, metadataRing,
+                           controlBlock, numSlots, payloadBase, payloadDmaMap,
+                           out);
     }
 
     // Between completion callbacks the command pointer can advance by one
@@ -278,6 +314,32 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
         controlBlock->finalizedEnd.load(std::memory_order_relaxed);
     const uint64_t monotonicFinalizedEnd =
         std::max(previousFinalizedEnd, nextFinalizedEnd);
+
+    // Seal per packet, before publishing the frontier. The frontier is
+    // advisory telemetry; the arbitration word is the decision, and a packet
+    // that crosses into finality without one is exactly the state a producer
+    // could still win. Iterating the frontier delta -- not the repointable
+    // window -- keeps coverage gap-free when the command pointer jumps more
+    // than one completion group.
+    for (uint64_t packetAbs = previousFinalizedEnd;
+         packetAbs < monotonicFinalizedEnd;
+         ++packetAbs) {
+        // One last claim immediately before the seal. An offer that landed
+        // while this pass was busy with later packets is still legitimate
+        // content, and binding it costs nothing; without this, the window
+        // between passing a packet and sealing it spans the whole scan.
+        if (packetAbs >= firstRepointable) {
+            TryBindLatePayload(packetAbs, hardwareAbsIdx, metadataRing,
+                               controlBlock, numSlots, payloadBase,
+                               payloadDmaMap, out);
+        }
+        auto& meta = metadataRing[static_cast<uint32_t>(packetAbs % numSlots)];
+        if (meta.packetIndex != packetAbs) continue;
+        SealOnArmedImage(meta,
+                         ExpectedTxCommitGeneration(packetAbs, numSlots),
+                         controlBlock, out);
+    }
+
     controlBlock->finalizedEnd.store(
         monotonicFinalizedEnd, std::memory_order_release);
     out.finalizedEnd = monotonicFinalizedEnd;
@@ -440,12 +502,23 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
     ringPacketsAhead_ = numPackets;
     controlBlock->mappedEnd.store(softwareFillAbsIdx_,
                                   std::memory_order_release);
-    controlBlock->finalizedEnd.store(
-        std::min<uint64_t>(
-            softwareFillAbsIdx_,
-            ASFW::Shared::Isoch::IsochQueueGeometry::
-                kPayloadFinalityLeadPackets),
-        std::memory_order_release);
+    const uint64_t primedFinalizedEnd = std::min<uint64_t>(
+        softwareFillAbsIdx_,
+        ASFW::Shared::Isoch::IsochQueueGeometry::kPayloadFinalityLeadPackets);
+    // Prime makes these packets final exactly as a completion pass would, so it
+    // owes them the same per-packet seal. Without it the first packets of a
+    // stream are the one window where a producer could still win a race against
+    // a decision already taken.
+    RefillOutcome primeSeal{};
+    for (uint64_t packetAbs = 0; packetAbs < primedFinalizedEnd; ++packetAbs) {
+        auto& meta = metadataRing[static_cast<uint32_t>(packetAbs % numSlots)];
+        if (meta.packetIndex != packetAbs) continue;
+        SealOnArmedImage(meta,
+                         ExpectedTxCommitGeneration(packetAbs, numSlots),
+                         controlBlock, primeSeal);
+    }
+    controlBlock->finalizedEnd.store(primedFinalizedEnd,
+                                     std::memory_order_release);
 
     stats.packetsAssembled = numPackets;
     ASFW_LOG(Isoch, "IT: Dynamic descriptor ring primed. numPackets=%u softwareFillIdx=%llu",

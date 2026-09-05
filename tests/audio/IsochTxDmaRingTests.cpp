@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <array>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -82,9 +83,23 @@ protected:
             // The seal is written by transport when it binds the slot; this
             // only has to be something other than the value it will compute.
             meta.payloadSeal = 0;
+            // Armed for lap 1, exactly as the producer's commit leaves it.
+            meta.payloadArbitration.store(
+                ASFW::Isoch::MakeTxPayloadArbitration(
+                    1, ASFW::Isoch::TxPayloadArbitration::kNoAlternative),
+                std::memory_order_relaxed);
             meta.commitGeneration.store(1, std::memory_order_release);
         }
         return metadataRing;
+    }
+
+    /// Offer image 1 through the real producer entry point, so a test cannot
+    /// place a slot in a state the producer could not have reached.
+    [[nodiscard]] static bool OfferLateImage(
+        std::vector<IsochTxPacketMeta>& metadataRing, uint32_t slot) {
+        return ASFW::Isoch::OfferLateTxPayload(
+            metadataRing[slot],
+            ASFW::Isoch::ExpectedTxCommitGeneration(slot, kSharedPayloadSlots));
     }
 
     void RefreshPayloadSeal(
@@ -367,8 +382,11 @@ TEST_F(IsochTxDmaRingTest,
     // Packet 8 is exactly two packets away and is the first legal rebind.
     ImageBytes(7, 1)[8] = 0x77;
     ImageBytes(8, 1)[8] = 0x88;
-    metadataRing[7].pcmGeneration.store(1, std::memory_order_release);
-    metadataRing[8].pcmGeneration.store(1, std::memory_order_release);
+    // Packet 7 is already final: Prime sealed everything below the finality
+    // frontier, so the producer is correctly refused rather than left believing
+    // it placed content into a packet whose choice was made.
+    EXPECT_FALSE(OfferLateImage(metadataRing, 7));
+    EXPECT_TRUE(OfferLateImage(metadataRing, 8));
 
     const uint32_t commandPtr = ring_.Slab().GetDescriptorIOVA(
         6 * Layout::kBlocksPerPacket);
@@ -426,7 +444,7 @@ TEST_F(IsochTxDmaRingTest,
             metadataRing.data(), &primeControl_, sharedPayload_.data(),
             Layout::kNumPackets).packetsAssembled,
         Layout::kNumPackets);
-    metadataRing[8].pcmGeneration.store(1, std::memory_order_release);
+    ASSERT_TRUE(OfferLateImage(metadataRing, 8));
 
     const uint32_t commandPtr = ring_.Slab().GetDescriptorIOVA(
         6 * Layout::kBlocksPerPacket);
@@ -1388,4 +1406,224 @@ TEST(IsochTxQueueOwnershipTests, ProducerAcquiresOnlyAppendCursorOwnedSlot) {
     EXPECT_FALSE(CanAcquireTxProducerSlot(79, 79, 80, 64));
     EXPECT_FALSE(CanAcquireTxProducerSlot(144, 144, 80, 64));
     EXPECT_FALSE(CanAcquireTxProducerSlot(100, 100, 80, 0));
+}
+
+
+// --- Producer/transport arbitration ------------------------------------------
+//
+// Regression cover for the lost-publication race: transport used to decide a
+// packet's payload by skipping it in a scan and advancing a separate frontier
+// afterwards, so a producer publishing between those two steps read a frontier
+// that had not yet caught up and was told it had won a packet already decided.
+// The arbitration word makes offering and deciding one atomic event per packet.
+
+namespace {
+
+/// Runs a hook inside transport's DMA publish, which is where a real producer
+/// thread would interleave with the completion pass.
+class InterposingDma final : public ASFW::Isoch::Memory::IIsochDMAMemory {
+public:
+    explicit InterposingDma(ASFW::Isoch::Memory::IIsochDMAMemory& inner)
+        : inner_(inner) {}
+    mutable std::function<void(const std::byte*)> onPublish;
+
+    std::optional<ASFW::Shared::DMARegion> AllocateDescriptor(size_t n) override {
+        return inner_.AllocateDescriptor(n);
+    }
+    std::optional<ASFW::Shared::DMARegion> AllocatePayloadBuffer(size_t n) override {
+        return inner_.AllocatePayloadBuffer(n);
+    }
+    std::optional<ASFW::Shared::DMARegion> AllocateRegion(size_t n, size_t a) override {
+        return inner_.AllocateRegion(n, a);
+    }
+    uint64_t VirtToIOVA(const std::byte* p) const noexcept override {
+        return inner_.VirtToIOVA(p);
+    }
+    std::byte* IOVAToVirt(uint64_t p) const noexcept override {
+        return inner_.IOVAToVirt(p);
+    }
+    void PublishToDevice(const std::byte* p, size_t n) const noexcept override {
+        if (onPublish) onPublish(p);
+        inner_.PublishToDevice(p, n);
+    }
+    void FetchFromDevice(const std::byte* p, size_t n) const noexcept override {
+        inner_.FetchFromDevice(p, n);
+    }
+    size_t TotalSize() const noexcept override { return inner_.TotalSize(); }
+    size_t AvailableSize() const noexcept override { return inner_.AvailableSize(); }
+
+private:
+    ASFW::Isoch::Memory::IIsochDMAMemory& inner_;
+};
+
+} // namespace
+
+class IsochTxPayloadArbitrationTest : public IsochTxDmaRingTest {
+protected:
+    std::unique_ptr<InterposingDma> interposed_;
+
+    void SetUp() override {
+        IsochMemoryConfig config;
+        config.numDescriptors = Layout::kRingBlocks;
+        config.packetSizeBytes = 0;
+        config.descriptorAlignment = Layout::kOHCIPageSize;
+        config.payloadPageAlignment = 16384;
+        config.allocatePayloadSlab = false;
+
+        dmaMemory_ = IsochDMAMemoryManager::Create(config);
+        ASSERT_NE(dmaMemory_, nullptr);
+        ASSERT_TRUE(dmaMemory_->Initialize(hardware_));
+        interposed_ = std::make_unique<InterposingDma>(*dmaMemory_);
+        ring_.SetChannel(1);
+        ASSERT_EQ(ring_.SetupRings(*interposed_), kIOReturnSuccess);
+
+        const TxPayloadDmaSegment payloadSegment{
+            .deviceAddress = kSharedPayloadIOVA,
+            .length = sharedPayload_.size(),
+        };
+        ASSERT_TRUE(payloadDmaMap_.Configure(
+            std::span<const TxPayloadDmaSegment>(&payloadSegment, 1),
+            sharedPayload_.size()));
+    }
+
+    /// Place the live command pointer on a packet, as the controller would.
+    void PointAt(uint32_t packet) {
+        hardware_.SetTestRegister(
+            static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+            ring_.Slab().GetDescriptorIOVA(packet * Layout::kBlocksPerPacket) |
+                Layout::kBlocksPerPacket);
+        hardware_.SetTestRegister(
+            static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
+            0);
+    }
+
+    /// Packets need a real invariant prefix and a two-fragment payload before a
+    /// late rebind is legal at all.
+    void PrimeRebindable(std::vector<IsochTxPacketMeta>& metadataRing) {
+        for (auto& meta : metadataRing) {
+            meta.payloadLength = 72;
+            meta.payloadPrefixBytes = 8;
+        }
+        primeControl_.numSlots = kSharedPayloadSlots;
+        primeControl_.slotStrideBytes = kSharedPayloadStride;
+        primeControl_.maxPacketBytes = kSharedPayloadStride;
+        primeControl_.committedEnd.store(120);
+        ASSERT_EQ(
+            ring_.Prime(payloadDmaMap_, kSharedPayloadSlots,
+                        kSharedPayloadStride, metadataRing.data(),
+                        &primeControl_, sharedPayload_.data(), 120)
+                .packetsAssembled,
+            Layout::kNumPackets);
+    }
+
+    auto Refill(std::vector<IsochTxPacketMeta>& metadataRing) {
+        return ring_.Refill(hardware_, 0, metadataRing.data(), &primeControl_,
+                            kSharedPayloadSlots, sharedPayload_.data(),
+                            payloadDmaMap_);
+    }
+};
+
+// The reproduced schedule from the V3 review: the scan passes packet 8 with
+// nothing on offer, and the producer publishes packet 8 while transport is
+// still working on packet 9. Transport now revisits the packet immediately
+// before sealing it, so the content the producer was told it placed is the
+// content that goes on the wire.
+TEST_F(IsochTxPayloadArbitrationTest,
+       OfferLandingDuringTheScanIsBoundNotSilentlyDropped) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(6);
+
+    ASSERT_TRUE(OfferLateImage(metadataRing, 9));
+
+    bool producerAccepted = false;
+    bool interleaved = false;
+    interposed_->onPublish = [&](const std::byte* published) {
+        if (published != reinterpret_cast<const std::byte*>(ImageBytes(9, 1))) {
+            return;
+        }
+        interleaved = true;
+        producerAccepted = OfferLateImage(metadataRing, 8);
+    };
+
+    const auto outcome = Refill(metadataRing);
+    ASSERT_TRUE(outcome.ok);
+    ASSERT_TRUE(interleaved);
+
+    EXPECT_TRUE(producerAccepted);
+    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 1U);
+    EXPECT_EQ(metadataRing[9].selectedPayloadImage, 1U);
+    EXPECT_EQ(outcome.latePayloadLostPublications, 0U);
+}
+
+// The same interleaving against a packet transport has already sealed. The
+// producer must be refused. Under the old frontier comparison this returned
+// success -- the frontier still read 8 while packet 8's fate was already
+// decided -- and the engine counted silence as content.
+//
+// Reaching that state takes two interleavings: an offer must land after the
+// selection pass has gone past its packet, so that the packet is only bound
+// during the finality pass, which is the one that runs after packet 8 is
+// sealed.
+TEST_F(IsochTxPayloadArbitrationTest,
+       OfferForAnAlreadySealedPacketIsRefused) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(6);
+
+    ASSERT_TRUE(OfferLateImage(metadataRing, 20));
+
+    bool lateOfferPlaced = false;
+    bool interleaved = false;
+    bool producerAccepted = true;
+    interposed_->onPublish = [&](const std::byte* published) {
+        if (published == reinterpret_cast<const std::byte*>(ImageBytes(20, 1))) {
+            // The selection pass is past packet 13 by now, so this offer can
+            // only be taken up by the finality pass.
+            lateOfferPlaced = OfferLateImage(metadataRing, 13);
+            return;
+        }
+        if (published == reinterpret_cast<const std::byte*>(ImageBytes(13, 1))) {
+            // Packet 8 was sealed at the top of that same finality pass.
+            interleaved = true;
+            producerAccepted = OfferLateImage(metadataRing, 8);
+        }
+    };
+
+    const auto outcome = Refill(metadataRing);
+    ASSERT_TRUE(outcome.ok);
+    ASSERT_TRUE(lateOfferPlaced);
+    ASSERT_TRUE(interleaved);
+    ASSERT_EQ(outcome.finalizedEnd, 14U);
+
+    EXPECT_FALSE(producerAccepted);
+    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 0U);
+    EXPECT_EQ(metadataRing[13].selectedPayloadImage, 1U);
+}
+
+// A packet inside the live-command guard cannot be repointed, so an image
+// published for it is genuinely discarded. That is a real outcome, not an
+// error, and it has to be counted where transport decides it.
+TEST_F(IsochTxPayloadArbitrationTest,
+       ImageDiscardedInsideTheGuardIsCountedAsALostPublication) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(6);
+    ASSERT_TRUE(Refill(metadataRing).ok);
+    ASSERT_EQ(primeControl_.finalizedEnd.load(), 14U);
+
+    // Packet 16 is open: beyond the frontier and outside the guard.
+    ASSERT_TRUE(OfferLateImage(metadataRing, 16));
+
+    // The controller then jumps a full completion group, putting packet 16
+    // inside the guard before transport ever gets to bind it.
+    PointAt(15);
+    const auto outcome = Refill(metadataRing);
+    ASSERT_TRUE(outcome.ok);
+
+    EXPECT_EQ(metadataRing[16].selectedPayloadImage, 0U);
+    EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
+    EXPECT_EQ(primeControl_.latePayloadLostPublicationCount.load(), 1U);
+    // And the packet stays refused from now on.
+    EXPECT_FALSE(OfferLateImage(metadataRing, 16));
 }

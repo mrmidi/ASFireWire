@@ -904,8 +904,16 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                 queue->minimumLatePayloadRebindDistance.load(
                     std::memory_order_relaxed);
             ASFW_LOG(DirectAudio,
-                     "[TxFill] filled=%llu tooLate=%llu unavailable=%llu silentData=%llu cursor=%llu finalized=%llu mapped=%llu committed=%llu rebound=%llu rejected=%llu minRebindDistance=%u",
+                     // `filled` is the producer's optimistic count: it rises
+                     // when a publication is accepted, which is not the same as
+                     // the wire carrying it. `lost` is transport's count of
+                     // accepted publications it then sealed on the armed image,
+                     // so filled-minus-lost is the truthful content figure and
+                     // the one the latency ledger should read.
+                     "[TxFill] filled=%llu lost=%llu tooLate=%llu unavailable=%llu silentData=%llu cursor=%llu finalized=%llu mapped=%llu committed=%llu rebound=%llu rejected=%llu minRebindDistance=%u",
                      fill.lateFillsPublished.load(std::memory_order_relaxed),
+                     queue->latePayloadLostPublicationCount.load(
+                         std::memory_order_relaxed),
                      fill.lateFillsTooLate.load(std::memory_order_relaxed),
                      fill.lateFillsUnavailable.load(std::memory_order_relaxed),
                      fill.pcmSilenceSubstitutions.load(std::memory_order_relaxed),

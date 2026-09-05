@@ -104,6 +104,7 @@ public:
         uint64_t finalizedEnd{0};
         uint32_t latePayloadRebinds{0};
         uint32_t latePayloadRebindRejected{0};
+        uint32_t latePayloadLostPublications{0};
     };
 
     IsochTxDmaRing() noexcept = default;
@@ -178,6 +179,26 @@ private:
         uint32_t numSlots,
         uint8_t* payloadBase,
         const TxPayloadDmaMap& payloadDmaMap,
+        RefillOutcome& out) noexcept;
+    /// Decide one packet: bind image 1 if the producer offered a usable one,
+    /// otherwise leave the armed image standing. Never seals a packet that is
+    /// still open, so it is safe to call more than once for the same packet.
+    void TryBindLatePayload(
+        uint64_t packetAbs,
+        uint64_t hardwareAbsIdx,
+        IsochTxPacketMeta* metadataRing,
+        IsochTxQueueControl* controlBlock,
+        uint32_t numSlots,
+        uint8_t* payloadBase,
+        const TxPayloadDmaMap& payloadDmaMap,
+        RefillOutcome& out) noexcept;
+    /// Declare one packet final on its armed image, counting the discarded
+    /// offer if the producer had published one. The single site at which a lost
+    /// publication becomes a number.
+    static void SealOnArmedImage(
+        IsochTxPacketMeta& meta,
+        uint64_t generation,
+        IsochTxQueueControl* controlBlock,
         RefillOutcome& out) noexcept;
 
     uint8_t channel_{0};

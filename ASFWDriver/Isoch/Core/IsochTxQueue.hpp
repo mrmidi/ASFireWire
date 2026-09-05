@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 9;
+inline constexpr uint32_t kTxQueueAbiVersion = 10;
 
 /// Payload images per producer slot.
 ///
@@ -61,11 +61,13 @@ struct alignas(64) IsochTxPacketMeta final {
     /// Producer-written commit no longer implies payload finality, so the seal
     /// belongs to whoever froze the bytes.
     uint64_t payloadSeal;
-    /// Producer -> consumer: image 1 holds a complete alternative payload for
-    /// this packet. Accepted only when it equals ExpectedTxCommitGeneration for
-    /// the slot; any other value means "no alternative", including a stale one
-    /// left by an earlier lap.
-    std::atomic<uint64_t> pcmGeneration{0};
+    /// The single arbitration point between "producer offered image 1" and
+    /// "consumer chose an image". Both sides only ever move it by CAS, so the
+    /// two events are one event and neither side can observe a decision the
+    /// other has not yet made. Encodes the slot's commit generation with a
+    /// phase in the low bits, so a value left by an earlier lap can never be
+    /// mistaken for this packet's state. See TxPayloadArbitration.
+    std::atomic<uint64_t> payloadArbitration{0};
     uint8_t reserved1[64 - 48];
 };
 
@@ -78,7 +80,7 @@ static_assert(offsetof(IsochTxPacketMeta, commitGeneration) == 24);
 static_assert(offsetof(IsochTxPacketMeta, selectedPayloadImage) == 12);
 static_assert(offsetof(IsochTxPacketMeta, payloadPrefixBytes) == 14);
 static_assert(offsetof(IsochTxPacketMeta, payloadSeal) == 32);
-static_assert(offsetof(IsochTxPacketMeta, pcmGeneration) == 40);
+static_assert(offsetof(IsochTxPacketMeta, payloadArbitration) == 40);
 static_assert(std::atomic<uint64_t>::is_always_lock_free);
 
 [[nodiscard]] constexpr uint32_t TxQueueSlotIndexFor(
@@ -89,6 +91,91 @@ static_assert(std::atomic<uint64_t>::is_always_lock_free);
 [[nodiscard]] constexpr uint64_t ExpectedTxCommitGeneration(
     uint64_t packetIndex, uint32_t numSlots) noexcept {
     return packetIndex / numSlots + 1;
+}
+
+/// Phase of a slot's payload choice. The producer may only move a packet from
+/// kNoAlternative to kLateImageReady; the consumer may only move it from either
+/// of those to a terminal phase. Both transitions are CAS, and the terminal
+/// phases are what the packet actually transmitted:
+///
+///   kLateImageBound      -> image 1 went on the wire
+///   kFinalOnArmedImage   -> image 0 went on the wire
+///
+/// A producer whose CAS fails has lost the race and must account the packet as
+/// the armed image, not as content. Comparing a published marker against a
+/// frontier the consumer stores separately cannot express this: the consumer
+/// can skip a packet and advance the frontier as two distinct steps, and a
+/// producer that lands between them reads a frontier that has not yet caught
+/// up with the decision already made about its packet.
+enum class TxPayloadArbitration : uint64_t {
+    kNoAlternative = 0,      ///< Armed. No alternative image offered.
+    kLateImageReady = 1,     ///< Producer published a complete image 1.
+    kLateImageBound = 2,     ///< Consumer bound image 1 to the descriptor.
+    kFinalOnArmedImage = 3,  ///< Consumer froze the packet on image 0.
+};
+
+inline constexpr uint64_t kTxPayloadArbitrationPhaseBits = 2;
+
+/// Generation is >= 1 for every armed slot, so an all-zero word is never a
+/// valid state and a slot that was never armed cannot win any CAS.
+[[nodiscard]] constexpr uint64_t MakeTxPayloadArbitration(
+    uint64_t generation, TxPayloadArbitration phase) noexcept {
+    return (generation << kTxPayloadArbitrationPhaseBits) |
+           static_cast<uint64_t>(phase);
+}
+
+/// Producer side. Offers image 1 for a packet the consumer has not yet decided.
+/// Returns false when the consumer already sealed this packet -- the caller
+/// must then account the armed image, because that is what transmits.
+[[nodiscard]] inline bool OfferLateTxPayload(IsochTxPacketMeta& meta,
+                                             uint64_t generation) noexcept {
+    uint64_t expected = MakeTxPayloadArbitration(
+        generation, TxPayloadArbitration::kNoAlternative);
+    return meta.payloadArbitration.compare_exchange_strong(
+        expected,
+        MakeTxPayloadArbitration(generation,
+                                 TxPayloadArbitration::kLateImageReady),
+        std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+/// Consumer side. Claims a published image 1 for binding. Acquire on success
+/// pairs with the producer's release, so image 1's bytes are visible.
+[[nodiscard]] inline bool ClaimLateTxPayload(IsochTxPacketMeta& meta,
+                                             uint64_t generation) noexcept {
+    uint64_t expected = MakeTxPayloadArbitration(
+        generation, TxPayloadArbitration::kLateImageReady);
+    return meta.payloadArbitration.compare_exchange_strong(
+        expected,
+        MakeTxPayloadArbitration(generation,
+                                 TxPayloadArbitration::kLateImageBound),
+        std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+/// Consumer side. Declares the packet's choice final on the armed image. Call
+/// it for every packet whose finality frontier the consumer is about to cross
+/// and which it did not bind, so no packet is left in a state the producer
+/// could still win. Returns true when this discarded an image the producer had
+/// already published -- that is the lost publication, counted at its one
+/// authoritative site.
+[[nodiscard]] inline bool FinalizeTxPayloadOnArmedImage(
+    IsochTxPacketMeta& meta, uint64_t generation) noexcept {
+    const uint64_t sealed = MakeTxPayloadArbitration(
+        generation, TxPayloadArbitration::kFinalOnArmedImage);
+    uint64_t expected = MakeTxPayloadArbitration(
+        generation, TxPayloadArbitration::kNoAlternative);
+    if (meta.payloadArbitration.compare_exchange_strong(
+            expected, sealed, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+        return false;
+    }
+    if (expected != MakeTxPayloadArbitration(
+                        generation, TxPayloadArbitration::kLateImageReady)) {
+        // Already bound, already sealed, or a slot this generation never armed.
+        return false;
+    }
+    return meta.payloadArbitration.compare_exchange_strong(
+        expected, sealed, std::memory_order_acq_rel,
+        std::memory_order_acquire);
 }
 
 // The producer is append-only. Its first physical lap is prefilled while OHCI
@@ -198,6 +285,10 @@ struct IsochTxQueueControl final {
     std::atomic<uint64_t> finalizedEnd{0};
     std::atomic<uint64_t> latePayloadRebindCount{0};
     std::atomic<uint64_t> latePayloadRebindRejectedCount{0};
+    /// Packets whose producer published an alternative image that transport
+    /// then sealed on the armed image. This is the authoritative count of
+    /// content the producer believed it placed and the wire never carried.
+    std::atomic<uint64_t> latePayloadLostPublicationCount{0};
     std::atomic<uint32_t> minimumLatePayloadRebindDistance{~uint32_t{0}};
     std::atomic<uint64_t> completionStampCount{0};
     IsochTxCompletionStamp completionStamps[kIsochTxCompletionStampSlots]{};
@@ -228,6 +319,7 @@ struct IsochTxQueueControl final {
         finalizedEnd.store(0, std::memory_order_relaxed);
         latePayloadRebindCount.store(0, std::memory_order_relaxed);
         latePayloadRebindRejectedCount.store(0, std::memory_order_relaxed);
+        latePayloadLostPublicationCount.store(0, std::memory_order_relaxed);
         minimumLatePayloadRebindDistance.store(
             ~uint32_t{0}, std::memory_order_relaxed);
         completionStampCount.store(0, std::memory_order_relaxed);
