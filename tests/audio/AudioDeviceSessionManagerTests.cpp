@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "ASFWDriver/Audio/Devices/AudioDeviceSessionManager.hpp"
+#include "ASFWDriver/Audio/Families/Common/CommonProfileBuilder.hpp"
+#include "ASFWDriver/Audio/Shared/AudioGeometryPolicy.hpp"
 #include "ASFWDriver/Discovery/DeviceManager.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
 #include "ASFWDriver/Testing/Audio/FakeExistingFamilyDevice.hpp"
@@ -553,6 +555,80 @@ TEST(ResolvedProfileBuilder, ApogeeDuetPublishesAppleHalTimingAtBaseRates) {
     EXPECT_EQ(at480->outputLatencyFrames, 67U);
     EXPECT_EQ(at480->inputSafetyFrames, 50U);
     EXPECT_EQ(at480->outputSafetyFrames, 50U);
+}
+
+// A profile that declares nothing must still get a capture visibility margin
+// covering one whole completion batch: between completions a reader can be an
+// entire batch behind the writer, so a smaller safety offset does not cover
+// the interval it exists to cover. This used to be enforced by a floor applied
+// in graph construction on top of the profile value; the requirement now lives
+// once, in the default itself.
+TEST(ResolvedProfileBuilder, DefaultTimingCoversOneCompletionBatchAtEveryRate) {
+    using Policy = ::ASFW::Audio::Shared::AudioGeometryPolicy;
+
+    ResolvedAudioEndpointProfile profile{};
+    profile.supportedRates[0] = 44'100;
+    profile.supportedRates[1] = 48'000;
+    profile.supportedRates[2] = 96'000;
+    profile.supportedRates[3] = 192'000;
+    profile.supportedRateCount = 4;
+    profile.currentSampleRateHz = 48'000;
+    ::ASFW::Audio::Families::Common::AddDefaultTiming(profile, 500);
+
+    ASSERT_EQ(profile.timingCount, 4U);
+    for (uint8_t i = 0; i < profile.timingCount; ++i) {
+        const auto& timing = profile.timing[i];
+        const uint32_t batch =
+            Policy::CompletionBatchFrames(timing.sampleRateHz);
+        EXPECT_GE(timing.inputSafetyFrames, batch)
+            << "rate " << timing.sampleRateHz;
+        EXPECT_GE(timing.outputSafetyFrames, batch)
+            << "rate " << timing.sampleRateHz;
+    }
+
+    // The ladder is 6 packets x frames-per-DATA-packet (8/16/32).
+    EXPECT_EQ(Policy::CompletionBatchFrames(48'000), 48U);
+    EXPECT_EQ(Policy::CompletionBatchFrames(96'000), 96U);
+    EXPECT_EQ(Policy::CompletionBatchFrames(192'000), 192U);
+}
+
+// The generic AVC builder sets no timing of its own, so it is the path that
+// actually consumed the old literal 16.
+TEST(ResolvedProfileBuilder, GenericAvcInheritsADefensibleSafetyMargin) {
+    using Policy = ::ASFW::Audio::Shared::AudioGeometryPolicy;
+
+    Discovery::DeviceRecord record{};
+    record.instanceId = Discovery::DeviceInstanceId{11};
+    record.identity.observedGuid = 0x00A0DE000000BEEFULL;
+
+    DeviceProfiles::Audio::StaticAudioEndpointPlan plan{};
+    plan.unit = Discovery::UnitInstanceId{record.instanceId, 0x33};
+    plan.family = DeviceProfiles::Audio::AudioFamilyProviderId::GenericAvc;
+    plan.probePolicy = DeviceProfiles::Audio::ProbePolicyId::GenericAvc;
+    plan.support = DeviceProfiles::Audio::SupportDisposition::Supported;
+    plan.profileBuilder = DeviceProfiles::Audio::ProfileBuilderId::GenericAvc;
+    plan.vendorName = "Generic";
+    plan.modelName = "AVC Audio";
+
+    GenericAvcProbeFacts facts{};
+    facts.streams.hostInputPcmChannels = 2;
+    facts.streams.hostOutputPcmChannels = 2;
+    facts.streams.deviceToHostAm824Slots = 2;
+    facts.streams.hostToDeviceAm824Slots = 2;
+    facts.streams.sampleRateHz = 48'000;
+    facts.streams.deviceToHostStreamCount = 1;
+    facts.streams.hostToDeviceStreamCount = 1;
+    facts.supportedRates = {48'000};
+    facts.hasAudioSubunit = true;
+
+    const auto profile = ResolvedProfileBuilder::Build(
+        ProfileBuildContext{AudioEndpointId{12}, record, plan, facts});
+    ASSERT_TRUE(profile.has_value());
+
+    const auto* at480 = profile->TimingFor(48'000);
+    ASSERT_NE(at480, nullptr);
+    EXPECT_GE(at480->inputSafetyFrames, Policy::CompletionBatchFrames(48'000));
+    EXPECT_NE(at480->inputSafetyFrames, 16U);
 }
 
 // --- Bootloader preparation wiring -------------------------------------------

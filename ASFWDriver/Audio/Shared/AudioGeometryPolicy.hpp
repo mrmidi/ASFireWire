@@ -49,6 +49,21 @@ struct AudioGeometryPolicy final {
         return (kRxDelayPackets + RateAddend(rate)) * FramesPerPacket(rate);
     }
 
+    // Frames carried by one RX completion batch, counting every packet in the
+    // group as DATA -- an upper bound, since the D,D,D,N cadence leaves one
+    // NO-DATA per four packets.
+    //
+    // This is the floor for any capture visibility margin: a safety offset
+    // below it does not cover the interval it exists to cover, because a
+    // reader can be one whole batch behind the writer between completions. It
+    // is deliberately geometry only -- no scheduling-jitter term -- so a
+    // profile that says nothing still gets a margin that is defensible rather
+    // than arbitrary. See the J3 row in
+    // documentation/AUDIO_LATENCY_LEDGER_AND_SSOT_PLAN.md.
+    static constexpr uint32_t CompletionBatchFrames(double rate) {
+        return AudioTimingGeometry::kRxPacketsPerGroup * FramesPerPacket(rate);
+    }
+
     // Reported presentation latency (Saffire kext ladder). Frames.
     static constexpr uint32_t ReportedLatencyFrames(double rate) {
         if (rate > 96000.0) return 119u;

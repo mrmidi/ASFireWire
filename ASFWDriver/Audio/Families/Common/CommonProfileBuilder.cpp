@@ -2,6 +2,8 @@
 
 #include "CommonProfileBuilder.hpp"
 
+#include "../../Shared/AudioGeometryPolicy.hpp"
+
 #include <algorithm>
 #include <cstdio>
 
@@ -100,12 +102,19 @@ void AddDefaultTiming(Devices::ResolvedAudioEndpointProfile& profile,
         const uint32_t rate = profile.supportedRates[i] != 0
                                   ? profile.supportedRates[i]
                                   : profile.currentSampleRateHz;
+        // Safety defaults are derived, not guessed. A builder that knows its
+        // device replaces them; one that does not still gets a margin that
+        // covers a whole completion batch at its own rate. The literal 16 that
+        // stood here was below one batch at every supported rate, and only the
+        // graph's old input-safety floor was hiding that.
+        const uint32_t batchFrames =
+            Shared::AudioGeometryPolicy::CompletionBatchFrames(rate);
         profile.timing[i] = Devices::RateTimingPolicy{
             .sampleRateHz = rate,
             .inputLatencyFrames = 32,
             .outputLatencyFrames = 32,
-            .inputSafetyFrames = 16,
-            .outputSafetyFrames = 16,
+            .inputSafetyFrames = batchFrames,
+            .outputSafetyFrames = batchFrames,
             .rxTransferDelayTicks = 12800,
             .txTransferDelayTicks = 12800,
             .anchorTimeoutMs = anchorTimeoutMs,
