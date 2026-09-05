@@ -62,13 +62,18 @@ frames:
 | session | `RTL_ts` | delta from lowest | in ring laps |
 |---|---:|---:|---:|
 | prior fresh 64 | 354.95 | 0 | 0.00 |
-| this run | 930.95 | 576.00 | **2.00** |
+| post-reinstall run | 642.95 | 288.00 | **1.00** |
+| `capture.sh` run | 930.95 | 576.00 | **2.00** |
 | earlier session | 2370.95 | 2016.00 | **7.00** |
 
-Every pairwise delta is an exact multiple of 288 frames — 576, 1440, 2016. That
+Four observations across four driver starts, at laps 0, 1, 2 and 7. Every one of
+the six pairwise deltas is an exact integer multiple of 288 frames. That
 answers the question the restart series was going to ask: the ring implicated is
 `kTransmitInFlightPackets` (48), not the 168-slot timeline array. The offset is a
 whole number of TX descriptor-ring laps established at start.
+
+The two runs that bracket a reinstall differ by exactly one lap, so the offset
+is re-rolled on each driver start rather than being a property of the build.
 
 Note also that 354.95 need not be the zero-lap base; it is only the lowest seen.
 One lap below it is 66.95 frames, which is close to the driver's own named
