@@ -512,6 +512,49 @@ TEST(ResolvedProfileBuilder, FireWire1814PublishesIndependentBaseRateCapabilitie
     EXPECT_EQ(spdifInputAdatOutput->runtimeCaps.hostOutputPcmChannels, 12U);
 }
 
+TEST(ResolvedProfileBuilder, ApogeeDuetPublishesAppleHalTimingAtBaseRates) {
+    Discovery::DeviceRecord record{};
+    record.instanceId = Discovery::DeviceInstanceId{7};
+    record.identity.observedGuid = 0x0003DB000001DDDDULL;
+
+    DeviceProfiles::Audio::StaticAudioEndpointPlan plan{};
+    plan.unit = Discovery::UnitInstanceId{record.instanceId, 0x24};
+    plan.family = DeviceProfiles::Audio::AudioFamilyProviderId::OXFW;
+    plan.probePolicy = DeviceProfiles::Audio::ProbePolicyId::OxfwAvc;
+    plan.support = DeviceProfiles::Audio::SupportDisposition::Supported;
+    plan.profileBuilder = DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet;
+    plan.vendorName = "Apogee";
+    plan.modelName = "Duet";
+
+    OxfwProbeFacts facts{};
+    facts.streams.hostInputPcmChannels = 2;
+    facts.streams.hostOutputPcmChannels = 2;
+    facts.streams.deviceToHostAm824Slots = 2;
+    facts.streams.hostToDeviceAm824Slots = 2;
+    facts.streams.sampleRateHz = 48'000;
+    facts.streams.deviceToHostStreamCount = 1;
+    facts.streams.hostToDeviceStreamCount = 1;
+    facts.supportedRates = {44'100, 48'000};
+
+    const auto profile = ResolvedProfileBuilder::Build(
+        ProfileBuildContext{AudioEndpointId{9}, record, plan, facts});
+    ASSERT_TRUE(profile.has_value());
+
+    const auto* at441 = profile->TimingFor(44'100);
+    ASSERT_NE(at441, nullptr);
+    EXPECT_EQ(at441->inputLatencyFrames, 46U);
+    EXPECT_EQ(at441->outputLatencyFrames, 55U);
+    EXPECT_EQ(at441->inputSafetyFrames, 46U);
+    EXPECT_EQ(at441->outputSafetyFrames, 46U);
+
+    const auto* at480 = profile->TimingFor(48'000);
+    ASSERT_NE(at480, nullptr);
+    EXPECT_EQ(at480->inputLatencyFrames, 40U);
+    EXPECT_EQ(at480->outputLatencyFrames, 67U);
+    EXPECT_EQ(at480->inputSafetyFrames, 50U);
+    EXPECT_EQ(at480->outputSafetyFrames, 50U);
+}
+
 // --- Bootloader preparation wiring -------------------------------------------
 //
 // The cue machine and its transport are covered in BeBoBBootloaderCueTests.
