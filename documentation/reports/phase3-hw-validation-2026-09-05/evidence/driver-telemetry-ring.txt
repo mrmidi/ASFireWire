@@ -1,0 +1,24 @@
+### [TxFill]
+# 146 records retained; last 3:
+[DirectAudio] [TxFill] filled=4214636 lost=3910 tooLate=311 unavailable=790074 silentData=74680 cursor=5720376 finalized=5720264 mapped=5720304 committed=5720376 rebound=2133428 rejected=0 missedDeadline=609 stampsMissed=0 minRebin
+[DirectAudio] [TxFill] filled=4244637 lost=3910 tooLate=311 unavailable=790074 silentData=74680 cursor=5760378 finalized=5760266 mapped=5760306 committed=5760378 rebound=2133428 rejected=0 missedDeadline=609 stampsMissed=0 minRebin
+[DirectAudio] [TxFill] filled=4274639 lost=3910 tooLate=311 unavailable=790074 silentData=74680 cursor=5800380 finalized=5800268 mapped=5800308 committed=5800380 rebound=2133428 rejected=0 missedDeadline=609 stampsMissed=0 minRebin
+
+### [Ledger]
+# 291 records retained; last 3:
+[DirectAudio] [Ledger] J4 decode->read  n=145826 unres=205688 min=0 mean=786 max=6081 us hist=[10310,11409,33322,36297,54477,7,4,0]
+[DirectAudio] [Ledger] J3 recv->decode  n=5457959 unres=0 min=0 mean=310 max=9240 us hist=[1419491,1165937,1774330,1040869,56668,493,161,10]
+[DirectAudio] [Ledger] J4 decode->read  n=146655 unres=207203 min=0 mean=786 max=6081 us hist=[10381,11482,33535,36408,54838,7,4,0]
+
+### [TxPrep]
+# 146 records retained; last 3:
+[DirectAudio] [TxPrep] wakes=281717 maxLatUs=146 le750=281661 ge1500=33 lat=[1873,0,0,0,0,0] marginMin=120 marginMax=120 margin=[0,0,0,0,8542] headroomMin=1070 headroomRunMin=0
+[DirectAudio] [TxPrep] wakes=283589 maxLatUs=157 le750=283533 ge1500=33 lat=[1872,0,0,0,0,0] marginMin=120 marginMax=120 margin=[0,0,0,0,8543] headroomMin=1070 headroomRunMin=0
+[DirectAudio] [TxPrep] wakes=285461 maxLatUs=158 le750=285405 ge1500=33 lat=[1872,0,0,0,0,0] marginMin=120 marginMax=120 margin=[0,0,0,0,8545] headroomMin=1070 headroomRunMin=0
+
+### [TxLead]
+# 146 records retained; last 3:
+[DirectAudio] [TxLead] ticks=55966 min=53918 max=56990 frames=109 rate=48000
+[DirectAudio] [TxLead] ticks=53918 min=53918 max=56990 frames=105 rate=48000
+[DirectAudio] [TxLead] ticks=55966 min=53918 max=56990 frames=109 rate=48000
+

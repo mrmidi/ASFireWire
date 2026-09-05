@@ -380,10 +380,15 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                        bool useMAudio) noexcept {
     auto* queue = ivars.runtime.txSlotProvider.queueControl;
     auto* control = ivars.runtime.directAudioGraph.control;
-    if (!queue || !control || control->hardwareTimeline.Source() !=
-            ASFW::Audio::Runtime::HardwareTimelineSource::Transmit) {
-        return;
-    }
+    if (!queue || !control) return;
+    // Whether the sample timeline is driven from TX decides who may publish a
+    // boundary. It does not decide whether the TX path's own intervals happen:
+    // I1 and I2 are facts about our finality frontier and the controller's
+    // transmission, and on an RX-clocked device -- which is the normal case --
+    // returning here measured neither of them at all.
+    const bool txDrivesTimeline =
+        control->hardwareTimeline.Source() ==
+        ASFW::Audio::Runtime::HardwareTimelineSource::Transmit;
     const uint64_t stampCount = queue->completionStampCount.load(
         std::memory_order_acquire);
     if (stampCount == 0) {
@@ -427,7 +432,7 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     // finality on record when I2 asks for it.
     RecordLedgerFinality(ivars, control, timeline, timelineEpoch, pair);
 
-    if (useMAudio) {
+    if (useMAudio && txDrivesTimeline) {
         // The M-Audio warm-up state machine counts transport wakes, not
         // packets: ObserveHardwareWake refuses a second call for the same
         // transport generation, so draining into it would discard every stamp
@@ -545,7 +550,9 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             .correlationBusTicks = correlationBusTicks,
             .correlationHostTicks = pair.hostTimeMid,
         };
-        SubmitTxObservation(ivars, control, observation, "tx-fallback");
+        if (txDrivesTimeline) {
+            SubmitTxObservation(ivars, control, observation, "tx-fallback");
+        }
     }
     ivars.runtime.txCompletionStampCursor = stampCount;
 }

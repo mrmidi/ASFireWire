@@ -7,7 +7,58 @@ Validates the Phase 3 instrument repairs landed in `c912231e`, `e4464ae2`,
 
 Parent plan: [Audio latency ledger and timing SSOT](../../AUDIO_LATENCY_LEDGER_AND_SSOT_PLAN.md).
 
-## Status: partial. The physical path could not be measured.
+## Status: telemetry validated, one defect found, RTL measured on the second pass.
+
+The driver log ring — not `log stream` — is where this telemetry lives.
+`ASFW_LOG` always writes the ring and mirrors to os_log only when the mirror is
+enabled, so the predicate capture returned nothing but its own header. Read it
+with `asfw_log_query` over the MCP control plane on `127.0.0.1:8765/mcp`
+(initialize, then `notifications/initialized`, then `tools/call`). The ring held
+19520 records with **0 dropped** and `oldestSequence` 1, so no history was lost.
+
+## Defect found: I1 and I2 are never measured on an RX-clocked device
+
+`ObserveTxHardware` returns immediately unless the sample timeline is
+TX-driven, and both ledger intervals were recorded inside it. This device is
+RX-clocked (`[ZTS] rx`), which is the normal case, so `I1` and `I2` produced no
+samples and no unresolved count — their heartbeat lines never printed at all.
+Whether TX drives the timeline decides who may publish a boundary; it does not
+decide whether the TX path's own intervals occur. Fixed by gating only the
+boundary publication on the clock source.
+
+## Measured: RTL, on the run that had a return path
+
+The 60-trial run inside `capture.sh` had signal (peak 0.064, 32.5 dB SNR) and
+admitted **60 of 60** trials.
+
+| | frames | ms |
+|---|---:|---:|
+| `RTL_raw` | 1158.95 (sd 0.01) | 24.145 |
+| `RTL_ts` | 930.95 (sd 0.01) | 19.395 |
+| scheduling distance | 228.00 measured / 228 declared | — |
+| `RESIDUAL` | +823.95 | +17.166 |
+
+**This is the third `RTL_ts` value, and the three are spaced in exact hardware
+ring laps.** With 48 packets per TX ring and 6 frames per packet, one lap is 288
+frames:
+
+| session | `RTL_ts` | delta from lowest | in ring laps |
+|---|---:|---:|---:|
+| prior fresh 64 | 354.95 | 0 | 0.00 |
+| this run | 930.95 | 576.00 | **2.00** |
+| earlier session | 2370.95 | 2016.00 | **7.00** |
+
+Every pairwise delta is an exact multiple of 288 frames — 576, 1440, 2016. That
+answers the question the restart series was going to ask: the ring implicated is
+`kTransmitInFlightPackets` (48), not the 168-slot timeline array. The offset is a
+whole number of TX descriptor-ring laps established at start.
+
+Note also that 354.95 need not be the zero-lap base; it is only the lowest seen.
+One lap below it is 66.95 frames, which is close to the driver's own named
+below-client budget (~84 frames), so the possibility that *every* session
+observed so far is displaced is open, not excluded.
+
+## Earlier in the session: no return path was connected
 
 **No loopback return path is connected.** Driving each output against each
 input leaves input 1 flat at 0.000 and input 0 at its own noise floor
@@ -41,7 +92,36 @@ and confirms buffer negotiation still holds after the reinstall.
 The RTL preflight landed in `f0e724fa` reported no buffer-request failure and no
 unreadable declaration in any run, so the declared column is trustworthy here.
 
-## Not yet captured: the driver-side telemetry
+## Captured: the driver-side telemetry
+
+Cumulative since driver start.
+
+`[TxFill] filled=4274639 lost=3910 tooLate=311 unavailable=790074 silentData=74680 rebound=2133428 rejected=0 missedDeadline=609 stampsMissed=0`
+
+| Counter | Value | Reading |
+|---|---:|---|
+| `stampsMissed` | **0** | the cursor drain never fell behind the stamp ring, so no ZTS boundary was lost to overrun |
+| `rejected` | **0** | no late rebind failed geometry validation |
+| `lost` | 3910 of 3.6M | 0.1% of accepted publications were sealed on the armed image |
+| `missedDeadline` | 609 | the live-position recheck does fire — the old stale-snapshot guard was letting these through |
+| `tooLate` | 311 | producer refused a slot already past finality |
+
+`[Ledger] J3 recv->decode n=5457959 unres=0 min=0 mean=310 max=9240 us hist=[1419491,1165937,1774330,1040869,56668,493,161,10]`
+
+Mean 310 µs against a 0.75 ms nominal, but with a real tail: 664 samples above
+2 ms and 10 above 8 ms, max 9.24 ms. The nominal describes the centre and says
+nothing about that tail, which is the point of measuring it.
+
+`[Ledger] J4 decode->read n=146655 unres=207203 min=0 mean=786 max=6081 us`
+
+**`unresolved` exceeds `samples`.** 59% of reads asked for a newest frame not yet
+in the capture ring, which the primitive reports the same way as a stamp that
+aged out. Those are different conditions — one says the reader is ahead of the
+writer, the other says the measurement lost its endpoint — and conflating them
+means the J4 histogram describes only the lagging half of the distribution.
+Splitting the two is outstanding.
+
+## Superseded: the earlier claim that no telemetry was captured
 
 `[Ledger]`, `[TxFill]` and the rest are the actual Phase 3 deliverable, and the
 agent's sandbox returns zero lines from `log stream` silently — it cannot
