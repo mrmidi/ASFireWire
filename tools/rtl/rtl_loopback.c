@@ -189,7 +189,7 @@ typedef struct {
     int    have, haveSample;
     UInt32 prevN;
     double prevSample, prevHost;
-    UInt32 gapEvents, ambiguous, anchorEvents;
+    UInt32 gapEvents, ambiguous, anchorEvents, noTsEvents;
     double gapFrames, worstAnchor;
 } audit_t;
 
@@ -243,7 +243,7 @@ static void audit_step(audit_t *a, double sampleTime, int sampleValid,
     // After an invalid timestamp the next delta would span two callbacks, so
     // drop the witness rather than compare against the wrong span.
     if (sampleValid) { a->prevSample = sampleTime; a->haveSample = 1; }
-    else               a->haveSample = 0;
+    else             { a->haveSample = 0; a->noTsEvents++; }
 }
 
 // ------------------------------------------------------------- shared state
@@ -256,10 +256,11 @@ typedef struct {
     double  capIt;         // inputTime.mSampleTime at that same frame
     UInt32  n;
     int     tsValid;       // both timestamps were valid -- distinct from "zero"
-    UInt32  badAtStart;    // frame gaps, bounded to this trial
-    UInt32  badAtEnd;
-    UInt32  anchorAtStart; // re-anchors, bounded to this trial
-    UInt32  anchorAtEnd;
+    // Anomaly counters sampled at the trial's first and last callback. Every
+    // cause is tracked separately so a verdict can name it, but any change at
+    // all disqualifies the trial: admission is "nothing happened", not "nothing
+    // I judged fatal happened".
+    UInt32  gapAt[2], ambAt[2], anchorAt[2], noTsAt[2], cbAt[2];
     Float32 win[MAX_WINDOW];
 } trial_t;
 
@@ -288,21 +289,148 @@ static struct {
     trial_t t[MAX_TRIALS];
 } g;
 
-// A trial is unusable if either domain lost frames or could not classify what
-// happened; only a corroborated re-anchor is survivable, and only for RTL_raw.
-static UInt32 audit_bad(void) {
-    return g.itAudit.gapEvents + g.itAudit.ambiguous +
-           g.otAudit.gapEvents + g.otAudit.ambiguous;
-}
-static UInt32 audit_anchors(void) {
-    return g.itAudit.anchorEvents + g.otAudit.anchorEvents;
+// ------------------------------------------------------- trial admission
+// ONE decision, in one place. A trial is admitted only if nothing anomalous
+// happened anywhere inside it -- no lost frames, no re-anchor, no missing
+// timing evidence, no unclassifiable disagreement. Every one of those is a
+// rejection, so no classification the audit makes can widen what gets in.
+//
+// This deliberately gives up salvaging a re-anchored trial's RTL_raw. That
+// salvage was the only path by which a classifier verdict could preserve a
+// measurement, and every defect found in this file lived on it. Selective
+// recovery is a feature to add later against evidence and its own coverage,
+// not a default for a baseline instrument.
+//
+// A consequence worth naming: accepted trials are one set, so RTL_raw and
+// RTL_ts are drawn from identical populations and the paired scheduling
+// distance is structural rather than something a reporting branch must
+// remember to do.
+typedef enum {
+    TRIAL_ACCEPTED = 0,
+    TRIAL_GAP,
+    TRIAL_AMBIGUOUS,
+    TRIAL_ANCHOR,
+    TRIAL_NO_TIMESTAMPS,
+    TRIAL_NO_SIGNAL,
+    TRIAL_VERDICTS
+} verdict_t;
+
+static const char *const verdict_name[TRIAL_VERDICTS] = {
+    "accepted", "lost frames", "unclassified", "re-anchor",
+    "no timestamps", "no signal",
+};
+
+static UInt32 audit_gaps(void)    { return g.itAudit.gapEvents    + g.otAudit.gapEvents; }
+static UInt32 audit_amb(void)     { return g.itAudit.ambiguous    + g.otAudit.ambiguous; }
+static UInt32 audit_anchors(void) { return g.itAudit.anchorEvents + g.otAudit.anchorEvents; }
+static UInt32 audit_nots(void)    { return g.itAudit.noTsEvents   + g.otAudit.noTsEvents; }
+
+static void trial_mark(trial_t *t, int which) {
+    t->gapAt[which]    = audit_gaps();
+    t->ambAt[which]    = audit_amb();
+    t->anchorAt[which] = audit_anchors();
+    t->noTsAt[which]   = audit_nots();
+    t->cbAt[which]     = g.cycles;
 }
 
+// haveSignal is passed in rather than a result, so admission depends on the
+// timeline record alone and cannot drift with the detector.
+static verdict_t trial_verdict(const trial_t *t, int haveSignal) {
+    if (t->gapAt[1]    != t->gapAt[0])    return TRIAL_GAP;
+    if (t->ambAt[1]    != t->ambAt[0])    return TRIAL_AMBIGUOUS;
+    if (t->anchorAt[1] != t->anchorAt[0]) return TRIAL_ANCHOR;
+    if (t->noTsAt[1]   != t->noTsAt[0] || !t->tsValid) return TRIAL_NO_TIMESTAMPS;
+    if (!haveSignal) return TRIAL_NO_SIGNAL;
+    return TRIAL_ACCEPTED;
+}
+
+// ------------------------------------------------------------------- engine
+// The measurement state machine, with no CoreAudio in it, so the adversarial
+// simulator drives exactly the code the hardware path runs.
+typedef struct {
+    UInt32   n;
+    double   hostSec;
+    double   itSample; int itValid;
+    double   otSample; int otValid;
+    Float32 (*input)(void *ctx, UInt32 frame);
+    void    *ctx;
+    Float32 *outSlot;          // where an impulse goes; NULL if unavailable
+} step_t;
+
+static void engine_step(const step_t *s) {
+    const UInt32 n = s->n;
+    if (!n) return;
+
+    g.cycles++;
+    if (!g.minSpan || n < g.minSpan) g.minSpan = n;
+    if (g.spanCount < 16) {
+        int seen = 0;
+        for (UInt32 i = 0; i < g.spanCount; i++) if (g.spans[i] == n) seen = 1;
+        if (!seen) g.spans[g.spanCount++] = n;
+    }
+
+    if (!g.haveHostStart) { g.hostStart = s->hostSec; g.haveHostStart = 1; }
+
+    // Three quarters of the smallest callback: a lost callback costs at least a
+    // whole one, while scheduling jitter stays well below that.
+    double hostTol = 0.75 * (double)g.minSpan;
+    if (hostTol < 8.0) hostTol = 8.0;
+    audit_step(&g.itAudit, s->itSample, s->itValid, s->hostSec, n, g.sampleRate, hostTol);
+    audit_step(&g.otAudit, s->otSample, s->otValid, s->hostSec, n, g.sampleRate, hostTol);
+
+    switch (g.state) {
+    case ST_WARMUP:
+    case ST_GAP:
+        if (g.remaining > n) { g.remaining -= n; break; }
+        g.remaining = 0;
+        if (g.trial >= g.trials) { g.state = ST_DONE; break; }
+        {
+            trial_t *t = &g.t[g.trial];
+            if (s->outSlot) *s->outSlot = g.amplitude;
+            t->emitAbs = g.pos;
+            t->capAbs  = g.pos;
+            t->emitOt  = s->otValid ? s->otSample : 0.0;
+            t->capIt   = s->itValid ? s->itSample : 0.0;
+            t->tsValid = s->otValid && s->itValid;
+            t->n       = 0;
+            trial_mark(t, 0);
+            g.state = ST_CAPTURE;
+        }
+        __attribute__((fallthrough));
+    case ST_CAPTURE: {
+        trial_t *t = &g.t[g.trial];
+        for (UInt32 f = 0; f < n && t->n < g.window; f++)
+            t->win[t->n++] = s->input ? s->input(s->ctx, f) : 0.0f;
+        if (t->n >= g.window) {
+            trial_mark(t, 1);
+            g.trial++;
+            g.remaining = g.gapFrames;
+            g.state = (g.trial >= g.trials) ? ST_DONE : ST_GAP;
+        }
+        break;
+    }
+    default: break;
+    }
+
+    g.pos += (double)n;
+    if (g.state == ST_DONE)
+        atomic_store_explicit(&g.done, 1, memory_order_release);
+}
+
+// ------------------------------------------------------------- CoreAudio IO
 static OSStatus overload_listener(AudioObjectID o, UInt32 n,
                                   const AudioObjectPropertyAddress *a, void *u) {
     (void)o; (void)n; (void)a; (void)u;
     atomic_fetch_add_explicit(&g.overloads, 1u, memory_order_relaxed);
     return noErr;
+}
+
+typedef struct { const AudioBufferList *in; UInt32 ch; } ioctx_t;
+
+static Float32 io_input(void *ctx, UInt32 frame) {
+    const ioctx_t *c = (const ioctx_t *)ctx;
+    const Float32 *p = bl_slot(c->in, frame, c->ch);
+    return p ? *p : 0.0f;
 }
 
 static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
@@ -319,87 +447,35 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
             if (out->mBuffers[i].mData)
                 memset(out->mBuffers[i].mData, 0, out->mBuffers[i].mDataByteSize);
 
-    g.cycles++;
-    if (!g.minSpan || n < g.minSpan) g.minSpan = n;
-    if (g.spanCount < 16) {
-        int seen = 0;
-        for (UInt32 i = 0; i < g.spanCount; i++) if (g.spans[i] == n) seen = 1;
-        if (!seen) g.spans[g.spanCount++] = n;
-    }
-
-    // Wall clock, read directly rather than through any driver-supplied
-    // timestamp: a re-anchored sample timeline must not be able to hide a gap
-    // in delivered frames, and only an independent clock guarantees that.
-    const double hostSec = (double)mach_absolute_time() * g_h2s;
-    if (!g.haveHostStart) { g.hostStart = hostSec; g.haveHostStart = 1; }
-
-    const int itOk = it && (it->mFlags & kAudioTimeStampSampleTimeValid);
-    const int otOk = ot && (ot->mFlags & kAudioTimeStampSampleTimeValid);
-    // Three quarters of the smallest callback: a lost callback costs at least a
-    // whole one, while scheduling jitter stays well below that.
-    double hostTol = 0.75 * (double)g.minSpan;
-    if (hostTol < 8.0) hostTol = 8.0;
-    audit_step(&g.itAudit, itOk ? it->mSampleTime : 0.0, itOk, hostSec, n,
-               g.sampleRate, hostTol);
-    audit_step(&g.otAudit, otOk ? ot->mSampleTime : 0.0, otOk, hostSec, n,
-               g.sampleRate, hostTol);
-
     if (in) {
         const UInt32 nc = bl_channels(in);
         if (nc && nc <= MAX_CHANNELS) {
             g.inChans = nc;
             for (UInt32 c = 0; c < nc; c++)
                 for (UInt32 f = 0; f < n; f++) {
-                    const Float32 *s = bl_slot(in, f, c);
-                    if (!s) break;
-                    const Float32 a = fabsf(*s);
+                    const Float32 *p = bl_slot(in, f, c);
+                    if (!p) break;
+                    const Float32 a = fabsf(*p);
                     if (a > g.chPeak[c]) g.chPeak[c] = a;
                 }
         }
     }
 
-    switch (g.state) {
-    case ST_WARMUP:
-    case ST_GAP:
-        if (g.remaining > n) { g.remaining -= n; break; }
-        g.remaining = 0;
-        if (g.trial >= g.trials) { g.state = ST_DONE; break; }
-        {
-            trial_t *t = &g.t[g.trial];
-            Float32 *o = bl_slot(out, 0, g.outCh);
-            if (o) *o = g.amplitude;
-            t->emitAbs       = g.pos;
-            t->capAbs        = g.pos;
-            t->emitOt        = otOk ? ot->mSampleTime : 0.0;
-            t->capIt         = itOk ? it->mSampleTime : 0.0;
-            t->tsValid       = otOk && itOk;
-            t->badAtStart    = audit_bad();
-            t->anchorAtStart = audit_anchors();
-            t->n             = 0;
-            g.state          = ST_CAPTURE;
-        }
-        __attribute__((fallthrough));
-    case ST_CAPTURE: {
-        trial_t *t = &g.t[g.trial];
-        for (UInt32 f = 0; f < n && t->n < g.window; f++) {
-            const Float32 *s = bl_slot(in, f, g.inCh);
-            t->win[t->n++] = s ? *s : 0.0f;
-        }
-        if (t->n >= g.window) {
-            t->badAtEnd    = audit_bad();
-            t->anchorAtEnd = audit_anchors();
-            g.trial++;
-            g.remaining = g.gapFrames;
-            g.state = (g.trial >= g.trials) ? ST_DONE : ST_GAP;
-        }
-        break;
-    }
-    default: break;
-    }
-
-    g.pos += (double)n;
-    if (g.state == ST_DONE)
-        atomic_store_explicit(&g.done, 1, memory_order_release);
+    const int itOk = it && (it->mFlags & kAudioTimeStampSampleTimeValid);
+    const int otOk = ot && (ot->mFlags & kAudioTimeStampSampleTimeValid);
+    ioctx_t ctx = { in, g.inCh };
+    // The wall clock is read here, directly, rather than taken from any
+    // driver-supplied timestamp: a re-anchored sample timeline must not be able
+    // to hide a gap in delivered frames.
+    step_t st = {
+        .n = n,
+        .hostSec  = (double)mach_absolute_time() * g_h2s,
+        .itSample = itOk ? it->mSampleTime : 0.0, .itValid = itOk,
+        .otSample = otOk ? ot->mSampleTime : 0.0, .otValid = otOk,
+        .input = io_input, .ctx = &ctx,
+        .outSlot = bl_slot(out, 0, g.outCh),
+    };
+    engine_step(&st);
     return noErr;
 }
 
@@ -540,6 +616,153 @@ static void fill_trial(trial_t *t, double d, double amp, unsigned *rng) {
         const double noise = ((double)((*rng >> 16) & 0xFFFF) / 32768.0 - 1.0) * 1e-4;
         t->win[i] = synth_ir((double)i, d, amp) + (Float32)noise;
     }
+}
+
+// ------------------------------------------------------- adversarial simulator
+// Drives the real engine over a known physical timeline, injects faults into it,
+// and derives every expectation from WHAT WAS INJECTED -- never by recomputing
+// the classifier's own tolerances, which would only assert that the code agrees
+// with itself.
+//
+// The physical timeline is the authority. Delivered frames and the sample
+// timeline are two lossy views of it: a drop makes delivered frames lag physical
+// ones, an anchor offsets the sample view, and the impulse still arrives when
+// physics says it does. A trial that spans an injected fault must never be
+// admitted, and one that spans none must be admitted and must recover the
+// injected round trip exactly.
+typedef struct {
+    const char *name;
+    double trueRtl;
+    int    dropAt;    double dropFrames;
+    int    anchorAt;  double anchorFrames;
+    int    noTsAt;
+    double jitterFrames;
+    int    wideSpans;          // an unrelated change of callback size
+} sim_cfg_t;
+
+static struct {
+    double  trueRtl, dropped, anchor, posBefore;
+    double  emitPhys[MAX_TRIALS];
+    int     nEmits;
+    unsigned rng;
+} sim;
+
+static Float32 sim_input(void *ctx, UInt32 frame) {
+    (void)ctx;
+    const double physical = sim.posBefore + sim.dropped + (double)frame;
+    double v = 0;
+    for (int i = 0; i < sim.nEmits; i++)
+        v += synth_ir(physical, sim.emitPhys[i] + sim.trueRtl, 0.9);
+    sim.rng = sim.rng * 1103515245u + 12345u;
+    v += ((double)((sim.rng >> 16) & 0xFFFF) / 32768.0 - 1.0) * 1e-5;
+    return (Float32)v;
+}
+
+static int sim_run(const sim_cfg_t *c) {
+    memset(&g, 0, sizeof g);
+    memset(&sim, 0, sizeof sim);
+    g.sampleRate = 48000.0; g.amplitude = 0.9f;
+    g.trials = 4; g.window = 512; g.gapFrames = 128; g.warmupFrames = 128;
+    g.remaining = g.warmupFrames; g.state = ST_WARMUP;
+    sim.trueRtl = c->trueRtl;
+    sim.rng = 4321;
+
+    // Spans stay below trueRtl so an impulse never lands in its own emit
+    // callback, which is the one place the simulator could not have recorded it.
+    const UInt32 patNarrow[4] = { 128, 64, 64, 64 };
+    const UInt32 patWide[4]   = { 256, 96, 96, 96 };
+    const UInt32 *pat = c->wideSpans ? patWide : patNarrow;
+
+    int faults[4], nf = 0;
+    if (c->dropAt   >= 0) faults[nf++] = c->dropAt;
+    if (c->anchorAt >= 0) faults[nf++] = c->anchorAt;
+    if (c->noTsAt   >= 0) faults[nf++] = c->noTsAt;
+
+    unsigned jrng = 777;
+    for (int i = 1; i <= 400 && g.state != ST_DONE; i++) {
+        const UInt32 n = pat[(i - 1) % 4];
+        if (i == c->dropAt)   sim.dropped += c->dropFrames;   // a callback never delivered
+        if (i == c->anchorAt) sim.anchor  += c->anchorFrames; // timeline re-origined
+        const int tsOk = (i != c->noTsAt);
+
+        const double physical = g.pos + sim.dropped;
+        double jitter = 0.0;
+        if (c->jitterFrames > 0) {                            // late, never early
+            jrng = jrng * 1103515245u + 12345u;
+            jitter = (double)((jrng >> 16) & 0xFF) / 255.0 * c->jitterFrames;
+        }
+        Float32 slot = 0.0f;
+        sim.posBefore = g.pos;
+        step_t st = {
+            .n = n,
+            .hostSec  = (physical + jitter) / 48000.0,
+            .itSample = physical + sim.anchor,           .itValid = tsOk,
+            .otSample = physical + sim.anchor + 900.0,   .otValid = tsOk,
+            .input = sim_input, .ctx = NULL, .outSlot = &slot,
+        };
+        engine_step(&st);
+        if (slot != 0.0f && sim.nEmits < MAX_TRIALS)
+            sim.emitPhys[sim.nEmits++] = sim.posBefore + sim.dropped;
+    }
+
+    int failures = 0, accepted = 0, expectedAccepted = 0;
+    for (UInt32 k = 0; k < g.trial; k++) {
+        const trial_t *t = &g.t[k];
+        const result_t r = analyse(t);
+        const verdict_t v = trial_verdict(t, r.ok);
+
+        // A fault at the emit callback itself precedes the measured interval and
+        // cannot corrupt it; anything after does.
+        int affected = 0;
+        for (int f = 0; f < nf; f++)
+            if ((UInt32)faults[f] > t->cbAt[0] && (UInt32)faults[f] <= t->cbAt[1])
+                affected = 1;
+
+        if (v == TRIAL_ACCEPTED) accepted++;
+        if (!affected) expectedAccepted++;
+
+        if (affected && v == TRIAL_ACCEPTED) {
+            printf("      trial %u: injected fault ADMITTED (RTL_raw %.2f vs true %.2f)\n",
+                   k, r.rawFrames, c->trueRtl);
+            failures++;
+        } else if (!affected && v != TRIAL_ACCEPTED) {
+            printf("      trial %u: clean trial rejected as %s\n", k, verdict_name[v]);
+            failures++;
+        } else if (v == TRIAL_ACCEPTED && fabs(r.rawFrames - c->trueRtl) > 0.25) {
+            printf("      trial %u: admitted but reports %.2f, injected %.2f\n",
+                   k, r.rawFrames, c->trueRtl);
+            failures++;
+        }
+    }
+    if (g.trial == 0) { printf("      no trials ran\n"); failures++; }
+
+    printf("  %-26s %d/%u admitted (expected %d)   %s\n", c->name,
+           accepted, g.trial, expectedAccepted, failures ? "FAIL" : "ok");
+    return failures;
+}
+
+static int adversarial(void) {
+    // dropAt/anchorAt/noTsAt are callback indices; 3 falls inside trial 0 under
+    // either span pattern, and later trials stay clean.
+    const sim_cfg_t cfgs[] = {
+      { "clean",                 300, -1, 0,  -1, 0,      -1,  0,  0 },
+      { "clean, wider spans",    300, -1, 0,  -1, 0,      -1,  0,  1 },
+      { "jitter under tolerance",300, -1, 0,  -1, 0,      -1, 30,  0 },
+      { "dropped callback",      300,  3, 64, -1, 0,      -1,  0,  0 },
+      { "re-anchor",             300, -1, 0,   3, 936.0,  -1,  0,  0 },
+      { "re-anchor, negative",   300, -1, 0,   3, -936.0, -1,  0,  0 },
+      { "drop under re-anchor",  300,  3, 64,  3, 936.0,  -1,  0,  0 },
+      { "drop, negative anchor", 300,  3, 64,  3, -936.0, -1,  0,  0 },
+      { "missing timestamps",    300, -1, 0,  -1, 0,       3,  0,  0 },
+      { "drop, no timestamps",   300,  3, 64, -1, 0,       3,  0,  0 },
+      { "drop, wider spans",     300,  3, 64, -1, 0,      -1,  0,  1 },
+      { "all three at once",     300,  3, 64,  3, 936.0,   3,  0,  0 },
+    };
+    int failures = 0;
+    printf("\n--- adversarial: injected faults must never reach the statistics ---\n");
+    for (unsigned i = 0; i < sizeof cfgs / sizeof *cfgs; i++)
+        failures += sim_run(&cfgs[i]);
+    return failures;
 }
 
 static int selftest(void) {
@@ -702,6 +925,8 @@ static int selftest(void) {
                "mixed trial sets", paired, unpaired, ok ? "ok" : "FAIL");
     }
 
+    failures += adversarial();
+
     printf("\n  %s\n", failures ? "SELFTEST FAILED" : "selftest passed");
     return failures ? 1 : 0;
 }
@@ -850,46 +1075,42 @@ int main(int argc, char **argv) {
     printf("\n");
 
     double raw[MAX_TRIALS], ts[MAX_TRIALS], pre[MAX_TRIALS], sched[MAX_TRIALS];
-    int nr = 0, nts = 0, npre = 0, nsched = 0;
-    int noSignal = 0, droppedT = 0, anchoredT = 0, inverted = 0;
+    int nr = 0, inverted = 0;
+    UInt32 tally[TRIAL_VERDICTS] = {0};
     double worstNoise = 0, minPeak = 1e9;
     for (UInt32 i = 0; i < g.trial; i++) {
         const trial_t *tr = &g.t[i];
         const result_t r = analyse(tr);
-        if (!r.ok) { noSignal++; continue; }
-        if (r.noise > worstNoise) worstNoise = r.noise;
-        if (r.peak < minPeak) minPeak = r.peak;
-        if (r.inverted) inverted++;
-
-        // A gap in delivered frames makes RTL_raw read short by the gap, so the
-        // trial is rejected outright rather than averaged in.
-        if (tr->badAtEnd != tr->badAtStart) { droppedT++; continue; }
-        raw[nr++] = r.rawFrames;
-        pre[npre++] = (tr->capAbs + r.onset) - tr->emitAbs;
-
-        // A re-anchor invalidates only the sample-time reading; RTL_raw above
-        // stands, because it never consulted those timestamps.
-        if (tr->anchorAtEnd != tr->anchorAtStart) { anchoredT++; continue; }
-        if (r.tsValid) {
-            ts[nts++] = r.tsFrames;
-            // Paired within the trial. Differencing medians of two different
-            // trial sets is not this quantity and can be arbitrarily wrong.
-            sched[nsched++] = r.rawFrames - r.tsFrames;
+        const verdict_t v = trial_verdict(tr, r.ok);
+        tally[v]++;
+        if (r.ok) {
+            if (r.noise > worstNoise) worstNoise = r.noise;
+            if (r.peak < minPeak) minPeak = r.peak;
+            if (r.inverted) inverted++;
         }
+        // Fails closed: one gate, and only what passes it is measured. Every
+        // aggregate below therefore draws on the same trials by construction.
+        if (v != TRIAL_ACCEPTED) continue;
+        raw[nr]   = r.rawFrames;
+        ts[nr]    = r.tsFrames;
+        sched[nr] = r.rawFrames - r.tsFrames;
+        pre[nr]   = (tr->capAbs + r.onset) - tr->emitAbs;
+        nr++;
     }
+    const int nts = nr, npre = nr, nsched = nr;
 
     printf("\n--- round trip ---\n");
+    printf("  %-24s %d of %u accepted", "trials", nr, g.trial);
+    for (int v = 1; v < TRIAL_VERDICTS; v++)
+        if (tally[v]) printf("   (%u %s)", tally[v], verdict_name[v]);
+    printf("\n");
     if (!nr) {
-        printf("  no usable trial (%u attempted, %d without signal, %d dropped frames).\n",
-               g.trial, noSignal, droppedT);
-        printf("  check the loopback cable, output volume, and input gain; the\n"
-               "  per-channel peaks above show where signal actually landed.\n");
+        printf("  no trial was admitted. If the rejections are \"no signal\", check the\n"
+               "  loopback cable, output volume and input gain -- the per-channel peaks\n"
+               "  above show where signal actually landed. Otherwise the timeline was not\n"
+               "  quiet enough to measure against: raise --frames or quiet the machine.\n");
         return 1;
     }
-    printf("  %-24s %d of %u", "usable trials", nr, g.trial);
-    if (noSignal)  printf("   (%d no signal)", noSignal);
-    if (droppedT)  printf("   (%d spanned a frame gap)", droppedT);
-    printf("\n");
     printf("  %-24s peak %.3f, noise %.5f (%.1f dB SNR)%s\n", "signal",
            minPeak, worstNoise,
            worstNoise > 0 ? 20.0 * log10(minPeak / worstNoise) : 99.0,
@@ -899,17 +1120,12 @@ int main(int argc, char **argv) {
 
     stats("RTL_raw", raw, nr, sr);
     stats("RTL_raw (onset)", pre, npre, sr);
-    if (nts) stats("RTL_ts (hw latency)", ts, nts, sr);
-    else     printf("  %-24s <none: %d trials spanned a re-anchor>\n",
-                    "RTL_ts (hw latency)", anchoredT);
+    stats("RTL_ts (hw latency)", ts, nts, sr);
 
-    if (nsched)
-        printf("\n  scheduling distance     %.2f fr measured, %u declared (2*io + safety)\n",
-               median(sched, nsched), declared_sched(&dc));
-    else
-        printf("\n  scheduling distance     unavailable (no trial had usable timestamps)\n");
+    printf("\n  scheduling distance     %.2f fr measured, %u declared (2*io + safety)\n",
+           median(sched, nsched), declared_sched(&dc));
 
-    if (nts) {
+    {
         const double mts = median(ts, nts);
         const double resid = mts - (double)declared_hw(&dc);
         printf("  hardware latency        %.2f fr measured, %u declared (dev + stream)\n",
@@ -919,8 +1135,6 @@ int main(int argc, char **argv) {
         printf("  The signed amount by which our declarations misstate the physical\n"
                "  path. Positive means we under-declare: audio really arrives later\n"
                "  than we claim. This is the Phase 2 reference-plane input.\n");
-        if (anchoredT)
-            printf("  (%d trial(s) excluded from RTL_ts for spanning a re-anchor.)\n", anchoredT);
     }
     return 0;
 }

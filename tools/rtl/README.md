@@ -30,19 +30,35 @@ clang -O1 -o rtl_loopback rtl_loopback.c -framework CoreAudio -framework CoreFou
 ./rtl_loopback --selftest      # no hardware needed
 ```
 
-The self-test synthesises trials with known delays — including the symmetric
-pre-ringing a real converter pair produces — and checks that the detector
-recovers them. Integer delays come back exact; fractional delays carry up to
-**0.16 frames** of parabolic-interpolation bias, which is the instrument's
-resolution floor (3 µs at 48 kHz, against an RTL of several hundred frames).
-It also checks that an empty window is *rejected* rather than fitted to noise,
-that a residual of exactly zero is *retained* rather than mistaken for a missing
-value, that a varying callback size is not read as a timeline break, that a
-skipped callback smaller than the run's largest is still caught, that clocks
-disagreeing while the sample timeline reads continuous is rejected rather than
-accepted, that a loss hidden under a re-anchor of either sign is caught, that a
-merely late callback is not, and that the scheduling distance
-is paired per trial rather than differenced across two different trial sets.
+The self-test has three layers, none of which needs hardware.
+
+**Detector.** Known delays recovered from synthetic trials carrying the
+symmetric pre-ringing a real converter pair produces. Integer delays come back
+exact; fractional ones carry up to **0.16 frames** of parabolic-interpolation
+bias, the instrument's resolution floor (3 µs at 48 kHz, against an RTL of
+several hundred frames). An empty window is rejected rather than fitted to
+noise, and a residual of exactly zero is retained rather than mistaken for a
+missing value.
+
+**Timeline audit.** Unit cases for each classification, including the boundary
+ones: a varying callback size is not a break, a small callback dropped after a
+large one is still caught, disagreeing clocks are rejected, a merely late
+callback is not, and a loss hidden under a re-anchor of either sign does not
+read as a re-anchor.
+
+**Adversarial simulator.** Drives the *same engine the hardware path runs* over
+a known physical timeline, then independently injects dropped callbacks,
+re-anchors of both signs, missing timestamps, changed buffer sizes, and
+scheduling jitter — alone and in combination. Every expectation comes from what
+was injected, never from recomputing the classifier's tolerances, which would
+only assert that the code agrees with itself. A trial spanning an injected fault
+must never be admitted; a trial spanning none must be admitted *and* recover the
+injected round trip exactly.
+
+This layer exists because single-fault tests passed while combinations did not.
+It is the layer that would have caught the combined-fault defects early, and a
+tolerance or admission change should be run against all of it, not just against
+a case reproducing the specific bug.
 
 Run it after any edit to the detector. A measurement from an unverified
 detector is not evidence.
@@ -96,43 +112,48 @@ Those two halves — scheduling and hardware — are what the tool separates.
 threshold-based analysers, which read early by the pre-ring extent. Trust the
 peak: linear-phase converter filters ring symmetrically about the group delay.
 
-### What invalidates a trial
+### Trial admission
 
-The two failure modes are distinguished, because they invalidate different
-numbers.
+**One gate, and it fails closed.** A trial is admitted only if nothing anomalous
+happened anywhere inside it. `trial_verdict()` returns exactly one of:
 
-- **A gap in delivered frames** — the HAL skipped a callback under overload.
-  `RTL_raw` counts delivered frames, so it reads *short by the gap* and the
-  trial is **rejected outright**. Reported as `delivered-frame gaps`, alongside
-  the device's own `processor overloads` count.
-- **A sample-time re-anchor** — the driver's timeline jumped while delivery
-  stayed continuous. This invalidates **`RTL_ts` only**; `RTL_raw` stands,
-  because it never consulted those timestamps. Such trials are excluded from
-  `RTL_ts` while still counting toward `RTL_raw`. The jump itself is review
-  finding 5's territory (epoch transition without cursor translation).
+| Verdict | Meaning |
+|---|---|
+| `accepted` | nothing happened; the only verdict that reaches any statistic |
+| `lost frames` | the HAL skipped a callback, so `RTL_raw` reads short by the gap |
+| `re-anchor` | the driver's sample timeline jumped |
+| `unclassified` | the two clocks disagreed in a way matching neither |
+| `no timestamps` | timing evidence was missing |
+| `no signal` | no impulse above the noise floor |
 
-How the two are separated matters, because a threshold cannot do it: at small
-buffer sizes a dropped callback and ordinary scheduling jitter are the same
-magnitude. So the **gap is detected exactly**, from integer frame counts — the
-sample timeline advancing past the frames we were handed — and the wall clock
+Only `accepted` records reach aggregation, so "fails closed" is enforced in one
+place rather than by every reporting branch remembering its exclusions. Two
+consequences follow structurally rather than by care: `RTL_raw` and `RTL_ts` are
+drawn from identical populations, so the paired scheduling distance cannot
+regress to differencing two different sets; and no classifier verdict can widen
+what gets in.
+
+**This deliberately gives up salvaging a re-anchored trial's `RTL_raw`,** even
+though that measurement is usually sound. Salvage was the only path by which a
+classifier verdict could preserve a measurement, and it was where every defect
+in this file lived. A baseline instrument should be trustworthy first; selective
+recovery is a feature to add later, against evidence and its own coverage.
+
+The classification still runs, and is still reported — it tells you *which*
+failure you have. It just no longer decides what gets measured.
+
+How the causes are told apart: a threshold cannot do it, because at small buffer
+sizes a dropped callback and ordinary scheduling jitter are the same magnitude.
+So the **gap is detected exactly**, from integer frame counts — the sample
+timeline advancing past the frames we were handed — and the wall clock
 (`mach_absolute_time`, which no driver re-anchoring can move) is consulted only
-to decide *which* failure it was. The two hypotheses differ by the full
-magnitude of the gap, so that choice is robust.
+to decide which failure it was. The two clocks must **agree**: a sample timeline
+reading continuous while the wall clock says otherwise is conflicting evidence,
+not agreement. The re-anchor verdict is judged against the jitter scale rather
+than the size of the jump, so a large jump cannot buy room for a loss to hide
+inside it.
 
-Only the re-anchor verdict preserves `RTL_raw` — a gap or an unclassified result
-rejects the trial outright — so that verdict alone must assert the wall clock saw
-*nothing*, judged against the jitter scale rather than the size of the jump.
-Otherwise a large re-anchor buys room for a real loss to hide inside it.
-
-The two clocks are required to **agree**, not merely to be consulted when one of
-them complains. A sample timeline reading continuous while the wall clock says
-otherwise is conflicting evidence — it is what a lost callback would look like
-behind a re-anchor that happened to preserve the coordinates — so it is counted
-`unclassified` and rejected, as is anything matching neither hypothesis. The
-threshold for that disagreement is three quarters of the **smallest** callback
-in the run, not the one in hand: a skipped callback costs its own frames, not
-its predecessor's, so a tolerance scaled to the current span would miss a small
-callback dropped after a large one.
+Also watch:
 
 Also watch:
 
