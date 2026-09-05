@@ -1,0 +1,334 @@
+{
+  "cursorReset": true,
+  "latestSequence": 763,
+  "nextSequence": 763,
+  "oldestSequence": 1,
+  "recordCount": 36,
+  "records": [
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG MEM request provider=0x7580022718 endpoint=1 expectedInCh=2 expectedOutCh=2 rate=48000",
+      "sequence": 440,
+      "timestampNs": 576558419677875
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG MEM runtime allocate observedGuid=0x0003db0a0000d112 outBytes=65536 outFrames=8192 outCh=2 inBytes=65536 inFrames=8192 inCh=2 controlBytes=64928 rate=48000",
+      "sequence": 441,
+      "timestampNs": 576558419692500
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG BIND runtime local_memory_ready observedGuid=0x0003db0a0000d112 gen=2 outBase=0x10450c000 outBytes=65536 outFrames=8192 outCh=2 inBase=0x104524000 inBytes=65536 inFrames=8192 inCh=2 control=0x10453c000 rate=48",
+      "sequence": 443,
+      "timestampNs": 576558420303000
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG MEM runtime copy ok observedGuid=0x0003db0a0000d112 gen=2 outMem=0x7580023438 outFrames=8192 outCh=2 inMem=0x7580023578 inFrames=8192 inCh=2 controlMem=0x75800236b8 rate=48000",
+      "sequence": 444,
+      "timestampNs": 576558420318708
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG MEM mapped gen=2 outBase=0x10450c000 outLen=65536 outFrames=8192 outCh=2 inBase=0x104524000 inLen=65536 inFrames=8192 inCh=2 control=0x10453c000 controlLen=64928 rate=48000",
+      "sequence": 446,
+      "timestampNs": 576558420360791
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG BIND skeleton bound outBase=0x10450c000 outFrames=8192 outCh=2 inBase=0x104524000 inFrames=8192 inCh=2 control=0x10453c000 audioDevice=0x103cd9de8 rate=48000",
+      "sequence": 456,
+      "timestampNs": 576558420534250
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK IO handler installed deviceId=2 inputStream=6 outputStream=8",
+      "sequence": 462,
+      "timestampNs": 576558420553041
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ASFWAudioDevice: StartIO flags=0x0",
+      "sequence": 591,
+      "timestampNs": 576558863188083
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG StartIO running=0 while arming transport",
+      "sequence": 592,
+      "timestampNs": 576558863192875
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TimelineEpoch] epoch=1 reason=start-io source=1 base=0 rate=48000",
+      "sequence": 595,
+      "timestampNs": 576558864116250
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxV3] prefill=168/168 preparedTarget=120 ownershipGuard=48",
+      "sequence": 597,
+      "timestampNs": 576558864335416
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=120 syt=0x52b4",
+      "sequence": 692,
+      "timestampNs": 576559302389541
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=117 syt=0x66b4",
+      "sequence": 693,
+      "timestampNs": 576559302428333
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=132 syt=0x7ab4",
+      "sequence": 694,
+      "timestampNs": 576559302451750
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=127 syt=0x92b4",
+      "sequence": 695,
+      "timestampNs": 576559302472875
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxV3] epoch=1 source=1 completion=6 committed=168 margin=162 prepared=0 nextFrame=0 cache=[0,0) noCycle=0 noOrigin=0 resync=0",
+      "sequence": 715,
+      "timestampNs": 576559313058333
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxLead] ticks=0 min=0 max=0 frames=0 rate=48000",
+      "sequence": 719,
+      "timestampNs": 576559313102375
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxFill] filled=0 tooLate=0 unavailable=0 silentData=0 cursor=168 finalized=14 mapped=54 committed=168 rebound=0 rejected=0 minRebindDistance=0",
+      "sequence": 720,
+      "timestampNs": 576559313114208
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxPrep] wakes=0 maxLatUs=0 le750=0 ge1500=0 lat=[0,0,0,0,0,0] marginMin=162 marginMax=162 margin=[0,0,0,0,1] headroomMin=0 headroomRunMin=0",
+      "sequence": 721,
+      "timestampNs": 576559313132958
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "warning",
+      "levelId": 1,
+      "message": "[DirectAudio][tx-wire-payload] [TxWire] packet=721 first=1 dropout=0 infoQuads=16 maxAbs24=0 lastQuad=0x40000000",
+      "sequence": 733,
+      "timestampNs": 576559388017750
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [ZTS] rx epoch=1 sample=8192 host=13837427392966 period=8192",
+      "sequence": 734,
+      "timestampNs": 576559472731458
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG StartIO initial hardware ZTS sampleFrame=8192 hostTicks=13837427392966 waitMs=132",
+      "sequence": 735,
+      "timestampNs": 576559472928625
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG StartIO super::StartIO ok callbacks=0 outsideRun=0",
+      "sequence": 736,
+      "timestampNs": 576559472952041
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG StartIO transport and hardware clock ready",
+      "sequence": 737,
+      "timestampNs": 576559472957875
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG DUPLEX ready endpoint=1 rxStarted=1 txStarted=1 bindValid=1 hasIn=1 hasOut=1 audioDevice=0x103cd9de8",
+      "sequence": 738,
+      "timestampNs": 576559472962625
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK STATE after StartIO geometry ztsPeriod=8192 inputRingFrames=8192 outputRingFrames=8192 maxIoFrames=512",
+      "sequence": 739,
+      "timestampNs": 576559472977666
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK STATE after StartIO streams input(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32) output(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32)",
+      "sequence": 740,
+      "timestampNs": 576559472985208
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK STATE after StartIO timing input(sample=0 host=0) output(sample=0 host=0) zts(sample=8192 host=13837427392966)",
+      "sequence": 741,
+      "timestampNs": 576559473003583
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] ADK DBG IO super StartDevice ok id=2",
+      "sequence": 742,
+      "timestampNs": 576559473012083
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [RxRead] unknown -> healthy sampleTime=8252 frames=512 write=8920 oldest=728 delta=668 starvedFrames=0 capacity=8192",
+      "sequence": 744,
+      "timestampNs": 576559487732416
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [RxRead] healthy -> total-starve sampleTime=11964 frames=256 write=11480 oldest=3288 delta=-484 starvedFrames=256 capacity=8192",
+      "sequence": 745,
+      "timestampNs": 576559541362875
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [RxRead] total-starve -> healthy sampleTime=12220 frames=128 write=12496 oldest=4304 delta=276 starvedFrames=0 capacity=8192",
+      "sequence": 747,
+      "timestampNs": 576559562403833
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxV3] epoch=1 source=1 completion=40014 committed=40134 margin=120 prepared=6 nextFrame=241318 cache=[232480,240672) noCycle=0 noOrigin=0 resync=0",
+      "sequence": 758,
+      "timestampNs": 576564313730833
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxLead] ticks=53940 min=53940 max=57012 frames=105 rate=48000",
+      "sequence": 759,
+      "timestampNs": 576564313755125
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxFill] filled=28911 tooLate=0 unavailable=8043 silentData=568 cursor=40026 finalized=40022 mapped=40062 committed=40134 rebound=28334 rejected=0 minRebindDistance=2",
+      "sequence": 760,
+      "timestampNs": 576564313763625
+    },
+    {
+      "category": "DirectAudio",
+      "categoryId": 17,
+      "level": "notice",
+      "levelId": 2,
+      "message": "[DirectAudio] [TxPrep] wakes=1787 maxLatUs=318 le750=1787 ge1500=0 lat=[1780,7,0,0,0,0] marginMin=120 marginMax=153 margin=[0,0,0,0,8174] headroomMin=0 headroomRunMin=0",
+      "sequence": 761,
+      "timestampNs": 576564313776250
+    }
+  ],
+  "scannedCount": 768
+}

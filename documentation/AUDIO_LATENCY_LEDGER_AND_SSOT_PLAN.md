@@ -1,6 +1,8 @@
 # Audio latency ledger and timing SSOT — plan
 
-**Status:** plan, 2026-09-05, branch `ctrls` at `5e5991b1`. Revised twice after review.
+**Status:** plan, updated 2026-09-05 with provisional Duet electrical measurements.
+The original ledger reviewed branch `ctrls` at `5e5991b1`; the bench investigation
+reviewed `dad154d5`. Phase 0 has landed; Phase 1 remains open.
 **Premise:** every latency number in this driver is currently either a
 structural constant nobody can trace to a physical stage, a measurement of one
 stage presented as if it covered the path, or a literal copied from another
@@ -23,6 +25,105 @@ Three rules govern the ledger. Violating them is what produced the current mess:
 
 The SSOT comes after. A single source of truth for numbers whose meaning is
 undecided just centralises the ambiguity.
+
+## Current decision — explain the delay, then reduce it
+
+Evidence and retained run logs:
+[Duet latency investigation, 2026-09-05](reports/latency-investigation-2026-09-05/README.md).
+
+**Client buffer sizing behaved correctly in the bench runs.** At 48 kHz,
+requested and observed callback sizes agreed. After the user restarted the
+hardware, the 64 → 128 → 256 → 64 sweep measured 12.145 → 14.811 → 20.145 →
+12.145 ms RTL: each buffer increase added twice that increase to raw RTL.
+The configured 512-frame sizing budget is not a fixed callback batch.
+
+**The next investigation is startup timing and accumulated queue delay.** An
+earlier session measured 54.145 ms at the same 64-frame client size, about
+42 ms more. Within the restarted session, subtracting measured scheduling
+leaves approximately 355 frames / 7.40 ms at every buffer size. Against the
+107 declared latency frames, that leaves approximately 248 frames / 5.17 ms
+unexplained. Neither remainder is established hardware latency, and a restart
+changing the result does not locate the cause in ASFW versus interface internals.
+The fresh runs have weak SNR and no-signal rejections; the reporting-only
+self-check is still outstanding. These are investigation inputs, not a completed
+Phase 1 baseline or a reason to change a latency declaration.
+
+### Next implementation block — Phases 3 and 5 before more bench work
+
+Pause further latency sweeps while the known implementation defects are being
+repaired. The existing runs are enough to prioritize this work; repeating
+them now cannot resolve the attribution gaps in the instruments.
+
+1. **Phase 3 correctness repairs:** fix the lost-publication race first, then
+   completion-history draining and CommandPtr freshness. Repair the RTL
+   preflight and transport-status projection as well.
+2. **Phase 5 recovery coordination:** implement a coherent epoch transition
+   across RX, TX, and published PCM, and make the two-stream commit contract
+   atomic. These fixes do not depend on choosing the latency reference plane.
+3. **Phase 3 trace support:** implement the bounded marker trace below and the
+   interval measurements, so the next hardware run can locate the delay.
+4. **Verify the implementation before returning to hardware:** use reference
+   review, host tests, and simulators to exercise publication/finality races,
+   completion ordering, epoch transitions, and secondary-stream failure. These
+   checks prepare the bench pass; they do not establish actual DMA timing or
+   device behavior.
+
+Keep the work in reviewable changes. Return to hardware once this implementation
+block is ready for integrated verification. An earlier targeted hardware check
+is warranted only if an unresolved behavior blocks implementation and local
+references or the hardware-free lab cannot settle it.
+
+**Still deferred:** Phase 1's final baseline and self-check, Phase 2's
+reference-plane decision, and Phase 4's final resolution policy and timing
+values. Phase 3's measured distributions also remain open until the bench pass.
+Do not mark those phases complete based on the new instrumentation alone.
+
+### Next bench pass — one impulse traced across the path
+
+Follow the same marker through **HAL write → PCM publication → TX packet
+finalization/transmission → returned RX packet → capture publication → HAL
+read**. Retain the epoch, absolute sample coordinates, and correlated host/bus
+times. Record requested SYT presentation separately from observed transmission;
+do not treat completion-handler execution time as the packet's wire time.
+
+Use a bounded trace captured in memory and read after the run, with no per-packet
+logging or new audio/transport layer coupling. Repair the Phase 3 instruments
+that this trace relies on, keeping the lost-publication race first. Two further
+gaps from the bench review belong in that work: the RTL tool must surface
+buffer setter/getter failures, and the transport-status projection needs a live
+producer before its default `stopped` label can establish transport state.
+
+After the implementation block, repeat the trace across starts, keeping rate,
+buffer size, cable, gain, and routing fixed and recording whether the event was
+an audio stop/start, recovery,
+or hardware restart. Improve the returned signal before accepting a baseline;
+retain rejected trials and their reasons. Then perform the reporting-only
+latency perturbation self-check described in Phase 1.
+
+**Success:** locate the measured host-side waits and any frame/time displacement,
+show which term changes between starts, and retain the unobserved device span
+as an explicit unknown. That evidence must support a specific fix or identify
+the next missing observation. Do not absorb the difference into declarations.
+
+### Then reduce the known scheduling budget
+
+At 48 kHz with 64-frame callbacks, measured scheduling is:
+
+| Component | Frames | Duration |
+|-----------|-------:|---------:|
+| Input + output client buffers | 128 | 2.67 ms |
+| Input + output safety offsets | 100 | 2.08 ms |
+| Total scheduling distance | 228 | 4.75 ms |
+
+This is the observed accounting split `RTL_raw − RTL_ts`, not an additional
+delay to add on top of the physical path ledger. **A 2–3 ms RTL target requires
+reducing this scheduling budget too.** After establishing the reference plane,
+measure actual publication deadlines and capture visibility under load, then
+reduce client size and safety only where those measurements support it. Record
+raw RTL, trial acceptance, underruns, and recovery behavior at each setting.
+Reporting-only latency changes correct compensation; they do not reduce
+monitoring delay. No current result establishes that this hardware can meet
+the target.
 
 ---
 
@@ -218,9 +319,11 @@ two halves separate cleanly.
   in an input buffer, counted by accumulating each callback's frame count. It
   never reads `mSampleTime`, so it is immune to the reporting-only fields. It is
   the whole thru time. **The exit number.**
-- `RTL_ts` — the same event pair in the sample-time domain. A truthful device
-  returns `in_hw_latency + out_hw_latency`, so this is the **measured hardware
-  latency of the analog path**, converters included.
+- `RTL_ts` — the same event pair in the sample-time domain. With a validated
+  reference plane and truthful timing, it represents
+  `in_hw_latency + out_hw_latency`, converters included. Until that contract is
+  established, call it the **remaining path delay after measured scheduling**;
+  the tool's hardware-latency label does not prove hardware attribution.
 - `RTL_raw − RTL_ts` — the scheduling distance, reconciling with
   `2×io + safety`. It carries no latency term and therefore proves nothing about
   whether a declared latency reached the HAL.
@@ -229,13 +332,12 @@ two halves separate cleanly.
   directly** — a measured answer to the reference-plane question, where Part 2
   offers only a model.
 
-Trial validity distinguishes the two ways a run can lie. A gap in delivered
-frames makes `RTL_raw` read short by the gap, so such trials are rejected
-outright; a sample-time re-anchor with continuous delivery invalidates `RTL_ts`
-alone, and those trials still count toward `RTL_raw`. The gap is detected
-exactly from integer frame counts, with the wall clock consulted only to choose
-between the two — a threshold cannot separate them, because at small buffer
-sizes a dropped callback and ordinary jitter are the same magnitude.
+Trial admission fails closed (`cd5568d6`). A gap, ambiguous timing, re-anchor,
+missing timestamps, or absent signal rejects the whole trial. Only `Accepted`
+reaches any aggregate; `RTL_raw` and `RTL_ts` use identical populations, with
+scheduling differences computed per accepted trial. Re-anchored trials are
+not salvaged for raw RTL. The shared hardware/simulator engine is exercised
+with independently injected faults, including combined drops and re-anchors.
 
 `--selftest` covers the analysis without hardware: known delays recovered exactly
 at integer positions and within 0.16 frames at fractional ones, an empty window
@@ -243,8 +345,13 @@ rejected rather than fitted to noise, a zero residual retained rather than
 mistaken for a missing value, and a varying callback size not read as a timeline
 break.
 
-**Remaining:** the measurement itself — needs the loopback cable and the device.
-Procedure, setup, and invalidation conditions are in `tools/rtl/README.md`.
+**Bench status:** electrical measurements and a buffer sweep are recorded in the
+[investigation](reports/latency-investigation-2026-09-05/README.md). The fresh
+64-frame result is provisionally 12.145 ms; the earlier 54.145 ms result and the
+weak return signal prevent treating it as a stable baseline. Remaining work is
+the correlated trace and repeat-start comparison above, a stronger return
+signal, and the reporting-only self-check. Procedure, setup, and invalidation
+conditions are in [`tools/rtl/README.md`](../tools/rtl/README.md).
 
 **Exit:** an absolute electrical RTL figure from a path with no compensation,
 validated by the self-check.
@@ -270,11 +377,26 @@ residual-free sum.
 Ordered by how badly each corrupts measurement. Items 1–3 from
 `documentation/reviews/audioengine-v3-2026-09-05/`.
 
-1. **Lost-publication race** (finding 4). `PublishLatePayload` re-reads
-   `finalizedEnd` *before* the scan stores it, so the return value that exists
-   to report a lost race cannot fire in the window it guards. Corrupts
-   `filled`-vs-silence attribution — the telemetry Phases 2 and 6 read. Fix: one
-   linearization point for selection and finality.
+1. **Lost-publication race** (finding 4). **Landed in `c912231e`.**
+   `PublishLatePayload` re-read `finalizedEnd` *before* the scan stored it, so
+   the return value that exists to report a lost race could not fire in the
+   window it guarded. It corrupted `filled`-vs-silence attribution — the
+   telemetry Phases 2 and 6 read.
+
+   A generation-tagged arbitration word per packet is now the single
+   linearization point: the producer may only offer, transport may only bind or
+   seal, and both move it by CAS. Transport seals every packet it abandons,
+   per packet and before publishing the frontier, walking the frontier delta so
+   a command pointer that jumps more than a completion group leaves nothing
+   undecided. The frontier is now advisory telemetry rather than the decision.
+
+   Because a producer cannot know at call time whether its image will transmit,
+   `latePayloadLostPublicationCount` counts accepted publications that transport
+   then sealed on the armed image, and `[TxFill]` reports `lost=`. **The ledger
+   must read `filled − lost`, not `filled`.** One behaviour change to note when
+   reading older captures: `rejected=` now counts rejected packets rather than
+   rejection attempts, because a packet rejected on geometry is sealed instead
+   of retried once per pass.
 2. **Newest-only completion read** (finding 3). Publishes 2 ZTS boundaries where
    per-packet observation publishes 12, on the TX-sourced timeline. Corrupts the
    clock the ledger is written against. Fix: drain with a cursor.
@@ -293,6 +415,16 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    histograms for actual E1→E2 and F3→F4 elapsed time (including dispatch
    delay, which geometry does not bound), and for the `I1`/`J4` waits. Anomaly-
    gated per the hot-path instrumentation rule.
+5. **Make bench preflight and transport status trustworthy.** Check and report
+   RTL buffer setter/getter results and compare requested, read-back, and actual
+   callback spans. Give `txTransportStatus` a live, lifetime-safe producer or
+   expose it as unavailable; initialization/reset to zero currently becomes
+   `stopped` in MCP even while completion cursors advance. Use counter deltas
+   and freshness when judging progress, not cumulative activity alone.
+
+Use these repairs to support the correlated marker trace in the current
+decision above. Aggregate histograms remain useful, but cannot attribute a
+particular impulse or a displacement introduced at startup.
 
 **Exit:** `[TxFill]` counters and `minRebindDistance` mean what they say, and
 every "nominal" cell in Part 1 has a measured distribution beside it.
@@ -392,8 +524,14 @@ sourced, or explicitly accepted as a property we do not claim.
 
 ## Ordering rationale
 
-Phase 0 is a live bug. Phase 1 is first among the real work because it depends
-on nothing and constrains the plane decision. Phase 2 gives the ledger's
-arithmetic a unique answer. Phase 3 precedes the SSOT because constants derived
-against lying or absent telemetry are not derived. Phase 4 is the ask. Phases 5
-and 6 are independent of each other once 4 lands.
+Phase 0 has landed. The immediate work is the implementation and offline
+verification of Phases 3 and 5, with the lost-publication race first. Defer
+further routine hardware metering until the fixes and trace support are ready,
+then batch their hardware verification with the Phase 1 repeat-start baseline
+and reporting-only self-check. Phase 5 addresses established recovery defects;
+it is not yet proven to explain the observed latency difference.
+
+Phase 2 waits for that validated baseline and timing attribution; Phase 4 follows
+the plane decision and trustworthy instruments. Phase 6 requires the electrical
+baseline. Reduce the scheduling budget against measured deadlines after these
+timing contracts are established.

@@ -1,0 +1,56 @@
+{
+  "endpointCount": 1,
+  "endpoints": [
+    {
+      "bindingReady": true,
+      "counters": {
+        "copiesConcurrentRewrite": 0,
+        "copiesExpired": 11,
+        "copiesInvalid": 0,
+        "copiesNotYetPublished": 129514,
+        "copiesReady": 467406,
+        "copiesWrongEpoch": 0,
+        "deadlineNoData": 0,
+        "deferrals": 0,
+        "faultEvents": 0,
+        "missedFrames": 0,
+        "pcmDiscontinuities": 0,
+        "pcmExpiredFrames": 3731072,
+        "pcmFramesPublished": 3739264,
+        "pcmPublications": 29621
+      },
+      "deviceInstanceId": 1,
+      "endpointId": 1,
+      "firstFault": {
+        "audioFrame": 0,
+        "committedPacketEnd": 0,
+        "completionPacket": 0,
+        "packet": 0,
+        "pcmOldestValid": 0,
+        "pcmPublishedEnd": 0,
+        "reason": "none"
+      },
+      "frameCursors": {
+        "pcmOldestValid": 3740448,
+        "pcmPublishedEnd": 3748640,
+        "publishedAheadFrames": 0,
+        "scheduledFrameEnd": 3749014,
+        "scheduledRangeExpired": false,
+        "units": "absoluteHostFrames"
+      },
+      "observedGuid": "0x0003DB0A0000D112",
+      "outputChannels": 2,
+      "sampleRateHz": 48000,
+      "snapshotKind": "valueOwned",
+      "streaming": true,
+      "transportCursors": {
+        "committedEnd": 624750,
+        "committedMargin": 120,
+        "completion": 624630,
+        "status": "stopped",
+        "units": "absoluteIsochPackets"
+      },
+      "verdict": "healthy"
+    }
+  ]
+}

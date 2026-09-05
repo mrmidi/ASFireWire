@@ -1,0 +1,37 @@
+
+=== Duet (device 136) ===
+  format                   48000.0 Hz, 2 in / 2 out
+  buffer frame size        256
+  safety offset            50 in / 50 out
+  device latency           40 in / 67 out
+  stream latency           0 in / 0 out
+  declared scheduling      612 fr  (2*256 io + 50+50 safety)
+  declared hw latency      107 fr  (40+67 dev + 0+0 stream)
+  declared round-trip      719 fr  14.979 ms
+
+measuring: 8 trials, window 4096 fr, out ch 0 -> in ch 0, amp 0.10
+
+--- IO ---
+  callbacks                550
+  distinct spans           256
+  processor overloads      0
+  delivered-frame gaps     0 events, 0 frames lost
+  sample-time re-anchors   0 events (worst +0 fr)
+  clocks disagreed         0
+  missing timestamps       0
+  input channel peaks      0.005 0.000
+
+--- round trip ---
+  trials                   5 of 8 accepted   (3 no signal)
+  signal                   peak 0.004, noise 0.00048 (17.6 dB SNR)   <-- weak
+  RTL_raw                     966.94 fr    20.145 ms   [966.90 .. 967.01]  sd 0.04
+  RTL_raw (onset)             966.00 fr    20.125 ms   [963.00 .. 966.00]  sd 1.34
+  RTL_ts (hw latency)         354.94 fr     7.395 ms   [354.90 .. 355.01]  sd 0.04
+
+  scheduling distance     612.00 fr measured, 612 declared (2*io + safety)
+  hardware latency        354.94 fr measured, 107 declared (dev + stream)
+
+  RESIDUAL                +247.94 fr  (+5.165 ms)
+  The signed amount by which our declarations misstate the physical
+  path. Positive means we under-declare: audio really arrives later
+  than we claim. This is the Phase 2 reference-plane input.
