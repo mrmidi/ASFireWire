@@ -171,6 +171,12 @@ Duet is unaffected (sets 50 explicitly), which is why the suite stayed green.
 **Exit:** a generic-AVC profile test asserts input safety ≥ one completion
 batch, with the requirement expressed once rather than as a second floor.
 
+**Landed** in `2d1c584a`: `AddDefaultTiming` derives both safety defaults from
+`AudioGeometryPolicy::CompletionBatchFrames(rate)` — 48/96/192 frames at
+48/96/192 kHz — giving the first real caller of that header. Reported latency
+was deliberately left at 32/32; it needs the Phase 2 plane decision before it
+means anything.
+
 ### Phase 1 — uncompensated electrical baseline
 
 First among the real work: depends on nothing, and constrains Phase 2.
@@ -191,6 +197,35 @@ no scheduling — by a known amount and confirm the measurement does not move. D
 **not** probe with safety offsets or the client buffer: those feed
 `SetOutputSafetyOffset`/`SetInputSafetyOffset` and legitimately change physical
 timing, so a moving measurement would prove nothing.
+
+Verified chain for the probe field: `OxfwProfileBuilder.cpp:72` sets the Duet's
+48 kHz `outputLatencyFrames = 67`, which reaches `SetOutputLatency` untouched at
+`ASFWAudioDriverGraph.cpp:686`. Only output *safety* passes through
+`RequiredOutputSafetyFrames`, so this field is purely a declaration.
+
+**Instrument — `tools/rtl/rtl_loopback.c`** (built, offline-verified). Emits
+impulses through a HAL IOProc and reports three numbers:
+
+- `RTL_raw` — frames between writing a sample into an output buffer and seeing it
+  in an input buffer, counted by accumulating each callback's frame count. It
+  never reads `mSampleTime`, so it is structurally immune to the reporting-only
+  fields and sensitive only to what moves real timing. **The exit number.**
+- `RTL_ts` — the same event pair in the sample-time domain the HAL hands clients.
+  Zero if every declaration were truthful; what it actually is, is the signed
+  amount by which our declared path misstates the physical one. **Feeds Phase 2
+  directly** — a more immediate answer to the reference-plane question than the
+  model in Part 2.
+- their difference — the compensation the HAL applies, which must reconcile with
+  `2×io + latencies + safety offsets` from the properties block.
+
+It also audits callback-span variation and sample-time continuity per run, so a
+number produced across a timeline jump is flagged rather than averaged in.
+`--selftest` recovers known delays from synthetic trials with realistic
+pre-ringing: exact at integer delays, ≤0.16 frames of interpolation bias at
+fractional ones, and an empty window is rejected rather than fitted to noise.
+
+**Remaining:** the measurement itself — needs the loopback cable and the device.
+Procedure, setup, and invalidation conditions are in `tools/rtl/README.md`.
 
 **Exit:** an absolute electrical RTL figure from a path with no compensation,
 validated by the self-check.
