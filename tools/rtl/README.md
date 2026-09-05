@@ -37,7 +37,10 @@ recovers them. Integer delays come back exact; fractional delays carry up to
 resolution floor (3 µs at 48 kHz, against an RTL of several hundred frames).
 It also checks that an empty window is *rejected* rather than fitted to noise,
 that a residual of exactly zero is *retained* rather than mistaken for a missing
-value, and that a varying callback size is not read as a timeline break.
+value, that a varying callback size is not read as a timeline break, that a
+skipped callback smaller than the run's largest is still caught, and that the
+scheduling distance is paired per trial rather than differenced across two
+different trial sets.
 
 Run it after any edit to the detector. A measurement from an unverified
 detector is not evidence.
@@ -98,15 +101,22 @@ numbers.
 
 - **A gap in delivered frames** — the HAL skipped a callback under overload.
   `RTL_raw` counts delivered frames, so it reads *short by the gap* and the
-  trial is **rejected outright**. Detected against `mach_absolute_time`, which
-  no driver re-anchoring can move; reported as `delivered-frame lag`, alongside
+  trial is **rejected outright**. Reported as `delivered-frame gaps`, alongside
   the device's own `processor overloads` count.
 - **A sample-time re-anchor** — the driver's timeline jumped while delivery
   stayed continuous. This invalidates **`RTL_ts` only**; `RTL_raw` stands,
-  because it never consulted those timestamps. Reported as
-  `sample-time re-anchors`, and such trials are excluded from `RTL_ts` while
-  still counting toward `RTL_raw`. The jump itself is review finding 5's
-  territory (epoch transition without cursor translation).
+  because it never consulted those timestamps. Such trials are excluded from
+  `RTL_ts` while still counting toward `RTL_raw`. The jump itself is review
+  finding 5's territory (epoch transition without cursor translation).
+
+How the two are separated matters, because a threshold cannot do it: at small
+buffer sizes a dropped callback and ordinary scheduling jitter are the same
+magnitude. So the **gap is detected exactly**, from integer frame counts — the
+sample timeline advancing past the frames we were handed — and the wall clock
+(`mach_absolute_time`, which no driver re-anchoring can move) is consulted only
+to decide *which* failure it was. The two hypotheses differ by the full
+magnitude of the gap, so that choice is robust. Anything matching neither is
+counted `unclassified` and rejected as unsafe.
 
 Also watch:
 

@@ -231,9 +231,11 @@ two halves separate cleanly.
 
 Trial validity distinguishes the two ways a run can lie. A gap in delivered
 frames makes `RTL_raw` read short by the gap, so such trials are rejected
-outright, detected against `mach_absolute_time` — a clock no driver re-anchoring
-can move. A sample-time re-anchor with continuous delivery invalidates `RTL_ts`
-alone, and those trials still count toward `RTL_raw`.
+outright; a sample-time re-anchor with continuous delivery invalidates `RTL_ts`
+alone, and those trials still count toward `RTL_raw`. The gap is detected
+exactly from integer frame counts, with the wall clock consulted only to choose
+between the two — a threshold cannot separate them, because at small buffer
+sizes a dropped callback and ordinary jitter are the same magnitude.
 
 `--selftest` covers the analysis without hardware: known delays recovered exactly
 at integer positions and within 0.16 frames at fractional ones, an empty window

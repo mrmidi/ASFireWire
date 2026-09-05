@@ -163,30 +163,69 @@ static Float32 *bl_slot(const AudioBufferList *bl, UInt32 frame, UInt32 ch) {
     return NULL;
 }
 
-// ------------------------------------------------------- sample-time continuity
-// A timestamp domain advances by the frame count of the callback BEFORE it, not
-// of the callback reporting it. Comparing against the current span invents a
-// break on every size change, and this driver's callback size does vary
-// (hal_geometry --sweep exists for that reason).
+// ----------------------------------------------------------- timeline audit
+// Two different failures break a run, and they invalidate different numbers, so
+// they must be told apart rather than lumped into one "break".
+//
+//   dropped frames   the HAL skipped a callback: the sample timeline and the
+//                    wall clock BOTH advance past the frames we were handed.
+//                    RTL_raw counts delivered frames, so it reads short by the
+//                    gap and the trial is unusable.
+//   re-anchor        the driver's sample timeline jumped while delivery stayed
+//                    continuous: the wall clock does NOT corroborate. Only
+//                    RTL_ts is affected.
+//
+// The gap itself is detected exactly, from integer frame counts. The wall clock
+// is consulted only to choose between those two hypotheses, which differ by the
+// full magnitude of the gap. That is why this needs no threshold tuned against
+// jitter: a lag-only test cannot have one, because at small buffer sizes a
+// dropped callback and ordinary jitter are the same magnitude. A discrepancy
+// matching neither hypothesis is counted ambiguous, and ambiguous rejects.
+//
+// The advance is compared against the frame count of the callback BEFORE it,
+// not of the callback reporting it: comparing against the current span invents
+// a break on every size change, and this driver's callback size does vary.
 typedef struct {
-    double prev;
+    int    have, haveSample;
     UInt32 prevN;
-    int    have;
-    UInt32 breaks;
-    double worst;
-} cont_t;
+    double prevSample, prevHost;
+    UInt32 gapEvents, ambiguous, anchorEvents;
+    double gapFrames, worstAnchor;
+} audit_t;
 
-static void cont_step(cont_t *c, double sampleTime, UInt32 n) {
-    if (c->have) {
-        const double err = (sampleTime - c->prev) - (double)c->prevN;
-        if (fabs(err) > 0.5) {
-            c->breaks++;
-            if (fabs(err) > fabs(c->worst)) c->worst = err;
+static void audit_step(audit_t *a, double sampleTime, int sampleValid,
+                       double hostSec, UInt32 n, double sr) {
+    if (a->have) {
+        const double delivered = (double)a->prevN;
+        const double hostGap = (hostSec - a->prevHost) * sr - delivered;
+        if (sampleValid && a->haveSample) {
+            const double sampleGap = (sampleTime - a->prevSample) - delivered;
+            if (fabs(sampleGap) > 0.5) {
+                double tol = 0.5 * fabs(sampleGap);
+                if (tol < 0.25 * delivered) tol = 0.25 * delivered;
+                if (fabs(hostGap - sampleGap) <= tol) {
+                    a->gapEvents++;
+                    a->gapFrames += sampleGap;
+                } else if (fabs(hostGap) <= tol) {
+                    a->anchorEvents++;
+                    if (fabs(sampleGap) > fabs(a->worstAnchor)) a->worstAnchor = sampleGap;
+                } else {
+                    a->ambiguous++;
+                }
+            }
+        } else if (hostGap > 0.5 * delivered) {
+            // With no sample-time witness the wall clock alone cannot separate
+            // a gap from jitter, so anything suspicious is ambiguous.
+            a->ambiguous++;
         }
     }
-    c->prev  = sampleTime;
-    c->prevN = n;
-    c->have  = 1;
+    a->prevHost = hostSec;
+    a->prevN    = n;
+    a->have     = 1;
+    // After an invalid timestamp the next delta would span two callbacks, so
+    // drop the witness rather than compare against the wrong span.
+    if (sampleValid) { a->prevSample = sampleTime; a->haveSample = 1; }
+    else               a->haveSample = 0;
 }
 
 // ------------------------------------------------------------- shared state
@@ -197,12 +236,12 @@ typedef struct {
     double  emitOt;        // outputTime.mSampleTime at that same frame
     double  capAbs;        // absolute delivered-frame index of the first capture
     double  capIt;         // inputTime.mSampleTime at that same frame
-    double  lagStart;      // wall-clock lag, frames, at emit
-    double  lagEnd;        // wall-clock lag, frames, at end of capture
     UInt32  n;
     int     tsValid;       // both timestamps were valid -- distinct from "zero"
-    UInt32  contAtStart;   // continuity break counts, to bound them to a trial
-    UInt32  contAtEnd;
+    UInt32  badAtStart;    // frame gaps, bounded to this trial
+    UInt32  badAtEnd;
+    UInt32  anchorAtStart; // re-anchors, bounded to this trial
+    UInt32  anchorAtEnd;
     Float32 win[MAX_WINDOW];
 } trial_t;
 
@@ -218,10 +257,9 @@ static struct {
     double  hostStart;     // seconds, first callback
     int     haveHostStart;
     UInt32  cycles;
-    UInt32  spans[16], spanCount, maxSpan;
+    UInt32  spans[16], spanCount;
 
-    cont_t  itCont, otCont;
-    double  worstLagStep;
+    audit_t itAudit, otAudit;
 
     Float32 chPeak[MAX_CHANNELS];
     UInt32  inChans;
@@ -231,6 +269,16 @@ static struct {
 
     trial_t t[MAX_TRIALS];
 } g;
+
+// A trial is unusable if either domain lost frames or could not classify what
+// happened; only a corroborated re-anchor is survivable, and only for RTL_raw.
+static UInt32 audit_bad(void) {
+    return g.itAudit.gapEvents + g.itAudit.ambiguous +
+           g.otAudit.gapEvents + g.otAudit.ambiguous;
+}
+static UInt32 audit_anchors(void) {
+    return g.itAudit.anchorEvents + g.otAudit.anchorEvents;
+}
 
 static OSStatus overload_listener(AudioObjectID o, UInt32 n,
                                   const AudioObjectPropertyAddress *a, void *u) {
@@ -254,7 +302,6 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
                 memset(out->mBuffers[i].mData, 0, out->mBuffers[i].mDataByteSize);
 
     g.cycles++;
-    if (n > g.maxSpan) g.maxSpan = n;
     if (g.spanCount < 16) {
         int seen = 0;
         for (UInt32 i = 0; i < g.spanCount; i++) if (g.spans[i] == n) seen = 1;
@@ -266,12 +313,11 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
     // in delivered frames, and only an independent clock guarantees that.
     const double hostSec = (double)mach_absolute_time() * g_h2s;
     if (!g.haveHostStart) { g.hostStart = hostSec; g.haveHostStart = 1; }
-    const double lag = (hostSec - g.hostStart) * g.sampleRate - g.pos;
 
-    if (it && (it->mFlags & kAudioTimeStampSampleTimeValid))
-        cont_step(&g.itCont, it->mSampleTime, n);
-    if (ot && (ot->mFlags & kAudioTimeStampSampleTimeValid))
-        cont_step(&g.otCont, ot->mSampleTime, n);
+    const int itOk = it && (it->mFlags & kAudioTimeStampSampleTimeValid);
+    const int otOk = ot && (ot->mFlags & kAudioTimeStampSampleTimeValid);
+    audit_step(&g.itAudit, itOk ? it->mSampleTime : 0.0, itOk, hostSec, n, g.sampleRate);
+    audit_step(&g.otAudit, otOk ? ot->mSampleTime : 0.0, otOk, hostSec, n, g.sampleRate);
 
     if (in) {
         const UInt32 nc = bl_channels(in);
@@ -297,17 +343,15 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
             trial_t *t = &g.t[g.trial];
             Float32 *o = bl_slot(out, 0, g.outCh);
             if (o) *o = g.amplitude;
-            const int otOk = ot && (ot->mFlags & kAudioTimeStampSampleTimeValid);
-            const int itOk = it && (it->mFlags & kAudioTimeStampSampleTimeValid);
-            t->emitAbs     = g.pos;
-            t->capAbs      = g.pos;
-            t->emitOt      = otOk ? ot->mSampleTime : 0.0;
-            t->capIt       = itOk ? it->mSampleTime : 0.0;
-            t->tsValid     = otOk && itOk;
-            t->lagStart    = lag;
-            t->contAtStart = g.itCont.breaks + g.otCont.breaks;
-            t->n           = 0;
-            g.state        = ST_CAPTURE;
+            t->emitAbs       = g.pos;
+            t->capAbs        = g.pos;
+            t->emitOt        = otOk ? ot->mSampleTime : 0.0;
+            t->capIt         = itOk ? it->mSampleTime : 0.0;
+            t->tsValid       = otOk && itOk;
+            t->badAtStart    = audit_bad();
+            t->anchorAtStart = audit_anchors();
+            t->n             = 0;
+            g.state          = ST_CAPTURE;
         }
         __attribute__((fallthrough));
     case ST_CAPTURE: {
@@ -317,10 +361,8 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
             t->win[t->n++] = s ? *s : 0.0f;
         }
         if (t->n >= g.window) {
-            t->lagEnd    = lag;
-            t->contAtEnd = g.itCont.breaks + g.otCont.breaks;
-            if (fabs(t->lagEnd - t->lagStart) > fabs(g.worstLagStep))
-                g.worstLagStep = t->lagEnd - t->lagStart;
+            t->badAtEnd    = audit_bad();
+            t->anchorAtEnd = audit_anchors();
             g.trial++;
             g.remaining = g.gapFrames;
             g.state = (g.trial >= g.trials) ? ST_DONE : ST_GAP;
@@ -530,27 +572,61 @@ static int selftest(void) {
                ok ? "ok (raw kept, ts flagged)" : "FAIL");
     }
 
-    printf("\n--- continuity: varying callback size must not read as a break ---\n");
+    printf("\n--- timeline audit ---\n");
     {
-        const UInt32 n[]  = { 64, 128, 64, 64, 128, 64 };
-        const double st[] = { 0, 64, 192, 256, 320, 448 };
-        cont_t c; memset(&c, 0, sizeof c);
-        for (int i = 0; i < 6; i++) cont_step(&c, st[i], n[i]);
-        const int ok = c.breaks == 0;
+        // Varying callback size is not a break. The reviewer's case: a larger
+        // warmup callback ahead of the trial's own smaller ones.
+        const UInt32 n[]  = { 128, 64, 64, 64, 128, 64 };
+        const double st[] = { 0, 128, 192, 256, 320, 448 };
+        audit_t a; memset(&a, 0, sizeof a);
+        for (int i = 0; i < 6; i++)
+            audit_step(&a, st[i], 1, st[i] / 48000.0, n[i], 48000.0);
+        const int ok = !a.gapEvents && !a.anchorEvents && !a.ambiguous;
         if (!ok) failures++;
-        printf("  %-24s %u breaks   %s\n", "64/128/64 continuous", c.breaks,
-               ok ? "ok" : "FAIL (false break on size change)");
+        printf("  %-26s %u gap / %u anchor / %u amb   %s\n", "128 then 64, continuous",
+               a.gapEvents, a.anchorEvents, a.ambiguous, ok ? "ok" : "FAIL");
     }
     {
-        // ... while a genuine re-anchor still registers.
-        const UInt32 n[]  = { 64, 64, 64, 64 };
-        const double st[] = { 0, 64, 1064, 1128 };
-        cont_t c; memset(&c, 0, sizeof c);
-        for (int i = 0; i < 4; i++) cont_step(&c, st[i], n[i]);
-        const int ok = c.breaks == 1 && fabs(c.worst - 936.0) < 0.5;
+        // One 64-frame callback skipped, after a 128-frame warmup. A tolerance
+        // scaled to the run's LARGEST span accepts this; corroboration does not.
+        const UInt32 n[]  = { 128, 64, 64, 64 };
+        const double st[] = { 0, 128, 192, 320 };   // 64 frames missing at the end
+        audit_t a; memset(&a, 0, sizeof a);
+        for (int i = 0; i < 4; i++)
+            audit_step(&a, st[i], 1, st[i] / 48000.0, n[i], 48000.0);
+        const int ok = a.gapEvents == 1 && fabs(a.gapFrames - 64.0) < 0.5 && !a.anchorEvents;
         if (!ok) failures++;
-        printf("  %-24s %u breaks, worst %+.0f fr   %s\n", "1000-frame jump",
-               c.breaks, c.worst, ok ? "ok" : "FAIL");
+        printf("  %-26s %u gap, %.0f fr lost   %s\n", "skipped 64 after 128",
+               a.gapEvents, a.gapFrames, ok ? "ok" : "FAIL (gap accepted)");
+    }
+    {
+        // A re-anchor: sample time jumps, the wall clock does not follow.
+        const UInt32 n[]  = { 64, 64, 64, 64 };
+        const double st[] = { 0, 64, 128, 1128 };
+        const double ht[] = { 0, 64, 128, 192 };
+        audit_t a; memset(&a, 0, sizeof a);
+        for (int i = 0; i < 4; i++)
+            audit_step(&a, st[i], 1, ht[i] / 48000.0, n[i], 48000.0);
+        const int ok = a.anchorEvents == 1 && !a.gapEvents &&
+                       fabs(a.worstAnchor - 936.0) < 0.5;
+        if (!ok) failures++;
+        printf("  %-26s %u anchor, worst %+.0f fr   %s\n", "1000-frame jump",
+               a.anchorEvents, a.worstAnchor, ok ? "ok" : "FAIL");
+    }
+
+    printf("\n--- aggregation: scheduling distance must be paired per trial ---\n");
+    {
+        // Re-anchored trials contribute to RTL_raw but not RTL_ts, so the two
+        // medians describe different sets and their difference is meaningless.
+        double raw[]   = { 1000, 1000, 1400, 1400 };   // last two re-anchored
+        double ts[]    = { 600, 600 };                 // paired subset only
+        double sched[] = { 400, 400 };                 // per-trial differences
+        const double paired  = median(sched, 2);
+        const double unpaired = median(raw, 4) - median(ts, 2);
+        const int ok = fabs(paired - 400.0) < 0.5 && fabs(unpaired - 400.0) > 0.5;
+        if (!ok) failures++;
+        printf("  %-26s paired %.0f fr, median-difference %.0f fr   %s\n",
+               "mixed trial sets", paired, unpaired, ok ? "ok" : "FAIL");
     }
 
     printf("\n  %s\n", failures ? "SELFTEST FAILED" : "selftest passed");
@@ -677,11 +753,6 @@ int main(int argc, char **argv) {
         printf("\nWARNING: timed out after %d s with %u/%u trials -- IO may have stalled\n",
                timeout, g.trial, g.trials);
 
-    // One dropped callback loses a whole buffer of delivered frames, while
-    // ordinary callback jitter differs by well under that, so half a span
-    // separates them.
-    const double lagTol = g.maxSpan ? 0.5 * (double)g.maxSpan : 16.0;
-
     printf("\n--- IO ---\n");
     printf("  %-24s %u\n", "callbacks", g.cycles);
     printf("  %-24s", "distinct spans");
@@ -689,18 +760,25 @@ int main(int argc, char **argv) {
     printf("%s\n", g.spanCount > 1 ? "   <-- spans vary" : "");
     printf("  %-24s %u\n", "processor overloads",
            atomic_load_explicit(&g.overloads, memory_order_relaxed));
-    printf("  %-24s in %u breaks (worst %+.0f fr) / out %u breaks (worst %+.0f fr)%s\n",
-           "sample-time re-anchors", g.itCont.breaks, g.itCont.worst,
-           g.otCont.breaks, g.otCont.worst,
-           (g.itCont.breaks || g.otCont.breaks) ? "   <-- affects RTL_ts only" : "");
-    printf("  %-24s %+.1f fr worst per trial (tolerance %.0f)\n",
-           "delivered-frame lag", g.worstLagStep, lagTol);
+    printf("  %-24s %u events, %.0f frames lost%s\n", "delivered-frame gaps",
+           g.itAudit.gapEvents + g.otAudit.gapEvents,
+           g.itAudit.gapFrames,
+           (g.itAudit.gapEvents || g.otAudit.gapEvents) ? "   <-- rejects RTL_raw" : "");
+    printf("  %-24s %u events (worst %+.0f fr)%s\n", "sample-time re-anchors",
+           g.itAudit.anchorEvents + g.otAudit.anchorEvents,
+           fabs(g.itAudit.worstAnchor) > fabs(g.otAudit.worstAnchor)
+               ? g.itAudit.worstAnchor : g.otAudit.worstAnchor,
+           (g.itAudit.anchorEvents || g.otAudit.anchorEvents) ? "   <-- rejects RTL_ts only" : "");
+    printf("  %-24s %u%s\n", "unclassified",
+           g.itAudit.ambiguous + g.otAudit.ambiguous,
+           (g.itAudit.ambiguous || g.otAudit.ambiguous) ? "   <-- rejected as unsafe" : "");
     printf("  %-24s", "input channel peaks");
     for (UInt32 c = 0; c < g.inChans && c < 8; c++) printf(" %.3f", g.chPeak[c]);
     printf("\n");
 
-    double raw[MAX_TRIALS], ts[MAX_TRIALS], pre[MAX_TRIALS];
-    int nr = 0, nts = 0, npre = 0, noSignal = 0, droppedT = 0, anchoredT = 0, inverted = 0;
+    double raw[MAX_TRIALS], ts[MAX_TRIALS], pre[MAX_TRIALS], sched[MAX_TRIALS];
+    int nr = 0, nts = 0, npre = 0, nsched = 0;
+    int noSignal = 0, droppedT = 0, anchoredT = 0, inverted = 0;
     double worstNoise = 0, minPeak = 1e9;
     for (UInt32 i = 0; i < g.trial; i++) {
         const trial_t *tr = &g.t[i];
@@ -712,14 +790,19 @@ int main(int argc, char **argv) {
 
         // A gap in delivered frames makes RTL_raw read short by the gap, so the
         // trial is rejected outright rather than averaged in.
-        if (fabs(tr->lagEnd - tr->lagStart) > lagTol) { droppedT++; continue; }
+        if (tr->badAtEnd != tr->badAtStart) { droppedT++; continue; }
         raw[nr++] = r.rawFrames;
         pre[npre++] = (tr->capAbs + r.onset) - tr->emitAbs;
 
         // A re-anchor invalidates only the sample-time reading; RTL_raw above
         // stands, because it never consulted those timestamps.
-        if (tr->contAtEnd != tr->contAtStart) { anchoredT++; continue; }
-        if (r.tsValid) ts[nts++] = r.tsFrames;
+        if (tr->anchorAtEnd != tr->anchorAtStart) { anchoredT++; continue; }
+        if (r.tsValid) {
+            ts[nts++] = r.tsFrames;
+            // Paired within the trial. Differencing medians of two different
+            // trial sets is not this quantity and can be arbitrarily wrong.
+            sched[nsched++] = r.rawFrames - r.tsFrames;
+        }
     }
 
     printf("\n--- round trip ---\n");
@@ -747,10 +830,11 @@ int main(int argc, char **argv) {
     else     printf("  %-24s <none: %d trials spanned a re-anchor>\n",
                     "RTL_ts (hw latency)", anchoredT);
 
-    const double mraw = median(raw, nr);
-    printf("\n  scheduling distance     %.2f fr measured", nts ? mraw - median(ts, nts) : 0.0);
-    if (nts) printf(", %u declared (2*io + safety)\n", declared_sched(&dc));
-    else     printf(" -- unavailable\n");
+    if (nsched)
+        printf("\n  scheduling distance     %.2f fr measured, %u declared (2*io + safety)\n",
+               median(sched, nsched), declared_sched(&dc));
+    else
+        printf("\n  scheduling distance     unavailable (no trial had usable timestamps)\n");
 
     if (nts) {
         const double mts = median(ts, nts);
