@@ -1,0 +1,32 @@
+# Captured via the ASFW MCP control plane (skill client), 2026-09-05T18:16:07+02:00
+# endpoint: $ASFW_MCP_ENDPOINT=http://127.0.0.1:8765/mcp  (skill default 8766 is refused on this install)
+# health: status=ready expectedGeneration=4 reasons=[]
+
+## asfw_log_stats
+{
+  "capacityRecords": 39718,
+  "droppedRecords": 0,
+  "latestSequence": 20396,
+  "oldestSequence": 1,
+  "perCategory": {
+    "AVC": 22,
+    "Async": 12861,
+    "Audio": 103,
+    "BusReset": 3,
+    "ConfigROM": 65,
+    "Controller": 46,
+    "DirectAudio": 1165,
+    "Discovery": 29,
+    "FCP": 1,
+    "Hardware": 22,
+    "IRM": 10,
+    "Isoch": 1490,
+    "MusicSubunit": 65,
+    "Oxfw": 4257,
+    "Topology": 2,
+    "UserClient": 23,
+    "Zts": 232
+  },
+  "totalEmitted": 20396
+}
+

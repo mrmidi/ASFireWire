@@ -11,10 +11,22 @@ Parent plan: [Audio latency ledger and timing SSOT](../../AUDIO_LATENCY_LEDGER_A
 
 The driver log ring — not `log stream` — is where this telemetry lives.
 `ASFW_LOG` always writes the ring and mirrors to os_log only when the mirror is
-enabled, so the predicate capture returned nothing but its own header. Read it
-with `asfw_log_query` over the MCP control plane on `127.0.0.1:8765/mcp`
-(initialize, then `notifications/initialized`, then `tools/call`). The ring held
-19520 records with **0 dropped** and `oldestSequence` 1, so no history was lost.
+enabled, so the predicate capture in `capture.sh` returned nothing but its own
+header. **Do not use `log stream` as the ASFW diagnosis path.** Use the control
+plane's bundled client:
+
+```bash
+export ASFW_MCP_ENDPOINT=http://127.0.0.1:8765/mcp   # skill default 8766 is refused here
+python3 .claude/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py health
+python3 .claude/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_stats '{}'
+python3 .claude/skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_log_query \
+  '{"afterSequence":0,"categories":["DirectAudio"],"contains":"[Ledger]","maxLevel":"debug","maxRecords":200}'
+```
+
+Health reported `ready`, generation 4, no reasons. The ring reported
+`capacityRecords` 39718, `oldestSequence` 1 and **`droppedRecords` 0**, so the
+whole driver history since start was retained and nothing had to be inferred
+from a gap. Raw capture in [mcp-ring-capture.txt](evidence/mcp-ring-capture.txt).
 
 ## Defect found: I1 and I2 are never measured on an RX-clocked device
 
@@ -22,6 +34,11 @@ with `asfw_log_query` over the MCP control plane on `127.0.0.1:8765/mcp`
 TX-driven, and both ledger intervals were recorded inside it. This device is
 RX-clocked (`[ZTS] rx`), which is the normal case, so `I1` and `I2` produced no
 samples and no unresolved count — their heartbeat lines never printed at all.
+
+The absence is **conclusive, not inferred**: queried across the whole retained
+ring from `afterSequence` 0, `[Ledger] I1` and `[Ledger] I2` return 0 records
+each while `[Ledger] J` returns 200+, against `oldestSequence` 1 and
+`droppedRecords` 0. The lines were never emitted rather than aged out.
 Whether TX drives the timeline decides who may publish a boundary; it does not
 decide whether the TX path's own intervals occur. Fixed by gating only the
 boundary publication on the clock source.
@@ -125,8 +142,9 @@ Splitting the two is outstanding.
 
 `[Ledger]`, `[TxFill]` and the rest are the actual Phase 3 deliverable, and the
 agent's sandbox returns zero lines from `log stream` silently — it cannot
-capture them. Run [`capture.sh`](capture.sh); it needs no loopback, since every
-counter in it is driver-side.
+capture them. `capture.sh` drives the audio, but read the counters from the ring
+via the MCP client above rather than from its `log stream` predicate — that part
+of the script cannot work and its line counts are meaningless.
 
 What that capture has to answer:
 
