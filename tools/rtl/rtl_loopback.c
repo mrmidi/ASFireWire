@@ -556,19 +556,62 @@ static void stats(const char *label, double *v, int n, double sr) {
 // ---------------------------------------------------------------- declared
 typedef struct {
     UInt32 io, safIn, safOut, latIn, latOut, strIn, strOut;
+    // Names of the properties that would not read. A failed read leaves a zero
+    // behind, which is a legal value for every one of these, so silence here
+    // produces a wrong declared total and a wrong RESIDUAL with nothing to
+    // distinguish it from a device that really declares zero.
+    const char *missing[5];
+    int         nmissing;
 } declared_t;
+
+static void need(declared_t *c, int ok, const char *what) {
+    if (ok) return;
+    if (c->nmissing < (int)(sizeof c->missing / sizeof c->missing[0]))
+        c->missing[c->nmissing] = what;
+    c->nmissing++;
+}
 
 static declared_t read_declared(AudioObjectID d) {
     declared_t c; memset(&c, 0, sizeof c);
-    getprop(d, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal,
-            &c.io, sizeof c.io);
-    getprop(d, kAudioDevicePropertySafetyOffset, kAudioObjectPropertyScopeInput,  &c.safIn,  sizeof c.safIn);
-    getprop(d, kAudioDevicePropertySafetyOffset, kAudioObjectPropertyScopeOutput, &c.safOut, sizeof c.safOut);
-    getprop(d, kAudioDevicePropertyLatency,      kAudioObjectPropertyScopeInput,  &c.latIn,  sizeof c.latIn);
-    getprop(d, kAudioDevicePropertyLatency,      kAudioObjectPropertyScopeOutput, &c.latOut, sizeof c.latOut);
+    need(&c, getprop(d, kAudioDevicePropertyBufferFrameSize,
+                     kAudioObjectPropertyScopeGlobal, &c.io, sizeof c.io),
+         "buffer frame size");
+    need(&c, getprop(d, kAudioDevicePropertySafetyOffset,
+                     kAudioObjectPropertyScopeInput, &c.safIn, sizeof c.safIn),
+         "input safety offset");
+    need(&c, getprop(d, kAudioDevicePropertySafetyOffset,
+                     kAudioObjectPropertyScopeOutput, &c.safOut, sizeof c.safOut),
+         "output safety offset");
+    need(&c, getprop(d, kAudioDevicePropertyLatency,
+                     kAudioObjectPropertyScopeInput, &c.latIn, sizeof c.latIn),
+         "input device latency");
+    need(&c, getprop(d, kAudioDevicePropertyLatency,
+                     kAudioObjectPropertyScopeOutput, &c.latOut, sizeof c.latOut),
+         "output device latency");
+    // Stream latency legitimately has no value when a scope has no streams, so
+    // its absence is not a preflight failure.
     c.strIn  = stream_latency(d, kAudioObjectPropertyScopeInput);
     c.strOut = stream_latency(d, kAudioObjectPropertyScopeOutput);
     return c;
+}
+
+/// Request a client buffer size and report what the device actually adopted.
+/// Returns 0 when the request was refused or silently altered; the caller may
+/// still measure, but must not describe the run by the size it asked for.
+static int request_buffer_frames(AudioObjectID d, UInt32 want, UInt32 *outGot) {
+    AudioObjectPropertyAddress a = { kAudioDevicePropertyBufferFrameSize,
+                                     kAudioObjectPropertyScopeGlobal,
+                                     kAudioObjectPropertyElementMain };
+    UInt32 v = want;
+    const OSStatus st = AudioObjectSetPropertyData(d, &a, 0, NULL, sizeof v, &v);
+    UInt32 got = 0;
+    if (!getprop(d, kAudioDevicePropertyBufferFrameSize,
+                 kAudioObjectPropertyScopeGlobal, &got, sizeof got)) {
+        *outGot = 0;
+        return 0;
+    }
+    *outGot = got;
+    return st == noErr && got == want;
 }
 
 static UInt32 declared_hw(const declared_t *c)    { return c->latIn + c->latOut + c->strIn + c->strOut; }
@@ -592,6 +635,11 @@ static void print_declared(AudioObjectID d, const declared_t *c, Float64 sr) {
     printf("  %-24s %u fr  %.3f ms\n", "declared round-trip",
            declared_sched(c) + declared_hw(c),
            sr > 0 ? (declared_sched(c) + declared_hw(c)) * 1000.0 / sr : 0.0);
+    for (int i = 0; i < c->nmissing && i < (int)(sizeof c->missing /
+                                                 sizeof c->missing[0]); i++) {
+        printf("  %-24s %s   <-- NOT READ, counted as 0\n",
+               i ? "" : "declarations missing", c->missing[i]);
+    }
 }
 
 // ----------------------------------------------------------------- selftest
@@ -989,11 +1037,16 @@ int main(int argc, char **argv) {
     }
 
     if (reqFrames > 0) {
-        AudioObjectPropertyAddress a = { kAudioDevicePropertyBufferFrameSize,
-                                         kAudioObjectPropertyScopeGlobal,
-                                         kAudioObjectPropertyElementMain };
-        UInt32 v = (UInt32)reqFrames;
-        AudioObjectSetPropertyData(dev, &a, 0, NULL, sizeof v, &v);
+        UInt32 got = 0;
+        if (!request_buffer_frames(dev, (UInt32)reqFrames, &got)) {
+            // Buffer size is not a preference here: it sets the scheduling
+            // distance the whole measurement is reconciled against, so a
+            // request that did not take must be visible before any number is.
+            fprintf(stderr,
+                    "buffer frame size: requested %u, device reports %u -- "
+                    "the run below is at %u, not %u\n",
+                    (UInt32)reqFrames, got, got, (UInt32)reqFrames);
+        }
     }
 
     Float64 sr = 48000;
@@ -1133,11 +1186,22 @@ int main(int argc, char **argv) {
         const double resid = mts - (double)declared_hw(&dc);
         printf("  hardware latency        %.2f fr measured, %u declared (dev + stream)\n",
                mts, declared_hw(&dc));
-        printf("\n  RESIDUAL                %+.2f fr  (%+.3f ms)\n",
-               resid, resid * 1000.0 / sr);
-        printf("  The signed amount by which our declarations misstate the physical\n"
-               "  path. Positive means we under-declare: audio really arrives later\n"
-               "  than we claim. This is the Phase 2 reference-plane input.\n");
+        if (dc.nmissing != 0) {
+            // Fails closed for the same reason trial admission does: a number
+            // computed against a declaration we could not read is wrong in a
+            // way that looks exactly like a real answer.
+            printf("\n  RESIDUAL                unavailable -- %d declared "
+                   "propert%s could not be read.\n",
+                   dc.nmissing, dc.nmissing == 1 ? "y" : "ies");
+            printf("  The measurements above stand on their own; the residual does\n"
+                   "  not, because the declaration it subtracts is incomplete.\n");
+        } else {
+            printf("\n  RESIDUAL                %+.2f fr  (%+.3f ms)\n",
+                   resid, resid * 1000.0 / sr);
+            printf("  The signed amount by which our declarations misstate the physical\n"
+                   "  path. Positive means we under-declare: audio really arrives later\n"
+                   "  than we claim. This is the Phase 2 reference-plane input.\n");
+        }
     }
     return 0;
 }

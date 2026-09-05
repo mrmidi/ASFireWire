@@ -433,12 +433,30 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    histograms for actual E1→E2 and F3→F4 elapsed time (including dispatch
    delay, which geometry does not bound), and for the `I1`/`J4` waits. Anomaly-
    gated per the hot-path instrumentation rule.
-5. **Make bench preflight and transport status trustworthy.** Check and report
-   RTL buffer setter/getter results and compare requested, read-back, and actual
-   callback spans. Give `txTransportStatus` a live, lifetime-safe producer or
-   expose it as unavailable; initialization/reset to zero currently becomes
-   `stopped` in MCP even while completion cursors advance. Use counter deltas
-   and freshness when judging progress, not cumulative activity alone.
+5. **Make bench preflight and transport status trustworthy.** **Landed.**
+
+   `txTransportStatus` had a live producer all along and simply was not being
+   written: the value-owned transport mirror refreshes the completion cursor and
+   committed end on every preparation pass and omitted the status beside them,
+   so MCP read the initialisation value and reported `stopped` while the cursors
+   it sits next to advanced. It now mirrors `IsochTxQueueStatus`, which shares
+   the diagnostic encoding's numbering.
+
+   RTL preflight now reports both directions. A buffer request that is refused
+   or silently clamped is named before any measurement (the Duet clamps 7 to
+   15), and a declared property that will not read is listed as `NOT READ,
+   counted as 0` — with `RESIDUAL` withheld rather than computed, because a
+   residual taken against an incomplete declaration is wrong in a way that looks
+   exactly like an answer. The measurements themselves still stand.
+
+   `[TxFill]` now also carries `missedDeadline=` and `stampsMissed=`.
+
+   **Still open in this item:** MCP judges progress from cumulative activity
+   rather than counter deltas and freshness. **And a gap worth knowing before
+   the bench pass:** the new counters are readable only in the log, not in the
+   MCP snapshot — the Swift telemetry decoder uses a hand-written byte-offset
+   table with no assertion tying it to the C++ layout, so extending it is a
+   separate, deliberate change. Capture `[TxFill]` during the hardware pass.
 
 Use these repairs to support the correlated marker trace in the current
 decision above. Aggregate histograms remain useful, but cannot attribute a

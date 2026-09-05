@@ -947,6 +947,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                                                 std::memory_order_relaxed);
     control->txTransportCommittedEnd.store(committedAfter,
                                             std::memory_order_relaxed);
+    // The status belongs to this mirror and was the one field never refreshed,
+    // so diagnostics read its initialisation value and reported a live stream
+    // as stopped while the cursors beside it advanced. IsochTxQueueStatus and
+    // the diagnostic encoding share their numbering by construction.
+    control->txTransportStatus.store(
+        static_cast<uint32_t>(queue->statusWord.load(std::memory_order_acquire)),
+        std::memory_order_relaxed);
     control->txCurrentCommittedMarginPackets.store(
         margin > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(margin),
         std::memory_order_relaxed);
@@ -1012,7 +1019,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                      // accepted publications it then sealed on the armed image,
                      // so filled-minus-lost is the truthful content figure and
                      // the one the latency ledger should read.
-                     "[TxFill] filled=%llu lost=%llu tooLate=%llu unavailable=%llu silentData=%llu cursor=%llu finalized=%llu mapped=%llu committed=%llu rebound=%llu rejected=%llu minRebindDistance=%u",
+                     "[TxFill] filled=%llu lost=%llu tooLate=%llu unavailable=%llu silentData=%llu cursor=%llu finalized=%llu mapped=%llu committed=%llu rebound=%llu rejected=%llu missedDeadline=%llu stampsMissed=%llu minRebindDistance=%u",
                      fill.lateFillsPublished.load(std::memory_order_relaxed),
                      queue->latePayloadLostPublicationCount.load(
                          std::memory_order_relaxed),
@@ -1026,6 +1033,15 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                      queue->latePayloadRebindCount.load(
                          std::memory_order_relaxed),
                      queue->latePayloadRebindRejectedCount.load(
+                         std::memory_order_relaxed),
+                     // Rebinds abandoned because the controller had reached the
+                     // packet by the time the store was authorised, and
+                     // completion stamps that aged out before the observer
+                     // drained them. Both are written on the fix paths added
+                     // with them and were readable nowhere.
+                     queue->latePayloadRebindMissedDeadlineCount.load(
+                         std::memory_order_relaxed),
+                     control->backendCompletionStampsMissed.load(
                          std::memory_order_relaxed),
                      minRebindDistance == UINT32_MAX ? 0 :
                          minRebindDistance);
