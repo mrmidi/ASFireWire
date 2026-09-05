@@ -147,6 +147,32 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
     counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
 }
 
+bool IsochTxDmaRing::ReadLiveHardwareAbsIndex(
+    Driver::HardwareInterface& hw,
+    const uint8_t contextIndex,
+    const uint64_t referenceAbsIdx,
+    uint64_t& outAbsIdx) noexcept {
+    uint32_t cmdPtr = 0;
+    {
+        auto access = hw.TryBeginAccess();
+        if (!access) return false;
+        cmdPtr = access.Read(static_cast<Register32>(
+            DMAContextHelpers::IsoXmitCommandPtr(contextIndex)));
+    }
+    uint32_t hwPacketIndex = 0;
+    if (!DecodeHardwarePacketIndex(cmdPtr, hwPacketIndex)) return false;
+
+    // The controller only moves forward, and a pass that let it advance a whole
+    // ring lap has already holed the ring and is detected elsewhere. Lift the
+    // modulo index onto the absolute timeline at or after the reference.
+    const uint64_t lapBase =
+        referenceAbsIdx - (referenceAbsIdx % Layout::kNumPackets);
+    uint64_t live = lapBase + hwPacketIndex;
+    if (live < referenceAbsIdx) live += Layout::kNumPackets;
+    outAbsIdx = live;
+    return true;
+}
+
 void IsochTxDmaRing::SealOnArmedImage(
     IsochTxPacketMeta& meta,
     const uint64_t generation,
@@ -164,6 +190,8 @@ void IsochTxDmaRing::SealOnArmedImage(
 }
 
 void IsochTxDmaRing::TryBindLatePayload(
+    Driver::HardwareInterface& hw,
+    const uint8_t contextIndex,
     const uint64_t packetAbs,
     const uint64_t hardwareAbsIdx,
     IsochTxPacketMeta* metadataRing,
@@ -233,17 +261,54 @@ void IsochTxDmaRing::TryBindLatePayload(
         return;
     }
 
-    // Single linearization point for "transport chose image 1". After it
-    // succeeds no producer can still be told it owns this packet.
-    if (!ClaimLateTxPayload(meta, expectedGeneration)) {
-        return;
-    }
-
+    // Make image 1 visible to the device first. Writing that memory is
+    // harmless whatever the controller is doing -- it is not the live image --
+    // so it belongs before the deadline check rather than inside it.
     const auto* payload = reinterpret_cast<const std::byte*>(
         payloadBase + payloadOffset);
     if (dmaMemory_) {
         dmaMemory_->PublishToDevice(payload, payloadLength);
         dmaMemory_->PublishBarrier();
+    }
+
+    // The position that authorised this pass was sampled before completion
+    // processing and before every packet examined ahead of this one, so it can
+    // be several packets old by the time we get here. The guard has to hold at
+    // the store, not at the top of the pass: re-read the controller now and
+    // abandon the rebind if it has reached the packet. The armed image is
+    // complete and already bound, so abandoning costs content, never a holed
+    // ring.
+    //
+    // This closes snapshot age only. Controller prefetch, and controller
+    // progress between this read and the store below, remain open questions
+    // that need reference or hardware evidence to settle.
+    uint64_t liveAbsIdx = hardwareAbsIdx;
+    if (!ReadLiveHardwareAbsIndex(hw, contextIndex, hardwareAbsIdx,
+                                  liveAbsIdx)) {
+        // No authority to decide, so decide nothing. The packet stays open for
+        // a later pass, and the finality seal accounts it if it runs out of
+        // time first. Sealing here would turn a transient loss of MMIO access
+        // into permanently discarded content.
+        return;
+    }
+    if (packetAbs < liveAbsIdx +
+                        ASFW::Shared::Isoch::IsochQueueGeometry::
+                            kPayloadRepointGuardPackets) {
+        // Permanent for this packet: the controller only moves forward, so a
+        // later pass would find it further past, fail again, and count again.
+        // Seal it now, which also books the producer's image as the lost
+        // publication it is.
+        ++out.latePayloadRebindMissedDeadline;
+        controlBlock->latePayloadRebindMissedDeadlineCount.fetch_add(
+            1, std::memory_order_relaxed);
+        SealOnArmedImage(meta, expectedGeneration, controlBlock, out);
+        return;
+    }
+
+    // Single linearization point for "transport chose image 1". After it
+    // succeeds no producer can still be told it owns this packet.
+    if (!ClaimLateTxPayload(meta, expectedGeneration)) {
+        return;
     }
 
     meta.selectedPayloadImage = 1;
@@ -260,8 +325,10 @@ void IsochTxDmaRing::TryBindLatePayload(
         ASFW::Driver::WriteBarrier();
     }
 
+    // Against the position actually checked, so the reported minimum is a
+    // margin that existed rather than one the snapshot implied.
     const uint32_t distance =
-        static_cast<uint32_t>(packetAbs - hardwareAbsIdx);
+        static_cast<uint32_t>(packetAbs - liveAbsIdx);
     uint32_t previous = controlBlock->minimumLatePayloadRebindDistance.load(
         std::memory_order_relaxed);
     while (distance < previous &&
@@ -276,6 +343,8 @@ void IsochTxDmaRing::TryBindLatePayload(
 }
 
 void IsochTxDmaRing::RefreshLatePayloadBindings(
+    Driver::HardwareInterface& hw,
+    const uint8_t contextIndex,
     const uint64_t hardwareAbsIdx,
     IsochTxPacketMeta* metadataRing,
     IsochTxQueueControl* controlBlock,
@@ -299,9 +368,9 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
     for (uint64_t packetAbs = firstRepointable;
          packetAbs < mappedEnd;
          ++packetAbs) {
-        TryBindLatePayload(packetAbs, hardwareAbsIdx, metadataRing,
-                           controlBlock, numSlots, payloadBase, payloadDmaMap,
-                           out);
+        TryBindLatePayload(hw, contextIndex, packetAbs, hardwareAbsIdx,
+                           metadataRing, controlBlock, numSlots, payloadBase,
+                           payloadDmaMap, out);
     }
 
     // Between completion callbacks the command pointer can advance by one
@@ -329,9 +398,9 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
         // content, and binding it costs nothing; without this, the window
         // between passing a packet and sealing it spans the whole scan.
         if (packetAbs >= firstRepointable) {
-            TryBindLatePayload(packetAbs, hardwareAbsIdx, metadataRing,
-                               controlBlock, numSlots, payloadBase,
-                               payloadDmaMap, out);
+            TryBindLatePayload(hw, contextIndex, packetAbs, hardwareAbsIdx,
+                               metadataRing, controlBlock, numSlots,
+                               payloadBase, payloadDmaMap, out);
         }
         auto& meta = metadataRing[static_cast<uint32_t>(packetAbs % numSlots)];
         if (meta.packetIndex != packetAbs) continue;
@@ -798,6 +867,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     // descriptors. The absolute command position is the completed cursor after
     // this batch; modulo descriptor indices alone cannot distinguish laps.
     RefreshLatePayloadBindings(
+        hw,
+        contextIndex,
         completedAbsIdx + deltaConsumed,
         metadataRing,
         controlBlock,

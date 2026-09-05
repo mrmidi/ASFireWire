@@ -397,18 +397,36 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    reading older captures: `rejected=` now counts rejected packets rather than
    rejection attempts, because a packet rejected on geometry is sealed instead
    of retried once per pass.
-2. **Newest-only completion read** (finding 3). Publishes 2 ZTS boundaries where
-   per-packet observation publishes 12, on the TX-sourced timeline. Corrupts the
-   clock the ledger is written against. Fix: drain with a cursor.
-3. **Stale CommandPtr at rebind** (finding 1). `minRebindDistance` is sampled
-   before completion processing and the whole scan, so it overstates the margin
-   it reports. Fix: revalidate at the store, with a missed-update path that keeps
-   the armed image.
+2. **Newest-only completion read** (finding 3). **Landed in `e4464ae2`.** It
+   published 2 ZTS boundaries where per-packet observation publishes 12, on the
+   TX-sourced timeline, and corrupted the clock the ledger is written against.
+   The observer now keeps a cursor and drains every completion stamp it owes;
+   the cursor arithmetic is `TxCompletionStampDrain`, which rewinds on a re-arm
+   and reports rather than reads stamps that aged out of the ring. The M-Audio
+   path stays one observation per wake by design — its warm-up machine counts
+   wakes — but is given the wake's newest DATA packet, so a trailing NO-DATA no
+   longer hides the audio beside it.
+
+   **Reading older captures:** the completion-latency histogram and cycle trace
+   now record per packet rather than per wake, so that distribution is not
+   comparable across `e4464ae2`.
+3. **Stale CommandPtr at rebind** (finding 1). **Landed in the same series.**
+   `minRebindDistance` was sampled before completion processing and the whole
+   scan, so it overstated the margin it reported. Transport now re-reads the
+   live command position immediately before the descriptor store, abandons the
+   rebind if the controller has reached the packet, and reports the distance it
+   actually verified. A missed deadline is permanent for that packet — the
+   controller only moves forward — so it seals on the armed image rather than
+   being retried and re-counted, and the producer's image is booked as a lost
+   publication. A failure to read MMIO decides nothing and leaves the packet
+   open, so a transient loss of access cannot discard content.
 
    **This addresses snapshot age only.** Controller prefetch and controller
    progress between the recheck and the store remain separate, unresolved
    concerns — `I2`'s guard component still rests on an unverified assumption
-   after this fix, and settling it needs reference or hardware evidence.
+   after this fix, and settling it needs reference or hardware evidence. The
+   review fixture for writing that reproduction is now
+   `IsochTxPayloadArbitrationTest`.
 4. **Measure the intervals the ledger marks nominal.** Rule 3 above is currently
    unenforced: `I2` and `J3` are configured geometry with no observed
    distribution, and `I1`/`J4` are variable with no recorded spread. Add

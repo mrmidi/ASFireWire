@@ -1627,3 +1627,58 @@ TEST_F(IsochTxPayloadArbitrationTest,
     // And the packet stays refused from now on.
     EXPECT_FALSE(OfferLateImage(metadataRing, 16));
 }
+
+// The controller can advance while transport is publishing the alternate image.
+// The position that authorised the rebind was sampled before completion
+// processing and before every packet examined ahead of this one, so trusting it
+// let the descriptor address be changed on a packet the controller had already
+// reached, while reporting a two-packet margin that no longer existed.
+TEST_F(IsochTxPayloadArbitrationTest,
+       RebindIsAbandonedWhenTheControllerReachesThePacketDuringPublication) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(6);
+    ASSERT_TRUE(OfferLateImage(metadataRing, 8));
+
+    bool advanced = false;
+    interposed_->onPublish = [&](const std::byte* published) {
+        if (published != reinterpret_cast<const std::byte*>(ImageBytes(8, 1))) {
+            return;
+        }
+        // Hardware proceeds during the delay after the MMIO snapshot.
+        PointAt(8);
+        advanced = true;
+    };
+
+    const auto outcome = Refill(metadataRing);
+    ASSERT_TRUE(outcome.ok);
+    ASSERT_TRUE(advanced);
+
+    // Counted once: the miss is permanent, so the packet is sealed rather than
+    // retried and re-counted by the finality pass.
+    EXPECT_EQ(outcome.latePayloadRebindMissedDeadline, 1U);
+    EXPECT_EQ(outcome.latePayloadRebinds, 0U);
+    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 0U);
+    // And the producer's image is booked as the lost publication it is.
+    EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
+    // No margin was claimed, because none was ever verified.
+    EXPECT_EQ(primeControl_.minimumLatePayloadRebindDistance.load(),
+              ~uint32_t{0});
+}
+
+// A rebind that keeps its distance is still accepted, and the margin it reports
+// is measured against the position actually checked.
+TEST_F(IsochTxPayloadArbitrationTest,
+       AcceptedRebindReportsTheMarginItVerified) {
+    auto metadataRing = MakeMetadataRing();
+    PrimeRebindable(metadataRing);
+    PointAt(6);
+    ASSERT_TRUE(OfferLateImage(metadataRing, 8));
+
+    const auto outcome = Refill(metadataRing);
+    ASSERT_TRUE(outcome.ok);
+    EXPECT_EQ(outcome.latePayloadRebinds, 1U);
+    EXPECT_EQ(outcome.latePayloadRebindMissedDeadline, 0U);
+    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 1U);
+    EXPECT_EQ(primeControl_.minimumLatePayloadRebindDistance.load(), 2U);
+}

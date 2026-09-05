@@ -23,7 +23,7 @@ def run(args, cwd=ROOT):
 
 
 run(["cmake", "--build", BUILD, "--target", "HardwareSampleTimelineTests",
-     "AmdtpDirectTxTests", "IsochTxDmaRingTests", "-j", "8"])
+     "AmdtpDirectTxTests", "-j", "8"])
 commands = json.loads((BUILD / "compile_commands.json").read_text())
 
 
@@ -46,11 +46,13 @@ def link_repro(target, test_source, obj, output, extra_objects=()):
 
 
 compile_repro("HardwareSampleTimelineTests.cpp", HERE / "timeline_repro.cpp", OUT / "timeline.o")
-cadence = next((BUILD / "audio/CMakeFiles/AmdtpDirectTxTests.dir").rglob("AmdtpCadence.cpp.o"))
+# The timeline test target links AmdtpCadence itself now that the observation
+# coverage property is a permanent test, so borrowing another target's object
+# would duplicate the symbols.
 link_repro("HardwareSampleTimelineTests", "HardwareSampleTimelineTests.cpp",
-           OUT / "timeline.o", OUT / "timeline_repro", [cadence])
+           OUT / "timeline.o", OUT / "timeline_repro")
 run([OUT / "timeline_repro"])
 
-compile_repro("IsochTxDmaRingTests.cpp", HERE / "dma_repro.cpp", OUT / "dma.o")
-link_repro("IsochTxDmaRingTests", "IsochTxDmaRingTests.cpp", OUT / "dma.o", OUT / "dma_repro")
-run([OUT / "dma_repro", "--gtest_filter=V3ReviewDmaTest.*"])
+# The DMA reproductions (findings 1 and 4) are fixed and their invariants live
+# in IsochTxPayloadArbitrationTest, so nothing is reproduced here any more:
+#   ctest --test-dir build/tests_build -R IsochTxDmaRingTests

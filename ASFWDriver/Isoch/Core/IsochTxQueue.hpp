@@ -289,6 +289,10 @@ struct IsochTxQueueControl final {
     /// then sealed on the armed image. This is the authoritative count of
     /// content the producer believed it placed and the wire never carried.
     std::atomic<uint64_t> latePayloadLostPublicationCount{0};
+    /// Rebinds abandoned because the controller had reached the packet by the
+    /// time the descriptor store was authorised against a fresh position read.
+    /// The armed image stands, so this is a missed improvement, not a fault.
+    std::atomic<uint64_t> latePayloadRebindMissedDeadlineCount{0};
     std::atomic<uint32_t> minimumLatePayloadRebindDistance{~uint32_t{0}};
     std::atomic<uint64_t> completionStampCount{0};
     IsochTxCompletionStamp completionStamps[kIsochTxCompletionStampSlots]{};
@@ -320,6 +324,7 @@ struct IsochTxQueueControl final {
         latePayloadRebindCount.store(0, std::memory_order_relaxed);
         latePayloadRebindRejectedCount.store(0, std::memory_order_relaxed);
         latePayloadLostPublicationCount.store(0, std::memory_order_relaxed);
+        latePayloadRebindMissedDeadlineCount.store(0, std::memory_order_relaxed);
         minimumLatePayloadRebindDistance.store(
             ~uint32_t{0}, std::memory_order_relaxed);
         completionStampCount.store(0, std::memory_order_relaxed);

@@ -105,6 +105,7 @@ public:
         uint32_t latePayloadRebinds{0};
         uint32_t latePayloadRebindRejected{0};
         uint32_t latePayloadLostPublications{0};
+        uint32_t latePayloadRebindMissedDeadline{0};
     };
 
     IsochTxDmaRing() noexcept = default;
@@ -173,6 +174,8 @@ private:
     [[nodiscard]] bool DecodeHardwarePacketIndex(uint32_t cmdPtr,
                                                  uint32_t& outPacketIndex) noexcept;
     void RefreshLatePayloadBindings(
+        Driver::HardwareInterface& hw,
+        uint8_t contextIndex,
         uint64_t hardwareAbsIdx,
         IsochTxPacketMeta* metadataRing,
         IsochTxQueueControl* controlBlock,
@@ -184,6 +187,8 @@ private:
     /// otherwise leave the armed image standing. Never seals a packet that is
     /// still open, so it is safe to call more than once for the same packet.
     void TryBindLatePayload(
+        Driver::HardwareInterface& hw,
+        uint8_t contextIndex,
         uint64_t packetAbs,
         uint64_t hardwareAbsIdx,
         IsochTxPacketMeta* metadataRing,
@@ -195,6 +200,15 @@ private:
     /// Declare one packet final on its armed image, counting the discarded
     /// offer if the producer had published one. The single site at which a lost
     /// publication becomes a number.
+    /// Read the controller's live command position and lift it onto the
+    /// absolute packet timeline, relative to a reference this pass already
+    /// holds. Opens its own short MMIO scope: descriptor preparation must not
+    /// retain access or nest.
+    [[nodiscard]] bool ReadLiveHardwareAbsIndex(
+        Driver::HardwareInterface& hw,
+        uint8_t contextIndex,
+        uint64_t referenceAbsIdx,
+        uint64_t& outAbsIdx) noexcept;
     static void SealOnArmedImage(
         IsochTxPacketMeta& meta,
         uint64_t generation,
