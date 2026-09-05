@@ -1,0 +1,27 @@
+Built target asfw_test_support
+Built target HardwareSampleTimelineTests
+[  0%] Built target asfw_test_support
+[100%] Built target AmdtpDirectTxTests
+[  0%] Built target asfw_test_support
+[100%] Built target IsochTxDmaRingTests
+TX latest-only wake=1 packets: anchors=12 frames= 0 8192 16384 24576 32768 40960 49152 57344 65536 73728 81920 90112
+TX latest-only wake=6 packets: anchors=2 frames= 24576 40960
+TX latest-only wake=12 packets: anchors=1 frames= 40960
+epoch: next planned frame 9000 -> 16384 (gap 7384 frames); RX indexing is untouched by caller
+Duet policy: output safety=50; presentation-relative freeze lead with recorded 53876 ticks = 153.227 frames
+Running main() from /private/tmp/googletest-20260810-2300-tbptpn/googletest-1.18.0/googletest/src/gtest_main.cc
+Note: Google Test filter = V3ReviewDmaTest.*
+[==========] Running 2 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 2 tests from V3ReviewDmaTest
+[ RUN      ] V3ReviewDmaTest.PointerAdvancesInsidePublicationButRebindStillSucceeds
+REPRO: live command advanced to packet 8 before its address store; rebind accepted and reports distance 2
+[       OK ] V3ReviewDmaTest.PointerAdvancesInsidePublicationButRebindStillSucceeds (7 ms)
+[ RUN      ] V3ReviewDmaTest.PublicationCanWinProducerCheckAfterSelectorHasSkippedPacket
+REPRO: producer reports packet 8 accepted; finality advances to 14; next completion retires packet 8 as silence
+[       OK ] V3ReviewDmaTest.PublicationCanWinProducerCheckAfterSelectorHasSkippedPacket (7 ms)
+[----------] 2 tests from V3ReviewDmaTest (14 ms total)
+
+[----------] Global test environment tear-down
+[==========] 2 tests from 1 test suite ran. (15 ms total)
+[  PASSED  ] 2 tests.
