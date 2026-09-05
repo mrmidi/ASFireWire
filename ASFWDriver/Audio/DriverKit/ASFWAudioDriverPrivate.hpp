@@ -331,6 +331,11 @@ struct AudioDriverRuntimeState {
     /// first whose content has not been published -- content arrives in order,
     /// so there is nothing beyond it worth trying this pass.
     uint64_t txFillCursor{0};
+    /// Next unread TX completion stamp. Completion stamps are pushed one per
+    /// completed packet, so reading only the newest one skipped every other
+    /// packet in the wake -- and with it every ZTS boundary that fell in one.
+    /// Owned by the same serialized TxPreparation queue as the observer.
+    uint64_t txCompletionStampCursor{0};
 
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;

@@ -4,6 +4,7 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
+#include "../Runtime/TxCompletionStampDrain.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -224,6 +225,75 @@ void HandlePendingTimelineEpoch(ASFWAudioDriver_IVars& ivars) noexcept {
         sampleRate);
 }
 
+/// Expand one completion stamp against this wake's correlation anchor.
+/// Failure here is a real clock fault; a stamp whose packet simply carries no
+/// audio is not a failure and is filtered by the callers.
+[[nodiscard]] bool ExpandCompletionStamp(
+    ASFWAudioDriver_IVars& ivars,
+    ASFW::Isoch::IsochTxQueueControl* queue,
+    ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+    uint64_t stampIndex,
+    uint32_t correlationCycleTimer,
+    uint64_t& outPacketIndex,
+    uint64_t& outCompletionBusTicks,
+    uint64_t& outCorrelationBusTicks) noexcept {
+    uint32_t completionCycleTimer = 0;
+    if (!queue->ReadCompletionStamp(stampIndex, outPacketIndex,
+                                    completionCycleTimer)) {
+        return false;
+    }
+    if (ExpandCompletionAndCorrelation(ivars, completionCycleTimer,
+                                       correlationCycleTimer,
+                                       outCompletionBusTicks,
+                                       outCorrelationBusTicks)) {
+        return true;
+    }
+    const uint64_t failures =
+        control->backendObservationConversionFailures.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+    if (IsPowerOfTwo(failures)) {
+        ASFW_LOG_ERROR(
+            DirectAudio,
+            "[BackendTiming] conversionFailure=%llu completion=0x%08x correlation=0x%08x",
+            failures, completionCycleTimer, correlationCycleTimer);
+    }
+    return false;
+}
+
+/// Submit one packet's presentation observation and publish any ZTS boundary it
+/// crosses.
+void SubmitTxObservation(
+    ASFWAudioDriver_IVars& ivars,
+    ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+    const ASFW::Audio::Runtime::HardwarePresentationObservation& observation,
+    const char* reason) noexcept {
+    control->backendObservationConversions.fetch_add(
+        1, std::memory_order_relaxed);
+    ASFW::Audio::Runtime::HardwareZeroTimestamp boundary{};
+    const auto result = control->hardwareTimeline.Observe(observation,
+                                                          &boundary);
+    if (result ==
+        ASFW::Audio::Runtime::HardwareObservationResult::BoundaryReady) {
+        (void)PublishTimelineBoundary(ivars, boundary, reason);
+        return;
+    }
+    if (result == ASFW::Audio::Runtime::HardwareObservationResult::Accepted ||
+        result ==
+            ASFW::Audio::Runtime::HardwareObservationResult::DuplicateBoundary) {
+        return;
+    }
+    const uint64_t failures =
+        control->backendObservationConversionFailures.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+    if (IsPowerOfTwo(failures)) {
+        ASFW_LOG_ERROR(
+            DirectAudio,
+            "[BackendTiming] observationRejected=%llu result=%u epoch=%llu frame=%llu bus=%llu",
+            failures, static_cast<uint32_t>(result), observation.epoch,
+            observation.sampleFrame, observation.presentationBusTicks);
+    }
+}
+
 void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                        uint64_t transportGeneration,
                        bool useMAudio) noexcept {
@@ -235,50 +305,88 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     }
     const uint64_t stampCount = queue->completionStampCount.load(
         std::memory_order_acquire);
-    if (stampCount == 0) return;
-    uint64_t packetIndex = 0;
-    uint32_t completionCycleTimer = 0;
-    if (!queue->ReadCompletionStamp(stampCount - 1, packetIndex,
-                                    completionCycleTimer)) {
+    if (stampCount == 0) {
+        // The queue was re-armed; its stamp count restarts from zero and so
+        // must our cursor, or the whole next stream reads as already drained.
+        ivars.runtime.txCompletionStampCursor = 0;
         return;
     }
-    const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(
-        static_cast<uint32_t>(packetIndex));
-    if (!slot || !slot->isData || slot->framesInPacket == 0 ||
-        slot->epoch != control->hardwareTimeline.Epoch()) {
-        // The M-Audio observer must still see group 2 even if that group's last
-        // slot was NO-DATA. Use a zero-frame event for warm-up only.
-        if (!useMAudio) return;
-    }
-    ASFW::Isoch::IsochTxClockPairSample pair{};
-    if (!queue->clockPair.TryRead(pair) || pair.hostTimeMid == 0) return;
-    uint64_t completionBusTicks = 0;
-    uint64_t correlationBusTicks = 0;
-    if (!ExpandCompletionAndCorrelation(
-            ivars, completionCycleTimer, pair.cycleTimer32,
-            completionBusTicks, correlationBusTicks)) {
-        const uint64_t failures =
-            control->backendObservationConversionFailures.fetch_add(
-                1, std::memory_order_relaxed) + 1;
-        if (IsPowerOfTwo(failures)) {
+    const auto drain = ASFW::Audio::Runtime::PlanTxCompletionStampDrain(
+        ivars.runtime.txCompletionStampCursor, stampCount,
+        ASFW::Isoch::kIsochTxCompletionStampSlots);
+    if (drain.missed != 0) {
+        const uint64_t missed =
+            control->backendCompletionStampsMissed.fetch_add(
+                drain.missed, std::memory_order_relaxed) + drain.missed;
+        if (IsPowerOfTwo(missed)) {
             ASFW_LOG_ERROR(
                 DirectAudio,
-                "[BackendTiming] conversionFailure=%llu completion=0x%08x correlation=0x%08x",
-                failures, completionCycleTimer, pair.cycleTimer32);
+                "[BackendTiming] completionStampsMissed=%llu first=%llu count=%llu",
+                missed, drain.first, stampCount);
         }
+    }
+    if (drain.Empty()) {
+        ivars.runtime.txCompletionStampCursor = stampCount;
         return;
     }
+    const uint64_t cursor = drain.first;
 
-    ASFW::Audio::Runtime::HardwarePresentationObservation observation{};
-    bool ready = false;
+    // One correlation anchor per wake: the stamps differ in when their packet
+    // completed, not in which host/bus pair anchors this pass.
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    if (!queue->clockPair.TryRead(pair) || pair.hostTimeMid == 0) return;
+
+    const auto& timeline = ivars.runtime.txStreamEngine.Timeline();
+    const uint64_t timelineEpoch = control->hardwareTimeline.Epoch();
+
     if (useMAudio) {
+        // The M-Audio warm-up state machine counts transport wakes, not
+        // packets: ObserveHardwareWake refuses a second call for the same
+        // transport generation, so draining into it would discard every stamp
+        // after the first. Hand it the newest DATA packet of this wake instead.
+        // That keeps one group per wake while removing the defect that a
+        // trailing NO-DATA packet hid the audio which completed beside it.
+        uint64_t completionBusTicks = 0;
+        uint64_t correlationBusTicks = 0;
+        uint64_t sampleFrame = 0;
+        uint32_t frameCount = 0;
+        bool haveStamp = false;
+        for (uint64_t stampIndex = stampCount; stampIndex-- > cursor;) {
+            uint64_t packetIndex = 0;
+            uint64_t stampCompletion = 0;
+            uint64_t stampCorrelation = 0;
+            if (!ExpandCompletionStamp(ivars, queue, control, stampIndex,
+                                       pair.cycleTimer32, packetIndex,
+                                       stampCompletion, stampCorrelation)) {
+                continue;
+            }
+            if (!haveStamp) {
+                // Newest readable stamp: the fallback zero-frame warm-up event
+                // if this whole wake turns out to carry no audio.
+                completionBusTicks = stampCompletion;
+                correlationBusTicks = stampCorrelation;
+                haveStamp = true;
+            }
+            const auto* slot = timeline.SlotByIndex(
+                static_cast<uint32_t>(packetIndex));
+            if (!slot || !slot->isData || slot->framesInPacket == 0 ||
+                slot->epoch != timelineEpoch) {
+                continue;
+            }
+            completionBusTicks = stampCompletion;
+            correlationBusTicks = stampCorrelation;
+            sampleFrame = slot->firstAudioFrame;
+            frameCount = slot->framesInPacket;
+            break;
+        }
+        ivars.runtime.txCompletionStampCursor = stampCount;
+        if (!haveStamp) return;
+
         const auto converted =
             ivars.runtime.mAudioPresentationObserver.ObserveHardwareWake(
                 transportGeneration, completionBusTicks, correlationBusTicks,
-                {.cycleTime = pair.cycleTimer32,
-                 .hostTicks = pair.hostTimeMid},
-                slot ? slot->firstAudioFrame : 0,
-                slot ? slot->framesInPacket : 0);
+                {.cycleTime = pair.cycleTimer32, .hostTicks = pair.hostTimeMid},
+                sampleFrame, frameCount);
         control->mAudioWarmupGroups.store(converted.groupCount,
                                           std::memory_order_relaxed);
         if (converted.captureReferencePlanted) {
@@ -287,17 +395,49 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                      converted.groupCount,
                      converted.captureReference.hostTicks);
         }
-        ready = converted.observationReady;
-        observation = converted.observation;
-        if (ready) {
-            control->mAudioTxDerivedObservations.fetch_add(
-                1, std::memory_order_relaxed);
+        if (!converted.observationReady) return;
+        control->mAudioTxDerivedObservations.fetch_add(
+            1, std::memory_order_relaxed);
+        SubmitTxObservation(ivars, control, converted.observation, "maudio-tx");
+        return;
+    }
+
+    // Generic TX-derived clock: every completed DATA packet is an observation.
+    // The timeline publishes a ZTS boundary only when the boundary falls inside
+    // the packet it was given, so a packet that is never submitted is a
+    // boundary that is never published -- which is why reading the newest stamp
+    // alone lost five boundaries in six.
+    const uint32_t transfer =
+        control->txTransferDelayTicks.load(std::memory_order_relaxed);
+    const uint64_t completionCursor =
+        queue->completionCursor.load(std::memory_order_relaxed);
+    for (uint64_t stampIndex = cursor; stampIndex < stampCount; ++stampIndex) {
+        uint64_t packetIndex = 0;
+        uint64_t completionBusTicks = 0;
+        uint64_t correlationBusTicks = 0;
+        if (!ExpandCompletionStamp(ivars, queue, control, stampIndex,
+                                   pair.cycleTimer32, packetIndex,
+                                   completionBusTicks, correlationBusTicks)) {
+            continue;
         }
-    } else if (slot) {
-        const uint32_t transfer = control->txTransferDelayTicks.load(
-            std::memory_order_relaxed);
-        observation = {
-            .epoch = control->hardwareTimeline.Epoch(),
+        const auto* slot = timeline.SlotByIndex(
+            static_cast<uint32_t>(packetIndex));
+        if (!slot || !slot->isData || slot->framesInPacket == 0 ||
+            slot->epoch != timelineEpoch) {
+            continue;
+        }
+
+        control->txCycleTrace.Complete(slot->epoch, slot->cycleOrdinal,
+                                       completionCursor);
+        const uint64_t completionLatency = completionCursor > packetIndex
+            ? completionCursor - packetIndex : 0;
+        UpdateMaximum(control->txCompletionLatencyMaxCycles, completionLatency);
+        control->txCompletionLatencyHistogram[
+            HeadroomBucket(completionLatency)].fetch_add(
+                1, std::memory_order_relaxed);
+
+        const ASFW::Audio::Runtime::HardwarePresentationObservation observation{
+            .epoch = timelineEpoch,
             .source = ASFW::Audio::Runtime::HardwareTimelineSource::Transmit,
             .sampleFrame = slot->firstAudioFrame,
             .frameCount = slot->framesInPacket,
@@ -305,47 +445,9 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             .correlationBusTicks = correlationBusTicks,
             .correlationHostTicks = pair.hostTimeMid,
         };
-        ready = true;
+        SubmitTxObservation(ivars, control, observation, "tx-fallback");
     }
-    if (!ready) return;
-    control->backendObservationConversions.fetch_add(
-        1, std::memory_order_relaxed);
-
-    const uint64_t completionCursor = queue->completionCursor.load(
-        std::memory_order_relaxed);
-    if (slot) {
-        control->txCycleTrace.Complete(
-            slot->epoch, slot->cycleOrdinal, completionCursor);
-    }
-    const uint64_t completionLatency = completionCursor > packetIndex
-        ? completionCursor - packetIndex : 0;
-    UpdateMaximum(control->txCompletionLatencyMaxCycles, completionLatency);
-    control->txCompletionLatencyHistogram[
-        HeadroomBucket(completionLatency)].fetch_add(
-            1, std::memory_order_relaxed);
-
-    ASFW::Audio::Runtime::HardwareZeroTimestamp boundary{};
-    const auto result = control->hardwareTimeline.Observe(observation,
-                                                          &boundary);
-    if (result ==
-        ASFW::Audio::Runtime::HardwareObservationResult::BoundaryReady) {
-        (void)PublishTimelineBoundary(
-            ivars, boundary, useMAudio ? "maudio-tx" : "tx-fallback");
-    } else if (result !=
-                   ASFW::Audio::Runtime::HardwareObservationResult::Accepted &&
-               result != ASFW::Audio::Runtime::
-                             HardwareObservationResult::DuplicateBoundary) {
-        const uint64_t failures =
-            control->backendObservationConversionFailures.fetch_add(
-                1, std::memory_order_relaxed) + 1;
-        if (IsPowerOfTwo(failures)) {
-            ASFW_LOG_ERROR(
-                DirectAudio,
-                "[BackendTiming] observationRejected=%llu result=%u epoch=%llu frame=%llu bus=%llu",
-                failures, static_cast<uint32_t>(result), observation.epoch,
-                observation.sampleFrame, observation.presentationBusTicks);
-        }
-    }
+    ivars.runtime.txCompletionStampCursor = stampCount;
 }
 
 } // namespace

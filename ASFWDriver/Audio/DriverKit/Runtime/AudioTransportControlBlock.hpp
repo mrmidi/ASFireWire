@@ -605,6 +605,10 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> backendSytDiscontinuities{0};
     std::atomic<uint64_t> backendObservationConversions{0};
     std::atomic<uint64_t> backendObservationConversionFailures{0};
+    /// Completion stamps that aged out of the shared ring before the observer
+    /// drained them. Non-zero means timeline observations were lost, which is a
+    /// clock-quality fault, not a content fault.
+    std::atomic<uint64_t> backendCompletionStampsMissed{0};
     std::atomic<uint64_t> mAudioWarmupGroups{0};
     std::atomic<uint64_t> mAudioTxDerivedObservations{0};
     std::atomic<uint64_t> mAudioCaptureTransitions{0};
@@ -964,6 +968,7 @@ struct AudioTransportControlBlock final {
         backendDbcDiscontinuities.store(0, std::memory_order_relaxed);
         backendSytDiscontinuities.store(0, std::memory_order_relaxed);
         backendObservationConversions.store(0, std::memory_order_relaxed);
+        backendCompletionStampsMissed.store(0, std::memory_order_relaxed);
         backendObservationConversionFailures.store(
             0, std::memory_order_relaxed);
         mAudioWarmupGroups.store(0, std::memory_order_relaxed);

@@ -161,6 +161,7 @@ add_audio_test(AmdtpRateGeometryTests
 
 add_audio_test(HardwareSampleTimelineTests
     HardwareSampleTimelineTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
 )
 
 add_audio_test(TxCycleAnchorTests

@@ -1,10 +1,13 @@
 #include "Audio/Runtime/HardwareSampleTimeline.hpp"
+#include "Audio/Runtime/TxCompletionStampDrain.hpp"
+#include "Audio/Wire/AMDTP/AmdtpCadence.hpp"
 #include "Common/TimingUtils.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
 #include <utility>
+#include <vector>
 
 namespace {
 using namespace ASFW::Audio::Runtime;
@@ -153,6 +156,125 @@ TEST(HardwareSampleTimelineTests, EpochChangeRejectsOldObservationsAndRanges) {
     EXPECT_FALSE(timeline.PreviewTxRange(oldEpoch, 100, 8, range));
     ASSERT_TRUE(timeline.PreviewTxRange(newEpoch, 100, 8, range));
     EXPECT_EQ(range.firstAudioFrame, 8'192U);
+}
+
+
+// --- Completion-stamp drain ---------------------------------------------------
+//
+// The timeline publishes a zero-timestamp boundary only when that boundary
+// falls inside the packet it was handed. An observer that submits one packet in
+// N therefore publishes roughly one boundary in N, and the ones it misses are
+// never recovered. These tests pin both halves: the cursor arithmetic that
+// decides which stamps are still owed, and the coverage property that makes
+// draining them matter.
+
+TEST(TxCompletionStampDrainTests, DrainsEveryStampPushedSinceTheLastPass) {
+    const auto first = PlanTxCompletionStampDrain(0, 6, 32);
+    EXPECT_EQ(first.first, 0U);
+    EXPECT_EQ(first.last, 6U);
+    EXPECT_EQ(first.Count(), 6U);
+    EXPECT_EQ(first.missed, 0U);
+
+    const auto second = PlanTxCompletionStampDrain(first.last, 12, 32);
+    EXPECT_EQ(second.first, 6U);
+    EXPECT_EQ(second.Count(), 6U);
+    EXPECT_EQ(second.missed, 0U);
+}
+
+TEST(TxCompletionStampDrainTests, QuietWakeDrainsNothingAndLosesNothing) {
+    const auto drain = PlanTxCompletionStampDrain(9, 9, 32);
+    EXPECT_TRUE(drain.Empty());
+    EXPECT_EQ(drain.Count(), 0U);
+    EXPECT_EQ(drain.missed, 0U);
+    EXPECT_FALSE(drain.queueRestarted);
+}
+
+TEST(TxCompletionStampDrainTests, StampsOverwrittenBeforeReadingAreReportedNotRead) {
+    // 100 pushed, 32 slots: everything below 68 has been overwritten. Reading
+    // one of those would feed the clock a plausible wrong number.
+    const auto drain = PlanTxCompletionStampDrain(10, 100, 32);
+    EXPECT_EQ(drain.first, 68U);
+    EXPECT_EQ(drain.last, 100U);
+    EXPECT_EQ(drain.missed, 58U);
+    EXPECT_FALSE(drain.queueRestarted);
+}
+
+TEST(TxCompletionStampDrainTests, ARestartedQueueRewindsTheCursorInsteadOfSkippingTheStream) {
+    // The queue re-arms and its count restarts at zero. A cursor left above the
+    // new count would read as "already drained" for the next 400 packets.
+    const auto drain = PlanTxCompletionStampDrain(400, 3, 32);
+    EXPECT_TRUE(drain.queueRestarted);
+    EXPECT_EQ(drain.first, 0U);
+    EXPECT_EQ(drain.last, 3U);
+    EXPECT_EQ(drain.missed, 0U);
+}
+
+TEST(TxCompletionStampDrainTests, AnEmptyQueueLeavesNothingToDrain) {
+    const auto drain = PlanTxCompletionStampDrain(400, 0, 32);
+    EXPECT_TRUE(drain.Empty());
+    EXPECT_TRUE(drain.queueRestarted);
+}
+
+namespace {
+
+/// Run the production 48 kHz blocking cadence for two seconds, submitting the
+/// newest DATA packet of every `wakeGroup` packets, and report which boundaries
+/// the timeline published. `wakeGroup == 1` is the drained observer.
+[[nodiscard]] std::vector<uint64_t> BoundariesObservedEvery(unsigned wakeGroup) {
+    HardwareSampleTimeline timeline;
+    const uint64_t epoch = timeline.BeginEpoch(
+        HardwareTimelineSource::Transmit,
+        HardwareTimelineDiscontinuity::StartIO, 48'000, 0);
+    ASFW::Protocols::Audio::AMDTP::BlockingCadence cadence;
+    std::vector<uint64_t> boundaries;
+    uint64_t frame = 0;
+    for (uint64_t packet = 0; packet < 16'000; ++packet) {
+        const unsigned frames = cadence.CurrentCycleDataFrames();
+        if (frames != 0 && (packet + 1) % wakeGroup == 0) {
+            HardwareZeroTimestamp boundary{};
+            const auto result = timeline.Observe(
+                {epoch, HardwareTimelineSource::Transmit, frame, frames,
+                 1'000'000 + packet * 3072, 1'000'000 + packet * 3072,
+                 1'000'000'000 + packet * 125'000},
+                &boundary);
+            if (result == HardwareObservationResult::BoundaryReady) {
+                boundaries.push_back(boundary.sampleFrame);
+            }
+        }
+        frame += frames;
+        cadence.AdvanceCycle();
+    }
+    return boundaries;
+}
+
+} // namespace
+
+TEST(HardwareSampleTimelineTests, ObservingEveryDataPacketPublishesEveryBoundary) {
+    TimebaseGuard timebase{};
+    const auto drained = BoundariesObservedEvery(1);
+
+    // Two seconds of 48 kHz is 96000 frames, so every 8192-frame boundary from
+    // 0 up to and including 90112 must appear, in order and without gaps.
+    ASSERT_EQ(drained.size(), 12U);
+    for (size_t i = 0; i < drained.size(); ++i) {
+        EXPECT_EQ(drained[i], static_cast<uint64_t>(i) * 8192U);
+    }
+}
+
+TEST(HardwareSampleTimelineTests, ObservingOnlyTheNewestPacketOfAWakeLosesBoundaries) {
+    TimebaseGuard timebase{};
+    const auto drained = BoundariesObservedEvery(1);
+
+    // This is the defect the cursor exists to prevent, kept as an executable
+    // statement of it: a boundary lands inside one packet, so an observer that
+    // skips packets skips boundaries, and the first anchor arrives hundreds of
+    // milliseconds late. Six packets is one completion group.
+    for (const unsigned wakeGroup : {6U, 12U}) {
+        const auto sparse = BoundariesObservedEvery(wakeGroup);
+        EXPECT_LT(sparse.size(), drained.size()) << "wakeGroup=" << wakeGroup;
+        ASSERT_FALSE(sparse.empty()) << "wakeGroup=" << wakeGroup;
+        EXPECT_GT(sparse.front(), drained.front()) << "wakeGroup=" << wakeGroup;
+    }
 }
 
 } // namespace
