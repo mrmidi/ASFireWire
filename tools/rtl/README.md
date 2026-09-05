@@ -82,8 +82,18 @@ detector is not evidence.
 ./rtl_loopback -d ASFW --measure --frames 64 --trials 32
 ```
 
-Record, for each run: sample rate, buffer size, the full declarations block, and
-all three result numbers.
+Record, for each run: sample rate, buffer size, the full declarations block, the
+result numbers, **and the acceptance rate with its rejection breakdown**. The
+rate is part of the measurement, not noise around it — a figure from 3 of 20
+accepted trials is a different claim from one out of 20, and the rejection
+causes say whether the machine, the driver, or the cable was the problem.
+
+If a buffer size rejects heavily, raising `--frames` is a legitimate response,
+but it produces a **different measurement configuration** — larger buffers move
+the scheduling distance, which is part of what is being measured. Keep the
+smaller-buffer run and its rejection breakdown rather than replacing it: that
+the small configuration could not be measured cleanly is itself a result, and
+Phase 2 needs to know at which geometry the residual was obtained.
 
 ## Reading the numbers
 

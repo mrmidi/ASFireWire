@@ -1058,18 +1058,21 @@ int main(int argc, char **argv) {
     printf("%s\n", g.spanCount > 1 ? "   <-- spans vary" : "");
     printf("  %-24s %u\n", "processor overloads",
            atomic_load_explicit(&g.overloads, memory_order_relaxed));
-    printf("  %-24s %u events, %.0f frames lost%s\n", "delivered-frame gaps",
-           g.itAudit.gapEvents + g.otAudit.gapEvents,
-           g.itAudit.gapFrames,
-           (g.itAudit.gapEvents || g.otAudit.gapEvents) ? "   <-- rejects RTL_raw" : "");
-    printf("  %-24s %u events (worst %+.0f fr)%s\n", "sample-time re-anchors",
+    // Every cause below rejects the whole trial. They are broken out because
+    // they say which failure the machine or the driver has, not because they
+    // carry different consequences.
+    printf("  %-24s %u events, %.0f frames lost\n", "delivered-frame gaps",
+           g.itAudit.gapEvents + g.otAudit.gapEvents, g.itAudit.gapFrames);
+    printf("  %-24s %u events (worst %+.0f fr)\n", "sample-time re-anchors",
            g.itAudit.anchorEvents + g.otAudit.anchorEvents,
            fabs(g.itAudit.worstAnchor) > fabs(g.otAudit.worstAnchor)
-               ? g.itAudit.worstAnchor : g.otAudit.worstAnchor,
-           (g.itAudit.anchorEvents || g.otAudit.anchorEvents) ? "   <-- rejects RTL_ts only" : "");
-    printf("  %-24s %u%s\n", "unclassified",
-           g.itAudit.ambiguous + g.otAudit.ambiguous,
-           (g.itAudit.ambiguous || g.otAudit.ambiguous) ? "   <-- rejected as unsafe" : "");
+               ? g.itAudit.worstAnchor : g.otAudit.worstAnchor);
+    printf("  %-24s %u\n", "clocks disagreed",
+           g.itAudit.ambiguous + g.otAudit.ambiguous);
+    printf("  %-24s %u\n", "missing timestamps",
+           g.itAudit.noTsEvents + g.otAudit.noTsEvents);
+    if (audit_gaps() || audit_anchors() || audit_amb() || audit_nots())
+        printf("  %-24s any of the above inside a trial rejects that whole trial\n", "");
     printf("  %-24s", "input channel peaks");
     for (UInt32 c = 0; c < g.inChans && c < 8; c++) printf(" %.3f", g.chPeak[c]);
     printf("\n");
