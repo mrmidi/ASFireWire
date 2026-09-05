@@ -38,9 +38,10 @@ resolution floor (3 µs at 48 kHz, against an RTL of several hundred frames).
 It also checks that an empty window is *rejected* rather than fitted to noise,
 that a residual of exactly zero is *retained* rather than mistaken for a missing
 value, that a varying callback size is not read as a timeline break, that a
-skipped callback smaller than the run's largest is still caught, and that the
-scheduling distance is paired per trial rather than differenced across two
-different trial sets.
+skipped callback smaller than the run's largest is still caught, that clocks
+disagreeing while the sample timeline reads continuous is rejected rather than
+accepted, that a merely late callback is not, and that the scheduling distance
+is paired per trial rather than differenced across two different trial sets.
 
 Run it after any edit to the detector. A measurement from an unverified
 detector is not evidence.
@@ -115,8 +116,17 @@ magnitude. So the **gap is detected exactly**, from integer frame counts — the
 sample timeline advancing past the frames we were handed — and the wall clock
 (`mach_absolute_time`, which no driver re-anchoring can move) is consulted only
 to decide *which* failure it was. The two hypotheses differ by the full
-magnitude of the gap, so that choice is robust. Anything matching neither is
-counted `unclassified` and rejected as unsafe.
+magnitude of the gap, so that choice is robust.
+
+The two clocks are required to **agree**, not merely to be consulted when one of
+them complains. A sample timeline reading continuous while the wall clock says
+otherwise is conflicting evidence — it is what a lost callback would look like
+behind a re-anchor that happened to preserve the coordinates — so it is counted
+`unclassified` and rejected, as is anything matching neither hypothesis. The
+threshold for that disagreement is three quarters of the **smallest** callback
+in the run, not the one in hand: a skipped callback costs its own frames, not
+its predecessor's, so a tolerance scaled to the current span would miss a small
+callback dropped after a large one.
 
 Also watch:
 

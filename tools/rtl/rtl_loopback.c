@@ -193,8 +193,12 @@ typedef struct {
     double gapFrames, worstAnchor;
 } audit_t;
 
+// hostTol is the wall-clock disagreement worth acting on, and is sized from the
+// SMALLEST callback in the run rather than the one in hand: the frames a skipped
+// callback costs are its own, not its predecessor's, so a tolerance scaled to
+// the current span misses a small callback dropped after a large one.
 static void audit_step(audit_t *a, double sampleTime, int sampleValid,
-                       double hostSec, UInt32 n, double sr) {
+                       double hostSec, UInt32 n, double sr, double hostTol) {
     if (a->have) {
         const double delivered = (double)a->prevN;
         const double hostGap = (hostSec - a->prevHost) * sr - delivered;
@@ -212,10 +216,18 @@ static void audit_step(audit_t *a, double sampleTime, int sampleValid,
                 } else {
                     a->ambiguous++;
                 }
+            } else if (fabs(hostGap) > hostTol) {
+                // The sample timeline says delivery was continuous and the wall
+                // clock says it was not. That is conflicting evidence, not
+                // agreement, and accepting the sample timeline here would let a
+                // lost callback hide behind a re-anchor that happened to
+                // preserve the coordinates. Jitter is one-sided and well inside
+                // hostTol, so this does not fire on a merely late callback.
+                a->ambiguous++;
             }
-        } else if (hostGap > 0.5 * delivered) {
-            // With no sample-time witness the wall clock alone cannot separate
-            // a gap from jitter, so anything suspicious is ambiguous.
+        } else if (fabs(hostGap) > hostTol) {
+            // With no sample-time witness the wall clock is all there is, and
+            // it cannot separate a gap from jitter on its own.
             a->ambiguous++;
         }
     }
@@ -257,7 +269,7 @@ static struct {
     double  hostStart;     // seconds, first callback
     int     haveHostStart;
     UInt32  cycles;
-    UInt32  spans[16], spanCount;
+    UInt32  spans[16], spanCount, minSpan;
 
     audit_t itAudit, otAudit;
 
@@ -302,6 +314,7 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
                 memset(out->mBuffers[i].mData, 0, out->mBuffers[i].mDataByteSize);
 
     g.cycles++;
+    if (!g.minSpan || n < g.minSpan) g.minSpan = n;
     if (g.spanCount < 16) {
         int seen = 0;
         for (UInt32 i = 0; i < g.spanCount; i++) if (g.spans[i] == n) seen = 1;
@@ -316,8 +329,14 @@ static OSStatus rtl_ioproc(AudioObjectID dev, const AudioTimeStamp *now,
 
     const int itOk = it && (it->mFlags & kAudioTimeStampSampleTimeValid);
     const int otOk = ot && (ot->mFlags & kAudioTimeStampSampleTimeValid);
-    audit_step(&g.itAudit, itOk ? it->mSampleTime : 0.0, itOk, hostSec, n, g.sampleRate);
-    audit_step(&g.otAudit, otOk ? ot->mSampleTime : 0.0, otOk, hostSec, n, g.sampleRate);
+    // Three quarters of the smallest callback: a lost callback costs at least a
+    // whole one, while scheduling jitter stays well below that.
+    double hostTol = 0.75 * (double)g.minSpan;
+    if (hostTol < 8.0) hostTol = 8.0;
+    audit_step(&g.itAudit, itOk ? it->mSampleTime : 0.0, itOk, hostSec, n,
+               g.sampleRate, hostTol);
+    audit_step(&g.otAudit, otOk ? ot->mSampleTime : 0.0, otOk, hostSec, n,
+               g.sampleRate, hostTol);
 
     if (in) {
         const UInt32 nc = bl_channels(in);
@@ -580,7 +599,7 @@ static int selftest(void) {
         const double st[] = { 0, 128, 192, 256, 320, 448 };
         audit_t a; memset(&a, 0, sizeof a);
         for (int i = 0; i < 6; i++)
-            audit_step(&a, st[i], 1, st[i] / 48000.0, n[i], 48000.0);
+            audit_step(&a, st[i], 1, st[i] / 48000.0, n[i], 48000.0, 48.0);
         const int ok = !a.gapEvents && !a.anchorEvents && !a.ambiguous;
         if (!ok) failures++;
         printf("  %-26s %u gap / %u anchor / %u amb   %s\n", "128 then 64, continuous",
@@ -593,7 +612,7 @@ static int selftest(void) {
         const double st[] = { 0, 128, 192, 320 };   // 64 frames missing at the end
         audit_t a; memset(&a, 0, sizeof a);
         for (int i = 0; i < 4; i++)
-            audit_step(&a, st[i], 1, st[i] / 48000.0, n[i], 48000.0);
+            audit_step(&a, st[i], 1, st[i] / 48000.0, n[i], 48000.0, 48.0);
         const int ok = a.gapEvents == 1 && fabs(a.gapFrames - 64.0) < 0.5 && !a.anchorEvents;
         if (!ok) failures++;
         printf("  %-26s %u gap, %.0f fr lost   %s\n", "skipped 64 after 128",
@@ -606,12 +625,40 @@ static int selftest(void) {
         const double ht[] = { 0, 64, 128, 192 };
         audit_t a; memset(&a, 0, sizeof a);
         for (int i = 0; i < 4; i++)
-            audit_step(&a, st[i], 1, ht[i] / 48000.0, n[i], 48000.0);
+            audit_step(&a, st[i], 1, ht[i] / 48000.0, n[i], 48000.0, 48.0);
         const int ok = a.anchorEvents == 1 && !a.gapEvents &&
                        fabs(a.worstAnchor - 936.0) < 0.5;
         if (!ok) failures++;
         printf("  %-26s %u anchor, worst %+.0f fr   %s\n", "1000-frame jump",
                a.anchorEvents, a.worstAnchor, ok ? "ok" : "FAIL");
+    }
+
+    {
+        // Delivery lost behind a re-anchor that preserved the sample
+        // coordinates: the timeline looks continuous, the wall clock does not.
+        const UInt32 n[]  = { 64, 64, 64 };
+        const double st[] = { 0, 64, 128 };
+        const double ht[] = { 0, 64, 256 };
+        audit_t a; memset(&a, 0, sizeof a);
+        for (int i = 0; i < 3; i++)
+            audit_step(&a, st[i], 1, ht[i] / 48000.0, n[i], 48000.0, 48.0);
+        const int ok = a.ambiguous == 1 && !a.gapEvents;
+        if (!ok) failures++;
+        printf("  %-26s %u ambiguous   %s\n", "clocks disagree",
+               a.ambiguous, ok ? "ok" : "FAIL (conflict accepted)");
+    }
+    {
+        // A merely late callback must not be rejected.
+        const UInt32 n[]  = { 64, 64, 64 };
+        const double st[] = { 0, 64, 128 };
+        const double ht[] = { 0, 64, 148 };
+        audit_t a; memset(&a, 0, sizeof a);
+        for (int i = 0; i < 3; i++)
+            audit_step(&a, st[i], 1, ht[i] / 48000.0, n[i], 48000.0, 48.0);
+        const int ok = !a.ambiguous && !a.gapEvents && !a.anchorEvents;
+        if (!ok) failures++;
+        printf("  %-26s %u ambiguous   %s\n", "jitter within tolerance",
+               a.ambiguous, ok ? "ok" : "FAIL (jitter rejected)");
     }
 
     printf("\n--- aggregation: scheduling distance must be paired per trial ---\n");
