@@ -304,11 +304,15 @@ void LogLedgerInterval(const char* name,
     noexcept {
     const uint64_t samples = stats.samples.load(std::memory_order_relaxed);
     const uint64_t unresolved = stats.unresolved.load(std::memory_order_relaxed);
-    if (samples == 0 && unresolved == 0) return;
+    if (samples == 0 && unresolved == 0 &&
+        stats.pending.load(std::memory_order_relaxed) == 0) {
+        return;
+    }
     const uint64_t minMicros = stats.minMicros.load(std::memory_order_relaxed);
     ASFW_LOG(DirectAudio,
-             "[Ledger] %{public}s n=%llu unres=%llu min=%llu mean=%llu max=%llu us hist=[%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu]",
-             name, samples, unresolved,
+             "[Ledger] %{public}s n=%llu pend=%llu unres=%llu min=%llu mean=%llu max=%llu us hist=[%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu]",
+             name, samples, stats.pending.load(std::memory_order_relaxed),
+             unresolved,
              samples == 0 ? 0 : minMicros,
              stats.MeanMicros(),
              stats.maxMicros.load(std::memory_order_relaxed),
@@ -361,10 +365,11 @@ void RecordLedgerFinality(
             continue;
         }
         uint64_t publishedAt = 0;
-        if (!control->ledgerOutputPublication.CoveredAt(slot->firstAudioFrame,
-                                                        publishedAt) ||
+        const auto lookup = control->ledgerOutputPublication.Lookup(
+            slot->firstAudioFrame, publishedAt);
+        if (lookup != ASFW::Audio::Runtime::LedgerLookup::Resolved ||
             pair.hostTimeMid < publishedAt) {
-            control->ledgerI1WriteToFinality.CountUnresolved();
+            control->ledgerI1WriteToFinality.Count(lookup);
             continue;
         }
         control->ledgerI1WriteToFinality.Record(
@@ -425,12 +430,15 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
     const auto& timeline = ivars.runtime.txStreamEngine.Timeline();
     const uint64_t timelineEpoch = control->hardwareTimeline.Epoch();
 
-    // I1 (E0->E1) and the start endpoint of I2 (E1->E2). Finality is our own
-    // frontier, so the moment it passes a packet is only knowable where the
-    // frontier is read -- here. Both are recorded before the stamps are drained
-    // so a packet that goes final and completes in the same wake still has its
-    // finality on record when I2 asks for it.
+    // I1 (E0->E1). Finality is our own frontier, so the moment it passes a
+    // packet is only knowable where the frontier is read -- here.
     RecordLedgerFinality(ivars, control, timeline, timelineEpoch, pair);
+    // The start endpoint of I2 (E1->E2). It needs this wake's bus time, which
+    // only exists once a stamp has been expanded, so the frontier is captured
+    // here and stamped on the first expansion below.
+    const uint64_t finalizedEndAtWake =
+        queue->finalizedEnd.load(std::memory_order_acquire);
+    bool finalityStamped = false;
 
     if (useMAudio && txDrivesTimeline) {
         // The M-Audio warm-up state machine counts transport wakes, not
@@ -513,6 +521,15 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                                    completionBusTicks, correlationBusTicks)) {
             continue;
         }
+        if (!finalityStamped) {
+            // One stamp per wake, recorded before any lookup consults the ring.
+            // Omitting this is what left I2 with every sample unresolved: the
+            // ring was read and reset but never written.
+            control->ledgerTxFinality.Record(finalizedEndAtWake,
+                                             correlationBusTicks);
+            finalityStamped = true;
+        }
+
         const auto* slot = timeline.SlotByIndex(
             static_cast<uint32_t>(packetIndex));
         if (!slot || !slot->isData || slot->framesInPacket == 0 ||
@@ -523,13 +540,14 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         // I2 (E1->E2). Both endpoints are bus-domain, so this is finality to
         // wire and excludes the delay in noticing the completion.
         uint64_t finalityBusTicks = 0;
-        if (control->ledgerTxFinality.CoveredAt(packetIndex,
-                                                finalityBusTicks) &&
+        const auto finalityLookup =
+            control->ledgerTxFinality.Lookup(packetIndex, finalityBusTicks);
+        if (finalityLookup == ASFW::Audio::Runtime::LedgerLookup::Resolved &&
             completionBusTicks >= finalityBusTicks) {
             control->ledgerI2FinalityToTransmit.Record(
                 BusTicksToMicros(completionBusTicks - finalityBusTicks));
         } else {
-            control->ledgerI2FinalityToTransmit.CountUnresolved();
+            control->ledgerI2FinalityToTransmit.Count(finalityLookup);
         }
 
         control->txCycleTrace.Complete(slot->epoch, slot->cycleOrdinal,

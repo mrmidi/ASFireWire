@@ -77,6 +77,33 @@ TEST(LedgerStampRingTests, ReturnsTheRecordThatFirstCoveredTheValue) {
     EXPECT_EQ(ticks, 3000U);
 }
 
+TEST(LedgerStampRingTests, DistinguishesNotYetClosedFromLostEndpoint) {
+    LedgerStampRing ring{};
+    uint64_t ticks = 0;
+    // Nothing recorded at all: the span has not closed, it was not lost.
+    EXPECT_EQ(ring.Lookup(10, ticks), LedgerLookup::Pending);
+
+    ring.Record(100, 1000);
+    EXPECT_EQ(ring.Lookup(500, ticks), LedgerLookup::Pending)
+        << "a value the cursor has not reached yet is pending, not aged out";
+    EXPECT_EQ(ring.Lookup(50, ticks), LedgerLookup::Resolved);
+
+    // Lap the ring so the covering record is gone.
+    for (uint64_t i = 1; i <= kLedgerStampSlots * 2; ++i) ring.Record(i * 10, i * 100);
+    EXPECT_EQ(ring.Lookup(5, ticks), LedgerLookup::AgedOut);
+}
+
+TEST(LedgerIntervalStatsTests, PendingAndLostAreCountedApart) {
+    LedgerIntervalStats stats{};
+    stats.Count(LedgerLookup::Pending);
+    stats.Count(LedgerLookup::Pending);
+    stats.Count(LedgerLookup::AgedOut);
+    stats.Count(LedgerLookup::Resolved);  // counted by Record, not here
+    EXPECT_EQ(stats.pending.load(), 2U);
+    EXPECT_EQ(stats.unresolved.load(), 1U);
+    EXPECT_EQ(stats.samples.load(), 0U);
+}
+
 TEST(LedgerStampRingTests, AValueNotYetCoveredIsUnresolvedNotTheNewestRecord) {
     LedgerStampRing ring{};
     ring.Record(100, 1000);

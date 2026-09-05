@@ -37,6 +37,13 @@ inline constexpr uint32_t kLedgerIntervalBuckets = 8;
     return kLedgerIntervalBuckets - 1;
 }
 
+/// Why a lookup could not produce an interval. The two failures are different
+/// facts and must not share a counter: `Pending` says the span had not closed
+/// yet -- for J4, that the reader asked for a frame the writer had not decoded,
+/// which is the reader running ahead and not a measurement failure at all --
+/// while `AgedOut` says the endpoint existed and the ring lost it.
+enum class LedgerLookup : uint8_t { Resolved, Pending, AgedOut };
+
 /// One ledger interval's observed distribution.
 ///
 /// `unresolved` is part of the measurement, not an error channel: it counts
@@ -70,8 +77,19 @@ struct LedgerIntervalStats final {
         }
     }
 
+    /// Samples whose span had not closed when they were looked up. Kept apart
+    /// from `unresolved`, which means the endpoint was lost.
+    std::atomic<uint64_t> pending{0};
+
     void CountUnresolved() noexcept {
         unresolved.fetch_add(1, std::memory_order_relaxed);
+    }
+    void CountPending() noexcept {
+        pending.fetch_add(1, std::memory_order_relaxed);
+    }
+    void Count(LedgerLookup outcome) noexcept {
+        if (outcome == LedgerLookup::Pending) CountPending();
+        else if (outcome == LedgerLookup::AgedOut) CountUnresolved();
     }
 
     [[nodiscard]] uint64_t MeanMicros() const noexcept {
@@ -89,6 +107,7 @@ struct LedgerIntervalStats final {
     void Reset() noexcept {
         samples.store(0, std::memory_order_relaxed);
         unresolved.store(0, std::memory_order_relaxed);
+        pending.store(0, std::memory_order_relaxed);
         sumMicros.store(0, std::memory_order_relaxed);
         maxMicros.store(0, std::memory_order_relaxed);
         minMicros.store(~uint64_t{0}, std::memory_order_relaxed);
@@ -129,10 +148,11 @@ struct LedgerStampRing final {
     /// When `value` first became covered. False when nothing retained covers
     /// it: either no record has passed it yet, or the record that did has been
     /// overwritten.
-    [[nodiscard]] bool CoveredAt(uint64_t value,
-                                 uint64_t& outTicks) const noexcept {
+    /// As CoveredAt, but says which of the two failures occurred.
+    [[nodiscard]] LedgerLookup Lookup(uint64_t value,
+                                      uint64_t& outTicks) const noexcept {
         const uint64_t n = count.load(std::memory_order_acquire);
-        if (n == 0) return false;
+        if (n == 0) return LedgerLookup::Pending;
         const uint64_t oldest = n > kLedgerStampSlots ? n - kLedgerStampSlots : 0;
         bool found = false;
         uint64_t ticks = 0;
@@ -145,18 +165,21 @@ struct LedgerStampRing final {
             found = true;
             break;
         }
-        if (!found) return false;
-        // An answer of exactly the oldest retained record is not an answer once
-        // the ring has lapped: cursors only increase, so a discarded earlier
-        // record may have covered this value first, and taking the surviving
-        // one would understate precisely the long intervals worth measuring.
-        if (foundIndex == oldest && oldest > 0) return false;
-        // A writer that lapped during the scan may have replaced what was read.
+        // Nothing retained reaches past the value: the span has not closed yet.
+        if (!found) return LedgerLookup::Pending;
+        // The answer would be the oldest survivor of a lapped ring, so a
+        // discarded earlier record may have covered it first.
+        if (foundIndex == oldest && oldest > 0) return LedgerLookup::AgedOut;
         if (count.load(std::memory_order_acquire) > oldest + kLedgerStampSlots) {
-            return false;
+            return LedgerLookup::AgedOut;
         }
         outTicks = ticks;
-        return true;
+        return LedgerLookup::Resolved;
+    }
+
+    [[nodiscard]] bool CoveredAt(uint64_t value,
+                                 uint64_t& outTicks) const noexcept {
+        return Lookup(value, outTicks) == LedgerLookup::Resolved;
     }
 
     void Reset() noexcept {

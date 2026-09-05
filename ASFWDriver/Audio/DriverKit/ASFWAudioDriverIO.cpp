@@ -278,14 +278,21 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     uint64_t decodedAt = 0;
                     const uint64_t newest = ioBufferFrameSize == 0
                         ? sampleTime : sampleTime + ioBufferFrameSize - 1;
-                    if (control->ledgerCaptureDecode.CoveredAt(newest,
-                                                               decodedAt) &&
+                    // A read whose newest frame is not decoded yet is the
+                    // reader running ahead of the writer, which is a different
+                    // fact from losing the endpoint -- counting both as
+                    // "unresolved" made the J4 histogram describe only the
+                    // half of the distribution where the reader lagged.
+                    const auto lookup =
+                        control->ledgerCaptureDecode.Lookup(newest, decodedAt);
+                    if (lookup ==
+                            ASFW::Audio::Runtime::LedgerLookup::Resolved &&
                         hostTime >= decodedAt) {
                         control->ledgerJ4DecodeToRead.Record(
                             ASFW::Timing::hostTicksToNanos(
                                 hostTime - decodedAt) / 1000U);
                     } else {
-                        control->ledgerJ4DecodeToRead.CountUnresolved();
+                        control->ledgerJ4DecodeToRead.Count(lookup);
                     }
                 }
                 (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
