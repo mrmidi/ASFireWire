@@ -75,6 +75,46 @@ whole number of TX descriptor-ring laps established at start.
 The two runs that bracket a reinstall differ by exactly one lap, so the offset
 is re-rolled on each driver start rather than being a property of the build.
 
+### Where 288 frames comes from
+
+288 = 48 packets × 6 frames/packet at 48 kHz, and 48 is `Layout::kNumPackets`,
+the OHCI IT descriptor ring. No other TX constant yields 288: the finality lead
+is 48 frames, the repoint guard 12, the dispatch slack 432, the prepared target
+720, the shared slot ring 1008, a completion group 36, a cadence block 24.
+
+Absolute packet position is not observable.
+[`DecodeHardwarePacketIndex`](../../../ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp)
+returns a modulo-48 index — the CommandPtr says where in the ring the controller
+is and nothing about which lap — so absolute position is reconstructed by
+software accumulation:
+
+```
+deltaConsumed  = (hw >= prev) ? (hw - prev) : ((48 - prev) + hw)
+completionCursor = completedAbsIdx + deltaConsumed
+```
+
+seeded from `lastHwPacketIndex_{0}` with `completionCursor` reset to zero.
+`Prime` sets `softwareFillAbsIdx_` and `ringPacketsAhead_` but not
+`lastHwPacketIndex_`, so the first Refill computes `deltaConsumed = hwPacketIndex`
+— correct only while the controller has advanced less than one lap since arming.
+Past 48 packets (6 ms) the true count is `hw + 48k` and `hw` is recorded. The
+loss is silent because the modulo index carries no lap, and permanent because
+every later delta is relative.
+
+| observed | predicted by this mechanism |
+|---|---|
+| quantum exactly 288 frames | one ring lap |
+| constant within a run (sd 0.01) | seeded once, never re-derived |
+| re-rolled on each driver start | the seed happens at arm |
+| integer laps 0, 1, 2, 7 | 0/1/2/7 laps lost at seed |
+
+**Unverified:** those laps imply a first completion callback 0, 6, 12 and 42 ms
+after arm. The first three are ordinary DriverKit dispatch at stream start; 42 ms
+is large and is an inference from the model, not a measurement. The context also
+starts on a cycle match (`startCycleMatch`, `startFirstPacketIndex`), a second
+unaccounted contributor to that gap. Confirm by recording the first Refill's
+`hwPacketIndex` and elapsed-since-arm and checking laps correlate with it.
+
 Note also that 354.95 need not be the zero-lap base; it is only the lowest seen.
 One lap below it is 66.95 frames, which is close to the driver's own named
 below-client budget (~84 frames), so the possibility that *every* session

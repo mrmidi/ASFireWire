@@ -37,16 +37,49 @@ hardware, the 64 → 128 → 256 → 64 sweep measured 12.145 → 14.811 → 20.
 12.145 ms RTL: each buffer increase added twice that increase to raw RTL.
 The configured 512-frame sizing budget is not a fixed callback batch.
 
-**The next investigation is startup timing and accumulated queue delay.** An
-earlier session measured 54.145 ms at the same 64-frame client size, about
-42 ms more. Within the restarted session, subtracting measured scheduling
-leaves approximately 355 frames / 7.40 ms at every buffer size. Against the
-107 declared latency frames, that leaves approximately 248 frames / 5.17 ms
-unexplained. Neither remainder is established hardware latency, and a restart
-changing the result does not locate the cause in ASFW versus interface internals.
-The fresh runs have weak SNR and no-signal rejections; the reporting-only
-self-check is still outstanding. These are investigation inputs, not a completed
-Phase 1 baseline or a reason to change a latency declaration.
+**The start-time offset is a lost TX descriptor-ring lap.** Four `RTL_ts`
+observations across four driver starts — 354.95, 642.95, 930.95 and 2370.95
+frames — sit at laps 0, 1, 2 and 7 of a 288-frame lattice, and all six pairwise
+deltas are exact integer multiples of 288. Details and provenance:
+[Phase 3 hardware validation](reports/phase3-hw-validation-2026-09-05/README.md).
+
+288 frames is 48 packets × 6 frames/packet at 48 kHz, and 48 is
+`Layout::kNumPackets` — the OHCI IT descriptor ring. It is the only constant in
+the TX geometry that yields 288 frames; the finality lead gives 48, the repoint
+guard 12, the dispatch slack 432, the prepared target 720, the shared slot ring
+1008, a completion group 36, a cadence block 24.
+
+The mechanism is that absolute packet position is not observable.
+`DecodeHardwarePacketIndex` (`ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp:598`)
+returns a **modulo-48** index: the controller's CommandPtr says where in the ring
+it is and nothing about which lap. Absolute position is reconstructed purely by
+software accumulation, seeded from `lastHwPacketIndex_{0}`
+(`IsochTxDmaRing.hpp:224`) with `completionCursor` reset to zero, and `Prime`
+sets `softwareFillAbsIdx_` and `ringPacketsAhead_` but not `lastHwPacketIndex_`.
+The first Refill after the context starts therefore computes
+`deltaConsumed = hwPacketIndex`, which is correct only if the controller
+advanced **less than one full lap** since arming. Past 48 packets (6 ms) the
+true count is `hw + 48k` while `hw` is recorded; the modulo index carries no lap,
+so the loss is silent, and because every later delta is relative it never
+self-corrects.
+
+That predicts every property observed: a 288-frame quantum, constant within a
+run to sd 0.01, re-rolled on each driver start, at integer laps.
+
+**Not yet established.** The observed laps imply the first completion callback
+landed 0, 6, 12 and 42 ms after arm. The first three are unremarkable for
+DriverKit dispatch at stream start; 42 ms is large and has not been measured —
+it is an inference from the model. The context also starts on a cycle match
+(`startCycleMatch`, `startFirstPacketIndex`), a second contributor to the
+arm→first-callback gap that is unaccounted for. The cheap confirmation is to
+record the first Refill's `hwPacketIndex` and the elapsed time since arm and
+check that laps correlate with that gap; that is much smaller than the full
+correlated trace.
+
+Separately, and unchanged by the above: subtracting measured scheduling leaves
+roughly 355 frames / 7.40 ms at the lowest observed lap, of which the 107
+declared latency frames explain part. That remainder is not established hardware
+latency, and the reporting-only self-check is still outstanding.
 
 ### Next implementation block — Phases 3 and 5 before more bench work
 
@@ -557,6 +590,15 @@ Review findings 5 and 6. Neither blocks Phase 4.
 - **Two-stream commit is not atomic** — the secondary `CommitFill` result is
   `(void)`-discarded under a comment promising all-or-nothing. Source-level
   finding; not reproduced on a dual-stream device.
+- **The absolute packet cursor is seeded assuming less than one ring lap has
+  elapsed**, which loses whole 48-packet laps at start and displaces the
+  audio-frame↔packet mapping by 288 frames per lost lap. This is the measured
+  start-time offset described in the current decision above, and it is the item
+  with hardware evidence behind it: four starts at laps 0, 1, 2 and 7. Fix by
+  seeding from the controller's arm position rather than from zero, and add the
+  first-Refill `hwPacketIndex`/elapsed-since-arm record that confirms the
+  magnitude. Because the modulo index can never carry a lap, any fix has to make
+  the seed correct rather than try to detect the loss afterwards.
 
 ### Phase 6 — remaining measurement
 
