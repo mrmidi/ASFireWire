@@ -1,6 +1,7 @@
 // IsochTxDmaRing.cpp
 
 #include "IsochTxDmaRing.hpp"
+#include "TxPacketIndexLift.hpp"
 
 #include "../../Common/TimingUtils.hpp"
 
@@ -51,6 +52,7 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     softwareFillAbsIdx_ = 0;
     lastHwPacketIndex_ = 0;
     ringPacketsAhead_ = 0;
+    startLapObserved_ = false;
 
     nextTransmitCycle_ = 0;
     cycleTrackingValid_ = false;
@@ -729,6 +731,34 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     out.hwPacketIndex = hwPacketIndex;
     out.cmdPtr = cmdPtr;
     out.cmdAddr = cmdPtr & 0xFFFFFFF0u;
+
+    // One-shot: how far the controller had already gone when software first
+    // looked. Accumulating deltas assumes this is under one lap, and nothing in
+    // the descriptor program enforces that -- the ring branches from its last
+    // packet back to its first, so an unrefilled context re-transmits the same
+    // 48 packets indefinitely. Laps missed here are not a counting error alone:
+    // that stale audio went on the wire, and the client's content followed it
+    // 288 frames per lap later than planned.
+    if (!startLapObserved_) {
+        startLapObserved_ = true;
+        const uint32_t startCycleTimer =
+            controlBlock->startCycleMatch.load(std::memory_order_acquire);
+        if (startCycleTimer != 0) {
+            const uint32_t elapsedCycles =
+                Tx::CyclesBetween(startCycleTimer, refillCycleTimer);
+            const uint64_t lifted = Tx::LiftRingSlotToAbsolute(
+                hwPacketIndex, elapsedCycles, Layout::kNumPackets);
+            const uint64_t lapsLost = lifted / Layout::kNumPackets;
+            ASFW_LOG(Isoch,
+                     "[TxLapSeed] slot=%u elapsedCycles=%u naive=%u lifted=%llu lapsLost=%llu elapsedUs=%u",
+                     hwPacketIndex, elapsedCycles, hwPacketIndex, lifted,
+                     lapsLost, elapsedCycles * 125u);
+        } else {
+            ASFW_LOG(Isoch,
+                     "[TxLapSeed] slot=%u no start anchor; lap unresolvable",
+                     hwPacketIndex);
+        }
+    }
 
     const uint32_t deltaConsumed = ComputeDeltaConsumed(hwPacketIndex);
     out.completedPacketCount = deltaConsumed;

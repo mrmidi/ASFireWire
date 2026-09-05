@@ -594,11 +594,29 @@ Review findings 5 and 6. Neither blocks Phase 4.
   elapsed**, which loses whole 48-packet laps at start and displaces the
   audio-frame↔packet mapping by 288 frames per lost lap. This is the measured
   start-time offset described in the current decision above, and it is the item
-  with hardware evidence behind it: four starts at laps 0, 1, 2 and 7. Fix by
-  seeding from the controller's arm position rather than from zero, and add the
-  first-Refill `hwPacketIndex`/elapsed-since-arm record that confirms the
-  magnitude. Because the modulo index can never carry a lap, any fix has to make
-  the seed correct rather than try to detect the loss afterwards.
+  with hardware evidence: four starts at laps 0, 1, 2 and 7.
+
+  **Instrumented, not yet fixed.** The context now anchors `startCycleMatch` to
+  the cycle timer immediately after the run bit, and the first Refill emits
+  `[TxLapSeed]` with the ring slot, elapsed cycles, and the lap the slot alone
+  could not carry. `TxPacketIndexLift` supplies the arithmetic and is unit
+  tested, including the boundary where an expectation exactly half a ring out is
+  genuinely ambiguous.
+
+  **Why the fix is deliberately not "seed the cursor correctly".** The
+  descriptor ring branches from its last packet back to its first, so an
+  unrefilled context re-transmits the same 48 packets indefinitely. A lost lap
+  is therefore not only a counting error: that stale audio really went on the
+  wire, and the client's content followed it 288 frames per lap later than
+  planned. Writing the true absolute into `completionCursor` would also put it
+  ahead of `mappedEnd`, since the producer has committed only one ring's worth.
+  Correcting the number would leave the delay in place while hiding it.
+
+  The real choice is between **preventing the gap** — guaranteeing a first
+  refill inside one lap — and **re-anchoring the audio timeline** to the
+  position actually reached. Which is right depends on how large the arm→first
+  callback gap really is and why, which `[TxLapSeed]` is there to answer.
+  Decide it from that evidence, not from the model.
 
 ### Phase 6 — remaining measurement
 

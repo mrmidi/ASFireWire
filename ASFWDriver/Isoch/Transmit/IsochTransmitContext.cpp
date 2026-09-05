@@ -369,6 +369,18 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     access.Write(ctrlSetReg, Driver::ContextControl::kRun);
 
+    // Anchor absolute packet position in cycle time. The CommandPtr can only
+    // ever name a slot within the ring, so the lap has to come from elsewhere;
+    // an IT context transmits one packet per isochronous cycle, which makes
+    // cycles-since-start the packet count. Read immediately after the run bit
+    // so the anchor precedes the first descriptor fetch.
+    if (controlBlock_) {
+        controlBlock_->startCycleMatch.store(
+            access.Read(Register32::kCycleTimer), std::memory_order_release);
+        controlBlock_->startFirstPacketIndex.store(0,
+                                                   std::memory_order_relaxed);
+    }
+
     const uint32_t readCmd = access.Read(cmdPtrReg);
     const uint32_t readCtl = access.Read(ctrlReg);
 

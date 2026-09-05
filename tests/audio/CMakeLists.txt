@@ -165,6 +165,10 @@ add_audio_test(HardwareSampleTimelineTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
 )
 
+add_audio_test(TxPacketIndexLiftTests
+    TxPacketIndexLiftTests.cpp
+)
+
 add_audio_test(TxCycleAnchorTests
     TxCycleAnchorTests.cpp
 )

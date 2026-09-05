@@ -222,6 +222,8 @@ private:
     // Fill-ahead tracking
     uint64_t softwareFillAbsIdx_{0};
     uint32_t lastHwPacketIndex_{0};
+    /// Whether the one-shot start-lap observation has been taken this stream.
+    bool startLapObserved_{false};
     uint32_t ringPacketsAhead_{0};
 
     // Isoch cycle tracking for packet timing
