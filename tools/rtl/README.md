@@ -40,7 +40,8 @@ that a residual of exactly zero is *retained* rather than mistaken for a missing
 value, that a varying callback size is not read as a timeline break, that a
 skipped callback smaller than the run's largest is still caught, that clocks
 disagreeing while the sample timeline reads continuous is rejected rather than
-accepted, that a merely late callback is not, and that the scheduling distance
+accepted, that a loss hidden under a re-anchor of either sign is caught, that a
+merely late callback is not, and that the scheduling distance
 is paired per trial rather than differenced across two different trial sets.
 
 Run it after any edit to the detector. A measurement from an unverified
@@ -117,6 +118,11 @@ sample timeline advancing past the frames we were handed — and the wall clock
 (`mach_absolute_time`, which no driver re-anchoring can move) is consulted only
 to decide *which* failure it was. The two hypotheses differ by the full
 magnitude of the gap, so that choice is robust.
+
+Only the re-anchor verdict preserves `RTL_raw` — a gap or an unclassified result
+rejects the trial outright — so that verdict alone must assert the wall clock saw
+*nothing*, judged against the jitter scale rather than the size of the jump.
+Otherwise a large re-anchor buys room for a real loss to hide inside it.
 
 The two clocks are required to **agree**, not merely to be consulted when one of
 them complains. A sample timeline reading continuous while the wall clock says

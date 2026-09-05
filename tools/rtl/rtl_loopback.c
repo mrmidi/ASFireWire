@@ -210,7 +210,13 @@ static void audit_step(audit_t *a, double sampleTime, int sampleValid,
                 if (fabs(hostGap - sampleGap) <= tol) {
                     a->gapEvents++;
                     a->gapFrames += sampleGap;
-                } else if (fabs(hostGap) <= tol) {
+                } else if (fabs(hostGap) <= hostTol) {
+                    // hostTol, NOT tol. This is the only verdict that preserves
+                    // RTL_raw, so it must assert the wall clock saw nothing --
+                    // against the jitter scale, which is what "nothing" means.
+                    // Scaling it to the jump would let a large re-anchor buy
+                    // room for a real loss to hide inside: a 64-frame loss under
+                    // a 936-frame re-anchor would read as re-anchor only.
                     a->anchorEvents++;
                     if (fabs(sampleGap) > fabs(a->worstAnchor)) a->worstAnchor = sampleGap;
                 } else {
@@ -659,6 +665,26 @@ static int selftest(void) {
         if (!ok) failures++;
         printf("  %-26s %u ambiguous   %s\n", "jitter within tolerance",
                a.ambiguous, ok ? "ok" : "FAIL (jitter rejected)");
+    }
+
+    {
+        // Both faults at once: 64 frames lost while the timeline re-anchors
+        // around them. Tested in both directions, since a tolerance scaled to
+        // the jump is permissive regardless of its sign.
+        for (int sign = 1; sign >= -1; sign -= 2) {
+            const UInt32 n[]  = { 64, 64, 64, 64 };
+            const double st[] = { 0, 64, 128, 128 + 64 + 64 + sign * 936.0 };
+            const double ht[] = { 0, 64, 128, 256 };   // 64 delivered, 64 lost
+            audit_t a; memset(&a, 0, sizeof a);
+            for (int i = 0; i < 4; i++)
+                audit_step(&a, st[i], 1, ht[i] / 48000.0, n[i], 48000.0, 48.0);
+            const int ok = !a.anchorEvents && (a.ambiguous || a.gapEvents);
+            if (!ok) failures++;
+            printf("  %-26s %u gap / %u anchor / %u amb   %s\n",
+                   sign > 0 ? "loss under +936 anchor" : "loss under -936 anchor",
+                   a.gapEvents, a.anchorEvents, a.ambiguous,
+                   ok ? "ok" : "FAIL (loss hid in the anchor)");
+        }
     }
 
     printf("\n--- aggregation: scheduling distance must be paired per trial ---\n");
