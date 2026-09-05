@@ -1,0 +1,6 @@
+date        : 2026-09-05T18:04:23+02:00
+git commit  : 9740d4b5987d261bfc896e612b90fb82b8a243d9
+git branch  : ctrls
+tree clean  : yes (only this report dir untracked)
+dext        : net.mrmidi.ASFW.ASFWDriver (0.3.0/44)
+host        : 27.0 arm64
