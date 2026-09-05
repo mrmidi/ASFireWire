@@ -95,6 +95,41 @@ Nominal ticks per frame are used only inside an observed packet or similarly
 bounded interval. Successive hardware-derived ZTS anchors expose the actual
 media-clock rate to HAL.
 
+### Host-side filtering of our anchors (open decision)
+
+Removing the driver PLL does not make the anchor stream unfiltered. The host
+applies its own filter unless told otherwise
+(`AudioDriverKitTypes.h`, `IOUserAudioClockAlgorithm`):
+
+| value | behaviour |
+|---|---|
+| `Raw` (`'raww'`) | timestamps used as-is, no filtering |
+| `SimpleIIR` (`'iirf'`) | simple IIR filter — **the default when the device does not set the property** |
+| `TwelvePtMovingWindowAverage` (`'mavg'`) | 12-point moving window average |
+
+So "anchors expose the actual media-clock rate to HAL" is only true with `Raw`.
+By default a host-side IIR sits between our anchors and the HAL's rate estimate,
+which is the same smoothing we deliberately removed from the driver.
+
+This is the mechanism Apple described long before ADK: inaccurate time stamps
+"keep the HAL's clock from locking on to the true sample rate"
+(Jeff Moore, `coreaudio-api` 2004/Oct/msg00166). The filter *is* the locking.
+
+Two consequences to settle before hardware acceptance:
+
+- If our anchors are as accurate as V3 intends, the default filter only adds lag
+  to genuine rate tracking, and `Raw` is the consistent choice.
+- **Epoch interaction.** We reseed the timeline on discontinuity. A stateful IIR
+  carrying pre-epoch state across that reseed converges from a stale estimate;
+  nothing in the SDK says the host resets its filter on a ZTS discontinuity.
+  Under `Raw` the question does not arise.
+
+`SetClockAlgorithm()` is declared on `IOUserAudioClockDevice` and reaches us by
+inheritance (`class IOUserAudioDevice: public IOUserAudioClockDevice`).
+
+Anchor density is the other half of this: an 8,192-frame period at 48 kHz is one
+anchor per 170 ms, so a 12-point window would span roughly two seconds.
+
 ZTS is published exactly at every 8,192-frame boundary, including a boundary
 inside a received or transmitted packet. RX and TX observations cannot publish
 the same `{epoch, boundary}` twice.
@@ -111,6 +146,79 @@ A fresh `StartIO` begins at frame zero. A midstream epoch starts at the next
 8,192-frame boundary after the last published boundary. Cache publication and
 hardware observation use non-blocking active-operation fencing so a transition
 cannot race an in-flight RX observation or `WriteEnd` publication.
+
+Starting at zero is the documented device-timeline behaviour, not a V3 choice:
+`AudioDeviceGetCurrentTime()` returns a timeline that "starts at 0 when the
+hardware starts and monotonically increases while the hardware is running"
+(Jeff Moore, `coreaudio-api` 2005/Sep/msg00207). Our epoch trigger list also
+matches the discontinuity causes the archive enumerates — configuration change,
+sample-rate change, engine restart, overload.
+
+### An epoch is invisible to the HAL (open decision)
+
+Invariant 4 says a genuine hardware discontinuity creates a new *explicit*
+epoch. That is explicit to V3 only. There is no way to tell the host:
+
+> "the archive does not provide the exact driver API, flag, property, or callback
+> by which a driver explicitly announces 'the sample clock has restarted.' No
+> such mechanism should be inferred."
+>
+> "At the system level, a configuration change may instead be represented by
+> stopping the IO engine, updating device state, and restarting it."
+> — `coreaudio-api`, discontinuity thread (2005/Sep, 2008/Apr)
+
+The HAL only ever sees a stream of `{sample time, host time}` pairs. It has no
+concept of our epoch and receives no notification when one opens. Recovery above
+the HAL is interpolation, not resynchronisation: "the output unit uses the host
+times and rate scalar in its most recent HAL timestamps to interpolate a new
+sample time."
+
+So the question V3 has to answer explicitly is: **across a midstream epoch, does
+the absolute HAL sample coordinate remain continuous?**
+
+- If it does, an epoch is internal bookkeeping — discontinuity reason, source
+  arbitration, duplicate suppression — the host observes an unbroken monotonic
+  timeline, and nothing further is required. This should be stated as an
+  invariant rather than left implied.
+- If it does not, we are introducing an unannounced discontinuity. The host will
+  chase it through whatever clock algorithm is in force, and under the
+  `SimpleIIR` default it will filter *across* the jump rather than reset at it.
+  The only sanctioned representation of a real clock restart is
+  `StopIO` → reconfigure → `StartIO`, which is a heavier transition than "start
+  at the next 8,192-frame boundary" currently implies.
+
+The present wording — a midstream epoch starting at the next boundary while IO
+continues — reads as the first case, but does not say whether the coordinate
+itself reseeds. Hardware acceptance cannot settle this; it is a design statement
+we owe the reader.
+
+### Prewarm and the "fresh StartIO" rule (unresolved)
+
+`StartIO` is not called once per session. It carries flags
+(`AudioDriverKitTypes.h`):
+
+```c
+enum class IOUserAudioStartStopFlags : uint64_t { None = 0, Prewarm = (1L << 0) };
+enum class IOUserAudioDeviceTransportState : uint64_t { Stopped = 0, Prewarmed = 1, Running = 2 };
+```
+
+`Prewarm` means "enable the minimal hardware to minimize transition to normal IO
+operation", and the device advertises support through `in_supports_prewarming`
+on `IOUserAudioDevice::Create()`, readable via `GetSupportsPrewarming()`.
+
+The transport is therefore a three-state machine, and a session can legitimately
+be `StartIO(Prewarm)` → `StartIO(None)`. "A fresh `StartIO` begins at frame zero"
+does not say which one. Taken literally it opens two epochs per session, the
+second resetting the coordinate after the first already published anchors.
+
+V3 must state explicitly either that:
+
+- we advertise `in_supports_prewarming = false`, so only one `StartIO` occurs; or
+- a `Prewarm` start is epoch-neutral and only the `None` start opens the epoch.
+
+This is not currently addressed anywhere in the timeline, epoch, or M-Audio
+startup sections, and it interacts directly with the asymmetric M-Audio
+choreography (TX-first, RX at +160 cycles, TX prefill).
 
 ## Immutable PCM publication cache
 
@@ -177,9 +285,9 @@ Initial cycle policy:
 | Quantity | Cycle slots | Time |
 |---|---:|---:|
 | Ownership guard | 48 | 6 ms |
-| Dispatch slack | 96 | 12 ms |
-| Prepared target | 144 | 18 ms |
-| Durable packet store | 192 | 24 ms |
+| Dispatch slack | 72 | 9 ms |
+| Prepared target | 120 | 15 ms |
+| Durable packet store | 168 | 21 ms |
 
 These are policy values, not derived truths. Telemetry measures actual
 headroom, ownership, store high-water, and completion latency so the values can
@@ -254,10 +362,109 @@ boundary and rejected during runtime configuration.
 - Zero-timestamp period: 8,192 frames.
 - The geometry is configured when constructing the device; no artificial live
   configuration-change transaction is manufactured.
-- Output safety is derived from physical scheduling lead, backend transfer
-  delay, and packet granularity. It is not ring capacity.
+- Output safety is derived from the physical payload-finality lead and the
+  device-profile floor. Backend transfer delay is reported separately as
+  latency; it is not counted twice in safety.
 - Device/stream latency remains a separate handoff↔presentation or
   acquisition↔delivery measurement.
+
+Setting the geometry at construction is a deliberate refusal of an available
+path, not an absence of one: `IOUserAudioReservedConfigChangeAction` defines
+`RingBufferFrameSize = 2` alongside `SampleRate = 1` and `StreamFormat = 3`, so
+the ring can be resized live through the config-change mechanism. We do not.
+
+### Client buffer size range is synthesized, not chosen
+
+The driver does not advertise the client IO buffer range; the HAL derives it.
+Jeff Moore stated the formula twice, seven years apart:
+
+> "The buffer frame size range is synthesized by the HAL based on the smallest
+> schedulable time quantum (roughly 300 microseconds) to 3/8ths the size of the
+> hardware ring buffer."
+> — `coreaudio-api` 2001/Nov/msg00047
+
+> "Currently for IOAudio-based devices, the minimum is always however many frames
+> fit into 300 microseconds (for example 14 frames at 44100). The maximum is
+> always 3/8ths the number of frames in the ring buffer. […] The only influence
+> the driver has is through its control of the size of the ring buffer."
+> — `coreaudio-api` 2008/Aug/msg00171
+
+Both qualifiers matter: "currently", and "IOAudio-based". This is an
+implementation detail of a family we are not in, and no equivalent constraint
+appears anywhere in the AudioDriverKit headers — there is no documented minimum,
+maximum, or ring ratio.
+
+If the ratio carried over, our 8,192-frame ring caps clients at 3,072 frames,
+and the 4,096-frame `WriteEnd` benchmark exercises a size the HAL would never
+request. That is not a defect either way, but it means the benchmark's headroom
+claim is unanchored.
+
+**Action.** The driver cannot read this range — the HAL synthesizes it *from our
+ring buffer* and never hands it back to us. Two ways to observe it from where we
+actually sit:
+
+- *Driver-side, passive.* We already see the answer: the frame count in every
+  `WriteEnd(S, N)` is a size the HAL chose from that range. Record min/max/
+  distribution of `N` in the existing telemetry histograms. If `N` never exceeds
+  3,072 with an 8,192-frame ring, ADK inherited the ratio; if it reaches 4,096,
+  it did not. This costs one counter and answers the question during ordinary
+  playback.
+- *Userspace, one shot.* A HAL client reading
+  `kAudioDevicePropertyBufferFrameSizeRange` on our published device prints the
+  synthesized range directly. Worth doing once to confirm the passive result and
+  to record the number here.
+
+The passive form is authoritative for what actually happens; the userspace read
+is authoritative for what is *permitted*, including sizes no client requested.
+
+### Safety offset — what belongs in it
+
+The split V3 uses (payload-finality lead plus device-profile floor in safety;
+backend transfer delay reported as latency) matches Apple's stated purpose:
+
+> "The safety offset is there primarily to allow for physical transfer issues.
+> […] the USB Audio driver has to be some number of packets ahead of where the
+> USB hardware is because of how the USB hardware works. This requirement is
+> reflected in the safety offset the driver reports."
+> — Jeff Moore, `coreaudio-api` 2004/Oct/msg00166
+
+Our payload-finality lead is the FireWire analogue of "N packets ahead", so it
+belongs in safety; presentation delay belongs in the latency property. The
+50-frame floor is likewise consistent with "there really isn't any real hardware
+that would have a safety offset of 0."
+
+**But** the same message gives safety offset a second purpose we have designed
+out:
+
+> "The safety offset secondarily allows a driver to add some padding […] useful
+> for drivers whose hardware has trouble generating accurate time stamps.
+> Inaccurate time stamps keep the HAL's clock from locking on to the true sample
+> rate […] which leads to reading/writing data in places where the driver isn't
+> prepared which causes glitching."
+
+V3 carries no jitter padding by design — accuracy comes from hardware-derived
+anchors rather than margin. That is the better engineering position, but it
+means the 50-frame floor has no jitter reserve, and the failure mode is
+glitching rather than a clean error. Hardware acceptance should measure observed
+anchor jitter against the floor explicitly; the telemetry already records what is
+needed.
+
+### Reported latency is a sum of three properties
+
+Apple's accounting is:
+
+```text
+minimum stream latency = kAudioDevicePropertyLatency      (device presentation)
+                       + kAudioStreamPropertyLatency      (stream presentation)
+                       + kAudioDevicePropertySafetyOffset
+
+output = minimum stream latency + kAudioDevicePropertyBufferFrameSize
+```
+
+The `output = (reportedLatency + safetyOffset + ioBuffer) / rate` form used below
+collapses the two latency properties into one term. That is fine as shorthand,
+but the 117-frame and 90-frame figures must be checked against the sum of *both*
+device and stream latency, not one of them.
 
 ## Measured latency targets (Apogee Duet)
 
@@ -272,61 +479,55 @@ decimal, which is what makes these trustworthy rather than eyeballed:
 
 | rate | Apple output fixed | Apple input fixed | output in cycles | output ms |
 |---|---:|---:|---:|---:|
-| 44.1 kHz | 101 frames | 91 frames | 18.3 | 2.29 |
-| 48 kHz | **117 frames** | **88 frames** | 19.5 | 2.43 |
-| 96 kHz | 160 frames | 218 frames | 13.3 | 1.67 |
+| 44.1 kHz | 101 frames | 92 frames | 18.3 | 2.29 |
+| 48 kHz | **117 frames** | **90 frames** | 19.5 | 2.43 |
+| 88.2 kHz | 149 frames | 200 frames | 13.5 | 1.69 |
+| 96 kHz | 159 frames | 219 frames | 13.3 | 1.66 |
 
-Against V3 as it stands at 48 kHz:
+The Gate A2 working tree now reproduces the 48-kHz HAL split exactly:
 
-| | Apple | ASFW (`7ca8d6e3`) | ratio |
+| | Apple | ASFW | difference |
 |---|---:|---:|---:|
-| output fixed | 117 frames (19.5 cycles) | 896 frames (149 cycles) | 7.6x |
-| input fixed | 88 frames (14.7 cycles) | 256 frames (42.7 cycles) | 2.9x |
+| output fixed | 117 frames | 117 frames | 0 |
+| input fixed | 90 frames | 90 frames | 0 |
+| total fixed | 207 frames | 207 frames | 0 |
 
-Matching the output figure would put Logic at **5.1 ms output / 9.6 ms
-roundtrip** at 48 kHz / 128 frames — which is exactly what Apple's driver
-reports, and level with a modern USB interface (Audient iD14: 9.0 ms).
+At a 128-frame client buffer this property model predicts **5.1 ms output /
+9.6 ms roundtrip**, matching Apple's reported model. It does not prove physical
+loopback latency; Logic displays the properties supplied by the driver.
 
 ### What the numbers constrain
 
-720 of our 768 safety frames are *committed DMA lead*: PCM is fixed at
-preparation time, `kTxPreparedTargetCycleSlots` = 120 packets ahead, and the
-safety offset must cover it or we would be lying to CoreAudio about what we can
-still honour.
+The split is now implemented. The cadence/silence preparation runway remains
+120 cycle slots. Descriptor mapping remains a 48-packet physical ownership
+window. Payload finality is a separate eight-slot frontier: one six-packet
+completion interval plus a two-packet live-command repoint guard.
 
-Apple reaches 19.5 cycles **on the same OHCI silicon**. Subtracting the IEC
-61883-6 transfer delay (12800 ticks, ~4.2 cycles) leaves ~15 cycles of driver
-and DMA lead. Our ownership guard alone is 48 packets. So the guard is a policy
-choice, not a hardware floor, and roughly 3x more conservative than what is
-demonstrably sufficient.
+A planned DATA packet is armed as complete silence in image 0. Audio publishes
+a complete image 1 without touching hardware-addressed bytes. A1 places the
+invariant eight-byte prefix in descriptor 2 and the mutable tail in descriptor
+3. Gate A2 lets transport select image 1 for an already-bound packet by one
+aligned `descriptor3.dataAddress` store after DMA publication. `mappedEnd` is
+descriptor ownership; `finalizedEnd` is the producer's irreversible boundary.
 
-The other half of the evidence points the same way: Apple runs a *deep* IT ring
-(~800 packets, 100 ms TX interrupt cadence) with this *small* content lead.
-Ring depth and content lead are independent quantities. V3 currently makes them
-the same number, which is why the safety offset is large.
+At 48 kHz, eight cycle slots are 48 nominal frames, so the Duet profile's
+50-frame output-safety floor wins. The old formula's backend transfer and
+packet addends, plus 32-frame alignment, are gone from safety. The 67-frame
+output latency remains separate profile policy.
 
-The implied change is to split them:
-
-- keep a long **cadence** lead — plan, DBC, SYT, descriptors — sized by the
-  producer-lateness budget, which is what dispatch stalls actually threaten;
-- write **PCM payload** as late as the DMA allows, back-filling prepared but
-  unfetched slots when fresher content arrives;
-- report only the content lead as output safety.
-
-The unknown is where the true content boundary sits — how far ahead OHCI has
-actually fetched payload. Apple's ~15 cycles is the empirical upper bound on how
-conservative it needs to be. That is measurable rather than derivable, and it
-touches the transport/audio seam, so it wants its own instrumented step.
+Host tests prove complete-image race resolution and descriptor-field
+invariants. Hardware still must confirm that the two-packet repoint guard is
+sufficient on the real controller and wire.
 
 ### Caveats
 
-- One device. Other devices are not captured yet; DICE in particular may differ,
-  and its TX policy is deliberately still on the pre-`59f3b501` behaviour.
+- One device. Other device property tables are not inferred from the Duet;
+  DICE retains its own per-rate safety/latency policy.
 - The reference machine is Intel, on an OS old enough to use IOAudioFamily
   rather than AudioDriverKit. The *semantics* of the safety offset are the same
   so the frame counts compare directly, but Apple's scheduling headroom was
   chosen against a kext-era dispatch model, not DriverKit's.
-- The 96 kHz input figure (218 frames) is nearly 2.5x the 48 kHz one while
+- The 96 kHz input figure (219 frames) is over 2.4x the 48 kHz one while
   output moves the other way. Recorded as measured; not explained.
 
 ## Instrumentation
@@ -357,8 +558,9 @@ The continuously overwritten 512-entry `TxCycleTraceRecord` ring contains:
 - deadline headroom.
 
 There are no per-packet or per-`WriteEnd` logs. Normal output is one five-second
-`[TxV3]` liveness/margin heartbeat. Anomaly records use first-occurrence plus
-power-of-two repetition limiting:
+`[TxV3]` liveness/margin heartbeat plus `[TxFill]`, which reports payload
+finality, mapping, rebind acceptance/rejection, and minimum rebind distance.
+Anomaly records use first-occurrence plus power-of-two repetition limiting:
 
 - `[PcmCache]`
 - `[TxDeadline]`
@@ -371,7 +573,7 @@ power-of-two repetition limiting:
 Capture the V3 trace from a user shell with:
 
 ```bash
-log stream --style compact --info --debug --predicate 'process == "kernel" AND (eventMessage CONTAINS "[TxV3]" OR eventMessage CONTAINS "[PcmCache]" OR eventMessage CONTAINS "[TxDeadline]" OR eventMessage CONTAINS "[TimelineEpoch]" OR eventMessage CONTAINS "[ZTS]" OR eventMessage CONTAINS "[BackendTiming]" OR eventMessage CONTAINS "[TxOwnership]" OR eventMessage CONTAINS "[MAudioTiming]")'
+log stream --style compact --info --debug --predicate 'process == "kernel" AND (eventMessage CONTAINS "[TxV3]" OR eventMessage CONTAINS "[TxFill]" OR eventMessage CONTAINS "[PcmCache]" OR eventMessage CONTAINS "[TxDeadline]" OR eventMessage CONTAINS "[TimelineEpoch]" OR eventMessage CONTAINS "[ZTS]" OR eventMessage CONTAINS "[BackendTiming]" OR eventMessage CONTAINS "[TxOwnership]" OR eventMessage CONTAINS "[TxPayloadSeal]" OR eventMessage CONTAINS "[MAudioTiming]")'
 ```
 
 ## Software validation completed
@@ -380,7 +582,7 @@ The current working tree passes:
 
 - production Xcode Debug build with no warnings or errors;
 - Swift/XCTest suite, including telemetry-v6 decoding and MCP compatibility;
-- all 1,805 C++ host tests; seven hardware/environment or Debug-only tests are
+- all 1,839 C++ host tests; seven hardware/environment or Debug-only tests are
   intentionally reported as skipped;
 - optimized Release benchmark for maximum-channel 4,096-frame `WriteEnd`
   publication, below 10% of that operation's audio duration;
@@ -395,6 +597,8 @@ The current working tree passes:
 - DICE shared-plan equality;
 - M-Audio start choreography, callback-group qualification, presentation
   conversion, and cadence commit without a private frame cursor.
+- alternate-image rebind at the two-packet command-pointer guard, rejection
+  without an invariant prefix, and independent monotonic finality.
 
 ## Batched hardware acceptance pending
 
@@ -406,11 +610,23 @@ Hardware validation must confirm:
 - playback/capture are stable at 48/96/192 kHz;
 - output-only and RX-loss TX observation fallback remain clock-correct;
 - no stale audio is emitted after deadline misses;
-- measured preparation and ownership margins support 48/96/144;
+- measured preparation and ownership margins support 48/72/120;
+- `[TxFill]` shows rebind progress, zero rejected image selections, and a
+  minimum accepted distance of at least two packets;
 - DICE primary/secondary wire timing agrees;
 - M-Audio performs its asymmetric startup, produces TX-derived anchors, and
   transitions capture without moving the playback timeline;
-- reported safety and latency match observed hardware-relative behavior.
+- reported safety and latency match observed hardware-relative behavior;
+- the observed `WriteEnd` frame-count distribution is recorded, settling whether
+  ADK inherits the IOAudio 300 µs / 3-8ths synthesis and whether a 4,096-frame
+  client buffer is ever actually requested;
+- the effective `IOUserAudioClockAlgorithm` is confirmed, and if it is left at
+  the `SimpleIIR` default, that rate tracking still converges across an epoch
+  reseed rather than carrying stale filter state;
+- observed anchor jitter is measured against the 50-frame safety floor, which
+  carries no jitter reserve by design;
+- `StartIO(Prewarm)` either does not occur (prewarming unadvertised) or is
+  demonstrably epoch-neutral.
 
 The implementation is software-complete, but V3 is not release-accepted until
 this hardware batch passes. There is no runtime legacy fallback if it fails;
@@ -426,5 +642,12 @@ the V3 implementation must be corrected.
   media-clock authority.
 - M-Audio is special in control, startup, and observation conversion only—not
   in HAL timeline ownership.
+- The host does not filter our ZTS anchors. This holds only under
+  `IOUserAudioClockAlgorithm::Raw`; the default is `SimpleIIR`. Until
+  `SetClockAlgorithm` is called explicitly, this assumption is false.
+- An epoch is a V3-internal construct. The HAL is never told one has opened and
+  has no API to be told, so the sample coordinate the host observes must remain
+  monotonic and continuous across a midstream epoch. Any reseed that is visible
+  to the host is an unannounced discontinuity.
 - Initial cycle depths are conservative policies subject to telemetry-driven
   hardware tuning.

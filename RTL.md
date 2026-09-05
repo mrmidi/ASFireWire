@@ -1,24 +1,25 @@
 # ASFW Round-Trip Latency and TX Content Ownership
 
 Status: design and evidence record, 2026-08-29
-Source tree inspected: `cf4c6c4d4c6d`
-Implementation status: see **Implementation record** at the end (through `72204b91`).
+Source tree inspected: `3ab346e8` plus the Gate A2 working tree described below.
+Implementation status: Apple Duet HAL-accounting parity is implemented and
+host-validated; hardware acceptance is still required.
 
 This document records the latency investigation that followed Audio Engine V3.
 It separates measured facts, reverse-engineering evidence, current ASFW
 contracts, design conclusions, and remaining hardware questions. It is not a
-replacement for `AUDIOENGINEV3_DRAFT.md`; it narrows the next work to the point
-where V3 currently turns transport preparation depth into audible latency.
+replacement for `AUDIOENGINEV3_DRAFT.md`; it records how V3 separated deep
+transport preparation from the short payload-finality boundary.
 
 ## Executive conclusion
 
 The V3 hardware timeline, absolute sample coordinates, 8,192-frame HAL/cache
 geometry, and backend-specific SYT conversion remain the right foundation.
 
-The main output-latency defect is a different contract:
+The main output-latency defect was a different contract:
 
 ```text
-current ASFW
+ASFW before Gate A2
 
 packet planned for future transport
         =
@@ -54,20 +55,24 @@ coupling is not caused by using OHCI descriptors directly. It is caused by the
 ASFW seam treating producer-slot commit as both transport availability and
 permanent payload finality.
 
-The next V3 step should therefore model a stable planned producer slot
-separately from its writable PCM payload, its mapping into an ASFW OHCI
-descriptor, and its physical hardware-fetch boundary. The preferred steady-state
-path is late PCM fill into a preallocated, silence-initialized DATA payload
-whose ASFW OHCI address and length remain unchanged. A separate-buffer/remap
-design is an ASFW-specific fallback, not an inference from NuDCL behavior. HAL
-output safety must be derived from the measured physical content-freeze
-boundary, not from the long-range plan cursor.
+Gate A2 now models the stable planned producer slot separately from its
+writable payload, descriptor mapping, physical finality boundary, and
+completion. A packet is armed with complete silence in image 0. Image 1 may be
+published after descriptor binding. Because A1 split the invariant eight-byte
+prefix from the mutable tail, transport can select image 1 by changing one
+aligned `OUTPUT_LAST.dataAddress` store while leaving every other descriptor
+field unchanged.
 
-No current design decision is justified by the historical 40–42-cycle
-DriverKit stall observation. That number came from an older architecture and
-must not be treated as a V3 scheduling distribution or hardware requirement.
-Current-path telemetry must establish the required planning and transport
-depths anew.
+`mappedEnd` now means descriptor ownership only. `finalizedEnd` is the content
+boundary and advances from the absolute command-pointer position by one
+six-packet completion interval plus a two-packet repoint guard. The 120-slot
+prepared runway is unchanged and no longer appears in HAL output safety.
+
+No finality or HAL timing value is justified by the historical 40–42-cycle
+DriverKit stall observation. Preparation stalls are absorbed by the independent
+silence-armed runway. Current-path telemetry remains the acceptance source for
+preparation and ownership margins, but it is not a reason to move finality back
+to the mapping frontier.
 
 ## Scope and terminology
 
@@ -164,7 +169,7 @@ Consequences for the existing draft:
 The values are a reference-driver contract for the same hardware, not numbers
 that ASFW may copy without implementing and measuring equivalent semantics.
 
-### ASFW comparison at 48 kHz
+### Historical ASFW comparison at 48 kHz
 
 The V3 figures recorded from ASFW at `7ca8d6e3` were:
 
@@ -183,9 +188,10 @@ safety excess  = 768 - 50 = 718 frames
 latency excess = 128 - 67 =  61 frames
 ```
 
-The large ASFW safety value is not merely an incorrect property value. Under
-the current immutable-packet contract, PCM really is committed approximately
-that far ahead, so reporting a small safety value would be false.
+The large ASFW safety value was not merely an incorrect property value. Under
+the then-current immutable-packet contract, content really was committed that
+far ahead. Gate A2 removes that contract; the current working tree reports the
+same 117/90 fixed split as Apple.
 
 ## Evidence from AppleFWAudio
 
@@ -466,9 +472,9 @@ References:
 - `references/linux-upstream/sound/firewire/amdtp-stream.c`;
 - `references/linux-upstream/drivers/firewire/ohci.c`.
 
-## Current ASFW contract at `cf4c6c4d4c6d`
+## Current ASFW contract after Gate A2
 
-### Planning depth becomes safety
+### Planning depth is independent from safety
 
 `AudioTimingGeometry` currently defines:
 
@@ -479,38 +485,36 @@ prepared target          = 120
 shared packet slots      = 168
 ```
 
-These are current policy values, not established hardware minima. In
-particular, the comment tying the 72-slot allowance to historical 40–42-slot
-stalls records old evidence and must not be used as a present V3 acceptance
-criterion.
+These are preparation/runway values, not latency values. Packets are armed with
+a complete valid image throughout this horizon, so a delayed producer causes a
+content substitution, not a descriptor-chain hole.
 
-`AudioGeometryPolicy::RequiredOutputSafetyFrames` converts all 120 prepared
-cycle slots into sample frames, adds transfer and packet allowances, and rounds
-the result to a 32-frame boundary. At 48 kHz this dominates the reported output
-safety.
+The payload-finality lead is independently defined as eight cycle slots: six
+until the next transport completion plus a two-packet guard ahead of the live
+OHCI command pointer. At 48 kHz this is 48 nominal frames; the Duet profile's
+50-frame output-safety value wins. Backend transfer delay is reported as
+latency and is not counted again as safety. Safety is not rounded to the
+32-frame ring-alignment grid.
 
-The 32-frame alignment is also not an established safety-offset contract. The
-original Duet driver reports a 50-frame safety offset at 48 kHz. Ring-buffer
-alignment and reported safety must not be coupled without an independent HAL
-requirement.
+### Publication and finality are separate
 
-### Publication means permanent immutability
-
-`IAmdtpTxSlotProvider` exposes only:
+`IAmdtpTxSlotProvider` exposes the planned-slot publication path plus a late
+payload path:
 
 ```cpp
 AcquireWritableSlot(packetIndex, slot)
 PublishSlot(packet)
+FinalizedEnd()
+AcquireLatePayloadSlot(packetIndex, slot)
+PublishLatePayload(packetIndex)
 ```
 
-`DiceTxStreamEngine::PrepareTransmitSlot` obtains PCM, builds the complete wire
-packet, publishes it, and commits packetizer cadence. The isoch transport then
-assumes the payload is immutable until completion. It seals the opaque bytes,
-checks the seal at completion, and treats any mutation as a fatal producer
-contract violation.
-
-This contract is internally consistent, but it forces the content lead to be
-at least the complete prepared/owned transport horizon.
+`PublishSlot` commits packet geometry and a valid silence image, not final PCM.
+The audio service writes only image 1. Transport alone selects that image,
+publishes it to DMA, and either binds it initially or repoints the already-bound
+mutable tail. At completion it checks the seal of the image it selected. A race
+resolves to one complete image; the producer never mutates the image currently
+addressed by hardware.
 
 ### Producer slots and physical descriptors are already separate
 
@@ -525,26 +529,26 @@ ASFW does not have one monolithic packet/descriptor ring:
   physical descriptor changes;
 - the hardware command pointer and completion status drive physical progress.
 
-The current `commitGeneration` and `payloadSeal` turn the audio-to-transport
-handoff into a one-shot final commit. That is the precise contract V3 latency
-work must change. It must not change the content/transport layer boundary or
-pretend a NuDCL command is an ASFW OHCI descriptor.
+`commitGeneration` publishes planned geometry. `pcmGeneration` publishes image
+1. `payloadSeal` is transport-owned and covers the complete image selected for
+transmission. The content/transport layer boundary is unchanged; the mechanism
+is expressed entirely in ASFW producer slots and four-block OHCI programs, not
+as a numerical analogy to NuDCL.
 
-### OXFW timing is currently placeholder policy
+### Duet timing is exact profile policy
 
-`OxfwProfileBuilder` currently assigns every timing entry:
+`OxfwProfileBuilder` now scopes the original AppleFWAudio table to the Apogee
+Duet personality:
 
 ```text
-input latency  128
-output latency 128
-input safety   128
-output safety   64
+rate     input latency  output latency  input safety  output safety
+44.1 kHz      46              55             46             46
+48.0 kHz      40              67             50             50
 ```
 
-Those values do not reproduce the exact Duet override table. Output-path
-ownership must be fixed before reporting a smaller safety offset, and input
-latency/safety needs its own measurement. The original values are targets and
-cross-checks, not permission to report unimplemented performance.
+Graph construction reports the profile values directly. The removed generic
+input-jitter floor no longer overwrites 50 with 128. These are HAL accounting
+values; matching them does not by itself establish physical loopback latency.
 
 ## Contracts that remain unchanged
 
@@ -569,11 +573,11 @@ The latency fix must preserve these V3 decisions:
 
 The former 2,400-frame exposure theory is not part of this work.
 
-## Proposed TX ownership model
+## Implemented TX ownership model
 
 ### State machine
 
-Each absolute producer slot should have an explicit lifecycle that separates
+Each absolute producer slot has an explicit lifecycle that separates
 stable wire geometry, mapping into an ASFW physical descriptor, and client PCM
 finality:
 
@@ -591,8 +595,7 @@ PayloadWritable ---------> PcmFilledWritable
       v                           v
 DmaMappedWritableSilence   DmaMappedWritablePCM
       |                           |
-      | measured physical         | measured physical
-      | fetch/freeze point        | fetch/freeze point
+      | finalizedEnd              | finalizedEnd
       v                           v
 FrozenSilence              FrozenPCM
       |                        |
@@ -622,80 +625,51 @@ Important properties:
 - audio never reads OHCI MMIO or command pointers;
 - PCM words can change only through an accepted payload revision before the
   measured physical freeze guard;
-- the payload address, length, CIP, DBC, and SYT remain unchanged during the
-  preferred stable-mapping revision;
+- packet length, CIP, DBC, and SYT remain unchanged; transport may replace only
+  the mutable tail's descriptor address with the matching image-1 tail;
 - PCM words cannot change after freeze;
 - the payload seal is created/validated at freeze, not at long-range planning;
 - no missed client range is emitted later, retried, clamped, or rebased.
 
-There are two ASFW implementation candidates for a writable producer payload:
+The selected implementation is complete alternate-image selection. Audio
+never overwrites the image addressed by hardware. Image 0 is the valid armed
+packet; image 1 is a complete alternative with an identical declared prefix.
+Before finality, transport may select image 1 at initial bind or repoint the
+single mutable-tail descriptor field. This is an ASFW mechanism and receives
+no numerical safety proof from Apple's NuDCL implementation; hardware
+acceptance must validate the two-packet guard.
 
-1. **Stable mapped-payload fill:** an ASFW physical descriptor already
-   references the preallocated silence-initialized producer slot. Audio/Wire
-   overwrites its PCM words before a proven hardware fetch frontier; transport
-   republishes payload DMA visibility without changing descriptor address or
-   length.
-2. **Alternate producer-slot selection:** Audio/Wire finalizes a different
-   preallocated payload image and `IsochTxDmaRing` maps/selects it before a
-   separately proven physical descriptor boundary.
+### Neutral seam API
 
-The first matches the recovered steady-state behavior at both Apple layers:
-compiled descriptors continue to address the same packet buffer while client
-PCM changes only that buffer's words. It is preferred only if ASFW proves that
-DriverKit DMA publication and the OHCI fetch boundary make the write safe. The
-second is an ASFW fallback and receives no safety proof from Apple's NuDCL
-implementation. Neither may be assumed safe from host tests alone.
-
-### Neutral seam API sketch
-
-The exact names are provisional, but the cross-service contract needs the
-equivalent of:
+The implemented cross-service surface is:
 
 ```cpp
-struct TxPayloadSlotToken {
-    uint64_t generation;
-    uint64_t packetIndex;
-};
-
-enum class TxPayloadFillResult {
-    Filled,
-    TooLate,
-    AlreadyFrozen,
-    AlreadyFilled,
-    WrongGeneration,
-    InvalidSlot,
-};
-
-PublishPlannedSlot(packetIndex, silenceInitializedOpaquePacket)
-AcquirePayloadWrite(token) -> bounded opaque write lease or scratch view
-CommitPayloadWrite(token) -> TxPayloadFillResult
+AcquireWritableSlot(packetIndex, image0)
+PublishSlot(plannedPacket)
+FinalizedEnd()
+AcquireLatePayloadSlot(packetIndex, image1)
+PublishLatePayload(packetIndex)
 ```
 
-These names are deliberately provisional. If the stable-mapping design wins,
-the write lease must be impossible to acquire at or behind the transport's
-physical freeze guard, and payload revision commit must cause transport-owned
-DMA publication before the slot can freeze. If the alternate-slot design wins,
-`CommitPayloadWrite` selects the complete alternate image. The transport
-implementation owns mapping into the 48-entry physical ring, DMA
-synchronization, optional descriptor update, freeze decision, and completion.
-The audio-side port sees only neutral tokens, opaque buffers, and results.
+The write lease cannot be acquired below `finalizedEnd`. A publication racing
+the advancing frontier is reported as too late. Transport owns mapping into the
+48-entry physical ring, DMA synchronization, descriptor update, finality, seal,
+and completion. The audio-side port sees only neutral opaque slots and cursors.
 
 No hot-path allocation or blocking is permitted. All storage is preallocated
-and generation-tagged. A write/freeze race must resolve deterministically to
-either complete PCM or complete silence; hardware must never observe a partial
-mix. If alternate-slot storage is required, its capacity cost must be
-measured before fixing the final slot count.
+and generation-tagged. A write/freeze race resolves deterministically to
+either complete content or complete silence.
 
 ### Independent frontiers
 
-The engine and telemetry should distinguish at least:
+The engine and telemetry distinguish:
 
 ```text
 plannedEnd        cadence/presentation plans exist
 armedEnd          valid silence/NO-DATA producer slots are available
 mappedEnd         physical descriptor programs reference those producer slots
 contentFilledEnd  contiguous real-PCM payload fills were accepted
-freezeCursor      physical fetch guard forbids payload writes before this point
+finalizedEnd      transport forbids new payload choices before this point
 completionCursor  OHCI has retired packets before this point
 ```
 
@@ -712,16 +686,16 @@ or differently timed range.
 
 ### Output safety
 
-Output safety should express the conservative hardware-relative lead at which
+Output safety expresses the conservative hardware-relative lead at which
 newly published PCM can still reach its intended presentation slot.
 
-It is derived from measured current-path behavior, including:
+It is derived from the implemented finality contract, including:
 
 - the transport freeze boundary;
 - packet granularity;
-- cross-service publication/revision delay;
-- backend-specific handoff requirements that genuinely constrain the final
-  content decision.
+- one six-packet completion interval;
+- the two-packet live-command repoint guard;
+- a device-profile floor, 50 frames for the Duet at 48 kHz.
 
 It is **not** derived from:
 
@@ -738,15 +712,16 @@ Output latency remains the actual delay between the driver's content handoff
 point and physical device presentation. It must be reported separately from
 safety. Transfer delay must not be mechanically counted in both properties.
 
-The Apple Duet split of 67 latency and 50 safety is useful evidence about the
-original driver's semantics, but ASFW must measure where equivalent delays live
-in its own pipeline.
+The Duet profile now reports Apple's 67 latency and 50 safety. This is exact HAL
+accounting parity. Physical loopback measurement is still required to establish
+whether equivalent delays live at equivalent points in the two drivers.
 
 ### Input timing
 
-The TX ownership change does not solve the current input excess. Input needs a
-separate trace from hardware acquisition through packet decode and ADK-ring
-publication. Required measurements are:
+The generic input-safety override has been removed, so the Duet now reports the
+original 40 latency plus 50 safety. Further input trace work is physical
+validation, not a prerequisite for reproducing the original property table.
+Useful measurements remain:
 
 - acquisition presentation bus time;
 - correlated host time;
@@ -755,77 +730,36 @@ publication. Required measurements are:
 - current hardware sample coordinate at publication;
 - safe readable lag and packet/batch granularity.
 
-The resulting measured safe lag becomes input safety. Acquisition-to-delivery
-delay becomes input latency. The Duet's exact 48-kHz reference split is 40
-latency plus 50 safety.
+Any future measured correction must change the profile with evidence; graph
+construction no longer manufactures a generic floor.
 
-## Instrumentation required before tuning
+## Instrumentation and acceptance
 
-The existing V3 telemetry records plan publication, ownership, and completion,
-but the proposed contract requires new events and distributions.
+Audio telemetry remains wire v6; Gate A2 does not reinterpret its fixed bytes.
+The queue ABI is v9 and adds `finalizedEnd`, accepted/rejected late-rebind
+counters, and the minimum command-pointer distance of an accepted rebind.
 
-### Per-slot trace fields
+The bounded `TxCycleTraceRecord` continues to record plan coordinates, PCM
+result, presentation time, disposition, preparation/publication/ownership/
+completion cycles, and deadline headroom. `[TxFill]` now reports, every five
+seconds:
 
-Extend the bounded cycle trace with:
+```text
+filled tooLate unavailable silentData cursor
+finalized mapped committed rebound rejected minRebindDistance
+```
 
-- plan/arm cycle and baseline disposition;
-- payload-fill request, start, and completion cycles;
-- payload-fill result and generation;
-- freeze cycle;
-- selected silence/PCM state;
-- presentation cycle and bus ticks;
-- fill-to-freeze headroom;
-- freeze-to-presentation headroom;
-- completion cycle;
-- producer-slot index, physical-ring index, and command-pointer distance as
-  reported by transport;
-- stable-mapped versus alternate-slot mode;
-- synchronized payload identity or test nonce.
-
-If the fixed telemetry structure changes, increment the telemetry wire version
-and update the C++, Swift, MCP, and fixed-size checks together. Do not reinterpret
-existing v6 bytes under new field meanings.
-
-### Counters and histograms
-
-Add bounded counters/histograms for:
-
-- arm depth;
-- current-path plan and refill execution delay;
-- accepted payload fills and fill duration;
-- `TooLate`, `AlreadyFrozen`, generation, and invalid-slot rejections;
-- planned DATA packets transmitted as silence because PCM was absent;
-- planned DATA packets transmitted as silence because fill was late;
-- normal cadence NO-DATA packets, counted separately from silent DATA;
-- freeze lead in cycles and frames;
-- fill-to-freeze and freeze-to-completion distance;
-- fills accepted before versus after physical mapping;
-- stable-mapped and alternate-slot attempts;
-- payload DMA-publication and optional descriptor-update failures;
-- DICE grouped-fill failures;
-- wire-payload nonce mismatches.
-
-The historical 40–42-cycle figure may be retained only as labeled archival
-context. New histograms, under the current implementation and workload, decide
-the planning and armed-depth policies.
-
-### Logging policy
-
-Do not add per-packet logs. Keep one coarse liveness/margin heartbeat and emit
-anomaly-only records with first-occurrence plus power-of-two repetition
-limiting. Suggested tags:
-
-- `[TxArm]` for inability to maintain valid baseline packet coverage;
-- `[TxPayload]` for late, rejected, or inconsistent payload fills;
-- `[TxFreeze]` for freeze-margin anomalies;
-- `[TxWireCheck]` for payload identity mismatches;
-- existing `[TxV3]`, `[TxDeadline]`, and `[TxOwnership]` summaries.
+Acceptance requires `rebound` to advance during real playback, `rejected=0`,
+`minRebindDistance>=2`, `finalized<mapped`, and no payload-seal or ownership
+fault. There are no per-packet logs. `[TxV3]` and `[TxFill]` are the coarse
+liveness records; `[TxDeadline]`, `[TxOwnership]`, `[TxPayloadSeal]`,
+`[TimelineEpoch]`, and `[ZTS]` remain anomaly-oriented.
 
 ## Validation plan
 
-### Phase 1: establish current-path baselines
+### Phase 1: establish current-path baselines — completed
 
-Before choosing a new depth:
+The investigation completed these baseline tasks:
 
 1. Run the current V3 stream at each supported rate.
 2. Measure plan production, slot publication, refill, ownership, and completion
@@ -836,9 +770,9 @@ Before choosing a new depth:
 5. Record the maximum and distribution; do not import the old 40–42-cycle
    observation into the result.
 
-### Phase 2: host-test the new state machine
+### Phase 2: host-test the new state machine — completed
 
-Host tests must cover:
+Host tests cover:
 
 - valid plan, arm, fill, freeze, completion, and reuse;
 - payload fill immediately before and after freeze;
@@ -853,30 +787,22 @@ Host tests must cover:
 - teardown while armed or frozen;
 - cross-service lifetime and generation changes.
 
-Host tests cannot establish the OHCI fetch frontier or DMA visibility.
+Host tests cannot establish the OHCI fetch frontier or DMA visibility; that is
+the remaining hardware acceptance boundary.
 
-### Phase 3: focused hardware payload-fill experiment
+### Phase 3: focused hardware alternate-image acceptance — current
 
 Use a development build, not a shipping runtime legacy selector:
 
-1. Publish planned DATA producer slots with a recognizable valid-silence nonce
-   while keeping packet length, CIP, DBC, and SYT stable.
-2. Confirm through transport trace that `IsochTxDmaRing` has mapped the selected
-   producer slot into a known physical descriptor-ring index.
-3. Overwrite only the PCM words with a different per-slot nonce or waveform at
-   progressively smaller distances from the actual OHCI command pointer.
-4. Republish payload visibility using the transport's DMA primitives and
-   barriers without changing the physical descriptor address or length.
-5. Capture the actual wire packet and correlate its nonce with the accepted
-   payload-fill result, producer slot, physical-ring index, and command-pointer
-   distance.
-6. Reject fills before entering any distance where mixed, stale, or
-   nondeterministic payloads appear.
-7. Verify separately that planned cadence NO-DATA packets are unaffected.
-8. Repeat across rates, packet sizes, duplex/output-only operation, bus reset,
-   and load.
-9. Only if stable mapped-payload fill cannot pass, run a distinct ASFW
-   alternate-slot/descriptor-selection experiment.
+1. Play continuous non-silent audio and confirm `[TxFill] rebound` advances.
+2. Require `rejected=0`, `minRebindDistance>=2`, and a stable eight-slot
+   `finalizedEnd-completionCursor` lead.
+3. Capture the wire and require intact DATA payloads plus continuous cadence,
+   DBC, and SYT. Image selection must never alter packet geometry.
+4. Verify that a late fill loses to complete armed silence; no packet may mix
+   the two images.
+5. Repeat under load, output-only, duplex, buffer-size changes, restart, bus
+   reset, and RX loss.
 
 Pass criteria:
 
@@ -884,88 +810,68 @@ Pass criteria:
 - every rejected fill leaves complete valid silence intact;
 - no packet contains a mixture of silence and partially written client PCM;
 - no DBC/SYT/cadence discontinuity is introduced;
-- physical descriptor address/length remain unchanged in stable-mapped mode;
+- only the mutable-tail descriptor address may change;
 - no payload revision or seal failure occurs after freeze;
 - the measured freeze margin has a conservative repeatable bound.
 
-### Phase 4: derive and verify timing properties
+### Phase 4: verify reported and physical timing — current
 
-After the freeze contract is proven:
-
-1. Set output safety from the conservative content-freeze lead, not the plan
-   horizon.
-2. Measure output latency separately.
-3. Compare Logic's fixed cost with the original-driver reference on the same
-   Duet.
-4. Validate the Saffire/DICE profile without generic inflation.
-5. Instrument and correct the input path separately.
-6. Repeat all client buffer sizes to verify that fixed cost remains independent
+1. Confirm Logic reads the 207-frame fixed total at 48 kHz.
+2. Repeat all client buffer sizes to verify that fixed cost remains independent
    of the client I/O buffer.
+3. Measure physical cable loopback RTL independently from reported properties.
+4. Validate DICE profiles without replacing their device policy with Duet
+   constants.
 
-### Phase 5: remove the superseded contract
+### Phase 5: remove the superseded contract — completed in code
 
-Once hardware validation passes:
+The one-shot immutable publication boundary, prepared-target-derived safety,
+generic input-safety floor, and selectable legacy behavior are gone. The
+alternate-image/finality contract is the only path. Hardware rejection of the
+two-packet guard requires revising that guard or contract; it does not authorize
+silently restoring the old scheduler.
 
-- replace `AcquireWritableSlot`/one-shot immutable `PublishSlot` with the
-  planned-geometry/payload-fill/freeze contract;
-- move the integrity seal to payload freeze;
-- remove the prepared-target-derived safety calculation;
-- remove stale comments and tests that equate queue depth with safety;
-- do not retain a selectable legacy scheduler or snapshot fallback;
-- update `AUDIOENGINEV3_DRAFT.md` with exact Duet numbers and the verified
-  content-freeze result.
+## Decision result and fallback boundary
 
-## Decision gates and alternatives
+### Gate A: direct mutation of the mapped image — not selected
 
-### Gate A: stable mapped-payload PCM fill is safe
+ASFW does not mutate the payload image currently addressed by hardware. This
+avoids the cross-service in-progress-write race entirely.
 
-If ASFW can prove a deterministic write boundary after a producer slot has been
-mapped into the physical ring, retain deep cadence/silence coverage and fill
-PCM words late without descriptor-address or length changes. Choose final
-planning, mapped, freeze, and content leads from current telemetry and hardware
-measurements.
+### Gate B: complete alternate-image selection — implemented
 
-### Gate B: stable mapped fill is unsafe, alternate-slot selection is safe
+`IsochTxDmaRing` selects a separately completed image either at bind or by one
+mutable-tail address store outside a two-packet live-command guard. Host proof
+is complete; hardware acceptance of the guard is pending. AppleFWAudio's NuDCL
+behavior supplies no numerical safety argument for this ASFW-specific choice.
 
-Use a separately finalized preallocated producer slot and make
-`IsochTxDmaRing` select it before a proven physical descriptor boundary. Prove
-that boundary independently. AppleFWAudio's NuDCL behavior supplies no safety
-argument for this ASFW-specific alternative.
-
-### Gate C: neither hardware-visible update is safe
+### Gate C: alternate-image rebind fails hardware acceptance
 
 Do not mutate hardware-visible payload memory speculatively. The alternative is
 to keep a deep software presentation plan but expose only a measured short
 hardware descriptor chain whose packets are finalized as they enter it.
 
-That alternative is viable only if current-path scheduling measurements show
-that the short chain survives required workloads. Historical stall figures do
-not decide the result. Pick one proven contract and remove the other; do not
-ship two timing engines.
+If hardware rejects the two-packet guard, first increase the guard from measured
+evidence. If no bounded rebind is safe, retain the deep software plan but expose
+only a proven short hardware-final chain. Do not ship two timing engines.
 
 ## Open questions
 
-1. How far ahead can this OHCI implementation fetch a descriptor or payload?
-2. Can ASFW safely fill PCM words in an already-mapped, stable-address and
-   stable-length payload,
-   and which DriverKit DMA synchronization is sufficient?
+1. Does the Duet accept the two-packet mutable-tail rebind guard without stale,
+   mixed, or malformed wire payloads?
+2. What is the minimum accepted rebind distance on the actual controller under
+   load, restart, and bus-reset conditions?
 3. What are the current V3 plan/refill/dispatch delay distributions after the
    recent architecture changes?
-4. What conservative margin is required above the observed freeze boundary?
-5. If stable mapped fill fails, can ASFW select a separately finalized buffer
-   before branch publication or another proven fetch boundary?
-6. How should a DICE multi-stream plan commit PCM-versus-silence atomically
+4. How should a DICE multi-stream plan commit content-versus-silence atomically
    across streams?
-7. What portion of each backend's delay belongs in safety versus reported
+5. What portion of each backend's delay belongs in safety versus reported
    latency?
-8. What accounts for the current OXFW input latency and safety separately?
-9. Does AppleFWAudio's `synchronizeWithIO` serve only callback exclusion on the
-   target hardware, or does another unobserved platform layer add cache/DMA
-   synchronization?
+6. What is the Duet's physical cable-loopback RTL under ASFW versus Apple?
 
-Questions 1, 2, 4, 5, and 9 require targeted hardware or platform research.
-They are deliberately not answered by analogy to NuDCLs, the old 40–42-cycle
-trace, or host-only tests.
+Questions 1, 2, and 6 require targeted hardware measurement. They are
+deliberately not answered by analogy to NuDCLs, the old 40–42-cycle trace, or
+host-only tests.
 
 ## Rejected or superseded explanations
 
@@ -990,25 +896,19 @@ The following are not valid premises for this work:
 
 ## Immediate work order
 
-1. Correct the exact Duet reference values in `AUDIOENGINEV3_DRAFT.md`.
-2. Add current-path scheduling/refill distributions without changing TX
-   behavior.
-3. Record the completed AppleFWAudio, AppleFWOHCI, and Saffire content/transport
-   layer analysis. Selector `3` is resolved as
-   `kFWNuDCLModifyNotification`; no further NuDCL work is required for the
-   stable-mapped experiment.
-4. Specify and host-test the neutral planned/writable/frozen slot contract.
-5. Implement the stable mapped-payload hardware nonce experiment and establish
-   the payload-write frontier against ASFW's actual physical command pointer.
-6. Replace the current one-shot immutable publication contract if the hardware
-   gate passes.
-7. Derive output safety and latency from the new measured boundaries.
-8. Instrument and correct input latency independently.
-
-This ordering preserves the working V3 clock architecture, avoids retuning
-against stale scheduling evidence, and tests the only part that cannot be
-proven from source or host simulation: when a future OHCI payload becomes
-physically irreversible.
+1. Install the Gate A2 build and verify that HAL reads back the Duet's
+   `50/67` output and `50/40` input split at 48 kHz.
+2. Capture `[TxFill]` while playing audio and require `rebound` to advance,
+   `rejected=0`, `minRebindDistance>=2`, and a finality-to-mapping separation.
+3. Verify FireBug sees continuous DATA/NO-DATA cadence, DBC, and SYT with no
+   malformed or stale payload after late rebinds.
+4. Exercise startup, buffer-size changes, stop/start, bus reset, and RX-loss
+   fallback. Require no payload-seal fault, transport underrun, or timeline
+   rebase within an epoch.
+5. Measure physical loopback RTL separately. Reported parity is not proof of
+   converter or end-to-end parity.
+6. Keep the metallic-artifact investigation deferred until the Apple-parity
+   path has been accepted on hardware, per the explicit project decision.
 
 
 ## Implementation record — 2026-08-29
@@ -1025,6 +925,7 @@ this machine, read back through Logic or the driver log ring.
 | freeze at mapping frontier | 512 | 256 | 768 | `6ae514df` |
 | reported latency derived | 451 | 168 | 619 | `76a93f2a` |
 | latency corrected to measurement | 489 | 168 | 657 | `72204b91` |
+| Gate A2 + exact Duet HAL policy | 117 | 90 | 207 | working tree |
 | Apple's driver, same hardware | 117 | 90 | 207 | — |
 
 Logic confirmed each stage to the frame. At a 32-sample buffer the round trip
@@ -1063,21 +964,23 @@ the omission.
 ### The contract change
 
 `AcquireWritableSlot` / `PublishSlot` no longer means "final". A planned DATA
-packet is armed with a complete silent image at plan time; its samples stay
-writable until transport binds the slot to a descriptor. Two payload images per
-producer slot (ABI v7), a generation-tagged readiness marker, and `mappedEnd`
-publishing the freeze frontier back to the producer.
+packet is armed with a complete silent image at plan time. Two payload images
+per producer slot, ABI v9 generation markers, and independent `mappedEnd` and
+`finalizedEnd` frontiers separate geometry publication, descriptor ownership,
+payload choice, and completion.
 
-This is **Gate A's stable-mapped design minus the hardware question**: the
-freeze frontier is a software cursor (the mapping frontier), not the physical
-fetch boundary. No payload the hardware may be fetching is touched, so the
-open questions 1, 2 and 4 remain open.
+A1 is merged (`84c85a5b`): the declared opaque prefix occupies descriptor 2 and
+the mutable tail occupies descriptor 3. Gate A2 is now implemented: transport
+scans already-bound packets from `CommandPtr+2`, acquire-checks image 1,
+verifies that the declared prefixes match, publishes the new image to DMA, and
+changes only descriptor 3's aligned `dataAddress`. The finality frontier is
+`current absolute command position + 6 completion slots + 2 guard slots`.
 
-There is no torn-packet window. Transport is the sole writer of the descriptor
-and selects the image before binding, so it never observes a half-written one;
-a fill that loses the race is indistinguishable from one that never happened.
-The document's worry that a write/freeze race "must resolve deterministically"
-is satisfied by construction here, without needing the alternate-slot fallback.
+There is no producer-side mutation of a hardware-addressed image. A fill/freeze
+race resolves to complete image 0 or complete image 1; transport is the sole
+writer of the live descriptor address. Host tests pin the guard behavior, the
+single-field rebind, rejection without an invariant prefix, and monotonic
+finality. Hardware still must confirm that the two-packet guard is sufficient.
 
 Consequences: arming can no longer fail for content reasons, so the deferral
 and convert-to-cadence-NO-DATA path was deleted with the contract that needed
@@ -1108,7 +1011,8 @@ completion that appeared to *lead* its correlation but not one that appeared to
 bursts of ~6 packets every ~24 s. Window choice is now nearest-in-both-
 directions, and the lift exists once instead of twice.
 
-**Output reported latency is 105 frames, not the ~67 the reference implies.**
+**The measured ASFW presentation lead was 105 frames; the Duet profile now
+reports Apple's 67-frame policy.**
 `[TxLead]` measures the stamped presentation lead at 53876 ticks (min 105, max
 111 frames). The duplex path stamps `transmitBusTicks + replayEntry.sytOffset +
 transfer`, and the recovered offset carries a full 16-cycle modulus whenever the
@@ -1118,48 +1022,40 @@ delay matches its blocking-mode derivation at `:288-292` exactly, so this is
 ordinary AMDTP behaviour. An earlier suspicion of a double-counted transfer
 delay was unfounded: RX subtracts and TX adds back, symmetric with Linux.
 
-This sharpens the document's warning about copying the Duet override table.
-Apple reports 67 total while presumably stamping a comparable lead, so **their
-anchor sits at a different point in the path than ours**. `HardwareSampleTimeline`
-anchors on TX completion, so everything after transmission — including those 105
-frames — falls outside the safety offset and must be reported. The reference
-split is not transferable without matching the anchor.
+The 105-frame observation remains useful wire-timing telemetry, but it is not a
+HAL latency derivation. The current project decision is to reproduce the
+original Duet personality first: the profile reports 67 output frames while the
+wire planner keeps the Linux-compatible SYT/transfer construction unchanged.
+This closes accounting parity but makes the need for a physical loopback
+measurement more explicit, not less.
 
-### The whole remaining gap is the safety offsets
+### Reported parity is closed; physical parity remains unmeasured
 
-Remaining gap to Apple is 450 frames, and 412 of it -- 92% -- is the two safety
-offsets. Input *latency* is already at parity (40). There is no accounting trick
-available: what a safety offset measures is how early content must be final, and
-the only way to shrink one is to make content final closer to the wire.
+At 48 kHz the model now reports the same fixed split as Apple's Duet driver:
 
-Note in particular that **moving the anchor is not a latency win.** Logic shows
-safety + latency + buffer, and that sum must equal physical reality wherever the
-anchor sits: anchoring on presentation would place the anchor 105 frames later,
-so safety would have to grow by the same 105 to keep content final at the same
-physical instant. It is worth doing to make our split directly comparable to the
-reference's -- right now the two cannot be compared term by term -- but it buys
-no milliseconds.
-1. **Gate A proper** — freeze closer than the mapping frontier. The single
-   largest item at ~280 frames, and the only one that shrinks output safety at
-   all. Content is currently final one descriptor runway (48 slots) plus one
-   refill batch (6) before transmission; Apple's 50-frame safety means theirs is
-   final ~6-8 packets out. Still needs the nonce experiment. Prerequisite A1 (splitting the
-   descriptor at an opaque payload prefix so re-pointing an image is a single
-   aligned store rather than two) is written and parked, unmerged, because it is
-   wire-observable and would confound an open audio-quality investigation.
-2. **Input safety, 128.** Worth 78 frames. The derived floor is 104 — one 40-frame interrupt batch
-   (observed acquisition ages 15–30) plus a 64-frame cushion — which 32-frame ring
-   alignment rounds back to 128. Lowering it needs RX-side jitter numbers that do
-   not exist yet; `[TxPrep]`'s 8 ms outliers are the only tail measurement we
-   have and they argue against optimism.
+```text
+output = safety 50 + latency 67 = 117
+input  = safety 50 + latency 40 =  90
+total                              207 frames
+```
+
+The earlier 450-frame accounting gap is therefore closed in code: 78 frames by
+removing the generic input-safety override, 334 by moving output finality from
+54 to 8 cycle slots and honoring the 50-frame profile floor, and 38 by applying
+the original 67-frame output-latency policy. None of those arithmetic changes
+constitutes a loopback measurement.
 
 ### Open
 
-A metallic artifact appeared after the freeze-at-mapping change and is not yet
-explained. TX scheduling telemetry is clean at the time of observation (263k
-wakes, max 208 us, margin pinned, no seal mismatches, no `noCycleAnchor`), RX
-reports `receivingData` with the expected 3:1 DATA/NO-DATA ratio and zero replay
-resets, and arm-then-fill encoding is pinned byte-identical to one-shot
-encoding by host test. That leaves coverage — packets transmitting their armed
-silence — as the surviving hypothesis, which `[TxFill]` (`46976c32`) was added to
-measure and which has not yet been read back.
+The metallic artifact remains unexplained and is deliberately deferred. It is
+not a gate for implementing or measuring Apple parity. After hardware
+acceptance, `[TxFill]` can still distinguish successful late rebinds from
+silence substitutions without changing the scheduling contract.
+
+The exact acceptance capture is:
+
+```bash
+log stream --style compact --info --debug --predicate 'process == "kernel" AND (eventMessage CONTAINS "[TxV3]" OR eventMessage CONTAINS "[TxFill]" OR eventMessage CONTAINS "[TxOwnership]" OR eventMessage CONTAINS "[TxPayloadSeal]" OR eventMessage CONTAINS "[TxDeadline]" OR eventMessage CONTAINS "[TimelineEpoch]" OR eventMessage CONTAINS "[ZTS]")' > /tmp/asfw-rtl.log
+```
+
+Run it from the Codex terminal with the `!` prefix while audio is playing.
