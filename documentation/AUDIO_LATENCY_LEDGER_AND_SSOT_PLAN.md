@@ -427,12 +427,30 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    after this fix, and settling it needs reference or hardware evidence. The
    review fixture for writing that reproduction is now
    `IsochTxPayloadArbitrationTest`.
-4. **Measure the intervals the ledger marks nominal.** Rule 3 above is currently
-   unenforced: `I2` and `J3` are configured geometry with no observed
-   distribution, and `I1`/`J4` are variable with no recorded spread. Add
-   histograms for actual E1→E2 and F3→F4 elapsed time (including dispatch
-   delay, which geometry does not bound), and for the `I1`/`J4` waits. Anomaly-
-   gated per the hot-path instrumentation rule.
+4. **Measure the intervals the ledger marks nominal.** **Instrumented; awaiting
+   the bench run for the distributions themselves.** All four now report on the
+   `[Ledger]` heartbeat, each line carrying sample count, unresolved count, min,
+   mean, max and an eight-bucket µs ladder starting at one isoch cycle.
+
+   | Interval | Endpoints observed at | Domain |
+   |---|---|---|
+   | `I1` E0→E1 | `WriteEnd` publication → frontier crossing at the TX observer | host |
+   | `I2` E1→E2 | frontier crossing → the packet's own completion timestamp | bus |
+   | `J3` F3→F4 | the RX drain's back-dating of the packet, which *is* the elapsed time | host |
+   | `J4` F4→F5 | capture decode → `BeginRead` for the newest frame requested | host |
+
+   Two things to read carefully. `I2` starts at the frontier crossing **as
+   observed**, so the observer's own dispatch lag is inside it deliberately —
+   that lag is part of how late a content decision is and geometry does not
+   bound it. And `unresolved` is part of each measurement, not an error channel:
+   it counts samples whose first endpoint aged out of the stamp ring or arrived
+   out of order, so a thin histogram can never be read as a well-behaved
+   interval that merely occurred rarely.
+
+   These are **not** anomaly-gated, unlike the fault telemetry: a distribution
+   that only appears once it is already bad cannot establish what normal looks
+   like, which is the single thing these exist to do. They ride the existing
+   coarse heartbeat and add no per-packet logging.
 5. **Make bench preflight and transport status trustworthy.** **Landed.**
 
    `txTransportStatus` had a live producer all along and simply was not being

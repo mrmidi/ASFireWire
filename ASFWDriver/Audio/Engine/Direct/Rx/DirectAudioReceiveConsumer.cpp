@@ -365,6 +365,15 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packetHostTicks = batch.drainHostTicks > ageHostTicks
             ? batch.drainHostTicks - ageHostTicks
             : batch.drainHostTicks;
+        // J3 (F3->F4). The back-dating amount is the elapsed time itself: how
+        // long the packet sat between the controller receiving it and this
+        // drain reaching it. Dispatch delay is inside it, which is exactly why
+        // the ledger's "32-40 frames per batch" was never an answer to this --
+        // that figure says how much audio a batch carries, not how late it is.
+        if (inputView_.control) {
+            inputView_.control->ledgerJ3ReceiveToDecode.Record(
+                ::ASFW::Timing::hostTicksToNanos(ageHostTicks) / 1000U);
+        }
     } else {
         ++negativeAgeCount_;
         if (-timestamp.ageTicks >=
@@ -440,6 +449,13 @@ void DirectAudioReceiveConsumer::ConsumePacket(
 
     const uint64_t packetFirstFrame =
         absoluteFrameCursor_ - result.framesDecoded;
+    // F4 for the ledger's J4: these frames are in the capture ring as of this
+    // drain. Keyed by the end-exclusive frame they reach, so a later read can
+    // ask when the newest frame it wants became visible.
+    if (result.framesDecoded != 0 && inputView_.control) {
+        inputView_.control->ledgerCaptureDecode.Record(absoluteFrameCursor_,
+                                                       batch.drainHostTicks);
+    }
     if (result.framesDecoded != 0 && packetHostTicks != 0 &&
         clockPublisher_.IsBound() && cadence.established &&
         result.hasValidCip && result.syt != 0xffff &&

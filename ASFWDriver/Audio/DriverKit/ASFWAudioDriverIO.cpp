@@ -270,6 +270,24 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 }
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
                 control->rxCaptureBufferTelemetry.RecordReaderBeginRead();
+                // J4 (F4->F5): how long the newest frame this read wants had
+                // been sitting in the capture ring. Measured against the newest
+                // frame rather than the oldest, because that is the one whose
+                // wait bounds whether the read could have happened sooner.
+                {
+                    uint64_t decodedAt = 0;
+                    const uint64_t newest = ioBufferFrameSize == 0
+                        ? sampleTime : sampleTime + ioBufferFrameSize - 1;
+                    if (control->ledgerCaptureDecode.CoveredAt(newest,
+                                                               decodedAt) &&
+                        hostTime >= decodedAt) {
+                        control->ledgerJ4DecodeToRead.Record(
+                            ASFW::Timing::hostTicksToNanos(
+                                hostTime - decodedAt) / 1000U);
+                    } else {
+                        control->ledgerJ4DecodeToRead.CountUnresolved();
+                    }
+                }
                 (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
                                                      *control,
                                                      sampleTime,
@@ -294,9 +312,10 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                         .frameCapacity = memory.outputFrameCapacity,
                         .channels = memory.outputChannels,
                     });
+                const uint64_t publicationEnd = mach_absolute_time();
                 RecordPcmPublicationCost(
                     control->pcmPublicationTelemetry, ioBufferFrameSize,
-                    mach_absolute_time() - publicationStart);
+                    publicationEnd - publicationStart);
                 if (publishResult ==
                         ASFW::Audio::Runtime::PcmPublishResult::InvalidView ||
                     publishResult ==
@@ -312,6 +331,15 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     control->counters.CountWriteEnd();
                     return kIOReturnSuccess;
                 }
+
+                // E0 for the ledger's I1: the instant these frames became
+                // available to the planner, keyed by the end-exclusive frame
+                // they reach. It sits after the rejection and duplicate paths
+                // deliberately -- a publication the cache refused made nothing
+                // available, and recording it would date the frames to a write
+                // that never landed.
+                control->ledgerOutputPublication.Record(
+                    sampleTime + ioBufferFrameSize, publicationEnd);
 
                 // Publish W only after the complete callback range has been
                 // copied into the immutable publication cache.

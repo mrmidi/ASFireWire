@@ -294,6 +294,87 @@ void SubmitTxObservation(
     }
 }
 
+/// One ledger interval, on the coarse heartbeat. The ledger's rule is that a
+/// nominal is not an observation, so the line always carries the sample count
+/// and the unresolved count beside the distribution: a narrow spread over three
+/// samples, or one that dropped most of its observations, must not read like a
+/// well-behaved interval.
+void LogLedgerInterval(const char* name,
+                       const ASFW::Audio::Runtime::LedgerIntervalStats& stats)
+    noexcept {
+    const uint64_t samples = stats.samples.load(std::memory_order_relaxed);
+    const uint64_t unresolved = stats.unresolved.load(std::memory_order_relaxed);
+    if (samples == 0 && unresolved == 0) return;
+    const uint64_t minMicros = stats.minMicros.load(std::memory_order_relaxed);
+    ASFW_LOG(DirectAudio,
+             "[Ledger] %{public}s n=%llu unres=%llu min=%llu mean=%llu max=%llu us hist=[%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu]",
+             name, samples, unresolved,
+             samples == 0 ? 0 : minMicros,
+             stats.MeanMicros(),
+             stats.maxMicros.load(std::memory_order_relaxed),
+             stats.histogram[0].load(std::memory_order_relaxed),
+             stats.histogram[1].load(std::memory_order_relaxed),
+             stats.histogram[2].load(std::memory_order_relaxed),
+             stats.histogram[3].load(std::memory_order_relaxed),
+             stats.histogram[4].load(std::memory_order_relaxed),
+             stats.histogram[5].load(std::memory_order_relaxed),
+             stats.histogram[6].load(std::memory_order_relaxed),
+             stats.histogram[7].load(std::memory_order_relaxed));
+}
+
+/// Bus ticks run at 24.576 MHz; host ticks are converted through the timebase.
+[[nodiscard]] constexpr uint64_t BusTicksToMicros(uint64_t ticks) noexcept {
+    return ticks / 24U;  // 24.576 ticks/us; the truncation is under 3%.
+}
+
+/// Account every packet whose payload choice became final since the last wake:
+/// I1 against the publication that supplied its frames, and a finality stamp so
+/// I2 can close against the controller's transmission timestamp later.
+void RecordLedgerFinality(
+    ASFWAudioDriver_IVars& ivars,
+    ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+    const ASFW::Protocols::Audio::AMDTP::AmdtpPacketTimeline& timeline,
+    uint64_t timelineEpoch,
+    const ASFW::Isoch::IsochTxClockPairSample& pair) noexcept {
+    auto* queue = ivars.runtime.txSlotProvider.queueControl;
+    if (!queue) return;
+    const uint64_t finalizedEnd =
+        queue->finalizedEnd.load(std::memory_order_acquire);
+    const uint64_t alreadySeen =
+        control->ledgerObservedFinalizedEnd.load(std::memory_order_relaxed);
+    if (finalizedEnd <= alreadySeen) return;
+
+    // Bound the catch-up: a frontier that jumped further than the stamp ring
+    // retains cannot be attributed packet by packet anyway.
+    uint64_t first = alreadySeen;
+    if (alreadySeen == 0 ||
+        finalizedEnd - alreadySeen > ASFW::Audio::Runtime::kLedgerStampSlots) {
+        first = finalizedEnd > ASFW::Audio::Runtime::kLedgerStampSlots
+                    ? finalizedEnd - ASFW::Audio::Runtime::kLedgerStampSlots
+                    : 0;
+    }
+    for (uint64_t packet = first; packet < finalizedEnd; ++packet) {
+        const auto* slot =
+            timeline.SlotByIndex(static_cast<uint32_t>(packet));
+        if (!slot || !slot->isData || slot->framesInPacket == 0 ||
+            slot->epoch != timelineEpoch) {
+            continue;
+        }
+        uint64_t publishedAt = 0;
+        if (!control->ledgerOutputPublication.CoveredAt(slot->firstAudioFrame,
+                                                        publishedAt) ||
+            pair.hostTimeMid < publishedAt) {
+            control->ledgerI1WriteToFinality.CountUnresolved();
+            continue;
+        }
+        control->ledgerI1WriteToFinality.Record(
+            ASFW::Timing::hostTicksToNanos(pair.hostTimeMid - publishedAt) /
+            1000U);
+    }
+    control->ledgerObservedFinalizedEnd.store(finalizedEnd,
+                                              std::memory_order_relaxed);
+}
+
 void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
                        uint64_t transportGeneration,
                        bool useMAudio) noexcept {
@@ -338,6 +419,13 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
 
     const auto& timeline = ivars.runtime.txStreamEngine.Timeline();
     const uint64_t timelineEpoch = control->hardwareTimeline.Epoch();
+
+    // I1 (E0->E1) and the start endpoint of I2 (E1->E2). Finality is our own
+    // frontier, so the moment it passes a packet is only knowable where the
+    // frontier is read -- here. Both are recorded before the stamps are drained
+    // so a packet that goes final and completes in the same wake still has its
+    // finality on record when I2 asks for it.
+    RecordLedgerFinality(ivars, control, timeline, timelineEpoch, pair);
 
     if (useMAudio) {
         // The M-Audio warm-up state machine counts transport wakes, not
@@ -425,6 +513,18 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
         if (!slot || !slot->isData || slot->framesInPacket == 0 ||
             slot->epoch != timelineEpoch) {
             continue;
+        }
+
+        // I2 (E1->E2). Both endpoints are bus-domain, so this is finality to
+        // wire and excludes the delay in noticing the completion.
+        uint64_t finalityBusTicks = 0;
+        if (control->ledgerTxFinality.CoveredAt(packetIndex,
+                                                finalityBusTicks) &&
+            completionBusTicks >= finalityBusTicks) {
+            control->ledgerI2FinalityToTransmit.Record(
+                BusTicksToMicros(completionBusTicks - finalityBusTicks));
+        } else {
+            control->ledgerI2FinalityToTransmit.CountUnresolved();
         }
 
         control->txCycleTrace.Complete(slot->epoch, slot->cycleOrdinal,
@@ -1107,6 +1207,17 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                      .load(std::memory_order_relaxed),
                  headroomMin == UINT32_MAX ? 0u : headroomMin,
                  headroomRunMin == UINT32_MAX ? 0u : headroomRunMin);
+
+        // The four ledger intervals ride the same coarse heartbeat rather than
+        // being anomaly-gated: a distribution that only appears when it is
+        // already bad cannot establish what normal looks like, which is the
+        // one thing these exist to do. The buckets are cumulative for the run,
+        // so successive lines are a running shape, not a per-interval sample.
+        using ASFW::Audio::DriverKit::LogLedgerInterval;
+        LogLedgerInterval("I1 write->final ", control->ledgerI1WriteToFinality);
+        LogLedgerInterval("I2 final->wire  ", control->ledgerI2FinalityToTransmit);
+        LogLedgerInterval("J3 recv->decode ", control->ledgerJ3ReceiveToDecode);
+        LogLedgerInterval("J4 decode->read ", control->ledgerJ4DecodeToRead);
     }
     if (committedAfter < target) {
         const uint64_t shortageCount =

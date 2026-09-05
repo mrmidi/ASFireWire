@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioClientCursor.hpp"
+#include "../../Runtime/AudioLedgerIntervals.hpp"
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
 #include "TxSytTrace.hpp"
@@ -609,6 +610,38 @@ struct AudioTransportControlBlock final {
     /// drained them. Non-zero means timeline observations were lost, which is a
     /// clock-quality fault, not a content fault.
     std::atomic<uint64_t> backendCompletionStampsMissed{0};
+
+    // ---- Ledger interval observation (plan Part 1a/1b) -------------------
+    // The four spans the ledger asserts as geometry rather than measurement.
+    // Rule 3 of the ledger says a nominal is not an observation; these are what
+    // make that rule enforceable.
+    /// I1, E0->E1: client write lands -> the packet carrying it goes final.
+    /// Host domain. A wait, not a cost: it is how far ahead of finality the HAL
+    /// scheduled the write.
+    ASFW::Audio::Runtime::LedgerIntervalStats ledgerI1WriteToFinality{};
+    /// I2, E1->E2: payload finality -> the packet reaches the wire. Bus domain,
+    /// so the transmission endpoint is the controller's own timestamp and not a
+    /// callback's. Its start is the frontier crossing *as observed here*, so the
+    /// observer's dispatch lag is inside the number by design -- that lag is a
+    /// real part of how late a content decision is, and geometry does not bound
+    /// it. `unresolved` counts both a crossing that aged out and one seen only
+    /// after the packet had already gone.
+    ASFW::Audio::Runtime::LedgerIntervalStats ledgerI2FinalityToTransmit{};
+    /// J3, F3->F4: packet received by host OHCI -> frame decoded into the
+    /// capture ring. Includes dispatch delay, which is the whole reason the
+    /// 32-40 frames per batch is not an answer to this question.
+    ASFW::Audio::Runtime::LedgerIntervalStats ledgerJ3ReceiveToDecode{};
+    /// J4, F4->F5: decoded into the capture ring -> read by the client. Host
+    /// domain. Real waiting whenever the reader lags the writer.
+    ASFW::Audio::Runtime::LedgerIntervalStats ledgerJ4DecodeToRead{};
+    /// E0: end-exclusive published output frame -> host ticks at publication.
+    ASFW::Audio::Runtime::LedgerStampRing ledgerOutputPublication{};
+    /// E1: observed finality frontier -> bus ticks at the observing wake.
+    ASFW::Audio::Runtime::LedgerStampRing ledgerTxFinality{};
+    /// F4: end-exclusive decoded capture frame -> host ticks at decode.
+    ASFW::Audio::Runtime::LedgerStampRing ledgerCaptureDecode{};
+    /// Highest frontier this observer has already accounted for I1.
+    std::atomic<uint64_t> ledgerObservedFinalizedEnd{0};
     std::atomic<uint64_t> mAudioWarmupGroups{0};
     std::atomic<uint64_t> mAudioTxDerivedObservations{0};
     std::atomic<uint64_t> mAudioCaptureTransitions{0};
@@ -969,6 +1002,14 @@ struct AudioTransportControlBlock final {
         backendSytDiscontinuities.store(0, std::memory_order_relaxed);
         backendObservationConversions.store(0, std::memory_order_relaxed);
         backendCompletionStampsMissed.store(0, std::memory_order_relaxed);
+        ledgerI1WriteToFinality.Reset();
+        ledgerI2FinalityToTransmit.Reset();
+        ledgerJ3ReceiveToDecode.Reset();
+        ledgerJ4DecodeToRead.Reset();
+        ledgerOutputPublication.Reset();
+        ledgerTxFinality.Reset();
+        ledgerCaptureDecode.Reset();
+        ledgerObservedFinalizedEnd.store(0, std::memory_order_relaxed);
         backendObservationConversionFailures.store(
             0, std::memory_order_relaxed);
         mAudioWarmupGroups.store(0, std::memory_order_relaxed);
