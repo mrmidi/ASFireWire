@@ -50,7 +50,6 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kMinimumNominalFramesPerInterrupt, 32U);
     EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 40U);
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
-    EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 104U);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
     EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 8192U);
     EXPECT_EQ(Geometry::kTxSharedSlotPackets, 168U);

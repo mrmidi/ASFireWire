@@ -1,4 +1,4 @@
-#include "Audio/Config/InputSafetyPolicy.hpp"
+#include "Audio/Shared/AudioGeometryPolicy.hpp"
 #include "Audio/Shared/AudioTimingGeometry.hpp"
 #include "Audio/Wire/AMDTP/RxSequenceReplay.hpp"
 #include "Isoch/Core/IsochDmaGeometry.hpp"
@@ -238,30 +238,14 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 168U);
 }
 
-TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
-    // The IO buffer window must NOT inflate the safety offset (was 624). The
-    // margin is one interrupt batch + jitter (40+64=104), floored by the
-    // profile value and aligned up to the 32-frame grid.
-    //   profile floor 128 wins over the 104 batch -> 128.
-    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(128, 40, 64), 128U);
-    //   no profile floor -> interrupt batch 104 aligned up to 128.
-    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(0, 40, 64), 128U);
-    //   a larger profile floor is honored, aligned: 200 -> 224.
-    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(200, 40, 64), 224U);
-}
-
 TEST(RxDrivenTimingTests, OutputSafetyIsTheContentFreezeLeadNotTheArmHorizon) {
     using Policy = ASFW::Audio::Shared::AudioGeometryPolicy;
-    // 54 content-freeze slots, not the 120-slot arm horizon: a packet is armed
-    // with silence long before its samples stop being writable, and only the
-    // latter is latency. Halving these is the whole point of the split.
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 48'000, 12'800),
-              384U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000, 12'800),
-              736U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000, 12'800),
-              1440U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100, 12'800),
+    // Eight content-finality slots, not the 120-slot arm horizon. Backend
+    // transfer delay is latency and is not counted again as safety.
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(50, 48'000), 50U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000), 96U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000), 192U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100),
               0U);
 }
 

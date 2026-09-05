@@ -8,9 +8,9 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
-#include "../Config/InputSafetyPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
+#include "../Shared/AudioGeometryPolicy.hpp"
 #include "../Shared/AudioTimingGeometry.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
@@ -665,8 +665,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     const uint32_t profileOutputSafety = outSafety;
     outSafety = ASFW::Audio::Shared::AudioGeometryPolicy::
         RequiredOutputSafetyFrames(
-            outSafety, static_cast<uint32_t>(currentSampleRate),
-            profile->TxTransferDelayTicks(currentSampleRate));
+            outSafety, static_cast<uint32_t>(currentSampleRate));
     if (outSafety == 0) {
         ASFW_LOG_ERROR(
             Audio,
@@ -677,35 +676,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (outSafety != profileOutputSafety) {
         ASFW_LOG(
             Audio,
-            "ASFWAudioDriver: output safety %u -> %u (preparedSlots=%u transferTicks=%u packetFrames=%u)",
+            "ASFWAudioDriver: output safety %u -> %u (finalitySlots=%u)",
             profileOutputSafety, outSafety,
             ASFW::Audio::Shared::AudioTimingGeometry::
-                kTxPreparedTargetCycleSlots,
-            profile->TxTransferDelayTicks(currentSampleRate),
-            ASFW::Audio::Shared::AudioGeometryPolicy::FramesPerPacket(
-                currentSampleRate));
-    }
-
-    constexpr uint32_t kSchedulingJitterFrames = 64;
-    // Data-visibility margin only; the IO buffer size is NOT folded in (see
-    // RequiredInputSafetyFrames). This floors the profile's per-rate value
-    // (RxSafetyOffsetFrames) at one interrupt batch + jitter, never inflates it.
-    const uint32_t requiredInputSafety =
-        ASFW::Audio::RequiredInputSafetyFrames(
-            inSafety,
-            ASFW::Audio::Shared::AudioTimingGeometry::
-                kMaximumNominalFramesPerInterrupt,
-            kSchedulingJitterFrames);
-    if (inSafety != requiredInputSafety) {
-        ASFW_LOG(
-            Audio,
-            "ASFWAudioDriver: input safety %u -> %u (maxIRQFrames=%u jitter=%u)",
-            inSafety,
-            requiredInputSafety,
-            ASFW::Audio::Shared::AudioTimingGeometry::
-                kMaximumNominalFramesPerInterrupt,
-            kSchedulingJitterFrames);
-        inSafety = requiredInputSafety;
+                kTxContentFreezeCycleSlots);
     }
 
     if (!requireAdkSuccess(

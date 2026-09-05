@@ -64,15 +64,9 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kHalZeroTimestampPeriodFrames =
         kActiveAudioHalBufferProfile.zeroTimestampPeriodFrames;
 
-    // Scheduling-jitter cushion (single Default-queue contention). Field runs
-    // showed producer wakes delayed by tens of packets; every "must lead by"
-    // budget adds this on top of its nominal requirement. Frames.
+    // Scheduling-jitter cushion used for immutable publication retention. It
+    // is not a HAL safety-offset floor; device profiles own reported safety.
     static constexpr uint32_t kSchedulingJitterFrames = 64;
-
-    // The graph applies the complete profile/output/client-IO formula. This is
-    // only the interrupt-batch component of that calculation.
-    static constexpr uint32_t kInputSafetyFloorFrames =
-        kMaximumNominalFramesPerInterrupt + kSchedulingJitterFrames;
 
     // Client IO sizing/safety budget. ADK may issue a different operation
     // span; the callback validates that span against stream-ring capacity.
@@ -163,17 +157,21 @@ struct AudioTimingGeometry final {
         kTxPreparedTargetCycleSlots;
     // 21 ms of durable packet storage: 15 ms prepared plus the 6 ms ownership
     // guard. Storage capacity is not presentation latency.
-    // Freeze frontier: how far ahead of the hardware a packet's samples stop
-    // being writable. Transport binds a slot to a descriptor at most one
-    // hardware ring ahead, and advances that frontier one completion group at a
-    // time, so a fill must land this far ahead to be certain of winning.
+    // Bound-payload finality: transport refreshes alternative payload images on
+    // each six-packet completion and never repoints either of the two commands
+    // closest to the live OHCI CommandPtr. The next completion interval plus
+    // that guard is therefore the producer-visible finality frontier.
     //
     // This is the ONLY TX depth that becomes CoreAudio output latency. The arm
     // horizon above may grow freely to absorb scheduling stalls: an armed
     // packet already holds a valid silent image, so a late producer costs
     // content, never a holed descriptor ring.
+    static constexpr uint32_t kTxDescriptorRepointGuardCycleSlots =
+        ::ASFW::Shared::Isoch::IsochQueueGeometry::
+            kPayloadRepointGuardPackets;
     static constexpr uint32_t kTxContentFreezeCycleSlots =
-        kTxHardwareRingPackets + kTxPacketsPerGroup;
+        ::ASFW::Shared::Isoch::IsochQueueGeometry::
+            kPayloadFinalityLeadPackets;
     static constexpr uint32_t kTxSharedSlotPackets = 168;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
     static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =

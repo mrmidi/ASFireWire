@@ -63,38 +63,25 @@ struct AudioGeometryPolicy final {
         return maxClientIoFrames + jitterFrames;
     }
 
-    // Conservative hardware-relative output lead. It is deliberately derived
-    // from the physical scheduling policy, backend transfer delay, and one
-    // DATA-packet quantum. Ring/cache capacity is not an input.
+    // Conservative hardware-relative output lead. It is derived from the
+    // physical payload-finality policy; backend presentation delay is reported
+    // separately as latency. Ring/cache capacity is not an input.
     static constexpr uint32_t RequiredOutputSafetyFrames(
         uint32_t profileFloorFrames,
-        uint32_t sampleRateHz,
-        uint32_t backendTransferTicks) noexcept {
+        uint32_t sampleRateHz) noexcept {
         if (!AudioTimingGeometry::IsV3SampleRate(sampleRateHz)) {
             return 0;
         }
-        // The content lead, not the arm horizon. Packets are armed with silence
-        // far ahead so a producer stall cannot hole the descriptor ring, but
-        // samples may be written until transport binds the slot -- so what the
-        // host must stay ahead of is the freeze frontier: the hardware ring
-        // plus the refill batch that advances it in one step.
+        // Safety is the producer-visible payload-finality lead, not the arm
+        // horizon and not backend presentation delay. The latter is reported
+        // separately as stream latency.
         const uint64_t scheduledFrames =
             (static_cast<uint64_t>(sampleRateHz) *
                  AudioTimingGeometry::kTxContentFreezeCycleSlots +
              7'999U) /
             8'000U;
-        const uint32_t ticksPerFrame = 24'576'000U / sampleRateHz;
-        const uint64_t transferFrames =
-            (static_cast<uint64_t>(backendTransferTicks) +
-             ticksPerFrame - 1U) /
-            ticksPerFrame;
-        const uint64_t physicalLead = scheduledFrames + transferFrames +
-            FramesPerPacket(sampleRateHz);
-        const uint64_t raw = physicalLead > profileFloorFrames
-            ? physicalLead : profileFloorFrames;
-        constexpr uint32_t alignment = AudioTimingGeometry::kFrameAlignment;
-        return static_cast<uint32_t>(
-            ((raw + alignment - 1U) / alignment) * alignment);
+        return static_cast<uint32_t>(scheduledFrames > profileFloorFrames
+            ? scheduledFrames : profileFloorFrames);
     }
 };
 
@@ -150,50 +137,10 @@ static_assert(AudioGeometryPolicy::RxSafetyOffsetFrames(48000.0) == 128,
               "48k RX safety must be 16 packets x 8 frames");
 static_assert(AudioGeometryPolicy::ReportedLatencyFrames(48000.0) == 29,
               "48k reported latency must be 29 frames");
-// 54 cycle slots of content lead (48 hardware ring + one 6-packet refill
-// batch) = 324 frames, plus 25 frames of backend transfer delay and one
-// 8-frame DATA packet, rounded to the 32-frame ring alignment.
-//
-// Was 768, derived from the 120-slot ARM horizon back when publishing a packet
-// also made its samples final. It no longer does: arming and freezing are
-// separate, and only the freeze frontier is latency.
+// Six completion slots plus a two-slot live-descriptor guard are 48 frames at
+// 48 kHz. The Duet's 50-frame profile floor therefore wins.
 static_assert(AudioGeometryPolicy::RequiredOutputSafetyFrames(
-                  48, 48'000, 12'800) == 384,
-              "48k V3 output safety must reflect the content freeze frontier");
+                  50, 48'000) == 50,
+              "48k Duet safety must reflect the finality frontier");
 
 } // namespace ASFW::Audio::Shared
-
-// -----------------------------------------------------------------------------
-// RX input-safety cushion. Kept in namespace ASFW::Audio (unchanged signature)
-// so existing call sites and InputSafetyPolicy.hpp includers do not break.
-// -----------------------------------------------------------------------------
-namespace ASFW::Audio {
-
-[[nodiscard]] constexpr uint32_t RequiredInputSafetyFrames(
-    uint32_t profileInputSafety,
-    uint32_t maximumFramesPerInterrupt,
-    uint32_t schedulingJitterFrames) noexcept {
-    // The HAL safety offset is the data-VISIBILITY margin only: how far the
-    // input read head must lag the producer so the frames are guaranteed
-    // present. CoreAudio accounts for the IO buffer size SEPARATELY (via the
-    // buffer-frame-size property), so the IO window must NOT be folded in here.
-    // Folding it in inflated the input safety offset to 624 frames (~13 ms,
-    // ~10.7 ms of phantom input latency) and broke the input==output symmetry
-    // every reference stack holds: Apogee Duet plist (50/50 @48k, x2/x4 by
-    // rate), Focusrite Saffire (delayPackets x framesPerPacket), and Apple's
-    // AppleFWAudio engine (small multiples of frames-per-group + device
-    // override) all sit at tens of frames, never hundreds.
-    //
-    // The margin is one interrupt batch + scheduling jitter, floored by the
-    // device profile's own value (RxSafetyOffsetFrames = 128 @48k), aligned up
-    // to the 32-frame grid.
-    const uint32_t interruptBatch =
-        maximumFramesPerInterrupt + schedulingJitterFrames;
-    const uint32_t raw =
-        profileInputSafety > interruptBatch ? profileInputSafety : interruptBatch;
-    constexpr uint32_t kAlign =
-        ASFW::Audio::Shared::AudioTimingGeometry::kFrameAlignment;
-    return ((raw + kAlign - 1) / kAlign) * kAlign;
-}
-
-} // namespace ASFW::Audio
