@@ -145,9 +145,9 @@ public:
         return true;
     }
 
-    [[nodiscard]] uint64_t MappedEnd() const noexcept override {
+    [[nodiscard]] uint64_t FinalizedEnd() const noexcept override {
         if (!queueControl) return 0;
-        return queueControl->mappedEnd.load(std::memory_order_acquire);
+        return queueControl->finalizedEnd.load(std::memory_order_acquire);
     }
 
     [[nodiscard]] bool AcquireLatePayloadSlot(
@@ -163,12 +163,11 @@ public:
         const uint64_t committedEnd =
             queueControl->committedEnd.load(std::memory_order_acquire);
         if (packetIndex >= committedEnd) return false;
-        // ...and must not be frozen. mappedEnd only advances, so a value read
-        // here can go stale in the safe direction only: the write may be
-        // wasted, never torn, because transport chooses the image before it
-        // binds and never re-reads the bytes afterwards.
+        // ...and its payload choice must not be final. The producer writes only
+        // image 1; transport alone changes a live descriptor address, so a
+        // stale frontier can waste a fill but cannot tear transmitted bytes.
         if (packetIndex <
-            queueControl->mappedEnd.load(std::memory_order_acquire)) {
+            queueControl->finalizedEnd.load(std::memory_order_acquire)) {
             return false;
         }
         const uint32_t slotIdx = packetIndex % numSlots;
@@ -189,7 +188,12 @@ public:
         meta.pcmGeneration.store(
             ASFW::Isoch::ExpectedTxCommitGeneration(packetIndex, numSlots),
             std::memory_order_release);
-        return true;
+        // Transport may have crossed the packet while image 1 was being
+        // encoded. The marker is harmless in that case, but report the lost
+        // race so the engine accounts the packet as silence rather than real
+        // content.
+        return packetIndex >=
+            queueControl->finalizedEnd.load(std::memory_order_acquire);
     }
 
     [[nodiscard]] bool PublishSlot(
@@ -274,11 +278,10 @@ public:
         }
 
         // The seal is no longer taken here. Commit publishes geometry, not
-        // payload finality: a late image may still replace these bytes until
-        // transport binds the slot. Transport seals whichever image it bound,
-        // at the instant it binds it, and re-hashes that same image at
-        // completion -- so a post-freeze writer is still named rather than
-        // presenting as unexplained all-zero PCM.
+        // payload finality: a late image may still replace these bytes after
+        // descriptor binding and until transport advances finalizedEnd.
+        // Transport seals whichever complete image it selected and re-hashes
+        // that image at completion.
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =

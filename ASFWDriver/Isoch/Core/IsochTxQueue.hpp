@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 8;
+inline constexpr uint32_t kTxQueueAbiVersion = 9;
 
 /// Payload images per producer slot.
 ///
@@ -187,11 +187,18 @@ struct IsochTxQueueControl final {
     std::atomic<uint32_t> startCycleMatch{0};
     std::atomic<uint64_t> startFirstPacketIndex{0};
     std::atomic<uint64_t> completionCursor{0};
-    /// End-exclusive packet index the consumer has bound to descriptors. At or
-    /// beyond this cursor a producer may still publish an alternative payload
-    /// image; below it the bytes are frozen and any write is a contract
-    /// violation. It only ever advances within a stream generation.
+    /// End-exclusive packet index the consumer has bound to descriptors. This
+    /// is descriptor ownership only; binding no longer makes payload final because
+    /// transport can atomically repoint the mutable tail to image 1.
     std::atomic<uint64_t> mappedEnd{0};
+    /// End-exclusive packet index whose payload choice is final. A producer may
+    /// write image 1 only at or beyond this frontier. Transport advances it
+    /// from the live command pointer after refreshing safely distant bound
+    /// descriptors, so it is independent of the deep arm horizon.
+    std::atomic<uint64_t> finalizedEnd{0};
+    std::atomic<uint64_t> latePayloadRebindCount{0};
+    std::atomic<uint64_t> latePayloadRebindRejectedCount{0};
+    std::atomic<uint32_t> minimumLatePayloadRebindDistance{~uint32_t{0}};
     std::atomic<uint64_t> completionStampCount{0};
     IsochTxCompletionStamp completionStamps[kIsochTxCompletionStampSlots]{};
     std::atomic<uint64_t> refillRequestGeneration{0};
@@ -218,6 +225,11 @@ struct IsochTxQueueControl final {
         startFirstPacketIndex.store(0, std::memory_order_relaxed);
         completionCursor.store(0, std::memory_order_relaxed);
         mappedEnd.store(0, std::memory_order_relaxed);
+        finalizedEnd.store(0, std::memory_order_relaxed);
+        latePayloadRebindCount.store(0, std::memory_order_relaxed);
+        latePayloadRebindRejectedCount.store(0, std::memory_order_relaxed);
+        minimumLatePayloadRebindDistance.store(
+            ~uint32_t{0}, std::memory_order_relaxed);
         completionStampCount.store(0, std::memory_order_relaxed);
         refillRequestGeneration.store(0, std::memory_order_relaxed);
         refillHandledGeneration.store(0, std::memory_order_relaxed);

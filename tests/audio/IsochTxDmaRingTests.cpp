@@ -341,6 +341,113 @@ TEST_F(IsochTxDmaRingTest, PrefixIsIgnoredWhenItWouldEmptyTheSecondEntry) {
     EXPECT_EQ(desc3->control & 0xffffu, 4u);
 }
 
+TEST_F(IsochTxDmaRingTest,
+       RefillRepointsOnlyTheMutableTailOutsideTheLiveCommandGuard) {
+    auto metadataRing = MakeMetadataRing();
+    for (auto& meta : metadataRing) {
+        meta.payloadLength = 72;
+        meta.payloadPrefixBytes = 8;
+    }
+    primeControl_.numSlots = kSharedPayloadSlots;
+    primeControl_.slotStrideBytes = kSharedPayloadStride;
+    primeControl_.maxPacketBytes = kSharedPayloadStride;
+    const auto prime = ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+        metadataRing.data(), &primeControl_, sharedPayload_.data(),
+        Layout::kNumPackets);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+    ASSERT_EQ(primeControl_.mappedEnd.load(std::memory_order_acquire),
+              Layout::kNumPackets);
+    ASSERT_EQ(
+        primeControl_.finalizedEnd.load(std::memory_order_acquire),
+        ASFW::Shared::Isoch::IsochQueueGeometry::
+            kPayloadFinalityLeadPackets);
+
+    // Packet 7 is inside the live guard when CommandPtr reaches packet 6.
+    // Packet 8 is exactly two packets away and is the first legal rebind.
+    ImageBytes(7, 1)[8] = 0x77;
+    ImageBytes(8, 1)[8] = 0x88;
+    metadataRing[7].pcmGeneration.store(1, std::memory_order_release);
+    metadataRing[8].pcmGeneration.store(1, std::memory_order_release);
+
+    const uint32_t commandPtr = ring_.Slab().GetDescriptorIOVA(
+        6 * Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitCommandPtr(0)),
+        commandPtr | Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto outcome = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &primeControl_,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(outcome.ok);
+    EXPECT_EQ(outcome.latePayloadRebinds, 1U);
+    EXPECT_EQ(outcome.latePayloadRebindRejected, 0U);
+    EXPECT_EQ(outcome.finalizedEnd, 14U);
+
+    const auto* packet7Prefix = ring_.Slab().GetDescriptorPtr(
+        7 * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+    const auto* packet7Tail = ring_.Slab().GetDescriptorPtr(
+        7 * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+    EXPECT_EQ(packet7Prefix->dataAddress, ImageIOVA(7, 0));
+    EXPECT_EQ(packet7Tail->dataAddress, ImageIOVA(7, 0) + 8);
+    EXPECT_EQ(metadataRing[7].selectedPayloadImage, 0U);
+
+    const auto* packet8Prefix = ring_.Slab().GetDescriptorPtr(
+        8 * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+    const auto* packet8Tail = ring_.Slab().GetDescriptorPtr(
+        8 * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+    EXPECT_EQ(packet8Prefix->dataAddress, ImageIOVA(8, 0));
+    EXPECT_EQ(packet8Tail->dataAddress, ImageIOVA(8, 1) + 8);
+    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 1U);
+    EXPECT_EQ(
+        primeControl_.minimumLatePayloadRebindDistance.load(
+            std::memory_order_relaxed),
+        2U);
+}
+
+TEST_F(IsochTxDmaRingTest,
+       RefillKeepsArmedImageWhenNoInvariantPrefixWasDeclared) {
+    auto metadataRing = MakeMetadataRing();
+    for (auto& meta : metadataRing) {
+        meta.payloadLength = 72;
+        meta.payloadPrefixBytes = 0;
+    }
+    primeControl_.numSlots = kSharedPayloadSlots;
+    primeControl_.slotStrideBytes = kSharedPayloadStride;
+    primeControl_.maxPacketBytes = kSharedPayloadStride;
+    ASSERT_EQ(
+        ring_.Prime(
+            payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride,
+            metadataRing.data(), &primeControl_, sharedPayload_.data(),
+            Layout::kNumPackets).packetsAssembled,
+        Layout::kNumPackets);
+    metadataRing[8].pcmGeneration.store(1, std::memory_order_release);
+
+    const uint32_t commandPtr = ring_.Slab().GetDescriptorIOVA(
+        6 * Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitCommandPtr(0)),
+        commandPtr | Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto outcome = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &primeControl_,
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
+    ASSERT_TRUE(outcome.ok);
+    EXPECT_EQ(outcome.latePayloadRebinds, 0U);
+    EXPECT_EQ(outcome.latePayloadRebindRejected, 1U);
+    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 0U);
+}
+
 TEST_F(IsochTxDmaRingTest, PrimeProgramsPayloadCrossingDmaSegment) {
     const uint64_t kBoundaryOffset =
         ASFW::Isoch::TxPayloadImageOffset(7, 0, kSharedPayloadStride) + 256;
@@ -1246,6 +1353,8 @@ TEST(IsochTxQueueControlTests, ProducerAndConsumerResetsHaveDisjointOwnership) {
     queue.abiVersion = ASFW::Isoch::kTxQueueAbiVersion;
     queue.committedEnd.store(408, std::memory_order_release);
     queue.completionCursor.store(144, std::memory_order_release);
+    queue.mappedEnd.store(192, std::memory_order_release);
+    queue.finalizedEnd.store(152, std::memory_order_release);
     queue.statusWord.store(IsochTxQueueStatus::kRunning,
                            std::memory_order_release);
 
@@ -1253,6 +1362,8 @@ TEST(IsochTxQueueControlTests, ProducerAndConsumerResetsHaveDisjointOwnership) {
     EXPECT_EQ(queue.abiVersion, ASFW::Isoch::kTxQueueAbiVersion);
     EXPECT_EQ(queue.committedEnd.load(std::memory_order_acquire), 408U);
     EXPECT_EQ(queue.completionCursor.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(queue.mappedEnd.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(queue.finalizedEnd.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(queue.statusWord.load(std::memory_order_acquire),
               IsochTxQueueStatus::kStopped);
 

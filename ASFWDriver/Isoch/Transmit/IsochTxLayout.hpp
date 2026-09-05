@@ -49,21 +49,6 @@ struct Layout final {
 
     static constexpr size_t kDescriptorRingSize = kTotalPages * kOHCIPageSize;  // 16384
 
-    // The command-pointer slot and the next four packets are treated as
-    // hardware-owned. Payload preparation uses a much earlier deadline so the
-    // controller cannot observe a packet while it is being patched.
-    static constexpr uint32_t kHardwareOwnedGuardPackets = 4;
-    static constexpr uint32_t kPreparationDeadlinePackets = 12;
-    static constexpr uint32_t kGuardBandPackets = kHardwareOwnedGuardPackets;
-
-    // Metadata exposure window for inspecting recently refilled packet metadata/payloads.
-    static constexpr uint32_t kMetadataWriteAhead = 12;
-    static constexpr uint32_t kMaxWriteAhead =
-        kNumPackets - kHardwareOwnedGuardPackets;  // 44
-
-    static_assert(kPreparationDeadlinePackets > kHardwareOwnedGuardPackets);
-    static_assert(kPreparationDeadlinePackets < kMaxWriteAhead);
-
     // Static assertions
     static_assert(kDescriptorsPerPage >= kBlocksPerPacket, "Need at least one packet per page");
     static_assert((kDescriptorsPerPage % kBlocksPerPacket) == 0, "Keep packets within a page");

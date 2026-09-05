@@ -791,13 +791,12 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
         std::memory_order_acquire);
 
     // Content pass. Arming above fixed the wire geometry for a deep horizon;
-    // this fills in the samples for the packets transport has not bound yet.
-    // The distance between mappedEnd and where this stops is the content lead,
-    // and it -- not the arm horizon -- is what CoreAudio is told to stay ahead
-    // of. Filling in index order matters: content is published in order, so the
-    // first packet whose range is not yet available ends the pass.
+    // this fills in samples until transport makes their payload choice final.
+    // Bound descriptors remain fillable: transport can repoint their mutable
+    // payload tail without changing the invariant packet prefix.
     {
-        const uint64_t frozen = queue->mappedEnd.load(std::memory_order_acquire);
+        const uint64_t frozen =
+            queue->finalizedEnd.load(std::memory_order_acquire);
         // Everything the frontier passed that this loop never filled now
         // transmits the silence it was armed with. Attribute it before the
         // cursor skips over it: a stream that plays but is quietly half silence
@@ -901,15 +900,25 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
         }
         {
             const auto& fill = ivars->runtime.txStreamEngine.Counters();
+            const uint32_t minRebindDistance =
+                queue->minimumLatePayloadRebindDistance.load(
+                    std::memory_order_relaxed);
             ASFW_LOG(DirectAudio,
-                     "[TxFill] filled=%llu tooLate=%llu unavailable=%llu silentData=%llu cursor=%llu frozen=%llu committed=%llu",
+                     "[TxFill] filled=%llu tooLate=%llu unavailable=%llu silentData=%llu cursor=%llu finalized=%llu mapped=%llu committed=%llu rebound=%llu rejected=%llu minRebindDistance=%u",
                      fill.lateFillsPublished.load(std::memory_order_relaxed),
                      fill.lateFillsTooLate.load(std::memory_order_relaxed),
                      fill.lateFillsUnavailable.load(std::memory_order_relaxed),
                      fill.pcmSilenceSubstitutions.load(std::memory_order_relaxed),
                      ivars->runtime.txFillCursor,
+                     queue->finalizedEnd.load(std::memory_order_relaxed),
                      queue->mappedEnd.load(std::memory_order_relaxed),
-                     committedAfter);
+                     committedAfter,
+                     queue->latePayloadRebindCount.load(
+                         std::memory_order_relaxed),
+                     queue->latePayloadRebindRejectedCount.load(
+                         std::memory_order_relaxed),
+                     minRebindDistance == UINT32_MAX ? 0 :
+                         minRebindDistance);
         }
 
         // [TxPrep] is the scheduling half of the heartbeat: how late the

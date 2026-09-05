@@ -75,18 +75,18 @@ public:
     }
     uint32_t SlotCount() const noexcept override { return 192; }
 
-    // Late-payload seam. mappedEnd defaults to 0, so every packet is fillable
+    // Late-payload seam. finalizedEnd defaults to 0, so every packet is fillable
     // unless a test freezes it.
-    uint64_t mappedEnd{0};
+    uint64_t finalizedEnd{0};
     std::array<uint8_t, 256> lateBytes{};
     uint32_t latePublished{0};
     bool lateAcquireAllowed{true};
 
-    uint64_t MappedEnd() const noexcept override { return mappedEnd; }
+    uint64_t FinalizedEnd() const noexcept override { return finalizedEnd; }
 
     bool AcquireLatePayloadSlot(uint32_t packetIndex,
                                 TxPacketSlotView& out) noexcept override {
-        if (!lateAcquireAllowed || packetIndex < mappedEnd) return false;
+        if (!lateAcquireAllowed || packetIndex < finalizedEnd) return false;
         out = {packetIndex, lateBytes.data(),
                static_cast<uint32_t>(lateBytes.size())};
         return true;
@@ -141,7 +141,7 @@ TEST(AmdtpDirectTxTests, PacketizerEncodesSuppliedAbsoluteFrame) {
     EXPECT_EQ(timeline.FinalizedFrameEnd(), 42'008U);
 }
 
-// --- Late PCM fill (freeze = mapping frontier) -------------------------------
+// --- Late PCM fill (finality is independent of descriptor mapping) -----------
 //
 // A packet is armed with silence at plan time so transport always has a valid
 // image for the slot, then re-encoded with real PCM if content arrives before
@@ -468,7 +468,7 @@ TEST(AmdtpDirectTxTests, FillIsRefusedOnceTransportHasFrozenTheSlot) {
               TxSlotPrepareResult::Prepared);
 
     // Transport has bound packet 7: the content lead has run out.
-    slots.mappedEnd = 8;
+    slots.finalizedEnd = 8;
     EXPECT_EQ(engine.FillTransmitSlot(7), TxSlotFillResult::TooLate);
     EXPECT_EQ(engine.Counters().lateFillsTooLate.load(), 1U);
     EXPECT_EQ(slots.latePublished, 0U);

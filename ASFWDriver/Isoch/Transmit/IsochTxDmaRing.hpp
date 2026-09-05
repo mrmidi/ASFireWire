@@ -15,6 +15,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Common/BarrierUtils.hpp"
 #include "../../Shared/Isoch/TxPayloadSeal.hpp"
+#include "../../Shared/Isoch/IsochQueueGeometry.hpp"
 
 #include <atomic>
 #include <array>
@@ -100,6 +101,9 @@ public:
         uint32_t refillPacketCount{0};
         uint64_t packetsFilled{0};
         uint64_t refillRequestGeneration{0};
+        uint64_t finalizedEnd{0};
+        uint32_t latePayloadRebinds{0};
+        uint32_t latePayloadRebindRejected{0};
     };
 
     IsochTxDmaRing() noexcept = default;
@@ -167,6 +171,14 @@ private:
     void CommitRefill(uint32_t toFill) noexcept;
     [[nodiscard]] bool DecodeHardwarePacketIndex(uint32_t cmdPtr,
                                                  uint32_t& outPacketIndex) noexcept;
+    void RefreshLatePayloadBindings(
+        uint64_t hardwareAbsIdx,
+        IsochTxPacketMeta* metadataRing,
+        IsochTxQueueControl* controlBlock,
+        uint32_t numSlots,
+        uint8_t* payloadBase,
+        const TxPayloadDmaMap& payloadDmaMap,
+        RefillOutcome& out) noexcept;
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};

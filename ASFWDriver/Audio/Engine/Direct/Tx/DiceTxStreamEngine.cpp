@@ -208,7 +208,7 @@ void DiceTxStreamEngine::NoteFrozenWithoutContent(
 }
 
 uint64_t DiceTxStreamEngine::FreezeFrontier() const noexcept {
-    return slotProvider_ ? slotProvider_->MappedEnd() : 0;
+    return slotProvider_ ? slotProvider_->FinalizedEnd() : 0;
 }
 
 TxSlotFillResult DiceTxStreamEngine::FillTransmitSlot(
