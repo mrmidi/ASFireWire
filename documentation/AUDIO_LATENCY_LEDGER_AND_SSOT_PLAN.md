@@ -203,26 +203,43 @@ Verified chain for the probe field: `OxfwProfileBuilder.cpp:72` sets the Duet's
 `ASFWAudioDriverGraph.cpp:686`. Only output *safety* passes through
 `RequiredOutputSafetyFrames`, so this field is purely a declaration.
 
+Note what the self-check may and may not assert. Since IOProc timestamps do not
+carry hardware latency, moving this field must leave **both** `RTL_raw` and
+`RTL_ts` unchanged, and move only the declared figure — and hence the residual.
+An expectation that `RTL_ts` tracks the field would be wrong.
+
 **Instrument — `tools/rtl/rtl_loopback.c`** (built, offline-verified). Emits
-impulses through a HAL IOProc and reports three numbers:
+impulses through a HAL IOProc. Its arithmetic follows Apple's contract, not our
+own: IOProc timestamps carry the safety offset but **not** hardware latency
+(Moore, coreaudio-api 2002/Aug/msg00055; confirmed 2004/Oct/msg00266), so the
+two halves separate cleanly.
 
 - `RTL_raw` — frames between writing a sample into an output buffer and seeing it
   in an input buffer, counted by accumulating each callback's frame count. It
-  never reads `mSampleTime`, so it is structurally immune to the reporting-only
-  fields and sensitive only to what moves real timing. **The exit number.**
-- `RTL_ts` — the same event pair in the sample-time domain the HAL hands clients.
-  Zero if every declaration were truthful; what it actually is, is the signed
-  amount by which our declared path misstates the physical one. **Feeds Phase 2
-  directly** — a more immediate answer to the reference-plane question than the
-  model in Part 2.
-- their difference — the compensation the HAL applies, which must reconcile with
-  `2×io + latencies + safety offsets` from the properties block.
+  never reads `mSampleTime`, so it is immune to the reporting-only fields. It is
+  the whole thru time. **The exit number.**
+- `RTL_ts` — the same event pair in the sample-time domain. A truthful device
+  returns `in_hw_latency + out_hw_latency`, so this is the **measured hardware
+  latency of the analog path**, converters included.
+- `RTL_raw − RTL_ts` — the scheduling distance, reconciling with
+  `2×io + safety`. It carries no latency term and therefore proves nothing about
+  whether a declared latency reached the HAL.
+- **`RESIDUAL` = `RTL_ts` − declared hardware latency.** The signed amount by
+  which our declarations misstate the physical path. **This feeds Phase 2
+  directly** — a measured answer to the reference-plane question, where Part 2
+  offers only a model.
 
-It also audits callback-span variation and sample-time continuity per run, so a
-number produced across a timeline jump is flagged rather than averaged in.
-`--selftest` recovers known delays from synthetic trials with realistic
-pre-ringing: exact at integer delays, ≤0.16 frames of interpolation bias at
-fractional ones, and an empty window is rejected rather than fitted to noise.
+Trial validity distinguishes the two ways a run can lie. A gap in delivered
+frames makes `RTL_raw` read short by the gap, so such trials are rejected
+outright, detected against `mach_absolute_time` — a clock no driver re-anchoring
+can move. A sample-time re-anchor with continuous delivery invalidates `RTL_ts`
+alone, and those trials still count toward `RTL_raw`.
+
+`--selftest` covers the analysis without hardware: known delays recovered exactly
+at integer positions and within 0.16 frames at fractional ones, an empty window
+rejected rather than fitted to noise, a zero residual retained rather than
+mistaken for a missing value, and a varying callback size not read as a timeline
+break.
 
 **Remaining:** the measurement itself — needs the loopback cable and the device.
 Procedure, setup, and invalidation conditions are in `tools/rtl/README.md`.
