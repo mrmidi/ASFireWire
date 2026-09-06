@@ -105,7 +105,9 @@ public:
     [[nodiscard]] Decision<uint64_t> ObserveProgress(
         EpochAgreement epochs, uint32_t slot, uint32_t ringPackets,
         std::optional<AdvanceBounds> bounds) noexcept {
-        if (auto check = CheckEpoch(epochs); !check) {
+        // No record accompanies a progress observation, so a stale snapshot is
+        // an entirely old call by definition.
+        if (auto check = CheckEpoch(epochs, std::nullopt); !check) {
             return std::unexpected(check.error());
         }
         if (ringPackets_ != 0 && ringPackets != ringPackets_) {
@@ -122,7 +124,13 @@ public:
     [[nodiscard]] Decision<Audio::Runtime::TxPresentationRange> Admit(
         EpochAgreement epochs, const Audio::Runtime::TxPresentationRange& range,
         std::optional<PresentationEvidence> evidence) noexcept {
-        if (auto check = CheckEpoch(epochs); !check) {
+        // A record's age cannot be judged until its own stamps agree. A range
+        // and evidence naming different epochs is a broken handoff whatever the
+        // snapshot says.
+        if (evidence && evidence->epoch != range.epoch) {
+            return Fail<Audio::Runtime::TxPresentationRange>(Rejection::EpochMismatch);
+        }
+        if (auto check = CheckEpoch(epochs, range.epoch); !check) {
             return std::unexpected(check.error());
         }
         if (range.epoch != epoch_) {
@@ -133,9 +141,7 @@ public:
         if (!progressVerified_ || !evidence) {
             return Fail<Audio::Runtime::TxPresentationRange>(Rejection::MissingEvidence);
         }
-        if (evidence->epoch != epoch_) {
-            return Fail<Audio::Runtime::TxPresentationRange>(Rejection::EpochMismatch);
-        }
+        // evidence->epoch == range.epoch == epoch_ is established above.
         constexpr auto max = std::numeric_limits<uint64_t>::max();
         if (range.frameCount == 0 || evidence->frameCount == 0 ||
             range.frameCount > max - range.firstAudioFrame ||
@@ -168,10 +174,19 @@ private:
         return std::unexpected(rejection);
     }
 
-    [[nodiscard]] Decision<void> CheckEpoch(EpochAgreement epochs) noexcept {
+    // `recordEpoch` is the epoch stamped on the record this call carries, or
+    // nullopt when it carries none. A record is *entirely* old -- and so
+    // harmless to a newer epoch -- only when the snapshot and the record name
+    // the same older epoch. A stale snapshot paired with a current-epoch record
+    // is the same broken handoff as its mirror (current snapshot, old range),
+    // and must demand recovery rather than be waved through as merely late.
+    [[nodiscard]] Decision<void> CheckEpoch(
+        EpochAgreement epochs, std::optional<uint64_t> recordEpoch) noexcept {
         if (epoch_ == 0) return std::unexpected(Rejection::NoEpoch);
-        if (epochs.rx != 0 && epochs.rx == epochs.tx && epochs.rx == epochs.pcm &&
-            epochs.rx < epoch_) {
+        const bool coherentStaleSnapshot =
+            epochs.rx != 0 && epochs.rx == epochs.tx && epochs.rx == epochs.pcm &&
+            epochs.rx < epoch_;
+        if (coherentStaleSnapshot && (!recordEpoch || *recordEpoch == epochs.rx)) {
             return std::unexpected(Rejection::StaleEpoch);
         }
         if (epochs.rx != epoch_ || epochs.tx != epoch_ || epochs.pcm != epoch_) {

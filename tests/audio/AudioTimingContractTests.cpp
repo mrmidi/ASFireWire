@@ -1,4 +1,5 @@
 #include "AudioTimingContract.hpp"
+#include "Isoch/Transmit/IsochTxLayout.hpp"
 #include "Isoch/Transmit/TxPacketIndexLift.hpp"
 
 #include <gtest/gtest.h>
@@ -14,6 +15,11 @@ using namespace ASFW::Audio::Runtime;
 constexpr EpochAgreement Epoch(uint64_t value) { return {value, value, value}; }
 constexpr uint32_t kRing = 48;
 constexpr uint64_t kBusOrigin = 10'000'000;
+
+// The lap arithmetic below is only meaningful against the real IT ring. Without
+// this the suite would keep testing 48 after the geometry moved.
+static_assert(kRing == ASFW::Isoch::Tx::Layout::kNumPackets,
+              "fixture ring size must track the OHCI IT descriptor ring");
 
 template <typename T>
 void ExpectRejected(const Decision<T>& result, Rejection expected) {
@@ -237,6 +243,37 @@ TEST_F(AudioTimingContractTest, OldRecordsAreRejectedWithoutPoisoningACoherentNe
     ASSERT_TRUE(contract.ObserveProgress(Epoch(2), 0, kRing, AdvanceBounds{0, 0}));
     range.epoch = evidence.epoch = 2;
     ASSERT_TRUE(contract.Admit(Epoch(2), range, evidence));
+}
+
+TEST_F(AudioTimingContractTest, StaleSnapshotCannotWaveThroughACurrentRecord) {
+    // Mirror of CurrentSnapshotCannotBlessOldRangeOrOldEvidence. Only an
+    // *entirely* old record may be dismissed as merely late; a stale snapshot
+    // carrying a current-epoch record is the same broken handoff and must
+    // demand recovery rather than leave the contract usable.
+    ASSERT_TRUE(contract.BeginEpoch(Epoch(2), 0, 0));
+    ASSERT_TRUE(contract.ObserveProgress(Epoch(2), 0, kRing, AdvanceBounds{0, 0}));
+    range.epoch = evidence.epoch = 2;
+    ExpectRejected(contract.Admit(Epoch(1), range, evidence), Rejection::EpochMismatch);
+    ExpectRejected(contract.Admit(Epoch(2), range, evidence), Rejection::RecoveryRequired);
+    EXPECT_EQ(contract.NextFrame(), 0U);
+
+    // A record disagreeing with itself is a broken handoff under any snapshot.
+    Contract split;
+    ASSERT_TRUE(split.BeginEpoch(Epoch(2), 0, 0));
+    ASSERT_TRUE(split.ObserveProgress(Epoch(2), 0, kRing, AdvanceBounds{0, 0}));
+    auto stale = evidence;
+    stale.epoch = 1;
+    ExpectRejected(split.Admit(Epoch(1), range, stale), Rejection::EpochMismatch);
+    ExpectRejected(split.Admit(Epoch(2), range, evidence), Rejection::RecoveryRequired);
+
+    // The entirely-old record is still harmless.
+    Contract old;
+    ASSERT_TRUE(old.BeginEpoch(Epoch(2), 0, 0));
+    ASSERT_TRUE(old.ObserveProgress(Epoch(2), 0, kRing, AdvanceBounds{0, 0}));
+    auto oldRange = range;
+    oldRange.epoch = stale.epoch = 1;
+    ExpectRejected(old.Admit(Epoch(1), oldRange, stale), Rejection::StaleEpoch);
+    ASSERT_TRUE(old.Admit(Epoch(2), range, evidence));
 }
 
 TEST_F(AudioTimingContractTest, CurrentSnapshotCannotBlessOldRangeOrOldEvidence) {

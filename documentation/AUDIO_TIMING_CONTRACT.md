@@ -27,15 +27,30 @@ nor provide a range to aggregate.
 | The first frame has the intended presentation time | Its unwrapped bus time lies inside the independent evidence interval, including endpoints |
 | A failed epoch cannot silently resume | Current-epoch ambiguity, missing evidence or a contract violation blocks admission until a strictly newer coherent epoch |
 
-Entirely old records return `StaleEpoch` without damaging a new epoch. An old
-range paired with a current snapshot is a mixed-epoch violation and blocks it.
-Re-entering the same epoch cannot clear a failure. A failed partial transition
-also blocks admission on the previous epoch.
+A record is *entirely* old — and so dismissible as merely late, returning
+`StaleEpoch` without damaging a new epoch — only when the RX/TX/PCM snapshot and
+every epoch stamped on the record itself name the same older epoch. Every mixed
+pairing is a broken handoff and blocks: an old range under a current snapshot, a
+current range under a stale snapshot, and a range and its evidence disagreeing
+with each other. Re-entering the same epoch cannot clear a failure. A failed
+partial transition also blocks admission on the previous epoch.
 
 This is a single-threaded verification state machine. Agreement among three
 observed IDs is a **necessary condition**, not proof of atomic publication or
 safe cross-service teardown. Those still need the production recovery
 transaction and concurrency tests in Phase 5.
+
+**Two limits of scope, stated so the table is not read for more than it says.**
+
+- **Packet progress and content progress are verified separately and never
+  related.** `Admit` does not read the verified packet index. The contract can
+  say that a ring position was justified and that a content range was
+  contiguous, and cannot say that the two advanced consistently with each other.
+  A frames-per-packet invariant is exactly the kind of relation the current
+  investigation needs, and it is not here yet.
+- **Only the first frame of a range is bound to a presentation time**, so the
+  contract is blind to rate error inside a range: a range with the intended
+  start and the wrong interval is admitted. It detects offset, not slope.
 
 ## Evidence is part of the contract
 
@@ -130,21 +145,30 @@ ctest --test-dir build/tests_build --output-on-failure -R 'AudioTiming(ProgressC
 The new target is part of the normal CMake/CTest suite. It is host-only, so it
 does not add a dext source or change `project.yml`.
 
-**Validation on 2026-09-06:** all 20 contract tests passed. The existing timeline,
-completion-drain, packet-lift and architecture checks also passed. Five mutations
-were compiled against temporary copies of the specification header, leaving the
+**Validation on 2026-09-06:** all 21 contract tests passed. The existing timeline,
+completion-drain, packet-lift and architecture checks also passed. Mutations were
+compiled against temporary copies of the specification header, leaving the
 working tree and normal test binary unchanged:
 
 | Deliberate weakening | Failing tests |
 |---|---:|
+| Permit admission/observation after the epoch is blocked | 6 |
 | Return the first candidate when progress is ambiguous | 5 |
 | Return an accepted range despite presentation mismatch | 3 |
-| Permit admission/observation after the epoch is blocked | 5 |
 | Return an accepted range despite content identity mismatch | 2 |
 | Allow a partial RX/TX/PCM epoch transition | 1 |
+| Judge staleness from the snapshot alone, ignoring the record's own epoch | 1 |
 
 These are mutations of the verification contract, not of a production recovery
 implementation. They show that weakening its admission rules is observable.
+
+The last row is a regression guard rather than a hypothetical. The first
+revision of this contract judged staleness from the snapshot triple alone, which
+dismissed a current-epoch record under a stale snapshot as merely late — leaving
+the contract usable where the mirrored pairing correctly demanded recovery. The
+fixture ring size is now `static_assert`ed against
+`Isoch::Tx::Layout::kNumPackets`, so the lap arithmetic cannot outlive the
+geometry it describes.
 
 Next, supply the runtime adapter with defensible progress evidence and fresh
 presentation evidence; replace silent continuation after lost progress with a
