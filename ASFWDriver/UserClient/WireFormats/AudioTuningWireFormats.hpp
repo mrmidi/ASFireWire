@@ -7,7 +7,7 @@
 
 namespace ASFW::UserClient::Wire {
 
-inline constexpr uint32_t kAudioTuningWireVersion = 1;
+inline constexpr uint32_t kAudioTuningWireVersion = 2;
 
 // One snapshot answers both questions the panel asks: what is the driver
 // running, and what is CoreAudio being told. Keeping them in one struct means
@@ -53,12 +53,16 @@ struct AudioTuningSnapshotWire final {
     uint32_t streaming{0};          // 1 while IO is running
     uint32_t pendingGroups{0};      // non-zero: a candidate is parked, not yet applied
     uint32_t appliedSequence{0};    // increments on every successful apply
-    uint32_t lastRejection{0};      // TuningRejection of the last refused apply
+    uint32_t lastError{0};          // IOReturn of the last asynchronous outcome
     uint32_t lastWarnings{0};       // TuningWarning mask of the last accepted apply
+    uint32_t requestId{0};
+    uint32_t requestStatus{0};      // TuningRequestStatus
+    uint32_t supportedGroups{0};
+    uint32_t ready{0};
     uint32_t _reserved1{0};
 };
-static_assert(sizeof(AudioTuningSnapshotWire) == 112,
-              "AudioTuningSnapshotWire must stay 112 bytes");
+static_assert(sizeof(AudioTuningSnapshotWire) == 128,
+              "AudioTuningSnapshotWire must stay 128 bytes");
 
 // An apply request. `groups` is the TuningGroup mask; a zero mask is a no-op
 // rather than an error, so a panel that submits with nothing selected does not

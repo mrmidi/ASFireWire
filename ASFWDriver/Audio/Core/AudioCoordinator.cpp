@@ -3,6 +3,8 @@
 
 #include "AudioCoordinator.hpp"
 
+#include "../Shared/AudioRuntimeTuningStore.hpp"
+
 #include "AudioEndpointRuntime.hpp"
 #include "AudioRuntimeRegistry.hpp"
 #include "../Duplex/SyncAsyncBridge.hpp"
@@ -348,32 +350,20 @@ IOReturn AudioCoordinator::RequestRuntimeTuning(
                  endpointId.value);
         return kIOReturnSuccess;
     }
-    const auto outcome = Shared::ValidateTuning(candidate);
-    if (!outcome.Applicable()) {
-        // Silent here would leave the operator with an app-side error and no
-        // record of which field the driver objected to.
-        ASFW_LOG_ERROR(Audio,
-                       "[AudioTuning] endpoint=%llu REFUSED groups=0x%x "
-                       "rejection=%u slack=%u guard=%u ring=%u zts=%u -- request "
-                       "never reached the audio side",
-                       endpointId.value, groups,
-                       static_cast<uint32_t>(outcome.rejection),
-                       candidate.txDispatchSlackPackets,
-                       candidate.txOwnershipGuardPackets,
-                       candidate.frameRingFrames,
-                       candidate.zeroTimestampPeriodFrames);
-        return kIOReturnBadArgument;
-    }
     auto* nub = publisher_.GetNub(endpointId);
     if (!nub) return kIOReturnNoDevice;
-    if (!nub->NotifyRuntimeTuningRequested(candidate, groups)) {
+    const auto kr = nub->NotifyRuntimeTuningRequested(candidate, groups);
+    if (kr != kIOReturnSuccess) {
+        // Silent here would leave the operator with an app-side error code and
+        // no record of which request the driver turned away, or why.
         ASFW_LOG_ERROR(Audio,
-                       "[AudioTuning] endpoint=%llu request dropped -- no audio "
-                       "driver has registered for tuning on this nub",
-                       endpointId.value);
-        return kIOReturnNotReady;
+                       "[AudioTuning] endpoint=%llu REFUSED kr=0x%x groups=0x%x "
+                       "slack=%u guard=%u -- request never reached the audio side",
+                       endpointId.value, kr, groups,
+                       candidate.txDispatchSlackPackets,
+                       candidate.txOwnershipGuardPackets);
     }
-    return kIOReturnSuccess;
+    return kr;
 }
 
 IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
@@ -383,17 +373,16 @@ IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
     auto* nub = publisher_.GetNub(endpointId);
     if (!nub) return kIOReturnNoDevice;
 
-    // Defaults are the shipping constants, so a nub that has never published an
-    // active tuning still reports the geometry the driver is genuinely running.
-    Shared::AudioRuntimeTuning active{};
-    nub->CopyActiveRuntimeTuning(active);
+    Shared::RuntimeTuningSnapshot snapshot{};
+    if (!nub->CopyRuntimeTuningSnapshot(snapshot)) return kIOReturnNotReady;
+    const auto& active = snapshot.effective;
 
     out = {};
     out.endpointId = endpointId.value;
     out.txDispatchSlackPackets = active.txDispatchSlackPackets;
     out.txOwnershipGuardPackets = active.txOwnershipGuardPackets;
     out.preparedTargetPackets = active.PreparedTargetPackets();
-    out.preparedLeadFrames = Shared::PreparedLeadFrames(active);
+    out.preparedLeadFrames = Shared::PreparedLeadFrames(active, snapshot.sampleRateHz);
     out.outputLatencyFrames = active.outputLatencyFrames;
     out.inputLatencyFrames = active.inputLatencyFrames;
     out.outputSafetyOffsetFrames = active.outputSafetyOffsetFrames;
@@ -401,21 +390,23 @@ IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
     out.frameRingFrames = active.frameRingFrames;
     out.clientIoBudgetFrames = active.clientIoBudgetFrames;
     out.zeroTimestampPeriodFrames = active.zeroTimestampPeriodFrames;
-    out.sampleRateHz = nub->GetCurrentSampleRateHz();
+    out.sampleRateHz = snapshot.sampleRateHz;
     out.txPacketsPerGroup = Shared::AudioTimingGeometry::kTxPacketsPerGroup;
     out.txHardwareRingPackets =
         Shared::AudioTimingGeometry::kTxHardwareRingPackets;
     out.txSharedSlotPackets = Shared::AudioTimingGeometry::kTxSharedSlotPackets;
-    out.framesPerPacketAverage =
-        Shared::AudioTimingGeometry::kCadenceBlockFrames /
-        Shared::AudioTimingGeometry::kCadenceBlockPackets;
-    out.inputChannels = nub->GetInputChannelCount();
-    out.outputChannels = nub->GetOutputChannelCount();
-    nub->CopyRuntimeTuningOutcome(out.lastRejection, out.lastWarnings,
-                                  out.appliedSequence);
-    out.streaming = nub->IsAudioIoRunning() ? 1U : 0U;
-    Shared::AudioRuntimeTuning pending{};
-    out.pendingGroups = nub->CopyPendingRuntimeTuning(pending);
+    out.framesPerPacketAverage = snapshot.sampleRateHz / 8'000U;
+    out.inputChannels = snapshot.inputChannels;
+    out.outputChannels = snapshot.outputChannels;
+    out.lastError = snapshot.lastError;
+    out.lastWarnings = snapshot.warnings;
+    out.appliedSequence = snapshot.appliedSequence;
+    out.streaming = snapshot.streaming ? 1U : 0U;
+    out.pendingGroups = snapshot.pendingGroups;
+    out.requestId = snapshot.requestId;
+    out.requestStatus = static_cast<uint32_t>(snapshot.status);
+    out.supportedGroups = Shared::kSupportedTuningGroups;
+    out.ready = snapshot.ready ? 1U : 0U;
     return kIOReturnSuccess;
 }
 

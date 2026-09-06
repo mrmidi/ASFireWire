@@ -175,6 +175,7 @@ add_audio_test(AudioTimingContractTests
 
 add_audio_test(AudioRuntimeTuningTests
     AudioRuntimeTuningTests.cpp
+    AudioRuntimeTuningStoreTests.cpp
 )
 
 add_audio_test(TxCycleAnchorTests

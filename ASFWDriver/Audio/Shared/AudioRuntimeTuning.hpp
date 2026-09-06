@@ -81,6 +81,10 @@ enum class TuningRejection : uint32_t {
     kFrameRingZero,
     kSafetyOffsetExceedsFrameRing,
     kLatencyExceedsFrameRing,
+    kUnsupportedGroups,
+    kBusy,
+    kNotReady,
+    kRequestIdExhausted,
 };
 
 // Non-fatal: the candidate is applicable but leaves the envelope the
@@ -175,8 +179,8 @@ struct ValidationOutcome final {
     // cross-process memory. AudioTimingGeometry.hpp:222 fixes that size as
     // `prepared target + ownership guard`, so the store must still hold both
     // after the target shrinks -- the target alone is not the bound.
-    const uint32_t required = candidate.PreparedTargetPackets() +
-                              candidate.txOwnershipGuardPackets;
+    const uint64_t required = uint64_t{candidate.txDispatchSlackPackets} +
+                              2ULL * candidate.txOwnershipGuardPackets;
     if (required > AudioTimingGeometry::kTxSharedSlotPackets) {
         if (out.rejection == TuningRejection::kNone)
             out.rejection = TuningRejection::kPreparedTargetExceedsSharedSlots;
@@ -307,15 +311,12 @@ struct DeclaredLatencyMath final {
     return m;
 }
 
-// The prepared lead expressed in audio frames -- the quantity that showed up as
-// ~720 frames of measured output latency at the shipping depth. Frames per
-// packet is the blocking-cadence average, which is rate-independent because
-// SYT_INTERVAL scales with the rate.
+// Nominal planning horizon, not measured latency. Bus cycles keep their
+// duration as sample rate changes; the number of audio frames must scale.
 [[nodiscard]] constexpr uint32_t PreparedLeadFrames(
-    const AudioRuntimeTuning& tuning) noexcept {
-    return tuning.PreparedTargetPackets() *
-           (AudioTimingGeometry::kCadenceBlockFrames /
-            AudioTimingGeometry::kCadenceBlockPackets);
+    const AudioRuntimeTuning& tuning, uint32_t sampleRateHz) noexcept {
+    return static_cast<uint32_t>(uint64_t{tuning.PreparedTargetPackets()} *
+                                 sampleRateHz / 8'000U);
 }
 
 // Isochronous cycles are 125 us regardless of sample rate, so a packet count
@@ -330,7 +331,7 @@ static_assert(ValidateTuning(AudioRuntimeTuning{}).Applicable(),
 static_assert(AudioRuntimeTuning{}.PreparedTargetPackets() ==
                   AudioTimingGeometry::kTxPreparedTargetCycleSlots,
               "default tuning must reproduce the compile-time prepared target");
-static_assert(PreparedLeadFrames(AudioRuntimeTuning{}) == 720,
+static_assert(PreparedLeadFrames(AudioRuntimeTuning{}, 48'000) == 720,
               "default prepared lead is 120 packets x 6 frames");
 // The shipping value sits exactly on the asserted floor, so it must not warn,
 // and anything below it must.

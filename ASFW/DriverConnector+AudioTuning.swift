@@ -4,8 +4,8 @@ import IOKit
 // MARK: - Wire mirrors
 //
 // Hand-mirrored from ASFWDriver/UserClient/WireFormats/AudioTuningWireFormats.hpp.
-// Field order and padding must match exactly; the sizes are asserted below so a
-// divergence is a build-time failure in the app rather than a garbled panel.
+// Field order and padding must match exactly; tests check sizes and offsets,
+// and the connector rejects incompatible versions or reply sizes.
 
 struct AudioTuningSnapshotWire {
     var version: UInt32 = 0
@@ -37,8 +37,12 @@ struct AudioTuningSnapshotWire {
     var streaming: UInt32 = 0
     var pendingGroups: UInt32 = 0
     var appliedSequence: UInt32 = 0
-    var lastRejection: UInt32 = 0
+    var lastError: UInt32 = 0
     var lastWarnings: UInt32 = 0
+    var requestId: UInt32 = 0
+    var requestStatus: UInt32 = 0
+    var supportedGroups: UInt32 = 0
+    var ready: UInt32 = 0
     var reserved1: UInt32 = 0
 }
 
@@ -60,29 +64,29 @@ struct AudioTuningRequestWire {
 }
 
 enum AudioTuningGroup {
-    static let wireVersion: UInt32 = 1
+    static let wireVersion: UInt32 = 2
     static let transmitDepth: UInt32 = 1 << 0
     static let declarations: UInt32 = 1 << 1
     static let halGeometry: UInt32 = 1 << 2
 }
 
-/// What applying a request costs. Mirrors `ASFW::Audio::Shared::ApplyCost`, and
-/// exists so the panel can warn *before* the operator commits rather than after
-/// the device has vanished from every running app.
-enum AudioTuningApplyCost {
-    case nothing
-    case streamRearm
-    case deviceRepublish
-
-    var label: String {
-        switch self {
-        case .nothing: return "No change"
-        case .streamRearm: return "Restarts audio streams"
-        case .deviceRepublish: return "Republishes the CoreAudio device"
-        }
+// Wide intermediates keep display arithmetic safe for every wire value.
+enum AudioTuningPresentation {
+    static func outputFrames(_ s: AudioTuningSnapshotWire, io: UInt32) -> UInt64 {
+        UInt64(io) + UInt64(s.outputLatencyFrames) + UInt64(s.outputSafetyOffsetFrames)
     }
-
-    var isDisruptive: Bool { self != .nothing }
+    static func roundTripFrames(_ s: AudioTuningSnapshotWire, io: UInt32) -> UInt64 {
+        outputFrames(s, io: io) + UInt64(io)
+            + UInt64(s.inputLatencyFrames) + UInt64(s.inputSafetyOffsetFrames)
+    }
+    static func status(_ s: AudioTuningSnapshotWire) -> String {
+        let labels = ["Idle", "Queued", "Waiting for host", "Applying", "Applied",
+                      "Rejected", "Aborted", "Unchanged"]
+        let label = labels.indices.contains(Int(s.requestStatus))
+            ? labels[Int(s.requestStatus)] : "Unknown status"
+        return "Request \(s.requestId): \(label)"
+            + (s.lastError == 0 ? "" : String(format: " (0x%08x)", s.lastError))
+    }
 }
 
 extension ASFWDriverConnector {
@@ -120,7 +124,7 @@ extension ASFWDriverConnector {
         return wire
     }
 
-    /// Submits a candidate. Success means the driver accepted it and opened a
+    /// Submits a candidate. Success means the driver queued it for a
     /// configuration-change window; the geometry is in force only once a
     /// subsequent snapshot reports it, so callers must re-read rather than
     /// assume.

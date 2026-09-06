@@ -734,6 +734,19 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return error;
     }
 
+    auto effective = ivars.runtime.activeTuning;
+    effective.outputLatencyFrames = outLatency;
+    effective.inputLatencyFrames = inLatency;
+    effective.outputSafetyOffsetFrames = outSafety;
+    effective.inputSafetyOffsetFrames = inSafety;
+    effective.frameRingFrames = bufferProfile.frameRingFrames;
+    effective.clientIoBudgetFrames = bufferProfile.clientIoBudgetFrames;
+    effective.zeroTimestampPeriodFrames = bufferProfile.zeroTimestampPeriodFrames;
+    ivars.runtime.activeTuning = effective;
+    ivars.device.audioNub->PublishRuntimeTuningGraph(effective,
+        static_cast<uint32_t>(ivars.device.currentSampleRate),
+        ivars.device.inputChannelCount, ivars.device.outputChannelCount);
+
     ASFW_LOG(Audio,
              "✅ ASFWAudioDriver: Started - device '%{public}s' (in=%u out=%u aggregate=%u)",
              ivars.device.deviceName,

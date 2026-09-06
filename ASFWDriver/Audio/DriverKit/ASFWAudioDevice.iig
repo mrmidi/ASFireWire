@@ -45,7 +45,7 @@ public:
     // as the control path above -- that window is what stops and restarts IO,
     // which is the whole point -- but on a reserved token, so the rate/optical
     // configuration state machine is never entered or perturbed.
-    kern_return_t RequestRuntimeTuning() LOCALONLY;
+    kern_return_t RequestRuntimeTuning(uint32_t requestId) LOCALONLY;
     virtual kern_return_t PerformDeviceConfigurationChange(uint64_t change_action,
                                                            OSObject* in_change_info) override LOCALONLY;
     virtual kern_return_t AbortDeviceConfigurationChange(uint64_t change_action,

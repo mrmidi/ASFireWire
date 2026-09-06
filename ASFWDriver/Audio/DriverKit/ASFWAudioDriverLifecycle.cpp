@@ -49,6 +49,8 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
         ivars->txTransportFaultAction.reset();
+        ivars->runtimeTuningRequestedAction.reset();
+        ivars->deviceConfigurationRequestedAction.reset();
         ivars->txPreparationQueue.reset();
         TearDownAudioGraph(*this, *ivars, &graphState);
         (void)Stop(provider, SUPERDISPATCH);
@@ -186,13 +188,12 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
 void IMPL(ASFWAudioDriver, RuntimeTuningRequested)
 {
     (void)action;
-    (void)groups;
     if (!ivars || !ivars->audioDevice || !ivars->device.audioNub) return;
-    const kern_return_t kr = ivars->audioDevice->RequestRuntimeTuning();
+    const kern_return_t kr = ivars->audioDevice->RequestRuntimeTuning(requestId);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "[AudioTuning] request rejected groups=0x%x kr=0x%x",
-                       groups, kr);
+                       "[AudioTuning] request rejected request=%u kr=0x%x",
+                       requestId, kr);
     }
 }
 
@@ -269,10 +270,11 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
         }
         ivars->txPreparationAction.reset();
         ivars->txTransportFaultAction.reset();
+        ivars->runtimeTuningRequestedAction.reset();
+        ivars->deviceConfigurationRequestedAction.reset();
         ivars->txPreparationQueue.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
-        ivars->deviceConfigurationRequestedAction.reset();
         ivars->device.audioNub = nullptr;
     }
 

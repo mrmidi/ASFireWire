@@ -62,9 +62,9 @@ public:
 
     // Diagnostic geometry sweep. Default queue for the same reason as the
     // configuration bridge: applying blocks on a configuration-change window.
-    // The candidate itself is read back from the nub; only the group mask
+    // The candidate itself is read back from the nub; only the request ID
     // travels with the action.
-    virtual void RuntimeTuningRequested(OSAction* action, uint32_t groups)
+    virtual void RuntimeTuningRequested(OSAction* action, uint32_t requestId)
         TYPE(ASFWAudioNub::RuntimeTuningRequested);
 
     // Protocol-backed boolean control bridge (used by custom control subclass).

@@ -30,7 +30,7 @@ TEST(AudioRuntimeTuning, DefaultsReproduceTheCompileTimeGeometryExactly) {
     EXPECT_EQ(d.frameRingFrames, AudioTimingGeometry::kFrameRingFrames);
     EXPECT_EQ(d.zeroTimestampPeriodFrames,
               AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
-    EXPECT_EQ(PreparedLeadFrames(d), 720U);
+    EXPECT_EQ(PreparedLeadFrames(d, 48000), 720U);
 
     const auto v = ValidateTuning(d);
     EXPECT_TRUE(v.Applicable());

@@ -1078,7 +1078,7 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
              prepared, slots,
              ivars.runtime.activeTuning.PreparedTargetPackets(),
              ivars.runtime.activeTuning.txOwnershipGuardPackets,
-             ASFW::Audio::Shared::PreparedLeadFrames(ivars.runtime.activeTuning));
+             ASFW::Audio::Shared::PreparedLeadFrames(ivars.runtime.activeTuning, static_cast<uint32_t>(ivars.device.currentSampleRate)));
 }
 
 } // namespace ASFW::Audio::DriverKit

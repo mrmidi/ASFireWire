@@ -1,0 +1,6 @@
+overflow: applicable=1 rejection=0 target=47 required=95 slots=168
+rate=48000: reported=720 frames -> 15.000 ms; 120 packets -> 15000 us
+rate=96000: reported=720 frames -> 7.500 ms; 120 packets -> 15000 us
+rate=192000: reported=720 frames -> 3.750 ms; 120 packets -> 15000 us
+torn active: slack=48 latency=12 (writer always pairs equal values)
+active snapshot: 19637 mismatches across 47440442 reads

@@ -1,3 +1,4 @@
+# Runtime tuning store and AudioTuningTests are included by the recursive source paths below.
 # XcodeGen spec for ASFW.xcodeproj — the pbxproj is GENERATED from this file.
 # Edit this spec (never the pbxproj), then run `xcodegen generate` (build.sh
 # does it automatically). The generated project is gitignored and never committed.
