@@ -331,7 +331,8 @@ if (!txCursorInitialized_) {
 ```
 
 After that, `CommitTxRange` advances the cursor on its own. So this single
-expression fixes the TX-to-RX frame alignment for the life of the epoch.
+expression establishes the starting TX frame coordinate. It does not revalidate
+TX-to-RX physical alignment later in the epoch.
 
 #### How a whole lap enters that expression
 
@@ -350,15 +351,15 @@ The arithmetic closes exactly:
 288 frames x 512 nominal bus ticks/frame = 147456 ticks = 6.0 ms
 ```
 
-So **k laps of completion-cursor loss produce k x 288 frames of TX cursor
-displacement**. The seed is one-shot, so an error introduced there persists for
-the epoch.
+An injected presentation-time error of k laps moves the seed by k × 288 frames
+at 48 kHz. Attributing that error to completion-cursor loss requires tracing
+both indices and their execution association, as the limits below explain.
 
-**Status: MEASURED AND EXCLUDED (2026-09-06).** The probes below ran on hardware
-and the content cursor is clean — see *The measurements that settled it*. The
-reasoning that follows is retained because it is why the probe was built and
-what its limits still are; limit 1 in particular is the caveat that survives the
-result.
+**Status: relative alignment measured in one session (2026-09-06).** The probes
+below found no large cursor/projection divergence in that run. They share
+inputs and do not provide an independent physical reference. The physical
+cause of the RTL discrepancy is still open; the seed calculation being
+internally consistent does not close it.
 
 Three limits have to stay attached to the seed hypothesis:
 
@@ -398,15 +399,14 @@ per-family one:
 
 | Backend | Source | Exposure |
 |---|---|---|
-| DICE (Duet), OXFW, generic BeBoB, AVC — anything with input channels | `Receive` | **Directly exposed**: TX cursor seeded from an RX observation using a TX-derived bus time |
+| DICE, OXFW (Duet), generic BeBoB, AVC — input-bearing devices without the M-Audio override | `Receive` | TX cursor seeded from an RX observation using a TX-derived bus time |
 | M-Audio (BeBoB special), when `useMAudioTxClock` | `Transmit` | Different path — `MAudioPresentationObserver` supplies the observation |
 | Output-only devices (`inputChannelCount == 0`) | `Transmit` | As above |
 
-For the `Transmit`-source backends `PreviewTxRange` still seeds from
-`lastObservationFrame_`, but observation and plan then derive from the *same*
-completion stamps, so a lap error may partially cancel instead of appearing as
-displacement. **Not traced — reason about it separately before assuming either
-way.**
+For `Transmit`-source backends, `BeginEpoch` initializes the TX cursor directly
+to `baseFrame`, so `PreviewTxRange` does not take the receive-derived seed
+branch. Trace their observation/plan relationship separately; the receive-seed
+arithmetic is not their startup mechanism.
 
 **Still live:** correlator aliasing. An unrefilled ring re-transmits the same 48
 packets, so the stimulus genuinely repeats at 288-frame spacing and a weak-SNR
@@ -435,17 +435,14 @@ packet at a time, so the projection can be one RX packet stale. It oscillates
 `droppedRecords: 0` with `oldestSequence: 1`, so this is the whole retained
 history, not a window.
 
-**The seed was correct.** `[TxSeed] first=4844 presentBus=83773160
+**The seed calculation was internally consistent.** `[TxSeed] first=4844 presentBus=83773160
 obsFrame=4128 obsBus=83406568 nominal=512` — `(83773160-83406568)/512 = 716`,
 `4128+716 = 4844`, and `[TxAlign]` reads `delta=0` at the flip.
 
-So **hypotheses 1 and 3 of the previous section are dead**: neither a wrong
-one-shot seed nor mid-epoch execution loss is displacing the content cursor.
-
-> **What this does not exclude.** Cursor and projection share one coordinate, so
-> a *common-mode* displacement of both reads as zero. This is the same
-> cancellation the `AnchorForPacket` caveat describes. It rules out the two
-> mechanisms this document proposed; it does not rule out every mechanism.
+This is evidence against large relative divergence during the reported
+interval. Cursor and projection share inputs: an erroneous physical origin or
+common displacement can leave this comparison unchanged. The probe does not
+exclude all seed/execution faults or establish correctness in other epochs.
 
 #### And the lattice is still there
 
@@ -454,19 +451,19 @@ Measured the same session, 20/20 trials accepted at 34.9 dB SNR, sd 0.01:
 | | frames | ms |
 |---|---:|---:|
 | RTL_raw | 1158.95 | 24.145 |
-| RTL_ts (hardware latency) | 930.95 | 19.395 |
+| RTL_ts (remaining delay after measured scheduling) | 930.95 | 19.395 |
 | scheduling distance | 228 measured / **228 declared** | — |
 | **residual** | **+823.95** | **+17.166** |
 
 `1158.95 = 582.95 + 2 x 288` — the historical lattice, same fractional part, two
-laps up. So the 288-frame quantum survives while the content cursor is provably
-clean. Whatever carries it is not frame assignment.
+laps up. The 288-frame spacing survives a session with small measured relative
+cursor divergence. This does not identify the mechanism.
 
-**The scheduling side is exact**: measured scheduling distance equals declared,
-to the frame. The whole error is in hardware latency — declared 107, measured
-930.95.
+Measured scheduling equals declared scheduling to the reported precision.
+The remaining discrepancy is between `RTL_ts` and declared latency; calling it
+hardware latency does not establish hardware-only attribution.
 
-#### Where 720 of those frames are
+#### Prepared depth is a candidate experiment
 
 `asfw_get_audio_cursors` reports `committedMargin: 120` packets against a
 48-descriptor ring. That is not an overrun — it is the design target:
@@ -479,18 +476,17 @@ kTxPreparedTargetCycleSlots = kTxHardwareRingPackets(48)
 preparation runs to `completion + 120` into a 168-slot shared ring, and only 48
 of those are bound to descriptors at a time. But **120 packets x 6 frames =
 720 frames = 15 ms**, and the seed's own planning lead was 716 frames
-(`presentBus - obsBus = 366592 ticks = 14.9 ms`). `AudioTimingGeometry.hpp:158`
-says *"storage capacity is not presentation latency"*; the measurement says that
-here it is. Of 930.95 frames of measured hardware latency, roughly 720 is our own
-prepared lead and roughly 211 frames (4.4 ms) is wire, device and converters.
+(`presentBus - obsBus = 366592 ticks = 14.9 ms`). Both describe planning ahead;
+neither observes a content marker waiting there. The driver can arm silence and
+publish PCM later, so subtracting 720 from measured `RTL_ts` does not isolate
+211 frames of wire/device/converter delay.
 
-That reframes the budget question in §1: the client IO buffer plus safety offsets
-are the *smaller* lever. `kTxDispatchSlackCycleSlots = 72` is 9 ms of additive
-slack in the output path, and unlike `kPacketsPerCompletionGroup` it is not fused
-to the finality lead — see `APPLE_DRIVER_TIMESTAMP_MECHANICS.md` §8.3.1.
-
-**Open:** whether the k x 288 lattice rides on that prepared lead. Deciding it
-needs the constant changed, a rebuild, and a repeat RTL run.
+Dispatch slack is independently selectable from completion grouping and is
+worth a controlled experiment, with underrun/recovery evidence. Its effect on
+physical RTL and the 288-frame lattice remains unmeasured. The new runtime
+tuning path consumes transmit depth without a rebuild, but its effective
+readback and apply transaction must first pass the
+[runtime tuning review](reviews/runtime-tuning-2026-09-06/README.md).
 
 > **Do not use `maxCompletionDelta > 48`.** An earlier revision of this document
 > proposed that as direct evidence of lap loss. It cannot fire.
@@ -504,13 +500,88 @@ needs the constant changed, a rebuild, and a repeat RTL run.
 *independent* of the modulo subtraction. The tree already has one:
 `Tx::CyclesBetween` + `Tx::LiftRingSlotToAbsolute` (`TxPacketIndexLift.hpp`),
 today used once at start for `[TxLapSeed]`. Applying the same lift at each
-completion and reporting `lifted - completionCursor` gives lap loss directly.
+completion and reporting `lifted - completionCursor` gives a discrepancy
+against that estimate, not direct proof of lap loss.
 Carry `TxPacketIndexLift.hpp`'s own caveat with it: elapsed cycles is an *upper
 bound* on descriptor progress, because the self-linked skip address means a lost
 cycle need not advance a packet, and it is exact only below half a ring of
 accumulated skips. Report it as an estimate with its bound, never as established
-progress — and preserve the raw observations rather than letting a low modulo
+progress -- and preserve the raw observations rather than letting a low modulo
 delta stand in for a clean interval.
+
+### RESOLVED, 2026-09-06 (late): rung 0 measured, mechanism identified
+
+**The lattice has a floor and it was reached.** After replugging the FireWire
+controller (fresh dext instance, one epoch, stock geometry
+`preparedTarget=120 leadFrames=720`), two consecutive `rtl_loopback` runs
+measured:
+
+| quantity | value |
+|---|---|
+| `RTL_ts` | **66.95 fr = 1.395 ms** (20/20 accepted, sd 0.01, 33 dB SNR) |
+| scheduling distance | 1124.00 measured / **1124 declared** (512 client buffer) |
+| **residual** | **-40.05 fr (-0.834 ms)** |
+
+Restated against every measurement ever taken, the lattice is
+**`RTL_ts = 66.95 + k x 288`**, with k = 0, 2, 4, 5, 6 all observed. The earlier
+constants in this document (`354.95`, and `RTL_raw = 582.95`) were this same
+lattice seen from rung 1 with a client-buffer-dependent scheduling term folded
+in. **State the lattice in `RTL_ts`, never `RTL_raw`.**
+
+**66.95 frames is the entire physical path** -- converters, wire, device.
+Everything above it is accumulated lap slip.
+
+**The prepared-lead question is settled, negatively.** Rung 0 was measured with
+the prepared lead untouched at 720 frames. If those frames were in the physical
+path, `RTL_ts` could not be 66.95 -- one tenth of the lead.
+`AudioTimingGeometry.hpp:158` ("storage capacity is not presentation latency")
+is correct. Dispatch slack is **not** a demonstrated lever on output latency,
+and the transmit-depth sweep this section proposed is no longer the priority.
+
+**At rung 0 the remaining error is over-declaration**, not under-declaration:
+declared hardware latency 107, measured 67. That -40 frames is the only
+declaration error left once the lattice is at its floor, and it is now
+actionable in a way `+823.95` never was.
+
+**The mechanism is `ComputeDeltaConsumed`.** `IsochTxDmaRing.cpp` derived the
+completion delta by subtracting two ring *slot* indices, so its value is bounded
+by `kNumPackets - 1` by construction. A controller that completed a whole lap or
+more between two observations does not produce a large delta -- the lap is
+*absent* from the arithmetic -- and because the absolute `completionCursor` is
+advanced by accumulating these differences, each loss is permanent and re-bases
+every later reading. One lap = 48 packets = 288 frames. That is the lattice, and
+`k` is the number of unobserved laps.
+
+This also explains why every probe built to find it came back clean:
+
+- `maxCompletionDelta` is bounded at 47 by the same construction (the box above).
+- `[TxAlign]` stayed within +/-8 frames because the cursor and the projection
+  share the coordinate and slip together -- the common-mode cancellation that
+  probe's own caveat named.
+- `[TxPrep] marginMin/marginMax` sat pinned at exactly 120 throughout. It is a
+  tautology, not a measurement: `margin = committedAfter - completion`
+  (`ASFWAudioDriverZts.cpp:1180`) while the producer prepares to
+  `completion + preparedTarget`. A lagging cursor drags the production window
+  with it, so margin *cannot* report this.
+
+**Fixed** by giving the delta the lap the CommandPtr cannot carry, using the
+cycle timer already sampled in the same MMIO access block as the CommandPtr:
+`Tx::RecoverConsumedDelta` (`TxPacketIndexLift.hpp`), consumed by
+`ComputeDeltaConsumed`. The correction only ever *adds* laps -- elapsed cycles
+is an upper bound on descriptor progress, so the healthy path is unchanged --
+and it refuses to adjudicate across the cycle timer's eight-second wrap, counting
+that as `lapUnresolvable` rather than guessing. New telemetry: `[TxLapRecover]`
+per event, and `lapsRecovered` / `lapEvents` / `lapUnresolvable` / `maxDelta`
+on the TX watchdog line, where `maxDelta` can now exceed the ring.
+
+**Unverified.** This is a code-and-evidence argument, not a measurement. Its
+falsifiable prediction: `lapsRecovered` should equal the `k` in
+`RTL_ts = 66.95 + k x 288`. If RTL climbs a rung with `lapsRecovered = 0`, or
+recoveries accumulate without RTL moving, the diagnosis is wrong and the change
+is only instrumentation. Its risk: if accumulated skipped cycles reach half a
+ring inside one observation gap the lift over-counts, discarding 48 packets as a
+6 ms glitch instead of adding 6 ms of permanent latency -- a deliberate trade of
+an audible one-off for invisible drift.
 
 ## Mistakes this corrects
 

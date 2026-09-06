@@ -1,8 +1,10 @@
 # Audio latency ledger and timing SSOT — plan
 
-**Status: reconciled 2026-09-06 against `ace8d1b2` and the uncommitted executable
-timing contract.** Production audio changes currently end at `f4a9bb84`; later
-commits correct the research. Phase 0 and several Phase 3 repairs have landed.
+**Status: reconciled 2026-09-06 against `0cd228bf`.** The timing contract landed
+in `d11c2fbf`, with its epoch-staleness correction in `1946d6ae`; alignment probes
+landed in `d88e3feb`. Runtime tuning and the app panel are now implemented through
+`0cd228bf`, but their effective readback and apply transaction need repairs.
+Phase 0 and several Phase 3 repairs have landed.
 The timing contract is host-side verification; runtime alignment/recovery and
 the validated electrical baseline remain open. This is source status, not a
 claim that the installed dext matches this checkout.
@@ -41,7 +43,8 @@ undecided just centralises the ambiguity.
 | Phase 1 — electrical baseline | Instrument hardened and several provisional runs captured | Stronger return, repeat-start provenance, correlated trace and reporting-only self-check |
 | Phase 2 — reference plane | Open | Validated timing attribution from Phases 1/3/5; a residual alone does not select the plane |
 | Phase 3 — instruments/progress | Payload arbitration, completion draining, live-pointer recheck and preflight/status repairs landed | Correct event dating/history/snapshot consistency, progress evidence and marker trace |
-| Executable timing contract | Added in the working tree; 20 tests pass and five weakened-rule mutations are caught | Host-only; production must be made to conform |
+| Executable timing contract | Landed; 21 tests and six mutation cases documented after the epoch correction | Host-only; join packet/content evidence and validate timing inside a range, beyond its first-frame offset |
+| Runtime tuning panel | Transmit-depth consumer wired; request/bridge/UI/logging added | Effective-state readback, publication safety and apply semantics fail review; declarations/HAL geometry are not applied |
 | Phase 4 — resolution policy | Open; common safety defaults already derive from geometry | Final latency values wait for Phase 2; policy consolidation remains |
 | Phase 5 — recovery/alignment | Defects identified; contract tests detect injected timeline slips | Runtime admission, coordinated epoch transition and atomic two-stream commit |
 | Phase 6 — monitoring/acoustic | Open | Validated electrical baseline and stable timing; software monitoring remains unmeasured |
@@ -77,25 +80,26 @@ not established. These are observations, not a controlled buffer-size comparison
 or proof of an implementation improvement. The older ~355-frame remainder is
 therefore not a demonstrated floor.
 
-**Frame assignment is not the cause (measured 2026-09-06).** The alignment
-probes in `d88e3feb` ran on a live Duet: over 43.7 s the TX content cursor never
-diverged from the receive-derived projection by more than one packet, and the
-seed was exact. A wrong one-shot seed and mid-epoch execution loss are both
-excluded; only a common-mode displacement of cursor and projection together
-would still read zero. The same session measured RTL_raw 1158.95 fr
-(24.145 ms), RTL_ts 930.95 fr, scheduling distance 228 measured against 228
-declared, residual +823.95 fr — and `1158.95 = 582.95 + 2 x 288`, so the lattice
-survives the cursor being clean.
+**The alignment probes found small relative divergence in one session.**
+`3a133a09` records 43.7 s within one packet of the receive-derived projection,
+an internally consistent seed calculation, and a same-session 20/20 accepted
+RTL run at 34.9 dB SNR: raw 1158.95 frames / 24.145 ms, timestamp-domain 930.95,
+measured/declared scheduling 228, residual +823.95. This narrows the search for
+large *relative* drift in that run. It does not independently establish the
+seed's physical correctness, exclude common-mode errors or close the cause of
+other sessions. Preserve the raw trace, exact settings and loaded build with
+the next comparison; the four retained follow-up logs above are separate runs.
 
-**Roughly 720 of the 930.95 measured hardware-latency frames are our own.**
-`committedMargin` is 120 packets by design (`kTxPreparedTargetCycleSlots =
-48 guard + 72 slack`), which is 720 frames / 15 ms of prepared lead, matching the
-seed's observed 716-frame planning lead. That leaves ~211 frames (4.4 ms) for
-wire, device and converters. Reducing `kTxDispatchSlackCycleSlots` is therefore a
-larger lever on output latency than the client-buffer and safety-offset budget,
-and unlike `kPacketsPerCompletionGroup` it is additive rather than fused to the
-finality lead. Whether the k x 288 lattice rides on that lead is the open
-question; it needs the constant changed, a rebuild and a repeat RTL run.
+**Prepared depth is now a testable variable, not an attributed RTL interval.**
+120 packets is a 15 ms planning horizon (720 frames at 48 kHz), and the reported
+seed lead was 716 frames. This agreement is not evidence that a marker waited
+720 frames there: arming can precede PCM publication. Do not subtract 720 from
+930.95 and call the remainder device/converter latency. The new panel can change
+transmit depth through a requested ADK window without rebuilding the dext, but
+the [runtime tuning review](reviews/runtime-tuning-2026-09-06/README.md) found
+incorrect effective readback and apply/validation defects. Repair those before
+using it for a controlled sweep. Declaration overrides and HAL geometry still
+have no runtime consumer; a successful panel readback does not make them active.
 
 **A 288-frame lattice is a clue, not a closed cause.** At 48 kHz, one 48-packet
 ring traversal takes 6 ms when each cycle advances a packet and carries 288
@@ -138,29 +142,38 @@ Pause further latency sweeps while the known implementation defects are being
 repaired. The existing runs are enough to prioritize this work; repeating
 them now cannot resolve the attribution gaps in the instruments.
 
-1. **Finish Phase 3 event evidence.** Date finality at the actual seal decision,
+1. **Make the tuning tool trustworthy.** Resolve the
+   [runtime tuning review](reviews/runtime-tuning-2026-09-06/README.md): expose
+   effective values separately from requests, disable unsupported groups,
+   serialize request/snapshot publication, merge only selected groups, report
+   terminal apply/abort outcomes, and fix validation and rate conversion. Add
+   tests through the apply/readback path; the seven value-helper tests alone do
+   not cover it. This is the next bounded change for rebuild-free experiments.
+2. **Finish Phase 3 event evidence.** Date finality at the actual seal decision,
    retain bounded event history with a sound publication/read protocol, and
    remove the fallback that substitutes observer time for a missing event.
    Capture F4 at actual successful PCM publication. Port the existing review
    reproductions into permanent tests before treating these distributions as
-   measured intervals. This is the next bounded implementation change.
-2. **Implement runtime progress and presentation admission.** Feed a production
+   measured intervals.
+3. **Implement runtime progress and presentation admission.** Feed a production
    adapter independently justified packet-progress bounds and a fresh
-   frame/presentation relation with explicit uncertainty. The host contract
+   frame/presentation relation with explicit uncertainty. Join execution and
+   content identities and verify timing over the range; the current helper
+   checks their progress separately and tests only the first-frame offset. The host contract
    already rejects ambiguous laps and shifted content; now make production
    correct or explicitly enter recovery. Do not turn a cycle estimate into
    exact evidence or impose a permanent nominal-rate slope.
-3. **Complete Phase 5 recovery as part of that integration.** Quiesce and move
+4. **Complete Phase 5 recovery as part of that integration.** Quiesce and move
    RX, TX, PCM identities and pending observations to a coherent epoch; preserve
    the intended source/coordinate policy and make two-stream commit atomic.
    Test stalls, skipped cycles, old-record replay and secondary-commit failure.
    Matching epoch IDs in the host contract is not proof of atomic execution.
-4. **Close startup admission and trace coverage.** Specify interrupted SYT
+5. **Close startup admission and trace coverage.** Specify interrupted SYT
    warm-up behavior and profile-appropriate FDF/DBC/SYT validation, then test it
    through the actual consumer. Add the bounded marker trace below, including
    both the startup seed and later alignment. The current contract does not
    yet test that receive admission path.
-5. **Batch integrated verification, then the bench.** Turn the contract's
+6. **Batch integrated verification, then the bench.** Turn the contract's
    production defect detectors into conformance tests for the adapter, retain
    independent expectations and mutation checks, and verify the reference
    behavior before rebuilding/installing for the correlated electrical run.
@@ -235,9 +248,9 @@ Follow one frame. Events:
 
 | Event | Meaning | Observed? |
 |-------|---------|-----------|
-| `E0` | HAL client writes the frame into the shared output buffer | yes |
-| `E1` | the packet carrying it reaches payload finality (`finalizedEnd` passes it) | yes |
-| `E2` | OHCI IT DMA transmits that packet onto the wire | yes |
+| `E0` | HAL client writes the frame into the shared output buffer | publication hook exists; correlate actual event/time |
+| `E1` | the packet carrying it reaches payload finality (`finalizedEnd` passes it) | decision exists; timestamp/history still need repair |
+| `E2` | OHCI IT DMA transmits that packet onto the wire | per-packet completion evidence; absolute execution identity must be justified |
 | `E3` | the packet is received by the device | **no — never observed** |
 | `E4` | the device's nominal presentation instant for the frame (SYT) | stamped by us, not observed |
 | `E5` | analog signal at the output jack | no |
@@ -257,8 +270,8 @@ Follow one frame. Events:
 | `F1` | ADC emits the digital frame | no |
 | `F2` | device transmits the packet carrying it | **no — never observed** |
 | `F3` | packet received by host OHCI | yes |
-| `F4` | frame decoded into the capture ring by the completion batch | yes |
-| `F5` | HAL client reads it | yes |
+| `F4` | decoded frame is successfully published as available in the capture ring | publication exists; current timestamp is taken later |
+| `F5` | HAL client reads it | BeginRead hook exists; use actual read event, not scheduled hostTime |
 
 | Interval | Span | Magnitude @48k | What we actually know | Composition & accounting |
 |----------|------|---------------:|----------------------|--------------------------|
@@ -317,24 +330,25 @@ how the arm horizon became latency the first time.
 
 **Which plane is the HAL sample clock anchored in?**
 
-Verified in code; no compensation anywhere along the chain:
+The receive-clock path constructs a presentation coordinate and projects it
+into host time. Relevant symbols, rather than stale line numbers:
 
 ```
-DirectAudioReceiveConsumer.cpp:467  presentationBusTicks = packetBusTicks
-                                        + sytOffset + rxTransferDelayTicks
-HardwareSampleTimeline.hpp:292      boundaryBusTicks = presentationBusTicks + …
-AudioTransportControlBlock.hpp:839  PublishHostClockAnchor(…)   ← pass-through
-ASFWAudioDriverZts.cpp:372          UpdateCurrentZeroTimestamp(sampleFrame,
-                                                               hostTicks)
+DirectAudioReceiveConsumer::ConsumePacket  packetBusTicks + SYT offset + RX delay
+HardwareSampleTimeline::Observe        project a boundary inside the packet
+PublishHostClockAnchor                 publish the sample/host pair
+UpdateCurrentZeroTimestamp             supply the pair to ADK
 ```
 
-So the HAL's "now" is the **stamped presentation** instant (`E4`), while
-`finalizedEnd` is anchored on the DMA command pointer (`E2`). Two planes, one set
-of numbers.
+This establishes how the RX-derived timestamp is constructed. It does not
+alone establish that TX content reaches its requested `E4` on that same
+coordinate, or where either analog converter lies relative to it. TX-sourced
+devices take a different path. The following is a conditional accounting model,
+not a completed reference-plane decision.
 
 | If the ZTS reference is… | `A1` should cover | `A2` bounds `I1` against a deadline of |
 |---|---|---|
-| `E4`, stamped presentation (what the code does) | `I4` only — the **unknown** DAC residual | `I2`+`I3` ahead of the reference |
+| `E4`, if the shared timeline matches TX presentation | `I4` only — the **unknown** DAC residual | `I2`+`I3` ahead of the reference |
 | `E2`, transmission | `I3`+`I4` ≈ 105 + unknown | `I2` |
 | Today | 67 | 50 |
 
@@ -343,53 +357,34 @@ it is the unknown `I4`. `E4` is a stamped instant at the device's decode point,
 not the analog jack. Any exit criterion demanding a residual-free sum would force
 someone to invent a number for `I4`.
 
-One caveat that must survive: the shortfall implied by the presentation reading
-is a **model**. The 10 s acoustic capture on this exact configuration was clean —
-no dropouts, no drift, no silent runs. Something absorbs it, most plausibly the
-HAL's published frontier running further ahead than `A2` alone requires.
-**Decide the plane; do not assume the number must grow.**
+The earlier clean 10 s acoustic capture does not validate the plane or identify
+what supplied sufficient lead. Measure the publication/deadline relation before
+concluding that a safety declaration must grow.
 
 ---
 
 ## Part 3 — Phases
 
-### Phase 0 — live bug, do immediately
+### Phase 0 — default safety repair (landed)
 
-**Generic AVC input safety is 16 frames.** `GenericAvcProfileBuilder.cpp:20`
-calls `AddDefaultTiming` and sets nothing after, keeping `inputSafetyFrames =
-16`. Commit `5d1ea98c` removed the floor that previously raised it to 128.
-
-16 frames is below the frame count a single completion batch carries (`J3`,
-32–40), so the declared visibility margin does not cover the interval it exists
-to cover. Whether that *manifests* as a glitch depends on capture position
-relative to the chosen ZTS reference — stated as unjustified, not as a predicted
-failure.
-
-Output is unaffected (`RequiredOutputSafetyFrames` still floors 16 → 48); the
-Duet is unaffected (sets 50 explicitly), which is why the suite stayed green.
-
-**Exit:** a generic-AVC profile test asserts input safety ≥ one completion
-batch, with the requirement expressed once rather than as a second floor.
-
-**Landed** in `2d1c584a`: `AddDefaultTiming` derives both safety defaults from
+The former generic AVC input default was 16 frames after `5d1ea98c` removed an
+input floor. **Fixed in `2d1c584a`:** `AddDefaultTiming` derives both defaults from
 `AudioGeometryPolicy::CompletionBatchFrames(rate)` — 48/96/192 frames at
-48/96/192 kHz — giving the first real caller of that header. Reported latency
-was deliberately left at 32/32; it needs the Phase 2 plane decision before it
-means anything.
+48/96/192 kHz. The Duet still supplies 50/50 at 48 kHz. This is a geometry
+default, not a measured bound on dispatch delay or proof of input visibility.
+Reported latency remains 32/32 in the common builder and requires Phase 2
+attribution. Do not re-open this completed literal-removal task as the next fix.
 
 ### Phase 1 — uncompensated electrical baseline
 
-First among the real work: depends on nothing, and constrains Phase 2.
+Instrument and provisional measurements exist; final acceptance remains open.
 
 Measure round-trip **electrically** (output→input cable), with **no DAW in the
-measurement path**. This yields one number covering `I1`…`I4` and `J1`…`J4` plus
-the scheduling terms — **including both converters**, since the signal passes
-DAC then ADC.
-
-It immediately settles the ambiguity left by the Logic captures: physical RTL is
-either ~270 samples (5.6 ms) or ~541 (11.3 ms), and only an uncompensated
-measurement can say which. The 4.2× improvement over baseline is robust either
-way; the absolute is not, and 11.3 ms would be audible for monitoring.
+measurement path**. It covers the physical waits in `I1`…`I4` and `J1`…`J4`,
+including both converters. Scheduling affects those waits; do not add its
+accounting sum to the already measured raw RTL. The old choice between 270 and
+541 frames inferred from compensated Logic captures is superseded by the
+electrical runs and their explicit admission/provenance limits.
 
 **Bench self-check.** Vary a **reporting-only** field — `outputLatencyFrames` or
 `inputLatencyFrames`, which feed `SetOutputLatency`/`SetInputLatency` and change
@@ -398,10 +393,13 @@ no scheduling — by a known amount and confirm the measurement does not move. D
 `SetOutputSafetyOffset`/`SetInputSafetyOffset` and legitimately change physical
 timing, so a moving measurement would prove nothing.
 
-Verified chain for the probe field: `OxfwProfileBuilder.cpp:72` sets the Duet's
-48 kHz `outputLatencyFrames = 67`, which reaches `SetOutputLatency` untouched at
-`ASFWAudioDriverGraph.cpp:686`. Only output *safety* passes through
-`RequiredOutputSafetyFrames`, so this field is purely a declaration.
+The baseline chain is `OxfwProfileBuilder`'s output latency 67 at 48 kHz through
+the resolved profile to `SetOutputLatency` in `ASFWAudioDriverGraph`. Only output
+*safety* passes through `RequiredOutputSafetyFrames`. The tuning panel does not
+yet apply declaration overrides to that graph, so it cannot currently perform
+this self-check despite reporting the requested values back as active. Complete
+that path or use a verified reporting-only build change for the test. Match
+restart conditions in both runs so a re-arm effect is not blamed on the field.
 
 Note what the self-check may and may not assert. Since IOProc timestamps do not
 carry hardware latency, moving this field must leave **both** `RTL_raw` and
@@ -426,10 +424,10 @@ two halves separate cleanly.
 - `RTL_raw − RTL_ts` — the scheduling distance, reconciling with
   `2×io + safety`. It carries no latency term and therefore proves nothing about
   whether a declared latency reached the HAL.
-- **`RESIDUAL` = `RTL_ts` − declared hardware latency.** The signed amount by
-  which our declarations misstate the physical path. **This feeds Phase 2
-  directly** — a measured answer to the reference-plane question, where Part 2
-  offers only a model.
+- **`RESIDUAL` = `RTL_ts` − declared hardware latency.** A signed discrepancy
+  to explain. It informs Phase 2 after timestamp/content alignment and detector
+  identity are validated; alone it neither chooses the plane nor proves a
+  converter/device delay.
 
 Trial admission fails closed (`cd5568d6`). A gap, ambiguous timing, re-anchor,
 missing timestamps, or absent signal rejects the whole trial. Only `Accepted`
@@ -444,12 +442,11 @@ rejected rather than fitted to noise, a zero residual retained rather than
 mistaken for a missing value, and a varying callback size not read as a timeline
 break.
 
-**Bench status:** electrical measurements and a buffer sweep are recorded in the
-[investigation](reports/latency-investigation-2026-09-05/README.md). The fresh
-64-frame result is provisionally 12.145 ms; the earlier 54.145 ms result and the
-weak return signal prevent treating it as a stable baseline. Remaining work is
-the correlated trace and repeat-start comparison above, a stronger return
-signal, and the reporting-only self-check. Procedure, setup, and invalidation
+**Bench status:** the initial sweep, September 6 follow-up and separately
+reported alignment session are summarized above. There is no accepted universal
+12.145 ms baseline. Remaining work is the correlated trace and repeat-start
+comparison, a strong identifiable return, exact effective configuration and
+loaded-build provenance, and the reporting-only self-check. Procedure, setup, and invalidation
 conditions are in [`tools/rtl/README.md`](../tools/rtl/README.md).
 
 **Exit:** an absolute electrical RTL figure from a path with no compensation,
@@ -457,7 +454,8 @@ validated by the self-check.
 
 ### Phase 2 — decide the reference plane
 
-Resolve Part 2, informed by Phase 1's number. Deliverable is a written decision
+Resolve Part 2 using the validated baseline and event attribution, not just one
+residual. Deliverable is a written decision
 plus the code change making one plane true everywhere: either move the ZTS
 anchor to `E2` and declare `I3` as latency, or keep `E4` and drop it from `A1`.
 
@@ -492,7 +490,8 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    Because a producer cannot know at call time whether its image will transmit,
    `latePayloadLostPublicationCount` counts accepted publications that transport
    then sealed on the armed image, and `[TxFill]` reports `lost=`. **The ledger
-   must read `filled − lost`, not `filled`.** One behaviour change to note when
+   must read `filled − lost`, not `filled`, for the same epoch and finalized
+   cohort; pending offers are not proof of transmitted content.** One behaviour change to note when
    reading older captures: `rejected=` now counts rejected packets rather than
    rejection attempts, because a packet rejected on geometry is sealed instead
    of retried once per pass.
@@ -509,7 +508,7 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    **Reading older captures:** the completion-latency histogram and cycle trace
    now record per packet rather than per wake, so that distribution is not
    comparable across `e4464ae2`.
-3. **Stale CommandPtr at rebind** (finding 1). **Landed in the same series.**
+3. **Stale CommandPtr at rebind** (finding 1). **Landed in `c9e31d67`.**
    `minRebindDistance` was sampled before completion processing and the whole
    scan, so it overstated the margin it reported. Transport now re-reads the
    live command position immediately before the descriptor store, abandons the
@@ -526,30 +525,25 @@ Ordered by how badly each corrupts measurement. Items 1–3 from
    after this fix, and settling it needs reference or hardware evidence. The
    review fixture for writing that reproduction is now
    `IsochTxPayloadArbitrationTest`.
-4. **Measure the intervals the ledger marks nominal.** **Instrumented; awaiting
-   the bench run for the distributions themselves.** All four now report on the
-   `[Ledger]` heartbeat, each line carrying sample count, unresolved count, min,
-   mean, max and an eight-bucket µs ladder starting at one isoch cycle.
+4. **Measure the intervals the ledger marks nominal.** **Instrumentation exists;
+   endpoint correctness is still open.** `9740d4b5`, `f5779a51`, `3a6cf466` and
+   `f4a9bb84` added distributions, RX-clocked observation coverage and better
+   accounting. Current source still has these review findings:
 
-   | Interval | Endpoints observed at | Domain |
+   | Evidence defect | Current site | Required repair |
    |---|---|---|
-   | `I1` E0→E1 | `WriteEnd` publication → frontier crossing at the TX observer | host |
-   | `I2` E1→E2 | frontier crossing → the packet's own completion timestamp | bus |
-   | `J3` F3→F4 | the RX drain's back-dating of the packet, which *is* the elapsed time | host |
-   | `J4` F4→F5 | capture decode → `BeginRead` for the newest frame requested | host |
+   | Seal record receives `refillCycleTimer` sampled before completion/binding work | `IsochTxDmaRing::Refill` → `PublishFinalitySeal` | Date the actual decision; the prior DMA-interposer probe returned cycle 100 after execution had advanced to 110 |
+   | I1 uses observer `pair.hostTimeMid`; I2 substitutes observer time when no seal is readable/expandable | `RecordLedgerFinality`, `ObserveTxHardware` | Use the actual finality event for both intervals; absent evidence stays unavailable |
+   | Latest-only seal can lose intermediate events and accept mixed fields | `IsochTxQueue::PublishFinalitySeal/ReadFinalitySeal` | Sound publication protocol plus bounded retained history; prior native stress accepted torn pairs |
+   | F4 is sampled after processing/cadence/logging, although PCM was already published | `RxAudioPacketProcessor::ProcessPacket` → `DirectAudioReceiveConsumer` | Timestamp actual successful `PublishProducedEnd`; do not date logical progress without PCM as availability |
 
-   Two things to read carefully. `I2` starts at the frontier crossing **as
-   observed**, so the observer's own dispatch lag is inside it deliberately —
-   that lag is part of how late a content decision is and geometry does not
-   bound it. And `unresolved` is part of each measurement, not an error channel:
-   it counts samples whose first endpoint aged out of the stamp ring or arrived
-   out of order, so a thin histogram can never be read as a well-behaved
-   interval that merely occurred rarely.
-
-   These are **not** anomaly-gated, unlike the fault telemetry: a distribution
-   that only appears once it is already bad cannot establish what normal looks
-   like, which is the single thing these exist to do. They ride the existing
-   coarse heartbeat and add no per-packet logging.
+   Intended intervals remain I1 write-publication→finality, I2 finality→wire,
+   J3 receive→successful capture publication and J4 capture publication→actual
+   read. The same host timebase can represent different events: an IO timestamp
+   is a scheduled reference event, not callback entry. Preserve lookup failure,
+   pending and invalid categories; never manufacture a measured endpoint from
+   a wake merely to fill a histogram. Keep distributions on the coarse heartbeat
+   and retain raw event records for the marker trace.
 5. **Make bench preflight and transport status trustworthy.** **Landed.**
 
    `txTransportStatus` had a live producer all along and simply was not being
@@ -624,16 +618,18 @@ Two limits to encode explicitly:
 **Wire up what is already written.** `AudioGeometryPolicy` already contains a
 complete generic per-rate ladder — `TxSafetyOffsetFrames` (48 @48k),
 `RxSafetyOffsetFrames` (128), `ReportedLatencyFrames` (29) — plus
-`RequiredOutputPublicationFrames`. **Nothing calls any of them.** They are
+`RequiredOutputPublicationFrames`. **None has a production caller.** They are
 referenced only by their own static_asserts, and look live in a grep only
 because `ResolvedAudioStreamProfile` has accessors with identical names reading
 the profile table instead. Make them the derivation path or delete them.
+The header as a whole is live: `CompletionBatchFrames` now supplies common
+safety defaults, and `RequiredOutputSafetyFrames` is used by the graph.
 
 **Consolidate the five builders**, which today each restate everything:
 
 | Builder | in/out latency, in/out safety | Style |
 |---|---|---|
-| `CommonProfileBuilder::AddDefaultTiming` | 32/32/16/16 | base for all |
+| `CommonProfileBuilder::AddDefaultTiming` | latency 32/32; safety 48/48 @48k, 96/96 @96k, 192/192 @192k | common safety derived from `CompletionBatchFrames` |
 | `OxfwProfileBuilder` | 46/55/46/46 @44.1, 40/67/50/50 @48 | literals, base rates only |
 | `DiceProfileBuilder` | 29/59/119; `(16+a)*fpp`, `(6+a)*fpp` | derived |
 | `BeBoBProfileBuilder` | 128/128/64/64 | literals + M-Audio special |
@@ -647,7 +643,8 @@ floor; rule 1 enforced in code; no dead ladder.
 
 ### Phase 5 — recovery coordination
 
-Review findings 5 and 6. Neither blocks Phase 4.
+Open runtime work. Policy refactoring can proceed independently, but credible
+final values and integrated timing verification require coherent recovery.
 
 - **Epoch transition** changes the sample origin via
   `NextBoundaryAfter(lastBoundary)` without translating RX cursors or queued TX
@@ -656,33 +653,28 @@ Review findings 5 and 6. Neither blocks Phase 4.
 - **Two-stream commit is not atomic** — the secondary `CommitFill` result is
   `(void)`-discarded under a comment promising all-or-nothing. Source-level
   finding; not reproduced on a dual-stream device.
-- **The absolute packet cursor is seeded assuming less than one ring lap has
-  elapsed**, which loses whole 48-packet laps at start and displaces the
-  audio-frame↔packet mapping by 288 frames per lost lap. This is the measured
-  start-time offset described in the current decision above, and it is the item
-  with hardware evidence: four starts at laps 0, 1, 2 and 7.
+- **Progress ambiguity and presentation alignment:** a modulo cursor cannot
+  identify whole traversals at startup or after a stall. `[TxLapSeed]` is a
+  conditional estimate, and `[TxSeed]`/`[TxAlign]` expose relative coordinates;
+  neither establishes physical progress by itself. The executable contract
+  demonstrates seed sensitivity and later presentation-slip admission in the
+  real class, but does not prove either caused the measured RTL.
 
-  **Instrumented, not yet fixed.** The context now anchors `startCycleMatch` to
-  the cycle timer immediately after the run bit, and the first Refill emits
-  `[TxLapSeed]` with the ring slot, elapsed cycles, and the lap the slot alone
-  could not carry. `TxPacketIndexLift` supplies the arithmetic and is unit
-  tested, including the boundary where an expectation exactly half a ring out is
-  genuinely ambiguous.
+  Preserve evidence sufficient to identify one absolute execution position or
+  declare ambiguity and enter coordinated recovery. Do not rewrite only the
+  completion count: descriptor generations, queued content, PCM identities and
+  published anchors must agree. Repeated payload already transmitted cannot be
+  undone by relabelling a counter. Whether it occurred in a particular run must
+  come from the trace, not the lattice.
+- **Startup admission:** FDF is parsed without a configured-rate comparison,
+  DBC is accumulated without a continuity gate, and interrupted SYT warm-up
+  retains cumulative history. Specify the supported profile's policy and add
+  consumer-level tests; do not impose Apple AV/C checks blindly on every family.
 
-  **Why the fix is deliberately not "seed the cursor correctly".** The
-  descriptor ring branches from its last packet back to its first, so an
-  unrefilled context re-transmits the same 48 packets indefinitely. A lost lap
-  is therefore not only a counting error: that stale audio really went on the
-  wire, and the client's content followed it 288 frames per lap later than
-  planned. Writing the true absolute into `completionCursor` would also put it
-  ahead of `mappedEnd`, since the producer has committed only one ring's worth.
-  Correcting the number would leave the delay in place while hiding it.
-
-  The real choice is between **preventing the gap** — guaranteeing a first
-  refill inside one lap — and **re-anchoring the audio timeline** to the
-  position actually reached. Which is right depends on how large the arm→first
-  callback gap really is and why, which `[TxLapSeed]` is there to answer.
-  Decide it from that evidence, not from the model.
+**Exit:** runtime conformance under delayed/missing progress, coherent recovery
+across participants, no partial two-stream commit, and validated startup
+evidence. Agreement checks in a single-threaded host helper are not proof of
+the cross-service transaction.
 
 ### Phase 6 — remaining measurement
 
@@ -704,9 +696,11 @@ sourced, or explicitly accepted as a property we do not claim.
 
 ## Ordering rationale
 
-Phase 0 has landed. The immediate work is the implementation and offline
-verification of Phases 3 and 5, with the lost-publication race first. Defer
-further routine hardware metering until the fixes and trace support are ready,
+Phase 0 and Phase 3's first three repairs have landed. The immediate supporting
+task is to repair runtime tuning's effective readback and transaction so it can
+support rebuild-free experiments. Then finish Phase 3 event evidence and the
+Phase 5 runtime contract/recovery integration described above. Defer further
+routine hardware metering until the relevant fixes and trace support are ready,
 then batch their hardware verification with the Phase 1 repeat-start baseline
 and reporting-only self-check. Phase 5 addresses established recovery defects;
 it is not yet proven to explain the observed latency difference.
