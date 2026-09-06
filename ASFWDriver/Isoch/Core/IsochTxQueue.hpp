@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 10;
+inline constexpr uint32_t kTxQueueAbiVersion = 11;
 
 /// Payload images per producer slot.
 ///
@@ -308,6 +308,12 @@ struct IsochTxQueueControl final {
     std::atomic<uint64_t> committedEnd{0};
 
     /// Runs in the producer before prefill. It never resets consumer state.
+    /// Seqlock over the finality seal above; written by transport only.
+    std::atomic<uint64_t> finalitySealSequence{0};
+    std::atomic<uint64_t> finalitySealPublished{0};
+    std::atomic<uint64_t> finalitySealFrontier{0};
+    std::atomic<uint32_t> finalitySealCycleTimer{0};
+
     void ResetProducerForStart() noexcept {
         committedEnd.store(0, std::memory_order_release);
     }
@@ -328,6 +334,10 @@ struct IsochTxQueueControl final {
         minimumLatePayloadRebindDistance.store(
             ~uint32_t{0}, std::memory_order_relaxed);
         completionStampCount.store(0, std::memory_order_relaxed);
+        finalitySealSequence.store(0, std::memory_order_relaxed);
+        finalitySealPublished.store(0, std::memory_order_relaxed);
+        finalitySealFrontier.store(0, std::memory_order_relaxed);
+        finalitySealCycleTimer.store(0, std::memory_order_relaxed);
         refillRequestGeneration.store(0, std::memory_order_relaxed);
         refillHandledGeneration.store(0, std::memory_order_relaxed);
         refillRequestHostTicks.store(0, std::memory_order_relaxed);
@@ -344,6 +354,35 @@ struct IsochTxQueueControl final {
                    handled, generation, std::memory_order_release,
                    std::memory_order_relaxed)) {
         }
+    }
+
+    /// Record when the finality frontier actually advanced.
+    ///
+    /// Finality is a transport decision, so only transport knows when it was
+    /// taken. A consumer that instead dates it from its own wake attributes
+    /// every packet sealed since the previous wake to the later instant, which
+    /// biases any finality-to-wire measurement short by up to one wake
+    /// interval. This is payload-opaque: a frontier and the cycle timer read
+    /// during the pass that moved it, nothing about content.
+    void PublishFinalitySeal(uint64_t frontier, uint32_t cycleTimer) noexcept {
+        const uint64_t seq =
+            finalitySealSequence.load(std::memory_order_relaxed) + 1;
+        finalitySealSequence.store(seq, std::memory_order_relaxed);
+        finalitySealFrontier.store(frontier, std::memory_order_relaxed);
+        finalitySealCycleTimer.store(cycleTimer, std::memory_order_relaxed);
+        finalitySealPublished.store(seq, std::memory_order_release);
+    }
+
+    /// The newest seal, or false when none has been published or one was being
+    /// written. Torn reads are dropped rather than blended.
+    [[nodiscard]] bool ReadFinalitySeal(uint64_t& outFrontier,
+                                        uint32_t& outCycleTimer) const noexcept {
+        const uint64_t published =
+            finalitySealPublished.load(std::memory_order_acquire);
+        if (published == 0) return false;
+        outFrontier = finalitySealFrontier.load(std::memory_order_relaxed);
+        outCycleTimer = finalitySealCycleTimer.load(std::memory_order_relaxed);
+        return finalitySealSequence.load(std::memory_order_acquire) == published;
     }
 
     void PushCompletionStamp(uint64_t packetIndex, uint32_t cycleTimestamp) noexcept {

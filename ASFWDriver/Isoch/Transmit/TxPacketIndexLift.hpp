@@ -47,10 +47,24 @@ inline constexpr uint32_t kCycleTimerWrapCycles = 8U * kIsochCyclesPerSecond;
 /// Returns the index congruent to `ringSlot` that is nearest `expectedIndex`.
 /// `expectedIndex` does not need to be exact, but it must be closer to the truth
 /// than half a ring: at exactly half the two candidates are equidistant and no
-/// rule can prefer one on the evidence, so the tie is broken downward. A cycle
-/// count is comfortably inside that bound -- it errs by the few cycles between
-/// arming the context and the controller fetching its first descriptor, not by
-/// twenty-four.
+/// rule can prefer one on the evidence, so the tie is broken downward.
+///
+/// A cycle count satisfies that bound only conditionally, and the caller owns
+/// the condition. Cycles equal descriptor advances while every cycle the
+/// context is scheduled in transmits a packet, but ASFW self-links each
+/// packet's skip address (IsochTxDmaRing.cpp, following Linux
+/// `queue_iso_transmit`), so a lost cycle or FIFO overrun skips a cycle
+/// *without* advancing past the packet -- see
+/// references/linux-ohci-firewire-low-level-stack/ohci.c:3250-3256. The cycle
+/// timer keeps running through those, so elapsed cycles is an upper bound on
+/// descriptor progress, not an equality. Launch delay biases it the same way.
+///
+/// Below half a ring of accumulated skips the lift is still exact, because the
+/// nearest-congruent rule absorbs the error. At or beyond it the result is off
+/// by a whole lap in the direction that invents transmitted laps. Skips are
+/// most likely exactly when the context is starved, which is the condition a
+/// lap-loss diagnostic exists to measure, so callers must report the result as
+/// an estimate under this assumption and not as established progress.
 [[nodiscard]] constexpr uint64_t LiftRingSlotToAbsolute(
     uint32_t ringSlot, uint64_t expectedIndex, uint32_t ringPackets) noexcept {
     if (ringPackets == 0) return expectedIndex;

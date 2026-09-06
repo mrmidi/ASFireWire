@@ -304,15 +304,19 @@ void LogLedgerInterval(const char* name,
     noexcept {
     const uint64_t samples = stats.samples.load(std::memory_order_relaxed);
     const uint64_t unresolved = stats.unresolved.load(std::memory_order_relaxed);
-    if (samples == 0 && unresolved == 0 &&
+    const uint64_t invalid = stats.invalid.load(std::memory_order_relaxed);
+    if (samples == 0 && unresolved == 0 && invalid == 0 &&
         stats.pending.load(std::memory_order_relaxed) == 0) {
         return;
     }
     const uint64_t minMicros = stats.minMicros.load(std::memory_order_relaxed);
+    // `inv` is the reversed-endpoint count: both ends were recovered and the
+    // span still did not order, which means one of them is stamped at the wrong
+    // event. n+pend+unres+inv is every candidate the site considered.
     ASFW_LOG(DirectAudio,
-             "[Ledger] %{public}s n=%llu pend=%llu unres=%llu min=%llu mean=%llu max=%llu us hist=[%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu]",
+             "[Ledger] %{public}s n=%llu pend=%llu unres=%llu inv=%llu min=%llu mean=%llu max=%llu us hist=[%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu]",
              name, samples, stats.pending.load(std::memory_order_relaxed),
-             unresolved,
+             unresolved, invalid,
              samples == 0 ? 0 : minMicros,
              stats.MeanMicros(),
              stats.maxMicros.load(std::memory_order_relaxed),
@@ -525,8 +529,26 @@ void ObserveTxHardware(ASFWAudioDriver_IVars& ivars,
             // One stamp per wake, recorded before any lookup consults the ring.
             // Omitting this is what left I2 with every sample unresolved: the
             // ring was read and reset but never written.
-            control->ledgerTxFinality.Record(finalizedEndAtWake,
-                                             correlationBusTicks);
+            //
+            // Take the frontier and the instant from transport's own seal. This
+            // wake's correlation time is when we noticed finality, not when it
+            // happened, and dating the ring with it understates I2 by however
+            // long the notification took. Fall back to the wake only when no
+            // seal has been published yet, so the ring is still written.
+            uint64_t sealFrontier = 0;
+            uint32_t sealCycleTimer = 0;
+            uint64_t sealBusTicks = 0;
+            uint64_t ignoredCorrelation = 0;
+            if (queue->ReadFinalitySeal(sealFrontier, sealCycleTimer) &&
+                sealCycleTimer != 0 &&
+                ExpandCompletionAndCorrelation(ivars, sealCycleTimer,
+                                               pair.cycleTimer32, sealBusTicks,
+                                               ignoredCorrelation)) {
+                control->ledgerTxFinality.Record(sealFrontier, sealBusTicks);
+            } else {
+                control->ledgerTxFinality.Record(finalizedEndAtWake,
+                                                 correlationBusTicks);
+            }
             finalityStamped = true;
         }
 

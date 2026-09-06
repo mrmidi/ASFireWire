@@ -177,6 +177,7 @@ private:
         Driver::HardwareInterface& hw,
         uint8_t contextIndex,
         uint64_t hardwareAbsIdx,
+        uint32_t sealCycleTimer,
         IsochTxPacketMeta* metadataRing,
         IsochTxQueueControl* controlBlock,
         uint32_t numSlots,

@@ -53,6 +53,12 @@ enum class LedgerLookup : uint8_t { Resolved, Pending, AgedOut };
 struct LedgerIntervalStats final {
     std::atomic<uint64_t> samples{0};
     std::atomic<uint64_t> unresolved{0};
+    /// Candidates whose endpoints were both recovered but did not order: the
+    /// span's end preceded its start. These are not measurement gaps, they are
+    /// evidence that one of the two endpoints is stamped at the wrong event,
+    /// and they must be counted rather than dropped -- `samples + pending +
+    /// unresolved + invalid` is the number of candidates the site considered.
+    std::atomic<uint64_t> invalid{0};
     std::atomic<uint64_t> sumMicros{0};
     std::atomic<uint64_t> maxMicros{0};
     std::atomic<uint64_t> minMicros{~uint64_t{0}};
@@ -87,9 +93,21 @@ struct LedgerIntervalStats final {
     void CountPending() noexcept {
         pending.fetch_add(1, std::memory_order_relaxed);
     }
+    /// The endpoints were found but did not order. See `invalid`.
+    void CountInvalid() noexcept {
+        invalid.fetch_add(1, std::memory_order_relaxed);
+    }
+    /// Total over the three non-sample outcomes. `Resolved` reaching here means
+    /// the lookup succeeded and the caller rejected the pair on its own terms,
+    /// which is the reversed-interval case -- it must land in a counter, not
+    /// fall through. Leaving it unhandled is what let reversed I1/I2 candidates
+    /// disappear from every counter at once.
     void Count(LedgerLookup outcome) noexcept {
-        if (outcome == LedgerLookup::Pending) CountPending();
-        else if (outcome == LedgerLookup::AgedOut) CountUnresolved();
+        switch (outcome) {
+            case LedgerLookup::Pending:  CountPending();   break;
+            case LedgerLookup::AgedOut:  CountUnresolved(); break;
+            case LedgerLookup::Resolved: CountInvalid();   break;
+        }
     }
 
     [[nodiscard]] uint64_t MeanMicros() const noexcept {
@@ -107,6 +125,7 @@ struct LedgerIntervalStats final {
     void Reset() noexcept {
         samples.store(0, std::memory_order_relaxed);
         unresolved.store(0, std::memory_order_relaxed);
+        invalid.store(0, std::memory_order_relaxed);
         pending.store(0, std::memory_order_relaxed);
         sumMicros.store(0, std::memory_order_relaxed);
         maxMicros.store(0, std::memory_order_relaxed);
@@ -129,7 +148,11 @@ inline constexpr uint32_t kLedgerStampSlots = 64;
 /// the oldest surviving entry, because that answer would be a plausible
 /// understatement of exactly the long intervals worth measuring.
 struct LedgerStampRing final {
+    /// One record. `sequence` is the writing record's index plus one -- zero
+    /// means never written or currently being overwritten -- and it is stored
+    /// last with release so a reader that observes it also observes the pair.
     struct Entry final {
+        std::atomic<uint64_t> sequence{0};
         std::atomic<uint64_t> cursor{0};
         std::atomic<uint64_t> ticks{0};
     };
@@ -137,12 +160,35 @@ struct LedgerStampRing final {
     std::atomic<uint64_t> count{0};
     Entry entries[kLedgerStampSlots]{};
 
+    /// Single producer. The slot is invalidated before it is rewritten so a
+    /// concurrent reader can tell a half-written pair from a whole one: without
+    /// that, on the first wrap (count == kLedgerStampSlots, oldest == 0) the
+    /// aged-out guard below does not fire -- the contended slot *is* index 0 --
+    /// and a lookup could return the incoming cursor beside the outgoing ticks.
     void Record(uint64_t cursor, uint64_t ticks) noexcept {
         const uint64_t n = count.load(std::memory_order_relaxed);
         auto& entry = entries[n % kLedgerStampSlots];
+        entry.sequence.store(0, std::memory_order_relaxed);
         entry.cursor.store(cursor, std::memory_order_relaxed);
         entry.ticks.store(ticks, std::memory_order_relaxed);
+        entry.sequence.store(n + 1, std::memory_order_release);
         count.store(n + 1, std::memory_order_release);
+    }
+
+    /// Read one record, rejecting it unless it still belongs to `index` both
+    /// before and after the pair is taken. A rejection means the writer is
+    /// recycling that slot, so the record it held is already gone.
+    [[nodiscard]] static bool ReadEntry(const Entry& entry,
+                                        uint64_t index,
+                                        uint64_t& outCursor,
+                                        uint64_t& outTicks) noexcept {
+        const uint64_t expected = index + 1;
+        if (entry.sequence.load(std::memory_order_acquire) != expected) {
+            return false;
+        }
+        outCursor = entry.cursor.load(std::memory_order_relaxed);
+        outTicks = entry.ticks.load(std::memory_order_relaxed);
+        return entry.sequence.load(std::memory_order_acquire) == expected;
     }
 
     /// When `value` first became covered. False when nothing retained covers
@@ -159,8 +205,15 @@ struct LedgerStampRing final {
         uint64_t foundIndex = 0;
         for (uint64_t index = oldest; index < n; ++index) {
             const auto& entry = entries[index % kLedgerStampSlots];
-            if (entry.cursor.load(std::memory_order_relaxed) <= value) continue;
-            ticks = entry.ticks.load(std::memory_order_relaxed);
+            uint64_t entryCursor = 0;
+            uint64_t entryTicks = 0;
+            if (!ReadEntry(entry, index, entryCursor, entryTicks)) {
+                // The only slot a writer can be recycling is the one holding
+                // the oldest retained record, so this is that record leaving.
+                return LedgerLookup::AgedOut;
+            }
+            if (entryCursor <= value) continue;
+            ticks = entryTicks;
             foundIndex = index;
             found = true;
             break;
@@ -185,6 +238,7 @@ struct LedgerStampRing final {
     void Reset() noexcept {
         count.store(0, std::memory_order_relaxed);
         for (auto& entry : entries) {
+            entry.sequence.store(0, std::memory_order_relaxed);
             entry.cursor.store(0, std::memory_order_relaxed);
             entry.ticks.store(0, std::memory_order_relaxed);
         }

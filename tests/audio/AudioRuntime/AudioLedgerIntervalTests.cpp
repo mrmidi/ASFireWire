@@ -149,4 +149,65 @@ TEST(LedgerStampRingTests, ResetForgetsEverything) {
     EXPECT_FALSE(ring.CoveredAt(50, ticks));
 }
 
+TEST(LedgerIntervalStatsTests, ReversedEndpointsAreCountedRatherThanDropped) {
+    LedgerIntervalStats stats{};
+
+    // A caller that recovered both endpoints and then found the span running
+    // backwards reports Resolved -- the lookup succeeded, the pair did not.
+    // That outcome used to match no branch and increment nothing, so reversed
+    // I1/I2 candidates left no trace in any counter at all.
+    stats.Count(LedgerLookup::Resolved);
+    stats.Count(LedgerLookup::Resolved);
+    stats.Count(LedgerLookup::Pending);
+    stats.Count(LedgerLookup::AgedOut);
+    stats.Record(500);
+
+    EXPECT_EQ(stats.invalid.load(), 2U);
+    EXPECT_EQ(stats.pending.load(), 1U);
+    EXPECT_EQ(stats.unresolved.load(), 1U);
+    EXPECT_EQ(stats.samples.load(), 1U);
+
+    // Every candidate the site considered lands in exactly one counter.
+    const uint64_t accounted = stats.samples.load() + stats.pending.load() +
+                               stats.unresolved.load() + stats.invalid.load();
+    EXPECT_EQ(accounted, 5U);
+
+    stats.Reset();
+    EXPECT_EQ(stats.invalid.load(), 0U);
+}
+
+TEST(LedgerStampRingTests, AFirstWrapOverwriteIsRefusedRatherThanBlended) {
+    LedgerStampRing ring{};
+    // Exactly one lap. count == kLedgerStampSlots makes `oldest` zero, so the
+    // oldest-survivor guard cannot fire for the slot about to be recycled --
+    // this is the one wrap where a torn pair could escape.
+    for (uint64_t i = 1; i <= kLedgerStampSlots; ++i) {
+        ring.Record(i * 10, i * 100);
+    }
+    uint64_t ticks = 0;
+    ASSERT_TRUE(ring.CoveredAt(5, ticks));
+    EXPECT_EQ(ticks, 100U);
+
+    // Emulate the producer partway through Record(650, 9999): it has
+    // invalidated the slot and replaced the cursor, but has not yet written the
+    // ticks or advanced the count.
+    ring.entries[0].sequence.store(0, std::memory_order_relaxed);
+    ring.entries[0].cursor.store(650, std::memory_order_relaxed);
+
+    // Accepting this slot would answer with the incoming cursor beside the
+    // outgoing ticks -- a pair that never existed at any instant.
+    uint64_t mixed = 0;
+    EXPECT_EQ(ring.Lookup(5, mixed), LedgerLookup::AgedOut);
+    EXPECT_FALSE(ring.CoveredAt(5, mixed));
+
+    // Once the writer finishes, the ring answers from the completed record.
+    ring.entries[0].ticks.store(9999, std::memory_order_relaxed);
+    ring.entries[0].sequence.store(kLedgerStampSlots + 1,
+                                   std::memory_order_release);
+    ring.count.store(kLedgerStampSlots + 1, std::memory_order_release);
+    uint64_t after = 0;
+    EXPECT_EQ(ring.Lookup(645, after), LedgerLookup::Resolved);
+    EXPECT_EQ(after, 9999U);
+}
+
 } // namespace

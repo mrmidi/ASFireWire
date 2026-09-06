@@ -358,6 +358,9 @@ void DirectAudioReceiveConsumer::ConsumePacket(
 
     // Back-date software handling to the controller-observed packet event.
     uint64_t packetHostTicks = batch.drainHostTicks;
+    // True when `packetHostTicks` is the controller's receive instant rather
+    // than a forward-dated estimate; only then is it a usable F3 for J3.
+    bool packetReceiveTicksValid = false;
     if (timestamp.ageTicks >= 0) {
         const uint64_t ageHostTicks = ::ASFW::Timing::nanosToHostTicks(
             ::ASFW::Isoch::Rx::FireWireTicksToNanos(
@@ -365,15 +368,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         packetHostTicks = batch.drainHostTicks > ageHostTicks
             ? batch.drainHostTicks - ageHostTicks
             : batch.drainHostTicks;
-        // J3 (F3->F4). The back-dating amount is the elapsed time itself: how
-        // long the packet sat between the controller receiving it and this
-        // drain reaching it. Dispatch delay is inside it, which is exactly why
-        // the ledger's "32-40 frames per batch" was never an answer to this --
-        // that figure says how much audio a batch carries, not how late it is.
-        if (inputView_.control) {
-            inputView_.control->ledgerJ3ReceiveToDecode.Record(
-                ::ASFW::Timing::hostTicksToNanos(ageHostTicks) / 1000U);
-        }
+        packetReceiveTicksValid = true;
     } else {
         ++negativeAgeCount_;
         if (-timestamp.ageTicks >=
@@ -449,12 +444,25 @@ void DirectAudioReceiveConsumer::ConsumePacket(
 
     const uint64_t packetFirstFrame =
         absoluteFrameCursor_ - result.framesDecoded;
-    // F4 for the ledger's J4: these frames are in the capture ring as of this
-    // drain. Keyed by the end-exclusive frame they reach, so a later read can
-    // ask when the newest frame it wants became visible.
+    // F4 for both J3 and J4, sampled here because here is where the frames
+    // actually become visible to a reader.
+    //
+    // `batch.drainHostTicks` is read once in IsochReceiveContext before
+    // DrainCompleted begins, so it predates decoding this packet and every
+    // packet ahead of it in the same drain. Dating F4 with it made J3 too short
+    // and J4 too long by the same amount -- the sum was right and the split was
+    // not. One clock read per published packet is the cost of the split being
+    // true; the receive instant it is measured against is still the
+    // controller's, so dispatch delay stays inside J3 where it belongs.
     if (result.framesDecoded != 0 && inputView_.control) {
+        const uint64_t publishHostTicks = mach_absolute_time();
         inputView_.control->ledgerCaptureDecode.Record(absoluteFrameCursor_,
-                                                       batch.drainHostTicks);
+                                                       publishHostTicks);
+        if (packetReceiveTicksValid && publishHostTicks > packetHostTicks) {
+            inputView_.control->ledgerJ3ReceiveToDecode.Record(
+                ::ASFW::Timing::hostTicksToNanos(
+                    publishHostTicks - packetHostTicks) / 1000U);
+        }
     }
     if (result.framesDecoded != 0 && packetHostTicks != 0 &&
         clockPublisher_.IsBound() && cadence.established &&

@@ -38,6 +38,31 @@ struct DiceTxEngineCounters final {
     std::atomic<uint64_t> lateFillsTooLate{0};
     /// Fills skipped because the content still was not available.
     std::atomic<uint64_t> lateFillsUnavailable{0};
+
+    /// Clear every counter for a new run.
+    ///
+    /// These are read beside queue counters that `ResetConsumerForArm` zeroes
+    /// on every arm -- `filled` minus transport's `lost` above all, which the
+    /// [TxFill] line advertises as the truthful content figure. Two lifetimes
+    /// make that subtraction meaningless: a restart that kept `filled` and
+    /// zeroed `lost` raises the advertised figure without any new content
+    /// reaching the wire. One run, one lifetime, both sides.
+    void Reset() noexcept {
+        packetsPrepared.store(0, std::memory_order_relaxed);
+        dataPacketsPrepared.store(0, std::memory_order_relaxed);
+        noDataPacketsPrepared.store(0, std::memory_order_relaxed);
+        slotAcquireFailures.store(0, std::memory_order_relaxed);
+        pcmCopiesReady.store(0, std::memory_order_relaxed);
+        pcmCopiesNotYetPublished.store(0, std::memory_order_relaxed);
+        pcmCopiesExpired.store(0, std::memory_order_relaxed);
+        pcmCopiesWrongEpoch.store(0, std::memory_order_relaxed);
+        pcmCopiesConcurrentRewrite.store(0, std::memory_order_relaxed);
+        pcmCopiesInvalid.store(0, std::memory_order_relaxed);
+        pcmSilenceSubstitutions.store(0, std::memory_order_relaxed);
+        lateFillsPublished.store(0, std::memory_order_relaxed);
+        lateFillsTooLate.store(0, std::memory_order_relaxed);
+        lateFillsUnavailable.store(0, std::memory_order_relaxed);
+    }
 };
 
 enum class TxSlotPrepareResult : uint8_t {

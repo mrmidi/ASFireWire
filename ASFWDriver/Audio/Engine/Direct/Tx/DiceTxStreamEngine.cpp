@@ -86,6 +86,10 @@ void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc) noexcept {
     // fill must never be attempted against an arm this run did not make.
     for (auto& armed : armedPackets_) armed = {};
     for (auto& filled : armedFilled_) filled = false;
+    // Same boundary as the queue's own consumer reset, so the producer and
+    // transport counters the [TxFill] line subtracts share one run. See
+    // DiceTxEngineCounters::Reset.
+    counters_.Reset();
 }
 
 bool DiceTxStreamEngine::PreviewPresentationPlan(

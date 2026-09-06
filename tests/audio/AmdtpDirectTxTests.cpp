@@ -446,6 +446,34 @@ TEST(AmdtpDirectTxTests, FillReportsContentUnavailableAndLeavesTheArmedSilence) 
     EXPECT_EQ(slots.latePublished, 0U);
 }
 
+TEST(AmdtpDirectTxTests, ResetForStartClearsTheCountersTransportResetsToo) {
+    TestProfile profile{};
+    DiceTxStreamEngine engine{};
+    SlotProvider slots{};
+    ASSERT_TRUE(Configure(engine, profile));
+    engine.BindSlotProvider(&slots);
+    PcmPublicationCache cache{};
+    ASSERT_TRUE(cache.Configure(2, 8192));
+    cache.BeginEpoch(3);
+    engine.BindPcmSource(&cache);
+    engine.ResetForStart(0);
+
+    ASSERT_EQ(engine.PrepareTransmitSlot(7, DataPlan(100), 8, 0x4567),
+              TxSlotPrepareResult::Prepared);
+    ASSERT_EQ(engine.FillTransmitSlot(7), TxSlotFillResult::ContentUnavailable);
+    ASSERT_EQ(engine.Counters().lateFillsUnavailable.load(), 1U);
+    ASSERT_EQ(engine.Counters().packetsPrepared.load(), 1U);
+
+    // The queue zeroes its own consumer counters on every arm. These are read
+    // beside them -- filled minus transport's lost is advertised as the
+    // truthful content figure -- so carrying them across a restart would raise
+    // that figure without a single new packet reaching the wire.
+    engine.ResetForStart(0);
+    EXPECT_EQ(engine.Counters().lateFillsUnavailable.load(), 0U);
+    EXPECT_EQ(engine.Counters().lateFillsPublished.load(), 0U);
+    EXPECT_EQ(engine.Counters().packetsPrepared.load(), 0U);
+}
+
 TEST(AmdtpDirectTxTests, FillIsRefusedOnceTransportHasFrozenTheSlot) {
     TestProfile profile{};
     DiceTxStreamEngine engine{};

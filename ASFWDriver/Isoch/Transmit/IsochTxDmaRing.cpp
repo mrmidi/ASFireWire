@@ -348,6 +348,7 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
     Driver::HardwareInterface& hw,
     const uint8_t contextIndex,
     const uint64_t hardwareAbsIdx,
+    const uint32_t sealCycleTimer,
     IsochTxPacketMeta* metadataRing,
     IsochTxQueueControl* controlBlock,
     const uint32_t numSlots,
@@ -413,6 +414,12 @@ void IsochTxDmaRing::RefreshLatePayloadBindings(
 
     controlBlock->finalizedEnd.store(
         monotonicFinalizedEnd, std::memory_order_release);
+    // Date the decision here, where it is taken. A consumer reading this later
+    // cannot reconstruct when the frontier moved, only when it noticed.
+    if (monotonicFinalizedEnd > previousFinalizedEnd && sealCycleTimer != 0) {
+        controlBlock->PublishFinalitySeal(monotonicFinalizedEnd,
+                                          sealCycleTimer);
+    }
     out.finalizedEnd = monotonicFinalizedEnd;
 }
 
@@ -749,10 +756,16 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             const uint64_t lifted = Tx::LiftRingSlotToAbsolute(
                 hwPacketIndex, elapsedCycles, Layout::kNumPackets);
             const uint64_t lapsLost = lifted / Layout::kNumPackets;
+            // The lift infers descriptor progress from elapsed cycles, which
+            // holds only while the context advanced one packet per cycle. The
+            // self-linked skip address means it may not have: report the raw
+            // observations, mark the inference, and state the bound under which
+            // it is exact. See TxPacketIndexLift.hpp.
             ASFW_LOG(Isoch,
-                     "[TxLapSeed] slot=%u elapsedCycles=%u naive=%u lifted=%llu lapsLost=%llu elapsedUs=%u",
+                     "[TxLapSeed] slot=%u elapsedCycles=%u naive=%u liftedEst=%llu lapsLostEst=%llu elapsedUs=%u exactIfSkippedCyclesUnder=%u",
                      hwPacketIndex, elapsedCycles, hwPacketIndex, lifted,
-                     lapsLost, elapsedCycles * 125u);
+                     lapsLost, elapsedCycles * 125u,
+                     Layout::kNumPackets / 2u);
         } else {
             ASFW_LOG(Isoch,
                      "[TxLapSeed] slot=%u no start anchor; lap unresolvable",
@@ -900,6 +913,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         hw,
         contextIndex,
         completedAbsIdx + deltaConsumed,
+        refillCycleTimer,
         metadataRing,
         controlBlock,
         numSlots,
