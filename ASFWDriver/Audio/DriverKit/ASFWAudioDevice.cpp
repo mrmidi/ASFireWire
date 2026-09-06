@@ -221,6 +221,8 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.lastTxObservationBusTicks = 0;
         ivars.runtime.txNoCycleAnchorEvents = 0;
         ivars.runtime.txNoPresentationOriginEvents = 0;
+        ivars.runtime.txAlignmentDeltaFrames = 0;
+        ivars.runtime.txAlignmentValid = false;
         ivars.runtime.txReplayResyncs = 0;
         ivars.runtime.mAudioPresentationObserver.Disarm();
         ivars.runtime.mAudioInternalTxTiming.Disarm();

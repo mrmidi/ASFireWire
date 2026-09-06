@@ -325,6 +325,12 @@ struct AudioDriverRuntimeState {
     // DATA decision before the cache is consulted count themselves here.
     uint64_t txNoCycleAnchorEvents{0};
     uint64_t txNoPresentationOriginEvents{0};
+    // Last reported [TxAlign] divergence between the TX content cursor and the
+    // receive-derived projection for the same presentation time. Held so the
+    // probe can log on change rather than per packet; reset at the seed and on
+    // stream start. Single-writer on the TX preparation queue.
+    int64_t txAlignmentDeltaFrames{0};
+    bool txAlignmentValid{false};
     uint64_t txReplayResyncs{0};
     /// Lowest packet whose content has not been settled yet. It advances past
     /// packets that were filled, frozen, or carry no samples, and stops at the

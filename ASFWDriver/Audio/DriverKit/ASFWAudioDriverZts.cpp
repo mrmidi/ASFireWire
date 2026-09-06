@@ -23,6 +23,21 @@ using PrepareResult = ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
 using Timeline = ASFW::Audio::Runtime::HardwareSampleTimeline;
 using FillResult = ASFW::Protocols::Audio::DICE::TxSlotFillResult;
 
+// One traversal of the OHCI IT descriptor ring, expressed in audio frames.
+// 48 packets at the blocking cadence's 6 frames/packet average = 288, which is
+// both the configured TX lead and the quantum the measured RTL displacement
+// lands on. The alignment probe reports its step in these units so a whole-lap
+// divergence is legible without arithmetic at the log.
+inline constexpr uint32_t kTxRingFrames =
+    ASFW::Shared::Isoch::IsochQueueGeometry::kTransmitInFlightPackets *
+    (ASFW::Audio::Shared::AudioTimingGeometry::kCadenceBlockFrames /
+     ASFW::Audio::Shared::AudioTimingGeometry::kCadenceBlockPackets);
+static_assert(ASFW::Audio::Shared::AudioTimingGeometry::kCadenceBlockFrames %
+                      ASFW::Audio::Shared::AudioTimingGeometry::
+                          kCadenceBlockPackets ==
+                  0,
+              "cadence block must divide into whole frames per packet");
+
 constexpr uint64_t kBusWrapTicks =
     static_cast<uint64_t>(ASFW::Timing::kFWTimeWrapSeconds) *
     ASFW::Timing::kTicksPerSecond;
@@ -881,7 +896,82 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 .frameCount = plan.frameCount,
                 .presentationBusTicks = plan.presentationBusTicks,
             };
+            // --- TX/RX alignment probes -------------------------------------
+            //
+            // The 288-frame RTL displacement has three candidate causes that
+            // no startup-only trace can separate: a wrong receive-derived seed,
+            // execution time lost mid-epoch, and a loopback correlator locking
+            // onto a repeat of the 288-frame ring content. These two lines
+            // decide between them. Both are receive-sourced only: a Transmit
+            // timeline initialises its cursor at BeginEpoch and never seeds.
+            //
+            // Read the answer as: constant nonzero delta => the seed;
+            // delta growing in 288-frame steps => mid-epoch loss; delta
+            // always zero => the displacement is not here, and aliasing
+            // returns to the front.
+            const bool seedingNow =
+                !control->hardwareTimeline.TxCursorInitialized();
             if (!control->hardwareTimeline.CommitTxRange(range)) break;
+            if (control->hardwareTimeline.Source() ==
+                ASFW::Audio::Runtime::HardwareTimelineSource::Receive) {
+                if (seedingNow) {
+                    // Once per epoch, at the flip. Everything the seed
+                    // expression consumed, plus the completion coordinates the
+                    // presentation time was extrapolated from.
+                    ASFW_LOG(
+                        DirectAudio,
+                        "[TxSeed] epoch=%llu first=%llu presentBus=%llu obsFrame=%llu obsBus=%llu nominal=%u frames=%u packet=%llu completionCursor=%llu",
+                        range.epoch, range.firstAudioFrame,
+                        range.presentationBusTicks,
+                        control->hardwareTimeline.LastObservationFrame(),
+                        control->hardwareTimeline.LastObservationBusTicks(),
+                        control->hardwareTimeline.NominalBusTicksPerFrame(),
+                        range.frameCount, packetIndex, completionCursor);
+                    ivars.runtime.txAlignmentDeltaFrames = 0;
+                    ivars.runtime.txAlignmentValid = false;
+                } else {
+                    // Re-evaluate the seed expression against the *current*
+                    // observation for this packet's own presentation time. At
+                    // the seed the two agree by construction; afterwards
+                    // PreviewTxRange stops consulting the observation at all,
+                    // so any divergence is the cursor drifting away from the
+                    // hardware it was placed against.
+                    uint64_t projected = 0;
+                    if (control->hardwareTimeline
+                            .ProjectFirstFrameFromObservation(
+                                range.presentationBusTicks, projected)) {
+                        const int64_t delta =
+                            static_cast<int64_t>(range.firstAudioFrame) -
+                            static_cast<int64_t>(projected);
+                        // Anomaly-only: one line when the divergence moves, not
+                        // one per packet. A clean run prints nothing here.
+                        if (!ivars.runtime.txAlignmentValid ||
+                            delta != ivars.runtime.txAlignmentDeltaFrames) {
+                            const int64_t previous =
+                                ivars.runtime.txAlignmentValid
+                                    ? ivars.runtime.txAlignmentDeltaFrames
+                                    : 0;
+                            const int64_t step = delta - previous;
+                            const uint32_t nominal =
+                                control->hardwareTimeline
+                                    .NominalBusTicksPerFrame();
+                            ASFW_LOG(
+                                DirectAudio,
+                                "[TxAlign] epoch=%llu delta=%lld step=%lld ringFrames=%u stepLaps=%lld cursorFirst=%llu projected=%llu presentBus=%llu obsFrame=%llu obsBus=%llu nominal=%u packet=%llu completionCursor=%llu",
+                                range.epoch, delta, step, kTxRingFrames,
+                                step / static_cast<int64_t>(kTxRingFrames),
+                                range.firstAudioFrame, projected,
+                                range.presentationBusTicks,
+                                control->hardwareTimeline.LastObservationFrame(),
+                                control->hardwareTimeline
+                                    .LastObservationBusTicks(),
+                                nominal, packetIndex, completionCursor);
+                            ivars.runtime.txAlignmentDeltaFrames = delta;
+                            ivars.runtime.txAlignmentValid = true;
+                        }
+                    }
+                }
+            }
             const uint64_t nextTxFrame =
                 control->hardwareTimeline.NextTxFrame();
             control->txScheduledSampleFrame.store(

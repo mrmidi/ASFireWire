@@ -180,6 +180,33 @@ public:
         return lastPresentationBusTicks_.load(std::memory_order_acquire);
     }
 
+    // The receive-derived seed expression, in one place.
+    //
+    // PreviewTxRange uses this exactly once per epoch, to place the TX content
+    // cursor against the newest RX observation. It is exposed because that is
+    // also the only defensible way to ask, later in the same epoch, "where
+    // would this presentation time put the content *now*?" -- the alignment
+    // probe must evaluate the same expression the seed did, not a copy of it
+    // that can drift. Const and non-mutating: asking never moves the cursor.
+    [[nodiscard]] bool ProjectFirstFrameFromObservation(
+        uint64_t presentationBusTicks, uint64_t& outFirstFrame) const noexcept {
+        if (!observationValid_.load(std::memory_order_acquire)) return false;
+        const uint64_t observedFrame =
+            lastObservationFrame_.load(std::memory_order_relaxed);
+        const uint64_t observedBus =
+            lastPresentationBusTicks_.load(std::memory_order_relaxed);
+        const uint32_t nominal =
+            nominalBusTicksPerFrame_.load(std::memory_order_relaxed);
+        if (presentationBusTicks < observedBus || nominal == 0) return false;
+        outFirstFrame =
+            observedFrame + (presentationBusTicks - observedBus) / nominal;
+        return true;
+    }
+
+    [[nodiscard]] uint32_t NominalBusTicksPerFrame() const noexcept {
+        return nominalBusTicksPerFrame_.load(std::memory_order_relaxed);
+    }
+
     [[nodiscard]] bool TxCursorInitialized() const noexcept {
         return txCursorInitialized_.load(std::memory_order_acquire);
     }
@@ -311,16 +338,9 @@ public:
                                       TxPresentationRange& out) noexcept {
         if (epoch == 0 || epoch != Epoch() || frameCount == 0) return false;
         uint64_t first = txNextFrame_.load(std::memory_order_acquire);
-        if (!txCursorInitialized_.load(std::memory_order_acquire)) {
-            if (!observationValid_.load(std::memory_order_acquire)) return false;
-            const uint64_t observedFrame =
-                lastObservationFrame_.load(std::memory_order_relaxed);
-            const uint64_t observedBus =
-                lastPresentationBusTicks_.load(std::memory_order_relaxed);
-            const uint32_t nominal =
-                nominalBusTicksPerFrame_.load(std::memory_order_relaxed);
-            if (presentationBusTicks < observedBus || nominal == 0) return false;
-            first = observedFrame + (presentationBusTicks - observedBus) / nominal;
+        if (!txCursorInitialized_.load(std::memory_order_acquire) &&
+            !ProjectFirstFrameFromObservation(presentationBusTicks, first)) {
+            return false;
         }
         out = {
             .epoch = epoch,
