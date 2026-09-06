@@ -163,12 +163,97 @@ the end, silently. Split into `[IsochWatchdog]` and `[IsochTxDelta]` in
 read at all -- so session B's `lapsRecovered = 0` is **not** backed by a
 `lapUnresolvable = 0`, and is correspondingly weaker.
 
-### Open: run count or elapsed time?
+### Answered: neither. Idle time does nothing, and the driver cannot see it
 
-The drift is deterministic and cheap to characterise. Leave a stream up without
-measuring, then take one run. Still 66.95 means the runs cause it; 77.95 means
-time does. That single measurement splits the hypothesis and, unlike everything
-else recorded here, is properly controlled.
+After session B's three runs the stream was left stopped for ten minutes
+(`StartIO` x3 / `StopIO` x3, `streaming: False` throughout, no TX activity in the
+ring for ~4500 records), then one run was taken:
+
+| run | `RTL_ts` | sd | range | SNR |
+|--:|---------:|-----:|---|------:|
+| B4 | 75.96 | 38.57 | 75.94 .. 169.96 | 30.2 |
+
+Statistically identical to B3 (77.95, sd 38.21). **Idle time neither heals the
+drift nor advances it.** It is frozen.
+
+#### Every instrumented quantity is identical across clean and degraded runs
+
+| | B1 (66.95, sd **0.01**) | B4 (75.96, sd **38.57**) |
+|---|---|---|
+| `marginMin` | 96 | 96 |
+| `headroomMin` / `headroomRunMin` | 0 / 0 | 0 / 0 |
+| `ge1500` (late preparations) | 0 | 0 |
+| `lapsRecovered` | 0 | 0 |
+| `[TxContent]` / `[TxLapRecover]` / Isoch errors | 0 / 0 / 0 | 0 / 0 / 0 |
+| measured scheduling | 1124.00 (= declared) | 1124.00 (= declared) |
+| `carriedPerMille` | 13-38 | **0** |
+
+The `[TxPrep]` records are bit-identical across all four runs. The producer
+behaves exactly the same in the run that measured a needle-sharp 66.95 and the
+one that measured 75.96 with a 94-frame outlier tail.
+
+#### Interrupt burstiness is not the cause
+
+`carriedPerMille` read **0** across every watchdog line of B4 -- perfect interrupt
+delivery -- on the worst measurement of the session, after reading 13-38 during
+the clean B1. The hypothesis that carried-tick rate was the tell for this drift
+is **falsified**, not merely unsupported. Without this run it would still be
+believed.
+
+#### The headroom disambiguation works, and rules itself out
+
+```
+[TxPrep] wakes=0   ... headroomMin=-1 headroomRunMin=-1   <- no packet prepared
+[TxPrep] wakes=452 ... headroomMin=0  headroomRunMin=0    <- genuine: nothing staged
+```
+
+These were indistinguishable before the fix. The `0` is real producer starvation
+at the margin -- and it is real in **every** run including the clean one, so it
+does not discriminate either.
+
+### The phenomenon, restated
+
+Not a climb. A **step**:
+
+> Some number of runs at exactly **66.95, sd 0.01**, then a one-time step to a
+> plateau around **75-78** with a growing outlier tail. The mode is stable (the
+> minimum stays 74.9-77.9); the maximum grows, 88.96 -> 163.97 -> 169.96, so the
+> rising sd is tail growth rather than mode movement. It persists across
+> `StartIO`/`StopIO`, survives ten minutes idle, and is cleared only by a driver
+> reinstall or a controller replug.
+
+Session A stepped after three clean runs, session B after one. Nothing yet
+explains the difference.
+
+### Where this leaves the search
+
+**The driver cannot see this in anything it currently records.** Not one
+instrumented quantity differs between the clean and degraded runs. So the cause
+is either outside the driver -- the HAL's client-side scheduling, or the device --
+or inside it in a quantity nothing measures.
+
+Two constraints for whatever is proposed next:
+
+- Measured scheduling distance is exactly the declared 1124 frames in every run,
+  so the client-buffer/safety-offset term is stable. The movement is entirely in
+  `RTL_ts`, the physical path.
+- The transmit path's own records are identical, so a mechanism that acts through
+  packet preparation, completion timing, lap accounting or producer headroom is
+  excluded by the evidence already in hand.
+
+The Duet is the least-instrumented element in the chain and the only one reset by
+both events that clear the drift. A device-side stream or clock state that
+settles differently after its first stream is worth considering -- but session A
+took three clean runs before stepping and session B took one, which a simple
+first-stream-after-power-up story does not fit. Recorded as unexplained rather
+than attributed.
+
+### Was open: run count or elapsed time?
+
+Superseded by the run above: idle time does neither. What remains open is what
+*does* advance it, and the answer is not in the driver's current instrument set.
+The step is deterministic and reproducible, so a bisection is cheap -- but it has
+to be run against something outside the transmit path.
 
 ## Problems with the measurements
 
