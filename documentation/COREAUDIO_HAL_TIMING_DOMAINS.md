@@ -278,7 +278,7 @@ Plus one FireWire-specific requirement:
 > resynchronisation mechanisms. Whether an initial anchor error persists in ASFW
 > is an open question to be measured, not a quotable fact.
 
-### The 288-frame RTL offsets — open, with one candidate weakened
+### The 288-frame RTL offsets — mechanism traced in code, not yet measured
 
 `RTL_raw` has been measured at six stream starts as `582.95 + k x 288` frames,
 k in {0,1,2,4,7,12}; 288 frames = one 48-packet OHCI IT descriptor-ring lap.
@@ -286,30 +286,94 @@ Stable to sd 0.01 within a run; k varies between starts.
 
 **Ruled out:** the first-refill seed. `[TxLapSeed]` reported a clean seed
 (`elapsedCycles=3, lapsLostEst=0`) on the very context that measured 4 laps up,
-and the same single arm later measured 12 laps up.
+and that same single arm later measured 12 laps up.
 
-**Weakened:** "a TX CommandPtr lap ambiguity corrupts the first ZTS." On the
-Duet the ZTS is published from the **receive** path
-(`DirectAudioReceiveConsumer.cpp:498`, `HardwareTimelineSource::Receive`), not
-from TX completions, so the direct TX-CommandPtr-to-first-ZTS mechanism this
-document previously asserted **does not exist in the current code**. A related
-mechanism remains plausible — TX frame-to-packet assignment being displaced
-*relative to* the RX-anchored timeline — but that is a different claim and is
-unverified.
+**Ruled out:** "a TX CommandPtr lap ambiguity corrupts the first ZTS." On any
+input-bearing device the ZTS is published from the **receive** path
+(`DirectAudioReceiveConsumer.cpp:498`), not from TX completions. The RX ZTS is
+not the displaced quantity.
+
+#### The coupling point: TX frame assignment is seeded from an RX observation
+
+`HardwareSampleTimeline::PreviewTxRange` (`HardwareSampleTimeline.hpp:307`)
+seeds the TX content cursor **exactly once per epoch**, from the latest RX
+observation, using a TX-derived bus time:
+
+```cpp
+if (!txCursorInitialized_) {
+    first = observedFrame + (presentationBusTicks - observedBus) / nominal;
+}
+```
+
+After that, `CommitTxRange` advances the cursor on its own. So this single
+expression fixes the TX-to-RX frame alignment for the life of the epoch.
+
+#### How a whole lap enters that expression
+
+| # | step | file |
+|---|---|---|
+| 1 | `completionCursor` accumulates `deltaConsumed` from the **mod-48** `DecodeHardwarePacketIndex`, so it can run short by whole laps | `IsochTxDmaRing.cpp` |
+| 2 | `PushCompletionStamp` records that possibly-short absolute index | `IsochTxQueue.hpp` |
+| 3 | `AnchorForPacket` reads the newest stamp and extrapolates by `packetIndex - completedPacketIndex` cycles. A `completedPacketIndex` short by 48k makes that distance **48k cycles too large** | `ASFWAudioDriverPrivate.hpp:68` |
+| 4 | `transmitBusTicks`, and hence `presentationBusTicks`, land 48k x 125 us = **6k ms** late | `ASFWAudioDriverZts.cpp:662-772` |
+| 5 | that error is carried straight into the one-shot seed above | `HardwareSampleTimeline.hpp:307` |
+
+The arithmetic closes exactly:
+
+```
+1 lap = 48 packets = 48 isoch cycles = 6 ms = 288 frames @ 48 kHz
+288 frames x 512 nominal bus ticks/frame = 147456 ticks = 6.0 ms
+```
+
+So **k laps of completion-cursor loss produce k x 288 frames of TX cursor
+displacement**, and because the seed is one-shot the error is fixed for the
+epoch. That accounts for the lap quantisation, the sd 0.01 stability within a
+run, and the variation between starts — without requiring the ZTS to be wrong.
+
+**Status: traced statically, not measured.** The mechanism exists in the code
+and the arithmetic matches the observed quantum. It has not been confirmed on
+hardware, and correlator aliasing (below) has not been excluded.
+
+#### Which backends are exposed
+
+The timeline source is chosen once, at `ASFWAudioDevice.cpp:355`:
+
+```cpp
+timelineSource = (useMAudioTxClock || inputChannelCount == 0)
+    ? Transmit : Receive;
+```
+
+It is a **per-capability** decision with one family-specific override, not a
+per-family one:
+
+| Backend | Source | Exposure |
+|---|---|---|
+| DICE (Duet), OXFW, generic BeBoB, AVC — anything with input channels | `Receive` | **Directly exposed**: TX cursor seeded from an RX observation using a TX-derived bus time |
+| M-Audio (BeBoB special), when `useMAudioTxClock` | `Transmit` | Different path — `MAudioPresentationObserver` supplies the observation |
+| Output-only devices (`inputChannelCount == 0`) | `Transmit` | As above |
+
+For the `Transmit`-source backends `PreviewTxRange` still seeds from
+`lastObservationFrame_`, but observation and plan then derive from the *same*
+completion stamps, so a lap error may partially cancel instead of appearing as
+displacement. **Not traced — reason about it separately before assuming either
+way.**
 
 **Still live:** correlator aliasing. An unrefilled ring re-transmits the same 48
 packets, so the stimulus genuinely repeats at 288-frame spacing and a weak-SNR
 correlator can lock onto the wrong repeat. Evidence is mixed: a 60/60 run at
-36.2 dB SNR still landed 4 laps up, while the 12-lap run had ~30% trial
-acceptance.
+36.2 dB SNR still landed 4 laps up, while the 12-lap run had ~30% acceptance.
 
-**Next trace (driver-side, no cable/gain dependency):** pair the **first RX ZTS**
-with the **TX frame-to-packet / presentation assignment** for the same epoch, and
-add an identifiable loopback marker so the acoustic measurement can be aligned
-against driver-side truth rather than trusted on its own. Surfacing
-`maxCompletionDelta` / `maxCompletionDeltaEvents` (written at
-`IsochTxDmaRing.cpp:793,795`, read nowhere) gives an independent check for real
-lap loss.
+#### The measurement that settles it
+
+One log line, once per epoch, at the moment `txCursorInitialized_` flips —
+recording `observedFrame`, `observedBus`, `presentationBusTicks`, `nominal`, the
+computed `first`, and the `completionCursor` / `completedPacketIndex` the anchor
+used. If `first` lands on a 288-frame grid offset from the RX observation, this
+is the mechanism. If it does not, aliasing returns to the front.
+
+Independently, surfacing `maxCompletionDelta` / `maxCompletionDeltaEvents`
+(written at `IsochTxDmaRing.cpp:793,795`, read nowhere) tests step 1 directly: a
+completion delta above 48 packets is lap loss observed at source.
 
 ## Mistakes this corrects
 
