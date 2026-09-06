@@ -266,7 +266,33 @@ template the FireWire side.
 
 **Instrumentation.** Features and fixes should be traceable, but do not add IO or noisy logging to hot paths. Design instrumentation alongside the feature, suggest the relevant `log stream` command or predicate, and ask the user for runtime state when needed (for example: driver running, audio playing, device connected). Otherwise the trace may prove nothing. Gate hot-path telemetry **anomaly-only once the happy path is confirmed**: keep draining any telemetry ring so it never overflows, but emit a log line only on a real fault (e.g. `[PayloadWriter]` logs only on deficit/withoutPkt/raced/`written != visited`; `[TxPrepRange]` only on `stoppedShort`/`frameShort`), leaving one coarse liveness/margin heartbeat (`[TxPrep]`). A clean run then prints only the heartbeat, and any other line means a regression.
 
-**The agent's Bash sandbox cannot read the unified log.** `log show` / `log stream` return **zero lines silently** under the sandbox (not an error — every predicate looks "empty"), so the agent cannot capture dext logs itself. Confirm the dext is alive with `systemextensionsctl list` (that works), but for the actual trace **hand the user a ready `log stream … | grep -m N … > file` command to run via the `!` prefix**, then read the file. DriverKit dexts have no real os_log categories (`os_log_create` is unavailable — everything is `OS_LOG_DEFAULT` from `kernel`), so the category lives only in the message-text prefix: filter on `eventMessage CONTAINS "[Tag]"`, and pass `--info --debug` or the lines (logged below default level) won't appear.
+**Read the driver over the ASFW MCP control plane, not the unified log.** The
+running dext serves a live control plane, and the agent reaches it directly —
+there is **no need to ask the user to collect logs by hand.** Use the
+`asfw-mcp-control-plane` skill and its bundled client; do not hand-roll the
+MCP HTTP/SSE session with `curl`.
+
+```bash
+# The skill's DEFAULT_ENDPOINT is 8766, but this machine's app serves 8765.
+export ASFW_MCP_ENDPOINT=http://127.0.0.1:8765/mcp
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py health
+python3 skills/asfw-mcp-control-plane/scripts/asfw_mcp.py call asfw_get_audio_stream_health '{}'
+```
+
+On `Connection refused`, read the port from the app's **MCP Control Plane**
+settings panel rather than concluding the server is down. The skill carries the
+full workflow: ring-first diagnosis, the stream-health verdict table, the
+active-audio-run rule (no `health`/`summary`/discovery during an endurance run),
+and the mutation policy. `asfw_log_query` is the **only** way to see
+`ASFW_LOG_RING_ONLY` records, which never reach os_log. Pass the bare tag to
+`contains` (`"TxSeed"`, not `"[TxSeed]"`).
+
+RTL is measured with `./tools/rtl/rtl_loopback -d <device> --measure` (needs a
+physical output->input loopback cable). **`-d` matches the CoreAudio device
+name, which is the device's own name (e.g. `Duet`), not `ASFW`** — the tool's
+default filter of `ASFW` matches nothing and reports "no duplex device".
+
+**The agent's Bash sandbox cannot read the unified log.** `log show` / `log stream` return **zero lines silently** under the sandbox (not an error — every predicate looks "empty"), so the agent cannot capture dext logs itself. **Use the MCP control plane above instead** — it carries the same records and more. Only if the control plane is unreachable, hand the user a ready `log stream … | grep -m N … > file` command to run via the `!` prefix, then read the file. Confirm the dext is alive with `systemextensionsctl list` (that works). DriverKit dexts have no real os_log categories (`os_log_create` is unavailable — everything is `OS_LOG_DEFAULT` from `kernel`), so the category lives only in the message-text prefix: filter on `eventMessage CONTAINS "[Tag]"`, and pass `--info --debug` or the lines (logged below default level) won't appear.
 
 **Commit and git history.** Keep history traceable. If changes are getting large, warn the user that it is better to commit the current work first; otherwise unrelated logic shifts can become hard to repair or reason about.
 
