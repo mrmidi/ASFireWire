@@ -77,6 +77,26 @@ not established. These are observations, not a controlled buffer-size comparison
 or proof of an implementation improvement. The older ~355-frame remainder is
 therefore not a demonstrated floor.
 
+**Frame assignment is not the cause (measured 2026-09-06).** The alignment
+probes in `d88e3feb` ran on a live Duet: over 43.7 s the TX content cursor never
+diverged from the receive-derived projection by more than one packet, and the
+seed was exact. A wrong one-shot seed and mid-epoch execution loss are both
+excluded; only a common-mode displacement of cursor and projection together
+would still read zero. The same session measured RTL_raw 1158.95 fr
+(24.145 ms), RTL_ts 930.95 fr, scheduling distance 228 measured against 228
+declared, residual +823.95 fr — and `1158.95 = 582.95 + 2 x 288`, so the lattice
+survives the cursor being clean.
+
+**Roughly 720 of the 930.95 measured hardware-latency frames are our own.**
+`committedMargin` is 120 packets by design (`kTxPreparedTargetCycleSlots =
+48 guard + 72 slack`), which is 720 frames / 15 ms of prepared lead, matching the
+seed's observed 716-frame planning lead. That leaves ~211 frames (4.4 ms) for
+wire, device and converters. Reducing `kTxDispatchSlackCycleSlots` is therefore a
+larger lever on output latency than the client-buffer and safety-offset budget,
+and unlike `kPacketsPerCompletionGroup` it is additive rather than fused to the
+finality lead. Whether the k x 288 lattice rides on that lead is the open
+question; it needs the constant changed, a rebuild and a repeat RTL run.
+
 **A 288-frame lattice is a clue, not a closed cause.** At 48 kHz, one 48-packet
 ring traversal takes 6 ms when each cycle advances a packet and carries 288
 frames on average. The September 6 scheduling-normalized results differ by

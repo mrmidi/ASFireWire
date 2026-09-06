@@ -354,8 +354,13 @@ So **k laps of completion-cursor loss produce k x 288 frames of TX cursor
 displacement**. The seed is one-shot, so an error introduced there persists for
 the epoch.
 
-**Status: a demonstrated sensitivity, not a closed explanation.** Three limits
-have to stay attached to it:
+**Status: MEASURED AND EXCLUDED (2026-09-06).** The probes below ran on hardware
+and the content cursor is clean — see *The measurements that settled it*. The
+reasoning that follows is retained because it is why the probe was built and
+what its limits still are; limit 1 in particular is the caveat that survives the
+result.
+
+Three limits have to stay attached to the seed hypothesis:
 
 1. **The seed's sensitivity is established; its input is not.** Injecting a
    late `presentationBusTicks` into the real class moves `first` by exactly
@@ -408,20 +413,84 @@ packets, so the stimulus genuinely repeats at 288-frame spacing and a weak-SNR
 correlator can lock onto the wrong repeat. Evidence is mixed: a 60/60 run at
 36.2 dB SNR still landed 4 laps up, while the 12-lap run had ~30% acceptance.
 
-#### The measurements that would settle it
+#### The measurements that settled it — RESULT, 2026-09-06
 
-**(a) The seed, once per epoch.** One log line at the moment
-`txCursorInitialized_` flips — recording `observedFrame`, `observedBus`,
-`presentationBusTicks`, `nominal`, the computed `first`, and the
-`completionCursor` / `completedPacketIndex` the anchor used. Necessary, but by
-limit 3 above **not sufficient**: it can only implicate or clear startup.
+Both probes landed in `d88e3feb` (`[TxSeed]`, `[TxAlign]`) and were read off the
+driver ring over the MCP control plane on a live Apogee Duet at 48 kHz.
 
-**(b) Frame-to-presentation alignment across the epoch.** The one that can
-actually distinguish the hypotheses. Periodically re-derive what `first` *would*
-be from the current RX observation and compare it against the running
-`txNextFrame_`. A constant difference means the seed; a difference that grows in
-lap steps means mid-epoch execution loss; no difference means the displacement is
-not here at all and correlator aliasing returns to the front.
+**The TX content cursor does not drift.** Over 43.7 s of continuous streaming
+(packet 726 -> 350129, 2.1M frames), `[TxAlign]` never leaves +/-8 frames and
+`stepLaps` is **0 on every record**:
+
+```
+delta=0  step=0   cursorFirst=4852     projected=4852     packet=727
+delta=-8 step=-8  cursorFirst=147516   projected=147524   packet=24505
+delta=-8 step=-8  cursorFirst=1039412  projected=1039420  packet=173154
+delta=-8 step=-8  cursorFirst=2101260  projected=2101268  packet=350129
+```
+
++/-8 frames is exactly one packet at 48 kHz: `lastObservationFrame_` advances a
+packet at a time, so the projection can be one RX packet stale. It oscillates
+0 -> -8 -> 0 and never accumulates. `asfw_log_stats` reported
+`droppedRecords: 0` with `oldestSequence: 1`, so this is the whole retained
+history, not a window.
+
+**The seed was correct.** `[TxSeed] first=4844 presentBus=83773160
+obsFrame=4128 obsBus=83406568 nominal=512` — `(83773160-83406568)/512 = 716`,
+`4128+716 = 4844`, and `[TxAlign]` reads `delta=0` at the flip.
+
+So **hypotheses 1 and 3 of the previous section are dead**: neither a wrong
+one-shot seed nor mid-epoch execution loss is displacing the content cursor.
+
+> **What this does not exclude.** Cursor and projection share one coordinate, so
+> a *common-mode* displacement of both reads as zero. This is the same
+> cancellation the `AnchorForPacket` caveat describes. It rules out the two
+> mechanisms this document proposed; it does not rule out every mechanism.
+
+#### And the lattice is still there
+
+Measured the same session, 20/20 trials accepted at 34.9 dB SNR, sd 0.01:
+
+| | frames | ms |
+|---|---:|---:|
+| RTL_raw | 1158.95 | 24.145 |
+| RTL_ts (hardware latency) | 930.95 | 19.395 |
+| scheduling distance | 228 measured / **228 declared** | — |
+| **residual** | **+823.95** | **+17.166** |
+
+`1158.95 = 582.95 + 2 x 288` — the historical lattice, same fractional part, two
+laps up. So the 288-frame quantum survives while the content cursor is provably
+clean. Whatever carries it is not frame assignment.
+
+**The scheduling side is exact**: measured scheduling distance equals declared,
+to the frame. The whole error is in hardware latency — declared 107, measured
+930.95.
+
+#### Where 720 of those frames are
+
+`asfw_get_audio_cursors` reports `committedMargin: 120` packets against a
+48-descriptor ring. That is not an overrun — it is the design target:
+
+```cpp
+kTxPreparedTargetCycleSlots = kTxHardwareRingPackets(48)
+                            + kTxDispatchSlackCycleSlots(72) = 120
+```
+
+preparation runs to `completion + 120` into a 168-slot shared ring, and only 48
+of those are bound to descriptors at a time. But **120 packets x 6 frames =
+720 frames = 15 ms**, and the seed's own planning lead was 716 frames
+(`presentBus - obsBus = 366592 ticks = 14.9 ms`). `AudioTimingGeometry.hpp:158`
+says *"storage capacity is not presentation latency"*; the measurement says that
+here it is. Of 930.95 frames of measured hardware latency, roughly 720 is our own
+prepared lead and roughly 211 frames (4.4 ms) is wire, device and converters.
+
+That reframes the budget question in §1: the client IO buffer plus safety offsets
+are the *smaller* lever. `kTxDispatchSlackCycleSlots = 72` is 9 ms of additive
+slack in the output path, and unlike `kPacketsPerCompletionGroup` it is not fused
+to the finality lead — see `APPLE_DRIVER_TIMESTAMP_MECHANICS.md` §8.3.1.
+
+**Open:** whether the k x 288 lattice rides on that prepared lead. Deciding it
+needs the constant changed, a rebuild, and a repeat RTL run.
 
 > **Do not use `maxCompletionDelta > 48`.** An earlier revision of this document
 > proposed that as direct evidence of lap loss. It cannot fire.
