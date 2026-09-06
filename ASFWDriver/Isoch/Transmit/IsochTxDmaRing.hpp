@@ -66,6 +66,11 @@ public:
         /// Observations that had to be corrected. Distinct from lapsRecovered:
         /// one observation can lose several laps.
         std::atomic<uint64_t> lapRecoveryEvents{0};
+        /// Packets skipped by the completion walk because the controller
+        /// lapped the software fill. Their descriptors transmitted stale
+        /// content and their shared slots were recycled before software could
+        /// retire them, so there is nothing left to verify or return.
+        std::atomic<uint64_t> abandonedOnLap{0};
         /// Observations where the cycle timer could not adjudicate the lap
         /// (no anchor, or more than the timer's eight-second range apart). The
         /// naive delta stood; a lap may have been lost unnoticed.

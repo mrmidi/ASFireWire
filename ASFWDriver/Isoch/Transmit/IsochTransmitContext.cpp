@@ -976,11 +976,12 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     ASFW_LOG_RING_ONLY(
         Isoch,
         ::ASFW::Logging::LogLevel::Notice,
-        "[IsochTxDelta] context=%u lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu maxDelta=%u",
+        "[IsochTxDelta] context=%u lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu abandoned=%llu maxDelta=%u",
         contextIndex_,
         ring_.RTCounters().lapsRecovered.load(std::memory_order_relaxed),
         ring_.RTCounters().lapRecoveryEvents.load(std::memory_order_relaxed),
         ring_.RTCounters().lapUnresolvable.load(std::memory_order_relaxed),
+        ring_.RTCounters().abandonedOnLap.load(std::memory_order_relaxed),
         ring_.RTCounters().maxDeltaConsumed.load(std::memory_order_relaxed));
 }
 

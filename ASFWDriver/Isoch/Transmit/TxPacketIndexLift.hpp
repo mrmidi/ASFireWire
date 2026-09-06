@@ -112,4 +112,30 @@ inline constexpr uint32_t kCycleTimerWrapCycles = 8U * kIsochCyclesPerSecond;
     return delta > naive ? delta : naive;
 }
 
+/// How much of a completion delta the walk may inspect, and how much it must
+/// write off.
+///
+/// The completion walk returns shared-slot ownership, so it may only touch slots
+/// whose metadata still describes the packet being retired. A slot is retired
+/// once per lap: when the delta exceeds the descriptor ring the controller
+/// lapped, and everything older than the last `ringPackets` had its slot
+/// recycled a lap ago. Inspecting those compares a current payload against stale
+/// metadata and reports a seal mismatch that is an artefact of the walk.
+///
+/// The two halves must always sum to the full delta. The cursor advances by the
+/// whole thing regardless -- the lap really happened, and concealing it is what
+/// displaces every later packet by a lap. Only the inspection is bounded.
+struct CompletionWalkSpan final {
+    uint32_t abandoned{0};  ///< skipped: slots already recycled
+    uint32_t walked{0};     ///< inspected: the most recent lap
+};
+
+[[nodiscard]] constexpr CompletionWalkSpan SplitCompletionWalk(
+    uint32_t deltaConsumed, uint32_t ringPackets) noexcept {
+    if (ringPackets == 0 || deltaConsumed <= ringPackets) {
+        return {0, deltaConsumed};
+    }
+    return {deltaConsumed - ringPackets, ringPackets};
+}
+
 } // namespace ASFW::Isoch::Tx

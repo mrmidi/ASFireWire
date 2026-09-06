@@ -73,6 +73,7 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     counters_.lapsRecovered.store(0, std::memory_order_relaxed);
     counters_.lapRecoveryEvents.store(0, std::memory_order_relaxed);
     counters_.lapUnresolvable.store(0, std::memory_order_relaxed);
+    counters_.abandonedOnLap.store(0, std::memory_order_relaxed);
     counters_.criticalGapEvents.store(0, std::memory_order_relaxed);
 }
 
@@ -887,7 +888,40 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
     // Fetch and publish completed stamps
     const uint64_t completedAbsIdx = controlBlock->completionCursor.load(std::memory_order_relaxed);
-    for (uint32_t i = 0; i < deltaConsumed; ++i) {
+
+    // The walk returns shared-slot ownership for packets the controller has
+    // finished with, so it may only inspect slots whose metadata still
+    // describes the packet being retired. A slot can be retired once per lap:
+    // if `deltaConsumed` exceeds the descriptor ring, the controller lapped and
+    // everything older than the last `kNumPackets` had its slot recycled a lap
+    // ago. Verifying those compares a current payload against stale metadata and
+    // reports a seal mismatch that is an artefact of the walk, not a producer
+    // fault -- observed on hardware 2026-09-06 as `[TxPayloadSeal] FATAL
+    // packet=237852` two records after a `lapsLost=1` recovery, which then
+    // fatal-stopped a healthy stream.
+    //
+    // Walk the most recent `kNumPackets` instead and account for the rest as
+    // abandoned. The cursor still advances by the *full* recovered delta below:
+    // the lap really did happen, and hiding it is what put 288 frames of latency
+    // into every later packet. Only the inspection is bounded, never the truth.
+    const auto walkSpan =
+        Tx::SplitCompletionWalk(deltaConsumed, Layout::kNumPackets);
+    const uint32_t abandonedPackets = walkSpan.abandoned;
+    if (abandonedPackets != 0) {
+        counters_.abandonedOnLap.fetch_add(abandonedPackets,
+                                           std::memory_order_relaxed);
+        // Loud: this is real content the controller transmitted from recycled
+        // descriptors, i.e. stale audio that went on the wire. Recoverable, but
+        // never silent.
+        ASFW_LOG_ERROR(
+            Isoch,
+            "[TxLapAbandon] delta=%u ring=%u abandoned=%u firstAbs=%llu "
+            "resumeAbs=%llu -- the controller lapped the software fill; these "
+            "packets transmitted stale descriptors and their slots are gone",
+            deltaConsumed, Layout::kNumPackets, abandonedPackets,
+            completedAbsIdx, completedAbsIdx + abandonedPackets);
+    }
+    for (uint32_t i = abandonedPackets; i < deltaConsumed; ++i) {
         const uint64_t currentAbsIdx = completedAbsIdx + i;
         const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
 

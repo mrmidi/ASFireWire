@@ -149,4 +149,48 @@ TEST(TxPacketIndexLiftTests, RecoveryToleratesADegenerateRing) {
     EXPECT_EQ(RecoverConsumedDelta(0, 0, 100, 0), 0U);
 }
 
+
+// --- SplitCompletionWalk --------------------------------------------------
+//
+// Guards the regression that killed a healthy stream on 2026-09-06: a
+// lap-recovered delta of 58 against a 48-packet ring made the completion walk
+// inspect more than one lap, and the slots older than the last lap had been
+// recycled, so their seals no longer matched. The walk reported a producer fault
+// and the context fatal-stopped.
+
+TEST(TxPacketIndexLiftTests, ShortDeltasAreWalkedWhole) {
+    for (uint32_t d : {0U, 1U, 10U, 47U, kRing}) {
+        const auto s = SplitCompletionWalk(d, kRing);
+        EXPECT_EQ(s.abandoned, 0U) << "delta=" << d;
+        EXPECT_EQ(s.walked, d) << "delta=" << d;
+    }
+}
+
+TEST(TxPacketIndexLiftTests, ALappedDeltaWalksOnlyTheMostRecentLap) {
+    // The exact hardware case: 58 consumed against a 48-packet ring.
+    const auto s = SplitCompletionWalk(58, kRing);
+    EXPECT_EQ(s.walked, kRing);
+    EXPECT_EQ(s.abandoned, 10U);
+
+    const auto two = SplitCompletionWalk(2 * kRing + 5, kRing);
+    EXPECT_EQ(two.walked, kRing);
+    EXPECT_EQ(two.abandoned, kRing + 5);
+}
+
+TEST(TxPacketIndexLiftTests, TheSplitNeverLosesOrInventsPackets) {
+    // The cursor advances by the full delta, so the two halves must account for
+    // all of it: anything else silently moves the completion coordinate.
+    for (uint32_t d = 0; d < 4 * kRing; ++d) {
+        const auto s = SplitCompletionWalk(d, kRing);
+        EXPECT_EQ(s.abandoned + s.walked, d) << "delta=" << d;
+        EXPECT_LE(s.walked, kRing) << "delta=" << d;
+    }
+}
+
+TEST(TxPacketIndexLiftTests, ADegenerateRingWalksEverything) {
+    const auto s = SplitCompletionWalk(58, 0);
+    EXPECT_EQ(s.abandoned, 0U);
+    EXPECT_EQ(s.walked, 58U);
+}
+
 } // namespace
