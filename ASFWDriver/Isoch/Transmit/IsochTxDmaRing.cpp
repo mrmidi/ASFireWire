@@ -63,6 +63,17 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
 
+    // Every counter that describes *this* stream's completion behaviour has to
+    // go with it. A high-water that outlives the geometry it was measured under
+    // is worse than no counter: after a runtime tuning change the watchdog line
+    // keeps reporting the previous depth's worst case, which is exactly the
+    // reading an operator would use to judge whether the new depth is safe.
+    // (The gap counters above were already reset; these were not.)
+    counters_.maxDeltaConsumed.store(0, std::memory_order_relaxed);
+    counters_.lapsRecovered.store(0, std::memory_order_relaxed);
+    counters_.lapRecoveryEvents.store(0, std::memory_order_relaxed);
+    counters_.lapUnresolvable.store(0, std::memory_order_relaxed);
+    counters_.criticalGapEvents.store(0, std::memory_order_relaxed);
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {

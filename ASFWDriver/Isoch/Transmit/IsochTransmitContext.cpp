@@ -916,6 +916,15 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     if (!controlBlock_) {
         return;
     }
+    const uint64_t carriedNow = irqCarriedTicks_.load(std::memory_order_relaxed);
+    const uint64_t pollNow = tickCount_;
+    const uint64_t carriedDelta = carriedNow - lastLoggedCarriedTicks_;
+    const uint64_t pollDelta = pollNow - lastLoggedPollTicks_;
+    const uint64_t carriedPerMille = pollDelta != 0
+        ? (carriedDelta * 1000U) / pollDelta : 0;
+    lastLoggedCarriedTicks_ = carriedNow;
+    lastLoggedPollTicks_ = pollNow;
+
     const uint64_t now = mach_absolute_time();
     const uint64_t lastProgress = progressMonitor_.LastProgressTicks();
     const uint64_t ageUsec = now >= lastProgress
@@ -924,7 +933,7 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     ASFW_LOG_RING_ONLY(
         Isoch,
         ::ASFW::Logging::LogLevel::Notice,
-        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carried=%llu lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu maxDelta=%u",
+        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carried=%llu carriedPerMille=%llu lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu maxDelta=%u",
         contextIndex_,
         tickCount_,
         interruptCount_.load(std::memory_order_relaxed),
@@ -944,6 +953,14 @@ void IsochTransmitContext::LogStatistics() const noexcept {
         //   lockstep with poll=.
         irqSilenceEvents_.load(std::memory_order_relaxed),
         irqCarriedTicks_.load(std::memory_order_relaxed),
+        // The total is the wrong shape to read: it only ever grows, so a healthy
+        // stream and a degrading one both show "a bigger number than last time".
+        // What separates them is the RATE, and on 2026-09-06 that was the only
+        // quantity in the whole driver that saw the degradation -- 2 carried
+        // ticks per 5000 polls when clean, 77 per 5000 later in the same session
+        // with the interrupt rate unchanged. Per mille of the polls in this
+        // interval, so successive lines are directly comparable.
+        carriedPerMille,
         // lapsRecovered: whole ring laps the controller completed between two
         //   CommandPtr readings, recovered from the cycle timer. The slot
         //   difference alone cannot express these, so before recovery existed

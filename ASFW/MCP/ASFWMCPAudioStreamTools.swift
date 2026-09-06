@@ -53,6 +53,31 @@ struct ASFWMCPAudioStreamHealth: Equatable {
     let captureIntervalStarvedFrames: UInt64
     let captureOverrunEvents: UInt64
 
+    // Transmit. Every field above describes the receive path, which is why a
+    // fatally stopped transmit context previously read as `receivingData`: RX
+    // was genuinely fine and nothing here asked about TX. `IsochTxQueueStatus`,
+    // mirrored by the driver on every preparation pass.
+    let txTransportStatus: UInt32
+
+    var txTransportStatusName: String {
+        switch txTransportStatus {
+        case 0: return "stopped"
+        case 1: return "running"
+        case 2: return "producerFault"
+        case 3: return "deadContext"
+        case 4: return "transportProgressStall"
+        default: return "unknown"
+        }
+    }
+
+    /// A transmit context that is not running while the endpoint is streaming.
+    /// Kept separate from the RX verdict rather than folded into it: the two
+    /// directions fail independently, and collapsing them would reintroduce the
+    /// case this exists to catch.
+    var txFaulted: Bool {
+        streaming && txTransportStatus != 1
+    }
+
     var rejectedPackets: UInt64 {
         emptyCompletions &+ shortPackets &+ invalidCipHeaders &+
             zeroDataBlockSize &+ geometryMismatch
@@ -66,6 +91,13 @@ struct ASFWMCPAudioStreamHealth: Equatable {
     var verdict: String {
         if !bindingReady {
             return "bindingNotReady"
+        }
+        // Asked before any receive counter. On 2026-09-06 an IT FATAL STOP left
+        // the transmit context stopped for minutes while RX kept decoding
+        // perfectly, and this tool answered `receivingData` the whole time --
+        // which is true of the receive path and worthless as a health verdict.
+        if txFaulted {
+            return "transmitNotRunning"
         }
         if packetsSeen == 0 {
             return "noPacketsReceived"
@@ -109,6 +141,8 @@ struct ASFWMCPAudioStreamHealth: Equatable {
             return "Valid CIP headers arrived carrying SYT 0xFFFF and no audio frames. The device is in NO-DATA. This states what the device sent; it is not evidence about what the device is waiting for."
         case "dataNotAccepted":
             return "Data-bearing packets with valid SYT arrived but no replay entry was published. Inspect the SYT cadence detector rather than the device."
+        case "transmitNotRunning":
+            return "The endpoint is streaming but its transmit context is not running (\(txTransportStatusName)). Receive counters below may look perfectly healthy and say nothing about this: the two directions fail independently. Check the Isoch ring for IT FATAL STOP and for TX-IRQ-001 interrupt silence."
         case "framesNotReachingReader":
             return "Packets are decoding and being accepted, but the reader is being zero-filled: decoded audio is not landing where CoreAudio reads. Compare the RX write coordinate against the hardware-derived HAL sample coordinate before suspecting the device or the wire."
         default:
@@ -128,6 +162,10 @@ struct ASFWMCPAudioStreamHealth: Equatable {
             "outputChannels": .int(Int(outputChannels)),
             "verdict": .string(verdict),
             "explanation": .string(explanation),
+            "transmit": .object([
+                "status": .string(txTransportStatusName),
+                "faulted": .bool(txFaulted)
+            ]),
             "counters": .object([
                 "packetsSeen": .uint64(packetsSeen),
                 "dataPackets": .uint64(dataPackets),
@@ -185,7 +223,8 @@ extension AudioTelemetryEndpoint {
             captureTotalStarvedFrames: rxTotalStarvedFrames,
             captureIntervalStarvationEvents: rxCompletedIntervalStarvationEvents,
             captureIntervalStarvedFrames: rxCompletedIntervalStarvedFrames,
-            captureOverrunEvents: rxCaptureOverrunEvents
+            captureOverrunEvents: rxCaptureOverrunEvents,
+            txTransportStatus: txTransportStatus
         )
     }
 }

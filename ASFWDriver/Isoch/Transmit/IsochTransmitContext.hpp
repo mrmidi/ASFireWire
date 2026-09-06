@@ -188,6 +188,11 @@ private:
     //: stream without interrupts. Both surface in LogStatistics().
     std::atomic<uint64_t> irqSilenceEvents_{0};
     std::atomic<uint64_t> irqCarriedTicks_{0};
+    /// Previous values at the last statistics line, so it can report a rate
+    /// rather than a monotone total. Mutable because LogStatistics is const and
+    /// this is bookkeeping for the log, not observable state.
+    mutable uint64_t lastLoggedCarriedTicks_{0};
+    mutable uint64_t lastLoggedPollTicks_{0};
 
     // Interrupt-delivery re-arm attempts, taken before the fatal above.
     //

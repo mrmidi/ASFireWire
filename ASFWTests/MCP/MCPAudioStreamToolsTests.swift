@@ -104,6 +104,67 @@ struct MCPAudioStreamToolsTests {
         #expect(cursor(transportStatus: 4).verdict == "fatal")
     }
 
+    // 2026-09-06: an IT FATAL STOP cleared RUN and masked the IT interrupt while
+    // the receive path kept decoding perfectly. Every counter below is healthy
+    // and the old rules answered "receivingData" for minutes, which is true of
+    // RX and useless as a health verdict. The two directions fail independently.
+    @Test func aStoppedTransmitContextIsNamedEvenWhileReceiveIsPerfect() {
+        func health(txStatus: UInt32, streaming: Bool = true) -> ASFWMCPAudioStreamHealth {
+            ASFWMCPAudioStreamHealth(
+                endpointId: AudioEndpointID(101),
+                deviceInstanceId: DeviceInstanceID(1),
+                observedGuid: 0x0011_2233_4455_6677,
+                bindingReady: true,
+                streaming: streaming,
+                sampleRateHz: 48_000,
+                inputChannels: 2,
+                outputChannels: 2,
+                packetsSeen: 3_038_073,
+                dataPackets: 2_278_554,
+                noDataPackets: 759_519,
+                emptyCompletions: 0,
+                shortPackets: 0,
+                invalidCipHeaders: 0,
+                zeroDataBlockSize: 0,
+                geometryMismatch: 0,
+                replayEntries: 3_038_073,
+                replayEpochResets: 1,
+                captureReaderActive: true,
+                hasCompletedCaptureInterval: true,
+                captureAvailableFrames: 768,
+                captureCapacityFrames: 8_192,
+                captureStarvationEvents: 0,
+                captureTotalStarvedFrames: 0,
+                captureIntervalStarvationEvents: 0,
+                captureIntervalStarvedFrames: 0,
+                captureOverrunEvents: 0,
+                txTransportStatus: txStatus
+            )
+        }
+
+        // Running: the receive verdict is reached as before.
+        #expect(health(txStatus: 1).verdict == "receivingData")
+        #expect(health(txStatus: 1).txFaulted == false)
+
+        // Every non-running transmit state outranks a perfect receive path.
+        for stopped: UInt32 in [0, 2, 3, 4] {
+            let h = health(txStatus: stopped)
+            #expect(h.txFaulted)
+            #expect(h.verdict == "transmitNotRunning")
+            #expect(h.rejectedPackets == 0)
+            #expect(h.explanation.contains("transmit context is not running"))
+        }
+        #expect(health(txStatus: 3).txTransportStatusName == "deadContext")
+
+        // Not streaming is idle, not a fault: a stopped transmit context is
+        // exactly what an endpoint with no IO should have.
+        #expect(health(txStatus: 0, streaming: false).txFaulted == false)
+
+        let transmit = object(object(health(txStatus: 3).mcpValue())["transmit"])
+        #expect(transmit["status"] == .string("deadContext"))
+        #expect(transmit["faulted"] == .bool(true))
+    }
+
     @Test func emptyReceiveCompletionIsAnExplicitRejectedCycle() {
         let health = ASFWMCPAudioStreamHealth(
             endpointId: AudioEndpointID(101),
@@ -132,7 +193,8 @@ struct MCPAudioStreamToolsTests {
             captureTotalStarvedFrames: 0,
             captureIntervalStarvationEvents: 0,
             captureIntervalStarvedFrames: 0,
-            captureOverrunEvents: 0
+            captureOverrunEvents: 0,
+            txTransportStatus: 1
         )
 
         #expect(health.rejectedPackets == 1)
@@ -176,7 +238,8 @@ struct MCPAudioStreamToolsTests {
                 captureTotalStarvedFrames: 2_097_152,
                 captureIntervalStarvationEvents: 32,
                 captureIntervalStarvedFrames: intervalStarvedFrames,
-                captureOverrunEvents: 0
+                captureOverrunEvents: 0,
+                txTransportStatus: 1
             )
         }
 
@@ -231,7 +294,8 @@ struct MCPAudioStreamToolsTests {
             captureTotalStarvedFrames: 0,
             captureIntervalStarvationEvents: 0,
             captureIntervalStarvedFrames: 0,
-            captureOverrunEvents: 0
+            captureOverrunEvents: 0,
+            txTransportStatus: 1
         )
 
         #expect(health.verdict == "bindingNotReady")

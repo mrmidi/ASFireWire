@@ -683,7 +683,8 @@ actor MockASFWDriverControl: ASFWDriverControlling {
             captureTotalStarvedFrames: 0,
             captureIntervalStarvationEvents: 0,
             captureIntervalStarvedFrames: 0,
-            captureOverrunEvents: 0
+            captureOverrunEvents: 0,
+            txTransportStatus: 1
         )]
     }
 

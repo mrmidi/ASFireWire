@@ -1307,7 +1307,10 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
             control->txMinimumProducerHeadroomFrames.load(
                 std::memory_order_relaxed);
         ASFW_LOG(DirectAudio,
-                 "[TxPrep] wakes=%llu maxLatUs=%llu le750=%llu ge1500=%llu lat=[%llu,%llu,%llu,%llu,%llu,%llu] marginMin=%u marginMax=%u margin=[%llu,%llu,%llu,%llu,%llu] headroomMin=%u headroomRunMin=%u",
+                 // headroom is signed here on purpose: -1 is "no packet was prepared in this
+                 // interval", 0 is "the writer had nothing staged beyond the next TX
+                 // frame". Those are opposite facts and used to print identically.
+                 "[TxPrep] wakes=%llu maxLatUs=%llu le750=%llu ge1500=%llu lat=[%llu,%llu,%llu,%llu,%llu,%llu] marginMin=%u marginMax=%u margin=[%llu,%llu,%llu,%llu,%llu] headroomMin=%d headroomRunMin=%d",
                  control->txPreparationLatencySamples.load(
                      std::memory_order_relaxed),
                  ASFW::Timing::hostTicksToNanos(latencyMaxTicks) /
@@ -1342,8 +1345,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
                      .load(std::memory_order_relaxed),
                  control->txCompletedIntervalCommittedMarginHistogram[4]
                      .load(std::memory_order_relaxed),
-                 headroomMin == UINT32_MAX ? 0u : headroomMin,
-                 headroomRunMin == UINT32_MAX ? 0u : headroomRunMin);
+                 headroomMin == UINT32_MAX ? -1 : static_cast<int32_t>(headroomMin),
+                 headroomRunMin == UINT32_MAX ? -1
+                                              : static_cast<int32_t>(headroomRunMin));
 
         // The four ledger intervals ride the same coarse heartbeat rather than
         // being anomaly-gated: a distribution that only appears when it is

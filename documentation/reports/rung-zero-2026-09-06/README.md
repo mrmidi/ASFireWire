@@ -56,10 +56,45 @@ and it is the constant offset between what a host displays and the truth.
 | 3 | 48 | 66.95 | 0.01 | 31.7 | 15/20 | new build; 5 no-signal |
 | 4 | 36 | 75.95 | 22.98 | 28.1 | 20/20 | SNR flagged *weak*; range [75.93 .. 131.95] |
 | 5 | 72 | **74.95** | **11.55** | 32.5 | 20/20 | **control; did not reproduce #1** |
+| 6 | 24 | 77.95 | 4.92 | **33.6** | 20/20 | lead 432 fr, the shortest of the session |
 
-Driver state at #5: `lapsRecovered=0 lapEvents=0 lapUnresolvable=0 irqSilence=0`,
-zero Isoch errors, zero `[TxContent]` faults, `[TxV3] preparedTarget=120` — every
-counter clean, and the geometry identical to #1.
+Driver state at #5 and #6: `lapsRecovered=0 lapEvents=0 lapUnresolvable=0
+irqSilence=0`, zero Isoch errors, zero `[TxContent]` faults, geometry confirmed
+in the hot path via `[TxV3] preparedTarget` each time — every counter clean.
+
+### Run #6 kills the signal-quality explanation
+
+Run #6 measured at **33.6 dB, the joint-best SNR of the session and identical to
+run #1**, and produced sd 4.92 where run #1 produced sd 0.01. Weak signal was
+offered as a possible cause of run #4's spread; it cannot explain #6. The jitter
+is in the system, not the correlator.
+
+### `RTL_ts` tracks elapsed time, not the setting
+
+| | #3 | #4 | #5 | #6 |
+|---|---:|---:|---:|---:|
+| dispatch slack | 48 | 36 | 72 | 24 |
+| prepared lead (fr) | 576 | 504 | 720 | 432 |
+| `RTL_ts` | 66.95 | 75.95 | 74.95 | 77.95 |
+| `carried` per 5000 polls | 2 | — | 68 | 77 |
+
+The slack sequence is non-monotonic and spans 432-720 frames of lead. `RTL_ts`
+and `carried` are both monotone upward with wall-clock session time. The setting
+explains neither. Run #6 also re-closes the prepared-lead question from the
+opposite direction: the *shortest* lead of the session produced the *highest*
+latency.
+
+The distribution converges rather than widening -- max 131.95 -> 100.96 -> 89.95,
+sd 22.98 -> 11.55 -> 4.92, floor 74.94 -> 77.94 -- as though a bimodal split were
+collapsing into a single higher mode. No mechanism is offered for that.
+
+### Run #6 is where the stale counter cost a measurement
+
+Run #6 existed to answer one question: did a coalesced completion delta exceed
+the 24-packet slack budget? `maxDelta` reported 36 throughout -- run #4's
+high-water, carried across three stream restarts because `ResetForStart` does not
+clear it. The counter that would have answered the question was reporting a
+different geometry. This is problem 5 below, and it is no longer hypothetical.
 
 ## Problems with the measurements
 
