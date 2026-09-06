@@ -578,7 +578,17 @@ on the TX watchdog line, where `maxDelta` can now exceed the ring.
 falsifiable prediction: `lapsRecovered` should equal the `k` in
 `RTL_ts = 66.95 + k x 288`. If RTL climbs a rung with `lapsRecovered = 0`, or
 recoveries accumulate without RTL moving, the diagnosis is wrong and the change
-is only instrumentation. Its risk: if accumulated skipped cycles reach half a
+is only instrumentation. As of the evening session it is still untested: every
+run stayed inside one rung, so nothing exercised the recovery.
+
+**And the lattice is not the only thing that moves this number.** A control run
+at stock geometry measured `RTL_ts` 74.95 with sd 11.55 where an identical
+earlier run measured 66.95 with sd 0.01, at healthy SNR and with
+`lapsRecovered = 0` / `lapUnresolvable = 0`. An 8-frame shift is not a 288-frame
+rung and must not be folded into the lattice story. See
+[rung zero and measurement validity](reports/rung-zero-2026-09-06/README.md) for
+the full record and for why none of the per-setting comparisons in that session
+are controlled. Its risk: if accumulated skipped cycles reach half a
 ring inside one observation gap the lift over-counts, discarding 48 packets as a
 6 ms glitch instead of adding 6 ms of permanent latency -- a deliberate trade of
 an audible one-off for invisible drift.
