@@ -146,18 +146,67 @@ reference plane. ASFW should be able to state its own equivalent for RX vs TX.
 the other never publishes. ASFW's equivalent is the
 `HardwareTimelineSource::Receive`/`Transmit` choice at `ASFWAudioDevice.cpp:355`.
 
-## 7. What this changes for ASFW
+## 7. Most of this does **not** transfer to FireWire — and the reason matters
 
-| finding | consequence |
-|---|---|
-| ZTS period 341 ms in Apple's own driver | ASFW's 170 ms is **not** too coarse. Retire that concern. |
-| Timestamp interpolated to sub-frame at the wrap point | ASFW takes its boundary from a packet observation without an equivalent intra-batch interpolation. Worth comparing. |
-| First timestamp taken at first frame with actual data | ASFW anchors from the first RX observation; whether that is the *first frame that moved data* is unverified. |
-| 33-tap FIR on intervals, 4-tap during startup | ASFW has no driver-side timestamp filter. The HAL's is the only one. |
-| Input adds one frame of reference-plane correction | ASFW's RX/TX reference planes are not stated in these terms. Relevant to the residual (§4 of the HAL doc). |
+USB and FireWire do not have comparable timing substrates, so §2 and §5 are
+compensations for a weakness FireWire does not have. Reading them as "best
+practice to copy" would be a mistake.
 
-None of these is yet a defect claim. They are differences against a working
-reference, which is the bar the repo sets for wire/behavioural questions.
+**Why USB needs interpolation and a 33-tap FIR:**
+
+- the only host-side time reference is the controller's own SOF, one USB frame
+  per 1 ms, from a crystal unrelated to the device;
+- an audio frame boundary does **not** align with a USB frame boundary — at
+  48 kHz a frame carries 47, 48 or 49 samples, as the source comments note — so
+  where a given sample sits inside a USB frame must be **estimated**;
+- the anchor itself is noisy enough that ten of them are accumulated
+  (`kAnchorsToAccumulate = 10`);
+- the device's sample clock has no hardware relationship to the bus at all, so
+  its rate must be *inferred* from the timestamp series.
+
+Hence: sub-frame interpolation to recover position, and a 33-tap FIR to recover
+rate. Both are host-side estimation standing in for a missing hardware clock.
+
+**What FireWire has instead:**
+
+- a bus-wide 24.576 MHz cycle timer distributed by cycle start packets, which
+  the device is phase-locked to;
+- exactly one isochronous packet per 125 us cycle, so the packet *is* the
+  quantum — there is no "where inside the batch did this land" question to
+  interpolate away;
+- an OHCI hardware timestamp per packet, `sec[2:0]:cycle[12:0]`
+  (`IsochTxDmaRing.cpp:877`), i.e. cycle-granular by construction;
+- and, decisively, **IEC 61883-6 SYT**: the device itself states the
+  presentation time of a data block at cycle-offset resolution
+  (1/24.576 MHz ~ 40.7 ns), in the same clock domain the host reads.
+
+So the sub-cycle precision AppleUSBAudio *estimates* is, on FireWire, *supplied
+by the device*. ASFW already consumes it — `ComputeReplaySytOffset` at
+`DirectAudioReceiveConsumer.cpp:430`, and
+`presentationBusTicks = packetBusTicks + sytOffset + rxTransferDelayTicks`
+at `:490`. That path is strictly better than interpolation, not a gap in it.
+
+A heavy FIR is likewise suspect here: it buys jitter rejection at the cost of
+group delay, against a rate reference that on FireWire is already hardware-
+locked rather than inferred.
+
+### So what does transfer
+
+These three are about **anchoring discipline**, independent of clock quality:
+
+| § | mechanism | why it still applies |
+|---|---|---|
+| 4 | First timestamp taken at the first frame *observed to have moved data*, not at start | Nothing about FireWire makes it safe to anchor on an assumed start instant. ASFW anchors from the first RX observation; whether that observation is the first packet that demonstrably carried audio is **unverified**. |
+| 6 | Direction-dependent reference plane (input adds a whole frame) | ASFW's RX and TX reference planes are not stated in these terms, and §4 of the HAL doc makes that a live question for the residual. |
+| 6 | Only the master stream publishes | ASFW's equivalent is the `Receive`/`Transmit` choice at `ASFWAudioDevice.cpp:355`. Same idea, already present. |
+
+And §3 stands on its own: it retires the "our ZTS period is too coarse" concern
+by precedent, regardless of transport.
+
+**Cadence (§1) is an open question, not a transferable answer.** The 2 ms / 64 ms
+split shows Apple was willing to run output interrupts very sparsely, and the
+recorded ~20 ms / ~100 ms for their FireWire stack has the same shape — but the
+FireWire numbers must come from the kext, not be inferred from USB.
 
 ## Open, blocked on IDA
 
