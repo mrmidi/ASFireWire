@@ -598,18 +598,35 @@ if (result.framesDecoded != 0 && packetHostTicks != 0 &&
 update" is a SYT whose delta from the previous SYT lies in `(0, 65535]`. So ASFW
 *does* wait for 513 plausible SYT deltas before it will anchor.
 
-> **They are cumulative, not consecutive — and that is a second gap.** An earlier
-> revision of this section called them consecutive. On an invalid delta,
-> `RxSytCadence::Observe` (`RxSytCadence.hpp:67`) clears only `previousSyt_`; it
-> leaves `validUpdates_`, the 512-entry ring and `rollingCadenceTicks_` intact.
-> So 512 valid deltas, then a break, then a reseed and **one** further valid
-> delta reaches `established`. The consumer's rejection handler
-> (`DirectAudioReceiveConsumer.cpp:417`) calls `ResetReplayEpochForDiscontinuity`
-> only when replay is *already* established, so it cannot repair a broken
-> warm-up either. A cadence ring holding a discontinuity is admitted as if it
-> were clean. If consecutiveness is the intended contract — Apple's *is*
-> consecutive, it resets its counter on mismatch — then this needs stating and
-> enforcing, and the interrupted warm-up needs a test through the consumer.
+> **They are cumulative, and that is faithful — two earlier claims here were
+> wrong.** This section first called them consecutive, then called the
+> cumulative behaviour a defect on the grounds that "Apple's resets its counter
+> on mismatch". The second claim took `AppleFWAudio`'s FDF/DBC startup counter
+> (§8.8) and attributed it to Saffire's SYT counter — a different driver and a
+> different counter. Checked in the binary, Saffire's warm-up counter at
+> `a1 + 1570764` is incremented at `0xd7bc` and compared `>= 0x200` at `0xd7c9`,
+> and **no path anywhere zeroes it**. Post-increment against 512 establishes on
+> the 513th update, which is exactly ASFW's `kWarmupUpdates`. Cumulative,
+> surviving breaks, is the reference behaviour.
+>
+> The geometry is faithful too. Saffire stores its filter output as
+> `*(_WORD *)(a1 + 1570760) = v22 >> 8` (`0xd73a`) — the average is over
+> **256** entries, matching ASFW's 256-deep sliding sum. The ring is 512 because
+> its second half is replay history, not filter depth: `FillFirewireBuffers`
+> seeds a read cursor at `writeIndex + 256` (`0xec78`) and consumes one recorded
+> delta per transmitted packet (`0xed64`, `0xed72`), adding it to the output
+> presentation offset. So `kEntryCount`, `kReadDelay` and `kWarmupUpdates` are
+> all correct as written.
+>
+> **What does diverge is ASFW's, not Apple's.** Saffire applies no plausibility
+> test at all — `SYTDiffInOffsets` output goes straight into the ring. ASFW added
+> `delta <= 0 || delta > 65535`, clears `previousSyt_` on it, and routes the
+> rejection to `ResetReplayEpochForDiscontinuity`. Saffire's only chain break is
+> a DBC mismatch setting `previousSyt = 0xFFFF` (`0xd67c`). And on a chain
+> restart Saffire writes the ring's *current running average* and counts it
+> (`0xd6ac`), where ASFW returns early writing nothing — so ASFW's writer and a
+> future reader would drift by one entry per seed. Both divergences move away
+> from the reference; neither is a gap in it.
 >
 > The warm-up interval was also given as ~64 ms. That assumed 8000 valid SYTs
 > per second, i.e. one per isoch cycle. A blocking 48 kHz stream carries eight
@@ -621,7 +638,7 @@ update" is a SYT whose delta from the previous SYT lies in `(0, 65535]`. So ASFW
 
 | check | Apple | ASFW |
 |---|---|---|
-| timing series plausible | **yes**, consecutive | **partly** — 513 *cumulative* SYT deltas |
+| timing series plausible | 513 cumulative SYT deltas (Saffire) | **yes** — same 513 cumulative rule |
 | CIP structurally valid | yes | **yes** — `hasValidCip` |
 | SYT present | yes | **yes** — `syt != 0xffff` |
 | **FDF matches configured rate** | **yes**, resets startup counter on mismatch | **no** |
@@ -654,8 +671,16 @@ exactly the area under investigation.**
 
 ### 8.10.1 But do NOT simply copy Apple's gates — they are device-specific
 
-Apple could afford strict FDF and DBC gates because `AppleFWAudio` shipped
-against a **known, tested set** of AV/C devices. ASFW is general-purpose, and
+First, note the gate is not AV/C-specific: `Saffire` applies the same class of
+check before it touches SYT at all, dropping the packet outright on an FDF/FMT,
+DBS or payload-length mismatch (`0xd4e6`, clearing the valid flag at `0xd598`),
+and breaking the SYT chain on a DBC mismatch (`0xd67c`). **Both** Apple FireWire
+audio drivers gate on FDF and DBC, so §8.10's finding stands against the DICE
+reference too — ASFW is the outlier, not AppleFWAudio.
+
+What remains device-specific is how far the gate may be generalised. Apple could
+afford strict gates because each driver shipped against a **known, tested set**
+of devices. ASFW is general-purpose, and
 Linux — which supports far more hardware — needs a **twelve-flag quirk matrix**
 to make the same checks safe (`amdtp-stream.h:44-58`):
 

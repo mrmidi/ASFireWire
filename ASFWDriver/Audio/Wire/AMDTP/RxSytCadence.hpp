@@ -56,14 +56,35 @@ public:
 
         const uint16_t previous = previousSyt_.load(std::memory_order_relaxed);
         if (previous == kNoInfo) {
-            // First SYT of a chain (start, or restart after an invalid delta)
-            // only seeds previousSyt_. Recording a synthetic nominal delta
-            // would bias the ring at any rate whose real step differs from
-            // the seed constant (48k = 4096 ticks vs 44.1k = 4458/4459).
+            // DIVERGES FROM Saffire.kext, deliberately but not obviously.
+            //
+            // The first SYT of a chain (start, or restart below) only seeds
+            // previousSyt_: no ring write, no validUpdates_ increment. The
+            // original rationale was that a synthetic *nominal* delta would
+            // bias the ring at any rate whose real step differs from the seed
+            // constant (48k = 4096 ticks vs 44.1k = 4458/4459).
+            //
+            // Saffire does not use a constant. ReadFirewireBuffers 0xd6ac
+            // writes the ring's own current running average and counts it, so
+            // it is rate-adaptive by construction and carries no such bias.
+            // Keeping this early return costs one ring entry and one count per
+            // seed, which desynchronises the writer from a reader trailing by
+            // kReadDelay. Harmless only while no such reader exists -- see the
+            // class comment; ASFW has not implemented Saffire's TX-side replay.
             previousSyt_.store(syt, std::memory_order_relaxed);
             EndWrite();
             return true;
         }
+        // ALSO DIVERGES FROM Saffire.kext. It applies no plausibility test:
+        // SYTDiffInOffsets output goes straight into the ring whatever it is
+        // (0xd6c1 -> 0xd6de). Its only chain break is a DBC mismatch, which
+        // sets previousSyt = 0xFFFF at 0xd67c. This test therefore rejects
+        // packets the reference accepts, and the caller escalates it further
+        // (DirectAudioReceiveConsumer.cpp:417 resets the replay epoch). The
+        // band is also nearly vacuous at any rate -- (0, 65535] admits 1 tick
+        // and 24575 ticks where 48k nominal is 4096 -- so it neither matches
+        // the reference nor buys a real cadence check. A rate-relative band
+        // belongs with the per-device CIP capability work, not here.
         const int64_t delta = ASFW::Timing::SYTDiffInOffsets(syt, previous);
         if (delta <= 0 || delta > UINT16_MAX) {
             previousSyt_.store(kNoInfo, std::memory_order_relaxed);
