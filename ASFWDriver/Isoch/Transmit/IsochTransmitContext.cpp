@@ -920,6 +920,11 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     const uint64_t pollNow = tickCount_;
     const uint64_t carriedDelta = carriedNow - lastLoggedCarriedTicks_;
     const uint64_t pollDelta = pollNow - lastLoggedPollTicks_;
+    // The raw total is deliberately not logged. It only ever grows, so a healthy
+    // stream and a degrading one both read as "a bigger number than last time";
+    // what separates them is the RATE. Per mille of this interval's polls, so
+    // successive lines compare directly. On 2026-09-06 this was the only
+    // quantity in the driver that saw the session's degradation.
     const uint64_t carriedPerMille = pollDelta != 0
         ? (carriedDelta * 1000U) / pollDelta : 0;
     lastLoggedCarriedTicks_ = carriedNow;
@@ -930,10 +935,15 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     const uint64_t ageUsec = now >= lastProgress
         ? ASFW::Timing::hostTicksToNanos(now - lastProgress) / 1000
         : 0;
+    // irqSilence: times the path went silent past the error threshold. This IS 0
+    //   on a healthy run -- any non-zero value is TX-IRQ-001.
+    // carriedPerMille: per mille of ticks that refilled with no new interrupt.
+    //   Interrupts arrive at ~1333/s against a 1000/s tick, so an occasional
+    //   tick legitimately sees none. During an outage this approaches 1000.
     ASFW_LOG_RING_ONLY(
         Isoch,
         ::ASFW::Logging::LogLevel::Notice,
-        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carried=%llu carriedPerMille=%llu lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu maxDelta=%u",
+        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carriedPerMille=%llu",
         contextIndex_,
         tickCount_,
         interruptCount_.load(std::memory_order_relaxed),
@@ -944,34 +954,30 @@ void IsochTransmitContext::LogStatistics() const noexcept {
         progressWakeSuccesses_.load(std::memory_order_relaxed),
         progressWakeAttempts_.load(std::memory_order_relaxed),
         progressFatalStops_.load(std::memory_order_relaxed),
-        // irqSilence: times the path went silent past the error threshold. This
-        //   IS 0 on a healthy run — any non-zero value is TX-IRQ-001.
-        // carried: ticks the watchdog refilled with no new interrupt. Interrupts
-        //   arrive at ~1333/s against a 1000/s tick, so an occasional tick sees
-        //   none; expect a small, slowly-growing value when healthy. What
-        //   matters is the RATE: during an outage it climbs at ~1000/s, i.e. in
-        //   lockstep with poll=.
         irqSilenceEvents_.load(std::memory_order_relaxed),
-        irqCarriedTicks_.load(std::memory_order_relaxed),
-        // The total is the wrong shape to read: it only ever grows, so a healthy
-        // stream and a degrading one both show "a bigger number than last time".
-        // What separates them is the RATE, and on 2026-09-06 that was the only
-        // quantity in the whole driver that saw the degradation -- 2 carried
-        // ticks per 5000 polls when clean, 77 per 5000 later in the same session
-        // with the interrupt rate unchanged. Per mille of the polls in this
-        // interval, so successive lines are directly comparable.
-        carriedPerMille,
-        // lapsRecovered: whole ring laps the controller completed between two
-        //   CommandPtr readings, recovered from the cycle timer. The slot
-        //   difference alone cannot express these, so before recovery existed
-        //   each one silently and permanently displaced the completion cursor by
-        //   a lap. 0 on a healthy run; every non-zero value is latency that used
-        //   to accumulate invisibly.
-        // lapUnresolvable: readings the cycle timer could not adjudicate. A lap
-        //   may have been lost here without being counted, so a non-zero value
-        //   weakens any "no laps lost" conclusion.
-        // maxDelta: high-water of a single lap-recovered completion delta. This
-        //   can now exceed the ring; the raw slot difference never could.
+        carriedPerMille);
+
+    // A second record rather than more fields on the first. LogRing.hpp:163 caps
+    // a message at 232 bytes, and the first attempt at carrying these on the
+    // watchdog line silently truncated lapUnresolvable and maxDelta -- the two
+    // fields it had been extended to carry. They are a different subject anyway:
+    // the line above answers "is the interrupt path delivering", this one
+    // answers "what did the controller actually complete, and could the cycle
+    // timer adjudicate it".
+    //
+    // lapsRecovered: whole ring laps recovered from the cycle timer. The slot
+    //   difference alone cannot express these; before recovery existed each one
+    //   permanently displaced the completion cursor by a lap. 0 on a healthy run.
+    // lapUnresolvable: observations the cycle timer could not adjudicate, so a
+    //   lap may have been lost uncounted. Non-zero weakens any "no laps" reading.
+    // maxDelta: high-water of a single lap-recovered completion delta. Can now
+    //   exceed the ring; the raw slot difference never could.
+    // All four reset with the stream.
+    ASFW_LOG_RING_ONLY(
+        Isoch,
+        ::ASFW::Logging::LogLevel::Notice,
+        "[IsochTxDelta] context=%u lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu maxDelta=%u",
+        contextIndex_,
         ring_.RTCounters().lapsRecovered.load(std::memory_order_relaxed),
         ring_.RTCounters().lapRecoveryEvents.load(std::memory_order_relaxed),
         ring_.RTCounters().lapUnresolvable.load(std::memory_order_relaxed),
