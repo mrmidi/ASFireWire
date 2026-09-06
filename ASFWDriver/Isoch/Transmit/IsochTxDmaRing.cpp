@@ -51,6 +51,8 @@ namespace {
 void IsochTxDmaRing::ResetForStart() noexcept {
     softwareFillAbsIdx_ = 0;
     lastHwPacketIndex_ = 0;
+    lastObservationCycleTimer_ = 0;
+    lastObservationCycleTimerValid_ = false;
     ringPacketsAhead_ = 0;
     startLapObserved_ = false;
 
@@ -73,18 +75,87 @@ void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
              currentCycle, nextTransmitCycle_);
 }
 
-uint32_t IsochTxDmaRing::ComputeDeltaConsumed(const uint32_t hwPacketIndex) noexcept {
+// The CommandPtr names a descriptor inside the ring, so the difference between
+// two readings is a difference of slot indices: it is bounded by
+// `kNumPackets - 1` whatever the controller actually did. If the controller
+// completed a whole lap or more since the previous observation, that lap is not
+// small in this arithmetic -- it is *absent* from it, and because the completion
+// cursor is advanced by accumulating these differences, the loss is permanent
+// and every later reading is relative to the wrong origin.
+//
+// The cost is not a counting error alone. The ring branches from its last packet
+// back to its first, so an unrefilled context re-transmits stale audio; the
+// client's content then reaches the wire one lap -- kNumPackets packets, one
+// packet per isochronous cycle, so 48 * 125 us = 6 ms -- later than planned, for
+// the remaining life of the stream. Laps accumulate and the offset never
+// returns. (What that lap costs in audio frames is the content layer's
+// arithmetic, not this one's.)
+//
+// The cycle timer supplies the lap the pointer cannot. An IT context begins one
+// packet per isochronous cycle, so cycles elapsed since the previous observation
+// bounds how far the controller advanced, and `LiftRingSlotToAbsolute` picks the
+// index congruent to the observed slot nearest that bound. Elapsed cycles is an
+// upper bound rather than an equality -- ASFW self-links each packet's skip
+// address, so a lost cycle or FIFO overrun skips a cycle without advancing past
+// the packet -- and the nearest-congruent rule absorbs that error while
+// accumulated skips stay under half a ring. See TxPacketIndexLift.hpp, which
+// owns this reasoning and its bound.
+uint32_t IsochTxDmaRing::ComputeDeltaConsumed(const uint32_t hwPacketIndex,
+                                              const uint32_t nowCycleTimer) noexcept {
     const uint32_t prevHwPacketIndex = lastHwPacketIndex_;
-    const uint32_t deltaConsumed =
+    const uint32_t naiveDelta =
         (hwPacketIndex >= prevHwPacketIndex)
             ? (hwPacketIndex - prevHwPacketIndex)
             : ((Layout::kNumPackets - prevHwPacketIndex) + hwPacketIndex);
-    lastHwPacketIndex_ = hwPacketIndex;
 
-    ringPacketsAhead_ -= deltaConsumed;
-    if (ringPacketsAhead_ > Layout::kNumPackets) {
-        ringPacketsAhead_ = 0;
+    uint32_t deltaConsumed = naiveDelta;
+
+    if (lastObservationCycleTimerValid_ && nowCycleTimer != 0) {
+        const uint32_t elapsedCycles =
+            Tx::CyclesBetween(lastObservationCycleTimer_, nowCycleTimer);
+        // CyclesBetween is only correct across one wrap of the three-bit seconds
+        // field. At the wrap the answer is indistinguishable from zero elapsed,
+        // so refuse rather than adjudicate on it.
+        if (elapsedCycles + 1U < Tx::kCycleTimerWrapCycles) {
+            const uint64_t liftedDelta = Tx::RecoverConsumedDelta(
+                prevHwPacketIndex, hwPacketIndex, elapsedCycles,
+                Layout::kNumPackets);
+            // Congruent by construction, so any disagreement is whole laps.
+            if (liftedDelta > naiveDelta) {
+                const uint64_t lapsLost =
+                    (liftedDelta - naiveDelta) / Layout::kNumPackets;
+                deltaConsumed = liftedDelta > UINT32_MAX
+                    ? UINT32_MAX : static_cast<uint32_t>(liftedDelta);
+                counters_.lapsRecovered.fetch_add(lapsLost,
+                                                  std::memory_order_relaxed);
+                counters_.lapRecoveryEvents.fetch_add(1,
+                                                      std::memory_order_relaxed);
+                ASFW_LOG_ERROR(Isoch,
+                               "[TxLapRecover] prevSlot=%u slot=%u elapsedCycles=%u "
+                               "naive=%u lifted=%llu lapsLost=%llu "
+                               "packetsRecovered=%llu -- the completion cursor "
+                               "would have lost these permanently",
+                               prevHwPacketIndex, hwPacketIndex, elapsedCycles,
+                               naiveDelta, liftedDelta, lapsLost,
+                               lapsLost * Layout::kNumPackets);
+            }
+        } else {
+            counters_.lapUnresolvable.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else if (lastObservationCycleTimerValid_) {
+        counters_.lapUnresolvable.fetch_add(1, std::memory_order_relaxed);
     }
+
+    lastHwPacketIndex_ = hwPacketIndex;
+    if (nowCycleTimer != 0) {
+        lastObservationCycleTimer_ = nowCycleTimer;
+        lastObservationCycleTimerValid_ = true;
+    }
+
+    // A recovered delta can exceed the ring, which means the controller lapped
+    // the software fill: nothing is ahead of it any more.
+    ringPacketsAhead_ = deltaConsumed >= ringPacketsAhead_
+        ? 0U : ringPacketsAhead_ - deltaConsumed;
 
     return deltaConsumed;
 }
@@ -773,7 +844,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         }
     }
 
-    const uint32_t deltaConsumed = ComputeDeltaConsumed(hwPacketIndex);
+    const uint32_t deltaConsumed =
+        ComputeDeltaConsumed(hwPacketIndex, refillCycleTimer);
     out.completedPacketCount = deltaConsumed;
     const uint32_t gap = ringPacketsAhead_;
     UpdateGapCounters(gap);

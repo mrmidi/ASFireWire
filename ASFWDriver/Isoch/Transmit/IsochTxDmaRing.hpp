@@ -50,7 +50,26 @@ public:
 
         // High-water mark of a single coalesced completion. Content consumers
         // own the policy that decides whether this is an unsafe cadence.
+        //
+        // This is the *lap-recovered* delta, so it can exceed the ring size.
+        // The raw CommandPtr difference never could -- it is a difference of
+        // two slot indices and is bounded by kNumPackets - 1 by construction --
+        // which is why a "coalesced delta larger than a lap" was undetectable
+        // before the recovery below existed.
         std::atomic<uint32_t> maxDeltaConsumed{0};
+
+        /// Whole ring laps the controller completed between two consecutive
+        /// observations, recovered from the cycle timer. Every lap counted here
+        /// is 288 frames (at 48 kHz) that the naive slot difference would have
+        /// dropped from the completion cursor permanently.
+        std::atomic<uint64_t> lapsRecovered{0};
+        /// Observations that had to be corrected. Distinct from lapsRecovered:
+        /// one observation can lose several laps.
+        std::atomic<uint64_t> lapRecoveryEvents{0};
+        /// Observations where the cycle timer could not adjudicate the lap
+        /// (no anchor, or more than the timer's eight-second range apart). The
+        /// naive delta stood; a lap may have been lost unnoticed.
+        std::atomic<uint64_t> lapUnresolvable{0};
 
         // DMA ring gap monitoring
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
@@ -164,7 +183,13 @@ public:
     [[nodiscard]] const IsochTxDescriptorSlab& Slab() const noexcept { return slab_; }
 
 private:
-    [[nodiscard]] uint32_t ComputeDeltaConsumed(uint32_t hwPacketIndex) noexcept;
+    /// Packets the controller completed since the previous observation.
+    ///
+    /// `nowCycleTimer` is the OHCI cycle timer sampled with `hwPacketIndex`;
+    /// pass 0 when no reading is available, which forfeits lap recovery for
+    /// this observation and counts it as unresolvable.
+    [[nodiscard]] uint32_t ComputeDeltaConsumed(uint32_t hwPacketIndex,
+                                                uint32_t nowCycleTimer) noexcept;
     void UpdateGapCounters(uint32_t gap) noexcept;
     void ResyncCycleTracking(Driver::HardwareInterface& hw,
                              uint32_t hwPacketIndex,
@@ -223,6 +248,11 @@ private:
     // Fill-ahead tracking
     uint64_t softwareFillAbsIdx_{0};
     uint32_t lastHwPacketIndex_{0};
+    /// Cycle timer sampled alongside lastHwPacketIndex_. The CommandPtr names a
+    /// slot and cannot carry a lap, so this is what says whether the controller
+    /// advanced 3 packets or 51 between two observations.
+    uint32_t lastObservationCycleTimer_{0};
+    bool lastObservationCycleTimerValid_{false};
     /// Whether the one-shot start-lap observation has been taken this stream.
     bool startLapObserved_{false};
     uint32_t ringPacketsAhead_{0};

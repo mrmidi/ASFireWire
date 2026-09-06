@@ -79,4 +79,37 @@ inline constexpr uint32_t kCycleTimerWrapCycles = 8U * kIsochCyclesPerSecond;
     return candidate;
 }
 
+/// Packets the controller completed between two CommandPtr observations.
+///
+/// The slot difference alone is bounded by `ringPackets - 1`, so it cannot
+/// express a lap: if the controller completed a whole ring or more since the
+/// previous reading, that lap is absent from the difference rather than large in
+/// it. Accumulating such differences into an absolute cursor loses the lap
+/// permanently and re-bases every later reading on the wrong origin.
+///
+/// `elapsedCycles` adjudicates. One packet begins per isochronous cycle, so it
+/// bounds the true advance, and the nearest-congruent lift recovers the laps the
+/// slot could not carry.
+///
+/// Never returns less than the naive difference: elapsed cycles is an upper
+/// bound on descriptor progress (self-linked skip addresses mean a lost cycle
+/// need not advance the context), so it may only ever add laps, never remove
+/// packets the slots already prove were consumed. Exact while accumulated
+/// skipped cycles stay under half a ring; at or beyond that it over-counts in
+/// the direction that invents laps, so callers owe the same caveat
+/// LiftRingSlotToAbsolute carries.
+[[nodiscard]] constexpr uint64_t RecoverConsumedDelta(uint32_t prevSlot,
+                                                      uint32_t nowSlot,
+                                                      uint32_t elapsedCycles,
+                                                      uint32_t ringPackets) noexcept {
+    if (ringPackets == 0) return 0;
+    const uint32_t naive = nowSlot >= prevSlot
+                               ? nowSlot - prevSlot
+                               : (ringPackets - prevSlot) + nowSlot;
+    const uint64_t lifted = LiftRingSlotToAbsolute(
+        nowSlot, static_cast<uint64_t>(prevSlot) + elapsedCycles, ringPackets);
+    const uint64_t delta = lifted > prevSlot ? lifted - prevSlot : 0;
+    return delta > naive ? delta : naive;
+}
+
 } // namespace ASFW::Isoch::Tx

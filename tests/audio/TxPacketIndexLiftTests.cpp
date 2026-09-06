@@ -81,4 +81,72 @@ TEST(TxPacketIndexLiftTests, LateFirstObservationIsNotAttributedToLapZero) {
     EXPECT_EQ(LiftRingSlotToAbsolute(ringSlot, elapsed, kRing), 336U);
 }
 
+
+// --- RecoverConsumedDelta -------------------------------------------------
+//
+// The regression these guard is the one that produced the k*288-frame latency
+// lattice: a slot difference cannot express a lap, so a completion cursor
+// advanced by accumulating slot differences drops 48 packets per missed lap and
+// never recovers them.
+
+TEST(TxPacketIndexLiftTests, ShortAdvancesAreUnchangedByRecovery) {
+    // The naive difference is already exact here, and recovery must not move it.
+    EXPECT_EQ(RecoverConsumedDelta(10, 12, 2, kRing), 2U);
+    EXPECT_EQ(RecoverConsumedDelta(0, 47, 47, kRing), 47U);
+    // Wrapping the ring without lapping it.
+    EXPECT_EQ(RecoverConsumedDelta(40, 5, 13, kRing), 13U);
+    // No advance at all.
+    EXPECT_EQ(RecoverConsumedDelta(7, 7, 0, kRing), 0U);
+}
+
+TEST(TxPacketIndexLiftTests, AWholeLapBetweenObservationsIsRecovered) {
+    // Slot moved 10 -> 12, but 50 cycles elapsed: the controller lapped once and
+    // the slot difference alone reports 2.
+    EXPECT_EQ(RecoverConsumedDelta(10, 12, 50, kRing), 50U);
+    // Exactly one lap, same slot: the difference is 0 and the truth is 48.
+    EXPECT_EQ(RecoverConsumedDelta(7, 7, 48, kRing), 48U);
+    // Several laps accumulate rather than folding.
+    EXPECT_EQ(RecoverConsumedDelta(10, 12, 2 + 3 * kRing, kRing), 2U + 3U * kRing);
+}
+
+TEST(TxPacketIndexLiftTests, RecoveryNeverRemovesPacketsTheSlotsProve) {
+    // Elapsed cycles is an upper bound on descriptor progress, never a lower
+    // one: a reading that suggests less advance than the slots show must not
+    // shrink the delta, or the cursor would run ahead of the hardware.
+    EXPECT_EQ(RecoverConsumedDelta(10, 20, 0, kRing), 10U);
+    EXPECT_EQ(RecoverConsumedDelta(10, 20, 3, kRing), 10U);
+    EXPECT_EQ(RecoverConsumedDelta(40, 5, 1, kRing), 13U);
+}
+
+TEST(TxPacketIndexLiftTests, SkippedCyclesUnderHalfARingDoNotInventALap) {
+    // Self-linked skip addresses mean a cycle can pass without the context
+    // advancing, so elapsed cycles overshoots. Below half a ring of overshoot
+    // the nearest-congruent rule must absorb it and report the true advance.
+    for (uint32_t skipped = 0; skipped < kRing / 2; ++skipped) {
+        EXPECT_EQ(RecoverConsumedDelta(10, 12, 2 + skipped, kRing), 2U)
+            << "skippedCycles=" << skipped;
+        EXPECT_EQ(RecoverConsumedDelta(10, 12, 50 + skipped, kRing), 50U)
+            << "skippedCycles=" << skipped << " (one lap lost)";
+    }
+}
+
+TEST(TxPacketIndexLiftTests, RecoveryIsAlwaysCongruentWithTheObservedSlot) {
+    // Whatever the cycle evidence says, the answer must land the cursor on the
+    // slot the controller actually reported; anything else is a new bug class.
+    for (uint32_t prev = 0; prev < kRing; prev += 7) {
+        for (uint32_t now = 0; now < kRing; now += 5) {
+            for (uint32_t cycles : {0U, 1U, 47U, 48U, 49U, 200U, 1000U}) {
+                const uint64_t delta =
+                    RecoverConsumedDelta(prev, now, cycles, kRing);
+                EXPECT_EQ((prev + delta) % kRing, now)
+                    << "prev=" << prev << " now=" << now << " cycles=" << cycles;
+            }
+        }
+    }
+}
+
+TEST(TxPacketIndexLiftTests, RecoveryToleratesADegenerateRing) {
+    EXPECT_EQ(RecoverConsumedDelta(0, 0, 100, 0), 0U);
+}
+
 } // namespace

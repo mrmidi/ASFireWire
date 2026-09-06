@@ -924,7 +924,7 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     ASFW_LOG_RING_ONLY(
         Isoch,
         ::ASFW::Logging::LogLevel::Notice,
-        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carried=%llu",
+        "[IsochWatchdog] direction=tx context=%u poll=%llu irq=%llu ret=%llu committed=%llu progressAgeUs=%llu snapshots=%llu wakes=%llu/%llu fatals=%llu irqSilence=%llu carried=%llu lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu maxDelta=%u",
         contextIndex_,
         tickCount_,
         interruptCount_.load(std::memory_order_relaxed),
@@ -943,7 +943,22 @@ void IsochTransmitContext::LogStatistics() const noexcept {
         //   matters is the RATE: during an outage it climbs at ~1000/s, i.e. in
         //   lockstep with poll=.
         irqSilenceEvents_.load(std::memory_order_relaxed),
-        irqCarriedTicks_.load(std::memory_order_relaxed));
+        irqCarriedTicks_.load(std::memory_order_relaxed),
+        // lapsRecovered: whole ring laps the controller completed between two
+        //   CommandPtr readings, recovered from the cycle timer. The slot
+        //   difference alone cannot express these, so before recovery existed
+        //   each one silently and permanently displaced the completion cursor by
+        //   a lap. 0 on a healthy run; every non-zero value is latency that used
+        //   to accumulate invisibly.
+        // lapUnresolvable: readings the cycle timer could not adjudicate. A lap
+        //   may have been lost here without being counted, so a non-zero value
+        //   weakens any "no laps lost" conclusion.
+        // maxDelta: high-water of a single lap-recovered completion delta. This
+        //   can now exceed the ring; the raw slot difference never could.
+        ring_.RTCounters().lapsRecovered.load(std::memory_order_relaxed),
+        ring_.RTCounters().lapRecoveryEvents.load(std::memory_order_relaxed),
+        ring_.RTCounters().lapUnresolvable.load(std::memory_order_relaxed),
+        ring_.RTCounters().maxDeltaConsumed.load(std::memory_order_relaxed));
 }
 
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
