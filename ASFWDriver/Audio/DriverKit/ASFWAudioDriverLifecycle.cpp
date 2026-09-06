@@ -239,6 +239,29 @@ void IMPL(ASFWAudioDriver, TxTransportFaultReady)
         return;
     }
 
+    // A fault against an already-inactive TX has nothing to recover, and
+    // re-arming is what produces the next one.
+    //
+    // txActive is set true only by StartIO, never by this path, and
+    // ASFWAudioDriverZts.cpp gates packet preparation on the same flag. So once
+    // the first fault has cleared it, a re-arm prefills the shared slots, the
+    // controller drains exactly those, nothing extends committedEnd because the
+    // producer is gated off, and the refill starves at the prefill boundary --
+    // observed on hardware as fifteen consecutive
+    // `reason=uncommitted-slot fatalAbs=168 fatalSlot=0 payloadLen=0` fatals,
+    // each one re-issuing CMP disconnect transactions on the bus.
+    //
+    // The endpoint is already idle and already disconnected by the recovery that
+    // ran on the first fault. Stop here and wait for the HAL to start IO again,
+    // which is the only thing that can bring a producer back.
+    if (!wasActive) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: TX transport fault on an inactive transmit "
+                 "path -- already recovered, not re-arming (a re-arm with no "
+                 "producer starves at the prefill boundary and faults again)");
+        return;
+    }
+
     ASFW::Audio::DriverKit::RepublishTxRingForRestart(*ivars);
 
     const kern_return_t kr =
