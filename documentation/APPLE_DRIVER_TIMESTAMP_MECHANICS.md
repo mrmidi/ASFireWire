@@ -1,15 +1,23 @@
 # How Apple's own audio drivers generate zero timestamps
 
-Read against `AppleUSBAudio` (open source, no decompilation), because it is the
-same `IOAudioEngine::takeTimeStamp` contract `AppleFWAudio` implements. The
-FireWire mapping is **not yet done** — see [Open, blocked](#open-blocked-on-ida).
+Two sources, read in this order:
 
-> **Rule for the FireWire half of this document, when it is written.** Apple's
-> FireWire audio stack is expressed in **DCLs** (DMA Command List). A DCL
-> statement is worthless on its own: every DCL claim here must be mapped to the
-> **OHCI isochronous DMA program and its descriptors** it compiles into —
-> which descriptor, which branch, which interrupt bit. If it cannot be mapped
-> to descriptors, it does not go in this document.
+- **`AppleUSBAudio`** (§§1-7) — open source, no decompilation. Same
+  `IOAudioEngine::takeTimeStamp` contract `AppleFWAudio` implements, so it
+  establishes the shape.
+- **`AppleFWAudio`** (§8) — disassembly, cross-checked against the
+  **IOFireWireFamily-338-4-0 source** for every DCL API it calls.
+
+> **Rule for anything DCL.** Apple's FireWire audio stack is expressed in
+> **DCLs** (DMA Command List). A DCL statement is worthless on its own: a DCL
+> claim must be carried down to the **OHCI isochronous DMA program and its
+> descriptors** — which descriptor, which branch, which interrupt bit.
+>
+> §8 observes that rule by splitting what is *read* from what is *inferred*: the
+> DCL-level facts come from the disassembly plus `IOFWDCL.h`, and the final step
+> to descriptors is marked **not established**, because the code that performs
+> it (`AppleFWOHCI`) has not been read. Nothing in §8 asserts a descriptor
+> layout.
 
 Source: `/Users/mrmidi/Downloads/OSXUSBAudioDriverSource 4` (AppleUSBAudio,
 ~10.5-era with later `rdar://` fixes). Paths below are relative to it.
@@ -208,31 +216,139 @@ split shows Apple was willing to run output interrupts very sparsely, and the
 recorded ~20 ms / ~100 ms for their FireWire stack has the same shape — but the
 FireWire numbers must come from the kext, not be inferred from USB.
 
-## Open, blocked on IDA
+## 8. AppleFWAudio: what the disassembly actually shows
 
-The FireWire half needs the disassembly databases and the IDA MCP server was
-**not reachable** this session (`ConnectionRefused`, nothing on `127.0.0.1:13337`).
+IDA session over `AppleFWAudio-update.i64` (BeBoB / OXFW / AV-C devices).
+Addresses are file offsets in that database. Every `IOFWDCL` call below was
+checked against `IOFireWireFamily-338-4-0/IOFireWireFamily.kmodproj/IOFWDCL.h`.
 
-Databases present:
+Two receive implementations exist side by side — `AM824DCLRead` (legacy DCL) and
+`AM824NuDCLRead` (NuDCL). The NuDCL path is the one examined here.
 
-- `/Users/mrmidi/Desktop/FWA_KEXT_CLEAN/AppleFWAudio-update.i64` — BeBoB, OXFW
-  and other AV/C devices
-- `/Users/mrmidi/Desktop/Saffire.i64` — DICE-based, expected to differ
+### 8.1 The 20 ms RX cadence is computed, not hardcoded
 
-Questions to answer there, in this order:
+`AM824NuDCLRead::SetupReceiveBuffer` (`0x3d484`):
 
-1. **Interrupt cadence.** Which isoch DMA descriptors carry the interrupt bit,
-   and at what packet interval? Compare against USB's 2 ms in / 64 ms out and
-   against the ~20 ms / ~100 ms already recorded in
-   `[[apple-fwaudio-isoch-geometry]]`.
-2. **Where the timestamp is taken.** Which descriptor completion, and is there
-   an interpolation equivalent to §2 — i.e. does it recover a sub-packet
-   position, or does it timestamp at packet granularity?
-3. **The first timestamp.** Is there an equivalent of the "first frame with
-   non-zero `frActCount`" scan?
-4. **Filtering.** Is there a driver-side FIR, or does AppleFWAudio hand raw
-   values to the HAL?
-5. **DICE vs AV/C.** Where `Saffire.i64` diverges from `AppleFWAudio`.
+```c
+buffersPerCallback = 0x4E20u / (125 * fNumPacketsPerBufferGroup);
+```
 
-Every DCL-level answer must be carried down to the OHCI descriptors it
-generates, per the rule at the top.
+`0x4E20` = 20000 (microseconds); `125` is us per isochronous cycle. So this is
+"how many buffer groups span 20 ms". The `FireLog` immediately after prints
+`kCallbackTimeoutInMSec=%lu` with the literal `20`, and the function refuses to
+proceed if `fNumBufferGroups % buffersPerCallback != 0`.
+
+**This confirms the ~20 ms RX interrupt cadence in `[[apple-fwaudio-isoch-geometry]]`
+from source rather than from inference.**
+
+### 8.2 Program shape
+
+Built in `SetupReceiveBuffer`, a nested loop over `fNumBufferGroups` x
+`fNumPacketsPerBufferGroup`:
+
+- **one NuDCL receive command per isochronous packet**, created with three
+  ranges — a 4-byte isoch header, an 8-byte CIP header, and the payload;
+- `IOFWDCL::setTimeStampPtr(dcl, &fTimeStampArray[n])` on **every packet DCL**;
+- a callback attached only to the last DCL of every `buffersPerCallback`-th
+  group:
+
+```c
+if (!(bufferGroupIndex % buffersPerCallback)) {
+    IOFWDCL::setFlags(lastDCL, 4u);                     // BIT(2)
+    IOFWDCL::setRefcon(lastDCL, &perBufferGroupData[i]);
+    IOFWDCL::setCallback(lastDCL, AM824NuDCLRead::s_NuDCLCallback);
+}
+```
+
+- and finally `IOFWDCL::setBranch(lastDCL, firstDCL)` — the program is
+  **circular**, the same shape as ASFW's descriptor ring.
+
+`setFlags(…, 4)` is `kUpdateBeforeCallback` (`IOFWDCL.h:104`, `BIT(2)`).
+
+### 8.3 The architectural point: per-packet stamps, sparse interrupts
+
+Timestamps are recorded on **every packet**; interrupts fire every **20 ms**.
+Those are independent knobs, and Apple sets them three orders of magnitude
+apart.
+
+This is FireWire's answer to §2. AppleUSBAudio must *interpolate* to recover
+where inside a completed batch the wrap fell, because USB gives it nothing
+finer. AppleFWAudio does not interpolate at all — the DMA program records a
+timestamp for each packet, and the 20 ms callback simply harvests the array.
+Sparse interrupts cost no timing resolution.
+
+**Not established — the descriptor step.** That per-packet timestamp and the
+callback DCL's interrupt must ultimately become fields in OHCI IR descriptors,
+but the code that does it is `AppleFWOHCI`, which has not been read.
+`IOFWDCL.h` declares `compile(IODCLProgram&, bool&)`, `link()`,
+`interrupt(bool&, IOFWDCL*&)` and `checkForInterrupt()` as **pure virtuals**
+(`IOFWDCL.h:179-208`), implemented by an OHCI-specific subclass. That
+`checkForInterrupt()` is per-DCL makes it *likely* that a DCL carrying a
+callback yields a descriptor with the interrupt bit set — but that is an
+inference from a header, not a reading of the emitter, and it is recorded here
+as such.
+
+### 8.4 The filter is 4 taps, against USB's 33
+
+`AM824NuDCLRead::CalculateNewTimeStamp` (`0x4331c`) keeps a 4-entry shift
+register and averages it:
+
+```c
+// 4-iteration shift of the timing history, summing into timingValuesSum
+newTimestampNanos = base + offset + timingValuesSum / 4 / 10;
+```
+
+Compare §5: AppleUSBAudio runs a symmetric **33-tap FIR** on the same quantity.
+Same vendor, same era, same `takeTimeStamp` contract — **4 taps on FireWire, 33
+on USB**.
+
+That is §7's argument confirmed from Apple's own code rather than reasoned from
+first principles. USB must infer rate from a noisy series; FireWire has a
+bus-locked cycle timer and device-supplied SYT, so a 4-entry average suffices.
+It also means a heavy filter is not merely unnecessary on FireWire but contrary
+to how Apple built it.
+
+### 8.5 The bus-clock/host-clock correlation
+
+`AM824NuDCLRead::InitializeTimeStampClock` (`0x434ce`) reads, in one place:
+
+- the FireWire cycle time (vtable call on the audio device), through
+  `TimeConversionUtils::ConvertEncodedCycleTimeToNanoseconds`;
+- `clock_get_uptime()`;
+- converts both to nanoseconds and stores the **pair**, replicated across two
+  entries, with a fixed-point numerator of `0x10000000` (2^28).
+
+This is the concrete form of the requirement Jeff Moore gave a FireWire driver
+author: *"you'll need to have an independent idea about how the FireWire clock
+relates to the CPU clock"* (`COREAUDIO_HAL_TIMING_DOMAINS.md` M22275). There is
+also `UpdateTimeStampClock(TimeConversionUtils::TimeRatioRecord*)` (`0x412f2`)
+maintaining it during streaming.
+
+### 8.6 Single master publisher — same as USB
+
+`AM824NuDCLRead::SetMasterStream(bool)` (`0x40688`), with equivalents on the
+write and legacy-DCL classes. Same idea as AppleUSBAudio's `mMasterMode` (§6)
+and as ASFW's `Receive`/`Transmit` choice at `ASFWAudioDevice.cpp:355`.
+
+### 8.7 Correction to an earlier note
+
+"Buffer group" **is** an AppleFWAudio concept:
+`PerReadBufferGroupDataStruct`, `fNumBufferGroups`,
+`fNumBufferGroupsPerCallback`, `fPerBufferGroupDataArray`. A previous note
+recorded it as *not* a FireWire concept on the strength of zero hits in
+IOFireWireFamily. That was the wrong place to look: it is not an
+*IOFireWireFamily* abstraction, but it is central to *AppleFWAudio*, where it is
+the unit that callbacks are scheduled against.
+
+## Still open
+
+- **The descriptor step (§8.3).** Needs `AppleFWOHCI` disassembled — the
+  DCL-to-descriptor emitter. Until then no descriptor-layout claim is made.
+- **TX cadence.** `AM824NuDCLWrite` has not been examined; the ~100 ms TX figure
+  in `[[apple-fwaudio-isoch-geometry]]` is still uncorroborated.
+- **DICE.** `Saffire.i64` unopened; expected to differ from the AV/C path.
+- **First-timestamp discipline (§4).** Whether AppleFWAudio has an equivalent of
+  the USB "first frame with non-zero `frActCount`" scan is unresolved.
+  `HandleNuDCLCallbackFirstTimeProcessing` (`0x3ed40`) and
+  `HandleProcessCIPHeadersFirstTimeProcesssing` (`0x3f968`) are the places to
+  look.
