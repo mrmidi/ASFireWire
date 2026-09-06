@@ -499,18 +499,89 @@ registers over the TCAT interface, making the OHCI packet timestamp redundant
 for that family. It is a genuinely different clocking strategy, not a variation
 in tuning.
 
+`Saffire::PrepareSendDCLs` (`0x10304`) is different again — and stamps:
+
+- **two parallel DCL chains per packet**, one for the payload and an 8-byte one
+  for the CIP header, cross-linked by a second pass of `setBranch` at the end;
+- `setFlags(dcl, 6u)` on **every** DCL of both chains;
+- `setTimeStampPtr` on **both** DCLs of a packet, sharing one timestamp slot;
+- `SendGroupCallback` on the last DCL of **every** group, again with no modulo.
+
 | | AppleFWAudio (AV/C) | Saffire (DICE) |
 |---|---|---|
 | RX callback | every N-th group (20 ms) | **every group** |
+| TX callback | every N-th group, or one per ring if device-clocked | **every group** |
 | RX per-packet timestamp | yes | **none** |
+| TX per-packet timestamp | yes | yes (two DCLs share one slot) |
+| DCLs per packet | 1 | **2** (payload + header chains) |
 | clock source | OHCI packet timestamps + SYT | device registers over TCAT |
+
+So DICE stamps on transmit but not receive, and interrupts far more often than
+AppleFWAudio on both directions. Its receive clock does not come from the wire at
+all.
+
+### 8.10 ASFW's anchor gate against Apple's — the one code-level gap
+
+Apple (§8.8) will not anchor until it has seen, over a run of packets:
+
+1. **FDF** matching the expected sample rate, and
+2. **DBC** running continuously.
+
+ASFW's gate, at `DirectAudioReceiveConsumer.cpp:467-471`, is:
+
+```c
+if (result.framesDecoded != 0 && packetHostTicks != 0 &&
+    clockPublisher_.IsBound() && cadence.established &&
+    result.hasValidCip && result.syt != 0xffff &&
+    hardwareTimeline.Source() == HardwareTimelineSource::Receive)
+```
+
+`cadence.established` is `validUpdates >= kWarmupUpdates`, and
+`kWarmupUpdates = kEntryCount + 1 = 513` (`RxSytCadence.hpp:19-21`). A "valid
+update" is a SYT whose delta from the previous SYT lies in `(0, 65535]`. So ASFW
+*does* wait — 513 consecutive plausible SYT deltas, on the order of 64 ms of
+stream — before it will anchor.
+
+**But it waits on a different quantity.** Comparing gate by gate:
+
+| check | Apple | ASFW |
+|---|---|---|
+| timing series plausible | implicit | **yes** — 513 consecutive SYT deltas |
+| CIP structurally valid | yes | **yes** — `hasValidCip` |
+| SYT present | yes | **yes** — `syt != 0xffff` |
+| **FDF matches configured rate** | **yes**, resets startup counter on mismatch | **no** |
+| **DBC continuous** | **yes**, zeroes arrays and restarts on mismatch | **no** |
+
+Both gaps are verifiable in the tree:
+
+- **FDF is parsed and never compared.** `RxAudioPacketProcessor.cpp:46` sets
+  `result.fdf`; its only other appearance is a log line at
+  `DirectAudioReceiveConsumer.cpp:713`. The expected value *is* available —
+  `ResolvedAudioStreamProfile` carries `captureFdf` — and is never checked
+  against the wire.
+- **DBC is accumulated, not validated.** `DirectAudioReceiveConsumer.cpp:329-335`
+  adds `(uint8_t)(result.dbc - lastDbc_)` into `rxDbcFrameCount` and stores
+  `lastDbc_`. No discontinuity check, nothing gated.
+
+So ASFW can anchor its HAL timeline on a stream that is running at a rate it did
+not ask for, or whose data-block sequence has already broken — conditions under
+which Apple explicitly refuses to anchor and, after four DBC failures, resets the
+device.
+
+**Why this matters beyond tidiness.** The anchor is taken once and, per M3770,
+its error goes straight into the HAL's clock. `COREAUDIO_HAL_TIMING_DOMAINS.md`
+§6 records an unexplained whole-lap displacement of that anchor. Anchoring on an
+unvalidated stream is a mechanism by which the first observation could be taken
+from a packet that does not mean what the timeline assumes it means. **This is
+not a demonstrated cause — it is an untested difference from the reference, in
+exactly the area under investigation.**
+
 
 ## Still open
 
-- **`AM824DCLRead`/`AM824DCLWrite` (legacy DCL).** Not examined; the NuDCL path
-  is the live one and the rate-family builders there are stubs.
-- **Saffire TX.** `PrepareSendDCLs` (`0x10304`) has two `setCallback` and two
-  `setTimeStampPtr` sites, so its TX *does* stamp — the placement has not been
-  read.
-- **Whether ASFW's anchor matches §8.8's discipline.** The one item here that
-  changes ASFW code rather than documentation.
+- **Whether adding FDF and DBC gates changes the observed anchor displacement.**
+  §8.10 is the only remaining item, and it is a code change plus a hardware run,
+  not more reading.
+
+Legacy `AM824DCLRead`/`AM824DCLWrite` are deliberately not covered: NuDCL is the
+live path, and the rate-family builders there are stubs.
