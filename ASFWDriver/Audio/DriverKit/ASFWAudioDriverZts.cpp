@@ -667,9 +667,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     uint64_t packetIndex = startPacketIndex;
     uint32_t prepared = 0;
 
-    while (packetIndex < requiredPacketIndex &&
-           prepared < ASFW::Audio::Shared::AudioTimingGeometry::
-               kTxPreparedTargetCycleSlots) {
+    // Prepared depth is operator-tunable for latency sweeps; the default is the
+    // compile-time constant, so this reads identically until someone changes it.
+    const uint32_t preparedTarget =
+        ivars.runtime.activeTuning.PreparedTargetPackets();
+    while (packetIndex < requiredPacketIndex && prepared < preparedTarget) {
         // Kept as three separate outcomes so a rejection says which stage
         // produced it: no completion anchor at all, a negative anchor, or the
         // unwrapper refusing a backwards step against its high-water mark.
@@ -1072,12 +1074,11 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
         ++prepared;
     }
     ASFW_LOG(DirectAudio,
-             "[TxV3] prefill=%u/%u preparedTarget=%u ownershipGuard=%u",
+             "[TxV3] prefill=%u/%u preparedTarget=%u ownershipGuard=%u leadFrames=%u",
              prepared, slots,
-             ASFW::Audio::Shared::AudioTimingGeometry::
-                 kTxPreparedTargetCycleSlots,
-             ASFW::Audio::Shared::AudioTimingGeometry::
-                 kTxOwnershipGuardCycleSlots);
+             ivars.runtime.activeTuning.PreparedTargetPackets(),
+             ivars.runtime.activeTuning.txOwnershipGuardPackets,
+             ASFW::Audio::Shared::PreparedLeadFrames(ivars.runtime.activeTuning));
 }
 
 } // namespace ASFW::Audio::DriverKit
@@ -1109,9 +1110,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
         std::memory_order_acquire);
     const uint64_t committedBefore = queue->committedEnd.load(
         std::memory_order_acquire);
-    const uint64_t target = completion +
-        ASFW::Audio::Shared::AudioTimingGeometry::
-            kTxPreparedTargetCycleSlots;
+    const uint64_t target =
+        completion + ivars->runtime.activeTuning.PreparedTargetPackets();
     const bool useMAudio =
         ASFW::Audio::Families::BeBoB::MAudio::UsesSpecialDuplexPolicy(
             ivars->resolvedProfile.Value().profileBuilder);

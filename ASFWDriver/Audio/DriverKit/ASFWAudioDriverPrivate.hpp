@@ -10,6 +10,7 @@
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
+#include "../Shared/AudioRuntimeTuning.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Families/BeBoB/MAudio/MAudioDuplexPolicy.hpp"
 #include "../Families/BeBoB/MAudio/MAudioInternalTxTiming.hpp"
@@ -325,6 +326,10 @@ struct AudioDriverRuntimeState {
     // DATA decision before the cache is consulted count themselves here.
     uint64_t txNoCycleAnchorEvents{0};
     uint64_t txNoPresentationOriginEvents{0};
+    // Geometry actually in force. Defaults to the shipping constants, so every
+    // read is valid before an operator has ever touched the panel. Written only
+    // inside a configuration-change window, when IO is stopped.
+    ASFW::Audio::Shared::AudioRuntimeTuning activeTuning{};
     // Last reported [TxAlign] divergence between the TX content cursor and the
     // receive-derived projection for the same presentation time. Held so the
     // probe can log on change rather than per packet; reset at the seed and on
@@ -422,6 +427,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> txPreparationQueue;
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<OSAction> deviceConfigurationRequestedAction;
+    OSSharedPtr<OSAction> runtimeTuningRequestedAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
 
 

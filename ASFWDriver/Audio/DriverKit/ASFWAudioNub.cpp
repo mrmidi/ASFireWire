@@ -18,6 +18,7 @@
 #include "../Core/AudioCoordinator.hpp"
 #include "../../Service/DriverContext.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "../Shared/AudioRuntimeTuning.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
@@ -202,6 +203,10 @@ void ASFWAudioNub::free()
             ivars->deviceClockChangedAction->release();
             ivars->deviceClockChangedAction = nullptr;
         }
+        if (ivars->runtimeTuningRequestedAction) {
+            ivars->runtimeTuningRequestedAction->release();
+            ivars->runtimeTuningRequestedAction = nullptr;
+        }
         if (ivars->deviceConfigurationRequestedAction) {
             ivars->deviceConfigurationRequestedAction->release();
             ivars->deviceConfigurationRequestedAction = nullptr;
@@ -261,6 +266,10 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
         if (ivars->deviceClockChangedAction) {
             ivars->deviceClockChangedAction->release();
             ivars->deviceClockChangedAction = nullptr;
+        }
+        if (ivars->runtimeTuningRequestedAction) {
+            ivars->runtimeTuningRequestedAction->release();
+            ivars->runtimeTuningRequestedAction = nullptr;
         }
         if (ivars->deviceConfigurationRequestedAction) {
             ivars->deviceConfigurationRequestedAction->release();
@@ -509,6 +518,120 @@ bool ASFWAudioNub::NotifyDeviceConfigurationRequested(
     DeviceConfigurationRequested(ivars->deviceConfigurationRequestedAction,
                                  sampleRateHz, opticalInput, opticalOutput);
     return true;
+}
+
+void IMPL(ASFWAudioNub, RuntimeTuningRequested)
+{
+    (void)action;
+    (void)groups;
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterRuntimeTuningRequestedAction)
+{
+    if (!ivars) return kIOReturnNotReady;
+    // Retain the new action before releasing the old, so re-registering the
+    // same action cannot drop the last reference mid-swap.
+    if (action) action->retain();
+    OSAction* oldAction = ivars->runtimeTuningRequestedAction;
+    ivars->runtimeTuningRequestedAction = action;
+    if (oldAction) oldAction->release();
+    return kIOReturnSuccess;
+}
+
+bool ASFWAudioNub::NotifyRuntimeTuningRequested(
+    const ASFW::Audio::Shared::AudioRuntimeTuning& candidate, uint32_t groups)
+{
+    if (!ivars || !ivars->runtimeTuningRequestedAction || groups == 0) {
+        return false;
+    }
+    ivars->pendingTxDispatchSlackPackets = candidate.txDispatchSlackPackets;
+    ivars->pendingTxOwnershipGuardPackets = candidate.txOwnershipGuardPackets;
+    ivars->pendingOutputLatencyFrames = candidate.outputLatencyFrames;
+    ivars->pendingInputLatencyFrames = candidate.inputLatencyFrames;
+    ivars->pendingOutputSafetyOffsetFrames = candidate.outputSafetyOffsetFrames;
+    ivars->pendingInputSafetyOffsetFrames = candidate.inputSafetyOffsetFrames;
+    ivars->pendingFrameRingFrames = candidate.frameRingFrames;
+    ivars->pendingClientIoBudgetFrames = candidate.clientIoBudgetFrames;
+    ivars->pendingZeroTimestampPeriodFrames = candidate.zeroTimestampPeriodFrames;
+    // Release the mask last: the reader acquires it before touching any field,
+    // so a half-written candidate can never be observed as pending.
+    ivars->pendingTuningGroups.store(groups, std::memory_order_release);
+
+    ASFW_LOG(Audio,
+             "[AudioTuning] request endpoint=%llu groups=0x%x slack=%u target=%u "
+             "outLat=%u inLat=%u outSafety=%u inSafety=%u ring=%u zts=%u",
+             ivars->endpointId, groups, candidate.txDispatchSlackPackets,
+             candidate.PreparedTargetPackets(), candidate.outputLatencyFrames,
+             candidate.inputLatencyFrames, candidate.outputSafetyOffsetFrames,
+             candidate.inputSafetyOffsetFrames, candidate.frameRingFrames,
+             candidate.zeroTimestampPeriodFrames);
+    RuntimeTuningRequested(ivars->runtimeTuningRequestedAction, groups);
+    return true;
+}
+
+uint32_t ASFWAudioNub::CopyPendingRuntimeTuning(
+    ASFW::Audio::Shared::AudioRuntimeTuning& out) const
+{
+    if (!ivars) return 0;
+    const uint32_t groups =
+        ivars->pendingTuningGroups.load(std::memory_order_acquire);
+    if (groups == 0) return 0;
+    out.txDispatchSlackPackets = ivars->pendingTxDispatchSlackPackets;
+    out.txOwnershipGuardPackets = ivars->pendingTxOwnershipGuardPackets;
+    out.outputLatencyFrames = ivars->pendingOutputLatencyFrames;
+    out.inputLatencyFrames = ivars->pendingInputLatencyFrames;
+    out.outputSafetyOffsetFrames = ivars->pendingOutputSafetyOffsetFrames;
+    out.inputSafetyOffsetFrames = ivars->pendingInputSafetyOffsetFrames;
+    out.frameRingFrames = ivars->pendingFrameRingFrames;
+    out.clientIoBudgetFrames = ivars->pendingClientIoBudgetFrames;
+    out.zeroTimestampPeriodFrames = ivars->pendingZeroTimestampPeriodFrames;
+    return groups;
+}
+
+void ASFWAudioNub::SetActiveRuntimeTuning(
+    const ASFW::Audio::Shared::AudioRuntimeTuning& active)
+{
+    if (!ivars) return;
+    ivars->activeTxDispatchSlackPackets = active.txDispatchSlackPackets;
+    ivars->activeTxOwnershipGuardPackets = active.txOwnershipGuardPackets;
+    ivars->activeOutputLatencyFrames = active.outputLatencyFrames;
+    ivars->activeInputLatencyFrames = active.inputLatencyFrames;
+    ivars->activeOutputSafetyOffsetFrames = active.outputSafetyOffsetFrames;
+    ivars->activeInputSafetyOffsetFrames = active.inputSafetyOffsetFrames;
+    ivars->activeFrameRingFrames = active.frameRingFrames;
+    ivars->activeClientIoBudgetFrames = active.clientIoBudgetFrames;
+    ivars->activeZeroTimestampPeriodFrames = active.zeroTimestampPeriodFrames;
+    ivars->activeTuningSequence.fetch_add(1, std::memory_order_release);
+}
+
+void ASFWAudioNub::CopyActiveRuntimeTuning(
+    ASFW::Audio::Shared::AudioRuntimeTuning& out) const
+{
+    if (!ivars) return;
+    // Never published yet: leave the caller's defaults, which are the shipping
+    // constants, rather than reporting a zeroed geometry the driver never ran.
+    if (ivars->activeTuningSequence.load(std::memory_order_acquire) == 0) return;
+    out.txDispatchSlackPackets = ivars->activeTxDispatchSlackPackets;
+    out.txOwnershipGuardPackets = ivars->activeTxOwnershipGuardPackets;
+    out.outputLatencyFrames = ivars->activeOutputLatencyFrames;
+    out.inputLatencyFrames = ivars->activeInputLatencyFrames;
+    out.outputSafetyOffsetFrames = ivars->activeOutputSafetyOffsetFrames;
+    out.inputSafetyOffsetFrames = ivars->activeInputSafetyOffsetFrames;
+    out.frameRingFrames = ivars->activeFrameRingFrames;
+    out.clientIoBudgetFrames = ivars->activeClientIoBudgetFrames;
+    out.zeroTimestampPeriodFrames = ivars->activeZeroTimestampPeriodFrames;
+}
+
+// Consume the parked candidate exactly once. Clearing here means a duplicate or
+// late action wake finds nothing pending instead of re-applying a stale request.
+uint32_t ASFWAudioNub::TakePendingRuntimeTuning(
+    ASFW::Audio::Shared::AudioRuntimeTuning& out)
+{
+    const uint32_t groups = CopyPendingRuntimeTuning(out);
+    if (groups != 0 && ivars) {
+        ivars->pendingTuningGroups.store(0, std::memory_order_release);
+    }
+    return groups;
 }
 
 uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const

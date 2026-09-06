@@ -42,6 +42,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxTransportFaultAction(nullptr);
+            (void)ivars->device.audioNub->RegisterRuntimeTuningRequestedAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceConfigurationRequestedAction(nullptr);
         }
         ivars->ztsAnchorAction.reset();
@@ -161,7 +162,38 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterDeviceConfigurationRequestedAction");
     }
 
+    OSAction* rawRuntimeTuningAction = nullptr;
+    error = CreateActionRuntimeTuningRequested(0, &rawRuntimeTuningAction);
+    if (error != kIOReturnSuccess || !rawRuntimeTuningAction) {
+        return failStart(error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+                         "CreateActionRuntimeTuningRequested");
+    }
+    ivars->runtimeTuningRequestedAction =
+        ASFW::Common::AdoptRetained(rawRuntimeTuningAction);
+    error = ivars->device.audioNub->RegisterRuntimeTuningRequestedAction(
+        ivars->runtimeTuningRequestedAction.get());
+    if (error != kIOReturnSuccess) {
+        ivars->runtimeTuningRequestedAction.reset();
+        return failStart(error, "RegisterRuntimeTuningRequestedAction");
+    }
+
     return kIOReturnSuccess;
+}
+
+// Landing point for an operator's geometry request, on the default queue: the
+// apply path blocks on a configuration-change window, exactly like
+// DeviceConfigurationRequested above.
+void IMPL(ASFWAudioDriver, RuntimeTuningRequested)
+{
+    (void)action;
+    (void)groups;
+    if (!ivars || !ivars->audioDevice || !ivars->device.audioNub) return;
+    const kern_return_t kr = ivars->audioDevice->RequestRuntimeTuning();
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioTuning] request rejected groups=0x%x kr=0x%x",
+                       groups, kr);
+    }
 }
 
 void IMPL(ASFWAudioDriver, DeviceConfigurationRequested)
@@ -232,6 +264,7 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxTransportFaultAction(nullptr);
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
+            (void)ivars->device.audioNub->RegisterRuntimeTuningRequestedAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceConfigurationRequestedAction(nullptr);
         }
         ivars->txPreparationAction.reset();

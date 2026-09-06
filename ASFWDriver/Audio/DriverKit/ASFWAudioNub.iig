@@ -24,6 +24,7 @@
 #include <cstdint>
 
 class ASFWDriver;
+namespace ASFW::Audio::Shared { struct AudioRuntimeTuning; }
 // Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
 // Properties set by ASFWDriver:
 //   - ASFWDeviceName (OSString): Device name from config ROM
@@ -140,6 +141,39 @@ public:
     [[nodiscard]] bool NotifyDeviceConfigurationRequested(
         uint32_t sampleRateHz, uint32_t opticalInput, uint32_t opticalOutput) LOCALONLY;
 
+    // Runtime tuning bridge (diagnostic geometry sweep from the app).
+    //
+    // Unlike the configuration bridge above, the action carries only the group
+    // mask: the candidate is nine values, and threading those through an OSAction
+    // signature would be sprawl for no benefit. The nub already owns
+    // cross-service state, so the value is parked here and the audio side reads
+    // it back LOCALONLY -- same process, no new lifetime to get wrong.
+    virtual void RuntimeTuningRequested(OSAction* action TARGET, uint32_t groups);
+    virtual kern_return_t RegisterRuntimeTuningRequestedAction(
+        OSAction* action TYPE(RuntimeTuningRequested));
+
+    // Park a candidate and fire the action. Returns false when no audio driver
+    // has registered, so the caller reports "not ready" rather than silently
+    // dropping an operator's request.
+    [[nodiscard]] bool NotifyRuntimeTuningRequested(
+        const ASFW::Audio::Shared::AudioRuntimeTuning& candidate,
+        uint32_t groups) LOCALONLY;
+    // Read the parked candidate. Returns the group mask; zero means nothing is
+    // pending, which is how a spurious action wake is distinguished from a real
+    // request.
+    [[nodiscard]] uint32_t CopyPendingRuntimeTuning(
+        ASFW::Audio::Shared::AudioRuntimeTuning& out) const LOCALONLY;
+    // Published by the audio side once a candidate is actually in force, so the
+    // panel reports what the driver is running rather than what was asked for.
+    void SetActiveRuntimeTuning(
+        const ASFW::Audio::Shared::AudioRuntimeTuning& active) LOCALONLY;
+    void CopyActiveRuntimeTuning(
+        ASFW::Audio::Shared::AudioRuntimeTuning& out) const LOCALONLY;
+    // Consume the parked candidate exactly once, so a duplicate or late action
+    // wake finds nothing pending rather than re-applying a stale request.
+    [[nodiscard]] uint32_t TakePendingRuntimeTuning(
+        ASFW::Audio::Shared::AudioRuntimeTuning& out) LOCALONLY;
+
     // Host-side belief of the device rate, updated only after a successful
     // semantic configuration projection. Used by the transport side to detect
     // device-initiated clock moves.
@@ -216,6 +250,34 @@ struct ASFWAudioNub_IVars {
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
     OSAction* deviceConfigurationRequestedAction{nullptr};
+    OSAction* runtimeTuningRequestedAction{nullptr};
+
+    // Runtime tuning, stored as plain quadlets rather than the value type so the
+    // .iig needs no C++ header. Ordering is enforced by pendingTuningGroups:
+    // the writer fills the fields then releases the mask, the reader acquires
+    // the mask then reads the fields, so a partially written candidate is never
+    // observed as pending.
+    uint32_t pendingTxDispatchSlackPackets{0};
+    uint32_t pendingTxOwnershipGuardPackets{0};
+    uint32_t pendingOutputLatencyFrames{0};
+    uint32_t pendingInputLatencyFrames{0};
+    uint32_t pendingOutputSafetyOffsetFrames{0};
+    uint32_t pendingInputSafetyOffsetFrames{0};
+    uint32_t pendingFrameRingFrames{0};
+    uint32_t pendingClientIoBudgetFrames{0};
+    uint32_t pendingZeroTimestampPeriodFrames{0};
+    std::atomic<uint32_t> pendingTuningGroups{0};
+
+    uint32_t activeTxDispatchSlackPackets{0};
+    uint32_t activeTxOwnershipGuardPackets{0};
+    uint32_t activeOutputLatencyFrames{0};
+    uint32_t activeInputLatencyFrames{0};
+    uint32_t activeOutputSafetyOffsetFrames{0};
+    uint32_t activeInputSafetyOffsetFrames{0};
+    uint32_t activeFrameRingFrames{0};
+    uint32_t activeClientIoBudgetFrames{0};
+    uint32_t activeZeroTimestampPeriodFrames{0};
+    std::atomic<uint32_t> activeTuningSequence{0};
 };
 
 #endif /* ASFWAudioNub_h */

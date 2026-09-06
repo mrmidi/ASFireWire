@@ -1156,10 +1156,77 @@ kern_return_t ASFWAudioDevice::RequestControlConfiguration(
     return kr;
 }
 
+// Reserved configuration-change token for the diagnostic geometry sweep. The
+// rate/optical state machine issues small monotonic tokens, so a value up here
+// cannot collide with one; keeping the spaces disjoint is what lets the tuning
+// path use the ADK window without entering that machine at all.
+static constexpr uint64_t kRuntimeTuningChangeToken = 0xA5F70000'00000001ULL;
+
+kern_return_t ASFWAudioDevice::RequestRuntimeTuning() {
+    if (!ivars || !ivars->driverIvars) return kIOReturnNotReady;
+    ASFW_LOG(Audio,
+             "[AudioTuning] requesting ADK window endpoint=%llu running=%d",
+             ivars->driverIvars->device.endpointId,
+             ivars->driverIvars->runtime.isRunning.load(
+                 std::memory_order_acquire));
+    return RequestDeviceConfigurationChange(kRuntimeTuningChangeToken, nullptr);
+}
+
+// Apply inside the window, i.e. with IO stopped. Loud on purpose: this is an
+// operator action that changes how the driver behaves, and a silent one would
+// be impossible to correlate with a later measurement.
+static void ApplyPendingRuntimeTuning(ASFWAudioDriver_IVars& driverIvars) {
+    if (!driverIvars.device.audioNub) return;
+    auto candidate = driverIvars.runtime.activeTuning;
+    const uint32_t groups =
+        driverIvars.device.audioNub->TakePendingRuntimeTuning(candidate);
+    if (groups == 0) {
+        ASFW_LOG(Audio, "[AudioTuning] window opened with nothing pending");
+        return;
+    }
+    const auto outcome = ASFW::Audio::Shared::ValidateTuning(candidate);
+    if (!outcome.Applicable()) {
+        // Validated app-side too, so reaching here means the two disagree.
+        // Refuse rather than install a geometry the asserts do not cover.
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioTuning] REJECTED groups=0x%x rejection=%u -- geometry unchanged",
+                       groups, static_cast<uint32_t>(outcome.rejection));
+        return;
+    }
+    const auto& previous = driverIvars.runtime.activeTuning;
+    ASFW_LOG(Audio,
+             "[AudioTuning] APPLYING groups=0x%x warnings=0x%x slack=%u->%u "
+             "target=%u->%u lead=%u->%u fr",
+             groups, outcome.warnings, previous.txDispatchSlackPackets,
+             candidate.txDispatchSlackPackets, previous.PreparedTargetPackets(),
+             candidate.PreparedTargetPackets(),
+             ASFW::Audio::Shared::PreparedLeadFrames(previous),
+             ASFW::Audio::Shared::PreparedLeadFrames(candidate));
+    if (outcome.Has(ASFW::Audio::Shared::TuningWarning::
+                        kDispatchSlackBelowAssertedFloor)) {
+        ASFW_LOG(Audio,
+                 "[AudioTuning] dispatch slack %u packets is BELOW the asserted "
+                 "floor of %u -- a coalesced completion delta larger than this "
+                 "holes the descriptor ring",
+                 candidate.txDispatchSlackPackets,
+                 12U * ASFW::Audio::Shared::AudioTimingGeometry::kTxPacketsPerGroup);
+    }
+    driverIvars.runtime.activeTuning = candidate;
+    driverIvars.device.audioNub->SetActiveRuntimeTuning(candidate);
+}
+
 kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     uint64_t change_action, OSObject* in_change_info) {
-    if (!ivars || !ivars->driverIvars || !ivars->configurationLock ||
-        !ivars->configurationEnabled) {
+    if (!ivars || !ivars->driverIvars) {
+        return super::PerformDeviceConfigurationChange(change_action, in_change_info);
+    }
+    // Checked before the configuration machine so the tuning path neither reads
+    // nor advances it.
+    if (change_action == kRuntimeTuningChangeToken) {
+        ApplyPendingRuntimeTuning(*ivars->driverIvars);
+        return super::PerformDeviceConfigurationChange(change_action, in_change_info);
+    }
+    if (!ivars->configurationLock || !ivars->configurationEnabled) {
         return super::PerformDeviceConfigurationChange(change_action, in_change_info);
     }
     auto& driverIvars = *ivars->driverIvars;
@@ -1274,6 +1341,21 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
 
 kern_return_t ASFWAudioDevice::AbortDeviceConfigurationChange(
     uint64_t change_action, OSObject* in_change_info) {
+    // Drop the parked candidate: the host refused the window, so nothing was
+    // applied and leaving it pending would let an unrelated later window
+    // install a request the operator has long since moved on from.
+    if (change_action == kRuntimeTuningChangeToken) {
+        if (ivars && ivars->driverIvars && ivars->driverIvars->device.audioNub) {
+            ASFW::Audio::Shared::AudioRuntimeTuning discarded{};
+            const uint32_t groups =
+                ivars->driverIvars->device.audioNub->TakePendingRuntimeTuning(
+                    discarded);
+            ASFW_LOG(Audio,
+                     "[AudioTuning] window ABORTED by host groups=0x%x -- request discarded",
+                     groups);
+        }
+        return super::AbortDeviceConfigurationChange(change_action, in_change_info);
+    }
     if (ivars && ivars->configurationLock && ivars->configurationEnabled) {
         IOLockLock(ivars->configurationLock);
         const auto pending = ASFW::Configuration::CoherentSnapshot(ivars->configurationMachine.state);
