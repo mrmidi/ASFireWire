@@ -83,10 +83,17 @@ rounded up to a multiple of two pages.
 | AppleUSBAudio | 16384 frames | **341.3 ms** |
 | ASFW (`audio-engine-v3`) | 8192 frames | **170.7 ms** |
 
-**This retires a concern raised earlier in `COREAUDIO_HAL_TIMING_DOMAINS.md` §2.**
-ASFW's ZTS period is not coarse by Apple's own precedent — it is twice as fine as
-AppleUSBAudio's. What ASFW does *not* yet have is §2's interpolation and §5's
-filter.
+**This is precedent, not validation.** ASFW's configured ZTS period is not coarse
+by Apple's own standard — it is twice as fine as AppleUSBAudio's. That bounds one
+worry raised in `COREAUDIO_HAL_TIMING_DOMAINS.md` §2 and no more: a *configured*
+period is not a *measured* publication cadence, and ring capacity says nothing
+about first-anchor quality or whether the HAL's filter converges on this stack.
+Those remain open and want measurement.
+
+What ASFW does *not* have is §5's measured-rate filter. It does interpolate: it
+projects a ZTS boundary falling inside a packet at the nominal rate
+(`HardwareSampleTimeline.hpp:281-283`). The gap is filtered-rate vs nominal-rate
+refinement, not the presence or absence of interpolation.
 
 ## 4. The first timestamp is special-cased, exactly as Jeff Moore prescribed
 
@@ -128,9 +135,10 @@ filtered_time_nanos     = mLastFilteredTimeStamp_nanos + filteredStampDifference
   history;
 - `nIter` must reset to zero if timestamps stop and restart.
 
-**This puts a real number on "it takes a few time stamps to lock" (M14477): the
-driver-side filter alone is 33 timestamps deep**, and the HAL's own filter sits
-downstream of it. At ASFW's 170.7 ms period, 33 timestamps is ~5.6 s; at
+**This puts a real number on the *driver-side* filter depth: 33 timestamps.** It
+does not quantify M14477's "a few time stamps", which describes the HAL's own
+filter sitting downstream — a different filter, and one the source still does not
+put a number on. At ASFW's 170.7 ms period, 33 timestamps is ~5.6 s; at
 AppleUSBAudio's output rate the same fill takes ~11 s. Apple evidently considers
 that acceptable — because the 4-tap startup filter carries the first second.
 
@@ -207,8 +215,10 @@ These three are about **anchoring discipline**, independent of clock quality:
 | 6 | Direction-dependent reference plane (input adds a whole frame) | ASFW's RX and TX reference planes are not stated in these terms, and §4 of the HAL doc makes that a live question for the residual. |
 | 6 | Only the master stream publishes | ASFW's equivalent is the `Receive`/`Transmit` choice at `ASFWAudioDevice.cpp:355`. Same idea, already present. |
 
-And §3 stands on its own: it retires the "our ZTS period is too coarse" concern
-by precedent, regardless of transport.
+And §3 bounds — but does not close — the "our ZTS period is too coarse" concern:
+a shipping driver ran a coarser configured period, which makes the number alone
+unalarming. It does not measure ASFW's actual publication cadence or lock
+behaviour, which is what the concern ultimately asks about.
 
 **Cadence (§1) is an open question, not a transferable answer.** The 2 ms / 64 ms
 split shows Apple was willing to run output interrupts very sparsely, and the
@@ -333,14 +343,35 @@ Apple's driver did on the same class of hardware.
 
 And by §8.3 that buys **nothing in timing resolution** — the per-packet
 timestamps are written by hardware either way. The only thing a smaller group
-buys is latency-to-service: how soon software reacts to a completed packet.
+buys is latency-to-service: how soon software reacts to a completed packet. That
+is not nothing when the target is 2-3 ms RTL, because RX decode currently happens
+*during* the completion drain — deferring the only service point to 20 ms defers
+the input data with it, however precisely each packet was stamped.
 
 This is worth weighing against `[[tx-irq-001-interrupt-path-stall]]`, where the
 entire OHCI interrupt path was observed to latch up. Running an order of
 magnitude more interrupts than the reference stack is not evidence of a cause,
 but it is a large unexamined difference from the only implementation known to
-have shipped on this hardware. **`kPacketsPerCompletionGroup` is a one-constant
-experiment.**
+have shipped on this hardware.
+
+> **It is not a one-constant experiment.** An earlier revision said it was.
+> `kPacketsPerCompletionGroup` (`IsochQueueGeometry.hpp:12`) is fused with three
+> other policies:
+>
+> - `kPayloadFinalityLeadPackets = kPacketsPerCompletionGroup + 2` — the PCM
+>   finalisation deadline moves with it;
+> - `kRxPacketsPerGroup` / `kTxPacketsPerGroup` / `kTimingGroupPackets`
+>   (`AudioTimingGeometry.hpp:49-53`) — RX and TX service cadence and the
+>   32/40-frames-per-interrupt statistics all assume six;
+> - two `static_assert`s: `48 % group == 0` and `group + 2 < 48`.
+>
+> Apple's 160 fails both asserts outright. 48 fails the finality assert *and*
+> would leave a once-per-traversal modulo cursor structurally unable to observe a
+> full lap. Even the legal divisors (8, 12, 16, 24) confound interrupt rate with
+> PCM deadlines, so the result of any such run is uninterpretable.
+>
+> Decouple IRQ stride from finality lead and from the audio group size first.
+> Then cadence can be varied as one thing at a time.
 
 ### 8.3.2 Callback placement is a per-configuration choice, not one policy
 
@@ -397,8 +428,19 @@ legacy `AM824DCLWrite` only, where both are real implementations.
 
 ASFW raises ~27x more RX interrupts than Apple, and — in the configuration it
 actually runs, device-clocked — on the order of **100x more TX interrupts**. By
-§8.3 that buys nothing in timing resolution, because the hardware stamps every
-packet regardless. `kPacketsPerCompletionGroup` is a one-constant experiment.
+§8.3 that buys nothing in *timing resolution*, because the hardware stamps every
+packet regardless; it does buy latency-to-service.
+
+Two caveats on these ratios. They compare **callback placement**, which is what
+the DCL setters show; they are not a full service-path comparison, since the work
+that feeds and drains the ring is separate from the callback that triggers it.
+And Linux establishes the OHCI interrupt *encoding*, not how Apple's NuDCL
+compiler lowers every `setCallback` into descriptors — `IOFWDCL::setCallback`
+itself only stores a pointer. Keep observed callback placement, inferred
+descriptor policy, and actual interrupt counts distinguishable. Saffire, the
+closer DICE reference, already shows a different callback policy from
+AppleFWAudio (§8.9), so there is no single "reference cadence" to converge on.
+See §8.3.1 for why this is not a one-constant change.
 
 ### 8.4 The filter is 4 taps, against USB's 33
 
@@ -494,10 +536,25 @@ Focusrite's Saffire driver is DICE/TCAT-based and also builds NuDCL programs
   references from `PrepareRecvDCLs`; only `PrepareSendDCLs` uses it, twice).
 
 So a DICE driver does **not** harvest per-packet OHCI receive timestamps at all.
-That is consistent with DICE devices exposing their own clock and sample-count
-registers over the TCAT interface, making the OHCI packet timestamp redundant
-for that family. It is a genuinely different clocking strategy, not a variation
-in tuning.
+
+**That is the limit of what the DCL evidence supports.** Not asking NuDCL to
+populate a timestamp slot means Saffire ignores the *OHCI hardware* stamp on
+receive. It does **not** mean the receive clock is unrelated to the wire — and in
+fact it is not. `Saffire::ReadFirewireBuffers` (`0xcf24`) extracts the SYT word
+from the CIP header at `0xd5e7`, calls `SYTDiffInOffsets` and maintains a
+512-entry delta history at `0xd69e-0xd73a`, and aligns sample positions through
+`extendTstamp` / `tstampToOffsets` / `extOffsetDiff` from `0xdded`.
+
+ASFW's own tree already says so: `RxSytCadence.hpp:11-15` names
+`ReadFirewireBuffers at 0xd69e-0xd81e` as the behavioural source for its 512-SYT
+warm-up. An earlier revision of this section concluded "its receive clock does
+not come from the wire at all" — that was wrong, and contradicted by a header
+comment in this repository.
+
+The correct statement is narrower: **Saffire recovers its receive clock from the
+CIP SYT field, not from the OHCI packet timestamp.** Two distinct clock sources
+were conflated. Whether TCAT registers *also* participate is a separate question
+this evidence does not answer.
 
 `Saffire::PrepareSendDCLs` (`0x10304`) is different again — and stamps:
 
@@ -514,11 +571,11 @@ in tuning.
 | RX per-packet timestamp | yes | **none** |
 | TX per-packet timestamp | yes | yes (two DCLs share one slot) |
 | DCLs per packet | 1 | **2** (payload + header chains) |
-| clock source | OHCI packet timestamps + SYT | device registers over TCAT |
+| RX clock source | OHCI packet timestamps + SYT | **CIP SYT only** (512-delta history) |
 
 So DICE stamps on transmit but not receive, and interrupts far more often than
-AppleFWAudio on both directions. Its receive clock does not come from the wire at
-all.
+AppleFWAudio in both directions. Both drivers recover the receive clock from the
+wire; they differ in whether the OHCI packet timestamp participates.
 
 ### 8.10 ASFW's anchor gate against Apple's — the one code-level gap
 
@@ -539,14 +596,32 @@ if (result.framesDecoded != 0 && packetHostTicks != 0 &&
 `cadence.established` is `validUpdates >= kWarmupUpdates`, and
 `kWarmupUpdates = kEntryCount + 1 = 513` (`RxSytCadence.hpp:19-21`). A "valid
 update" is a SYT whose delta from the previous SYT lies in `(0, 65535]`. So ASFW
-*does* wait — 513 consecutive plausible SYT deltas, on the order of 64 ms of
-stream — before it will anchor.
+*does* wait for 513 plausible SYT deltas before it will anchor.
+
+> **They are cumulative, not consecutive — and that is a second gap.** An earlier
+> revision of this section called them consecutive. On an invalid delta,
+> `RxSytCadence::Observe` (`RxSytCadence.hpp:67`) clears only `previousSyt_`; it
+> leaves `validUpdates_`, the 512-entry ring and `rollingCadenceTicks_` intact.
+> So 512 valid deltas, then a break, then a reseed and **one** further valid
+> delta reaches `established`. The consumer's rejection handler
+> (`DirectAudioReceiveConsumer.cpp:417`) calls `ResetReplayEpochForDiscontinuity`
+> only when replay is *already* established, so it cannot repair a broken
+> warm-up either. A cadence ring holding a discontinuity is admitted as if it
+> were clean. If consecutiveness is the intended contract — Apple's *is*
+> consecutive, it resets its counter on mismatch — then this needs stating and
+> enforcing, and the interrupted warm-up needs a test through the consumer.
+>
+> The warm-up interval was also given as ~64 ms. That assumed 8000 valid SYTs
+> per second, i.e. one per isoch cycle. A blocking 48 kHz stream carries eight
+> frames in each DATA packet, so it emits 6000 DATA packets/s and 2000 NO_DATA
+> packets whose SYT is `0xffff` and contributes nothing. 513 valid deltas is
+> therefore **~85 ms**, not 64 — and longer on any stream with more empties.
 
 **But it waits on a different quantity.** Comparing gate by gate:
 
 | check | Apple | ASFW |
 |---|---|---|
-| timing series plausible | implicit | **yes** — 513 consecutive SYT deltas |
+| timing series plausible | **yes**, consecutive | **partly** — 513 *cumulative* SYT deltas |
 | CIP structurally valid | yes | **yes** — `hasValidCip` |
 | SYT present | yes | **yes** — `syt != 0xffff` |
 | **FDF matches configured rate** | **yes**, resets startup counter on mismatch | **no** |
@@ -570,7 +645,8 @@ device.
 
 **Why this matters beyond tidiness.** The anchor is taken once and, per M3770,
 its error goes straight into the HAL's clock. `COREAUDIO_HAL_TIMING_DOMAINS.md`
-§6 records an unexplained whole-lap displacement of that anchor. Anchoring on an
+§6 records an unexplained whole-lap offset in the TX content cursor -- an offset
+that document declines to attribute to the anchor. Anchoring on an
 unvalidated stream is a mechanism by which the first observation could be taken
 from a packet that does not mean what the timeline assumes it means. **This is
 not a demonstrated cause — it is an untested difference from the reference, in
@@ -611,7 +687,19 @@ header to read an FDF from at all.
 ### 8.10.2 The same reasoning exposes an existing ASFW limitation
 
 ASFW's ZTS gate already requires `result.syt != 0xffff`. Six families set
-`CIP_UNAWARE_SYT`, i.e. SYT **is** `0xffff` or is not meaningful:
+`CIP_UNAWARE_SYT` — and the flag's meaning is **direction-specific**
+(`amdtp-stream.h:37-39`):
+
+> For outgoing packet, the value in SYT field of CIP is 0xffff.
+> For incoming packet, the value in SYT field of CIP **is not handled**.
+
+Linux acts on the incoming half by simply declining to read the field
+(`amdtp-stream.c:807`: `if (!(s->flags & CIP_UNAWARE_SYT)) *syt = ...`). It never
+asserts what is on the wire. `oxfw-stream.c:164-169` explains the flag in terms
+of playback timing and NO_INFO compatibility — again a statement about what the
+device *honours*, not about what it *sends*.
+
+The families:
 
 | family | source |
 |---|---|
@@ -622,14 +710,25 @@ ASFW's ZTS gate already requires `result.syt != 0xffff`. Six families set
 | Tascam | `tascam/amdtp-tascam.c:224` |
 | OXFW (conditionally) | `oxfw/oxfw-stream.c:169` |
 
-For any of these, `syt != 0xffff` is never true, so **ASFW would never publish an
-RX-derived ZTS boundary and never anchor an RX-clocked timeline**. The RX-clocked
-path structurally works only for SYT-bearing devices.
+For these, ASFW's gate reads a field the device does not promise is a clock. The
+correct conclusion is that **ASFW cannot assume every incoming SYT is a valid
+clock observation** — and depending on what the device actually puts on the wire,
+that breaks in one of two ways:
+
+- if SYT really is `0xffff`, the gate is never true: ASFW never publishes an
+  RX-derived ZTS boundary and never anchors an RX-clocked timeline;
+- if SYT is non-`0xffff` but meaningless, the gate passes and ASFW anchors the
+  HAL clock on a number the device never intended as timing. **This is the worse
+  failure**, and an earlier revision of this section missed it by asserting the
+  first case categorically.
+
+Which occurs is per device and is not decided by the flag. It needs
+direction-specific policy and per-device evidence, not a family table.
 
 That is not a bug today — the tested hardware (Duet, DICE) does carry SYT — but
 it is an **unflagged quirk assumption already baked into the anchor gate**, and
-it means those families would need the `Transmit` timeline source or a
-device-clock path, not merely a profile entry.
+those families would need the `Transmit` timeline source or a device-clock path,
+not merely a profile entry.
 
 **Conclusion.** The gap in §8.10 is real, but the fix is not Apple's
 unconditional checks. It is per-device capability flags modelled on Linux
@@ -639,11 +738,36 @@ assumption folded in as the first such flag rather than left implicit.
 
 ## Still open
 
-- **A CIP capability-flag mechanism in `DeviceProfiles/`**, modelled on Linux
-  `cip_flags`, carrying at minimum: SYT-aware, DBC semantics (start vs end
-  event, quadlets vs blocks), empty-packet DBC validity, and header presence.
-  Only once that exists can §8.10's FDF/DBC gates be added safely, and only then
-  is the hardware run meaningful.
+Ordered so that the cheap, decisive work comes first. The two measurement items
+are the ones that produce evidence; the framework item is the one that would take
+weeks and settle nothing about the current bug.
+
+1. **Frame-to-presentation alignment across the epoch** — the discriminator.
+   `COREAUDIO_HAL_TIMING_DOMAINS.md` §6(b): periodically re-derive `first` from
+   the current RX observation and compare against the running `txNextFrame_`.
+   Constant difference means the startup seed; lap-stepped growth means
+   mid-epoch execution loss; no difference sends it back to correlator aliasing.
+   A startup-only trace cannot separate these, because `PreviewTxRange` stops
+   consulting bus/frame alignment after initialisation.
+2. **Startup admission** — make the warm-up contract explicit and testable.
+   §8.10's box shows `validUpdates_` survives a discontinuity, so a cadence ring
+   containing a break is admitted as clean. Decide whether consecutiveness is the
+   contract (Apple's is), then test an interrupted warm-up *through the
+   consumer*, not just through `RxSytCadence`.
+3. **Identifiable loopback markers.** The RTL stimulus repeats at exactly the
+   ring period (288 frames), which is what makes lap-counting and correlator
+   aliasing indistinguishable. A non-repeating marker separates "delayed payload"
+   from "repeated payload" and would retire that ambiguity outright.
+4. **A CIP capability-flag mechanism in `DeviceProfiles/`**, modelled on Linux
+   `cip_flags`, carrying at minimum: SYT-aware (both directions — see §8.10.2),
+   DBC semantics (start vs end event, quadlets vs blocks), empty-packet DBC
+   validity, and header presence. Only once that exists can §8.10's FDF/DBC gates
+   be added safely. This is device-support breadth, not a fix for the current
+   latency question — it should not precede 1-3.
+
+Explicitly **not** next: raising `kPacketsPerCompletionGroup`. §8.3.1 shows it is
+fused with the payload-finality deadline and the audio group geometry, so no
+legal value yields an interpretable result until those are decoupled.
 
 Legacy `AM824DCLRead`/`AM824DCLWrite` are deliberately not covered: NuDCL is the
 live path, and the rate-family builders there are stubs.

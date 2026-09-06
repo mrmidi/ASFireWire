@@ -89,12 +89,24 @@ scheduling: safety offset, latency and nominal rate all participate.
 | `clientIoBudgetFrames` | 512 | 10.67 ms |
 | `zeroTimestampPeriodFrames` | 8192 | **170.67 ms** |
 
-The ZTS period currently yields ~5.9 timestamps/second. **This has now been
-validated and the concern is retired:** AppleUSBAudio's own ring wrap period is
-`sampleRate/4` rounded to two pages = **16384 frames (341 ms) at 48 kHz**, twice
-as coarse as ASFW's. See `APPLE_DRIVER_TIMESTAMP_MECHANICS.md` §3. What Apple has
-and ASFW does not is sub-frame interpolation at the wrap point and a driver-side
-33-tap FIR — cadence was never the issue.
+The ZTS period currently yields ~5.9 timestamps/second. **A coarse period is not
+by itself out of family:** AppleUSBAudio's own ring wrap period is `sampleRate/4`
+rounded to two pages = **16384 frames (341 ms) at 48 kHz**, twice as coarse as
+ASFW's. See `APPLE_DRIVER_TIMESTAMP_MECHANICS.md` §3.
+
+**That is precedent, not validation.** A shipping driver tolerating a coarse
+*configured* period says nothing about ASFW's *measured* publication cadence, the
+quality of its first anchor, or whether the HAL's filter converges on this stack.
+Ring capacity is not a latency proof. Treat the cadence question as open until
+publication intervals and lock behaviour are measured, not settled by analogy.
+
+The real difference from Apple is in *how* the timestamp is refined, not how
+often it is published. ASFW does project a ZTS boundary that falls inside a
+packet, linearly at the nominal rate (`HardwareSampleTimeline.hpp:281-283`,
+`boundaryBusTicks = presentationBusTicks + (boundary - sampleFrame) * nominal`).
+What it lacks is Apple's *measured-rate* refinement: a 33-tap interval FIR with a
+four-tap startup branch. Nominal-rate projection and filtered-rate interpolation
+are different things; do not read "ASFW has no interpolation" anywhere.
 
 These three rings are distinct and are **not** required to coincide: the audio
 frame ring (8192 frames), the declared ZTS period (8192 frames), and the OHCI IT
@@ -156,7 +168,7 @@ a clock mismatch.
 So the declaration contract is:
 
 ```
-declared latency  = delay AFTER the HAL hands us the samples
+declared latency  = delay AFTER the timestamp's reference plane
                     (wire transit + device buffering + DAC)
 NOT included      = IO buffer size, safety offset   (HAL already counts these)
 earliest on wire  = start time + safety offset + latency
@@ -242,7 +254,8 @@ gets worse exactly when the machine is loaded [[M22275](#m22275)].
 
 So a coarse ZTS period costs time-to-lock, and until the filter locks the HAL
 runs on the *nominal* rate rather than the device's true rate. ASFW's period is
-170.67 ms at 48 kHz, so "a few time stamps" is on the order of a second.
+170.67 ms at 48 kHz, so each timestamp the filter needs costs that much wall
+clock — but how many it needs is **not stated by the source**.
 
 > **"A few" is not quantified by the source.** An earlier revision of this
 > document tabulated lock times from an assumed 4-8 timestamps. That range was
@@ -291,10 +304,15 @@ Stable to sd 0.01 within a run; k varies between starts.
 (`elapsedCycles=3, lapsLostEst=0`) on the very context that measured 4 laps up,
 and that same single arm later measured 12 laps up.
 
-**Ruled out:** "a TX CommandPtr lap ambiguity corrupts the first ZTS." On any
-input-bearing device the ZTS is published from the **receive** path
-(`DirectAudioReceiveConsumer.cpp:498`), not from TX completions. The RX ZTS is
-not the displaced quantity.
+**Ruled out:** "a TX CommandPtr lap ambiguity corrupts the first ZTS." Whenever
+the timeline source is `Receive`, the ZTS is published from the **receive** path
+(`DirectAudioReceiveConsumer.cpp:498`), not from TX completions, and the RX ZTS
+is not the displaced quantity. That is *most* input-bearing devices but not all:
+`ASFWAudioDevice.cpp:355` also selects `Transmit` when `useMAudioTxClock` is set,
+regardless of input channels (see the source-selection table below). On a
+TX-sourced device this exclusion does not apply — and neither does the seed
+mechanism below, since `SetSource` initialises `txCursorInitialized_` to true for
+`Transmit` (`HardwareSampleTimeline.hpp:112`).
 
 #### The coupling point: TX frame assignment is seeded from an RX observation
 
@@ -329,13 +347,33 @@ The arithmetic closes exactly:
 ```
 
 So **k laps of completion-cursor loss produce k x 288 frames of TX cursor
-displacement**, and because the seed is one-shot the error is fixed for the
-epoch. That accounts for the lap quantisation, the sd 0.01 stability within a
-run, and the variation between starts — without requiring the ZTS to be wrong.
+displacement**. The seed is one-shot, so an error introduced there persists for
+the epoch.
 
-**Status: traced statically, not measured.** The mechanism exists in the code
-and the arithmetic matches the observed quantum. It has not been confirmed on
-hardware, and correlator aliasing (below) has not been excluded.
+**Status: a demonstrated sensitivity, not a closed explanation.** Three limits
+have to stay attached to it:
+
+1. **The seed's sensitivity is established; its input is not.** Injecting a
+   late `presentationBusTicks` into the real class moves `first` by exactly
+   288 frames per lap. That does not show the completion path *supplies* such an
+   error, nor its sign. `AnchorForPacket` extrapolates by
+   `packetIndex - completedPacketIndex`; only the completed index has been
+   traced. Any offset common to both cancels.
+2. **288 frames is the ring, so a k x 288 grid is weak evidence.**
+   `kTransmitInFlightPackets = 48` at 6 frames/packet *is* 288 frames — the TX
+   lead is exactly one lap. Any difference in priming or configured lead lands on
+   the same grid without a single lap being lost.
+3. **The seed cannot explain later drift, because it is not an invariant.**
+   After initialisation `PreviewTxRange` never consults observed bus/frame
+   alignment again — it returns `txNextFrame_` and ignores `presentationBusTicks`
+   entirely. A presentation time arriving a whole lap late therefore maps to the
+   *same* content frame. Execution time lost mid-epoch changes physical TX/RX
+   alignment with no second seed involved. The document's own "4 laps at one
+   point, 12 laps later in the same arm" observation is not accounted for by a
+   one-shot seed at all, and needs epoch and interval provenance before it is
+   attributed to anything.
+
+Correlator aliasing (below) is also still not excluded.
 
 #### Which backends are exposed
 
@@ -366,17 +404,40 @@ packets, so the stimulus genuinely repeats at 288-frame spacing and a weak-SNR
 correlator can lock onto the wrong repeat. Evidence is mixed: a 60/60 run at
 36.2 dB SNR still landed 4 laps up, while the 12-lap run had ~30% acceptance.
 
-#### The measurement that settles it
+#### The measurements that would settle it
 
-One log line, once per epoch, at the moment `txCursorInitialized_` flips —
-recording `observedFrame`, `observedBus`, `presentationBusTicks`, `nominal`, the
-computed `first`, and the `completionCursor` / `completedPacketIndex` the anchor
-used. If `first` lands on a 288-frame grid offset from the RX observation, this
-is the mechanism. If it does not, aliasing returns to the front.
+**(a) The seed, once per epoch.** One log line at the moment
+`txCursorInitialized_` flips — recording `observedFrame`, `observedBus`,
+`presentationBusTicks`, `nominal`, the computed `first`, and the
+`completionCursor` / `completedPacketIndex` the anchor used. Necessary, but by
+limit 3 above **not sufficient**: it can only implicate or clear startup.
 
-Independently, surfacing `maxCompletionDelta` / `maxCompletionDeltaEvents`
-(written at `IsochTxDmaRing.cpp:793,795`, read nowhere) tests step 1 directly: a
-completion delta above 48 packets is lap loss observed at source.
+**(b) Frame-to-presentation alignment across the epoch.** The one that can
+actually distinguish the hypotheses. Periodically re-derive what `first` *would*
+be from the current RX observation and compare it against the running
+`txNextFrame_`. A constant difference means the seed; a difference that grows in
+lap steps means mid-epoch execution loss; no difference means the displacement is
+not here at all and correlator aliasing returns to the front.
+
+> **Do not use `maxCompletionDelta > 48`.** An earlier revision of this document
+> proposed that as direct evidence of lap loss. It cannot fire.
+> `ComputeDeltaConsumed` (`IsochTxDmaRing.cpp:75`) subtracts two positions
+> already reduced modulo 48, so its range is 0..47 by construction — one whole
+> traversal reads as 0 and several read as nothing at all. The counter measures
+> modulo movement and is worth surfacing as that, but it is structurally blind to
+> the quantity it was proposed to detect.
+
+**(c) Lap loss at source, done correctly.** It needs a progress estimate that is
+*independent* of the modulo subtraction. The tree already has one:
+`Tx::CyclesBetween` + `Tx::LiftRingSlotToAbsolute` (`TxPacketIndexLift.hpp`),
+today used once at start for `[TxLapSeed]`. Applying the same lift at each
+completion and reporting `lifted - completionCursor` gives lap loss directly.
+Carry `TxPacketIndexLift.hpp`'s own caveat with it: elapsed cycles is an *upper
+bound* on descriptor progress, because the self-linked skip address means a lost
+cycle need not advance a packet, and it is exact only below half a ring of
+accumulated skips. Report it as an estimate with its bound, never as established
+progress — and preserve the raw observations rather than letting a low modulo
+delta stand in for a clean interval.
 
 ## Mistakes this corrects
 
@@ -386,10 +447,16 @@ Recorded so they are not repeated:
   drives lap loss."** Wrong: compares a client-process buffer against an OHCI
   descriptor ring. Unrelated domains (§1).
 - **"Changing the client buffer size did not re-arm the TX context — that's a
-  finding."** Not a finding; §1 says it never could.
+  finding."** Not a finding. §1 shows the client size does not size or reshape
+  the isoch ring, so there was no reason to expect a re-arm. (§1 does not
+  establish that a re-arm is *impossible* — that is an IO start/stop lifecycle
+  question, not a domain one. It simply was never the expected outcome.)
 - **"J4 reverses because F5 anchors to the span's oldest frame and F4 to its
-  newest."** Wrong mechanism. J4 reverses because it differences a ZTS-predicted
-  `hostTime` against a driver wall-clock stamp (§3).
+  newest."** Wrong mechanism. J4 reverses because it differences a *predicted*
+  quantity against a *measured* one: a ZTS-derived `hostTime` against a driver
+  wall-clock stamp (§3). This is not a clock-domain mismatch — per M8567 the two
+  share a timebase (next bullet). A prediction and a measurement on the same
+  clock can still order either way.
 - **Reading a client's displayed "Resulting Latency" as a device property.** It
   is client-side arithmetic over that client's own buffer size plus our declared
   safety offset and device latency.
