@@ -120,6 +120,20 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
 
     const uint64_t resumeToken = this->ivars->configurationResumeToken.load(
         std::memory_order_acquire);
+    if (ivars && ivars->driverIvars && ivars->driverIvars->device.audioNub) {
+        const uint32_t window =
+            ivars->driverIvars->device.audioNub->CurrentRuntimeTuningWindow();
+        if (window != 0) {
+            const auto& active = ivars->driverIvars->runtime.activeTuning;
+            ASFW_LOG(Audio,
+                     "[AudioTuning] win=%u IO STARTING with slack=%u target=%u "
+                     "lead=%u fr -- this geometry is now in force",
+                     window, active.txDispatchSlackPackets,
+                     active.PreparedTargetPackets(),
+                     ASFW::Audio::Shared::PreparedLeadFrames(active));
+        }
+        ivars->driverIvars->device.audioNub->SetAudioIoRunning(true);
+    }
     ASFW_LOG(DirectAudio, "ASFWAudioDevice: StartIO flags=0x%llx",
              static_cast<uint64_t>(in_flags));
     if (resumeToken != 0) {
@@ -721,6 +735,17 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
 
     const uint64_t inFlightToken = this->ivars->configurationInFlightToken.load(
         std::memory_order_acquire);
+    if (ivars && ivars->driverIvars && ivars->driverIvars->device.audioNub) {
+        const uint32_t window =
+            ivars->driverIvars->device.audioNub->CurrentRuntimeTuningWindow();
+        if (window != 0) {
+            ASFW_LOG(Audio,
+                     "[AudioTuning] win=%u IO STOPPING (this is the restart the "
+                     "apply asked for)",
+                     window);
+        }
+        ivars->driverIvars->device.audioNub->SetAudioIoRunning(false);
+    }
     ASFW_LOG(DirectAudio, "ASFWAudioDevice: StopIO flags=0x%llx",
              static_cast<uint64_t>(in_flags));
     if (inFlightToken != 0) {
@@ -1163,13 +1188,28 @@ kern_return_t ASFWAudioDevice::RequestControlConfiguration(
 static constexpr uint64_t kRuntimeTuningChangeToken = 0xA5F70000'00000001ULL;
 
 kern_return_t ASFWAudioDevice::RequestRuntimeTuning() {
-    if (!ivars || !ivars->driverIvars) return kIOReturnNotReady;
+    if (!ivars || !ivars->driverIvars || !ivars->driverIvars->device.audioNub) {
+        return kIOReturnNotReady;
+    }
+    auto& driverIvars = *ivars->driverIvars;
+    // One id stamped on every line of this apply, so request -> stop -> apply
+    // -> restart reads as a single story when the ring is filtered.
+    const uint32_t window = driverIvars.device.audioNub->NextRuntimeTuningWindow();
+    const bool running =
+        driverIvars.runtime.isRunning.load(std::memory_order_acquire);
     ASFW_LOG(Audio,
-             "[AudioTuning] requesting ADK window endpoint=%llu running=%d",
-             ivars->driverIvars->device.endpointId,
-             ivars->driverIvars->runtime.isRunning.load(
-                 std::memory_order_acquire));
-    return RequestDeviceConfigurationChange(kRuntimeTuningChangeToken, nullptr);
+             "[AudioTuning] win=%u REQUEST endpoint=%llu running=%d -- asking the "
+             "host for a configuration-change window; IO will stop and restart",
+             window, driverIvars.device.endpointId, running);
+    const kern_return_t kr =
+        RequestDeviceConfigurationChange(kRuntimeTuningChangeToken, nullptr);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioTuning] win=%u REQUEST refused by host kr=0x%x -- "
+                       "geometry unchanged, candidate still parked",
+                       window, kr);
+    }
+    return kr;
 }
 
 // Apply inside the window, i.e. with IO stopped. Loud on purpose: this is an
@@ -1177,11 +1217,15 @@ kern_return_t ASFWAudioDevice::RequestRuntimeTuning() {
 // be impossible to correlate with a later measurement.
 static void ApplyPendingRuntimeTuning(ASFWAudioDriver_IVars& driverIvars) {
     if (!driverIvars.device.audioNub) return;
+    auto* nub = driverIvars.device.audioNub;
+    const uint32_t window = nub->CurrentRuntimeTuningWindow();
     auto candidate = driverIvars.runtime.activeTuning;
-    const uint32_t groups =
-        driverIvars.device.audioNub->TakePendingRuntimeTuning(candidate);
+    const uint32_t groups = nub->TakePendingRuntimeTuning(candidate);
     if (groups == 0) {
-        ASFW_LOG(Audio, "[AudioTuning] window opened with nothing pending");
+        ASFW_LOG(Audio,
+                 "[AudioTuning] win=%u WINDOW GRANTED with nothing pending -- "
+                 "IO stopped and will restart unchanged",
+                 window);
         return;
     }
     const auto outcome = ASFW::Audio::Shared::ValidateTuning(candidate);
@@ -1189,15 +1233,17 @@ static void ApplyPendingRuntimeTuning(ASFWAudioDriver_IVars& driverIvars) {
         // Validated app-side too, so reaching here means the two disagree.
         // Refuse rather than install a geometry the asserts do not cover.
         ASFW_LOG_ERROR(Audio,
-                       "[AudioTuning] REJECTED groups=0x%x rejection=%u -- geometry unchanged",
-                       groups, static_cast<uint32_t>(outcome.rejection));
+                       "[AudioTuning] win=%u REJECTED groups=0x%x rejection=%u -- "
+                       "geometry unchanged, IO will restart on the old values",
+                       window, groups, static_cast<uint32_t>(outcome.rejection));
+        nub->SetRuntimeTuningOutcome(static_cast<uint32_t>(outcome.rejection), 0);
         return;
     }
     const auto& previous = driverIvars.runtime.activeTuning;
     ASFW_LOG(Audio,
-             "[AudioTuning] APPLYING groups=0x%x warnings=0x%x slack=%u->%u "
+             "[AudioTuning] win=%u APPLYING groups=0x%x warnings=0x%x slack=%u->%u "
              "target=%u->%u lead=%u->%u fr",
-             groups, outcome.warnings, previous.txDispatchSlackPackets,
+             window, groups, outcome.warnings, previous.txDispatchSlackPackets,
              candidate.txDispatchSlackPackets, previous.PreparedTargetPackets(),
              candidate.PreparedTargetPackets(),
              ASFW::Audio::Shared::PreparedLeadFrames(previous),
@@ -1211,8 +1257,23 @@ static void ApplyPendingRuntimeTuning(ASFWAudioDriver_IVars& driverIvars) {
                  candidate.txDispatchSlackPackets,
                  12U * ASFW::Audio::Shared::AudioTimingGeometry::kTxPacketsPerGroup);
     }
+    // Declarations and HAL geometry are carried but not yet consumed: the graph
+    // still reads the compile-time constants for SetOutputLatency and the
+    // device's zero-timestamp period. Say so rather than let the log imply they
+    // took effect.
+    if (ASFW::Audio::Shared::Contains(
+            groups, ASFW::Audio::Shared::TuningGroup::kDeclarations) ||
+        ASFW::Audio::Shared::Contains(
+            groups, ASFW::Audio::Shared::TuningGroup::kHalGeometry)) {
+        ASFW_LOG(Audio,
+                 "[AudioTuning] win=%u NOTE declarations/HAL geometry are stored "
+                 "but NOT yet consumed by the graph -- only transmit depth "
+                 "changes behaviour in this build",
+                 window);
+    }
     driverIvars.runtime.activeTuning = candidate;
-    driverIvars.device.audioNub->SetActiveRuntimeTuning(candidate);
+    nub->SetActiveRuntimeTuning(candidate);
+    nub->SetRuntimeTuningOutcome(0, outcome.warnings);
 }
 
 kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
@@ -1351,7 +1412,10 @@ kern_return_t ASFWAudioDevice::AbortDeviceConfigurationChange(
                 ivars->driverIvars->device.audioNub->TakePendingRuntimeTuning(
                     discarded);
             ASFW_LOG(Audio,
-                     "[AudioTuning] window ABORTED by host groups=0x%x -- request discarded",
+                     "[AudioTuning] win=%u WINDOW ABORTED by host groups=0x%x -- "
+                     "request discarded, geometry unchanged",
+                     ivars->driverIvars->device.audioNub
+                         ->CurrentRuntimeTuningWindow(),
                      groups);
         }
         return super::AbortDeviceConfigurationChange(change_action, in_change_info);

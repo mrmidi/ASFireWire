@@ -634,6 +634,44 @@ uint32_t ASFWAudioNub::TakePendingRuntimeTuning(
     return groups;
 }
 
+void ASFWAudioNub::SetRuntimeTuningOutcome(uint32_t rejection, uint32_t warnings)
+{
+    if (!ivars) return;
+    ivars->lastTuningRejection = rejection;
+    ivars->lastTuningWarnings = warnings;
+}
+
+void ASFWAudioNub::CopyRuntimeTuningOutcome(uint32_t& rejection,
+                                            uint32_t& warnings,
+                                            uint32_t& appliedSequence) const
+{
+    if (!ivars) return;
+    rejection = ivars->lastTuningRejection;
+    warnings = ivars->lastTuningWarnings;
+    appliedSequence = ivars->activeTuningSequence.load(std::memory_order_acquire);
+}
+
+uint32_t ASFWAudioNub::NextRuntimeTuningWindow()
+{
+    if (!ivars) return 0;
+    return ivars->tuningWindowSequence.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+void ASFWAudioNub::SetAudioIoRunning(bool running)
+{
+    if (ivars) ivars->audioIoRunning.store(running, std::memory_order_release);
+}
+
+bool ASFWAudioNub::IsAudioIoRunning() const
+{
+    return ivars && ivars->audioIoRunning.load(std::memory_order_acquire);
+}
+
+uint32_t ASFWAudioNub::CurrentRuntimeTuningWindow() const
+{
+    return ivars ? ivars->tuningWindowSequence.load(std::memory_order_acquire) : 0;
+}
+
 uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
 {
     return ivars ? ivars->currentSampleRateHz : 0;

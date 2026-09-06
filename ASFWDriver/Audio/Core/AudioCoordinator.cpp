@@ -341,15 +341,39 @@ IOReturn AudioCoordinator::RequestRuntimeTuning(
     // A mask of zero is "apply nothing", which must not restart the streams.
     // Reported as success so a panel submitting an unchanged form is not shown
     // an error for doing nothing.
-    if (groups == 0) return kIOReturnSuccess;
-    if (!Shared::ValidateTuning(candidate).Applicable()) {
+    if (groups == 0) {
+        ASFW_LOG(Audio,
+                 "[AudioTuning] endpoint=%llu request with an empty group mask -- "
+                 "nothing to apply, streams left running",
+                 endpointId.value);
+        return kIOReturnSuccess;
+    }
+    const auto outcome = Shared::ValidateTuning(candidate);
+    if (!outcome.Applicable()) {
+        // Silent here would leave the operator with an app-side error and no
+        // record of which field the driver objected to.
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioTuning] endpoint=%llu REFUSED groups=0x%x "
+                       "rejection=%u slack=%u guard=%u ring=%u zts=%u -- request "
+                       "never reached the audio side",
+                       endpointId.value, groups,
+                       static_cast<uint32_t>(outcome.rejection),
+                       candidate.txDispatchSlackPackets,
+                       candidate.txOwnershipGuardPackets,
+                       candidate.frameRingFrames,
+                       candidate.zeroTimestampPeriodFrames);
         return kIOReturnBadArgument;
     }
     auto* nub = publisher_.GetNub(endpointId);
     if (!nub) return kIOReturnNoDevice;
-    return nub->NotifyRuntimeTuningRequested(candidate, groups)
-               ? kIOReturnSuccess
-               : kIOReturnNotReady;
+    if (!nub->NotifyRuntimeTuningRequested(candidate, groups)) {
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioTuning] endpoint=%llu request dropped -- no audio "
+                       "driver has registered for tuning on this nub",
+                       endpointId.value);
+        return kIOReturnNotReady;
+    }
+    return kIOReturnSuccess;
 }
 
 IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
@@ -385,6 +409,11 @@ IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
     out.framesPerPacketAverage =
         Shared::AudioTimingGeometry::kCadenceBlockFrames /
         Shared::AudioTimingGeometry::kCadenceBlockPackets;
+    out.inputChannels = nub->GetInputChannelCount();
+    out.outputChannels = nub->GetOutputChannelCount();
+    nub->CopyRuntimeTuningOutcome(out.lastRejection, out.lastWarnings,
+                                  out.appliedSequence);
+    out.streaming = nub->IsAudioIoRunning() ? 1U : 0U;
     Shared::AudioRuntimeTuning pending{};
     out.pendingGroups = nub->CopyPendingRuntimeTuning(pending);
     return kIOReturnSuccess;

@@ -173,6 +173,21 @@ public:
     // wake finds nothing pending rather than re-applying a stale request.
     [[nodiscard]] uint32_t TakePendingRuntimeTuning(
         ASFW::Audio::Shared::AudioRuntimeTuning& out) LOCALONLY;
+    // Outcome of the last apply, so the panel reports what happened rather than
+    // leaving the operator to read the log to find out.
+    void SetRuntimeTuningOutcome(uint32_t rejection, uint32_t warnings) LOCALONLY;
+    void CopyRuntimeTuningOutcome(uint32_t& rejection, uint32_t& warnings,
+                                  uint32_t& appliedSequence) const LOCALONLY;
+    // Monotonic id stamped on every line of one apply, so the request, the IO
+    // stop, the apply and the IO restart read as a single story in the ring.
+    [[nodiscard]] uint32_t NextRuntimeTuningWindow() LOCALONLY;
+    [[nodiscard]] uint32_t CurrentRuntimeTuningWindow() const LOCALONLY;
+    // Whether the HAL currently has IO running, published by the audio side at
+    // StartIO/StopIO. The core side cannot see ASFWAudioDriver's ivars, and a
+    // panel that guesses this would be reporting a different fact than the one
+    // it labels.
+    void SetAudioIoRunning(bool running) LOCALONLY;
+    [[nodiscard]] bool IsAudioIoRunning() const LOCALONLY;
 
     // Host-side belief of the device rate, updated only after a successful
     // semantic configuration projection. Used by the transport side to detect
@@ -278,6 +293,10 @@ struct ASFWAudioNub_IVars {
     uint32_t activeClientIoBudgetFrames{0};
     uint32_t activeZeroTimestampPeriodFrames{0};
     std::atomic<uint32_t> activeTuningSequence{0};
+    std::atomic<uint32_t> tuningWindowSequence{0};
+    std::atomic<bool> audioIoRunning{false};
+    uint32_t lastTuningRejection{0};
+    uint32_t lastTuningWarnings{0};
 };
 
 #endif /* ASFWAudioNub_h */
