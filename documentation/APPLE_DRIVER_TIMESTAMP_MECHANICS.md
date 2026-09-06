@@ -576,12 +576,74 @@ from a packet that does not mean what the timeline assumes it means. **This is
 not a demonstrated cause — it is an untested difference from the reference, in
 exactly the area under investigation.**
 
+### 8.10.1 But do NOT simply copy Apple's gates — they are device-specific
+
+Apple could afford strict FDF and DBC gates because `AppleFWAudio` shipped
+against a **known, tested set** of AV/C devices. ASFW is general-purpose, and
+Linux — which supports far more hardware — needs a **twelve-flag quirk matrix**
+to make the same checks safe (`amdtp-stream.h:44-58`):
+
+```c
+CIP_EMPTY_WITH_TAG0, CIP_DBC_IS_END_EVENT, CIP_WRONG_DBS,
+CIP_SKIP_DBC_ZERO_CHECK, CIP_EMPTY_HAS_WRONG_DBC, CIP_JUMBO_PAYLOAD,
+CIP_HEADER_WITHOUT_EOH, CIP_NO_HEADER, CIP_UNALIGHED_DBC,
+CIP_UNAWARE_SYT, CIP_DBC_IS_PAYLOAD_QUADLETS
+```
+
+An unconditional DBC-continuity gate would break, by Linux's own annotations:
+
+| family | quirk | why a naive DBC gate fails |
+|---|---|---|
+| **BeBoB** | `CIP_EMPTY_HAS_WRONG_DBC` | empty packets carry a wrong DBC |
+| Fireworks | `CIP_DBC_IS_END_EVENT`, `CIP_SKIP_DBC_ZERO_CHECK`, `CIP_UNALIGHED_DBC`, `CIP_WRONG_DBS` | DBC means end-of-event; initial value not aligned |
+| MOTU | `CIP_WRONG_DBS`, `CIP_SKIP_DBC_ZERO_CHECK`, `CIP_DBC_IS_END_EVENT` | as above |
+| OXFW | `CIP_WRONG_DBS`, `CIP_DBC_IS_END_EVENT`, `CIP_DBC_IS_PAYLOAD_QUADLETS` | DBC may count **quadlets**, not data blocks |
+| Tascam | `CIP_SKIP_DBC_ZERO_CHECK` | zero-DBC packets must be skipped |
+
+BeBoB is precisely the family `AppleFWAudio` targeted — and even it needs a DBC
+exception in Linux. ASFW already records one such decision by hand
+(`DbcCounter.cpp:5-8`: *"CIP_DBC_IS_END_EVENT is a device quirk we do not
+implement"*) but has no per-device flag mechanism to hang others on.
+
+An FDF gate has its own limit: `CIP_NO_HEADER` (Fireface) means there is no CIP
+header to read an FDF from at all.
+
+### 8.10.2 The same reasoning exposes an existing ASFW limitation
+
+ASFW's ZTS gate already requires `result.syt != 0xffff`. Six families set
+`CIP_UNAWARE_SYT`, i.e. SYT **is** `0xffff` or is not meaningful:
+
+| family | source |
+|---|---|
+| Fireface (RME) | `fireface/amdtp-ff.c:165` |
+| Fireworks (Echo) | `fireworks/fireworks_stream.c:32` |
+| MOTU | `motu/amdtp-motu.c:440` |
+| Digi00x | `digi00x/amdtp-dot.c:393` |
+| Tascam | `tascam/amdtp-tascam.c:224` |
+| OXFW (conditionally) | `oxfw/oxfw-stream.c:169` |
+
+For any of these, `syt != 0xffff` is never true, so **ASFW would never publish an
+RX-derived ZTS boundary and never anchor an RX-clocked timeline**. The RX-clocked
+path structurally works only for SYT-bearing devices.
+
+That is not a bug today — the tested hardware (Duet, DICE) does carry SYT — but
+it is an **unflagged quirk assumption already baked into the anchor gate**, and
+it means those families would need the `Transmit` timeline source or a
+device-clock path, not merely a profile entry.
+
+**Conclusion.** The gap in §8.10 is real, but the fix is not Apple's
+unconditional checks. It is per-device capability flags modelled on Linux
+`cip_flags`, living in `DeviceProfiles/`, with the *existing* `syt != 0xffff`
+assumption folded in as the first such flag rather than left implicit.
+
 
 ## Still open
 
-- **Whether adding FDF and DBC gates changes the observed anchor displacement.**
-  §8.10 is the only remaining item, and it is a code change plus a hardware run,
-  not more reading.
+- **A CIP capability-flag mechanism in `DeviceProfiles/`**, modelled on Linux
+  `cip_flags`, carrying at minimum: SYT-aware, DBC semantics (start vs end
+  event, quadlets vs blocks), empty-packet DBC validity, and header presence.
+  Only once that exists can §8.10's FDF/DBC gates be added safely, and only then
+  is the hardware run meaningful.
 
 Legacy `AM824DCLRead`/`AM824DCLWrite` are deliberately not covered: NuDCL is the
 live path, and the rate-family builders there are stubs.
