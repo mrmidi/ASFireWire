@@ -144,6 +144,112 @@ i.e. four notifications, and a plug-in is expected to emulate HAL semantics
 exactly: *"Your plug-in is expected to emulate the semantics of the rest of the
 HAL. It's part of the reason writing these plug-ins is so hard."* [[M14741](#m14741)]
 
+## 6. The zero timestamp: cadence, and why the *first* one dominates
+
+### Where a ZTS comes from
+
+> `takeTimeStamp()` is meant to be called from your **_primary_ hardware
+> interrupt that gets raised when your DMA wraps around the ring buffer**.
+> — Jeff Moore [[M3770](#m3770)]
+
+So the ZTS period *is* the ring buffer size, and one ZTS is taken per DMA wrap.
+ASFW's `frameRingFrames == zeroTimestampPeriodFrames == 8192` matches that model.
+
+Apple gives no recommended *number*. The stated constraints are about where the
+timestamp comes from, not how often:
+
+- from the **primary** interrupt at a known hardware position — not a secondary
+  interrupt, not a timer, not `performAudioEngineStart()`;
+- taking it in a secondary interrupt injects scheduling-latency jitter, which
+  gets worse exactly when the machine is loaded [[M22275](#m22275)].
+
+### What the predictor does, and what a coarse period costs
+
+> The HAL's internal clock runs off of the time stamps your driver provides. The
+> clock has to **filter** these time stamps to derive the true rate of the
+> device. This filter code has a certain amount of **delay built into it to help
+> manage the jitter**. When the clock starts up, it **primes itself with the
+> nominal rate**. It takes **a few time stamps** for the clock to work the actual
+> time stamp data through the filter and lock on to the true rate.
+> — Jeff Moore [[M14477](#m14477)]
+
+The cost of a coarse period is therefore time-to-lock, measured in timestamps:
+
+| ZTS period | one ZTS | "a few" (say 4–8) = time to lock |
+|---:|---:|---:|
+| 512 fr | 10.7 ms | ~43–85 ms |
+| 2048 fr | 42.7 ms | ~170–340 ms |
+| **8192 fr (ASFW)** | **170.7 ms** | **~0.7–1.4 s** |
+
+Until the filter locks, the HAL runs on the **nominal** rate, not the device's
+true rate. At ASFW's period that is roughly a second of every stream start spent
+on an unlocked clock, and the filter has correspondingly few samples to work
+with. This is a consequence worth measuring, not yet a proven defect.
+
+### The first timestamp is the anchor, and its error is permanent
+
+> it kind of goes without saying, but **the first time stamp a driver gives to
+> the HAL is the most important time stamp the driver delivers**. The reason why
+> is that once the HAL sees the first time stamp, it will **anchor it's clock**
+> and begin doing IO. **Any error in the first time stamp is passed pretty much
+> directly into the HAL's anchor time**, which causes the HAL to start off
+> already out of synch with the hardware in an amount proportionate to the error
+> in the first time stamp.
+>
+> This is why drivers need to bend over backward to make the first time stamp as
+> accurate as possible. — Jeff Moore [[M3770](#m3770)]
+
+Apple's recommended technique for getting an accurate first ZTS, given twice —
+once generally, once to a FireWire driver author:
+
+> use your DMA program to do a small transfer, raise an interrupt, and then you
+> can take your first time stamp **since you know exactly where the hardware is
+> at that point**. — Jeff Moore [[M3770](#m3770)], [[M22275](#m22275)]
+
+And the anti-pattern, stated to that same FireWire author:
+
+> you are picking a random point in time prior to starting the hardware and
+> calling that your zero point. Frankly, **this is the worst way to do this
+> because it has no relationship to when the hardware really started**. However,
+> it is a pretty common mistake that many driver writers have made.
+> — Jeff Moore [[M22275](#m22275)]
+
+Plus one FireWire-specific requirement:
+
+> you'll need to have an **independent idea about how the FireWire clock relates
+> to the CPU clock**. This is something that has to be factored into your
+> calculations that are producing time stamps. — Jeff Moore [[M22275](#m22275)]
+
+### Why this matters to the 288-frame RTL offsets — hypothesis
+
+**Status: hypothesis, not established.** It is recorded because it is the first
+mechanism that accounts for every observed property.
+
+`RTL_ts` has been measured at six stream starts as `582.95 + k x 288` frames
+(RTL_raw), k in {0,1,2,4,7,12}. 288 frames = one 48-packet TX descriptor-ring
+lap. Within a run the figure is stable to sd 0.01; between starts k changes.
+
+If the first ZTS boundary is computed from a TX packet index that carries the
+mod-48 CommandPtr lap ambiguity (see `[[tx-ring-lap-offset]]` and
+`DecodeHardwarePacketIndex`), then a first ZTS wrong by k laps anchors the HAL's
+clock 288k frames wrong — and per M3770 that error goes in **directly** and is
+never re-derived. That predicts exactly what is seen:
+
+| observation | explained by a wrong first ZTS? |
+|---|---|
+| offsets are integer multiples of one ring lap | yes — the ambiguity is in whole laps |
+| stable within a run (sd 0.01) | yes — the HAL anchors once and keeps it |
+| varies between starts | yes — the ambiguity resolves differently per arm |
+| `[TxLapSeed]` reports a clean seed while `RTL_ts` is displaced | yes — the seed measures the *refill cursor*; the ZTS boundary is a different path with its own lap ambiguity |
+
+**Before treating this as established** it has to be separated from the
+competing explanation, which is that a weak-SNR correlator aliases onto the
+repeating ring content (an unrefilled ring re-transmits the same 48 packets, so
+the stimulus genuinely repeats at 288-frame spacing). Both predict lap-quantised
+offsets. The discriminator is driver-side: surface `maxCompletionDelta` and the
+first published ZTS boundary, and check them against a measurement with high
+trial acceptance.
+
 ## Mistakes this corrects
 
 Recorded so they are not repeated:
@@ -183,6 +289,10 @@ python3 -c "import sqlite3;print(sqlite3.connect('coreaudio_archive.db').execute
 | <a id="m14741"></a>M14741 | 2004-12-10 | **Jeff Moore (Apple)** | Re: kAudioDevicePropertyBufferFrameSize notification in a driver | `2004/Dec/msg00088.html` |
 | <a id="m35404"></a>M35404 | 2004-12-13 | **Jeff Moore (Apple)** | Re: kAudioDevicePropertyBufferFrameSize notification in a driver | `2004/Dec/msg00104.html` |
 | <a id="m30713"></a>M30713 | 2002-05-30 | **Jeff Moore (Apple)** | Re: Stream/Device Latency | `2002/May/msg00150.html` |
+| <a id="m3770"></a>M3770 | 2008-12-09 | **Jeff Moore (Apple)** | Re: PCI Audio Driver and takeTimeStamp | `2008/Dec/msg00084.html` |
+| <a id="m22275"></a>M22275 | 2009-02-27 | **Jeff Moore (Apple)** | Re: Driver seems a little dizzy while running more than one media player | `2009/Feb/msg00533.html` |
+| <a id="m14477"></a>M14477 | 2004-10-05 | **Jeff Moore (Apple)** | Re: HAL timing issues | `2004/Oct/msg00041.html` |
+| <a id="m835"></a>M835 | 2013-12-12 | **Jeff Moore (Apple)** | Re: AudioServerPlugin: resynchronization | `2013/Dec/msg00059.html` |
 
 M2110's author is not an Apple address; it is retained because it is the
 clearest statement of the `hostTime` contract in the corpus and is consistent
