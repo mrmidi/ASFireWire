@@ -17,6 +17,7 @@
 #include "../../Audio/Shared/Configuration/DeviceConfigurationSnapshot.hpp"
 #include "../../Service/DriverContext.hpp"
 #include "../WireFormats/AudioConfigurationWireFormats.hpp"
+#include "../WireFormats/AudioTuningWireFormats.hpp"
 #include "../WireFormats/AudioControlSurfaceWireFormats.hpp"
 #include "../WireFormats/AudioMeterWireFormats.hpp"
 #include "../WireFormats/AudioSemanticTopologyWireFormats.hpp"
@@ -73,6 +74,8 @@ enum {
     kMethodGetAudioMeterSnapshotAsync = 1025,
     kMethodSetAudioMeteringEnabledAsync = 1026,
     kMethodRequestAudioConfigurationAsync = 1027,
+    kMethodGetAudioRuntimeTuning = 1033,
+    kMethodRequestAudioRuntimeTuning = 1034,
     kMethodGetAudioSemanticTopology = 1028,
     kMethodGetAudioSemanticTopologyEndpoints = 1029,
     kMethodGetAudioSemanticConsoleLayout = 1030,
@@ -388,6 +391,10 @@ kern_return_t HandleSetAudioMeteringEnabledAsync(
 kern_return_t HandleRequestAudioConfigurationAsync(
     ASFWDriver& driver, ASFWDriverUserClient& userClient,
     IOUserClientMethodArguments* arguments);
+kern_return_t HandleGetAudioRuntimeTuning(
+    ASFWDriver& driver, IOUserClientMethodArguments* arguments);
+kern_return_t HandleRequestAudioRuntimeTuning(
+    ASFWDriver& driver, IOUserClientMethodArguments* arguments);
 
 MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
                                                   ASFWDriverUserClient& userClient,
@@ -420,6 +427,10 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
         return HandleGetAudioConfiguration(driver, arguments);
     case kMethodRequestAudioConfiguration:
         return HandleRequestAudioConfiguration(driver, arguments);
+    case kMethodGetAudioRuntimeTuning:
+        return HandleGetAudioRuntimeTuning(driver, arguments);
+    case kMethodRequestAudioRuntimeTuning:
+        return HandleRequestAudioRuntimeTuning(driver, arguments);
     case kMethodGetAudioConfigurationEndpoints:
         return HandleGetAudioConfigurationEndpoints(driver, arguments);
     case kMethodGetAudioControlSurface:
@@ -637,6 +648,55 @@ kern_return_t HandleRequestAudioConfiguration(
         {.sampleRate = static_cast<uint32_t>(arguments->scalarInput[1]),
          .opticalInput = input,
          .opticalOutput = output});
+}
+
+kern_return_t HandleGetAudioRuntimeTuning(
+    ASFWDriver& driver, IOUserClientMethodArguments* arguments) {
+    if (!arguments || !arguments->scalarInput || arguments->scalarInputCount != 1) {
+        return kIOReturnBadArgument;
+    }
+    auto* context = static_cast<ServiceContext*>(driver.GetServiceContext());
+    if (!context || !context->audioCoordinator) return kIOReturnNotReady;
+
+    ASFW::UserClient::Wire::AudioTuningSnapshotWire wire{};
+    const kern_return_t kr = context->audioCoordinator->CopyRuntimeTuningSnapshot(
+        ASFW::Audio::Devices::AudioEndpointId{arguments->scalarInput[0]}, wire);
+    if (kr != kIOReturnSuccess) return kr;
+    auto* data = OSData::withBytes(&wire, sizeof(wire));
+    if (!data) return kIOReturnNoMemory;
+    arguments->structureOutput = data;
+    arguments->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+kern_return_t HandleRequestAudioRuntimeTuning(
+    ASFWDriver& driver, IOUserClientMethodArguments* arguments) {
+    if (!arguments || !arguments->structureInput) return kIOReturnBadArgument;
+    auto* input = OSDynamicCast(OSData, arguments->structureInput);
+    if (!input || input->getLength() < sizeof(ASFW::UserClient::Wire::AudioTuningRequestWire)) {
+        return kIOReturnBadArgument;
+    }
+    ASFW::UserClient::Wire::AudioTuningRequestWire request{};
+    __builtin_memcpy(&request, input->getBytesNoCopy(), sizeof(request));
+    if (request.version != ASFW::UserClient::Wire::kAudioTuningWireVersion) {
+        return kIOReturnUnsupported;
+    }
+    auto* context = static_cast<ServiceContext*>(driver.GetServiceContext());
+    if (!context || !context->audioCoordinator) return kIOReturnNotReady;
+
+    ASFW::Audio::Shared::AudioRuntimeTuning candidate{};
+    candidate.txDispatchSlackPackets = request.txDispatchSlackPackets;
+    candidate.txOwnershipGuardPackets = request.txOwnershipGuardPackets;
+    candidate.outputLatencyFrames = request.outputLatencyFrames;
+    candidate.inputLatencyFrames = request.inputLatencyFrames;
+    candidate.outputSafetyOffsetFrames = request.outputSafetyOffsetFrames;
+    candidate.inputSafetyOffsetFrames = request.inputSafetyOffsetFrames;
+    candidate.frameRingFrames = request.frameRingFrames;
+    candidate.clientIoBudgetFrames = request.clientIoBudgetFrames;
+    candidate.zeroTimestampPeriodFrames = request.zeroTimestampPeriodFrames;
+    return context->audioCoordinator->RequestRuntimeTuning(
+        ASFW::Audio::Devices::AudioEndpointId{request.endpointId}, candidate,
+        request.groups);
 }
 
 kern_return_t HandleGetAudioControlSurface(

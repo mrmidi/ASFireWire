@@ -101,6 +101,8 @@ public:
         kMethodGetAudioMeterSnapshotAsync = 1025,
         kMethodSetAudioMeteringEnabledAsync = 1026,
         kMethodRequestAudioConfigurationAsync = 1027,
+        kMethodGetAudioRuntimeTuning         = 1033,
+        kMethodRequestAudioRuntimeTuning     = 1034,
         // Immutable semantic graph for the endpoint's currently committed
         // topology. Runtime values and meter samples are intentionally not
         // part of this reply.

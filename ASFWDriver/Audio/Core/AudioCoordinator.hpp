@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "../Shared/AudioRuntimeTuning.hpp"
+#include "../../UserClient/WireFormats/AudioTuningWireFormats.hpp"
 #include "AudioNubPublisher.hpp"
 #include "../Devices/AudioDeviceSessionManager.hpp"
 #include "../Duplex/AudioDuplexCoordinator.hpp"
@@ -93,6 +95,17 @@ public:
     [[nodiscard]] IOReturn RequestDeviceConfiguration(
         EndpointId endpointId,
         const Configuration::DeviceConfiguration& desired) noexcept;
+
+    // Diagnostic geometry sweep. Validated here as well as app-side: the app
+    // cannot be trusted to be the same build as the driver, and installing a
+    // geometry outside the compile-time envelope is worse than refusing it.
+    [[nodiscard]] IOReturn RequestRuntimeTuning(
+        EndpointId endpointId,
+        const Shared::AudioRuntimeTuning& candidate,
+        uint32_t groups) noexcept;
+    [[nodiscard]] IOReturn CopyRuntimeTuningSnapshot(
+        EndpointId endpointId,
+        UserClient::Wire::AudioTuningSnapshotWire& out) noexcept;
     [[nodiscard]] IOReturn CopyDeviceConfigurationSnapshot(
         EndpointId endpointId,
         Configuration::DeviceConfigurationSnapshot& outSnapshot) noexcept;

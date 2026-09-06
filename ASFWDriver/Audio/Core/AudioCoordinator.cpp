@@ -332,6 +332,64 @@ IOReturn AudioCoordinator::CommitDeviceConfiguration(
         ? kIOReturnSuccess : kIOReturnError;
 }
 
+IOReturn AudioCoordinator::RequestRuntimeTuning(
+    EndpointId endpointId, const Shared::AudioRuntimeTuning& candidate,
+    uint32_t groups) noexcept {
+    if (!endpointId || teardownRequested_.load(std::memory_order_acquire)) {
+        return kIOReturnNotReady;
+    }
+    // A mask of zero is "apply nothing", which must not restart the streams.
+    // Reported as success so a panel submitting an unchanged form is not shown
+    // an error for doing nothing.
+    if (groups == 0) return kIOReturnSuccess;
+    if (!Shared::ValidateTuning(candidate).Applicable()) {
+        return kIOReturnBadArgument;
+    }
+    auto* nub = publisher_.GetNub(endpointId);
+    if (!nub) return kIOReturnNoDevice;
+    return nub->NotifyRuntimeTuningRequested(candidate, groups)
+               ? kIOReturnSuccess
+               : kIOReturnNotReady;
+}
+
+IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
+    EndpointId endpointId,
+    UserClient::Wire::AudioTuningSnapshotWire& out) noexcept {
+    if (!endpointId) return kIOReturnBadArgument;
+    auto* nub = publisher_.GetNub(endpointId);
+    if (!nub) return kIOReturnNoDevice;
+
+    // Defaults are the shipping constants, so a nub that has never published an
+    // active tuning still reports the geometry the driver is genuinely running.
+    Shared::AudioRuntimeTuning active{};
+    nub->CopyActiveRuntimeTuning(active);
+
+    out = {};
+    out.endpointId = endpointId.value;
+    out.txDispatchSlackPackets = active.txDispatchSlackPackets;
+    out.txOwnershipGuardPackets = active.txOwnershipGuardPackets;
+    out.preparedTargetPackets = active.PreparedTargetPackets();
+    out.preparedLeadFrames = Shared::PreparedLeadFrames(active);
+    out.outputLatencyFrames = active.outputLatencyFrames;
+    out.inputLatencyFrames = active.inputLatencyFrames;
+    out.outputSafetyOffsetFrames = active.outputSafetyOffsetFrames;
+    out.inputSafetyOffsetFrames = active.inputSafetyOffsetFrames;
+    out.frameRingFrames = active.frameRingFrames;
+    out.clientIoBudgetFrames = active.clientIoBudgetFrames;
+    out.zeroTimestampPeriodFrames = active.zeroTimestampPeriodFrames;
+    out.sampleRateHz = nub->GetCurrentSampleRateHz();
+    out.txPacketsPerGroup = Shared::AudioTimingGeometry::kTxPacketsPerGroup;
+    out.txHardwareRingPackets =
+        Shared::AudioTimingGeometry::kTxHardwareRingPackets;
+    out.txSharedSlotPackets = Shared::AudioTimingGeometry::kTxSharedSlotPackets;
+    out.framesPerPacketAverage =
+        Shared::AudioTimingGeometry::kCadenceBlockFrames /
+        Shared::AudioTimingGeometry::kCadenceBlockPackets;
+    Shared::AudioRuntimeTuning pending{};
+    out.pendingGroups = nub->CopyPendingRuntimeTuning(pending);
+    return kIOReturnSuccess;
+}
+
 IOReturn AudioCoordinator::RequestDeviceConfiguration(
     EndpointId endpointId,
     const Configuration::DeviceConfiguration& desired) noexcept {
