@@ -89,9 +89,12 @@ scheduling: safety offset, latency and nominal rate all participate.
 | `clientIoBudgetFrames` | 512 | 10.67 ms |
 | `zeroTimestampPeriodFrames` | 8192 | **170.67 ms** |
 
-The ZTS period currently yields ~5.9 timestamps/second. Whether that is
-appropriate is **open** — it has not been validated against what Apple's own
-drivers use.
+The ZTS period currently yields ~5.9 timestamps/second. **This has now been
+validated and the concern is retired:** AppleUSBAudio's own ring wrap period is
+`sampleRate/4` rounded to two pages = **16384 frames (341 ms) at 48 kHz**, twice
+as coarse as ASFW's. See `APPLE_DRIVER_TIMESTAMP_MECHANICS.md` §3. What Apple has
+and ASFW does not is sub-frame interpolation at the wrap point and a driver-side
+33-tap FIR — cadence was never the issue.
 
 These three rings are distinct and are **not** required to coincide: the audio
 frame ring (8192 frames), the declared ZTS period (8192 frames), and the OHCI IT
