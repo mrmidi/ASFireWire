@@ -8,6 +8,10 @@ Sourced from the Apple `coreaudio-api` mailing list archive (see
 are the behavioural ground truth for the questions below — the headers and
 `ctx7` describe the *API surface* and say almost nothing about these semantics.
 
+The [executable timing contract](AUDIO_TIMING_CONTRACT.md) turns the progress,
+content/presentation and epoch obligations into host tests. It includes audits
+of the current timeline's failure modes and records what remains unproven.
+
 > **Why this document exists.** Every one of the errors in
 > [Mistakes this corrects](#mistakes-this-corrects) was made in-tree, more than
 > once, by reasoning about frame counts without asking which domain they lived

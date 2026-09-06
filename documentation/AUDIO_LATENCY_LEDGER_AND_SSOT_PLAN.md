@@ -1,12 +1,17 @@
 # Audio latency ledger and timing SSOT — plan
 
-**Status:** plan, updated 2026-09-05 with provisional Duet electrical measurements.
-The original ledger reviewed branch `ctrls` at `5e5991b1`; the bench investigation
-reviewed `dad154d5`. Phase 0 has landed; Phase 1 remains open.
-**Premise:** every latency number in this driver is currently either a
-structural constant nobody can trace to a physical stage, a measurement of one
-stage presented as if it covered the path, or a literal copied from another
-driver. The fix is not a better constant. It is a *ledger*.
+**Status: reconciled 2026-09-06 against `ace8d1b2` and the uncommitted executable
+timing contract.** Production audio changes currently end at `f4a9bb84`; later
+commits correct the research. Phase 0 and several Phase 3 repairs have landed.
+The timing contract is host-side verification; runtime alignment/recovery and
+the validated electrical baseline remain open. This is source status, not a
+claim that the installed dext matches this checkout.
+
+The original ledger reviewed `5e5991b1`; the first bench report used `dad154d5`.
+Its geometry and measurements below retain that provenance unless updated
+explicitly. The remaining problem is to distinguish measured intervals,
+configured requirements and unexplained timing displacement before resolving
+the declarations into one policy.
 
 Three rules govern the ledger. Violating them is what produced the current mess:
 
@@ -28,8 +33,33 @@ undecided just centralises the ambiguity.
 
 ## Current decision — explain the delay, then reduce it
 
-Evidence and retained run logs:
-[Duet latency investigation, 2026-09-05](reports/latency-investigation-2026-09-05/README.md).
+### Where we are
+
+| Work | Current status | Remaining / dependency |
+|---|---|---|
+| Phase 0 — default safety | Landed: `2d1c584a` | Geometry default established; measured deadline margin still belongs to later work |
+| Phase 1 — electrical baseline | Instrument hardened and several provisional runs captured | Stronger return, repeat-start provenance, correlated trace and reporting-only self-check |
+| Phase 2 — reference plane | Open | Validated timing attribution from Phases 1/3/5; a residual alone does not select the plane |
+| Phase 3 — instruments/progress | Payload arbitration, completion draining, live-pointer recheck and preflight/status repairs landed | Correct event dating/history/snapshot consistency, progress evidence and marker trace |
+| Executable timing contract | Added in the working tree; 20 tests pass and five weakened-rule mutations are caught | Host-only; production must be made to conform |
+| Phase 4 — resolution policy | Open; common safety defaults already derive from geometry | Final latency values wait for Phase 2; policy consolidation remains |
+| Phase 5 — recovery/alignment | Defects identified; contract tests detect injected timeline slips | Runtime admission, coordinated epoch transition and atomic two-stream commit |
+| Phase 6 — monitoring/acoustic | Open | Validated electrical baseline and stable timing; software monitoring remains unmeasured |
+
+**Completed repairs are not the next task.** The lost-publication race
+(`c912231e`), newest-only completion read (`e4464ae2`), stale CommandPtr recheck
+(`c9e31d67`) and RTL preflight/transport-status projection (`f0e724fa`) are in
+the tree. Later instrumentation commits through `f4a9bb84` improved coverage and
+accounting but left the event-dating and snapshot defects listed in Phase 3.
+
+### What the measurements and research establish
+
+Retained evidence:
+[initial investigation](reports/latency-investigation-2026-09-05/README.md),
+[Phase 3 hardware report](reports/phase3-hw-validation-2026-09-05/README.md), and
+[September 6 RTL follow-up](reports/latency-followup-2026-09-06/README.md).
+Earlier reports describe their reviewed versions; their causal conclusions and
+completion claims are superseded by this status and the current contract.
 
 **Client buffer sizing behaved correctly in the bench runs.** At 48 kHz,
 requested and observed callback sizes agreed. After the user restarted the
@@ -37,49 +67,50 @@ hardware, the 64 → 128 → 256 → 64 sweep measured 12.145 → 14.811 → 20.
 12.145 ms RTL: each buffer increase added twice that increase to raw RTL.
 The configured 512-frame sizing budget is not a fixed callback batch.
 
-**The start-time offset is a lost TX descriptor-ring lap.** Four `RTL_ts`
-observations across four driver starts — 354.95, 642.95, 930.95 and 2370.95
-frames — sit at laps 0, 1, 2 and 7 of a 288-frame lattice, and all six pairwise
-deltas are exact integer multiples of 288. Details and provenance:
-[Phase 3 hardware validation](reports/phase3-hw-validation-2026-09-05/README.md).
+**There is no stable absolute baseline yet.** September 6 runs returned about
+84.145 ms raw RTL at 64 frames and, later, 8.811 ms twice at 128 frames. The
+128-frame declarations predict 9.646 ms round trip and 5.104 ms output, matching
+Logic's rounded 9.6/5.1 display. All four logs report the requested callback
+span and no callback timing anomalies, but weak returns accepted only 6–11 of
+20 trials. Installed binary and epoch continuity between those sessions were
+not established. These are observations, not a controlled buffer-size comparison
+or proof of an implementation improvement. The older ~355-frame remainder is
+therefore not a demonstrated floor.
 
-288 frames is 48 packets × 6 frames/packet at 48 kHz, and 48 is
-`Layout::kNumPackets` — the OHCI IT descriptor ring. It is the only constant in
-the TX geometry that yields 288 frames; the finality lead gives 48, the repoint
-guard 12, the dispatch slack 432, the prepared target 720, the shared slot ring
-1008, a completion group 36, a cadence block 24.
+**A 288-frame lattice is a clue, not a closed cause.** At 48 kHz, one 48-packet
+ring traversal takes 6 ms when each cycle advances a packet and carries 288
+frames on average. The September 6 scheduling-normalized results differ by
+approximately 3744 frames, or 13 such traversals. A lost lap, a configured lead
+and an impulse repeated by an unrefilled ring can share this spacing. A weak
+correlator can select a different repeat. Neither the grid nor a seed log alone
+distinguishes these explanations.
 
-The mechanism is that absolute packet position is not observable.
-`DecodeHardwarePacketIndex` (`ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp:598`)
-returns a **modulo-48** index: the controller's CommandPtr says where in the ring
-it is and nothing about which lap. Absolute position is reconstructed purely by
-software accumulation, seeded from `lastHwPacketIndex_{0}`
-(`IsochTxDmaRing.hpp:224`) with `completionCursor` reset to zero, and `Prime`
-sets `softwareFillAbsIdx_` and `ringPacketsAhead_` but not `lastHwPacketIndex_`.
-The first Refill after the context starts therefore computes
-`deltaConsumed = hwPacketIndex`, which is correct only if the controller
-advanced **less than one full lap** since arming. Past 48 packets (6 ms) the
-true count is `hw + 48k` while `hw` is recorded; the modulo index carries no lap,
-so the loss is silent, and because every later delta is relative it never
-self-corrects.
+Two software sensitivities are independently demonstrated by the
+[executable contract](AUDIO_TIMING_CONTRACT.md):
 
-That predicts every property observed: a 288-frame quantum, constant within a
-run to sd 0.01, re-rolled on each driver start, at integer laps.
+- A receive-derived TX seed shifts by 288 frames when its supplied presentation
+  time is shifted by one synthetic lap. That does not prove that the real
+  completion path supplies the error; both indices in an extrapolation must be
+  traced, since a common index offset can cancel.
+- After initialization, `PreviewTxRange` continues allocating consecutive
+  content while accepting a shifted presentation time. Alignment therefore
+  needs an invariant across the epoch, not only a corrected first seed.
 
-**Not yet established.** The observed laps imply the first completion callback
-landed 0, 6, 12 and 42 ms after arm. The first three are unremarkable for
-DriverKit dispatch at stream start; 42 ms is large and has not been measured —
-it is an inference from the model. The context also starts on a cycle match
-(`startCycleMatch`, `startFirstPacketIndex`), a second contributor to the
-arm→first-callback gap that is unaccounted for. The cheap confirmation is to
-record the first Refill's `hwPacketIndex` and the elapsed time since arm and
-check that laps correlate with that gap; that is much smaller than the full
-correlated trace.
+**Progress is not known from a modulo pointer alone.** `ComputeDeltaConsumed`
+returns 0–47 for the 48-packet ring, so `maxCompletionDelta > 48` cannot detect a
+lost traversal. Elapsed cycles and `TxPacketIndexLift` supply a conditional
+estimate; self-linked skips consume cycles without descriptor advance. Preserve
+raw observations and justified progress bounds, and report ambiguity when more
+than one lap fits. Neither elapsed time nor a nearest-lap guess establishes
+actual execution by itself.
 
-Separately, and unchanged by the above: subtracting measured scheduling leaves
-roughly 355 frames / 7.40 ms at the lowest observed lap, of which the 107
-declared latency frames explain part. That remainder is not established hardware
-latency, and the reporting-only self-check is still outstanding.
+The [HAL timing research](COREAUDIO_HAL_TIMING_DOMAINS.md) and
+[Apple driver mechanics](APPLE_DRIVER_TIMESTAMP_MECHANICS.md) are behavioral
+references, not tuning prescriptions. Client buffers, descriptor rings and ZTS
+periods are separate quantities. Apple's configured period does not validate
+ASFW's measured anchor cadence or convergence. Do not copy an interrupt cadence
+or startup gate across device families: completion grouping also changes
+finality and RX service, and valid SYT/FDF/DBC behavior is capability-specific.
 
 ### Next implementation block — Phases 3 and 5 before more bench work
 
@@ -87,19 +118,32 @@ Pause further latency sweeps while the known implementation defects are being
 repaired. The existing runs are enough to prioritize this work; repeating
 them now cannot resolve the attribution gaps in the instruments.
 
-1. **Phase 3 correctness repairs:** fix the lost-publication race first, then
-   completion-history draining and CommandPtr freshness. Repair the RTL
-   preflight and transport-status projection as well.
-2. **Phase 5 recovery coordination:** implement a coherent epoch transition
-   across RX, TX, and published PCM, and make the two-stream commit contract
-   atomic. These fixes do not depend on choosing the latency reference plane.
-3. **Phase 3 trace support:** implement the bounded marker trace below and the
-   interval measurements, so the next hardware run can locate the delay.
-4. **Verify the implementation before returning to hardware:** use reference
-   review, host tests, and simulators to exercise publication/finality races,
-   completion ordering, epoch transitions, and secondary-stream failure. These
-   checks prepare the bench pass; they do not establish actual DMA timing or
-   device behavior.
+1. **Finish Phase 3 event evidence.** Date finality at the actual seal decision,
+   retain bounded event history with a sound publication/read protocol, and
+   remove the fallback that substitutes observer time for a missing event.
+   Capture F4 at actual successful PCM publication. Port the existing review
+   reproductions into permanent tests before treating these distributions as
+   measured intervals. This is the next bounded implementation change.
+2. **Implement runtime progress and presentation admission.** Feed a production
+   adapter independently justified packet-progress bounds and a fresh
+   frame/presentation relation with explicit uncertainty. The host contract
+   already rejects ambiguous laps and shifted content; now make production
+   correct or explicitly enter recovery. Do not turn a cycle estimate into
+   exact evidence or impose a permanent nominal-rate slope.
+3. **Complete Phase 5 recovery as part of that integration.** Quiesce and move
+   RX, TX, PCM identities and pending observations to a coherent epoch; preserve
+   the intended source/coordinate policy and make two-stream commit atomic.
+   Test stalls, skipped cycles, old-record replay and secondary-commit failure.
+   Matching epoch IDs in the host contract is not proof of atomic execution.
+4. **Close startup admission and trace coverage.** Specify interrupted SYT
+   warm-up behavior and profile-appropriate FDF/DBC/SYT validation, then test it
+   through the actual consumer. Add the bounded marker trace below, including
+   both the startup seed and later alignment. The current contract does not
+   yet test that receive admission path.
+5. **Batch integrated verification, then the bench.** Turn the contract's
+   production defect detectors into conformance tests for the adapter, retain
+   independent expectations and mutation checks, and verify the reference
+   behavior before rebuilding/installing for the correlated electrical run.
 
 Keep the work in reviewable changes. Return to hardware once this implementation
 block is ready for integrated verification. An earlier targeted hardware check
@@ -120,11 +164,10 @@ times. Record requested SYT presentation separately from observed transmission;
 do not treat completion-handler execution time as the packet's wire time.
 
 Use a bounded trace captured in memory and read after the run, with no per-packet
-logging or new audio/transport layer coupling. Repair the Phase 3 instruments
-that this trace relies on, keeping the lost-publication race first. Two further
-gaps from the bench review belong in that work: the RTL tool must surface
-buffer setter/getter failures, and the transport-status projection needs a live
-producer before its default `stopped` label can establish transport state.
+logging or new audio/transport layer coupling. Finish the Phase 3 endpoint and
+snapshot repairs before trusting that trace. RTL setter/getter diagnostics and
+the transport-status mirror are already implemented; remaining MCP liveness
+checks need counter deltas and freshness rather than cumulative activity.
 
 After the implementation block, repeat the trace across starts, keeping rate,
 buffer size, cable, gain, and routing fixed and recording whether the event was
@@ -215,16 +258,18 @@ scheduling.
 | `A2` output safety offset | 50 | **Yes** — `SetOutputSafetyOffset` | the requirement that E0 precedes E1, i.e. bounds `I1` ≥ 0 | asserted (Apple plist) |
 | `A3` input latency | 40 | **No** | `J1`+`J2`, and part of `J3` depending on the plane | asserted (Apple plist) |
 | `A4` input safety offset | 50 | **Yes** — `SetInputSafetyOffset` | visibility margin: bounds `J4` ≥ 0 | asserted (Apple plist) |
-| `A5` client IO buffer | 32 | **Yes** | accounted separately by CoreAudio | user-set |
+| `A5` client IO buffer | client-specific; latest comparison 128 | **Yes** | accounted separately by CoreAudio | user-set |
 
-Logic's "5.6 ms roundtrip" is `(A5+A2+A1) + (A5+A4+A3)` = 271. **A sum of
-accounting terms, not of physical intervals**, displayed because we declared it.
+At 128 frames, `(A5+A2+A1) + (A5+A4+A3)` = 463 frames / 9.646 ms, and
+`A5+A2+A1` = 245 frames / 5.104 ms output: Logic's current rounded 9.6/5.1 ms.
+The earlier 32-frame 5.6 ms display was 271 frames. These are sums of declarations
+and scheduling allowances; neither display is an electrical measurement.
 
 ### 1d. Depths that are not latency at all
 
 | Constant | Value | Why it is not latency |
 |----------|------:|----------------------|
-| `kTxPreparedTargetCycleSlots` | 120 pkt / 720 fr / 15 ms | Arm horizon. Packets are armed with **silence**; content overwrites them later. A late producer costs content, never a holed ring. **Largest depth in the system.** |
+| `kTxPreparedTargetCycleSlots` | 120 pkt / 720 fr / 15 ms | Arm horizon. Packets are armed with **silence**; content overwrites them later. A late producer costs content rather than leaving an unarmed packet. Capacity alone does not establish playback delay. |
 | ↳ `kTxOwnershipGuardCycleSlots` | 48 pkt | component of the above |
 | ↳ `kTxDispatchSlackCycleSlots` | 72 pkt | component of the above |
 | `kPcmPublicationCacheFrames` | 8192 fr (~170 ms) | Retention window for republication, not delay |
@@ -236,14 +281,15 @@ how the arm horizon became latency the first time.
 
 - **`A1` = 67 while `I3` alone stamps 105.** Whatever the reconciliation is, it
   is not "these describe the same thing."
-- **`I4` and `J1` are unknown and unclaimed.** Apple's 67/40 presumably include
-  their converters; ours do not. Our numbers and Apple's are therefore **not the
-  same quantity** even where numerically equal — which undercuts "parity with
-  Apple" as a correctness target.
+- **`I4` and `J1` are not separately established.** Copied 67/40 declarations
+  may have included converters in Apple's reference plane; their numerical
+  equality does not establish the same coverage in ASFW. Electrical loopback
+  includes both converters but cannot isolate them.
 - **Two events are never observed** (`E3`, `F2`), so four spans collapse into
   two. Any future number that attributes delay across them is invented.
-- **Three intervals are nominal geometry, not measured** (`I2`, `J3`, plus the
-  variable pair `I1`/`J4`). Their distributions are Phase 3 work.
+- **Four intervals need trustworthy distributions:** `I2`/`J3` have nominal
+  geometry, while `I1`/`J4` vary with publication and reading. Instrumentation
+  exists, but Phase 3's remaining event-dating defects prevent closing them.
 
 ---
 

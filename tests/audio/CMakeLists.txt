@@ -169,6 +169,10 @@ add_audio_test(TxPacketIndexLiftTests
     TxPacketIndexLiftTests.cpp
 )
 
+add_audio_test(AudioTimingContractTests
+    AudioTimingContractTests.cpp
+)
+
 add_audio_test(TxCycleAnchorTests
     TxCycleAnchorTests.cpp
 )
