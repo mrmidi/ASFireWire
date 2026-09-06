@@ -342,6 +342,64 @@ but it is a large unexamined difference from the only implementation known to
 have shipped on this hardware. **`kPacketsPerCompletionGroup` is a one-constant
 experiment.**
 
+### 8.3.2 Callback placement is a per-configuration choice, not one policy
+
+All three NuDCL program builders were read. They do **not** share a cadence.
+
+| builder | addr | callback placement | per-packet `setTimeStampPtr` |
+|---|---|---|---|
+| `AM824NuDCLRead::SetupReceiveBuffer` | `0x3d484` | last DCL of every **N-th** group, N = 20 ms worth | yes, every packet |
+| `AM824NuDCLWrite::SetupSendBufferForMacSync` | `0x4d8d0` | last DCL of every **N-th** group, N = 20 ms worth | yes, every packet |
+| `AM824NuDCLWrite::SetupSendBufferForExternalSync` | `0x45012` | **exactly one**, after the loop, on the final DCL | yes, every packet |
+
+All three compute the same `0x4E20 / (125 * packetsPerGroup)` group count;
+`ExternalSync` computes it and then does not use it for callback placement.
+
+`MacSync` additionally has a switch that installs **no callbacks at all**:
+
+```c
+if (LOBYTE(this[32].sampleRate)) { nextGroupIndex = groupIndex + 1; }   // no callback
+else { ... if (!((groupIndex + 1) % groupsPerCallback)) { setCallback(...); } }
+```
+
+The split is by **who clocks the stream**, and it is the right split:
+
+- **`ExternalSync`** — the *device* is clock master. TX has no independent
+  timing duty, so it is serviced once per ring traversal; the RX side's 20 ms
+  callbacks already carry the clock.
+- **`MacSync`** — the *Mac* is clock master, so TX must be serviced on its own
+  20 ms cadence.
+
+**This is the configuration ASFW is in.** The Duet is clock master, ASFW runs an
+RX-derived timeline (`HardwareTimelineSource::Receive`), so the comparable Apple
+configuration is `ExternalSync`: **one TX interrupt per ring traversal.**
+
+> **Correction.** An earlier revision of this section said "TX uses a single
+> end-of-ring callback" without qualification, from having read only
+> `ExternalSync`. That is true for device-clocked streams and false for
+> Mac-clocked ones.
+
+Note also that in the NuDCL path the sample-rate-family builders
+`SetupSendBufferFor8NkHz` and `SetupSendBufferForMultipleOf44100Hz` are **stubs**
+(7 and 10 bytes). NuDCL does not branch by rate at all — rate only selects
+`SYT_INTERVAL` inside the builder (8 frames/packet at 44.1k and 48k, 16 at
+88.2/96k, 32 at 176.4/192k, matching IEC 61883-6). The rate-family split is
+legacy `AM824DCLWrite` only, where both are real implementations.
+
+### 8.3.3 Interrupt rates side by side
+
+| | group | period | interrupts/sec |
+|---|---:|---:|---:|
+| AppleFWAudio RX | 160 packets | 20 ms | 50 |
+| AppleFWAudio TX, device-clocked | whole ring | ring traversal | ~10 |
+| AppleFWAudio TX, Mac-clocked | 160 packets | 20 ms | 50 |
+| **ASFW RX and TX** | **6 packets** | **750 us** | **1333** |
+
+ASFW raises ~27x more RX interrupts than Apple, and — in the configuration it
+actually runs, device-clocked — on the order of **100x more TX interrupts**. By
+§8.3 that buys nothing in timing resolution, because the hardware stamps every
+packet regardless. `kPacketsPerCompletionGroup` is a one-constant experiment.
+
 ### 8.4 The filter is 4 taps, against USB's 33
 
 `AM824NuDCLRead::CalculateNewTimeStamp` (`0x4331c`) keeps a 4-entry shift
@@ -394,15 +452,65 @@ IOFireWireFamily. That was the wrong place to look: it is not an
 *IOFireWireFamily* abstraction, but it is central to *AppleFWAudio*, where it is
 the unit that callbacks are scheduled against.
 
+### 8.8 The first timestamp: Apple validates the stream before anchoring
+
+`AM824NuDCLRead::HandleNuDCLCallbackFirstTimeProcessing` (`0x3ed40`) walks the
+CIP headers of the packets in the first serviced groups and refuses to anchor
+until the stream proves itself:
+
+- **FDF** (format-dependent field, i.e. sample rate) must equal `fExpectedFDF`;
+  a mismatch logs `WRONG SAMPLE RATE` and resets `fStartupCounter` to 0;
+- **DBC** (data block counter) must match the running expected value; a mismatch
+  logs `bad calculated DBC`, **zeroes the sample-index and frames-per-packet
+  arrays**, and restarts the count at 1;
+- only once `fStartupCounter` passes its threshold does it log
+  `good stream`, set `validSyncStream = 1`, latch the sample counter, set the
+  DMA index and begin normal processing;
+- after 4 bad-DBC events it sends a reset message (`1818326117` = `'lock'`).
+
+This is the FireWire form of the discipline in §4, and it is **stricter** than
+the USB one. AppleUSBAudio anchors at the first frame that demonstrably carried
+data; AppleFWAudio additionally requires the *right rate* and a *continuous
+data-block sequence* over a run of packets before it will anchor at all.
+
+**Relevance to ASFW.** ASFW anchors from the first RX observation that passes
+`ExpandReceiveTimestamp` and cadence checks. Whether that is equivalent to
+Apple's "N consecutive packets with correct FDF and continuous DBC" is
+**unverified**, and it bears directly on the open anchor question in
+`COREAUDIO_HAL_TIMING_DOMAINS.md` §6.
+
+### 8.9 DICE (`Saffire.i64`) diverges on both counts
+
+Focusrite's Saffire driver is DICE/TCAT-based and also builds NuDCL programs
+(`IOFWDCL` symbols are imported), but makes different choices.
+
+`Saffire::PrepareRecvDCLs` (`0xfd14`):
+
+- one send/receive DCL per packet, grouped, circular via `setBranch` — same
+  skeleton;
+- **`setCallback(lastDCL, RecvGroupCallback)` on the last DCL of *every* group**
+  — no modulo, no 20 ms computation. Every group interrupts.
+- **no `setTimeStampPtr` anywhere in the receive path** (confirmed by xref: zero
+  references from `PrepareRecvDCLs`; only `PrepareSendDCLs` uses it, twice).
+
+So a DICE driver does **not** harvest per-packet OHCI receive timestamps at all.
+That is consistent with DICE devices exposing their own clock and sample-count
+registers over the TCAT interface, making the OHCI packet timestamp redundant
+for that family. It is a genuinely different clocking strategy, not a variation
+in tuning.
+
+| | AppleFWAudio (AV/C) | Saffire (DICE) |
+|---|---|---|
+| RX callback | every N-th group (20 ms) | **every group** |
+| RX per-packet timestamp | yes | **none** |
+| clock source | OHCI packet timestamps + SYT | device registers over TCAT |
+
 ## Still open
 
-- ~~The descriptor step.~~ **Closed** — established in §8.3 from OHCI hardware
-  semantics plus Linux and ASFW, without needing `AppleFWOHCI`.
-- **TX cadence.** `AM824NuDCLWrite` has not been examined; the ~100 ms TX figure
-  in `[[apple-fwaudio-isoch-geometry]]` is still uncorroborated.
-- **DICE.** `Saffire.i64` unopened; expected to differ from the AV/C path.
-- **First-timestamp discipline (§4).** Whether AppleFWAudio has an equivalent of
-  the USB "first frame with non-zero `frActCount`" scan is unresolved.
-  `HandleNuDCLCallbackFirstTimeProcessing` (`0x3ed40`) and
-  `HandleProcessCIPHeadersFirstTimeProcesssing` (`0x3f968`) are the places to
-  look.
+- **`AM824DCLRead`/`AM824DCLWrite` (legacy DCL).** Not examined; the NuDCL path
+  is the live one and the rate-family builders there are stubs.
+- **Saffire TX.** `PrepareSendDCLs` (`0x10304`) has two `setCallback` and two
+  `setTimeStampPtr` sites, so its TX *does* stamp — the placement has not been
+  read.
+- **Whether ASFW's anchor matches §8.8's discipline.** The one item here that
+  changes ASFW code rather than documentation.
