@@ -13,11 +13,10 @@ Two sources, read in this order:
 > claim must be carried down to the **OHCI isochronous DMA program and its
 > descriptors** — which descriptor, which branch, which interrupt bit.
 >
-> §8 observes that rule by splitting what is *read* from what is *inferred*: the
-> DCL-level facts come from the disassembly plus `IOFWDCL.h`, and the final step
-> to descriptors is marked **not established**, because the code that performs
-> it (`AppleFWOHCI`) has not been read. Nothing in §8 asserts a descriptor
-> layout.
+> §8.3 observes that rule. The mapping does **not** require Apple's OHCI driver:
+> descriptor format is fixed by hardware, so Linux `firewire-ohci` and ASFW's own
+> descriptor construction establish what any DCL must compile into. Each claim
+> there cites all three.
 
 Source: `/Users/mrmidi/Downloads/OSXUSBAudioDriverSource 4` (AppleUSBAudio,
 ~10.5-era with later `rdar://` fixes). Paths below are relative to it.
@@ -265,28 +264,83 @@ if (!(bufferGroupIndex % buffersPerCallback)) {
 
 `setFlags(…, 4)` is `kUpdateBeforeCallback` (`IOFWDCL.h:104`, `BIT(2)`).
 
-### 8.3 The architectural point: per-packet stamps, sparse interrupts
+### 8.3 DCL to descriptors — established, without reading AppleFWOHCI
 
-Timestamps are recorded on **every packet**; interrupts fire every **20 ms**.
-Those are independent knobs, and Apple sets them three orders of magnitude
-apart.
+An earlier revision parked this as "needs `AppleFWOHCI`". That was wrong. OHCI
+descriptor format is fixed by **hardware**, so whatever Apple's DCL layer
+expresses must compile into the same descriptors Linux and ASFW build. Two
+independent implementations plus the hardware semantics settle it.
 
-This is FireWire's answer to §2. AppleUSBAudio must *interpolate* to recover
-where inside a completed batch the wrap fell, because USB gives it nothing
-finer. AppleFWAudio does not interpolate at all — the DMA program records a
-timestamp for each packet, and the 20 ms callback simply harvests the array.
-Sparse interrupts cost no timing resolution.
+**Interrupt: `setCallback` on a DCL ⇒ interrupt bits set on that packet's
+descriptor.**
 
-**Not established — the descriptor step.** That per-packet timestamp and the
-callback DCL's interrupt must ultimately become fields in OHCI IR descriptors,
-but the code that does it is `AppleFWOHCI`, which has not been read.
-`IOFWDCL.h` declares `compile(IODCLProgram&, bool&)`, `link()`,
-`interrupt(bool&, IOFWDCL*&)` and `checkForInterrupt()` as **pure virtuals**
-(`IOFWDCL.h:179-208`), implemented by an OHCI-specific subclass. That
-`checkForInterrupt()` is per-DCL makes it *likely* that a DCL carrying a
-callback yields a descriptor with the interrupt bit set — but that is an
-inference from a header, not a reading of the emitter, and it is recorded here
-as such.
+The OHCI descriptor control word carries a 2-bit interrupt field at bits [5:4];
+`3` means "interrupt on completion of this descriptor".
+
+| source | encoding |
+|---|---|
+| Linux | `#define DESCRIPTOR_IRQ_ALWAYS (3 << 4)` (`ohci.c:66`), set per-descriptor in the IR queue path (`ohci.c:3298`) |
+| ASFW | `kIntAlways` / `kIntNever` on `kCmdInputLast`, chosen by `IsTimingGroupBoundary(i)` (`IsochRxDmaRing.cpp:53,126`) |
+| AppleFWAudio | callback on the last DCL of every `buffersPerCallback`-th group (§8.2) |
+
+ASFW's `IsTimingGroupBoundary(packetIndex)` is
+`(packetIndex % InterruptGroupPacketCount()) == (InterruptGroupPacketCount()-1)`
+— interrupt on the **last packet of each group**, every other packet's
+descriptor left at `kIntNever`. That is *structurally the same construction* as
+Apple's "callback on the last DCL of every Nth buffer group". Same hardware
+mechanism, same placement rule, different group size.
+
+**Timestamp: a per-packet receive timestamp costs nothing.**
+
+In OHCI IR header mode the controller writes the packet's timestamp **into the
+buffer**, ahead of the payload — Linux: *"The OHCI controller puts the
+isochronous header and trailer in the buffer, so we need at least 8 bytes"*
+(`ohci.c:3326`). ASFW already decodes it:
+
+```c
+// OHCI IR header mode stores the 16-bit [sec:3][cycle:13] timestamp in
+// the low half of the first little-endian quadlet. Cross-validated with
+// Linux firewire/ohci.c:2765 and Apple's packetReceiveTime().
+```
+(`IsochRxTiming.hpp:29-31`, `DecodeReceiveTimestamp`)
+
+So AppleFWAudio's `setTimeStampPtr` on **every** packet DCL is not a clever
+trick and buys no interrupts: the hardware stamps every received packet inline
+with its data whether anyone asked or not. Apple's 4-byte `isochHeaderRange` per
+packet (§8.2) is that quadlet. **Every OHCI driver gets per-packet receive
+timestamps for free; only the interrupt rate is a policy choice.**
+
+*(Which of the two the family surfaces through `fTimeStampPtr` — the in-buffer
+header quadlet or a descriptor status field — is an AppleFWOHCI detail and does
+not matter here. The load-bearing fact is that a per-packet receive timestamp
+exists without an interrupt, and that is guaranteed by the hardware.)*
+
+**Branch:** `IOFWDCL::setBranch(lastDCL, firstDCL)` ⇒ the descriptor's branch
+address pointing at the first descriptor block — a circular program, exactly
+ASFW's ring.
+
+### 8.3.1 The number that matters: ASFW interrupts 27x more often than Apple
+
+Both drivers use the same mechanism and pick very different policy:
+
+| | group size | interrupt period | interrupts/sec |
+|---|---:|---:|---:|
+| **AppleFWAudio** (RX) | 160 packets | **20 ms** | **50** |
+| **ASFW** (`kPacketsPerCompletionGroup = 6`) | 6 packets | **750 us** | **1333** |
+
+ASFW raises roughly **27 times more isochronous interrupts per second** than
+Apple's driver did on the same class of hardware.
+
+And by §8.3 that buys **nothing in timing resolution** — the per-packet
+timestamps are written by hardware either way. The only thing a smaller group
+buys is latency-to-service: how soon software reacts to a completed packet.
+
+This is worth weighing against `[[tx-irq-001-interrupt-path-stall]]`, where the
+entire OHCI interrupt path was observed to latch up. Running an order of
+magnitude more interrupts than the reference stack is not evidence of a cause,
+but it is a large unexamined difference from the only implementation known to
+have shipped on this hardware. **`kPacketsPerCompletionGroup` is a one-constant
+experiment.**
 
 ### 8.4 The filter is 4 taps, against USB's 33
 
@@ -342,8 +396,8 @@ the unit that callbacks are scheduled against.
 
 ## Still open
 
-- **The descriptor step (§8.3).** Needs `AppleFWOHCI` disassembled — the
-  DCL-to-descriptor emitter. Until then no descriptor-layout claim is made.
+- ~~The descriptor step.~~ **Closed** — established in §8.3 from OHCI hardware
+  semantics plus Linux and ASFW, without needing `AppleFWOHCI`.
 - **TX cadence.** `AM824NuDCLWrite` has not been examined; the ~100 ms TX figure
   in `[[apple-fwaudio-isoch-geometry]]` is still uncorroborated.
 - **DICE.** `Saffire.i64` unopened; expected to differ from the AV/C path.
