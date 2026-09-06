@@ -581,14 +581,23 @@ recoveries accumulate without RTL moving, the diagnosis is wrong and the change
 is only instrumentation. As of the evening session it is still untested: every
 run stayed inside one rung, so nothing exercised the recovery.
 
-**And the lattice is not the only thing that moves this number.** A control run
-at stock geometry measured `RTL_ts` 74.95 with sd 11.55 where an identical
-earlier run measured 66.95 with sd 0.01, at healthy SNR and with
-`lapsRecovered = 0` / `lapUnresolvable = 0`. An 8-frame shift is not a 288-frame
-rung and must not be folded into the lattice story. See
-[rung zero and measurement validity](reports/rung-zero-2026-09-06/README.md) for
-the full record and for why none of the per-setting comparisons in that session
-are controlled. Its risk: if accumulated skipped cycles reach half a
+**And the lattice is not the only thing that moves this number.** There is a
+second, independent effect: a per-run drift. Two sessions, on different builds at
+different dispatch depths, with the geometry held constant and nothing changed
+between runs, both produced `RTL_ts` **66.95 -> ~74.95 -> 77.95** over three
+consecutive runs, with sd growing 0.01 -> 6 -> 38 and `lapsRecovered = 0`
+throughout. An 8-frame shift is not a 288-frame rung and must not be folded into
+the lattice story.
+
+**Rung zero is the first run after a fresh stream, not a resting state.** Every
+later run measures this drift. That rule invalidates per-setting comparisons made
+across a run sequence and, applied to the two sessions' first runs, turns the
+prepared-lead result into a controlled comparison: 720 frames of lead and 576
+frames of lead both measure 66.95 with sd 0.01.
+
+See [rung zero and measurement validity](reports/rung-zero-2026-09-06/README.md)
+for the full record, the eight reasons the surrounding numbers are not
+controlled, and the protocol that follows from them. Its risk: if accumulated skipped cycles reach half a
 ring inside one observation gap the lift over-counts, discarding 48 packets as a
 6 ms glitch instead of adding 6 ms of permanent latency -- a deliberate trade of
 an audible one-off for invisible drift.

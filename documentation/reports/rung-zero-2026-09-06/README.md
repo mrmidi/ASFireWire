@@ -96,6 +96,80 @@ high-water, carried across three stream restarts because `ResetForStart` does no
 clear it. The counter that would have answered the question was reporting a
 different geometry. This is problem 5 below, and it is no longer hypothetical.
 
+## Session B: the confound is isolated
+
+A second session, after a rebuild and reinstall carrying the lap-recovery change
+and the observability fixes. Dispatch slack applied to 48 before any measurement
+and left there; geometry confirmed in the hot path before each run via
+`[TxV3] prefill=168/168 preparedTarget=96 ownershipGuard=48 leadFrames=576`.
+Three consecutive runs, **nothing changed between them**:
+
+| run | `RTL_ts` | sd | accepted | SNR |
+|--:|---------:|-----:|---------:|------:|
+| B1 | **66.95** | **0.01** | 15/20 | 33.2 |
+| B2 | 74.96 | 6.22 | 20/20 | 32.2 |
+| B3 | 77.95 | 38.21 | 20/20 | 30.9 |
+
+Session A's sequence was 66.95 -> 74.95 -> 77.95. Session B reproduces it to the
+frame, on a different build, at a different dispatch depth, with the geometry
+held constant throughout.
+
+**The drift is per run, not per setting.** Every per-setting difference in the
+session A table was measuring run order. Rung zero is not a state the system
+sits in: it is the *first run after a fresh stream*, and every measurement after
+that is measuring degradation.
+
+`lapsRecovered = 0` across all three runs, so this is **not** the 288-frame
+mechanism. The two phenomena stay separate: 288-frame rungs from unobserved ring
+laps, and this per-run drift of +8 then +3 frames with growing spread.
+
+### This turns the prepared-lead result into a controlled comparison
+
+Both sessions' **first** runs are now directly comparable, because run order is
+the variable that was confounding them:
+
+| | session A, run 1 | session B, run 1 |
+|---|---|---|
+| dispatch slack | 72 | 48 |
+| prepared lead | 720 fr | 576 fr |
+| stream age | first run after replug | first run after install |
+| `RTL_ts` | 66.95, sd 0.01 | 66.95, sd 0.01 |
+
+144 frames of prepared lead removed, controlled for the one factor that actually
+moves this number, and the result is identical to two decimal places. The
+prepared lead is not in the physical path. This is now established rather than
+inferred.
+
+### `carriedPerMille` works, and argues against its own hypothesis
+
+The new rate counter reads 13-38 per mille across session B -- **30 to 90 times**
+the earlier clean session's 0.4 per mille (2 carried ticks per 5000 polls).
+Interrupt delivery on this install is far burstier from the start.
+
+But it does **not** track the run-to-run climb: run B1 averaged ~18 per mille and
+measured a perfect 66.95 / sd 0.01, while B3 averaged ~20 and measured 77.95 /
+sd 38. The earlier suggestion that carried-tick rate was the tell for the drift
+is not supported. It measures interrupt burstiness, which is real and elevated,
+and which is a different thing from whatever moves `RTL_ts` between runs.
+
+### The instrumentation caught its own defect
+
+Reading the ring minutes after installing the observability fixes showed the
+watchdog record rendering at 229 bytes and ending `lapUnresolvable=`, with
+`maxDelta` absent. `LogRing.hpp:163` caps a message at 232 bytes and
+`carriedPerMille` had pushed the two fields the line was extended to carry off
+the end, silently. Split into `[IsochWatchdog]` and `[IsochTxDelta]` in
+`8259e730`. Until that is installed, `lapUnresolvable` and `maxDelta` cannot be
+read at all -- so session B's `lapsRecovered = 0` is **not** backed by a
+`lapUnresolvable = 0`, and is correspondingly weaker.
+
+### Open: run count or elapsed time?
+
+The drift is deterministic and cheap to characterise. Leave a stream up without
+measuring, then take one run. Still 66.95 means the runs cause it; 77.95 means
+time does. That single measurement splits the hypothesis and, unlike everything
+else recorded here, is properly controlled.
+
 ## Problems with the measurements
 
 This is the important section. **None of the numbers above should be treated as
@@ -197,6 +271,11 @@ overflow — but chronology older than the window is simply gone.
 
 Derived from what went wrong above.
 
+0. **Only the first run after a fresh stream is a valid measurement.** This is
+   the rule everything else in this document was missing. Runs two and three
+   measure a per-run drift of +8 and +3 frames with growing spread, reproducibly,
+   on both sessions. Restart the stream between conditions or compare only
+   first-runs.
 1. **Fix the observability first** — per-stream counter reset, a TX verdict,
    `carried` as a rate, the headroom aliasing. Three failures this session were
    invisible to the instruments; more runs against blind instruments buy nothing.
