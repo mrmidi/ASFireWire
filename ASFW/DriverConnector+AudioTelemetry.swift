@@ -9,7 +9,15 @@ import Foundation
 
 struct AudioTelemetryEndpoint: Identifiable, Equatable {
     static let latencyBucketLabels = ["<250 µs", "250–500 µs", "500–750 µs", "750–1000 µs", "1–1.5 ms", "≥1.5 ms"]
-    static let marginBucketLabels = ["<2× floor", "2–4×", "4–8×", "8–16×", "≥16×"]
+    // Fractions of the hardware ring, matching AudioTimingGeometry's
+    // kTxCommittedMarginQuarter/Half/ThreeQuarter/OneRingPackets. These were
+    // "<2× floor / 2–4× / 4–8× / 8–16× / ≥16×" long after the driver stopped
+    // using a multiplicative ladder, so a margin of exactly 2× the floor was
+    // being drawn in the "≥16×" bucket -- overstating it eightfold. The
+    // resolution is deliberately at the LOW end: the question this histogram
+    // answers is "how close did we come to holing the descriptor ring", so
+    // everything healthy collapses into the last bucket by design.
+    static let marginBucketLabels = ["≤¼ ring", "≤½ ring", "≤¾ ring", "≤1 ring", "> ring"]
     static let rxOccupancyBucketLabels = ["0–20%", "20–40%", "40–60%", "60–80%", "80–100%"]
     static let notMeasured = UInt32.max
     static let notMeasuredFrames = UInt64.max
@@ -143,6 +151,14 @@ struct AudioTelemetryEndpoint: Identifiable, Equatable {
     var intervalMinimum: UInt32? {
         completedIntervalMarginMinPackets == Self.notMeasured ? nil : completedIntervalMarginMinPackets
     }
+    /// Wakes that missed the 750 µs preparation budget. The wire carries the
+    /// count that PASSED, so without this the anomaly is a subtraction the
+    /// reader has to do in their head.
+    var lateWakeCount: UInt64 {
+        preparationWakeCount >= preparationAtMost750Us
+            ? preparationWakeCount - preparationAtMost750Us : 0
+    }
+
     var lifetimeMinimum: UInt32? {
         minimumCommittedMarginPackets == Self.notMeasured ? nil : minimumCommittedMarginPackets
     }

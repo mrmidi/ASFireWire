@@ -122,9 +122,8 @@ struct AudioTelemetryView: View {
     private func marginCards(_ endpoint: AudioTelemetryEndpoint) -> some View {
         HStack(spacing: 12) {
             TelemetryMetricCard(title: "Current margin", value: endpoint.currentCommittedMarginPackets.formatted(), detail: "packets", tint: .blue)
-            TelemetryMetricCard(title: "Interval low", value: endpoint.intervalMinimum?.formatted() ?? "—", detail: "packets", tint: marginTint(endpoint.intervalMinimum, floor: endpoint.hardwareFloorPackets))
-            TelemetryMetricCard(title: "Interval high", value: endpoint.completedIntervalMarginMaxPackets.formatted(), detail: "packets", tint: .teal)
-            TelemetryMetricCard(title: "Lifetime low", value: endpoint.lifetimeMinimum?.formatted() ?? "—", detail: "packets", tint: marginTint(endpoint.lifetimeMinimum, floor: endpoint.hardwareFloorPackets))
+            TelemetryMetricCard(title: "Interval low", value: endpoint.intervalMinimum?.formatted() ?? "—", detail: "this interval", tint: marginTint(endpoint.intervalMinimum, floor: endpoint.hardwareFloorPackets, lead: endpoint.preparationLeadPackets))
+            TelemetryMetricCard(title: "Lifetime low", value: endpoint.lifetimeMinimum?.formatted() ?? "—", detail: "since start", tint: marginTint(endpoint.lifetimeMinimum, floor: endpoint.hardwareFloorPackets, lead: endpoint.preparationLeadPackets))
             TelemetryMetricCard(title: "Safety geometry", value: "\(endpoint.hardwareFloorPackets) / \(endpoint.preparationLeadPackets)", detail: "floor / lead", tint: .secondary)
         }
     }
@@ -139,7 +138,7 @@ struct AudioTelemetryView: View {
                     tint: .purple
                 )
             }
-            TelemetryPanel(title: "Committed margin · last interval") {
+            TelemetryPanel(title: "Committed margin · last interval · fractions of the hardware ring") {
                 HistogramChart(
                     labels: AudioTelemetryEndpoint.marginBucketLabels,
                     counts: endpoint.completedMarginHistogram,
@@ -188,14 +187,28 @@ struct AudioTelemetryView: View {
             TelemetryMetricCard(title: "Last wake", value: endpoint.lastPreparationLatencyTicks.microsecondsText, detail: "preparation latency", tint: .purple)
             TelemetryMetricCard(title: "Interval max", value: endpoint.completedIntervalMaxLatencyTicks.microsecondsText, detail: "preparation latency", tint: .purple)
             TelemetryMetricCard(title: "Lifetime max", value: endpoint.maxPreparationLatencyTicks.microsecondsText, detail: "preparation latency", tint: .orange)
-            TelemetryMetricCard(title: "≤750 µs", value: endpoint.preparationAtMost750Us.formatted(), detail: "of \(endpoint.preparationWakeCount.formatted()) wakes", tint: .green)
+            TelemetryMetricCard(title: "Late wakes", value: endpoint.lateWakeCount.formatted(), detail: "of \(endpoint.preparationWakeCount.formatted()) over 750 µs", tint: endpoint.lateWakeCount == 0 ? .green : .orange)
             TelemetryMetricCard(title: "≥1.5 ms", value: endpoint.preparationAtLeast1500Us.formatted(), detail: "early-warning wakes", tint: endpoint.preparationAtLeast1500Us == 0 ? .green : .orange)
         }
     }
 
-    private func marginTint(_ value: UInt32?, floor: UInt32) -> Color {
+    // Judge the margin against the geometry actually in force, not a fixed
+    // multiple of the floor.
+    //
+    // The old rule was `<= floor * 2 ? .red : <= floor * 4 ? .orange : .green`.
+    // Margin is pinned at the prepared lead, and the lead is floor + slack, so
+    // the ratio is fixed by the geometry: it was 2.5x at ring 48 / slack 72,
+    // and became exactly 2.0x when both went to 504. A healthy stream therefore
+    // rendered RED, and green -- needing slack above three times the ring --
+    // was unreachable by any geometry anyone would ship.
+    //
+    // What the operator needs to know is simply: are we where this geometry
+    // says we should be, have we slipped, or are we below the fatal floor.
+    private func marginTint(_ value: UInt32?, floor: UInt32, lead: UInt32) -> Color {
         guard let value else { return .secondary }
-        return value <= floor * 2 ? .red : value <= floor * 4 ? .orange : .green
+        if value < floor { return .red }      // the descriptor ring can hole
+        if value < lead { return .orange }    // slipped below target
+        return .green                          // sitting at target
     }
 }
 
