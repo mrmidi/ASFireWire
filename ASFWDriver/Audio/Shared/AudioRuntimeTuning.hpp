@@ -188,7 +188,7 @@ struct ValidationOutcome final {
         out.warnings |= static_cast<uint32_t>(TuningWarning::kSharedSlotRingOverProvisioned);
     }
     if (candidate.MaxCoveredDeltaConsumedPackets() <
-        12U * AudioTimingGeometry::kTxPacketsPerGroup) {
+        AudioTimingGeometry::kTxDispatchSlackFloorPackets) {
         out.warnings |= static_cast<uint32_t>(TuningWarning::kDispatchSlackBelowAssertedFloor);
     }
 
@@ -315,15 +315,16 @@ struct DeclaredLatencyMath final {
 // duration as sample rate changes; the number of audio frames must scale.
 [[nodiscard]] constexpr uint32_t PreparedLeadFrames(
     const AudioRuntimeTuning& tuning, uint32_t sampleRateHz) noexcept {
-    return static_cast<uint32_t>(uint64_t{tuning.PreparedTargetPackets()} *
-                                 sampleRateHz / 8'000U);
+    return static_cast<uint32_t>(
+        uint64_t{tuning.PreparedTargetPackets()} * sampleRateHz /
+        AudioTimingGeometry::kIsochCyclesPerSecond);
 }
 
 // Isochronous cycles are 125 us regardless of sample rate, so a packet count
 // converts to time without knowing the rate.
 [[nodiscard]] constexpr uint32_t PacketsToMicroseconds(
     uint32_t packets) noexcept {
-    return packets * 125U;
+    return packets * AudioTimingGeometry::kMicrosecondsPerIsochCycle;
 }
 
 static_assert(ValidateTuning(AudioRuntimeTuning{}).Applicable(),

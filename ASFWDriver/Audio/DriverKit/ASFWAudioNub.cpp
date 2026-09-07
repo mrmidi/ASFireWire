@@ -601,7 +601,13 @@ bool ASFWAudioNub::CopyRuntimeTuningSnapshot(
     ASFW::Audio::Shared::RuntimeTuningSnapshot& out) const {
     if (!ivars || !ivars->tuningStore) return false;
     out = ivars->tuningStore->WithLock([](auto& state) { return state.Copy(); });
-    return out.ready;
+    // Success means "there is a snapshot", NOT "the graph is ready". Gating on
+    // readiness here made the snapshot's own `ready` field unreachable and hid
+    // the outcome of a request exactly when it mattered: Disconnect() aborts a
+    // parked request and clears ready in the same call, so refusing the read
+    // threw away the only record that the abort had happened. The caller reads
+    // `out.ready` and presents a disabled panel instead.
+    return true;
 }
 
 void ASFWAudioNub::SetAudioIoRunning(bool running, uint32_t rate) {

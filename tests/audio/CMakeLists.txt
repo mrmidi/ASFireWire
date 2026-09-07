@@ -178,6 +178,10 @@ add_audio_test(AudioRuntimeTuningTests
     AudioRuntimeTuningStoreTests.cpp
 )
 
+add_audio_test(AudioGeometryReportTests
+    AudioGeometryReportTests.cpp
+)
+
 add_audio_test(TxCycleAnchorTests
     TxCycleAnchorTests.cpp
 )

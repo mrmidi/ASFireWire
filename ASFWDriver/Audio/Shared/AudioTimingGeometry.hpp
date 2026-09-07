@@ -37,6 +37,13 @@ struct AudioTimingGeometry final {
     }
     static constexpr uint32_t kSampleRateHz = 48000;
 
+    // The isochronous cycle grid. Duplicated from ASFW::Timing (Common/
+    // TimingUtils.hpp) rather than included, because that header pulls in
+    // DriverKit/IOLib.h and this one is a pure constants header the host tests
+    // compile on its own. The static_asserts below pin the relationship.
+    static constexpr uint32_t kIsochCyclesPerSecond = 8'000;
+    static constexpr uint32_t kMicrosecondsPerIsochCycle = 125;
+
     // Blocking AMDTP cadence at 48k: D,D,D,N over 4 packets, 8 frames per
     // data packet => 24 frames per cadence block (6 frames/packet average).
     static constexpr uint32_t kFramesPerDataPacket = 8;
@@ -86,6 +93,8 @@ struct AudioTimingGeometry final {
     // the absolute sample timeline.
     static constexpr uint32_t kTxHardwareRingPackets =
         ::ASFW::Shared::Isoch::IsochQueueGeometry::kTransmitInFlightPackets;
+    static constexpr uint32_t kRxHardwareRingPackets =
+        ::ASFW::Shared::Isoch::IsochQueueGeometry::kReceiveInFlightPackets;
     // [TxPrep] telemetry buckets intentionally track the immutable hardware
     // floor rather than the larger, tuneable preparation lead.  That keeps a
     // captured distribution meaningful if the lead changes during tuning.
@@ -145,6 +154,12 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kTxOwnershipGuardCycleSlots =
         kTxHardwareRingPackets;
     static constexpr uint32_t kTxDispatchSlackCycleSlots = 72;
+    // The floor the COVERAGE assert below enforces, named once so validation
+    // and the tuning panel quote the same number instead of each spelling out
+    // twelve groups of six. The shipping value sits exactly on it.
+    static constexpr uint32_t kTxDispatchSlackFloorGroups = 12;
+    static constexpr uint32_t kTxDispatchSlackFloorPackets =
+        kTxDispatchSlackFloorGroups * kTxPacketsPerGroup;
     static constexpr uint32_t kTxPreparedTargetCycleSlots =
         kTxOwnershipGuardCycleSlots + kTxDispatchSlackCycleSlots;
     // Compatibility spelling while the remaining call sites are migrated to
@@ -199,6 +214,18 @@ static_assert(AudioTimingGeometry::kFrameRingFrames >=
               "Frame ring must hold one maximum HAL IO transfer");
 static_assert(AudioTimingGeometry::kTimingGroupPackets != 0,
               "Timing group packet count must be non-zero");
+static_assert(AudioTimingGeometry::kIsochCyclesPerSecond *
+                  AudioTimingGeometry::kMicrosecondsPerIsochCycle ==
+              1'000'000,
+              "Isoch cycle grid must be 8000 cycles of 125 us per second");
+static_assert(AudioTimingGeometry::kSampleRateHz %
+                  AudioTimingGeometry::kIsochCyclesPerSecond ==
+              0,
+              "V3 rates must divide the cycle grid so frames-per-cycle is exact");
+static_assert(AudioTimingGeometry::kRxHardwareRingPackets %
+                  AudioTimingGeometry::kRxPacketsPerGroup ==
+              0,
+              "RX hardware ring must be an integer number of groups");
 static_assert(AudioTimingGeometry::kRxPacketsPerGroup ==
                   AudioTimingGeometry::kTxPacketsPerGroup,
               "RX and TX interrupt groups must match");
@@ -212,7 +239,7 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
 // it below 12: overrunning it holes the descriptor ring, and unlike a PCM gap
 // that is a transport failure silence substitution cannot cover.
 static_assert(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets >=
-                  12 * AudioTimingGeometry::kTxPacketsPerGroup,
+                  AudioTimingGeometry::kTxDispatchSlackFloorPackets,
               "TX preparation headroom must cover at least 9 ms of producer "
               "dispatch latency at the current six-packet cadence");
 static_assert(AudioTimingGeometry::kTxCoverageLeadPackets ==

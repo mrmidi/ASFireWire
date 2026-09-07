@@ -11,6 +11,11 @@ namespace ASFW::Shared::Isoch {
 struct IsochQueueGeometry final {
     static constexpr uint32_t kPacketsPerCompletionGroup = 6;
     static constexpr uint32_t kTransmitInFlightPackets = 48;
+    // Receive descriptor ring depth. It lives here rather than in
+    // Isoch/Core/IsochDmaGeometry.hpp so that layers above the transport seam
+    // can report the ring without including OHCI descriptor geometry, which is
+    // the same reason kTransmitInFlightPackets is here.
+    static constexpr uint32_t kReceiveInFlightPackets = 504;
     // A mutable-tail rebind never targets the command-pointer packet or its
     // immediate successor. The two-packet guard corresponds to the 32-byte
     // OHCI descriptor prefetch quantum; the tail address itself is one aligned
@@ -27,5 +32,9 @@ static_assert(IsochQueueGeometry::kTransmitInFlightPackets %
               "in-flight packet window must contain complete groups");
 static_assert(IsochQueueGeometry::kPayloadFinalityLeadPackets <
               IsochQueueGeometry::kTransmitInFlightPackets);
+static_assert(IsochQueueGeometry::kReceiveInFlightPackets %
+                      IsochQueueGeometry::kPacketsPerCompletionGroup ==
+                  0,
+              "receive packet window must contain complete groups");
 
 } // namespace ASFW::Shared::Isoch

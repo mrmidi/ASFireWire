@@ -3,6 +3,7 @@
 
 #include "AudioCoordinator.hpp"
 
+#include "../Shared/AudioGeometryReport.hpp"
 #include "../Shared/AudioRuntimeTuningStore.hpp"
 
 #include "AudioEndpointRuntime.hpp"
@@ -374,6 +375,8 @@ IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
     if (!nub) return kIOReturnNoDevice;
 
     Shared::RuntimeTuningSnapshot snapshot{};
+    // A not-ready endpoint still reports: `ready` and the request state are
+    // what the panel needs in order to say why it is not showing live geometry.
     if (!nub->CopyRuntimeTuningSnapshot(snapshot)) return kIOReturnNotReady;
     const auto& active = snapshot.effective;
 
@@ -395,7 +398,6 @@ IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
     out.txHardwareRingPackets =
         Shared::AudioTimingGeometry::kTxHardwareRingPackets;
     out.txSharedSlotPackets = Shared::AudioTimingGeometry::kTxSharedSlotPackets;
-    out.framesPerPacketAverage = snapshot.sampleRateHz / 8'000U;
     out.inputChannels = snapshot.inputChannels;
     out.outputChannels = snapshot.outputChannels;
     out.lastError = snapshot.lastError;
@@ -407,6 +409,39 @@ IOReturn AudioCoordinator::CopyRuntimeTuningSnapshot(
     out.requestStatus = static_cast<uint32_t>(snapshot.status);
     out.supportedGroups = Shared::kSupportedTuningGroups;
     out.ready = snapshot.ready ? 1U : 0U;
+
+    // Read-only geometry. Derived in Audio/Shared so the arithmetic the
+    // operator reads is covered by the host suite; this is a mechanical copy.
+    const auto geometry = Shared::DeriveGeometryReport(snapshot.sampleRateHz);
+    out.framesPerDataPacket = geometry.framesPerDataPacket;
+    out.txDispatchSlackFloorPackets = geometry.txDispatchSlackFloorPackets;
+    out.txDispatchSlackDefaultPackets = geometry.txDispatchSlackDefaultPackets;
+    out.isochCyclesPerSecond = geometry.isochCyclesPerSecond;
+    out.microsecondsPerIsochCycle = geometry.microsecondsPerIsochCycle;
+    out.rxPacketsPerGroup = geometry.rxPacketsPerGroup;
+    out.rxHardwareRingPackets = geometry.rxHardwareRingPackets;
+    out.txInterruptIntervalMicroseconds =
+        geometry.txInterruptIntervalMicroseconds;
+    out.rxInterruptIntervalMicroseconds =
+        geometry.rxInterruptIntervalMicroseconds;
+    out.framesPerCompletionGroupTx = geometry.framesPerCompletionGroupTx;
+    out.framesPerCompletionGroupRx = geometry.framesPerCompletionGroupRx;
+    out.minFramesPerRxInterrupt = geometry.minFramesPerRxInterrupt;
+    out.maxFramesPerRxInterrupt = geometry.maxFramesPerRxInterrupt;
+    out.cadenceBlockPackets = geometry.cadenceBlockPackets;
+    out.cadenceBlockFrames = geometry.cadenceBlockFrames;
+    out.txContentFreezePackets = geometry.txContentFreezePackets;
+    out.txRepointGuardPackets = geometry.txRepointGuardPackets;
+    out.schedulingJitterFrames = geometry.schedulingJitterFrames;
+    out.frameAlignmentFrames = geometry.frameAlignmentFrames;
+    out.pcmPublicationCacheFrames = geometry.pcmPublicationCacheFrames;
+    out.maxBlockingFramesPerDataPacket =
+        geometry.maxBlockingFramesPerDataPacket;
+    out.txSafetyOffsetPolicyFrames = geometry.txSafetyOffsetPolicyFrames;
+    out.rxSafetyOffsetPolicyFrames = geometry.rxSafetyOffsetPolicyFrames;
+    out.reportedLatencyPolicyFrames = geometry.reportedLatencyPolicyFrames;
+    out.completionBatchFrames = geometry.completionBatchFrames;
+    out.txRingLapFrames = geometry.txRingLapFrames;
     return kIOReturnSuccess;
 }
 

@@ -13,7 +13,8 @@ namespace ASFW::Isoch {
 struct IsochDmaGeometry final {
     static constexpr uint32_t kPacketsPerInterrupt =
         ::ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup;
-    static constexpr uint32_t kReceiveDescriptorPackets = 504;
+    static constexpr uint32_t kReceiveDescriptorPackets =
+        ::ASFW::Shared::Isoch::IsochQueueGeometry::kReceiveInFlightPackets;
     static constexpr uint32_t kTransmitDescriptorPackets =
         ::ASFW::Shared::Isoch::IsochQueueGeometry::kTransmitInFlightPackets;
 };
