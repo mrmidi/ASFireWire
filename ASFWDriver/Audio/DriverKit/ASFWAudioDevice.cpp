@@ -598,6 +598,21 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // can publish while this work queue waits. Generic BeBoB devices can
         // spend ~1 s in CIP NO-DATA after input starts (Linux
         // bebob_stream.c:661-666); the M-Audio path instead seeds from TX.
+        //
+        // Blocking here is the sanctioned behaviour, not a workaround, and it
+        // reads like a bug to anyone arriving cold -- so: "This call is expected
+        // to always succeed or fail. The hardware can take as long as necessary
+        // in this call such that it always either succeeds ... or fails"
+        // (AudioDriverKit IOUserAudioDevice.iig:182-183). There is no
+        // asynchronous completion for StartIO: its return value is the contract.
+        // Returning success before an anchor exists would hand the HAL a running
+        // device with no clock, which is precisely what this wait prevents.
+        //
+        // Measured on an Apogee Duet: waitMs=133, i.e. about one
+        // kHalZeroTimestampPeriodFrames (8192 frames = 170.67 ms at 48 kHz).
+        // That period, not this loop, is what sets the cost -- shortening it is
+        // the cheap lever if start latency ever needs attacking, at the price of
+        // the HAL's maximum buffer size, which ADK derives from the same period.
         uint32_t ztsWaitMs = 0;
         while (ivars.runtime.lastHalZeroTimestampHostTicks.load(
                    std::memory_order_acquire) == 0 &&
