@@ -2,6 +2,8 @@
 
 #include "IsochTxDescriptorSlab.hpp"
 
+#include "../../Shared/Memory/UncachedFill.hpp"
+
 namespace ASFW::Isoch::Tx {
 
 kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemory& dmaMemory) noexcept {
@@ -38,8 +40,13 @@ kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemo
         return kIOReturnNoResources;
     }
 
-    // Zero the entire slab (will be filled with 0xDE in Start()).
-    std::memset(descRegion_.virtualBase, 0, Layout::kDescriptorRingSize);
+    // Zero the entire region (will be filled with 0xDE in Start()).
+    //
+    // NOT memset: this mapping is cache-inhibited and __bzero reaches for
+    // `dc zva` on blocks this size, which faults on Device memory. See
+    // Shared/Memory/UncachedFill.hpp. Bounded by the region the allocator
+    // actually returned rather than by the layout constant.
+    ASFW::Shared::FillUncachedDma(descRegion_.virtualBase, 0, descRegion_.size);
 
     ASFW_LOG(Isoch, "IT: Descriptor ring ready. DescIOVA=0x%llx (pageOff=0x%llx)",
              descRegion_.deviceBase, pageOffset);

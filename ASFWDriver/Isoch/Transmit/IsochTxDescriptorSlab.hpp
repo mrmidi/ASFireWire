@@ -6,6 +6,7 @@
 #include "IsochTxLayout.hpp"
 #include "../Memory/IIsochDMAMemory.hpp"
 #include "../../Shared/Memory/IDMAMemory.hpp"
+#include "../../Shared/Memory/UncachedFill.hpp"
 #include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -31,7 +32,9 @@ public:
 
     void DebugFillDescriptorSlab(uint8_t pattern) noexcept {
         if (!descRegion_.virtualBase || descRegion_.size == 0) return;
-        std::memset(descRegion_.virtualBase, pattern, descRegion_.size);
+        // Cache-inhibited mapping: see Shared/Memory/UncachedFill.hpp.
+        Shared::FillUncachedDma(descRegion_.virtualBase, pattern,
+                                descRegion_.size);
     }
 
     [[nodiscard]] Shared::DMARegion DescriptorRegion() const noexcept { return descRegion_; }

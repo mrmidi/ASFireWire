@@ -1,4 +1,5 @@
 #include "DMAMemoryManager.hpp"
+#include "UncachedFill.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -301,11 +302,9 @@ void DMAMemoryManager::ZeroSlab(size_t length) noexcept {
 
     const size_t cappedLength = std::min(length, slabSize_);
 
-    // Cache-inhibited mappings reject dc zva; use plain stores via volatile pointer
-    auto* volatilePtr = reinterpret_cast<volatile uint8_t*>(slabVirt_);
-    for (size_t i = 0; i < cappedLength; ++i) {
-        volatilePtr[i] = 0;
-    }
+    // Cache-inhibited mappings reject dc zva; the one place that rule is
+    // written down is Shared/Memory/UncachedFill.hpp, so go through it.
+    FillUncachedDma(slabVirt_, 0, cappedLength);
 }
 
 void DMAMemoryManager::PublishRange(const std::byte* address, size_t length) const noexcept {

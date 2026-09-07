@@ -96,3 +96,47 @@ TEST(TransmitBoundaryTests, AudioPolicyHasNoLegacyTransportLocation) {
 }
 
 } // namespace
+
+// A cache-inhibited DMA mapping does not accept `dc zva`, which Apple's __bzero
+// selects by block size -- so memset over a DMA region is safe only below a
+// libc-internal threshold. IsochTxDescriptorSlab did exactly that and survived
+// at a 4 KiB descriptor slab; the first start after the TX ring deepened it to
+// 32 KiB took EXC_ARM_DA_ALIGN inside __bzero. Size is not the fix, the store
+// instruction is: Shared::FillUncachedDma.
+//
+// Matches the call shape that bit us (a memset whose destination is a DMA
+// region's base) rather than memset in general, so the fixed-size descriptor
+// fills stay legal.
+TEST(TransmitBoundaryTests, NoMemsetOverDmaRegionBases) {
+    const auto repositoryRoot = RepositoryRoot();
+    const std::vector<std::filesystem::path> dmaRoots{
+        repositoryRoot / "ASFWDriver" / "Isoch",
+        repositoryRoot / "ASFWDriver" / "Shared" / "Memory",
+        repositoryRoot / "ASFWDriver" / "Async",
+    };
+    const std::regex memsetOverDmaBase(
+        R"((memset|bzero)\s*\([^;]*(virtualBase|slabVirt_|payloadBase|BaseVirtual\(\)))");
+
+    for (const auto& root : dmaRoots) {
+        if (!std::filesystem::exists(root)) {
+            continue;
+        }
+        for (const auto& entry :
+             std::filesystem::recursive_directory_iterator(root)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            const auto extension = entry.path().extension();
+            if (extension != ".hpp" && extension != ".cpp") {
+                continue;
+            }
+            std::ifstream source(entry.path());
+            std::ostringstream buffer;
+            buffer << source.rdbuf();
+            const std::string contents = buffer.str();
+            EXPECT_FALSE(std::regex_search(contents, memsetOverDmaBase))
+                << entry.path()
+                << ": fill DMA regions with ASFW::Shared::FillUncachedDma";
+        }
+    }
+}
