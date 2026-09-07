@@ -342,6 +342,9 @@ struct AudioDriverRuntimeState {
     /// first whose content has not been published -- content arrives in order,
     /// so there is nothing beyond it worth trying this pass.
     uint64_t txFillCursor{0};
+    /// Times the content cursor was found ahead of the committed end, which
+    /// means a start path left it stale and no packet can be filled.
+    uint64_t txFillCursorAheadEvents{0};
     /// Next unread TX completion stamp. Completion stamps are pushed one per
     /// completed packet, so reading only the newest one skipped every other
     /// packet in the wake -- and with it every ZTS boundary that fell in one.

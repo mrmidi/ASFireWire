@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Audio Engine V3: hardware-derived ZTS and explicit physical TX planning.
 
-#include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "ASFWAudioDevice.h"
 #include "../Wire/IEC61883/Syt.hpp"
 #include "../Runtime/TxCompletionStampDrain.hpp"
 #include "../../Common/TimingUtils.hpp"
@@ -1050,6 +1050,21 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     const uint32_t slots = ivars.runtime.txSlotProvider.numSlots;
     auto* control = ivars.runtime.directAudioGraph.control;
     if (slots == 0 || !control) return;
+
+    // The content cursor is absolute in the NEW stream's packet space, and the
+    // prefill below re-arms every slot from packet 0, so it has to start there
+    // too. Until 2026-09-07 this was reset only by RepublishTxRingForRestart on
+    // the TX-fault recovery path -- StartIO reset the control block, the queue
+    // producer and both stream engines, and left this one field alone. A second
+    // StartIO therefore began with the previous session's cursor (observed:
+    // 22,181,532) while committedEnd restarted near zero, so both fill loops
+    // below compared `cursor < committed` against a cursor twenty-two million
+    // packets in the future, took neither branch, and no packet ever received
+    // audio. Transport reported perfect health throughout -- every margin, every
+    // deadline, zero faults -- because nothing was wrong with it. The device
+    // simply played the silence each slot was armed with, and only a replug
+    // (which destroys the ivars) cleared it.
+    ivars.runtime.txFillCursor = 0;
     const TxPlan noData{
         .epoch = control->hardwareTimeline.Epoch(),
         .cycleOrdinal = 0,
@@ -1136,6 +1151,22 @@ void IMPL(ASFWAudioDriver, TxPreparationReady) {
     {
         const uint64_t frozen =
             queue->finalizedEnd.load(std::memory_order_acquire);
+        // The cursor trails the committed end by construction: it only ever
+        // advances through packets the producer has already committed. Leading
+        // it means some start path left stale state behind, and the symptom is
+        // silence with no fault anywhere -- so say so instead of looping zero
+        // times forever. Anomaly-only; a healthy stream never prints this.
+        if (ivars->runtime.txFillCursor > committedAfter) {
+            const uint64_t events = ++ivars->runtime.txFillCursorAheadEvents;
+            if (ASFW::Audio::DriverKit::IsPowerOfTwo(events)) {
+                ASFW_LOG_ERROR(
+                    DirectAudio,
+                    "[TxFill] stale content cursor=%llu ahead of committed=%llu "
+                    "events=%llu -- no packet can be filled; a start path did "
+                    "not reset it",
+                    ivars->runtime.txFillCursor, committedAfter, events);
+            }
+        }
         // Everything the frontier passed that this loop never filled now
         // transmits the silence it was armed with. Attribute it before the
         // cursor skips over it: a stream that plays but is quietly half silence
