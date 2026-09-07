@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <vector>
 
 namespace {
 
@@ -711,4 +712,185 @@ TEST(IsochRxTimingTests, CaptureChannelMapPermutesAndDefersDelayedChannels) {
 
     // The producer cursor still ends at the undelayed frontier.
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
+}
+
+namespace {
+
+// SYT carries a 4-bit cycle count and a 12-bit offset within the cycle. The
+// cadence detector only needs a stable per-packet step, so encode one from an
+// absolute FireWire tick position.
+uint16_t EncodeSyt(uint64_t busTicks) {
+    const uint32_t cycle =
+        static_cast<uint32_t>((busTicks / ASFW::Timing::kTicksPerCycle) & 0xFu);
+    const uint32_t offset =
+        static_cast<uint32_t>(busTicks % ASFW::Timing::kTicksPerCycle);
+    return static_cast<uint16_t>((cycle << 12) | (offset & 0xFFFu));
+}
+
+} // namespace
+
+// The invariant CoreAudio actually checks.
+//
+// The HAL takes our published (sampleFrame, hostTicks) pairs, fits a line, and
+// predicts where the next one lands. When a pair misses that prediction it logs
+// "A device's clock has detected a discontinuity in the devices host times ...
+// at X but expected at Y" and follows it with a write safety violation --
+// observed on hardware at roughly six per second, which is audible as clicking.
+//
+// So assert the property the HAL assumes rather than any one implementation
+// detail: consecutive anchors must be collinear. The slope between successive
+// anchors is host ticks per audio frame, and it must not change. That holds
+// whatever the correlation code does internally, so this test survives a
+// rewrite of it and fails for exactly the reason the HAL complains.
+//
+// The packet timestamps deliberately straddle the drain reference. The
+// reference is sampled BEFORE the batch is walked (IsochRxTiming.hpp), so
+// earlier packets in a batch carry a positive age and later ones a negative
+// age -- the packet completed after the reference was taken. Both branches of
+// the age handling in DirectAudioReceiveConsumer are therefore exercised, and
+// a discontinuity introduced by either one breaks the line.
+// DISABLED pending two more pieces of harness setup. The packet generation,
+// the straddled drain references and the collinearity assertion below are all
+// finished and compile; what is missing is getting an anchor published at all.
+// The publish site (DirectAudioReceiveConsumer.cpp, the `framesDecoded != 0`
+// block) gates on six conditions, and this fixture satisfies four:
+//
+//   framesDecoded != 0      ok, one frame per packet
+//   packetHostTicks != 0    ok
+//   syt != 0xffff           ok, EncodeSyt never returns kNoInfo
+//   hasValidCip             ok
+//   clockPublisher_.IsBound()                 <-- NOT SET UP
+//   hardwareTimeline.Source() == Receive      <-- NOT SET UP
+//
+// No existing test in this file asserts on a published anchor, so there is no
+// pattern to copy for those two. Finish them and drop the DISABLED_ prefix.
+TEST(IsochRxTimingTests, DISABLED_PublishedClockAnchorsStayCollinearAcrossDrainBatches) {
+    constexpr size_t kDbs = 2;
+    constexpr uint32_t kSampleRate = 48'000;
+    constexpr uint32_t kPacketsPerBatch = 6;
+    // The cadence detector needs kEntryCount + 1 observations before it reports
+    // established, and no anchor is published until it does.
+    constexpr uint32_t kTotalPackets = 900;
+    constexpr uint64_t kTicksPerFrame =
+        ASFW::Timing::kTicksPerSecond / kSampleRate;
+
+    std::array<float, 4096> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+
+    FixedDirectAudioBindingSource source({
+        .generation = 1,
+        .inputBase = input.data(),
+        .inputBytes = sizeof(input),
+        .inputFrames = static_cast<uint32_t>(input.size() / kDbs),
+        .inputChannels = kDbs,
+        .control = &control,
+        .sampleRateHz = kSampleRate,
+        .valid = true,
+    });
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+        &source,
+        {
+            .am824Slots = kDbs,
+            .streamChannels = kDbs,
+            .useTxDerivedPlaybackClock = false,
+        });
+    consumer.OnReceiveActivated();
+
+    // One frame per packet keeps the frame cursor equal to the packet count, so
+    // any slope change is unambiguously the host term.
+    constexpr size_t kFrames = 1;
+    constexpr uint32_t kStartSecond = 3;
+    constexpr uint32_t kStartCycle = 100;
+
+    struct Anchor { uint64_t frame; uint64_t host; };
+    std::vector<Anchor> anchors;
+    uint64_t lastSequence = 0;
+    ASFW::Isoch::IsochReceiveBatch currentBatch{};
+
+    for (uint32_t packetIndex = 0; packetIndex < kTotalPackets; ++packetIndex) {
+        const uint32_t cycle = kStartCycle + packetIndex;
+        const uint32_t seconds = kStartSecond + cycle / ASFW::Timing::kCyclesPerSecond;
+        const uint32_t cycleInSecond = cycle % ASFW::Timing::kCyclesPerSecond;
+
+        if (packetIndex % kPacketsPerBatch == 0) {
+            // Reference sampled mid-batch, so this batch's packets straddle it:
+            // the first carry a positive age, the last a negative one.
+            const uint32_t refCycle = cycle + kPacketsPerBatch / 2;
+            const uint32_t refSeconds =
+                kStartSecond + refCycle / ASFW::Timing::kCyclesPerSecond;
+            const uint32_t refCycleInSecond =
+                refCycle % ASFW::Timing::kCyclesPerSecond;
+            // Host time for the reference, derived from the SAME bus position,
+            // so successive batch references are mutually consistent. A skew
+            // introduced here would be the thing that breaks collinearity.
+            const uint64_t refBusTicks =
+                static_cast<uint64_t>(refCycle) * ASFW::Timing::kTicksPerCycle;
+            const uint64_t refHostTicks =
+                1'000'000'000ULL +
+                ASFW::Timing::nanosToHostTicks(
+                    ASFW::Isoch::Rx::FireWireTicksToNanos(refBusTicks));
+            currentBatch = ASFW::Isoch::IsochReceiveBatch{
+                .drainCycleTimer =
+                    EncodeCycleTimer(refSeconds, refCycleInSecond, 0),
+                .drainHostTicks = refHostTicks,
+            };
+            consumer.BeginReceiveBatch(currentBatch);
+        }
+
+        alignas(4) std::array<uint8_t, 8 + 8 + (kFrames * kDbs * 4)> packet{};
+        const uint16_t receiveTimestamp =
+            static_cast<uint16_t>(((seconds & 0x7u) << 13) | cycleInSecond);
+        packet[0] = static_cast<uint8_t>(receiveTimestamp & 0xFFu);
+        packet[1] = static_cast<uint8_t>(receiveTimestamp >> 8);
+        FillTwoChannelAmdtpPacket(packet, 0x40000000u, 0x40000000u);
+        const uint16_t syt = EncodeSyt(
+            static_cast<uint64_t>(packetIndex) * kTicksPerFrame * kFrames);
+        WriteBE32(packet.data() + 12, 0x90020000u | syt);
+
+        consumer.ConsumePacket(currentBatch, {
+            .descriptorIndex = static_cast<uint32_t>(packetIndex % 504),
+            .payload = packet,
+        });
+
+        const uint64_t sequence =
+            control.hostClockAnchor.sequence.load(std::memory_order_acquire);
+        if (sequence != lastSequence && (sequence % 2) == 0) {
+            lastSequence = sequence;
+            anchors.push_back({
+                control.hostClockAnchor.sampleFrame.load(std::memory_order_relaxed),
+                control.hostClockAnchor.hostTicks.load(std::memory_order_relaxed),
+            });
+        }
+    }
+
+    ASSERT_GE(anchors.size(), 3u)
+        << "no clock anchors were published; the cadence never established";
+
+    // Slope between consecutive anchors, in host ticks per frame. A
+    // discontinuity is a step in the host term with no matching step in the
+    // frame term, so it shows up here and nowhere else.
+    double firstSlope = 0.0;
+    for (size_t i = 1; i < anchors.size(); ++i) {
+        const int64_t frameDelta =
+            static_cast<int64_t>(anchors[i].frame) -
+            static_cast<int64_t>(anchors[i - 1].frame);
+        const int64_t hostDelta =
+            static_cast<int64_t>(anchors[i].host) -
+            static_cast<int64_t>(anchors[i - 1].host);
+        ASSERT_GT(frameDelta, 0) << "anchor " << i << " did not advance frames";
+        const double slope =
+            static_cast<double>(hostDelta) / static_cast<double>(frameDelta);
+        if (i == 1) {
+            firstSlope = slope;
+            continue;
+        }
+        // One frame of tolerance on the slope. A real discontinuity moves the
+        // host term by hundreds of microseconds -- tens of frames -- so this
+        // is far tighter than the fault and far looser than rounding.
+        EXPECT_NEAR(slope, firstSlope, firstSlope * 0.5)
+            << "clock anchor " << i << " is not collinear with its predecessors: "
+            << "frame " << anchors[i].frame << " host " << anchors[i].host
+            << ". This is the discontinuity CoreAudio reports as \"detected a "
+               "discontinuity in the devices host times\".";
+    }
 }
