@@ -1,0 +1,69 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 176414,\n    \"nextSequence\" : 176414,\n    \"oldestSequence\" : 136697,\n    \"recordCount\" : 5,\n    \"records\" : [\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery\",\n        \"sequence\" : 176003,\n        \"timestampNs\" : 747225305716041\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=1 \u2014 recovering\",\n        \"sequence\" : 176004,\n        \"timestampNs\" : 747225306023000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery\",\n        \"sequence\" : 176135,\n        \"timestampNs\" : 747225428042041\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 \u2014 recovering\",\n        \"sequence\" : 176136,\n        \"timestampNs\" : 747225428105125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)\",\n        \"sequence\" : 176137,\n        \"timestampNs\" : 747225428119500\n      }\n    ],\n    \"scannedCount\" : 464\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 176414,
+      "nextSequence": 176414,
+      "oldestSequence": 136697,
+      "recordCount": 5,
+      "records": [
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery",
+          "sequence": 176003,
+          "timestampNs": 747225305716041
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=1 \u2014 recovering",
+          "sequence": 176004,
+          "timestampNs": 747225306023000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery",
+          "sequence": 176135,
+          "timestampNs": 747225428042041
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 \u2014 recovering",
+          "sequence": 176136,
+          "timestampNs": 747225428105125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)",
+          "sequence": 176137,
+          "timestampNs": 747225428119500
+        }
+      ],
+      "scannedCount": 464
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

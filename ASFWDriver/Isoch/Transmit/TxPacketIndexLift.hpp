@@ -9,9 +9,11 @@
 // gap longer than a lap, silently loses whole laps, and because every later
 // delta is relative the loss never corrects itself.
 //
-// The cycle timer supplies what the pointer cannot. An IT context transmits one
-// packet per isochronous cycle, so cycles elapsed since the context started is
-// the number of packets it has begun, and the lap follows from that.
+// Cycle timing can bound an observation gap; it cannot establish a lap, and
+// nothing in the transmit path asks it to any more: completion is read from
+// OUTPUT_LAST descriptor status (IsochTxDmaRing::CountCompletedPackets), which
+// carries the lap the pointer cannot. The lift below is a diagnostic estimate,
+// never an ownership proof.
 
 #pragma once
 
@@ -77,65 +79,6 @@ inline constexpr uint32_t kCycleTimerWrapCycles = 8U * kIsochCyclesPerSecond;
         candidate -= ring;
     }
     return candidate;
-}
-
-/// Packets the controller completed between two CommandPtr observations.
-///
-/// The slot difference alone is bounded by `ringPackets - 1`, so it cannot
-/// express a lap: if the controller completed a whole ring or more since the
-/// previous reading, that lap is absent from the difference rather than large in
-/// it. Accumulating such differences into an absolute cursor loses the lap
-/// permanently and re-bases every later reading on the wrong origin.
-///
-/// `elapsedCycles` adjudicates. One packet begins per isochronous cycle, so it
-/// bounds the true advance, and the nearest-congruent lift recovers the laps the
-/// slot could not carry.
-///
-/// Never returns less than the naive difference: elapsed cycles is an upper
-/// bound on descriptor progress (self-linked skip addresses mean a lost cycle
-/// need not advance the context), so it may only ever add laps, never remove
-/// packets the slots already prove were consumed. Exact while accumulated
-/// skipped cycles stay under half a ring; at or beyond that it over-counts in
-/// the direction that invents laps, so callers owe the same caveat
-/// LiftRingSlotToAbsolute carries.
-[[nodiscard]] constexpr uint64_t RecoverConsumedDelta(uint32_t prevSlot,
-                                                      uint32_t nowSlot,
-                                                      uint32_t elapsedCycles,
-                                                      uint32_t ringPackets) noexcept {
-    if (ringPackets == 0) return 0;
-    const uint32_t naive = nowSlot >= prevSlot
-                               ? nowSlot - prevSlot
-                               : (ringPackets - prevSlot) + nowSlot;
-    const uint64_t lifted = LiftRingSlotToAbsolute(
-        nowSlot, static_cast<uint64_t>(prevSlot) + elapsedCycles, ringPackets);
-    const uint64_t delta = lifted > prevSlot ? lifted - prevSlot : 0;
-    return delta > naive ? delta : naive;
-}
-
-/// How much of a completion delta the walk may inspect, and how much it must
-/// write off.
-///
-/// The completion walk returns shared-slot ownership, so it may only touch slots
-/// whose metadata still describes the packet being retired. A slot is retired
-/// once per lap: when the delta exceeds the descriptor ring the controller
-/// lapped, and everything older than the last `ringPackets` had its slot
-/// recycled a lap ago. Inspecting those compares a current payload against stale
-/// metadata and reports a seal mismatch that is an artefact of the walk.
-///
-/// The two halves must always sum to the full delta. The cursor advances by the
-/// whole thing regardless -- the lap really happened, and concealing it is what
-/// displaces every later packet by a lap. Only the inspection is bounded.
-struct CompletionWalkSpan final {
-    uint32_t abandoned{0};  ///< skipped: slots already recycled
-    uint32_t walked{0};     ///< inspected: the most recent lap
-};
-
-[[nodiscard]] constexpr CompletionWalkSpan SplitCompletionWalk(
-    uint32_t deltaConsumed, uint32_t ringPackets) noexcept {
-    if (ringPackets == 0 || deltaConsumed <= ringPackets) {
-        return {0, deltaConsumed};
-    }
-    return {deltaConsumed - ringPackets, ringPackets};
 }
 
 } // namespace ASFW::Isoch::Tx

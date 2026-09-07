@@ -55,7 +55,6 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     lastObservationCycleTimer_ = 0;
     lastObservationCycleTimerValid_ = false;
     ringPacketsAhead_ = 0;
-    startLapObserved_ = false;
 
     nextTransmitCycle_ = 0;
     cycleTrackingValid_ = false;
@@ -71,15 +70,15 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     // reading an operator would use to judge whether the new depth is safe.
     // (The gap counters above were already reset; these were not.)
     counters_.maxDeltaConsumed.store(0, std::memory_order_relaxed);
-    counters_.lapsRecovered.store(0, std::memory_order_relaxed);
-    counters_.lapRecoveryEvents.store(0, std::memory_order_relaxed);
     counters_.lapUnresolvable.store(0, std::memory_order_relaxed);
-    counters_.abandonedOnLap.store(0, std::memory_order_relaxed);
     counters_.criticalGapEvents.store(0, std::memory_order_relaxed);
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
+    (void)ASFW::Timing::initializeHostTimebase();
     const uint32_t cycleTime = hw.ReadCycleTime();
+    lastObservationCycleTimer_ = cycleTime;
+    lastObservationCycleTimerValid_ = true;
     const uint32_t currentCycle = (cycleTime >> 12) & 0x1FFF;
     nextTransmitCycle_ = (currentCycle + 4) % 8000;
     cycleTrackingValid_ = true;
@@ -88,89 +87,74 @@ void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
              currentCycle, nextTransmitCycle_);
 }
 
-// The CommandPtr names a descriptor inside the ring, so the difference between
-// two readings is a difference of slot indices: it is bounded by
-// `kNumPackets - 1` whatever the controller actually did. If the controller
-// completed a whole lap or more since the previous observation, that lap is not
-// small in this arithmetic -- it is *absent* from it, and because the completion
-// cursor is advanced by accumulating these differences, the loss is permanent
-// and every later reading is relative to the wrong origin.
+// Packets the controller has finished, counted from the descriptors it wrote
+// rather than from where its CommandPtr happens to point.
 //
-// The cost is not a counting error alone. The ring branches from its last packet
-// back to its first, so an unrefilled context re-transmits stale audio; the
-// client's content then reaches the wire one lap -- kNumPackets packets, one
-// packet per isochronous cycle, so 48 * 125 us = 6 ms -- later than planned, for
-// the remaining life of the stream. Laps accumulate and the offset never
-// returns. (What that lap costs in audio frames is the content layer's
-// arithmetic, not this one's.)
+// The CommandPtr names a slot inside the ring, so a difference between two
+// readings is a difference of slot indices: it is bounded by kNumPackets - 1
+// whatever the controller actually did, and a lap is absent from it rather than
+// large in it (see 24ec4342). Every scheme that tries to restore the lap from
+// elapsed cycles is an estimate, and an estimate that is wrong retires packet
+// identities that were never bound -- the September 7 Instruments failure, where
+// a 15-slot difference was lifted to 63 and the seal check then failed at
+// exactly the mapped frontier.
 //
-// The cycle timer supplies the lap the pointer cannot. An IT context begins one
-// packet per isochronous cycle, so cycles elapsed since the previous observation
-// bounds how far the controller advanced, and `LiftRingSlotToAbsolute` picks the
-// index congruent to the observed slot nearest that bound. Elapsed cycles is an
-// upper bound rather than an equality -- ASFW self-links each packet's skip
-// address, so a lost cycle or FIFO overrun skips a cycle without advancing past
-// the packet -- and the nearest-congruent rule absorbs that error while
-// accumulated skips stay under half a ring. See TxPacketIndexLift.hpp, which
-// owns this reasoning and its bound.
-uint32_t IsochTxDmaRing::ComputeDeltaConsumed(const uint32_t hwPacketIndex,
-                                              const uint32_t nowCycleTimer) noexcept {
-    const uint32_t prevHwPacketIndex = lastHwPacketIndex_;
-    const uint32_t naiveDelta =
-        (hwPacketIndex >= prevHwPacketIndex)
-            ? (hwPacketIndex - prevHwPacketIndex)
-            : ((Layout::kNumPackets - prevHwPacketIndex) + hwPacketIndex);
-
-    uint32_t deltaConsumed = naiveDelta;
-
-    if (lastObservationCycleTimerValid_ && nowCycleTimer != 0) {
-        const uint32_t elapsedCycles =
-            Tx::CyclesBetween(lastObservationCycleTimer_, nowCycleTimer);
-        // CyclesBetween is only correct across one wrap of the three-bit seconds
-        // field. At the wrap the answer is indistinguishable from zero elapsed,
-        // so refuse rather than adjudicate on it.
-        if (elapsedCycles + 1U < Tx::kCycleTimerWrapCycles) {
-            const uint64_t liftedDelta = Tx::RecoverConsumedDelta(
-                prevHwPacketIndex, hwPacketIndex, elapsedCycles,
-                Layout::kNumPackets);
-            // Congruent by construction, so any disagreement is whole laps.
-            if (liftedDelta > naiveDelta) {
-                const uint64_t lapsLost =
-                    (liftedDelta - naiveDelta) / Layout::kNumPackets;
-                deltaConsumed = liftedDelta > UINT32_MAX
-                    ? UINT32_MAX : static_cast<uint32_t>(liftedDelta);
-                counters_.lapsRecovered.fetch_add(lapsLost,
-                                                  std::memory_order_relaxed);
-                counters_.lapRecoveryEvents.fetch_add(1,
-                                                      std::memory_order_relaxed);
-                ASFW_LOG_ERROR(Isoch,
-                               "[TxLapRecover] prevSlot=%u slot=%u elapsedCycles=%u "
-                               "naive=%u lifted=%llu lapsLost=%llu "
-                               "packetsRecovered=%llu -- the completion cursor "
-                               "would have lost these permanently",
-                               prevHwPacketIndex, hwPacketIndex, elapsedCycles,
-                               naiveDelta, liftedDelta, lapsLost,
-                               lapsLost * Layout::kNumPackets);
-            }
-        } else {
-            counters_.lapUnresolvable.fetch_add(1, std::memory_order_relaxed);
+// Descriptor status carries what the pointer cannot, with no arithmetic at all.
+// OHCI writes xferStatus into an OUTPUT_LAST as it retires that packet, and
+// every refill zeroes the field again (AR_init_status, OHCIDescriptors.hpp:128),
+// so a non-zero status means "the controller finished this descriptor since
+// software last bound it". Nothing is inferred and there is no lap to lose: a
+// late observer simply walks further.
+//
+// This is Linux's method, adopted behaviourally, not copied:
+//   references/linux-ohci-firewire-low-level-stack/ohci.c:2918-2922
+//     for (pd = d; pd <= last; pd++)
+//         if (pd->transfer_status)
+//             break;
+//     if (pd > last)
+//         return 0;   /* Descriptor(s) not done yet, stop iteration */
+// Linux can rely on that because it sets DESCRIPTOR_STATUS on every IT
+// OUTPUT_LAST unconditionally, independent of the interrupt bits
+// (ohci.c:3302-3306). ASFW sets the same status-update bit when it builds the
+// completion block, which is what makes the field trustworthy here too.
+//
+// The walk stops at `mappedLimit`. Past the mapped frontier a slot still holds
+// the status hardware wrote for the packet one lap ago, which this refill has
+// not rebound yet; counting those would double-count the lap the whole change
+// exists to stop guessing about.
+uint32_t IsochTxDmaRing::CountCompletedPackets(
+    const uint64_t completedAbsIdx, const uint64_t mappedLimit) noexcept {
+    uint32_t completed = 0;
+    while (completed < mappedLimit) {
+        const uint32_t slot = static_cast<uint32_t>(
+            (completedAbsIdx + completed) % Layout::kNumPackets);
+        auto* completionDesc = slab_.GetDescriptorPtr(
+            slot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        if (dmaMemory_) {
+            dmaMemory_->FetchFromDevice(
+                reinterpret_cast<const std::byte*>(completionDesc),
+                sizeof(*completionDesc));
         }
-    } else if (lastObservationCycleTimerValid_) {
-        counters_.lapUnresolvable.fetch_add(1, std::memory_order_relaxed);
+        // xferStatus is the high half of the status quadlet; the low half is
+        // the transmit timestamp, which is meaningless until status is written.
+        if ((completionDesc->statusWord >> 16) == 0) {
+            break;
+        }
+        ++completed;
     }
+    return completed;
+}
 
+// Bookkeeping that still wants the pointer: the next transmit cycle and the
+// fill-ahead gap. The completion count itself no longer comes from here.
+void IsochTxDmaRing::NoteObservation(const uint32_t hwPacketIndex,
+                                     const uint32_t nowCycleTimer,
+                                     const uint32_t deltaConsumed) noexcept {
     lastHwPacketIndex_ = hwPacketIndex;
-    if (nowCycleTimer != 0) {
-        lastObservationCycleTimer_ = nowCycleTimer;
-        lastObservationCycleTimerValid_ = true;
-    }
-
-    // A recovered delta can exceed the ring, which means the controller lapped
-    // the software fill: nothing is ahead of it any more.
+    lastObservationCycleTimer_ = nowCycleTimer;
+    lastObservationCycleTimerValid_ = true;
     ringPacketsAhead_ = deltaConsumed >= ringPacketsAhead_
         ? 0U : ringPacketsAhead_ - deltaConsumed;
-
-    return deltaConsumed;
 }
 
 void IsochTxDmaRing::UpdateGapCounters(const uint32_t gap) noexcept {
@@ -647,8 +631,11 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         const uint32_t nextPktIdx = (pktIdx + 1) % numPackets;
         const uint32_t nextDescIOVA =
             slab_.GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
-        desc3->branchWord =
-            MakeBranchWordAT(nextDescIOVA, Layout::kBlocksPerPacket);
+        // Finite DMA queue: the last bound packet must not replay the head.
+        // Linux context_get_descriptors/context_append leave the new tail zero
+        // and link it only after publication (ohci.c:1105-1107,1137-1141).
+        desc3->branchWord = pktIdx + 1 < numPackets
+            ? MakeBranchWordAT(nextDescIOVA, Layout::kBlocksPerPacket) : 0;
         AR_init_status(*desc3, 0);
     }
 
@@ -720,6 +707,8 @@ const char* IsochTxDmaRing::RefillFailureReasonName(
             return "invalid-packet-size";
         case RefillFailureReason::PayloadMapping:
             return "payload-mapping";
+        case RefillFailureReason::MappedRegionExhausted:
+            return "mapped-region-exhausted";
         case RefillFailureReason::PayloadSealMismatch:
             return "payload-seal-mismatch";
     }
@@ -866,46 +855,48 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     out.cmdPtr = cmdPtr;
     out.cmdAddr = cmdPtr & 0xFFFFFFF0u;
 
-    // One-shot: how far the controller had already gone when software first
-    // looked. Accumulating deltas assumes this is under one lap, and nothing in
-    // the descriptor program enforces that -- the ring branches from its last
-    // packet back to its first, so an unrefilled context re-transmits the same
-    // 48 packets indefinitely. Laps missed here are not a counting error alone:
-    // that stale audio went on the wire, and the client's content followed it
-    // 288 frames per lap later than planned.
-    if (!startLapObserved_) {
-        startLapObserved_ = true;
-        const uint32_t startCycleTimer =
-            controlBlock->startCycleMatch.load(std::memory_order_acquire);
-        if (startCycleTimer != 0) {
-            const uint32_t elapsedCycles =
-                Tx::CyclesBetween(startCycleTimer, refillCycleTimer);
-            const uint64_t lifted = Tx::LiftRingSlotToAbsolute(
-                hwPacketIndex, elapsedCycles, Layout::kNumPackets);
-            const uint64_t lapsLost = lifted / Layout::kNumPackets;
-            // The lift infers descriptor progress from elapsed cycles, which
-            // holds only while the context advanced one packet per cycle. The
-            // self-linked skip address means it may not have: report the raw
-            // observations, mark the inference, and state the bound under which
-            // it is exact. See TxPacketIndexLift.hpp.
-            ASFW_LOG(Isoch,
-                     "[TxLapSeed] slot=%u elapsedCycles=%u naive=%u liftedEst=%llu lapsLostEst=%llu elapsedUs=%u exactIfSkippedCyclesUnder=%u",
-                     hwPacketIndex, elapsedCycles, hwPacketIndex, lifted,
-                     lapsLost, elapsedCycles * 125u,
-                     Layout::kNumPackets / 2u);
-        } else {
-            ASFW_LOG(Isoch,
-                     "[TxLapSeed] slot=%u no start anchor; lap unresolvable",
-                     hwPacketIndex);
-        }
+    // Completion comes from the descriptors, not the CommandPtr. See
+    // CountCompletedPackets: the pointer cannot carry a lap and nothing here
+    // tries to restore one, so an observation arriving late is not ambiguous --
+    // it just finds more finished descriptors.
+    const uint64_t completedAbsIdx =
+        controlBlock->completionCursor.load(std::memory_order_relaxed);
+    if (completedAbsIdx > softwareFillAbsIdx_ ||
+        softwareFillAbsIdx_ - completedAbsIdx > Layout::kNumPackets) {
+        // The cursor cannot lead the mapping. Nothing may be retired against a
+        // frontier that does not exist.
+        counters_.lapUnresolvable.fetch_add(1, std::memory_order_relaxed);
+        out.failureReason = RefillFailureReason::MappedRegionExhausted;
+        out.failurePacketAbs = completedAbsIdx;
+        return out; // The context caller stops TX; no cursor or descriptor mutation.
     }
-
-    const uint32_t deltaConsumed =
-        ComputeDeltaConsumed(hwPacketIndex, refillCycleTimer);
+    const uint64_t mappedLimit = softwareFillAbsIdx_ - completedAbsIdx;
+    const uint32_t observedCompleted =
+        CountCompletedPackets(completedAbsIdx, mappedLimit);
+    // A retained completed anchor is not DMA lead. Report only descriptors
+    // still pending at the observation, including zero on exhaustion.
+    UpdateGapCounters(static_cast<uint32_t>(mappedLimit - observedCompleted));
+    if (mappedLimit == 0 || observedCompleted == mappedLimit) {
+        // The finite queue is exhausted. Its last descriptor remains the
+        // hardware's branch/wake anchor, so do not recycle that descriptor or
+        // return its payload on this path. Coordinated restart owns recovery.
+        // Exhaustion does not distinguish a late consumer from producer delay.
+        counters_.lapUnresolvable.fetch_add(1, std::memory_order_relaxed);
+        out.failureReason = RefillFailureReason::MappedRegionExhausted;
+        out.failurePacketAbs = softwareFillAbsIdx_;
+        return out;
+    }
+    // Retain the newest completed descriptor until its successor completes.
+    // Hardware may still use its branch as the resume anchor after a zero-tail
+    // stop. Linux retains ctx->last and only frees previous descriptor storage
+    // after advancing to the next completed program (ohci.c:954-982). Holding
+    // its payload ownership too keeps our descriptor/payload cursors unified.
+    const uint32_t deltaConsumed = observedCompleted > 0 ? observedCompleted - 1 : 0;
+    NoteObservation(hwPacketIndex, refillCycleTimer, deltaConsumed);
     out.completedPacketCount = deltaConsumed;
-    const uint32_t gap = ringPacketsAhead_;
-    UpdateGapCounters(gap);
-    ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
+    ResyncCycleTracking(hw,
+        static_cast<uint32_t>((completedAbsIdx + deltaConsumed) % Layout::kNumPackets),
+        deltaConsumed, out);
 
     // Publish a neutral completion-delta high-water. Content consumers decide
     // whether their own frame/lead policy can tolerate the observed cadence.
@@ -930,42 +921,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         }
     }
 
-    // Fetch and publish completed stamps
-    const uint64_t completedAbsIdx = controlBlock->completionCursor.load(std::memory_order_relaxed);
-
-    // The walk returns shared-slot ownership for packets the controller has
-    // finished with, so it may only inspect slots whose metadata still
-    // describes the packet being retired. A slot can be retired once per lap:
-    // if `deltaConsumed` exceeds the descriptor ring, the controller lapped and
-    // everything older than the last `kNumPackets` had its slot recycled a lap
-    // ago. Verifying those compares a current payload against stale metadata and
-    // reports a seal mismatch that is an artefact of the walk, not a producer
-    // fault -- observed on hardware 2026-09-06 as `[TxPayloadSeal] FATAL
-    // packet=237852` two records after a `lapsLost=1` recovery, which then
-    // fatal-stopped a healthy stream.
-    //
-    // Walk the most recent `kNumPackets` instead and account for the rest as
-    // abandoned. The cursor still advances by the *full* recovered delta below:
-    // the lap really did happen, and hiding it is what put 288 frames of latency
-    // into every later packet. Only the inspection is bounded, never the truth.
-    const auto walkSpan =
-        Tx::SplitCompletionWalk(deltaConsumed, Layout::kNumPackets);
-    const uint32_t abandonedPackets = walkSpan.abandoned;
-    if (abandonedPackets != 0) {
-        counters_.abandonedOnLap.fetch_add(abandonedPackets,
-                                           std::memory_order_relaxed);
-        // Loud: this is real content the controller transmitted from recycled
-        // descriptors, i.e. stale audio that went on the wire. Recoverable, but
-        // never silent.
-        ASFW_LOG_ERROR(
-            Isoch,
-            "[TxLapAbandon] delta=%u ring=%u abandoned=%u firstAbs=%llu "
-            "resumeAbs=%llu -- the controller lapped the software fill; these "
-            "packets transmitted stale descriptors and their slots are gone",
-            deltaConsumed, Layout::kNumPackets, abandonedPackets,
-            completedAbsIdx, completedAbsIdx + abandonedPackets);
-    }
-    for (uint32_t i = abandonedPackets; i < deltaConsumed; ++i) {
+    // Only descriptors the controller actually reported finishing, and only
+    // within the mapped frontier, may return ownership.
+    for (uint32_t i = 0; i < deltaConsumed; ++i) {
         const uint64_t currentAbsIdx = completedAbsIdx + i;
         const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
 
@@ -1082,12 +1040,10 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         payloadDmaMap,
         out);
 
-    // 4. Refill batch: try to fill deltaConsumed slots
-    // If softwareFillAbsIdx_ is 0, initialize it from the completedAbsIdx + ringPacketsAhead_
-    if (softwareFillAbsIdx_ == 0) {
-        softwareFillAbsIdx_ = completedAbsIdx + ringPacketsAhead_;
-    }
-
+    // Build a detached, zero-terminated batch in retired descriptor slots.
+    // The exhaustion check guarantees that the old tail is not among them.
+    // Until the final branch publication below, DMA can reach only the old
+    // queue, whose tail stops it even if software stalls during this loop.
     uint32_t packetsFilled = 0;
     for (uint32_t i = 0; i < deltaConsumed; ++i) {
         const uint64_t fillAbsIdx = softwareFillAbsIdx_ + i;
@@ -1260,9 +1216,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
                     OHCIDescriptor::kControlHighShift));
         desc3->dataAddress = payloadFragments[1].deviceAddress;
         const uint32_t nextHwSlot = (hwSlot + 1) % Layout::kNumPackets;
-        desc3->branchWord = MakeBranchWordAT(
-            slab_.GetDescriptorIOVA(nextHwSlot * Layout::kBlocksPerPacket),
-            Layout::kBlocksPerPacket);
+        desc3->branchWord = i + 1 < deltaConsumed
+            ? MakeBranchWordAT(
+                slab_.GetDescriptorIOVA(nextHwSlot * Layout::kBlocksPerPacket),
+                Layout::kBlocksPerPacket)
+            : 0;
         AR_init_status(
             *desc3, static_cast<uint16_t>(payloadFragments[1].length));
 
@@ -1281,6 +1239,32 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     }
 
     if (packetsFilled > 0) {
+        // Publish the ENTIRE new batch before making it reachable. This is the
+        // Linux context_append ordering (ohci.c:1137-1141), written for our
+        // fixed slab. Publish only the aligned branch word in the old tail:
+        // its completion status may still be hardware-owned.
+        if (dmaMemory_) {
+            dmaMemory_->PublishBarrier();
+        } else {
+            ASFW::Driver::WriteBarrier();
+        }
+        const uint32_t oldTailSlot = static_cast<uint32_t>(
+            (softwareFillAbsIdx_ - 1) % Layout::kNumPackets);
+        auto* oldTail = slab_.GetDescriptorPtr(
+            oldTailSlot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        oldTail->branchWord = MakeBranchWordAT(
+            slab_.GetDescriptorIOVA(
+                static_cast<uint32_t>(softwareFillAbsIdx_ % Layout::kNumPackets) *
+                Layout::kBlocksPerPacket),
+            Layout::kBlocksPerPacket);
+        if (dmaMemory_) {
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(&oldTail->branchWord),
+                sizeof(oldTail->branchWord));
+            dmaMemory_->PublishBarrier();
+        } else {
+            ASFW::Driver::WriteBarrier();
+        }
         CommitRefill(packetsFilled);
         // Publish the freeze frontier after the descriptors are visible, so a
         // producer that sees the new value can never still be racing a bind it
@@ -1294,8 +1278,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     return out;
 }
 
-bool IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw,
-                                       uint8_t contextIndex) noexcept {
+bool IsochTxDmaRing::WakeHardware(Driver::HardwareInterface& hw,
+                                  uint8_t contextIndex, bool queueAppended) noexcept {
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     auto access = hw.TryBeginAccess();
     if (!access) return false;
@@ -1305,11 +1289,12 @@ bool IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw,
     const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
     const bool active = (ctrl & Driver::ContextControl::kActive) != 0;
 
-    if (run && !dead && !active) {
+    if (run && !dead && (queueAppended || !active)) {
         Register32 ctrlSetReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex));
-        // Cross-validated with Linux context queue/flush behavior:
-        // firewire/ohci.c:1520-1525,3586-3592. Flush this anomaly-path write
-        // so the single bounded recovery attempt is observable immediately.
+        // Queue extension must wake even if active was sampled true: hardware
+        // may already have prefetched the old zero branch and stop afterward.
+        // Linux ohci_flush_queue_iso likewise always wakes (ohci.c:3471-3476).
+        // Idle-only watchdog probes retain their existing bounded behavior.
         access.WriteAndFlush(ctrlSetReg, Driver::ContextControl::kWake);
         return true;
     }

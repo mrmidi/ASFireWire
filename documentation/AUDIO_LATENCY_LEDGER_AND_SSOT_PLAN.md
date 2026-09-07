@@ -1,13 +1,15 @@
 # Audio latency ledger and timing SSOT — plan
 
-**September 7 diagnostic update:** bounded refill flight capture is implemented
-in the working tree; see [capture contract and validation](TX_REFILL_FLIGHT_RECORDER.md).
-The [saved playback failure](reports/rtl-repeat-2026-09-07/README.md) shows an
-inferred lap, a seal failure at old completion +48, then recovery starvation.
-Capture does not repair those paths. Next: inspect frozen pre-fault evidence,
-repair progress/descriptor identity and coordinated recovery, and verify enabled
-versus disabled instrumentation overhead. No new hardware measurement is claimed.
-
+**September 7 ownership update:** frozen evidence identified retirement beyond
+`mappedEnd`. The working tree now reads descriptor completion status, uses a
+finite DMA chain, and retains the continuation anchor until its successor
+completes. See [contract, verification and next bench step](TX_FINITE_QUEUE_OWNERSHIP.md)
+and the [Instruments capture](reports/instruments-failure-2026-09-07/README.md).
+The descriptor-replay interleaving is covered by a DMA-graph regression.
+Coordinated recovery and the separate interrupt/AT-completion failure remain
+open. The full host suite and DriverKit build passed; no installation or new
+hardware measurement is claimed. Commit this verified ownership change before
+mixing in the recovery work.
 
 **Status: reconciled 2026-09-06 against `0cd228bf`.** The timing contract landed
 in `d11c2fbf`, with its epoch-staleness correction in `1946d6ae`; alignment probes

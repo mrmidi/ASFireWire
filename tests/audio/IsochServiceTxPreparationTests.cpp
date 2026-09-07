@@ -25,6 +25,24 @@ using ASFW::Isoch::ExpectedTxCommitGeneration;
 using ASFW::Isoch::IsochTxPacketMeta;
 using ASFW::Isoch::IsochTxQueueControl;
 
+// Hardware writes xferStatus into each OUTPUT_LAST as it advances past it, and
+// the completion walk reads exactly that. A test that only moves the CommandPtr
+// is describing a controller that finishes nothing, so it must retire the
+// descriptors too.
+static void RetireDescriptors(ASFW::Isoch::IsochTransmitContext& context,
+                              uint64_t firstAbs, uint32_t count) {
+    auto& slab = context.RingForTesting().Slab();
+    // The last completion is retained as the continuation anchor.
+    for (uint32_t i = 0; i <= count; ++i) {
+        const uint32_t slot =
+            static_cast<uint32_t>((firstAbs + i) % Layout::kNumPackets);
+        auto* completion = slab.GetDescriptorPtr(
+            slot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        completion->statusWord =
+            (0x0011u << 16) | (completion->statusWord & 0xFFFFu);
+    }
+}
+
 class RecordingReceiveConsumer final : public ASFW::Isoch::IIsochReceiveConsumer {
   public:
     void OnReceiveActivated() noexcept override { ++activated; }
@@ -202,6 +220,7 @@ TEST_F(IsochTransmitProgressIntegrationTest,
             kCompleted * Layout::kBlocksPerPacket *
                 Layout::kDescriptorStride |
             Layout::kBlocksPerPacket);
+    RetireDescriptors(*context_, 0, kCompleted);
 
     context_->HandleInterrupt();
     EXPECT_EQ(context_->GetState(), ASFW::Isoch::ITState::Running);
@@ -284,6 +303,7 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
     const uint32_t nextCommandPtr =
         descriptorBase + completedPackets * Layout::kBlocksPerPacket * Layout::kDescriptorStride;
     hardware.SetTestRegister(commandPtrRegister, nextCommandPtr | Layout::kBlocksPerPacket);
+    RetireDescriptors(*context, 0, completedPackets);
 
     context->HandleInterrupt();
 

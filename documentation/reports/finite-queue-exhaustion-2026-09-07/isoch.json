@@ -1,0 +1,1824 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 1411,\n    \"nextSequence\" : 1311,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 200,\n    \"records\" : [\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=55440 busy=0 packets=209110 progressAgeUs=70 cmd=0x803b1c61 ctrl=0x40008451 intEvent=0x00100040 txEvent=0x00000001 rxEvent=0x00000000 cycle=0x489f562e\",\n        \"sequence\" : 964,\n        \"timestampNs\" : 746120379805541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=20972 irq=34804 ret=209039 committed=209159 progressAgeUs=473 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=0\",\n        \"sequence\" : 965,\n        \"timestampNs\" : 746120381063291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42\",\n        \"sequence\" : 966,\n        \"timestampNs\" : 746120381070000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=58096 busy=0 packets=219156 progressAgeUs=93 cmd=0x803b1a41 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4b1f39a9\",\n        \"sequence\" : 969,\n        \"timestampNs\" : 746121635548375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=21972 irq=36478 ret=219083 committed=219203 progressAgeUs=761 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=0\",\n        \"sequence\" : 970,\n        \"timestampNs\" : 746121636808750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42\",\n        \"sequence\" : 971,\n        \"timestampNs\" : 746121636815458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=60735 busy=0 packets=229074 progressAgeUs=84 cmd=0x803b1021 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4d971745\",\n        \"sequence\" : 977,\n        \"timestampNs\" : 746122875230208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=22972 irq=38131 ret=229001 committed=229121 progressAgeUs=750 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=0\",\n        \"sequence\" : 978,\n        \"timestampNs\" : 746122876474875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42\",\n        \"sequence\" : 979,\n        \"timestampNs\" : 746122876481083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=63392 busy=0 packets=239078 progressAgeUs=35 cmd=0x803b0b61 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x502053dc\",\n        \"sequence\" : 990,\n        \"timestampNs\" : 746124125650250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=23972 irq=39799 ret=239009 committed=239126 progressAgeUs=185 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=0\",\n        \"sequence\" : 991,\n        \"timestampNs\" : 746124126893875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42\",\n        \"sequence\" : 992,\n        \"timestampNs\" : 746124126898375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=66045 busy=0 packets=249132 progressAgeUs=79 cmd=0x803b09c1 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x52a0b667\",\n        \"sequence\" : 1008,\n        \"timestampNs\" : 746125382383958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=24972 irq=41468 ret=249059 committed=249179 progressAgeUs=755 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=0\",\n        \"sequence\" : 1009,\n        \"timestampNs\" : 746125383640458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42\",\n        \"sequence\" : 1010,\n        \"timestampNs\" : 746125383646750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=68695 busy=0 packets=259124 progressAgeUs=27 cmd=0x803b0441 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x551d3ae7\",\n        \"sequence\" : 1020,\n        \"timestampNs\" : 746126631387791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=25972 irq=43134 ret=259055 committed=259175 progressAgeUs=319 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=0\",\n        \"sequence\" : 1021,\n        \"timestampNs\" : 746126632693208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42\",\n        \"sequence\" : 1022,\n        \"timestampNs\" : 746126632696625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Refill failed reason=mapped-region-exhausted ctrl=0x00008011 streamStatus=1 cmdPtr=0x802885b0 cmdAddr=0x802885b0 hwPacket=22 fatalAbs=268295 fatalSlot=0 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x000000\",\n        \"sequence\" : 1025,\n        \"timestampNs\" : 746127787971333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL STOP: RUN cleared and interrupt masked\",\n        \"sequence\" : 1026,\n        \"timestampNs\" : 746127788025000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] Stop: Disabled IR interrupt for context 0. Stats: 268475 pkts polls=71147 busy=0\",\n        \"sequence\" : 1044,\n        \"timestampNs\" : 746127809366083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [RxDrain] eligible=0 running=0 verbosity=1\",\n        \"sequence\" : 1045,\n        \"timestampNs\" : 746127809392250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Prepared IR on channel 1\",\n        \"sequence\" : 1093,\n        \"timestampNs\" : 746127855077375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Configured ch=0 sid=0\",\n        \"sequence\" : 1094,\n        \"timestampNs\" : 746127855099625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Payload DMA mapped bytes=24192 segments=1\",\n        \"sequence\" : 1095,\n        \"timestampNs\" : 746127855261708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Payload DMA segment[0] slabOffset=0 iova=0x805bc000 length=24192\",\n        \"sequence\" : 1096,\n        \"timestampNs\" : 746127855275833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Mapped shared memory. payloadSegments=1 metadataRing=0x102110000 controlBlock=0x102e44000 slots=168 maxBytes=72\",\n        \"sequence\" : 1097,\n        \"timestampNs\" : 746127855320250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Prepared IT on channel 0\",\n        \"sequence\" : 1098,\n        \"timestampNs\" : 746127855336291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Starting prepared IR\",\n        \"sequence\" : 1100,\n        \"timestampNs\" : 746127876605416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] Start: Enabled IR interrupt for context 0 (mask=0x00000001) scheduled=0 timer=0x00000000\",\n        \"sequence\" : 1101,\n        \"timestampNs\" : 746127876618416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [RxDrain] eligible=1 running=1 verbosity=1\",\n        \"sequence\" : 1111,\n        \"timestampNs\" : 746127877398958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Starting prepared IT\",\n        \"sequence\" : 1125,\n        \"timestampNs\" : 746127887874125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Cycle tracking seeded: currentCycle=6616 nextTxCycle=6620\",\n        \"sequence\" : 1126,\n        \"timestampNs\" : 746127887897958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Starting transmit context\",\n        \"sequence\" : 1127,\n        \"timestampNs\" : 746127887905166\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Dynamic descriptor ring primed. numPackets=48 softwareFillIdx=48\",\n        \"sequence\" : 1128,\n        \"timestampNs\" : 746127887963250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Writing CommandPtr=0x80288004 (Z=4)\",\n        \"sequence\" : 1129,\n        \"timestampNs\" : 746127887969875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Enabled IT interrupt for context 0\",\n        \"sequence\" : 1130,\n        \"timestampNs\" : 746127887975958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Readback Cmd=0x80288004 Ctl=0x00008411 (run=1 active=1 dead=0 evt=0x11)\",\n        \"sequence\" : 1131,\n        \"timestampNs\" : 746127887995125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Started successfully\",\n        \"sequence\" : 1132,\n        \"timestampNs\" : 746127888007500\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=4\",\n        \"sequence\" : 1142,\n        \"timestampNs\" : 746127888666833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=5\",\n        \"sequence\" : 1147,\n        \"timestampNs\" : 746127889257708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=6\",\n        \"sequence\" : 1153,\n        \"timestampNs\" : 746127890301541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=31 busy=0 packets=113 progressAgeUs=54 cmd=0x803b0711 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x579fd00b\",\n        \"sequence\" : 1154,\n        \"timestampNs\" : 746127892479250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=0\\/64 ep=1 src=1 event=17907065635217 before=17907065635229 after=17907065635316\",\n        \"sequence\" : 1155,\n        \"timestampNs\" : 746127893689291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=0 cycle=5750f70a prev=575097e5 cmd=80288904 ctrl=00008411 slots=30\\/36 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1156,\n        \"timestampNs\" : 746127893717250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=0 completed=267869 mapped=267917 committed=267989 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1157,\n        \"timestampNs\" : 746127894045125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=1\\/64 ep=1 src=1 event=17907065653596 before=17907065653607 after=17907065653689\",\n        \"sequence\" : 1158,\n        \"timestampNs\" : 746127894055791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=1 cycle=57515889 prev=5750f70a cmd=80288a84 ctrl=00008411 slots=36\\/42 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1159,\n        \"timestampNs\" : 746127894065666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=1 completed=267875 mapped=267923 committed=267995 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1160,\n        \"timestampNs\" : 746127894076416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=2\\/64 ep=1 src=1 event=17907065671239 before=17907065671246 after=17907065671326\",\n        \"sequence\" : 1161,\n        \"timestampNs\" : 746127894085583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=2 cycle=5751b717 prev=57515889 cmd=80288004 ctrl=00008411 slots=42\\/0 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1162,\n        \"timestampNs\" : 746127894094083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=2 completed=267881 mapped=267929 committed=268001 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1163,\n        \"timestampNs\" : 746127894104000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=3\\/64 ep=1 src=1 event=17907065690872 before=17907065690882 after=17907065690966\",\n        \"sequence\" : 1164,\n        \"timestampNs\" : 746127894112333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=3 cycle=575221a6 prev=5751b717 cmd=802881c4 ctrl=00008411 slots=0\\/7 delta=7 fill=7 flags=1 fail=0\",\n        \"sequence\" : 1165,\n        \"timestampNs\" : 746127894120083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=3 completed=267887 mapped=267935 committed=268007 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1166,\n        \"timestampNs\" : 746127894129375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=4\\/64 ep=1 src=1 event=17907065707094 before=17907065707104 after=17907065707334\",\n        \"sequence\" : 1167,\n        \"timestampNs\" : 746127894141291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=4 cycle=57527688 prev=575221a6 cmd=80288304 ctrl=00008411 slots=7\\/12 delta=5 fill=5 flags=1 fail=0\",\n        \"sequence\" : 1168,\n        \"timestampNs\" : 746127894149083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=4 completed=267894 mapped=267942 committed=268014 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1169,\n        \"timestampNs\" : 746127894158333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=5\\/64 ep=1 src=1 event=17907065725370 before=17907065725380 after=17907065725462\",\n        \"sequence\" : 1170,\n        \"timestampNs\" : 746127894166250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=5 cycle=5752d7a3 prev=57527688 cmd=80288484 ctrl=00008411 slots=12\\/18 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1171,\n        \"timestampNs\" : 746127894173875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=5 completed=267899 mapped=267947 committed=268019 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1172,\n        \"timestampNs\" : 746127894183000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=6\\/64 ep=1 src=1 event=17907065743087 before=17907065743098 after=17907065743182\",\n        \"sequence\" : 1173,\n        \"timestampNs\" : 746127894190791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=6 cycle=57533684 prev=5752d7a3 cmd=80288604 ctrl=00008411 slots=18\\/24 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1174,\n        \"timestampNs\" : 746127894198583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=6 completed=267905 mapped=267953 committed=268025 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1175,\n        \"timestampNs\" : 746127894207791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=7\\/64 ep=1 src=1 event=17907065761212 before=17907065761222 after=17907065761304\",\n        \"sequence\" : 1176,\n        \"timestampNs\" : 746127894215625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=7 cycle=57539703 prev=57533684 cmd=80288784 ctrl=00008411 slots=24\\/30 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1177,\n        \"timestampNs\" : 746127894223291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=7 completed=267911 mapped=267959 committed=268031 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1178,\n        \"timestampNs\" : 746127894232375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=8\\/64 ep=1 src=1 event=17907065780992 before=17907065781002 after=17907065781086\",\n        \"sequence\" : 1179,\n        \"timestampNs\" : 746127894240208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=8 cycle=57540224 prev=57539703 cmd=80288944 ctrl=00008411 slots=30\\/37 delta=7 fill=7 flags=1 fail=0\",\n        \"sequence\" : 1180,\n        \"timestampNs\" : 746127894247791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=8 completed=267917 mapped=267965 committed=268037 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1181,\n        \"timestampNs\" : 746127894267083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=9\\/64 ep=1 src=1 event=17907065797222 before=17907065797233 after=17907065797315\",\n        \"sequence\" : 1182,\n        \"timestampNs\" : 746127894275000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=9 cycle=5754570f prev=57540224 cmd=80288a84 ctrl=00008411 slots=37\\/42 delta=5 fill=5 flags=1 fail=0\",\n        \"sequence\" : 1183,\n        \"timestampNs\" : 746127894282625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=9 completed=267924 mapped=267972 committed=268044 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1184,\n        \"timestampNs\" : 746127894291750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=10\\/64 ep=1 src=1 event=17907065815234 before=17907065815245 after=17907065815327\",\n        \"sequence\" : 1185,\n        \"timestampNs\" : 746127894299458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=10 cycle=5754b71c prev=5754570f cmd=80288004 ctrl=00008411 slots=42\\/0 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1186,\n        \"timestampNs\" : 746127894307208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=10 completed=267929 mapped=267977 committed=268049 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1187,\n        \"timestampNs\" : 746127894316375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=11\\/64 ep=1 src=1 event=17907065833102 before=17907065833113 after=17907065833194\",\n        \"sequence\" : 1188,\n        \"timestampNs\" : 746127894324291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=11 cycle=57551695 prev=5754b71c cmd=80288184 ctrl=00008411 slots=0\\/6 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1189,\n        \"timestampNs\" : 746127894332000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=11 completed=267935 mapped=267983 committed=268055 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1190,\n        \"timestampNs\" : 746127894341083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=12\\/64 ep=1 src=1 event=17907065851015 before=17907065851026 after=17907065851111\",\n        \"sequence\" : 1191,\n        \"timestampNs\" : 746127894348916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=12 cycle=57557640 prev=57551695 cmd=80288304 ctrl=00008411 slots=6\\/12 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1192,\n        \"timestampNs\" : 746127894357041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=12 completed=267941 mapped=267989 committed=268061 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1193,\n        \"timestampNs\" : 746127894366208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=13\\/64 ep=1 src=1 event=17907065870220 before=17907065870231 after=17907065870313\",\n        \"sequence\" : 1194,\n        \"timestampNs\" : 746127894373916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=13 cycle=5755db0e prev=57557640 cmd=80288484 ctrl=00008411 slots=12\\/18 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1195,\n        \"timestampNs\" : 746127894381625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=13 completed=267947 mapped=267995 committed=268067 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1196,\n        \"timestampNs\" : 746127894394333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=14\\/64 ep=1 src=1 event=17907065887305 before=17907065887315 after=17907065887396\",\n        \"sequence\" : 1197,\n        \"timestampNs\" : 746127894402250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=14 cycle=57563764 prev=5755db0e cmd=80288604 ctrl=00008411 slots=18\\/24 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1198,\n        \"timestampNs\" : 746127894409958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=14 completed=267953 mapped=268001 committed=268073 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1199,\n        \"timestampNs\" : 746127894419625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=15\\/64 ep=1 src=1 event=17907065905192 before=17907065905201 after=17907065905284\",\n        \"sequence\" : 1200,\n        \"timestampNs\" : 746127894427333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=15 cycle=575696f2 prev=57563764 cmd=80288784 ctrl=00008411 slots=24\\/30 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1201,\n        \"timestampNs\" : 746127894435291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=15 completed=267959 mapped=268007 committed=268079 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1202,\n        \"timestampNs\" : 746127894445250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=16\\/64 ep=1 src=1 event=17907065923231 before=17907065923242 after=17907065923326\",\n        \"sequence\" : 1203,\n        \"timestampNs\" : 746127894452916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=16 cycle=5756f71d prev=575696f2 cmd=80288904 ctrl=00008411 slots=30\\/36 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1204,\n        \"timestampNs\" : 746127894460583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=16 completed=267965 mapped=268013 committed=268085 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1205,\n        \"timestampNs\" : 746127894469708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=17\\/64 ep=1 src=1 event=17907065941425 before=17907065941434 after=17907065941516\",\n        \"sequence\" : 1206,\n        \"timestampNs\" : 746127894477333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=17 cycle=575757e0 prev=5756f71d cmd=80288a84 ctrl=00008411 slots=36\\/42 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1207,\n        \"timestampNs\" : 746127894485041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=17 completed=267971 mapped=268019 committed=268091 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1208,\n        \"timestampNs\" : 746127894494125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=18\\/64 ep=1 src=1 event=17907065960905 before=17907065960914 after=17907065961002\",\n        \"sequence\" : 1209,\n        \"timestampNs\" : 746127894502000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=18 cycle=5757c1d4 prev=575757e0 cmd=80288044 ctrl=00008411 slots=42\\/1 delta=7 fill=7 flags=1 fail=0\",\n        \"sequence\" : 1210,\n        \"timestampNs\" : 746127894509750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=18 completed=267977 mapped=268025 committed=268097 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1211,\n        \"timestampNs\" : 746127894518666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=19\\/64 ep=1 src=1 event=17907065977814 before=17907065977824 after=17907065977907\",\n        \"sequence\" : 1212,\n        \"timestampNs\" : 746127894526291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=19 cycle=57581972 prev=5757c1d4 cmd=80288184 ctrl=00008411 slots=1\\/6 delta=5 fill=5 flags=1 fail=0\",\n        \"sequence\" : 1213,\n        \"timestampNs\" : 746127894533958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=19 completed=267984 mapped=268032 committed=268104 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1214,\n        \"timestampNs\" : 746127894542833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=20\\/64 ep=1 src=1 event=17907065995669 before=17907065995680 after=17907065995766\",\n        \"sequence\" : 1215,\n        \"timestampNs\" : 746127894550375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=20 cycle=575878e4 prev=57581972 cmd=80288304 ctrl=00008411 slots=6\\/12 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1216,\n        \"timestampNs\" : 746127894558000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=20 completed=267989 mapped=268037 committed=268109 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1217,\n        \"timestampNs\" : 746127894567208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=21\\/64 ep=1 src=1 event=17907066013265 before=17907066013279 after=17907066013361\",\n        \"sequence\" : 1218,\n        \"timestampNs\" : 746127894574750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=21 cycle=5758d745 prev=575878e4 cmd=80288484 ctrl=00008411 slots=12\\/18 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1219,\n        \"timestampNs\" : 746127894582291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=21 completed=267995 mapped=268043 committed=268115 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1220,\n        \"timestampNs\" : 746127894591250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=22\\/64 ep=1 src=1 event=17907066031200 before=17907066031214 after=17907066031298\",\n        \"sequence\" : 1221,\n        \"timestampNs\" : 746127894598791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=22 cycle=57593706 prev=5758d745 cmd=80288604 ctrl=00008411 slots=18\\/24 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1222,\n        \"timestampNs\" : 746127894606500\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=22 completed=268001 mapped=268049 committed=268121 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1223,\n        \"timestampNs\" : 746127894615666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=23\\/64 ep=1 src=1 event=17907066051225 before=17907066051240 after=17907066051325\",\n        \"sequence\" : 1224,\n        \"timestampNs\" : 746127894623291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=23 cycle=5759a322 prev=57593706 cmd=802887c4 ctrl=00008411 slots=24\\/31 delta=7 fill=7 flags=1 fail=0\",\n        \"sequence\" : 1225,\n        \"timestampNs\" : 746127894630916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=23 completed=268007 mapped=268055 committed=268127 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1226,\n        \"timestampNs\" : 746127894639958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=24\\/64 ep=1 src=1 event=17907066067219 before=17907066067227 after=17907066067308\",\n        \"sequence\" : 1227,\n        \"timestampNs\" : 746127894647458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=24 cycle=5759f711 prev=5759a322 cmd=80288904 ctrl=00008411 slots=31\\/36 delta=5 fill=5 flags=1 fail=0\",\n        \"sequence\" : 1228,\n        \"timestampNs\" : 746127894655041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=24 completed=268014 mapped=268062 committed=268134 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1229,\n        \"timestampNs\" : 746127894664541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=25\\/64 ep=1 src=1 event=17907066084971 before=17907066084984 after=17907066085073\",\n        \"sequence\" : 1230,\n        \"timestampNs\" : 746127894672166\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=25 cycle=575a5621 prev=5759f711 cmd=80288a84 ctrl=00008411 slots=36\\/42 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1231,\n        \"timestampNs\" : 746127894679791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=25 completed=268019 mapped=268067 committed=268139 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1232,\n        \"timestampNs\" : 746127894689500\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=26\\/64 ep=1 src=1 event=17907066103074 before=17907066103085 after=17907066103169\",\n        \"sequence\" : 1233,\n        \"timestampNs\" : 746127894697125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=26 cycle=575ab685 prev=575a5621 cmd=80288004 ctrl=00008411 slots=42\\/0 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1234,\n        \"timestampNs\" : 746127894704625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=26 completed=268025 mapped=268073 committed=268145 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1235,\n        \"timestampNs\" : 746127894713541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=27\\/64 ep=1 src=1 event=17907066120763 before=17907066120774 after=17907066120854\",\n        \"sequence\" : 1236,\n        \"timestampNs\" : 746127894721125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=27 cycle=575b1543 prev=575ab685 cmd=80288184 ctrl=00008411 slots=0\\/6 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1237,\n        \"timestampNs\" : 746127894728708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=27 completed=268031 mapped=268079 committed=268151 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1238,\n        \"timestampNs\" : 746127894737625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=28\\/64 ep=1 src=1 event=17907066139094 before=17907066139102 after=17907066139186\",\n        \"sequence\" : 1239,\n        \"timestampNs\" : 746127894745250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=28 cycle=575b7696 prev=575b1543 cmd=80288304 ctrl=00008411 slots=6\\/12 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1240,\n        \"timestampNs\" : 746127894752833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=28 completed=268037 mapped=268085 committed=268157 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1241,\n        \"timestampNs\" : 746127894761833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=29\\/64 ep=1 src=1 event=17907066156932 before=17907066156939 after=17907066157020\",\n        \"sequence\" : 1242,\n        \"timestampNs\" : 746127894769875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=29 cycle=575bd5ed prev=575b7696 cmd=80288484 ctrl=00008411 slots=12\\/18 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1243,\n        \"timestampNs\" : 746127894783791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=29 completed=268043 mapped=268091 committed=268163 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1244,\n        \"timestampNs\" : 746127894796083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=30\\/64 ep=1 src=1 event=17907066174836 before=17907066174844 after=17907066174924\",\n        \"sequence\" : 1245,\n        \"timestampNs\" : 746127894803750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=30 cycle=575c358d prev=575bd5ed cmd=80288604 ctrl=00008411 slots=18\\/24 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1246,\n        \"timestampNs\" : 746127894811333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=30 completed=268049 mapped=268097 committed=268169 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1247,\n        \"timestampNs\" : 746127894820250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=31\\/64 ep=1 src=1 event=17907066192718 before=17907066192729 after=17907066192810\",\n        \"sequence\" : 1248,\n        \"timestampNs\" : 746127894827875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=31 cycle=575c9519 prev=575c358d cmd=80288784 ctrl=00008411 slots=24\\/30 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1249,\n        \"timestampNs\" : 746127894835625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=31 completed=268055 mapped=268103 committed=268175 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1250,\n        \"timestampNs\" : 746127894844625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=32\\/64 ep=1 src=1 event=17907066210847 before=17907066210854 after=17907066210933\",\n        \"sequence\" : 1251,\n        \"timestampNs\" : 746127894852250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=32 cycle=575cf597 prev=575c9519 cmd=80288904 ctrl=00008411 slots=30\\/36 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1252,\n        \"timestampNs\" : 746127894859833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=32 completed=268061 mapped=268109 committed=268181 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1253,\n        \"timestampNs\" : 746127894868791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=33\\/64 ep=1 src=1 event=17907066228800 before=17907066228813 after=17907066228893\",\n        \"sequence\" : 1254,\n        \"timestampNs\" : 746127894876291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=33 cycle=575d556f prev=575cf597 cmd=80288a84 ctrl=00008411 slots=36\\/42 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1255,\n        \"timestampNs\" : 746127894883833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=33 completed=268067 mapped=268115 committed=268187 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1256,\n        \"timestampNs\" : 746127894892833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=34\\/64 ep=1 src=1 event=17907066247080 before=17907066247091 after=17907066247175\",\n        \"sequence\" : 1257,\n        \"timestampNs\" : 746127894900416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=34 cycle=575db690 prev=575d556f cmd=80288004 ctrl=00008411 slots=42\\/0 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1258,\n        \"timestampNs\" : 746127894908000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=34 completed=268073 mapped=268121 committed=268193 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1259,\n        \"timestampNs\" : 746127894916833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=35\\/64 ep=1 src=1 event=17907066264913 before=17907066264926 after=17907066265007\",\n        \"sequence\" : 1260,\n        \"timestampNs\" : 746127894924416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=35 cycle=575e15e4 prev=575db690 cmd=80288184 ctrl=00008411 slots=0\\/6 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1261,\n        \"timestampNs\" : 746127894931916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=35 completed=268079 mapped=268127 committed=268199 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1262,\n        \"timestampNs\" : 746127894940791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=36\\/64 ep=1 src=1 event=17907066282681 before=17907066282692 after=17907066282773\",\n        \"sequence\" : 1263,\n        \"timestampNs\" : 746127894948375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=36 cycle=575e74f6 prev=575e15e4 cmd=80288304 ctrl=00008411 slots=6\\/12 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1264,\n        \"timestampNs\" : 746127894956041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=36 completed=268085 mapped=268133 committed=268205 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1265,\n        \"timestampNs\" : 746127894965041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=37\\/64 ep=1 src=1 event=17907066300803 before=17907066300813 after=17907066300893\",\n        \"sequence\" : 1266,\n        \"timestampNs\" : 746127894972708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=37 cycle=575ed570 prev=575e74f6 cmd=80288484 ctrl=00008411 slots=12\\/18 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1267,\n        \"timestampNs\" : 746127894980708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=37 completed=268091 mapped=268139 committed=268211 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1268,\n        \"timestampNs\" : 746127894989791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=38\\/64 ep=1 src=1 event=17907066318743 before=17907066318753 after=17907066318834\",\n        \"sequence\" : 1269,\n        \"timestampNs\" : 746127894997458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=38 cycle=575f3534 prev=575ed570 cmd=80288604 ctrl=00008411 slots=18\\/24 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1270,\n        \"timestampNs\" : 746127895005083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=38 completed=268097 mapped=268145 committed=268217 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1271,\n        \"timestampNs\" : 746127895014125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=39\\/64 ep=1 src=1 event=17907066336727 before=17907066336734 after=17907066336814\",\n        \"sequence\" : 1272,\n        \"timestampNs\" : 746127895021750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=39 cycle=575f9521 prev=575f3534 cmd=80288784 ctrl=00008411 slots=24\\/30 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1273,\n        \"timestampNs\" : 746127895029333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=39 completed=268103 mapped=268151 committed=268223 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1274,\n        \"timestampNs\" : 746127895038333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=40\\/64 ep=1 src=1 event=17907066355097 before=17907066355106 after=17907066355187\",\n        \"sequence\" : 1275,\n        \"timestampNs\" : 746127895045958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=40 cycle=575ff6a0 prev=575f9521 cmd=80288904 ctrl=00008411 slots=30\\/36 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1276,\n        \"timestampNs\" : 746127895053583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=40 completed=268109 mapped=268157 committed=268229 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1277,\n        \"timestampNs\" : 746127895062541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=41\\/64 ep=1 src=1 event=17907066374667 before=17907066374676 after=17907066374756\",\n        \"sequence\" : 1278,\n        \"timestampNs\" : 746127895070208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=41 cycle=576060e8 prev=575ff6a0 cmd=80288ab0 ctrl=00008411 slots=36\\/42 delta=7 fill=7 flags=1 fail=0\",\n        \"sequence\" : 1279,\n        \"timestampNs\" : 746127895077833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=41 completed=268115 mapped=268163 committed=268235 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1280,\n        \"timestampNs\" : 746127895089416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=42\\/64 ep=1 src=1 event=17907066391312 before=17907066391320 after=17907066391400\",\n        \"sequence\" : 1281,\n        \"timestampNs\" : 746127895099208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=42 cycle=5760b77b prev=576060e8 cmd=80288004 ctrl=00008411 slots=42\\/0 delta=5 fill=5 flags=1 fail=0\",\n        \"sequence\" : 1282,\n        \"timestampNs\" : 746127895108916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=42 completed=268122 mapped=268170 committed=268242 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1283,\n        \"timestampNs\" : 746127895120250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=43\\/64 ep=1 src=1 event=17907066409036 before=17907066409046 after=17907066409130\",\n        \"sequence\" : 1284,\n        \"timestampNs\" : 746127895130000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=43 cycle=57611666 prev=5760b77b cmd=80288184 ctrl=00008411 slots=0\\/6 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1285,\n        \"timestampNs\" : 746127895139583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=43 completed=268127 mapped=268175 committed=268247 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1286,\n        \"timestampNs\" : 746127895150875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=44\\/64 ep=1 src=1 event=17907066427081 before=17907066427090 after=17907066427177\",\n        \"sequence\" : 1287,\n        \"timestampNs\" : 746127895160583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=44 cycle=57617698 prev=57611666 cmd=80288304 ctrl=00008411 slots=6\\/12 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1288,\n        \"timestampNs\" : 746127895170375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=44 completed=268133 mapped=268181 committed=268253 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1289,\n        \"timestampNs\" : 746127895181916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=45\\/64 ep=1 src=1 event=17907066445230 before=17907066445237 after=17907066445321\",\n        \"sequence\" : 1290,\n        \"timestampNs\" : 746127895191750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=45 cycle=5761d72c prev=57617698 cmd=80288484 ctrl=00008411 slots=12\\/18 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1291,\n        \"timestampNs\" : 746127895201625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=45 completed=268139 mapped=268187 committed=268259 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1292,\n        \"timestampNs\" : 746127895214750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=46\\/64 ep=1 src=1 event=17907066463009 before=17907066463017 after=17907066463100\",\n        \"sequence\" : 1293,\n        \"timestampNs\" : 746127895225083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=46 cycle=5762364a prev=5761d72c cmd=80288604 ctrl=00008411 slots=18\\/24 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1294,\n        \"timestampNs\" : 746127895235125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=46 completed=268145 mapped=268193 committed=268265 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1295,\n        \"timestampNs\" : 746127895246833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=47\\/64 ep=1 src=1 event=17907066481033 before=17907066481043 after=17907066481124\",\n        \"sequence\" : 1296,\n        \"timestampNs\" : 746127895256708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=47 cycle=57629664 prev=5762364a cmd=80288784 ctrl=00008411 slots=24\\/30 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1297,\n        \"timestampNs\" : 746127895266541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=47 completed=268151 mapped=268199 committed=268271 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1298,\n        \"timestampNs\" : 746127895278375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=48\\/64 ep=1 src=1 event=17907066499041 before=17907066499048 after=17907066499129\",\n        \"sequence\" : 1299,\n        \"timestampNs\" : 746127895288333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=48 cycle=5762f668 prev=57629664 cmd=80288904 ctrl=00008411 slots=30\\/36 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1300,\n        \"timestampNs\" : 746127895298333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=48 completed=268157 mapped=268205 committed=268277 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1301,\n        \"timestampNs\" : 746127895310166\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=49\\/64 ep=1 src=1 event=17907066517003 before=17907066517011 after=17907066517096\",\n        \"sequence\" : 1302,\n        \"timestampNs\" : 746127895320208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=49 cycle=57635649 prev=5762f668 cmd=80288a84 ctrl=00008411 slots=36\\/42 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1303,\n        \"timestampNs\" : 746127895330125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=49 completed=268163 mapped=268211 committed=268283 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1304,\n        \"timestampNs\" : 746127895341750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=50\\/64 ep=1 src=1 event=17907066534991 before=17907066535002 after=17907066535083\",\n        \"sequence\" : 1305,\n        \"timestampNs\" : 746127895355833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=50 cycle=5763b63b prev=57635649 cmd=80288004 ctrl=00008411 slots=42\\/0 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1306,\n        \"timestampNs\" : 746127895365833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=50 completed=268169 mapped=268217 committed=268289 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1307,\n        \"timestampNs\" : 746127895377416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=51\\/64 ep=1 src=1 event=17907066553200 before=17907066553210 after=17907066553296\",\n        \"sequence\" : 1308,\n        \"timestampNs\" : 746127895387458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=51 cycle=57641716 prev=5763b63b cmd=80288184 ctrl=00008411 slots=0\\/6 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 1309,\n        \"timestampNs\" : 746127895397291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=51 completed=268175 mapped=268223 committed=268295 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 1310,\n        \"timestampNs\" : 746127895408791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=52\\/64 ep=1 src=1 event=17907066571293 before=17907066571305 after=17907066571387\",\n        \"sequence\" : 1311,\n        \"timestampNs\" : 746127895418750\n      }\n    ],\n    \"scannedCount\" : 407\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 1411,
+      "nextSequence": 1311,
+      "oldestSequence": 1,
+      "recordCount": 200,
+      "records": [
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=55440 busy=0 packets=209110 progressAgeUs=70 cmd=0x803b1c61 ctrl=0x40008451 intEvent=0x00100040 txEvent=0x00000001 rxEvent=0x00000000 cycle=0x489f562e",
+          "sequence": 964,
+          "timestampNs": 746120379805541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=20972 irq=34804 ret=209039 committed=209159 progressAgeUs=473 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+          "sequence": 965,
+          "timestampNs": 746120381063291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42",
+          "sequence": 966,
+          "timestampNs": 746120381070000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=58096 busy=0 packets=219156 progressAgeUs=93 cmd=0x803b1a41 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4b1f39a9",
+          "sequence": 969,
+          "timestampNs": 746121635548375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=21972 irq=36478 ret=219083 committed=219203 progressAgeUs=761 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+          "sequence": 970,
+          "timestampNs": 746121636808750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42",
+          "sequence": 971,
+          "timestampNs": 746121636815458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=60735 busy=0 packets=229074 progressAgeUs=84 cmd=0x803b1021 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4d971745",
+          "sequence": 977,
+          "timestampNs": 746122875230208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=22972 irq=38131 ret=229001 committed=229121 progressAgeUs=750 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+          "sequence": 978,
+          "timestampNs": 746122876474875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42",
+          "sequence": 979,
+          "timestampNs": 746122876481083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=63392 busy=0 packets=239078 progressAgeUs=35 cmd=0x803b0b61 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x502053dc",
+          "sequence": 990,
+          "timestampNs": 746124125650250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=23972 irq=39799 ret=239009 committed=239126 progressAgeUs=185 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+          "sequence": 991,
+          "timestampNs": 746124126893875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42",
+          "sequence": 992,
+          "timestampNs": 746124126898375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=66045 busy=0 packets=249132 progressAgeUs=79 cmd=0x803b09c1 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x52a0b667",
+          "sequence": 1008,
+          "timestampNs": 746125382383958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=24972 irq=41468 ret=249059 committed=249179 progressAgeUs=755 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+          "sequence": 1009,
+          "timestampNs": 746125383640458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42",
+          "sequence": 1010,
+          "timestampNs": 746125383646750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=68695 busy=0 packets=259124 progressAgeUs=27 cmd=0x803b0441 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x551d3ae7",
+          "sequence": 1020,
+          "timestampNs": 746126631387791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=25972 irq=43134 ret=259055 committed=259175 progressAgeUs=319 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+          "sequence": 1021,
+          "timestampNs": 746126632693208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42",
+          "sequence": 1022,
+          "timestampNs": 746126632696625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Refill failed reason=mapped-region-exhausted ctrl=0x00008011 streamStatus=1 cmdPtr=0x802885b0 cmdAddr=0x802885b0 hwPacket=22 fatalAbs=268295 fatalSlot=0 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x000000",
+          "sequence": 1025,
+          "timestampNs": 746127787971333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL STOP: RUN cleared and interrupt masked",
+          "sequence": 1026,
+          "timestampNs": 746127788025000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] Stop: Disabled IR interrupt for context 0. Stats: 268475 pkts polls=71147 busy=0",
+          "sequence": 1044,
+          "timestampNs": 746127809366083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [RxDrain] eligible=0 running=0 verbosity=1",
+          "sequence": 1045,
+          "timestampNs": 746127809392250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Prepared IR on channel 1",
+          "sequence": 1093,
+          "timestampNs": 746127855077375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Configured ch=0 sid=0",
+          "sequence": 1094,
+          "timestampNs": 746127855099625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Payload DMA mapped bytes=24192 segments=1",
+          "sequence": 1095,
+          "timestampNs": 746127855261708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Payload DMA segment[0] slabOffset=0 iova=0x805bc000 length=24192",
+          "sequence": 1096,
+          "timestampNs": 746127855275833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Mapped shared memory. payloadSegments=1 metadataRing=0x102110000 controlBlock=0x102e44000 slots=168 maxBytes=72",
+          "sequence": 1097,
+          "timestampNs": 746127855320250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Prepared IT on channel 0",
+          "sequence": 1098,
+          "timestampNs": 746127855336291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Starting prepared IR",
+          "sequence": 1100,
+          "timestampNs": 746127876605416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] Start: Enabled IR interrupt for context 0 (mask=0x00000001) scheduled=0 timer=0x00000000",
+          "sequence": 1101,
+          "timestampNs": 746127876618416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [RxDrain] eligible=1 running=1 verbosity=1",
+          "sequence": 1111,
+          "timestampNs": 746127877398958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Starting prepared IT",
+          "sequence": 1125,
+          "timestampNs": 746127887874125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Cycle tracking seeded: currentCycle=6616 nextTxCycle=6620",
+          "sequence": 1126,
+          "timestampNs": 746127887897958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Starting transmit context",
+          "sequence": 1127,
+          "timestampNs": 746127887905166
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Dynamic descriptor ring primed. numPackets=48 softwareFillIdx=48",
+          "sequence": 1128,
+          "timestampNs": 746127887963250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Writing CommandPtr=0x80288004 (Z=4)",
+          "sequence": 1129,
+          "timestampNs": 746127887969875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Enabled IT interrupt for context 0",
+          "sequence": 1130,
+          "timestampNs": 746127887975958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Readback Cmd=0x80288004 Ctl=0x00008411 (run=1 active=1 dead=0 evt=0x11)",
+          "sequence": 1131,
+          "timestampNs": 746127887995125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Started successfully",
+          "sequence": 1132,
+          "timestampNs": 746127888007500
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=4",
+          "sequence": 1142,
+          "timestampNs": 746127888666833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=5",
+          "sequence": 1147,
+          "timestampNs": 746127889257708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=6",
+          "sequence": 1153,
+          "timestampNs": 746127890301541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=31 busy=0 packets=113 progressAgeUs=54 cmd=0x803b0711 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x579fd00b",
+          "sequence": 1154,
+          "timestampNs": 746127892479250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=0/64 ep=1 src=1 event=17907065635217 before=17907065635229 after=17907065635316",
+          "sequence": 1155,
+          "timestampNs": 746127893689291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=0 cycle=5750f70a prev=575097e5 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1156,
+          "timestampNs": 746127893717250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=0 completed=267869 mapped=267917 committed=267989 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1157,
+          "timestampNs": 746127894045125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=1/64 ep=1 src=1 event=17907065653596 before=17907065653607 after=17907065653689",
+          "sequence": 1158,
+          "timestampNs": 746127894055791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=1 cycle=57515889 prev=5750f70a cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1159,
+          "timestampNs": 746127894065666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=1 completed=267875 mapped=267923 committed=267995 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1160,
+          "timestampNs": 746127894076416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=2/64 ep=1 src=1 event=17907065671239 before=17907065671246 after=17907065671326",
+          "sequence": 1161,
+          "timestampNs": 746127894085583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=2 cycle=5751b717 prev=57515889 cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1162,
+          "timestampNs": 746127894094083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=2 completed=267881 mapped=267929 committed=268001 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1163,
+          "timestampNs": 746127894104000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=3/64 ep=1 src=1 event=17907065690872 before=17907065690882 after=17907065690966",
+          "sequence": 1164,
+          "timestampNs": 746127894112333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=3 cycle=575221a6 prev=5751b717 cmd=802881c4 ctrl=00008411 slots=0/7 delta=7 fill=7 flags=1 fail=0",
+          "sequence": 1165,
+          "timestampNs": 746127894120083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=3 completed=267887 mapped=267935 committed=268007 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1166,
+          "timestampNs": 746127894129375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=4/64 ep=1 src=1 event=17907065707094 before=17907065707104 after=17907065707334",
+          "sequence": 1167,
+          "timestampNs": 746127894141291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=4 cycle=57527688 prev=575221a6 cmd=80288304 ctrl=00008411 slots=7/12 delta=5 fill=5 flags=1 fail=0",
+          "sequence": 1168,
+          "timestampNs": 746127894149083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=4 completed=267894 mapped=267942 committed=268014 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1169,
+          "timestampNs": 746127894158333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=5/64 ep=1 src=1 event=17907065725370 before=17907065725380 after=17907065725462",
+          "sequence": 1170,
+          "timestampNs": 746127894166250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=5 cycle=5752d7a3 prev=57527688 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1171,
+          "timestampNs": 746127894173875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=5 completed=267899 mapped=267947 committed=268019 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1172,
+          "timestampNs": 746127894183000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=6/64 ep=1 src=1 event=17907065743087 before=17907065743098 after=17907065743182",
+          "sequence": 1173,
+          "timestampNs": 746127894190791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=6 cycle=57533684 prev=5752d7a3 cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1174,
+          "timestampNs": 746127894198583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=6 completed=267905 mapped=267953 committed=268025 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1175,
+          "timestampNs": 746127894207791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=7/64 ep=1 src=1 event=17907065761212 before=17907065761222 after=17907065761304",
+          "sequence": 1176,
+          "timestampNs": 746127894215625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=7 cycle=57539703 prev=57533684 cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1177,
+          "timestampNs": 746127894223291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=7 completed=267911 mapped=267959 committed=268031 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1178,
+          "timestampNs": 746127894232375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=8/64 ep=1 src=1 event=17907065780992 before=17907065781002 after=17907065781086",
+          "sequence": 1179,
+          "timestampNs": 746127894240208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=8 cycle=57540224 prev=57539703 cmd=80288944 ctrl=00008411 slots=30/37 delta=7 fill=7 flags=1 fail=0",
+          "sequence": 1180,
+          "timestampNs": 746127894247791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=8 completed=267917 mapped=267965 committed=268037 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1181,
+          "timestampNs": 746127894267083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=9/64 ep=1 src=1 event=17907065797222 before=17907065797233 after=17907065797315",
+          "sequence": 1182,
+          "timestampNs": 746127894275000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=9 cycle=5754570f prev=57540224 cmd=80288a84 ctrl=00008411 slots=37/42 delta=5 fill=5 flags=1 fail=0",
+          "sequence": 1183,
+          "timestampNs": 746127894282625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=9 completed=267924 mapped=267972 committed=268044 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1184,
+          "timestampNs": 746127894291750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=10/64 ep=1 src=1 event=17907065815234 before=17907065815245 after=17907065815327",
+          "sequence": 1185,
+          "timestampNs": 746127894299458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=10 cycle=5754b71c prev=5754570f cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1186,
+          "timestampNs": 746127894307208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=10 completed=267929 mapped=267977 committed=268049 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1187,
+          "timestampNs": 746127894316375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=11/64 ep=1 src=1 event=17907065833102 before=17907065833113 after=17907065833194",
+          "sequence": 1188,
+          "timestampNs": 746127894324291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=11 cycle=57551695 prev=5754b71c cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1189,
+          "timestampNs": 746127894332000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=11 completed=267935 mapped=267983 committed=268055 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1190,
+          "timestampNs": 746127894341083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=12/64 ep=1 src=1 event=17907065851015 before=17907065851026 after=17907065851111",
+          "sequence": 1191,
+          "timestampNs": 746127894348916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=12 cycle=57557640 prev=57551695 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1192,
+          "timestampNs": 746127894357041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=12 completed=267941 mapped=267989 committed=268061 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1193,
+          "timestampNs": 746127894366208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=13/64 ep=1 src=1 event=17907065870220 before=17907065870231 after=17907065870313",
+          "sequence": 1194,
+          "timestampNs": 746127894373916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=13 cycle=5755db0e prev=57557640 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1195,
+          "timestampNs": 746127894381625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=13 completed=267947 mapped=267995 committed=268067 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1196,
+          "timestampNs": 746127894394333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=14/64 ep=1 src=1 event=17907065887305 before=17907065887315 after=17907065887396",
+          "sequence": 1197,
+          "timestampNs": 746127894402250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=14 cycle=57563764 prev=5755db0e cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1198,
+          "timestampNs": 746127894409958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=14 completed=267953 mapped=268001 committed=268073 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1199,
+          "timestampNs": 746127894419625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=15/64 ep=1 src=1 event=17907065905192 before=17907065905201 after=17907065905284",
+          "sequence": 1200,
+          "timestampNs": 746127894427333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=15 cycle=575696f2 prev=57563764 cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1201,
+          "timestampNs": 746127894435291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=15 completed=267959 mapped=268007 committed=268079 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1202,
+          "timestampNs": 746127894445250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=16/64 ep=1 src=1 event=17907065923231 before=17907065923242 after=17907065923326",
+          "sequence": 1203,
+          "timestampNs": 746127894452916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=16 cycle=5756f71d prev=575696f2 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1204,
+          "timestampNs": 746127894460583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=16 completed=267965 mapped=268013 committed=268085 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1205,
+          "timestampNs": 746127894469708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=17/64 ep=1 src=1 event=17907065941425 before=17907065941434 after=17907065941516",
+          "sequence": 1206,
+          "timestampNs": 746127894477333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=17 cycle=575757e0 prev=5756f71d cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1207,
+          "timestampNs": 746127894485041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=17 completed=267971 mapped=268019 committed=268091 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1208,
+          "timestampNs": 746127894494125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=18/64 ep=1 src=1 event=17907065960905 before=17907065960914 after=17907065961002",
+          "sequence": 1209,
+          "timestampNs": 746127894502000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=18 cycle=5757c1d4 prev=575757e0 cmd=80288044 ctrl=00008411 slots=42/1 delta=7 fill=7 flags=1 fail=0",
+          "sequence": 1210,
+          "timestampNs": 746127894509750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=18 completed=267977 mapped=268025 committed=268097 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1211,
+          "timestampNs": 746127894518666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=19/64 ep=1 src=1 event=17907065977814 before=17907065977824 after=17907065977907",
+          "sequence": 1212,
+          "timestampNs": 746127894526291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=19 cycle=57581972 prev=5757c1d4 cmd=80288184 ctrl=00008411 slots=1/6 delta=5 fill=5 flags=1 fail=0",
+          "sequence": 1213,
+          "timestampNs": 746127894533958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=19 completed=267984 mapped=268032 committed=268104 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1214,
+          "timestampNs": 746127894542833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=20/64 ep=1 src=1 event=17907065995669 before=17907065995680 after=17907065995766",
+          "sequence": 1215,
+          "timestampNs": 746127894550375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=20 cycle=575878e4 prev=57581972 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1216,
+          "timestampNs": 746127894558000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=20 completed=267989 mapped=268037 committed=268109 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1217,
+          "timestampNs": 746127894567208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=21/64 ep=1 src=1 event=17907066013265 before=17907066013279 after=17907066013361",
+          "sequence": 1218,
+          "timestampNs": 746127894574750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=21 cycle=5758d745 prev=575878e4 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1219,
+          "timestampNs": 746127894582291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=21 completed=267995 mapped=268043 committed=268115 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1220,
+          "timestampNs": 746127894591250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=22/64 ep=1 src=1 event=17907066031200 before=17907066031214 after=17907066031298",
+          "sequence": 1221,
+          "timestampNs": 746127894598791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=22 cycle=57593706 prev=5758d745 cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1222,
+          "timestampNs": 746127894606500
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=22 completed=268001 mapped=268049 committed=268121 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1223,
+          "timestampNs": 746127894615666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=23/64 ep=1 src=1 event=17907066051225 before=17907066051240 after=17907066051325",
+          "sequence": 1224,
+          "timestampNs": 746127894623291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=23 cycle=5759a322 prev=57593706 cmd=802887c4 ctrl=00008411 slots=24/31 delta=7 fill=7 flags=1 fail=0",
+          "sequence": 1225,
+          "timestampNs": 746127894630916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=23 completed=268007 mapped=268055 committed=268127 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1226,
+          "timestampNs": 746127894639958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=24/64 ep=1 src=1 event=17907066067219 before=17907066067227 after=17907066067308",
+          "sequence": 1227,
+          "timestampNs": 746127894647458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=24 cycle=5759f711 prev=5759a322 cmd=80288904 ctrl=00008411 slots=31/36 delta=5 fill=5 flags=1 fail=0",
+          "sequence": 1228,
+          "timestampNs": 746127894655041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=24 completed=268014 mapped=268062 committed=268134 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1229,
+          "timestampNs": 746127894664541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=25/64 ep=1 src=1 event=17907066084971 before=17907066084984 after=17907066085073",
+          "sequence": 1230,
+          "timestampNs": 746127894672166
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=25 cycle=575a5621 prev=5759f711 cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1231,
+          "timestampNs": 746127894679791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=25 completed=268019 mapped=268067 committed=268139 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1232,
+          "timestampNs": 746127894689500
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=26/64 ep=1 src=1 event=17907066103074 before=17907066103085 after=17907066103169",
+          "sequence": 1233,
+          "timestampNs": 746127894697125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=26 cycle=575ab685 prev=575a5621 cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1234,
+          "timestampNs": 746127894704625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=26 completed=268025 mapped=268073 committed=268145 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1235,
+          "timestampNs": 746127894713541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=27/64 ep=1 src=1 event=17907066120763 before=17907066120774 after=17907066120854",
+          "sequence": 1236,
+          "timestampNs": 746127894721125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=27 cycle=575b1543 prev=575ab685 cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1237,
+          "timestampNs": 746127894728708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=27 completed=268031 mapped=268079 committed=268151 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1238,
+          "timestampNs": 746127894737625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=28/64 ep=1 src=1 event=17907066139094 before=17907066139102 after=17907066139186",
+          "sequence": 1239,
+          "timestampNs": 746127894745250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=28 cycle=575b7696 prev=575b1543 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1240,
+          "timestampNs": 746127894752833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=28 completed=268037 mapped=268085 committed=268157 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1241,
+          "timestampNs": 746127894761833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=29/64 ep=1 src=1 event=17907066156932 before=17907066156939 after=17907066157020",
+          "sequence": 1242,
+          "timestampNs": 746127894769875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=29 cycle=575bd5ed prev=575b7696 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1243,
+          "timestampNs": 746127894783791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=29 completed=268043 mapped=268091 committed=268163 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1244,
+          "timestampNs": 746127894796083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=30/64 ep=1 src=1 event=17907066174836 before=17907066174844 after=17907066174924",
+          "sequence": 1245,
+          "timestampNs": 746127894803750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=30 cycle=575c358d prev=575bd5ed cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1246,
+          "timestampNs": 746127894811333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=30 completed=268049 mapped=268097 committed=268169 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1247,
+          "timestampNs": 746127894820250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=31/64 ep=1 src=1 event=17907066192718 before=17907066192729 after=17907066192810",
+          "sequence": 1248,
+          "timestampNs": 746127894827875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=31 cycle=575c9519 prev=575c358d cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1249,
+          "timestampNs": 746127894835625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=31 completed=268055 mapped=268103 committed=268175 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1250,
+          "timestampNs": 746127894844625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=32/64 ep=1 src=1 event=17907066210847 before=17907066210854 after=17907066210933",
+          "sequence": 1251,
+          "timestampNs": 746127894852250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=32 cycle=575cf597 prev=575c9519 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1252,
+          "timestampNs": 746127894859833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=32 completed=268061 mapped=268109 committed=268181 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1253,
+          "timestampNs": 746127894868791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=33/64 ep=1 src=1 event=17907066228800 before=17907066228813 after=17907066228893",
+          "sequence": 1254,
+          "timestampNs": 746127894876291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=33 cycle=575d556f prev=575cf597 cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1255,
+          "timestampNs": 746127894883833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=33 completed=268067 mapped=268115 committed=268187 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1256,
+          "timestampNs": 746127894892833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=34/64 ep=1 src=1 event=17907066247080 before=17907066247091 after=17907066247175",
+          "sequence": 1257,
+          "timestampNs": 746127894900416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=34 cycle=575db690 prev=575d556f cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1258,
+          "timestampNs": 746127894908000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=34 completed=268073 mapped=268121 committed=268193 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1259,
+          "timestampNs": 746127894916833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=35/64 ep=1 src=1 event=17907066264913 before=17907066264926 after=17907066265007",
+          "sequence": 1260,
+          "timestampNs": 746127894924416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=35 cycle=575e15e4 prev=575db690 cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1261,
+          "timestampNs": 746127894931916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=35 completed=268079 mapped=268127 committed=268199 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1262,
+          "timestampNs": 746127894940791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=36/64 ep=1 src=1 event=17907066282681 before=17907066282692 after=17907066282773",
+          "sequence": 1263,
+          "timestampNs": 746127894948375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=36 cycle=575e74f6 prev=575e15e4 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1264,
+          "timestampNs": 746127894956041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=36 completed=268085 mapped=268133 committed=268205 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1265,
+          "timestampNs": 746127894965041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=37/64 ep=1 src=1 event=17907066300803 before=17907066300813 after=17907066300893",
+          "sequence": 1266,
+          "timestampNs": 746127894972708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=37 cycle=575ed570 prev=575e74f6 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1267,
+          "timestampNs": 746127894980708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=37 completed=268091 mapped=268139 committed=268211 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1268,
+          "timestampNs": 746127894989791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=38/64 ep=1 src=1 event=17907066318743 before=17907066318753 after=17907066318834",
+          "sequence": 1269,
+          "timestampNs": 746127894997458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=38 cycle=575f3534 prev=575ed570 cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1270,
+          "timestampNs": 746127895005083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=38 completed=268097 mapped=268145 committed=268217 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1271,
+          "timestampNs": 746127895014125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=39/64 ep=1 src=1 event=17907066336727 before=17907066336734 after=17907066336814",
+          "sequence": 1272,
+          "timestampNs": 746127895021750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=39 cycle=575f9521 prev=575f3534 cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1273,
+          "timestampNs": 746127895029333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=39 completed=268103 mapped=268151 committed=268223 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1274,
+          "timestampNs": 746127895038333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=40/64 ep=1 src=1 event=17907066355097 before=17907066355106 after=17907066355187",
+          "sequence": 1275,
+          "timestampNs": 746127895045958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=40 cycle=575ff6a0 prev=575f9521 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1276,
+          "timestampNs": 746127895053583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=40 completed=268109 mapped=268157 committed=268229 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1277,
+          "timestampNs": 746127895062541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=41/64 ep=1 src=1 event=17907066374667 before=17907066374676 after=17907066374756",
+          "sequence": 1278,
+          "timestampNs": 746127895070208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=41 cycle=576060e8 prev=575ff6a0 cmd=80288ab0 ctrl=00008411 slots=36/42 delta=7 fill=7 flags=1 fail=0",
+          "sequence": 1279,
+          "timestampNs": 746127895077833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=41 completed=268115 mapped=268163 committed=268235 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1280,
+          "timestampNs": 746127895089416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=42/64 ep=1 src=1 event=17907066391312 before=17907066391320 after=17907066391400",
+          "sequence": 1281,
+          "timestampNs": 746127895099208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=42 cycle=5760b77b prev=576060e8 cmd=80288004 ctrl=00008411 slots=42/0 delta=5 fill=5 flags=1 fail=0",
+          "sequence": 1282,
+          "timestampNs": 746127895108916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=42 completed=268122 mapped=268170 committed=268242 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1283,
+          "timestampNs": 746127895120250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=43/64 ep=1 src=1 event=17907066409036 before=17907066409046 after=17907066409130",
+          "sequence": 1284,
+          "timestampNs": 746127895130000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=43 cycle=57611666 prev=5760b77b cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1285,
+          "timestampNs": 746127895139583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=43 completed=268127 mapped=268175 committed=268247 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1286,
+          "timestampNs": 746127895150875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=44/64 ep=1 src=1 event=17907066427081 before=17907066427090 after=17907066427177",
+          "sequence": 1287,
+          "timestampNs": 746127895160583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=44 cycle=57617698 prev=57611666 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1288,
+          "timestampNs": 746127895170375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=44 completed=268133 mapped=268181 committed=268253 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1289,
+          "timestampNs": 746127895181916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=45/64 ep=1 src=1 event=17907066445230 before=17907066445237 after=17907066445321",
+          "sequence": 1290,
+          "timestampNs": 746127895191750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=45 cycle=5761d72c prev=57617698 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1291,
+          "timestampNs": 746127895201625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=45 completed=268139 mapped=268187 committed=268259 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1292,
+          "timestampNs": 746127895214750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=46/64 ep=1 src=1 event=17907066463009 before=17907066463017 after=17907066463100",
+          "sequence": 1293,
+          "timestampNs": 746127895225083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=46 cycle=5762364a prev=5761d72c cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1294,
+          "timestampNs": 746127895235125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=46 completed=268145 mapped=268193 committed=268265 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1295,
+          "timestampNs": 746127895246833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=47/64 ep=1 src=1 event=17907066481033 before=17907066481043 after=17907066481124",
+          "sequence": 1296,
+          "timestampNs": 746127895256708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=47 cycle=57629664 prev=5762364a cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1297,
+          "timestampNs": 746127895266541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=47 completed=268151 mapped=268199 committed=268271 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1298,
+          "timestampNs": 746127895278375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=48/64 ep=1 src=1 event=17907066499041 before=17907066499048 after=17907066499129",
+          "sequence": 1299,
+          "timestampNs": 746127895288333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=48 cycle=5762f668 prev=57629664 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1300,
+          "timestampNs": 746127895298333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=48 completed=268157 mapped=268205 committed=268277 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1301,
+          "timestampNs": 746127895310166
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=49/64 ep=1 src=1 event=17907066517003 before=17907066517011 after=17907066517096",
+          "sequence": 1302,
+          "timestampNs": 746127895320208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=49 cycle=57635649 prev=5762f668 cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1303,
+          "timestampNs": 746127895330125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=49 completed=268163 mapped=268211 committed=268283 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1304,
+          "timestampNs": 746127895341750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=50/64 ep=1 src=1 event=17907066534991 before=17907066535002 after=17907066535083",
+          "sequence": 1305,
+          "timestampNs": 746127895355833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=50 cycle=5763b63b prev=57635649 cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1306,
+          "timestampNs": 746127895365833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=50 completed=268169 mapped=268217 committed=268289 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1307,
+          "timestampNs": 746127895377416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=51/64 ep=1 src=1 event=17907066553200 before=17907066553210 after=17907066553296",
+          "sequence": 1308,
+          "timestampNs": 746127895387458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=51 cycle=57641716 prev=5763b63b cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 1309,
+          "timestampNs": 746127895397291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=51 completed=268175 mapped=268223 committed=268295 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 1310,
+          "timestampNs": 746127895408791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=52/64 ep=1 src=1 event=17907066571293 before=17907066571305 after=17907066571387",
+          "sequence": 1311,
+          "timestampNs": 746127895418750
+        }
+      ],
+      "scannedCount": 407
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

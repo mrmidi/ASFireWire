@@ -118,6 +118,13 @@ public:
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
 #ifdef ASFW_HOST_TEST
+    /// Host tests drive the controller by hand. Completion is read from
+    /// OUTPUT_LAST descriptor status, not from the CommandPtr, so a test that
+    /// only moves the pointer is describing a controller that finishes
+    /// nothing. This exposes the ring so a test can write the status hardware
+    /// would have written on its way to that pointer.
+    [[nodiscard]] Tx::IsochTxDmaRing& RingForTesting() noexcept { return ring_; }
+
     void SetProgressThresholdsForTesting(
         Core::IsochProgressThresholds thresholds) noexcept;
 #endif

@@ -1,0 +1,60 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 1399,\n    \"nextSequence\" : 1399,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 4,\n    \"records\" : [\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL STOP: RUN cleared and interrupt masked\",\n        \"sequence\" : 1026,\n        \"timestampNs\" : 746127788025000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL: slot 0 not committed packet=168 commitGen=1 expectedGen=2\",\n        \"sequence\" : 1352,\n        \"timestampNs\" : 746127903809208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL dump: fatalAbs=168 slot=0 expectedGen=2 commitGen=1 slotLastPacketAbs=0 committedEnd=168 completionCursor=125 softwareFillAbs=167 ringPacketsAhead=42 deltaConsumed=6 i=1 numSlots=168 prepReq=1 prepHandled=0 prepAge\",\n        \"sequence\" : 1353,\n        \"timestampNs\" : 746127903834958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL STOP: RUN cleared and interrupt masked\",\n        \"sequence\" : 1355,\n        \"timestampNs\" : 746127903877291\n      }\n    ],\n    \"scannedCount\" : 1399\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 1399,
+      "nextSequence": 1399,
+      "oldestSequence": 1,
+      "recordCount": 4,
+      "records": [
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL STOP: RUN cleared and interrupt masked",
+          "sequence": 1026,
+          "timestampNs": 746127788025000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL: slot 0 not committed packet=168 commitGen=1 expectedGen=2",
+          "sequence": 1352,
+          "timestampNs": 746127903809208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL dump: fatalAbs=168 slot=0 expectedGen=2 commitGen=1 slotLastPacketAbs=0 committedEnd=168 completionCursor=125 softwareFillAbs=167 ringPacketsAhead=42 deltaConsumed=6 i=1 numSlots=168 prepReq=1 prepHandled=0 prepAge",
+          "sequence": 1353,
+          "timestampNs": 746127903834958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL STOP: RUN cleared and interrupt masked",
+          "sequence": 1355,
+          "timestampNs": 746127903877291
+        }
+      ],
+      "scannedCount": 1399
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

@@ -369,11 +369,9 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     access.Write(ctrlSetReg, Driver::ContextControl::kRun);
 
-    // Anchor absolute packet position in cycle time. The CommandPtr can only
-    // ever name a slot within the ring, so the lap has to come from elsewhere;
-    // an IT context transmits one packet per isochronous cycle, which makes
-    // cycles-since-start the packet count. Read immediately after the run bit
-    // so the anchor precedes the first descriptor fetch.
+    // Publish a launch-time observation for diagnostics. Elapsed cycles are an
+    // upper bound on descriptor progress, not an absolute packet identity:
+    // self-linked skips may leave the descriptor unchanged for a cycle.
     if (controlBlock_) {
         controlBlock_->startCycleMatch.store(
             access.Read(Register32::kCycleTimer), std::memory_order_release);
@@ -553,7 +551,7 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         }
         packetsAssembled_ += outcome.packetsFilled;
         if (outcome.packetsFilled > 0) {
-            (void)ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+            (void)ring_.WakeHardware(*hardware_, contextIndex_, true);
         }
         if (outcome.refillRequestGeneration != 0 &&
             txPreparationCallback_) {
@@ -588,7 +586,7 @@ void IsochTransmitContext::ObserveTransportProgress(
     bool wakeSucceeded = false;
     if (decision.requestWake) {
         progressWakeAttempts_.fetch_add(1, std::memory_order_relaxed);
-        wakeSucceeded = ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+        wakeSucceeded = ring_.WakeHardware(*hardware_, contextIndex_);
         if (wakeSucceeded) {
             progressWakeSuccesses_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -909,7 +907,7 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
 
 void IsochTransmitContext::WakeHardware() noexcept {
     if (!hardware_) return;
-    (void)ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+    (void)ring_.WakeHardware(*hardware_, contextIndex_);
 }
 
 void IsochTransmitContext::LogStatistics() const noexcept {
@@ -962,26 +960,17 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     // watchdog line silently truncated lapUnresolvable and maxDelta -- the two
     // fields it had been extended to carry. They are a different subject anyway:
     // the line above answers "is the interrupt path delivering", this one
-    // answers "what did the controller actually complete, and could the cycle
-    // timer adjudicate it".
-    //
-    // lapsRecovered: whole ring laps recovered from the cycle timer. The slot
-    //   difference alone cannot express these; before recovery existed each one
-    //   permanently displaced the completion cursor by a lap. 0 on a healthy run.
-    // lapUnresolvable: observations the cycle timer could not adjudicate, so a
-    //   lap may have been lost uncounted. Non-zero weakens any "no laps" reading.
-    // maxDelta: high-water of a single lap-recovered completion delta. Can now
-    //   exceed the ring; the raw slot difference never could.
-    // All four reset with the stream.
+    // answers how many descriptors were safely retired, and whether the
+    // mapped region exhausted. lapUnresolvable is a retained diagnostic name
+    // for exhausted/invalid-region stops, not a cycle-based lap estimate.
+    // maxDelta excludes the newest completion retained as the continuation
+    // anchor. Both reset with the stream.
     ASFW_LOG_RING_ONLY(
         Isoch,
         ::ASFW::Logging::LogLevel::Notice,
-        "[IsochTxDelta] context=%u lapsRecovered=%llu lapEvents=%llu lapUnresolvable=%llu abandoned=%llu maxDelta=%u",
+        "[IsochTxDelta] context=%u lapUnresolvable=%llu maxDelta=%u",
         contextIndex_,
-        ring_.RTCounters().lapsRecovered.load(std::memory_order_relaxed),
-        ring_.RTCounters().lapRecoveryEvents.load(std::memory_order_relaxed),
         ring_.RTCounters().lapUnresolvable.load(std::memory_order_relaxed),
-        ring_.RTCounters().abandonedOnLap.load(std::memory_order_relaxed),
         ring_.RTCounters().maxDeltaConsumed.load(std::memory_order_relaxed));
 }
 

@@ -49,32 +49,10 @@ public:
         std::atomic<uint64_t> fatalDescriptorBounds{0};
         std::atomic<uint64_t> txUnderruns{0};
 
-        // High-water mark of a single coalesced completion. Content consumers
-        // own the policy that decides whether this is an unsafe cadence.
-        //
-        // This is the *lap-recovered* delta, so it can exceed the ring size.
-        // The raw CommandPtr difference never could -- it is a difference of
-        // two slot indices and is bounded by kNumPackets - 1 by construction --
-        // which is why a "coalesced delta larger than a lap" was undetectable
-        // before the recovery below existed.
+        // High-water of descriptor-status completions in one accepted batch.
         std::atomic<uint32_t> maxDeltaConsumed{0};
 
-        /// Whole ring laps the controller completed between two consecutive
-        /// observations, recovered from the cycle timer. Every lap counted here
-        /// is 288 frames (at 48 kHz) that the naive slot difference would have
-        /// dropped from the completion cursor permanently.
-        std::atomic<uint64_t> lapsRecovered{0};
-        /// Observations that had to be corrected. Distinct from lapsRecovered:
-        /// one observation can lose several laps.
-        std::atomic<uint64_t> lapRecoveryEvents{0};
-        /// Packets skipped by the completion walk because the controller
-        /// lapped the software fill. Their descriptors transmitted stale
-        /// content and their shared slots were recycled before software could
-        /// retire them, so there is nothing left to verify or return.
-        std::atomic<uint64_t> abandonedOnLap{0};
-        /// Observations where the cycle timer could not adjudicate the lap
-        /// (no anchor, or more than the timer's eight-second range apart). The
-        /// naive delta stood; a lap may have been lost unnoticed.
+        // Retained diagnostic name: exhausted/invalid mapped-region stops.
         std::atomic<uint64_t> lapUnresolvable{0};
 
         // DMA ring gap monitoring
@@ -98,6 +76,9 @@ public:
         InvalidPacketSize,
         PayloadMapping,
         PayloadSealMismatch,
+        /// All mapped descriptors finished. The terminal descriptor remains
+        /// the hardware wake anchor; coordinated restart must reclaim it.
+        MappedRegionExhausted,
     };
 
     [[nodiscard]] static const char* RefillFailureReasonName(
@@ -177,8 +158,11 @@ public:
     }
 #endif
 
-    [[nodiscard]] bool WakeHardwareIfIdle(Driver::HardwareInterface& hw,
-                                          uint8_t contextIndex) noexcept;
+    /// A published queue extension always needs WAKE; an idle-only watchdog
+    /// probe uses the default. Never restart a stopped/dead context here.
+    [[nodiscard]] bool WakeHardware(Driver::HardwareInterface& hw,
+                                    uint8_t contextIndex,
+                                    bool queueAppended = false) noexcept;
 
     // Anomaly-only diagnostic read of the OUTPUT_LAST immediately preceding
     // CommandPtr. The returned word is opaque transport completion state.
@@ -197,13 +181,18 @@ public:
     [[nodiscard]] const IsochTxDescriptorSlab& Slab() const noexcept { return slab_; }
 
 private:
-    /// Packets the controller completed since the previous observation.
-    ///
-    /// `nowCycleTimer` is the OHCI cycle timer sampled with `hwPacketIndex`;
-    /// pass 0 when no reading is available, which forfeits lap recovery for
-    /// this observation and counts it as unresolvable.
-    [[nodiscard]] uint32_t ComputeDeltaConsumed(uint32_t hwPacketIndex,
-                                                uint32_t nowCycleTimer) noexcept;
+    /// Packets the controller completed since the previous observation, read
+    /// from OUTPUT_LAST descriptor status rather than derived from the
+    /// CommandPtr. Bounded by `mappedLimit`, the packets currently bound and
+    /// not yet retired: past that frontier a slot still carries the status
+    /// hardware wrote a lap ago. Linux does the same
+    /// (references/linux-ohci-firewire-low-level-stack/ohci.c:2918-2922).
+    [[nodiscard]] uint32_t CountCompletedPackets(uint64_t completedAbsIdx,
+                                                 uint64_t mappedLimit) noexcept;
+    /// Pointer-derived bookkeeping that survives the change: next transmit
+    /// cycle and the fill-ahead gap. Never the completion count.
+    void NoteObservation(uint32_t hwPacketIndex, uint32_t nowCycleTimer,
+                         uint32_t deltaConsumed) noexcept;
     void UpdateGapCounters(uint32_t gap) noexcept;
     void ResyncCycleTracking(Driver::HardwareInterface& hw,
                              uint32_t hwPacketIndex,
@@ -262,13 +251,12 @@ private:
     // Fill-ahead tracking
     uint64_t softwareFillAbsIdx_{0};
     uint32_t lastHwPacketIndex_{0};
-    /// Cycle timer sampled alongside lastHwPacketIndex_. The CommandPtr names a
-    /// slot and cannot carry a lap, so this is what says whether the controller
-    /// advanced 3 packets or 51 between two observations.
+    /// Kept for the flight recorder's per-batch bracket only. Nothing in the
+    /// completion path consults elapsed time any more: the host gap was read by
+    /// the admission gate that the descriptor walk replaced, and a value that is
+    /// written but never read is a trap for the next reader.
     uint32_t lastObservationCycleTimer_{0};
     bool lastObservationCycleTimerValid_{false};
-    /// Whether the one-shot start-lap observation has been taken this stream.
-    bool startLapObserved_{false};
     uint32_t ringPacketsAhead_{0};
 
     // Isoch cycle tracking for packet timing

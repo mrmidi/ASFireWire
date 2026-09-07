@@ -1,0 +1,456 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 1433,\n    \"nextSequence\" : 1433,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 48,\n    \"records\" : [\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery\",\n        \"sequence\" : 1027,\n        \"timestampNs\" : 746127788042500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=1 \u2014 recovering\",\n        \"sequence\" : 1028,\n        \"timestampNs\" : 746127788195375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] DisconnectIPCR entry: instance=1 node=1 gen=4 plug=0\",\n        \"sequence\" : 1030,\n        \"timestampNs\" : 746127788582500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000984 (iPCR0)\",\n        \"sequence\" : 1031,\n        \"timestampNs\" : 746127788613500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x81000000\",\n        \"sequence\" : 1033,\n        \"timestampNs\" : 746127788990833\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000984 expected=0x81000000 desired=0x80000000\",\n        \"sequence\" : 1034,\n        \"timestampNs\" : 746127788994416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x81000000 desired=0x80000000 observed=0x81000000 (MATCH)\",\n        \"sequence\" : 1036,\n        \"timestampNs\" : 746127789580000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] DisconnectOPCR entry: instance=1 node=1 gen=4 plug=0\",\n        \"sequence\" : 1037,\n        \"timestampNs\" : 746127799231083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000904 (oPCR0)\",\n        \"sequence\" : 1038,\n        \"timestampNs\" : 746127799240666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x81018036\",\n        \"sequence\" : 1040,\n        \"timestampNs\" : 746127799610916\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000904 expected=0x81018036 desired=0x80018036\",\n        \"sequence\" : 1041,\n        \"timestampNs\" : 746127799615375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x81018036 desired=0x80018036 observed=0x81018036 (MATCH)\",\n        \"sequence\" : 1043,\n        \"timestampNs\" : 746127800046500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=1 gen=4\",\n        \"sequence\" : 1062,\n        \"timestampNs\" : 746127820786958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1\",\n        \"sequence\" : 1063,\n        \"timestampNs\" : 746127820829000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AUDIO DUPLEX START endpointId=0x0000000000000001 rate=48000 ir=1 it=0 inCh=2 outCh=2 inSlots=2 outSlots=2 rx0=pcm0\\/dbs2@iso1 bw=596 tx0=pcm2\\/dbs2@iso0 bw=596 mode=blocking rxFmt=0 txFmt=0\",\n        \"sequence\" : 1092,\n        \"timestampNs\" : 746127854899750\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] Device clock stable before isoch start rate=48000 status=0x00000000 reads=3\",\n        \"sequence\" : 1099,\n        \"timestampNs\" : 746127876535416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectOPCR entry: instance=1 node=1 gen=4 plug=0 ch=1\",\n        \"sequence\" : 1102,\n        \"timestampNs\" : 746127876652708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Output plug=0 addr=0xf0000900\",\n        \"sequence\" : 1103,\n        \"timestampNs\" : 746127876694500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000900 (other)\",\n        \"sequence\" : 1104,\n        \"timestampNs\" : 746127876711458\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000900 value=0x80ff0001\",\n        \"sequence\" : 1106,\n        \"timestampNs\" : 746127877100666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR DONE: dir=Output plug=0 OK speed=2 plugCount=1\",\n        \"sequence\" : 1107,\n        \"timestampNs\" : 746127877113083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectOPCR ReadMPR done: status=0 speed=2\",\n        \"sequence\" : 1108,\n        \"timestampNs\" : 746127877125500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect entry: dir=Output plug=0 ch=1 attempt=0\",\n        \"sequence\" : 1109,\n        \"timestampNs\" : 746127877136000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000904 (oPCR0)\",\n        \"sequence\" : 1110,\n        \"timestampNs\" : 746127877150791\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x80018036\",\n        \"sequence\" : 1113,\n        \"timestampNs\" : 746127877532250\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: PCR=0x80018036 \u2192 desired=0x81018036 (p2p=1, ch=1)\",\n        \"sequence\" : 1114,\n        \"timestampNs\" : 746127877557541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000904 expected=0x80018036 desired=0x81018036\",\n        \"sequence\" : 1115,\n        \"timestampNs\" : 746127877572958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x80018036 desired=0x81018036 observed=0x80018036 (MATCH)\",\n        \"sequence\" : 1117,\n        \"timestampNs\" : 746127878266666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS\",\n        \"sequence\" : 1118,\n        \"timestampNs\" : 746127878281666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Output plug=0 ch=1\",\n        \"sequence\" : 1119,\n        \"timestampNs\" : 746127878309666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectIPCR entry: instance=1 node=1 gen=4 plug=0 ch=0\",\n        \"sequence\" : 1133,\n        \"timestampNs\" : 746127888024208\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Input plug=0 addr=0xf0000980\",\n        \"sequence\" : 1134,\n        \"timestampNs\" : 746127888048833\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000980 (other)\",\n        \"sequence\" : 1135,\n        \"timestampNs\" : 746127888057958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000980 value=0x80ff0001\",\n        \"sequence\" : 1137,\n        \"timestampNs\" : 746127888377333\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR DONE: dir=Input plug=0 OK speed=2 plugCount=1\",\n        \"sequence\" : 1138,\n        \"timestampNs\" : 746127888384583\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectIPCR ReadMPR done: status=0 speed=2\",\n        \"sequence\" : 1139,\n        \"timestampNs\" : 746127888392041\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect entry: dir=Input plug=0 ch=0 attempt=0\",\n        \"sequence\" : 1140,\n        \"timestampNs\" : 746127888398083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000984 (iPCR0)\",\n        \"sequence\" : 1141,\n        \"timestampNs\" : 746127888406625\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x80000000\",\n        \"sequence\" : 1144,\n        \"timestampNs\" : 746127888768500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: PCR=0x80000000 \u2192 desired=0x81000000 (p2p=1, ch=0)\",\n        \"sequence\" : 1145,\n        \"timestampNs\" : 746127888775916\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000984 expected=0x80000000 desired=0x81000000\",\n        \"sequence\" : 1146,\n        \"timestampNs\" : 746127888783958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x80000000 desired=0x81000000 observed=0x80000000 (MATCH)\",\n        \"sequence\" : 1149,\n        \"timestampNs\" : 746127889363625\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS\",\n        \"sequence\" : 1150,\n        \"timestampNs\" : 746127889372125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Input plug=0 ch=0\",\n        \"sequence\" : 1151,\n        \"timestampNs\" : 746127889378250\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Running phase=Running status=0x00000000 endpoint=1 restartId=2 gen=4\",\n        \"sequence\" : 1351,\n        \"timestampNs\" : 746127899031708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery\",\n        \"sequence\" : 1356,\n        \"timestampNs\" : 746127903884916\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 \u2014 recovering\",\n        \"sequence\" : 1357,\n        \"timestampNs\" : 746127903918875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)\",\n        \"sequence\" : 1358,\n        \"timestampNs\" : 746127903930791\n      }\n    ],\n    \"scannedCount\" : 647\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 1433,
+      "nextSequence": 1433,
+      "oldestSequence": 1,
+      "recordCount": 48,
+      "records": [
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery",
+          "sequence": 1027,
+          "timestampNs": 746127788042500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=1 \u2014 recovering",
+          "sequence": 1028,
+          "timestampNs": 746127788195375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] DisconnectIPCR entry: instance=1 node=1 gen=4 plug=0",
+          "sequence": 1030,
+          "timestampNs": 746127788582500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000984 (iPCR0)",
+          "sequence": 1031,
+          "timestampNs": 746127788613500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x81000000",
+          "sequence": 1033,
+          "timestampNs": 746127788990833
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000984 expected=0x81000000 desired=0x80000000",
+          "sequence": 1034,
+          "timestampNs": 746127788994416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x81000000 desired=0x80000000 observed=0x81000000 (MATCH)",
+          "sequence": 1036,
+          "timestampNs": 746127789580000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] DisconnectOPCR entry: instance=1 node=1 gen=4 plug=0",
+          "sequence": 1037,
+          "timestampNs": 746127799231083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000904 (oPCR0)",
+          "sequence": 1038,
+          "timestampNs": 746127799240666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x81018036",
+          "sequence": 1040,
+          "timestampNs": 746127799610916
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000904 expected=0x81018036 desired=0x80018036",
+          "sequence": 1041,
+          "timestampNs": 746127799615375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x81018036 desired=0x80018036 observed=0x81018036 (MATCH)",
+          "sequence": 1043,
+          "timestampNs": 746127800046500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=1 gen=4",
+          "sequence": 1062,
+          "timestampNs": 746127820786958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1",
+          "sequence": 1063,
+          "timestampNs": 746127820829000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AUDIO DUPLEX START endpointId=0x0000000000000001 rate=48000 ir=1 it=0 inCh=2 outCh=2 inSlots=2 outSlots=2 rx0=pcm0/dbs2@iso1 bw=596 tx0=pcm2/dbs2@iso0 bw=596 mode=blocking rxFmt=0 txFmt=0",
+          "sequence": 1092,
+          "timestampNs": 746127854899750
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] Device clock stable before isoch start rate=48000 status=0x00000000 reads=3",
+          "sequence": 1099,
+          "timestampNs": 746127876535416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectOPCR entry: instance=1 node=1 gen=4 plug=0 ch=1",
+          "sequence": 1102,
+          "timestampNs": 746127876652708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Output plug=0 addr=0xf0000900",
+          "sequence": 1103,
+          "timestampNs": 746127876694500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000900 (other)",
+          "sequence": 1104,
+          "timestampNs": 746127876711458
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000900 value=0x80ff0001",
+          "sequence": 1106,
+          "timestampNs": 746127877100666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR DONE: dir=Output plug=0 OK speed=2 plugCount=1",
+          "sequence": 1107,
+          "timestampNs": 746127877113083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectOPCR ReadMPR done: status=0 speed=2",
+          "sequence": 1108,
+          "timestampNs": 746127877125500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect entry: dir=Output plug=0 ch=1 attempt=0",
+          "sequence": 1109,
+          "timestampNs": 746127877136000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000904 (oPCR0)",
+          "sequence": 1110,
+          "timestampNs": 746127877150791
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x80018036",
+          "sequence": 1113,
+          "timestampNs": 746127877532250
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: PCR=0x80018036 \u2192 desired=0x81018036 (p2p=1, ch=1)",
+          "sequence": 1114,
+          "timestampNs": 746127877557541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000904 expected=0x80018036 desired=0x81018036",
+          "sequence": 1115,
+          "timestampNs": 746127877572958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x80018036 desired=0x81018036 observed=0x80018036 (MATCH)",
+          "sequence": 1117,
+          "timestampNs": 746127878266666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS",
+          "sequence": 1118,
+          "timestampNs": 746127878281666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Output plug=0 ch=1",
+          "sequence": 1119,
+          "timestampNs": 746127878309666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectIPCR entry: instance=1 node=1 gen=4 plug=0 ch=0",
+          "sequence": 1133,
+          "timestampNs": 746127888024208
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Input plug=0 addr=0xf0000980",
+          "sequence": 1134,
+          "timestampNs": 746127888048833
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000980 (other)",
+          "sequence": 1135,
+          "timestampNs": 746127888057958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000980 value=0x80ff0001",
+          "sequence": 1137,
+          "timestampNs": 746127888377333
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR DONE: dir=Input plug=0 OK speed=2 plugCount=1",
+          "sequence": 1138,
+          "timestampNs": 746127888384583
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectIPCR ReadMPR done: status=0 speed=2",
+          "sequence": 1139,
+          "timestampNs": 746127888392041
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect entry: dir=Input plug=0 ch=0 attempt=0",
+          "sequence": 1140,
+          "timestampNs": 746127888398083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000984 (iPCR0)",
+          "sequence": 1141,
+          "timestampNs": 746127888406625
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x80000000",
+          "sequence": 1144,
+          "timestampNs": 746127888768500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: PCR=0x80000000 \u2192 desired=0x81000000 (p2p=1, ch=0)",
+          "sequence": 1145,
+          "timestampNs": 746127888775916
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000984 expected=0x80000000 desired=0x81000000",
+          "sequence": 1146,
+          "timestampNs": 746127888783958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x80000000 desired=0x81000000 observed=0x80000000 (MATCH)",
+          "sequence": 1149,
+          "timestampNs": 746127889363625
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS",
+          "sequence": 1150,
+          "timestampNs": 746127889372125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Input plug=0 ch=0",
+          "sequence": 1151,
+          "timestampNs": 746127889378250
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Running phase=Running status=0x00000000 endpoint=1 restartId=2 gen=4",
+          "sequence": 1351,
+          "timestampNs": 746127899031708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery",
+          "sequence": 1356,
+          "timestampNs": 746127903884916
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 \u2014 recovering",
+          "sequence": 1357,
+          "timestampNs": 746127903918875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)",
+          "sequence": 1358,
+          "timestampNs": 746127903930791
+        }
+      ],
+      "scannedCount": 647
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

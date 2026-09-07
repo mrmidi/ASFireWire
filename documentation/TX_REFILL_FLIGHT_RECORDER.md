@@ -4,6 +4,12 @@ Added after the September 7 [Apple Music failure](reports/rtl-repeat-2026-09-07/
 This is diagnostic capture, not a fix for the lap estimator, retirement identity,
 recovery starvation, or misleading health projection.
 
+**September 7 follow-up:** the [finite-queue ownership repair](TX_FINITE_QUEUE_OWNERSHIP.md)
+replaces inferred progress with safe retirement from descriptor status. The
+recorder's historical `inferredDelta` field now holds the accepted retirement
+count, excluding the retained continuation anchor. The observation-gap trigger
+remains diagnostic; it does not decide whether a descriptor completed.
+
 ## Capture and ownership
 
 Each TX ring owns 64 preallocated 128-byte records (8 KiB payload storage).
@@ -15,10 +21,10 @@ capture completion/committed frontiers; mapped frontier is the writer's local
 software fill index. These fields are observations, not an atomic producer/TX
 transaction. The existing refill gate serializes writers.
 
-The first observed interval >=48 cycles, inferred delta >=48 packets, or refill
+The first observed interval >=48 cycles, completion delta >=48 packets, or refill
 failure after that snapshot freezes the history, including the triggering
 outcome. A 48-cycle interval is an ambiguity trigger, not a declaration of an
-underrun. Flag 1 means previous cycle valid, 2 means inferred delta >=ring,
+underrun. Flag 1 means previous cycle valid, 2 means completion delta >=ring,
 4 means observed cycle gap >=ring. As with the underlying modulo timer, a full
 eight-second alias cannot be detected here from cycle fields alone; host-tick
 history is retained so it can be recognized offline if another trigger fires.
@@ -43,14 +49,14 @@ existing primary watchdog hookup does not automatically enumerate them.
 - A: context, chronological index/count, recorder epoch, source (1 interrupt
   callback, 2 watchdog, 0 unspecified/test), event entry ticks, cycle-read bracket.
 - B: current/previous raw cycle timer, raw CommandPtr/control, previous/current
-  ring slots, inferred completion delta, packets filled, flags and failure enum.
+  ring slots, accepted retirement count, packets filled, flags and failure enum.
 - C: pre-batch completion/mapped/committed frontiers, failed packet identity,
   expected/observed payload seals.
 
 These are callback-level observations, **not physical IRQ arrival timestamps**.
-No descriptor-binding array or new descriptor-status sweep was added. In
-particular, a repeated descriptor's true content identity is still a separate
-correctness repair. The capture can expose a check beyond `mappedBefore`, and
+The recorder itself adds no descriptor-binding array or descriptor-status
+sweep. The completion path now walks status under the finite-queue ownership
+contract linked above. Capture can expose a check beyond `mappedBefore`, and
 separate a delayed observation from its subsequent fatal outcome; by itself it
 cannot prove whether hardware skipped cycles or an interrupt waited upstream.
 

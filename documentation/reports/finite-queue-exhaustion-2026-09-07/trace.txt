@@ -1,0 +1,343 @@
+964 746120379805541 [Isoch] [IsochWatchdog] direction=rx context=0 poll=55440 busy=0 packets=209110 progressAgeUs=70 cmd=0x803b1c61 ctrl=0x40008451 intEvent=0x00100040 txEvent=0x00000001 rxEvent=0x00000000 cycle=0x489f562e
+965 746120381063291 [Isoch] [IsochWatchdog] direction=tx context=0 poll=20972 irq=34804 ret=209039 committed=209159 progressAgeUs=473 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+966 746120381070000 [Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42
+969 746121635548375 [Isoch] [IsochWatchdog] direction=rx context=0 poll=58096 busy=0 packets=219156 progressAgeUs=93 cmd=0x803b1a41 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4b1f39a9
+970 746121636808750 [Isoch] [IsochWatchdog] direction=tx context=0 poll=21972 irq=36478 ret=219083 committed=219203 progressAgeUs=761 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+971 746121636815458 [Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42
+977 746122875230208 [Isoch] [IsochWatchdog] direction=rx context=0 poll=60735 busy=0 packets=229074 progressAgeUs=84 cmd=0x803b1021 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4d971745
+978 746122876474875 [Isoch] [IsochWatchdog] direction=tx context=0 poll=22972 irq=38131 ret=229001 committed=229121 progressAgeUs=750 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+979 746122876481083 [Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42
+990 746124125650250 [Isoch] [IsochWatchdog] direction=rx context=0 poll=63392 busy=0 packets=239078 progressAgeUs=35 cmd=0x803b0b61 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x502053dc
+991 746124126893875 [Isoch] [IsochWatchdog] direction=tx context=0 poll=23972 irq=39799 ret=239009 committed=239126 progressAgeUs=185 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+992 746124126898375 [Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42
+1008 746125382383958 [Isoch] [IsochWatchdog] direction=rx context=0 poll=66045 busy=0 packets=249132 progressAgeUs=79 cmd=0x803b09c1 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x52a0b667
+1009 746125383640458 [Isoch] [IsochWatchdog] direction=tx context=0 poll=24972 irq=41468 ret=249059 committed=249179 progressAgeUs=755 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+1010 746125383646750 [Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42
+1020 746126631387791 [Isoch] [IsochWatchdog] direction=rx context=0 poll=68695 busy=0 packets=259124 progressAgeUs=27 cmd=0x803b0441 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x551d3ae7
+1021 746126632693208 [Isoch] [IsochWatchdog] direction=tx context=0 poll=25972 irq=43134 ret=259055 committed=259175 progressAgeUs=319 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+1022 746126632696625 [Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=42
+1025 746127787971333 [Isoch] IT: Refill failed reason=mapped-region-exhausted ctrl=0x00008011 streamStatus=1 cmdPtr=0x802885b0 cmdAddr=0x802885b0 hwPacket=22 fatalAbs=268295 fatalSlot=0 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x000000
+1026 746127788025000 [Isoch] IT FATAL STOP: RUN cleared and interrupt masked
+1027 746127788042500 [Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 — dispatching recovery
+1028 746127788195375 [Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=1 — recovering
+1030 746127788582500 [Audio] !!! [CMP] DisconnectIPCR entry: instance=1 node=1 gen=4 plug=0
+1031 746127788613500 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000984 (iPCR0)
+1033 746127788990833 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x81000000
+1034 746127788994416 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000984 expected=0x81000000 desired=0x80000000
+1036 746127789580000 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x81000000 desired=0x80000000 observed=0x81000000 (MATCH)
+1037 746127799231083 [Audio] !!! [CMP] DisconnectOPCR entry: instance=1 node=1 gen=4 plug=0
+1038 746127799240666 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000904 (oPCR0)
+1040 746127799610916 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x81018036
+1041 746127799615375 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000904 expected=0x81018036 desired=0x80018036
+1043 746127800046500 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x81018036 desired=0x80018036 observed=0x81018036 (MATCH)
+1044 746127809366083 [Isoch] Stop: Disabled IR interrupt for context 0. Stats: 268475 pkts polls=71147 busy=0
+1045 746127809392250 [Isoch] [RxDrain] eligible=0 running=0 verbosity=1
+1062 746127820786958 [Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=1 gen=4
+1063 746127820829000 [Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1
+1092 746127854899750 [Audio] AUDIO DUPLEX START endpointId=0x0000000000000001 rate=48000 ir=1 it=0 inCh=2 outCh=2 inSlots=2 outSlots=2 rx0=pcm0/dbs2@iso1 bw=596 tx0=pcm2/dbs2@iso0 bw=596 mode=blocking rxFmt=0 txFmt=0
+1093 746127855077375 [Isoch] IsochService: Prepared IR on channel 1
+1094 746127855099625 [Isoch] IT: Configured ch=0 sid=0
+1095 746127855261708 [Isoch] IT: Payload DMA mapped bytes=24192 segments=1
+1096 746127855275833 [Isoch] IT: Payload DMA segment[0] slabOffset=0 iova=0x805bc000 length=24192
+1097 746127855320250 [Isoch] IT: Mapped shared memory. payloadSegments=1 metadataRing=0x102110000 controlBlock=0x102e44000 slots=168 maxBytes=72
+1098 746127855336291 [Isoch] IsochService: Prepared IT on channel 0
+1099 746127876535416 [Audio] Device clock stable before isoch start rate=48000 status=0x00000000 reads=3
+1100 746127876605416 [Isoch] IsochService: Starting prepared IR
+1101 746127876618416 [Isoch] Start: Enabled IR interrupt for context 0 (mask=0x00000001) scheduled=0 timer=0x00000000
+1102 746127876652708 [Audio] !!! [CMP] ConnectOPCR entry: instance=1 node=1 gen=4 plug=0 ch=1
+1103 746127876694500 [Audio] !!! [CMP] ReadMPR SUBMIT: dir=Output plug=0 addr=0xf0000900
+1104 746127876711458 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000900 (other)
+1106 746127877100666 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000900 value=0x80ff0001
+1107 746127877113083 [Audio] !!! [CMP] ReadMPR DONE: dir=Output plug=0 OK speed=2 plugCount=1
+1108 746127877125500 [Audio] !!! [CMP] ConnectOPCR ReadMPR done: status=0 speed=2
+1109 746127877136000 [Audio] !!! [CMP] AttemptConnect entry: dir=Output plug=0 ch=1 attempt=0
+1110 746127877150791 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000904 (oPCR0)
+1111 746127877398958 [Isoch] [RxDrain] eligible=1 running=1 verbosity=1
+1113 746127877532250 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x80018036
+1114 746127877557541 [Audio] !!! [CMP] AttemptConnect: PCR=0x80018036 → desired=0x81018036 (p2p=1, ch=1)
+1115 746127877572958 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000904 expected=0x80018036 desired=0x81018036
+1117 746127878266666 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x80018036 desired=0x81018036 observed=0x80018036 (MATCH)
+1118 746127878281666 [Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS
+1119 746127878309666 [Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Output plug=0 ch=1
+1125 746127887874125 [Isoch] IsochService: Starting prepared IT
+1126 746127887897958 [Isoch] IT: Cycle tracking seeded: currentCycle=6616 nextTxCycle=6620
+1127 746127887905166 [Isoch] IT: Starting transmit context
+1128 746127887963250 [Isoch] IT: Dynamic descriptor ring primed. numPackets=48 softwareFillIdx=48
+1129 746127887969875 [Isoch] IT: Writing CommandPtr=0x80288004 (Z=4)
+1130 746127887975958 [Isoch] IT: Enabled IT interrupt for context 0
+1131 746127887995125 [Isoch] IT: Readback Cmd=0x80288004 Ctl=0x00008411 (run=1 active=1 dead=0 evt=0x11)
+1132 746127888007500 [Isoch] IT: Started successfully
+1133 746127888024208 [Audio] !!! [CMP] ConnectIPCR entry: instance=1 node=1 gen=4 plug=0 ch=0
+1134 746127888048833 [Audio] !!! [CMP] ReadMPR SUBMIT: dir=Input plug=0 addr=0xf0000980
+1135 746127888057958 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000980 (other)
+1137 746127888377333 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000980 value=0x80ff0001
+1138 746127888384583 [Audio] !!! [CMP] ReadMPR DONE: dir=Input plug=0 OK speed=2 plugCount=1
+1139 746127888392041 [Audio] !!! [CMP] ConnectIPCR ReadMPR done: status=0 speed=2
+1140 746127888398083 [Audio] !!! [CMP] AttemptConnect entry: dir=Input plug=0 ch=0 attempt=0
+1141 746127888406625 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=4 node=1 addr=0xf0000984 (iPCR0)
+1142 746127888666833 [Isoch] IT completion delta high-water=4
+1144 746127888768500 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x80000000
+1145 746127888775916 [Audio] !!! [CMP] AttemptConnect: PCR=0x80000000 → desired=0x81000000 (p2p=1, ch=0)
+1146 746127888783958 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=4 node=1 addr=0xf0000984 expected=0x80000000 desired=0x81000000
+1147 746127889257708 [Isoch] IT completion delta high-water=5
+1149 746127889363625 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x80000000 desired=0x81000000 observed=0x80000000 (MATCH)
+1150 746127889372125 [Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS
+1151 746127889378250 [Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Input plug=0 ch=0
+1153 746127890301541 [Isoch] IT completion delta high-water=6
+1154 746127892479250 [Isoch] [IsochWatchdog] direction=rx context=0 poll=31 busy=0 packets=113 progressAgeUs=54 cmd=0x803b0711 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x579fd00b
+1155 746127893689291 [Isoch] [TxFlightA] ctx=0 i=0/64 ep=1 src=1 event=17907065635217 before=17907065635229 after=17907065635316
+1156 746127893717250 [Isoch] [TxFlightB] ctx=0 i=0 cycle=5750f70a prev=575097e5 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0
+1157 746127894045125 [Isoch] [TxFlightC] ctx=0 i=0 completed=267869 mapped=267917 committed=267989 failed=0 seals=0000000000000000/0000000000000000
+1158 746127894055791 [Isoch] [TxFlightA] ctx=0 i=1/64 ep=1 src=1 event=17907065653596 before=17907065653607 after=17907065653689
+1159 746127894065666 [Isoch] [TxFlightB] ctx=0 i=1 cycle=57515889 prev=5750f70a cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0
+1160 746127894076416 [Isoch] [TxFlightC] ctx=0 i=1 completed=267875 mapped=267923 committed=267995 failed=0 seals=0000000000000000/0000000000000000
+1161 746127894085583 [Isoch] [TxFlightA] ctx=0 i=2/64 ep=1 src=1 event=17907065671239 before=17907065671246 after=17907065671326
+1162 746127894094083 [Isoch] [TxFlightB] ctx=0 i=2 cycle=5751b717 prev=57515889 cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0
+1163 746127894104000 [Isoch] [TxFlightC] ctx=0 i=2 completed=267881 mapped=267929 committed=268001 failed=0 seals=0000000000000000/0000000000000000
+1164 746127894112333 [Isoch] [TxFlightA] ctx=0 i=3/64 ep=1 src=1 event=17907065690872 before=17907065690882 after=17907065690966
+1165 746127894120083 [Isoch] [TxFlightB] ctx=0 i=3 cycle=575221a6 prev=5751b717 cmd=802881c4 ctrl=00008411 slots=0/7 delta=7 fill=7 flags=1 fail=0
+1166 746127894129375 [Isoch] [TxFlightC] ctx=0 i=3 completed=267887 mapped=267935 committed=268007 failed=0 seals=0000000000000000/0000000000000000
+1167 746127894141291 [Isoch] [TxFlightA] ctx=0 i=4/64 ep=1 src=1 event=17907065707094 before=17907065707104 after=17907065707334
+1168 746127894149083 [Isoch] [TxFlightB] ctx=0 i=4 cycle=57527688 prev=575221a6 cmd=80288304 ctrl=00008411 slots=7/12 delta=5 fill=5 flags=1 fail=0
+1169 746127894158333 [Isoch] [TxFlightC] ctx=0 i=4 completed=267894 mapped=267942 committed=268014 failed=0 seals=0000000000000000/0000000000000000
+1170 746127894166250 [Isoch] [TxFlightA] ctx=0 i=5/64 ep=1 src=1 event=17907065725370 before=17907065725380 after=17907065725462
+1171 746127894173875 [Isoch] [TxFlightB] ctx=0 i=5 cycle=5752d7a3 prev=57527688 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0
+1172 746127894183000 [Isoch] [TxFlightC] ctx=0 i=5 completed=267899 mapped=267947 committed=268019 failed=0 seals=0000000000000000/0000000000000000
+1173 746127894190791 [Isoch] [TxFlightA] ctx=0 i=6/64 ep=1 src=1 event=17907065743087 before=17907065743098 after=17907065743182
+1174 746127894198583 [Isoch] [TxFlightB] ctx=0 i=6 cycle=57533684 prev=5752d7a3 cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0
+1175 746127894207791 [Isoch] [TxFlightC] ctx=0 i=6 completed=267905 mapped=267953 committed=268025 failed=0 seals=0000000000000000/0000000000000000
+1176 746127894215625 [Isoch] [TxFlightA] ctx=0 i=7/64 ep=1 src=1 event=17907065761212 before=17907065761222 after=17907065761304
+1177 746127894223291 [Isoch] [TxFlightB] ctx=0 i=7 cycle=57539703 prev=57533684 cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0
+1178 746127894232375 [Isoch] [TxFlightC] ctx=0 i=7 completed=267911 mapped=267959 committed=268031 failed=0 seals=0000000000000000/0000000000000000
+1179 746127894240208 [Isoch] [TxFlightA] ctx=0 i=8/64 ep=1 src=1 event=17907065780992 before=17907065781002 after=17907065781086
+1180 746127894247791 [Isoch] [TxFlightB] ctx=0 i=8 cycle=57540224 prev=57539703 cmd=80288944 ctrl=00008411 slots=30/37 delta=7 fill=7 flags=1 fail=0
+1181 746127894267083 [Isoch] [TxFlightC] ctx=0 i=8 completed=267917 mapped=267965 committed=268037 failed=0 seals=0000000000000000/0000000000000000
+1182 746127894275000 [Isoch] [TxFlightA] ctx=0 i=9/64 ep=1 src=1 event=17907065797222 before=17907065797233 after=17907065797315
+1183 746127894282625 [Isoch] [TxFlightB] ctx=0 i=9 cycle=5754570f prev=57540224 cmd=80288a84 ctrl=00008411 slots=37/42 delta=5 fill=5 flags=1 fail=0
+1184 746127894291750 [Isoch] [TxFlightC] ctx=0 i=9 completed=267924 mapped=267972 committed=268044 failed=0 seals=0000000000000000/0000000000000000
+1185 746127894299458 [Isoch] [TxFlightA] ctx=0 i=10/64 ep=1 src=1 event=17907065815234 before=17907065815245 after=17907065815327
+1186 746127894307208 [Isoch] [TxFlightB] ctx=0 i=10 cycle=5754b71c prev=5754570f cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0
+1187 746127894316375 [Isoch] [TxFlightC] ctx=0 i=10 completed=267929 mapped=267977 committed=268049 failed=0 seals=0000000000000000/0000000000000000
+1188 746127894324291 [Isoch] [TxFlightA] ctx=0 i=11/64 ep=1 src=1 event=17907065833102 before=17907065833113 after=17907065833194
+1189 746127894332000 [Isoch] [TxFlightB] ctx=0 i=11 cycle=57551695 prev=5754b71c cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0
+1190 746127894341083 [Isoch] [TxFlightC] ctx=0 i=11 completed=267935 mapped=267983 committed=268055 failed=0 seals=0000000000000000/0000000000000000
+1191 746127894348916 [Isoch] [TxFlightA] ctx=0 i=12/64 ep=1 src=1 event=17907065851015 before=17907065851026 after=17907065851111
+1192 746127894357041 [Isoch] [TxFlightB] ctx=0 i=12 cycle=57557640 prev=57551695 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0
+1193 746127894366208 [Isoch] [TxFlightC] ctx=0 i=12 completed=267941 mapped=267989 committed=268061 failed=0 seals=0000000000000000/0000000000000000
+1194 746127894373916 [Isoch] [TxFlightA] ctx=0 i=13/64 ep=1 src=1 event=17907065870220 before=17907065870231 after=17907065870313
+1195 746127894381625 [Isoch] [TxFlightB] ctx=0 i=13 cycle=5755db0e prev=57557640 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0
+1196 746127894394333 [Isoch] [TxFlightC] ctx=0 i=13 completed=267947 mapped=267995 committed=268067 failed=0 seals=0000000000000000/0000000000000000
+1197 746127894402250 [Isoch] [TxFlightA] ctx=0 i=14/64 ep=1 src=1 event=17907065887305 before=17907065887315 after=17907065887396
+1198 746127894409958 [Isoch] [TxFlightB] ctx=0 i=14 cycle=57563764 prev=5755db0e cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0
+1199 746127894419625 [Isoch] [TxFlightC] ctx=0 i=14 completed=267953 mapped=268001 committed=268073 failed=0 seals=0000000000000000/0000000000000000
+1200 746127894427333 [Isoch] [TxFlightA] ctx=0 i=15/64 ep=1 src=1 event=17907065905192 before=17907065905201 after=17907065905284
+1201 746127894435291 [Isoch] [TxFlightB] ctx=0 i=15 cycle=575696f2 prev=57563764 cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0
+1202 746127894445250 [Isoch] [TxFlightC] ctx=0 i=15 completed=267959 mapped=268007 committed=268079 failed=0 seals=0000000000000000/0000000000000000
+1203 746127894452916 [Isoch] [TxFlightA] ctx=0 i=16/64 ep=1 src=1 event=17907065923231 before=17907065923242 after=17907065923326
+1204 746127894460583 [Isoch] [TxFlightB] ctx=0 i=16 cycle=5756f71d prev=575696f2 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0
+1205 746127894469708 [Isoch] [TxFlightC] ctx=0 i=16 completed=267965 mapped=268013 committed=268085 failed=0 seals=0000000000000000/0000000000000000
+1206 746127894477333 [Isoch] [TxFlightA] ctx=0 i=17/64 ep=1 src=1 event=17907065941425 before=17907065941434 after=17907065941516
+1207 746127894485041 [Isoch] [TxFlightB] ctx=0 i=17 cycle=575757e0 prev=5756f71d cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0
+1208 746127894494125 [Isoch] [TxFlightC] ctx=0 i=17 completed=267971 mapped=268019 committed=268091 failed=0 seals=0000000000000000/0000000000000000
+1209 746127894502000 [Isoch] [TxFlightA] ctx=0 i=18/64 ep=1 src=1 event=17907065960905 before=17907065960914 after=17907065961002
+1210 746127894509750 [Isoch] [TxFlightB] ctx=0 i=18 cycle=5757c1d4 prev=575757e0 cmd=80288044 ctrl=00008411 slots=42/1 delta=7 fill=7 flags=1 fail=0
+1211 746127894518666 [Isoch] [TxFlightC] ctx=0 i=18 completed=267977 mapped=268025 committed=268097 failed=0 seals=0000000000000000/0000000000000000
+1212 746127894526291 [Isoch] [TxFlightA] ctx=0 i=19/64 ep=1 src=1 event=17907065977814 before=17907065977824 after=17907065977907
+1213 746127894533958 [Isoch] [TxFlightB] ctx=0 i=19 cycle=57581972 prev=5757c1d4 cmd=80288184 ctrl=00008411 slots=1/6 delta=5 fill=5 flags=1 fail=0
+1214 746127894542833 [Isoch] [TxFlightC] ctx=0 i=19 completed=267984 mapped=268032 committed=268104 failed=0 seals=0000000000000000/0000000000000000
+1215 746127894550375 [Isoch] [TxFlightA] ctx=0 i=20/64 ep=1 src=1 event=17907065995669 before=17907065995680 after=17907065995766
+1216 746127894558000 [Isoch] [TxFlightB] ctx=0 i=20 cycle=575878e4 prev=57581972 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0
+1217 746127894567208 [Isoch] [TxFlightC] ctx=0 i=20 completed=267989 mapped=268037 committed=268109 failed=0 seals=0000000000000000/0000000000000000
+1218 746127894574750 [Isoch] [TxFlightA] ctx=0 i=21/64 ep=1 src=1 event=17907066013265 before=17907066013279 after=17907066013361
+1219 746127894582291 [Isoch] [TxFlightB] ctx=0 i=21 cycle=5758d745 prev=575878e4 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0
+1220 746127894591250 [Isoch] [TxFlightC] ctx=0 i=21 completed=267995 mapped=268043 committed=268115 failed=0 seals=0000000000000000/0000000000000000
+1221 746127894598791 [Isoch] [TxFlightA] ctx=0 i=22/64 ep=1 src=1 event=17907066031200 before=17907066031214 after=17907066031298
+1222 746127894606500 [Isoch] [TxFlightB] ctx=0 i=22 cycle=57593706 prev=5758d745 cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0
+1223 746127894615666 [Isoch] [TxFlightC] ctx=0 i=22 completed=268001 mapped=268049 committed=268121 failed=0 seals=0000000000000000/0000000000000000
+1224 746127894623291 [Isoch] [TxFlightA] ctx=0 i=23/64 ep=1 src=1 event=17907066051225 before=17907066051240 after=17907066051325
+1225 746127894630916 [Isoch] [TxFlightB] ctx=0 i=23 cycle=5759a322 prev=57593706 cmd=802887c4 ctrl=00008411 slots=24/31 delta=7 fill=7 flags=1 fail=0
+1226 746127894639958 [Isoch] [TxFlightC] ctx=0 i=23 completed=268007 mapped=268055 committed=268127 failed=0 seals=0000000000000000/0000000000000000
+1227 746127894647458 [Isoch] [TxFlightA] ctx=0 i=24/64 ep=1 src=1 event=17907066067219 before=17907066067227 after=17907066067308
+1228 746127894655041 [Isoch] [TxFlightB] ctx=0 i=24 cycle=5759f711 prev=5759a322 cmd=80288904 ctrl=00008411 slots=31/36 delta=5 fill=5 flags=1 fail=0
+1229 746127894664541 [Isoch] [TxFlightC] ctx=0 i=24 completed=268014 mapped=268062 committed=268134 failed=0 seals=0000000000000000/0000000000000000
+1230 746127894672166 [Isoch] [TxFlightA] ctx=0 i=25/64 ep=1 src=1 event=17907066084971 before=17907066084984 after=17907066085073
+1231 746127894679791 [Isoch] [TxFlightB] ctx=0 i=25 cycle=575a5621 prev=5759f711 cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0
+1232 746127894689500 [Isoch] [TxFlightC] ctx=0 i=25 completed=268019 mapped=268067 committed=268139 failed=0 seals=0000000000000000/0000000000000000
+1233 746127894697125 [Isoch] [TxFlightA] ctx=0 i=26/64 ep=1 src=1 event=17907066103074 before=17907066103085 after=17907066103169
+1234 746127894704625 [Isoch] [TxFlightB] ctx=0 i=26 cycle=575ab685 prev=575a5621 cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0
+1235 746127894713541 [Isoch] [TxFlightC] ctx=0 i=26 completed=268025 mapped=268073 committed=268145 failed=0 seals=0000000000000000/0000000000000000
+1236 746127894721125 [Isoch] [TxFlightA] ctx=0 i=27/64 ep=1 src=1 event=17907066120763 before=17907066120774 after=17907066120854
+1237 746127894728708 [Isoch] [TxFlightB] ctx=0 i=27 cycle=575b1543 prev=575ab685 cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0
+1238 746127894737625 [Isoch] [TxFlightC] ctx=0 i=27 completed=268031 mapped=268079 committed=268151 failed=0 seals=0000000000000000/0000000000000000
+1239 746127894745250 [Isoch] [TxFlightA] ctx=0 i=28/64 ep=1 src=1 event=17907066139094 before=17907066139102 after=17907066139186
+1240 746127894752833 [Isoch] [TxFlightB] ctx=0 i=28 cycle=575b7696 prev=575b1543 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0
+1241 746127894761833 [Isoch] [TxFlightC] ctx=0 i=28 completed=268037 mapped=268085 committed=268157 failed=0 seals=0000000000000000/0000000000000000
+1242 746127894769875 [Isoch] [TxFlightA] ctx=0 i=29/64 ep=1 src=1 event=17907066156932 before=17907066156939 after=17907066157020
+1243 746127894783791 [Isoch] [TxFlightB] ctx=0 i=29 cycle=575bd5ed prev=575b7696 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0
+1244 746127894796083 [Isoch] [TxFlightC] ctx=0 i=29 completed=268043 mapped=268091 committed=268163 failed=0 seals=0000000000000000/0000000000000000
+1245 746127894803750 [Isoch] [TxFlightA] ctx=0 i=30/64 ep=1 src=1 event=17907066174836 before=17907066174844 after=17907066174924
+1246 746127894811333 [Isoch] [TxFlightB] ctx=0 i=30 cycle=575c358d prev=575bd5ed cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0
+1247 746127894820250 [Isoch] [TxFlightC] ctx=0 i=30 completed=268049 mapped=268097 committed=268169 failed=0 seals=0000000000000000/0000000000000000
+1248 746127894827875 [Isoch] [TxFlightA] ctx=0 i=31/64 ep=1 src=1 event=17907066192718 before=17907066192729 after=17907066192810
+1249 746127894835625 [Isoch] [TxFlightB] ctx=0 i=31 cycle=575c9519 prev=575c358d cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0
+1250 746127894844625 [Isoch] [TxFlightC] ctx=0 i=31 completed=268055 mapped=268103 committed=268175 failed=0 seals=0000000000000000/0000000000000000
+1251 746127894852250 [Isoch] [TxFlightA] ctx=0 i=32/64 ep=1 src=1 event=17907066210847 before=17907066210854 after=17907066210933
+1252 746127894859833 [Isoch] [TxFlightB] ctx=0 i=32 cycle=575cf597 prev=575c9519 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0
+1253 746127894868791 [Isoch] [TxFlightC] ctx=0 i=32 completed=268061 mapped=268109 committed=268181 failed=0 seals=0000000000000000/0000000000000000
+1254 746127894876291 [Isoch] [TxFlightA] ctx=0 i=33/64 ep=1 src=1 event=17907066228800 before=17907066228813 after=17907066228893
+1255 746127894883833 [Isoch] [TxFlightB] ctx=0 i=33 cycle=575d556f prev=575cf597 cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0
+1256 746127894892833 [Isoch] [TxFlightC] ctx=0 i=33 completed=268067 mapped=268115 committed=268187 failed=0 seals=0000000000000000/0000000000000000
+1257 746127894900416 [Isoch] [TxFlightA] ctx=0 i=34/64 ep=1 src=1 event=17907066247080 before=17907066247091 after=17907066247175
+1258 746127894908000 [Isoch] [TxFlightB] ctx=0 i=34 cycle=575db690 prev=575d556f cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0
+1259 746127894916833 [Isoch] [TxFlightC] ctx=0 i=34 completed=268073 mapped=268121 committed=268193 failed=0 seals=0000000000000000/0000000000000000
+1260 746127894924416 [Isoch] [TxFlightA] ctx=0 i=35/64 ep=1 src=1 event=17907066264913 before=17907066264926 after=17907066265007
+1261 746127894931916 [Isoch] [TxFlightB] ctx=0 i=35 cycle=575e15e4 prev=575db690 cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0
+1262 746127894940791 [Isoch] [TxFlightC] ctx=0 i=35 completed=268079 mapped=268127 committed=268199 failed=0 seals=0000000000000000/0000000000000000
+1263 746127894948375 [Isoch] [TxFlightA] ctx=0 i=36/64 ep=1 src=1 event=17907066282681 before=17907066282692 after=17907066282773
+1264 746127894956041 [Isoch] [TxFlightB] ctx=0 i=36 cycle=575e74f6 prev=575e15e4 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0
+1265 746127894965041 [Isoch] [TxFlightC] ctx=0 i=36 completed=268085 mapped=268133 committed=268205 failed=0 seals=0000000000000000/0000000000000000
+1266 746127894972708 [Isoch] [TxFlightA] ctx=0 i=37/64 ep=1 src=1 event=17907066300803 before=17907066300813 after=17907066300893
+1267 746127894980708 [Isoch] [TxFlightB] ctx=0 i=37 cycle=575ed570 prev=575e74f6 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0
+1268 746127894989791 [Isoch] [TxFlightC] ctx=0 i=37 completed=268091 mapped=268139 committed=268211 failed=0 seals=0000000000000000/0000000000000000
+1269 746127894997458 [Isoch] [TxFlightA] ctx=0 i=38/64 ep=1 src=1 event=17907066318743 before=17907066318753 after=17907066318834
+1270 746127895005083 [Isoch] [TxFlightB] ctx=0 i=38 cycle=575f3534 prev=575ed570 cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0
+1271 746127895014125 [Isoch] [TxFlightC] ctx=0 i=38 completed=268097 mapped=268145 committed=268217 failed=0 seals=0000000000000000/0000000000000000
+1272 746127895021750 [Isoch] [TxFlightA] ctx=0 i=39/64 ep=1 src=1 event=17907066336727 before=17907066336734 after=17907066336814
+1273 746127895029333 [Isoch] [TxFlightB] ctx=0 i=39 cycle=575f9521 prev=575f3534 cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0
+1274 746127895038333 [Isoch] [TxFlightC] ctx=0 i=39 completed=268103 mapped=268151 committed=268223 failed=0 seals=0000000000000000/0000000000000000
+1275 746127895045958 [Isoch] [TxFlightA] ctx=0 i=40/64 ep=1 src=1 event=17907066355097 before=17907066355106 after=17907066355187
+1276 746127895053583 [Isoch] [TxFlightB] ctx=0 i=40 cycle=575ff6a0 prev=575f9521 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0
+1277 746127895062541 [Isoch] [TxFlightC] ctx=0 i=40 completed=268109 mapped=268157 committed=268229 failed=0 seals=0000000000000000/0000000000000000
+1278 746127895070208 [Isoch] [TxFlightA] ctx=0 i=41/64 ep=1 src=1 event=17907066374667 before=17907066374676 after=17907066374756
+1279 746127895077833 [Isoch] [TxFlightB] ctx=0 i=41 cycle=576060e8 prev=575ff6a0 cmd=80288ab0 ctrl=00008411 slots=36/42 delta=7 fill=7 flags=1 fail=0
+1280 746127895089416 [Isoch] [TxFlightC] ctx=0 i=41 completed=268115 mapped=268163 committed=268235 failed=0 seals=0000000000000000/0000000000000000
+1281 746127895099208 [Isoch] [TxFlightA] ctx=0 i=42/64 ep=1 src=1 event=17907066391312 before=17907066391320 after=17907066391400
+1282 746127895108916 [Isoch] [TxFlightB] ctx=0 i=42 cycle=5760b77b prev=576060e8 cmd=80288004 ctrl=00008411 slots=42/0 delta=5 fill=5 flags=1 fail=0
+1283 746127895120250 [Isoch] [TxFlightC] ctx=0 i=42 completed=268122 mapped=268170 committed=268242 failed=0 seals=0000000000000000/0000000000000000
+1284 746127895130000 [Isoch] [TxFlightA] ctx=0 i=43/64 ep=1 src=1 event=17907066409036 before=17907066409046 after=17907066409130
+1285 746127895139583 [Isoch] [TxFlightB] ctx=0 i=43 cycle=57611666 prev=5760b77b cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0
+1286 746127895150875 [Isoch] [TxFlightC] ctx=0 i=43 completed=268127 mapped=268175 committed=268247 failed=0 seals=0000000000000000/0000000000000000
+1287 746127895160583 [Isoch] [TxFlightA] ctx=0 i=44/64 ep=1 src=1 event=17907066427081 before=17907066427090 after=17907066427177
+1288 746127895170375 [Isoch] [TxFlightB] ctx=0 i=44 cycle=57617698 prev=57611666 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0
+1289 746127895181916 [Isoch] [TxFlightC] ctx=0 i=44 completed=268133 mapped=268181 committed=268253 failed=0 seals=0000000000000000/0000000000000000
+1290 746127895191750 [Isoch] [TxFlightA] ctx=0 i=45/64 ep=1 src=1 event=17907066445230 before=17907066445237 after=17907066445321
+1291 746127895201625 [Isoch] [TxFlightB] ctx=0 i=45 cycle=5761d72c prev=57617698 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0
+1292 746127895214750 [Isoch] [TxFlightC] ctx=0 i=45 completed=268139 mapped=268187 committed=268259 failed=0 seals=0000000000000000/0000000000000000
+1293 746127895225083 [Isoch] [TxFlightA] ctx=0 i=46/64 ep=1 src=1 event=17907066463009 before=17907066463017 after=17907066463100
+1294 746127895235125 [Isoch] [TxFlightB] ctx=0 i=46 cycle=5762364a prev=5761d72c cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0
+1295 746127895246833 [Isoch] [TxFlightC] ctx=0 i=46 completed=268145 mapped=268193 committed=268265 failed=0 seals=0000000000000000/0000000000000000
+1296 746127895256708 [Isoch] [TxFlightA] ctx=0 i=47/64 ep=1 src=1 event=17907066481033 before=17907066481043 after=17907066481124
+1297 746127895266541 [Isoch] [TxFlightB] ctx=0 i=47 cycle=57629664 prev=5762364a cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0
+1298 746127895278375 [Isoch] [TxFlightC] ctx=0 i=47 completed=268151 mapped=268199 committed=268271 failed=0 seals=0000000000000000/0000000000000000
+1299 746127895288333 [Isoch] [TxFlightA] ctx=0 i=48/64 ep=1 src=1 event=17907066499041 before=17907066499048 after=17907066499129
+1300 746127895298333 [Isoch] [TxFlightB] ctx=0 i=48 cycle=5762f668 prev=57629664 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0
+1301 746127895310166 [Isoch] [TxFlightC] ctx=0 i=48 completed=268157 mapped=268205 committed=268277 failed=0 seals=0000000000000000/0000000000000000
+1302 746127895320208 [Isoch] [TxFlightA] ctx=0 i=49/64 ep=1 src=1 event=17907066517003 before=17907066517011 after=17907066517096
+1303 746127895330125 [Isoch] [TxFlightB] ctx=0 i=49 cycle=57635649 prev=5762f668 cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0
+1304 746127895341750 [Isoch] [TxFlightC] ctx=0 i=49 completed=268163 mapped=268211 committed=268283 failed=0 seals=0000000000000000/0000000000000000
+1305 746127895355833 [Isoch] [TxFlightA] ctx=0 i=50/64 ep=1 src=1 event=17907066534991 before=17907066535002 after=17907066535083
+1306 746127895365833 [Isoch] [TxFlightB] ctx=0 i=50 cycle=5763b63b prev=57635649 cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0
+1307 746127895377416 [Isoch] [TxFlightC] ctx=0 i=50 completed=268169 mapped=268217 committed=268289 failed=0 seals=0000000000000000/0000000000000000
+1308 746127895387458 [Isoch] [TxFlightA] ctx=0 i=51/64 ep=1 src=1 event=17907066553200 before=17907066553210 after=17907066553296
+1309 746127895397291 [Isoch] [TxFlightB] ctx=0 i=51 cycle=57641716 prev=5763b63b cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0
+1310 746127895408791 [Isoch] [TxFlightC] ctx=0 i=51 completed=268175 mapped=268223 committed=268295 failed=0 seals=0000000000000000/0000000000000000
+1311 746127895418750 [Isoch] [TxFlightA] ctx=0 i=52/64 ep=1 src=1 event=17907066571293 before=17907066571305 after=17907066571387
+1312 746127895428791 [Isoch] [TxFlightB] ctx=0 i=52 cycle=57647774 prev=57641716 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0
+1313 746127895440583 [Isoch] [TxFlightC] ctx=0 i=52 completed=268181 mapped=268229 committed=268301 failed=0 seals=0000000000000000/0000000000000000
+1314 746127895450833 [Isoch] [TxFlightA] ctx=0 i=53/64 ep=1 src=1 event=17907066589067 before=17907066589075 after=17907066589156
+1315 746127895461041 [Isoch] [TxFlightB] ctx=0 i=53 cycle=5764d687 prev=57647774 cmd=80288484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0
+1316 746127895473041 [Isoch] [TxFlightC] ctx=0 i=53 completed=268187 mapped=268235 committed=268307 failed=0 seals=0000000000000000/0000000000000000
+1317 746127895483083 [Isoch] [TxFlightA] ctx=0 i=54/64 ep=1 src=1 event=17907066607084 before=17907066607093 after=17907066607174
+1318 746127895493041 [Isoch] [TxFlightB] ctx=0 i=54 cycle=5765369b prev=5764d687 cmd=80288604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0
+1319 746127895505041 [Isoch] [TxFlightC] ctx=0 i=54 completed=268193 mapped=268241 committed=268313 failed=0 seals=0000000000000000/0000000000000000
+1320 746127895515125 [Isoch] [TxFlightA] ctx=0 i=55/64 ep=1 src=1 event=17907066624980 before=17907066624991 after=17907066625072
+1321 746127895525041 [Isoch] [TxFlightB] ctx=0 i=55 cycle=57659633 prev=5765369b cmd=80288784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0
+1322 746127895536833 [Isoch] [TxFlightC] ctx=0 i=55 completed=268199 mapped=268247 committed=268319 failed=0 seals=0000000000000000/0000000000000000
+1323 746127895546958 [Isoch] [TxFlightA] ctx=0 i=56/64 ep=1 src=1 event=17907066643002 before=17907066643012 after=17907066643092
+1324 746127895557083 [Isoch] [TxFlightB] ctx=0 i=56 cycle=5765f649 prev=57659633 cmd=80288904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0
+1325 746127895568875 [Isoch] [TxFlightC] ctx=0 i=56 completed=268205 mapped=268253 committed=268325 failed=0 seals=0000000000000000/0000000000000000
+1326 746127895579125 [Isoch] [TxFlightA] ctx=0 i=57/64 ep=1 src=1 event=17907066661179 before=17907066661186 after=17907066661267
+1327 746127895589125 [Isoch] [TxFlightB] ctx=0 i=57 cycle=576656fd prev=5765f649 cmd=80288a84 ctrl=00008411 slots=36/42 delta=6 fill=6 flags=1 fail=0
+1328 746127895600875 [Isoch] [TxFlightC] ctx=0 i=57 completed=268211 mapped=268259 committed=268331 failed=0 seals=0000000000000000/0000000000000000
+1329 746127895610916 [Isoch] [TxFlightA] ctx=0 i=58/64 ep=1 src=1 event=17907066679361 before=17907066679375 after=17907066679457
+1330 746127895620958 [Isoch] [TxFlightB] ctx=0 i=58 cycle=5766b7bf prev=576656fd cmd=80288004 ctrl=00008411 slots=42/0 delta=6 fill=6 flags=1 fail=0
+1331 746127895632666 [Isoch] [TxFlightC] ctx=0 i=58 completed=268217 mapped=268265 committed=268337 failed=0 seals=0000000000000000/0000000000000000
+1332 746127895642708 [Isoch] [TxFlightA] ctx=0 i=59/64 ep=1 src=1 event=17907066696998 before=17907066697006 after=17907066697087
+1333 746127895652708 [Isoch] [TxFlightB] ctx=0 i=59 cycle=57671644 prev=5766b7bf cmd=80288184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0
+1334 746127895664541 [Isoch] [TxFlightC] ctx=0 i=59 completed=268223 mapped=268271 committed=268343 failed=0 seals=0000000000000000/0000000000000000
+1335 746127895674541 [Isoch] [TxFlightA] ctx=0 i=60/64 ep=1 src=1 event=17907066714779 before=17907066714787 after=17907066714866
+1336 746127895684666 [Isoch] [TxFlightB] ctx=0 i=60 cycle=57677564 prev=57671644 cmd=80288304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0
+1337 746127895696458 [Isoch] [TxFlightC] ctx=0 i=60 completed=268229 mapped=268277 committed=268349 failed=0 seals=0000000000000000/0000000000000000
+1338 746127895706708 [Isoch] [TxFlightA] ctx=0 i=61/64 ep=1 src=1 event=17907066738029 before=17907066738100 after=17907066738181
+1339 746127895716875 [Isoch] [TxFlightB] ctx=0 i=61 cycle=5767f2a7 prev=57677564 cmd=80288504 ctrl=00008411 slots=12/20 delta=8 fill=8 flags=1 fail=0
+1340 746127895728666 [Isoch] [TxFlightC] ctx=0 i=61 completed=268235 mapped=268283 committed=268355 failed=0 seals=0000000000000000/0000000000000000
+1341 746127895738750 [Isoch] [TxFlightA] ctx=0 i=62/64 ep=1 src=1 event=17907066750959 before=17907066750967 after=17907066751048
+1342 746127895748750 [Isoch] [TxFlightB] ctx=0 i=62 cycle=5768361f prev=5767f2a7 cmd=80288604 ctrl=00008411 slots=20/24 delta=4 fill=4 flags=1 fail=0
+1343 746127895760833 [Isoch] [TxFlightC] ctx=0 i=62 completed=268243 mapped=268291 committed=268363 failed=0 seals=0000000000000000/0000000000000000
+1344 746127895770833 [Isoch] [TxFlightA] ctx=0 i=63/64 ep=1 src=1 event=17907066910235 before=17907066910263 after=17907066910348
+1345 746127895781000 [Isoch] [TxFlightB] ctx=0 i=63 cycle=576b8758 prev=5768361f cmd=802885b0 ctrl=00008011 slots=24/22 delta=0 fill=0 flags=5 fail=9
+1346 746127895792875 [Isoch] [TxFlightC] ctx=0 i=63 completed=268247 mapped=268295 committed=268367 failed=268295 seals=0000000000000000/0000000000000000
+1347 746127895805500 [Isoch] [IsochWatchdog] direction=tx context=0 poll=5 irq=7 ret=41 committed=168 progressAgeUs=2488 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+1348 746127895809208 [Isoch] [IsochTxDelta] context=0 lapUnresolvable=0 maxDelta=6
+1349 746127895912333 [Isoch] IT completion delta high-water=21
+1351 746127899031708 [Audio] [FSM] terminal state=Running phase=Running status=0x00000000 endpoint=1 restartId=2 gen=4
+1352 746127903809208 [Isoch] IT FATAL: slot 0 not committed packet=168 commitGen=1 expectedGen=2
+1353 746127903834958 [Isoch] IT FATAL dump: fatalAbs=168 slot=0 expectedGen=2 commitGen=1 slotLastPacketAbs=0 committedEnd=168 completionCursor=125 softwareFillAbs=167 ringPacketsAhead=42 deltaConsumed=6 i=1 numSlots=168 prepReq=1 prepHandled=0 prepAge
+1354 746127903850833 [Isoch] IT: Refill failed reason=uncommitted-slot ctrl=0x00008411 streamStatus=1 cmdPtr=0x80288784 cmdAddr=0x80288780 hwPacket=30 fatalAbs=168 fatalSlot=0 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x0000000000000000
+1355 746127903877291 [Isoch] IT FATAL STOP: RUN cleared and interrupt masked
+1356 746127903884916 [Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 — dispatching recovery
+1357 746127903918875 [Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 — recovering
+1358 746127903930791 [Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)
+1359 746129143981916 [Isoch] [IsochWatchdog] direction=rx context=0 poll=2698 busy=0 packets=10126 progressAgeUs=40 cmd=0x803b02e1 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5a299414
+1360 746130387291000 [Isoch] [IsochWatchdog] direction=rx context=0 poll=5353 busy=0 packets=20072 progressAgeUs=199 cmd=0x803b1a11 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5ca34209
+1361 746131626370250 [Isoch] [IsochWatchdog] direction=rx context=0 poll=8005 busy=0 packets=29985 progressAgeUs=36 cmd=0x803b0fa1 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5f1ad1d6
+1362 746132870054083 [Isoch] [IsochWatchdog] direction=rx context=0 poll=10663 busy=0 packets=39935 progressAgeUs=59 cmd=0x803b0771 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x6194ab81
+1363 746134118030250 [Isoch] [IsochWatchdog] direction=rx context=0 poll=13327 busy=0 packets=49919 progressAgeUs=59 cmd=0x803b0171 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x641cb159
+1364 746135356926541 [Isoch] [IsochWatchdog] direction=rx context=0 poll=15979 busy=0 packets=59831 progressAgeUs=65 cmd=0x803b1671 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x66942784
+1365 746136601191791 [Isoch] [IsochWatchdog] direction=rx context=0 poll=18638 busy=0 packets=69785 progressAgeUs=53 cmd=0x803b0e91 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x690e511d
+1366 746137835078458 [Isoch] [IsochWatchdog] direction=rx context=0 poll=21283 busy=0 packets=79657 progressAgeUs=117 cmd=0x803b0191 ctrl=0x40008451 intEvent=0x00100080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x6b834612
+1367 746139072955833 [Isoch] [IsochWatchdog] direction=rx context=0 poll=23934 busy=0 packets=89560 progressAgeUs=54 cmd=0x803b1601 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x6e0639ea
+1368 746140326055958 [Isoch] [IsochWatchdog] direction=rx context=0 poll=26605 busy=0 packets=99585 progressAgeUs=58 cmd=0x803b1291 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x7084d0ae
+1369 746141577987375 [Isoch] [IsochWatchdog] direction=rx context=0 poll=29274 busy=0 packets=109601 progressAgeUs=59 cmd=0x803b0e91 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x7302caa1
+1370 746142823965041 [Isoch] [IsochWatchdog] direction=rx context=0 poll=31932 busy=0 packets=119569 progressAgeUs=172 cmd=0x803b0791 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x757dd0e0
+1371 746144068263041 [Isoch] [IsochWatchdog] direction=rx context=0 poll=34591 busy=0 packets=129524 progressAgeUs=41 cmd=0x803b1f41 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x7803f998
+1372 746145302626375 [Isoch] [IsochWatchdog] direction=rx context=0 poll=37237 busy=0 packets=139399 progressAgeUs=132 cmd=0x803b1271 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x7a793101
+1373 746146540892333 [Isoch] [IsochWatchdog] direction=rx context=0 poll=39888 busy=0 packets=149306 progressAgeUs=32 cmd=0x803b07a1 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x7cf056e6
+1374 746147770233208 [Isoch] [IsochWatchdog] direction=rx context=0 poll=42527 busy=0 packets=159141 progressAgeUs=51 cmd=0x803b17d1 ctrl=0x40008451 intEvent=0x00100000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x7f6307e0
+1375 746149005461666 [Isoch] [IsochWatchdog] direction=rx context=0 poll=45174 busy=0 packets=169023 progressAgeUs=42 cmd=0x803b0b71 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x81d8aa69
+1376 746150241292000 [Isoch] [IsochWatchdog] direction=rx context=0 poll=47822 busy=0 packets=178910 progressAgeUs=28 cmd=0x803b1ee1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x845a9ac0
+1377 746151476738875 [Isoch] [IsochWatchdog] direction=rx context=0 poll=50469 busy=0 packets=188794 progressAgeUs=57 cmd=0x803b12a1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x86d05a63
+1378 746152712781583 [Isoch] [IsochWatchdog] direction=rx context=0 poll=53117 busy=0 packets=198683 progressAgeUs=56 cmd=0x803b06b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x8946674c
+1379 746153937973041 [Isoch] [IsochWatchdog] direction=rx context=0 poll=55751 busy=0 packets=208485 progressAgeUs=55 cmd=0x803b14d1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x8bb70621
+1380 746155176718833 [Isoch] [IsochWatchdog] direction=rx context=0 poll=58403 busy=0 packets=218395 progressAgeUs=145 cmd=0x803b0a31 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x8e3a6ab8
+1381 746156405159625 [Isoch] [IsochWatchdog] direction=rx context=0 poll=61041 busy=0 packets=228223 progressAgeUs=28 cmd=0x803b19f1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x90aca9e2
+1382 746157638020125 [Isoch] [IsochWatchdog] direction=rx context=0 poll=63684 busy=0 packets=238086 progressAgeUs=82 cmd=0x803b0c61 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x9321212d
+1383 746158871042208 [Isoch] [IsochWatchdog] direction=rx context=0 poll=66329 busy=0 packets=247951 progressAgeUs=32 cmd=0x803b1e71 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x9595a865
+1384 746160117808000 [Isoch] [IsochWatchdog] direction=rx context=0 poll=68991 busy=0 packets=257925 progressAgeUs=52 cmd=0x803b17e1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x981d12e7
+1385 746161344235625 [Isoch] [IsochWatchdog] direction=rx context=0 poll=71626 busy=0 packets=267737 progressAgeUs=63 cmd=0x803b0711 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x9a8e50db
+1387 746162575029000 [Isoch] [IsochWatchdog] direction=rx context=0 poll=74267 busy=0 packets=277584 progressAgeUs=85 cmd=0x803b1801 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x9d01b9d2
+1388 746163808272291 [Isoch] [IsochWatchdog] direction=rx context=0 poll=76912 busy=0 packets=287450 progressAgeUs=26 cmd=0x803b0ab1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x9f766264
+1389 746165033208333 [Isoch] [IsochWatchdog] direction=rx context=0 poll=79545 busy=0 packets=297250 progressAgeUs=46 cmd=0x803b18a1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xa1e6e150
+1391 746166262356000 [Isoch] [IsochWatchdog] direction=rx context=0 poll=82184 busy=0 packets=307084 progressAgeUs=51 cmd=0x803b0941 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xa4657887
+1392 746167496047958 [Isoch] [IsochWatchdog] direction=rx context=0 poll=84829 busy=0 packets=316954 progressAgeUs=64 cmd=0x803b1ba1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xa6da5814
+1393 746168716622666 [Isoch] [IsochWatchdog] direction=rx context=0 poll=87457 busy=0 packets=326719 progressAgeUs=25 cmd=0x803b07f1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xa948a885
+1395 746169949314958 [Isoch] [IsochWatchdog] direction=rx context=0 poll=90100 busy=0 packets=336581 progressAgeUs=65 cmd=0x803b19d1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xabbd07f4
+1396 746171186289500 [Isoch] [IsochWatchdog] direction=rx context=0 poll=92750 busy=0 packets=346477 progressAgeUs=33 cmd=0x803b0e51 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xae3f8ae4
+1397 746172412949208 [Isoch] [IsochWatchdog] direction=rx context=0 poll=95383 busy=0 packets=356291 progressAgeUs=57 cmd=0x803b1d31 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xb0b0e764
+1398 746173643219833 [Isoch] [IsochWatchdog] direction=rx context=0 poll=98024 busy=0 packets=366133 progressAgeUs=126 cmd=0x803b0e61 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xb3241295
+1400 746174878468208 [Isoch] [IsochWatchdog] direction=rx context=0 poll=100670 busy=0 packets=376016 progressAgeUs=36 cmd=0x803b0201 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xb599b7dd
+1401 746176112775166 [Isoch] [IsochWatchdog] direction=rx context=0 poll=103316 busy=0 packets=385891 progressAgeUs=29 cmd=0x803b14b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xb81ae6af
+1402 746177334491833 [Isoch] [IsochWatchdog] direction=rx context=0 poll=105944 busy=0 packets=395665 progressAgeUs=136 cmd=0x803b0191 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xba89c8dd
+1404 746178565174291 [Isoch] [IsochWatchdog] direction=rx context=0 poll=108585 busy=0 packets=405511 progressAgeUs=28 cmd=0x803b1271 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xbcfd27c2
+1405 746179794932291 [Isoch] [IsochWatchdog] direction=rx context=0 poll=111224 busy=0 packets=415349 progressAgeUs=108 cmd=0x803b0351 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000001 cycle=0xbf7011d6
+1406 746181026253083 [Isoch] [IsochWatchdog] direction=rx context=0 poll=113866 busy=0 packets=425200 progressAgeUs=46 cmd=0x803b1491 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xc1e3c223
+1408 746182266066875 [Isoch] [IsochWatchdog] direction=rx context=0 poll=116519 busy=0 packets=435119 progressAgeUs=70 cmd=0x803b0a71 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000001 cycle=0xc467b1c5
+1409 746183499467250 [Isoch] [IsochWatchdog] direction=rx context=0 poll=119164 busy=0 packets=444987 progressAgeUs=40 cmd=0x803b1cb1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xc6dc69be
+1410 746184717146708 [Isoch] [IsochWatchdog] direction=rx context=0 poll=121788 busy=0 packets=454729 progressAgeUs=105 cmd=0x803b0791 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xc9494876
+1412 746185952070291 [Isoch] [IsochWatchdog] direction=rx context=0 poll=124434 busy=0 packets=464609 progressAgeUs=71 cmd=0x803b1a91 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xcbbec6b5
+1413 746187193436375 [Isoch] [IsochWatchdog] direction=rx context=0 poll=127083 busy=0 packets=474540 progressAgeUs=87 cmd=0x803b1141 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0xce437b46
+1414 746188427244250 [Isoch] [IsochWatchdog] direction=rx context=0 poll=129729 busy=0 packets=484411 progressAgeUs=30 cmd=0x803b0431 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xd0b86aa2
+1415 746189654766500 [Isoch] [IsochWatchdog] direction=rx context=0 poll=132365 busy=0 packets=494232 progressAgeUs=111 cmd=0x803b1381 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0xd32a362d
+1417 746190893785166 [Isoch] [IsochWatchdog] direction=rx context=0 poll=135017 busy=0 packets=504144 progressAgeUs=95 cmd=0x803b0901 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0xd5a1c1bb
+1418 746192122554541 [Isoch] [IsochWatchdog] direction=rx context=0 poll=137656 busy=0 packets=513975 progressAgeUs=36 cmd=0x803b18f1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xd82029a6
+1419 746193350856458 [Isoch] [IsochWatchdog] direction=rx context=0 poll=140294 busy=0 packets=523802 progressAgeUs=39 cmd=0x803b0921 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xda925830

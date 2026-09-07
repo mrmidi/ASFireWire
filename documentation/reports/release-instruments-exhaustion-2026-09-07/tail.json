@@ -1,0 +1,564 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 176375,\n    \"nextSequence\" : 176370,\n    \"oldestSequence\" : 136658,\n    \"recordCount\" : 60,\n    \"records\" : [\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=57 cycle=0adac66f prev=0ada6643 cmd=80240184 ctrl=00008411 slots=0\\/6 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 176311,\n        \"timestampNs\" : 747225665590291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=57 completed=4111487 mapped=4111535 committed=4111607 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 176312,\n        \"timestampNs\" : 747225665607958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=58\\/64 ep=1 src=1 event=17933407099795 before=17933407099797 after=17933407099875\",\n        \"sequence\" : 176313,\n        \"timestampNs\" : 747225665648333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=58 cycle=0adb2681 prev=0adac66f cmd=80240304 ctrl=00008411 slots=6\\/12 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 176314,\n        \"timestampNs\" : 747225665663750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=58 completed=4111493 mapped=4111541 committed=4111613 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 176315,\n        \"timestampNs\" : 747225665681875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=59\\/64 ep=1 src=1 event=17933407118135 before=17933407118137 after=17933407118219\",\n        \"sequence\" : 176316,\n        \"timestampNs\" : 747225665697583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=59 cycle=0adb87e3 prev=0adb2681 cmd=80240484 ctrl=00008411 slots=12\\/18 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 176317,\n        \"timestampNs\" : 747225665712708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=59 completed=4111499 mapped=4111547 committed=4111619 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 176318,\n        \"timestampNs\" : 747225665730500\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=60\\/64 ep=1 src=1 event=17933407135882 before=17933407135884 after=17933407135961\",\n        \"sequence\" : 176319,\n        \"timestampNs\" : 747225665746041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=60 cycle=0adbe6db prev=0adb87e3 cmd=80240604 ctrl=00008411 slots=18\\/24 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 176320,\n        \"timestampNs\" : 747225665761541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=60 completed=4111505 mapped=4111553 committed=4111625 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 176321,\n        \"timestampNs\" : 747225665781083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=61\\/64 ep=1 src=1 event=17933407153740 before=17933407153741 after=17933407153823\",\n        \"sequence\" : 176322,\n        \"timestampNs\" : 747225665797625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=61 cycle=0adc464e prev=0adbe6db cmd=80240784 ctrl=00008411 slots=24\\/30 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 176323,\n        \"timestampNs\" : 747225665813875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=61 completed=4111511 mapped=4111559 committed=4111631 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 176324,\n        \"timestampNs\" : 747225665832375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=62\\/64 ep=1 src=1 event=17933407171715 before=17933407171718 after=17933407171797\",\n        \"sequence\" : 176325,\n        \"timestampNs\" : 747225665848666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=62 cycle=0adca632 prev=0adc464e cmd=80240904 ctrl=00008411 slots=30\\/36 delta=6 fill=6 flags=1 fail=0\",\n        \"sequence\" : 176326,\n        \"timestampNs\" : 747225665864416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=62 completed=4111517 mapped=4111565 committed=4111637 failed=0 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 176327,\n        \"timestampNs\" : 747225665882666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightA] ctx=0 i=63\\/64 ep=1 src=1 event=17933407328028 before=17933407328038 after=17933407328118\",\n        \"sequence\" : 176328,\n        \"timestampNs\" : 747225665903000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightB] ctx=0 i=63 cycle=0adfe782 prev=0adca632 cmd=802408b0 ctrl=00008011 slots=36\\/34 delta=0 fill=0 flags=5 fail=9\",\n        \"sequence\" : 176329,\n        \"timestampNs\" : 747225665919083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxFlightC] ctx=0 i=63 completed=4111523 mapped=4111571 committed=4111643 failed=4111571 seals=0000000000000000\\/0000000000000000\",\n        \"sequence\" : 176330,\n        \"timestampNs\" : 747225665937416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=3176 busy=0 packets=11814 progressAgeUs=31 cmd=0x803b0de1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x0e0ae5c4\",\n        \"sequence\" : 176331,\n        \"timestampNs\" : 747226879270750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=5787 busy=0 packets=21475 progressAgeUs=38 cmd=0x803b1331 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1072c0c7\",\n        \"sequence\" : 176332,\n        \"timestampNs\" : 747228086919625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=8388 busy=0 packets=31092 progressAgeUs=51 cmd=0x803b15c1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x12d7c880\",\n        \"sequence\" : 176333,\n        \"timestampNs\" : 747229288956583\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=10984 busy=0 packets=40673 progressAgeUs=44 cmd=0x803b1621 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x153aa29b\",\n        \"sequence\" : 176334,\n        \"timestampNs\" : 747230486601625\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=13595 busy=0 packets=50337 progressAgeUs=42 cmd=0x803b1b91 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x17a29afd\",\n        \"sequence\" : 176335,\n        \"timestampNs\" : 747231694524375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=16202 busy=0 packets=59980 progressAgeUs=31 cmd=0x803b0041 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1a1544ee\",\n        \"sequence\" : 176336,\n        \"timestampNs\" : 747232899782416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=18807 busy=0 packets=69632 progressAgeUs=32 cmd=0x803b0501 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1c7c838e\",\n        \"sequence\" : 176337,\n        \"timestampNs\" : 747234106217791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=21411 busy=0 packets=79261 progressAgeUs=170 cmd=0x803b0851 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1ee26103\",\n        \"sequence\" : 176338,\n        \"timestampNs\" : 747235309888958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=24017 busy=0 packets=88902 progressAgeUs=43 cmd=0x803b0c61 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x2148e758\",\n        \"sequence\" : 176339,\n        \"timestampNs\" : 747236514904916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=26625 busy=0 packets=98550 progressAgeUs=36 cmd=0x803b10e1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x23afe646\",\n        \"sequence\" : 176340,\n        \"timestampNs\" : 747237720835500\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=29224 busy=0 packets=108143 progressAgeUs=38 cmd=0x803b11f1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x261f784d\",\n        \"sequence\" : 176341,\n        \"timestampNs\" : 747238919925833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=31835 busy=0 packets=117808 progressAgeUs=26 cmd=0x803b1781 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x288788e8\",\n        \"sequence\" : 176342,\n        \"timestampNs\" : 747240128003833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=34436 busy=0 packets=127411 progressAgeUs=23 cmd=0x803b1931 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2aebc0e1\",\n        \"sequence\" : 176343,\n        \"timestampNs\" : 747241328360375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=37034 busy=0 packets=137004 progressAgeUs=42 cmd=0x803b1a41 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2d4f5059\",\n        \"sequence\" : 176344,\n        \"timestampNs\" : 747242527423875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=39638 busy=0 packets=146627 progressAgeUs=35 cmd=0x803b1d31 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2fb4b75e\",\n        \"sequence\" : 176345,\n        \"timestampNs\" : 747243730185416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=42233 busy=0 packets=156220 progressAgeUs=37 cmd=0x803b1e41 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x32245046\",\n        \"sequence\" : 176346,\n        \"timestampNs\" : 747244929299041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=44829 busy=0 packets=165801 progressAgeUs=30 cmd=0x803b1e91 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x34871853\",\n        \"sequence\" : 176347,\n        \"timestampNs\" : 747246126822416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=47422 busy=0 packets=175363 progressAgeUs=22 cmd=0x803b1db1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x36e8b6e3\",\n        \"sequence\" : 176348,\n        \"timestampNs\" : 747247321989916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=50013 busy=0 packets=184935 progressAgeUs=28 cmd=0x803b1d71 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x394afa15\",\n        \"sequence\" : 176349,\n        \"timestampNs\" : 747248518456791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=52613 busy=0 packets=194539 progressAgeUs=26 cmd=0x803b1f31 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x3baf3595\",\n        \"sequence\" : 176350,\n        \"timestampNs\" : 747249718843166\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=55206 busy=0 packets=204112 progressAgeUs=33 cmd=0x803b1f11 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x3e1d91e0\",\n        \"sequence\" : 176351,\n        \"timestampNs\" : 747250915486791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=57800 busy=0 packets=213685 progressAgeUs=55 cmd=0x803b1ed1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x407fd5e3\",\n        \"sequence\" : 176352,\n        \"timestampNs\" : 747252111959833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=60394 busy=0 packets=223243 progressAgeUs=27 cmd=0x803b1db1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x42e136b0\",\n        \"sequence\" : 176353,\n        \"timestampNs\" : 747253306648416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=62982 busy=0 packets=232775 progressAgeUs=37 cmd=0x803b1af1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x4540f3a4\",\n        \"sequence\" : 176354,\n        \"timestampNs\" : 747254498045916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=65572 busy=0 packets=242321 progressAgeUs=28 cmd=0x803b1911 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x47a1a046\",\n        \"sequence\" : 176355,\n        \"timestampNs\" : 747255691315333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=68164 busy=0 packets=251874 progressAgeUs=33 cmd=0x803b17a1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4a0ea48e\",\n        \"sequence\" : 176356,\n        \"timestampNs\" : 747256885288000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=70755 busy=0 packets=261437 progressAgeUs=36 cmd=0x803b16d1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x4c7054da\",\n        \"sequence\" : 176357,\n        \"timestampNs\" : 747258080592875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=73343 busy=0 packets=270963 progressAgeUs=31 cmd=0x803b13b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x4ecfb903\",\n        \"sequence\" : 176358,\n        \"timestampNs\" : 747259271314333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=75937 busy=0 packets=280548 progressAgeUs=44 cmd=0x803b1441 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x5132c772\",\n        \"sequence\" : 176359,\n        \"timestampNs\" : 747260469348041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=78534 busy=0 packets=290129 progressAgeUs=44 cmd=0x803b14a1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x5395a385\",\n        \"sequence\" : 176360,\n        \"timestampNs\" : 747261666982666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=81125 busy=0 packets=299670 progressAgeUs=40 cmd=0x803b1261 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5601eaad\",\n        \"sequence\" : 176361,\n        \"timestampNs\" : 747262859481333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=83721 busy=0 packets=309247 progressAgeUs=28 cmd=0x803b1271 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5864764f\",\n        \"sequence\" : 176362,\n        \"timestampNs\" : 747264056484375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=86316 busy=0 packets=318843 progressAgeUs=35 cmd=0x803b13b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5ac83a8d\",\n        \"sequence\" : 176363,\n        \"timestampNs\" : 747265255950833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=88915 busy=0 packets=328435 progressAgeUs=29 cmd=0x803b14b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5d2bb974\",\n        \"sequence\" : 176364,\n        \"timestampNs\" : 747266454871958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=91510 busy=0 packets=338018 progressAgeUs=21 cmd=0x803b1521 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5f8ea64b\",\n        \"sequence\" : 176365,\n        \"timestampNs\" : 747267652626041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=94099 busy=0 packets=347552 progressAgeUs=26 cmd=0x803b1281 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x61ee8b60\",\n        \"sequence\" : 176366,\n        \"timestampNs\" : 747268844349875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=96693 busy=0 packets=357126 progressAgeUs=42 cmd=0x803b1261 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x645ce6e4\",\n        \"sequence\" : 176367,\n        \"timestampNs\" : 747270040973166\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=99286 busy=0 packets=366683 progressAgeUs=46 cmd=0x803b1131 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x66be405d\",\n        \"sequence\" : 176368,\n        \"timestampNs\" : 747271235576958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=101879 busy=0 packets=376249 progressAgeUs=142 cmd=0x803b1091 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x69202157\",\n        \"sequence\" : 176369,\n        \"timestampNs\" : 747272431284666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=104472 busy=0 packets=385806 progressAgeUs=39 cmd=0x803b0f61 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x6b8169e6\",\n        \"sequence\" : 176370,\n        \"timestampNs\" : 747273625766583\n      }\n    ],\n    \"scannedCount\" : 81\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 176375,
+      "nextSequence": 176370,
+      "oldestSequence": 136658,
+      "recordCount": 60,
+      "records": [
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=57 cycle=0adac66f prev=0ada6643 cmd=80240184 ctrl=00008411 slots=0/6 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 176311,
+          "timestampNs": 747225665590291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=57 completed=4111487 mapped=4111535 committed=4111607 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 176312,
+          "timestampNs": 747225665607958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=58/64 ep=1 src=1 event=17933407099795 before=17933407099797 after=17933407099875",
+          "sequence": 176313,
+          "timestampNs": 747225665648333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=58 cycle=0adb2681 prev=0adac66f cmd=80240304 ctrl=00008411 slots=6/12 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 176314,
+          "timestampNs": 747225665663750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=58 completed=4111493 mapped=4111541 committed=4111613 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 176315,
+          "timestampNs": 747225665681875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=59/64 ep=1 src=1 event=17933407118135 before=17933407118137 after=17933407118219",
+          "sequence": 176316,
+          "timestampNs": 747225665697583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=59 cycle=0adb87e3 prev=0adb2681 cmd=80240484 ctrl=00008411 slots=12/18 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 176317,
+          "timestampNs": 747225665712708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=59 completed=4111499 mapped=4111547 committed=4111619 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 176318,
+          "timestampNs": 747225665730500
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=60/64 ep=1 src=1 event=17933407135882 before=17933407135884 after=17933407135961",
+          "sequence": 176319,
+          "timestampNs": 747225665746041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=60 cycle=0adbe6db prev=0adb87e3 cmd=80240604 ctrl=00008411 slots=18/24 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 176320,
+          "timestampNs": 747225665761541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=60 completed=4111505 mapped=4111553 committed=4111625 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 176321,
+          "timestampNs": 747225665781083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=61/64 ep=1 src=1 event=17933407153740 before=17933407153741 after=17933407153823",
+          "sequence": 176322,
+          "timestampNs": 747225665797625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=61 cycle=0adc464e prev=0adbe6db cmd=80240784 ctrl=00008411 slots=24/30 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 176323,
+          "timestampNs": 747225665813875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=61 completed=4111511 mapped=4111559 committed=4111631 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 176324,
+          "timestampNs": 747225665832375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=62/64 ep=1 src=1 event=17933407171715 before=17933407171718 after=17933407171797",
+          "sequence": 176325,
+          "timestampNs": 747225665848666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=62 cycle=0adca632 prev=0adc464e cmd=80240904 ctrl=00008411 slots=30/36 delta=6 fill=6 flags=1 fail=0",
+          "sequence": 176326,
+          "timestampNs": 747225665864416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=62 completed=4111517 mapped=4111565 committed=4111637 failed=0 seals=0000000000000000/0000000000000000",
+          "sequence": 176327,
+          "timestampNs": 747225665882666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightA] ctx=0 i=63/64 ep=1 src=1 event=17933407328028 before=17933407328038 after=17933407328118",
+          "sequence": 176328,
+          "timestampNs": 747225665903000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightB] ctx=0 i=63 cycle=0adfe782 prev=0adca632 cmd=802408b0 ctrl=00008011 slots=36/34 delta=0 fill=0 flags=5 fail=9",
+          "sequence": 176329,
+          "timestampNs": 747225665919083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxFlightC] ctx=0 i=63 completed=4111523 mapped=4111571 committed=4111643 failed=4111571 seals=0000000000000000/0000000000000000",
+          "sequence": 176330,
+          "timestampNs": 747225665937416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=3176 busy=0 packets=11814 progressAgeUs=31 cmd=0x803b0de1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x0e0ae5c4",
+          "sequence": 176331,
+          "timestampNs": 747226879270750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=5787 busy=0 packets=21475 progressAgeUs=38 cmd=0x803b1331 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1072c0c7",
+          "sequence": 176332,
+          "timestampNs": 747228086919625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=8388 busy=0 packets=31092 progressAgeUs=51 cmd=0x803b15c1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x12d7c880",
+          "sequence": 176333,
+          "timestampNs": 747229288956583
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=10984 busy=0 packets=40673 progressAgeUs=44 cmd=0x803b1621 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x153aa29b",
+          "sequence": 176334,
+          "timestampNs": 747230486601625
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=13595 busy=0 packets=50337 progressAgeUs=42 cmd=0x803b1b91 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x17a29afd",
+          "sequence": 176335,
+          "timestampNs": 747231694524375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=16202 busy=0 packets=59980 progressAgeUs=31 cmd=0x803b0041 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1a1544ee",
+          "sequence": 176336,
+          "timestampNs": 747232899782416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=18807 busy=0 packets=69632 progressAgeUs=32 cmd=0x803b0501 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1c7c838e",
+          "sequence": 176337,
+          "timestampNs": 747234106217791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=21411 busy=0 packets=79261 progressAgeUs=170 cmd=0x803b0851 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1ee26103",
+          "sequence": 176338,
+          "timestampNs": 747235309888958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=24017 busy=0 packets=88902 progressAgeUs=43 cmd=0x803b0c61 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x2148e758",
+          "sequence": 176339,
+          "timestampNs": 747236514904916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=26625 busy=0 packets=98550 progressAgeUs=36 cmd=0x803b10e1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x23afe646",
+          "sequence": 176340,
+          "timestampNs": 747237720835500
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=29224 busy=0 packets=108143 progressAgeUs=38 cmd=0x803b11f1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x261f784d",
+          "sequence": 176341,
+          "timestampNs": 747238919925833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=31835 busy=0 packets=117808 progressAgeUs=26 cmd=0x803b1781 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x288788e8",
+          "sequence": 176342,
+          "timestampNs": 747240128003833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=34436 busy=0 packets=127411 progressAgeUs=23 cmd=0x803b1931 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2aebc0e1",
+          "sequence": 176343,
+          "timestampNs": 747241328360375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=37034 busy=0 packets=137004 progressAgeUs=42 cmd=0x803b1a41 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2d4f5059",
+          "sequence": 176344,
+          "timestampNs": 747242527423875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=39638 busy=0 packets=146627 progressAgeUs=35 cmd=0x803b1d31 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2fb4b75e",
+          "sequence": 176345,
+          "timestampNs": 747243730185416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=42233 busy=0 packets=156220 progressAgeUs=37 cmd=0x803b1e41 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x32245046",
+          "sequence": 176346,
+          "timestampNs": 747244929299041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=44829 busy=0 packets=165801 progressAgeUs=30 cmd=0x803b1e91 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x34871853",
+          "sequence": 176347,
+          "timestampNs": 747246126822416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=47422 busy=0 packets=175363 progressAgeUs=22 cmd=0x803b1db1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x36e8b6e3",
+          "sequence": 176348,
+          "timestampNs": 747247321989916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=50013 busy=0 packets=184935 progressAgeUs=28 cmd=0x803b1d71 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x394afa15",
+          "sequence": 176349,
+          "timestampNs": 747248518456791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=52613 busy=0 packets=194539 progressAgeUs=26 cmd=0x803b1f31 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x3baf3595",
+          "sequence": 176350,
+          "timestampNs": 747249718843166
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=55206 busy=0 packets=204112 progressAgeUs=33 cmd=0x803b1f11 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x3e1d91e0",
+          "sequence": 176351,
+          "timestampNs": 747250915486791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=57800 busy=0 packets=213685 progressAgeUs=55 cmd=0x803b1ed1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x407fd5e3",
+          "sequence": 176352,
+          "timestampNs": 747252111959833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=60394 busy=0 packets=223243 progressAgeUs=27 cmd=0x803b1db1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x42e136b0",
+          "sequence": 176353,
+          "timestampNs": 747253306648416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=62982 busy=0 packets=232775 progressAgeUs=37 cmd=0x803b1af1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x4540f3a4",
+          "sequence": 176354,
+          "timestampNs": 747254498045916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=65572 busy=0 packets=242321 progressAgeUs=28 cmd=0x803b1911 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x47a1a046",
+          "sequence": 176355,
+          "timestampNs": 747255691315333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=68164 busy=0 packets=251874 progressAgeUs=33 cmd=0x803b17a1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x4a0ea48e",
+          "sequence": 176356,
+          "timestampNs": 747256885288000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=70755 busy=0 packets=261437 progressAgeUs=36 cmd=0x803b16d1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x4c7054da",
+          "sequence": 176357,
+          "timestampNs": 747258080592875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=73343 busy=0 packets=270963 progressAgeUs=31 cmd=0x803b13b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x4ecfb903",
+          "sequence": 176358,
+          "timestampNs": 747259271314333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=75937 busy=0 packets=280548 progressAgeUs=44 cmd=0x803b1441 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x5132c772",
+          "sequence": 176359,
+          "timestampNs": 747260469348041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=78534 busy=0 packets=290129 progressAgeUs=44 cmd=0x803b14a1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x5395a385",
+          "sequence": 176360,
+          "timestampNs": 747261666982666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=81125 busy=0 packets=299670 progressAgeUs=40 cmd=0x803b1261 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5601eaad",
+          "sequence": 176361,
+          "timestampNs": 747262859481333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=83721 busy=0 packets=309247 progressAgeUs=28 cmd=0x803b1271 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5864764f",
+          "sequence": 176362,
+          "timestampNs": 747264056484375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=86316 busy=0 packets=318843 progressAgeUs=35 cmd=0x803b13b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5ac83a8d",
+          "sequence": 176363,
+          "timestampNs": 747265255950833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=88915 busy=0 packets=328435 progressAgeUs=29 cmd=0x803b14b1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5d2bb974",
+          "sequence": 176364,
+          "timestampNs": 747266454871958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=91510 busy=0 packets=338018 progressAgeUs=21 cmd=0x803b1521 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x5f8ea64b",
+          "sequence": 176365,
+          "timestampNs": 747267652626041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=94099 busy=0 packets=347552 progressAgeUs=26 cmd=0x803b1281 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x61ee8b60",
+          "sequence": 176366,
+          "timestampNs": 747268844349875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=96693 busy=0 packets=357126 progressAgeUs=42 cmd=0x803b1261 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x645ce6e4",
+          "sequence": 176367,
+          "timestampNs": 747270040973166
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=99286 busy=0 packets=366683 progressAgeUs=46 cmd=0x803b1131 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x66be405d",
+          "sequence": 176368,
+          "timestampNs": 747271235576958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=101879 busy=0 packets=376249 progressAgeUs=142 cmd=0x803b1091 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x69202157",
+          "sequence": 176369,
+          "timestampNs": 747272431284666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=104472 busy=0 packets=385806 progressAgeUs=39 cmd=0x803b0f61 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x6b8169e6",
+          "sequence": 176370,
+          "timestampNs": 747273625766583
+        }
+      ],
+      "scannedCount": 81
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

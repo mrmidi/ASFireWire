@@ -58,7 +58,7 @@ stateDiagram-v2
     ProducerOwned --> Committed: "producer writes bytes and metadata; commitGeneration release-store last"
     Committed --> DmaOwned: "transport acquire-loads expected generation and publishes DMA descriptors"
     DmaOwned --> Completed: "OHCI writes completion status"
-    Completed --> ProducerOwned: "transport verifies payload seal, then release-stores completionCursor"
+    Completed --> ProducerOwned: "successor completed; transport verifies seal and releases completionCursor"
 ```
 
 The invariants are:
@@ -74,6 +74,11 @@ The invariants are:
 6. The configured isochronous channel is transport-owned and is stamped into
    the otherwise opaque immediate header immediately before descriptor
    publication.
+
+TX uses a finite, zero-terminated DMA program over reusable slab slots. Refill
+publishes a detached batch before linking the old tail, and retains the newest
+completion as a continuation anchor until its successor completes. See the
+[ownership contract and regression coverage](../../documentation/TX_FINITE_QUEUE_OWNERSHIP.md).
 
 Generic queue constants shared with packet producers live in
 `../Shared/Isoch/IsochQueueGeometry.hpp`. OHCI-specific descriptor geometry
