@@ -332,8 +332,8 @@ static_assert(ValidateTuning(AudioRuntimeTuning{}).Applicable(),
 static_assert(AudioRuntimeTuning{}.PreparedTargetPackets() ==
                   AudioTimingGeometry::kTxPreparedTargetCycleSlots,
               "default tuning must reproduce the compile-time prepared target");
-static_assert(PreparedLeadFrames(AudioRuntimeTuning{}, 48'000) == 720,
-              "default prepared lead is 120 packets x 6 frames");
+static_assert(PreparedLeadFrames(AudioRuntimeTuning{}, 48'000) == 6'048,
+              "default prepared lead is 1008 packets x 6 frames");
 // The shipping value sits exactly on the asserted floor, so it must not warn,
 // and anything below it must.
 static_assert(!ValidateTuning(AudioRuntimeTuning{})

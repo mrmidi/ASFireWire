@@ -52,22 +52,22 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
     EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 8192U);
-    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 168U);
-    EXPECT_EQ(Geometry::kTxHardwareRingPackets, 48U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1512U);
+    EXPECT_EQ(Geometry::kTxHardwareRingPackets, 504U);
     EXPECT_EQ(Geometry::kTxPreparationLatencyHistogramBuckets, 6U);
     EXPECT_EQ(Geometry::kTxCommittedMarginHistogramBuckets, 5U);
     EXPECT_EQ(Geometry::kTxPreparationLatency250Us, 250U);
     EXPECT_EQ(Geometry::kTxPreparationLatency1500Us, 1500U);
     // Committed-margin buckets resolve fractions of the hardware ring: the
-    // shared store is 168 packets, so the old 2x/4x/8x/16x-ring ladder put
+    // shared store is three rings deep, so the old 2x/4x/8x/16x-ring ladder put
     // every sample in one bucket.
-    EXPECT_EQ(Geometry::kTxCommittedMarginQuarterRingPackets, 12U);
-    EXPECT_EQ(Geometry::kTxCommittedMarginHalfRingPackets, 24U);
-    EXPECT_EQ(Geometry::kTxCommittedMarginThreeQuarterRingPackets, 36U);
-    EXPECT_EQ(Geometry::kTxCommittedMarginOneRingPackets, 48U);
-    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 72U);
-    EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 120U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 120U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginQuarterRingPackets, 126U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginHalfRingPackets, 252U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginThreeQuarterRingPackets, 378U);
+    EXPECT_EQ(Geometry::kTxCommittedMarginOneRingPackets, 504U);
+    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 504U);
+    EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 1008U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 1008U);
 
     // DMA completion cadence and the ZTS grid are intentionally independent.
     EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,

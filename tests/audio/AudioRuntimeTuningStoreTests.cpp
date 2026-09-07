@@ -51,7 +51,8 @@ TEST(AudioRuntimeTuningTransaction, SelectedDepthIgnoresMalformedUnselectedField
     ASSERT_TRUE(candidate);
     EXPECT_EQ(candidate->outputLatencyFrames, 67U);
     EXPECT_EQ(candidate->frameRingFrames, Duet().frameRingFrames);
-    EXPECT_EQ(state.Copy().effective.txDispatchSlackPackets, 72U);
+    EXPECT_EQ(state.Copy().effective.txDispatchSlackPackets,
+              AudioTimingGeometry::kTxDispatchSlackCycleSlots);
     ASSERT_TRUE(state.Finish(*id, 0));
     EXPECT_EQ(state.Copy().effective.txDispatchSlackPackets, 24U);
     EXPECT_EQ(state.Copy().status, TuningRequestStatus::Applied);
@@ -91,7 +92,8 @@ TEST(AudioRuntimeTuningTransaction, RefusalAndAbortHaveTerminalOutcomesAndStaleC
         EXPECT_EQ(state.Copy().lastError, 123U);
         EXPECT_EQ(state.Copy().status, aborted ? TuningRequestStatus::Aborted : TuningRequestStatus::Rejected);
         EXPECT_EQ(state.Copy().pendingGroups, 0U);
-        EXPECT_EQ(state.Copy().effective.txDispatchSlackPackets, 72U);
+        EXPECT_EQ(state.Copy().effective.txDispatchSlackPackets,
+              AudioTimingGeometry::kTxDispatchSlackCycleSlots);
         const auto b = state.Submit(request, depth); ASSERT_TRUE(b); EXPECT_NE(*a, *b);
         EXPECT_FALSE(state.RequestWindow(*a));
         EXPECT_FALSE(state.BeginApply(*a));
@@ -132,7 +134,15 @@ TEST(AudioRuntimeTuningTransaction, StoreProvidesCoherentConcurrentSnapshots) {
     writer.join(); EXPECT_EQ(bad.load(), 0U);
 }
 TEST(AudioRuntimeTuningTransaction, OverflowCannotTurnExcessiveSlackIntoAnAcceptedTarget) {
-    for (uint32_t slack : {73U, UINT32_MAX, UINT32_MAX - 48U, UINT32_MAX - 95U}) {
+    // One packet past what the shared store can hold, plus values chosen so a
+    // naive `slack + 2 * guard` would wrap. Derived, because the first entry is
+    // the store bound and moves with the geometry.
+    constexpr uint32_t kFirstExcessive =
+        AudioTimingGeometry::kTxSharedSlotPackets -
+        2U * AudioTimingGeometry::kTxOwnershipGuardCycleSlots + 1U;
+    for (uint32_t slack : {kFirstExcessive, UINT32_MAX,
+                           UINT32_MAX - AudioTimingGeometry::kTxOwnershipGuardCycleSlots,
+                           UINT32_MAX - 95U}) {
         auto request = Duet(); request.txDispatchSlackPackets = slack;
         EXPECT_EQ(ValidateTuning(request).rejection, TuningRejection::kPreparedTargetExceedsSharedSlots);
         auto state = Ready(); EXPECT_FALSE(state.Submit(request, depth));
@@ -140,8 +150,13 @@ TEST(AudioRuntimeTuningTransaction, OverflowCannotTurnExcessiveSlackIntoAnAccept
     EXPECT_TRUE(ValidateTuning(Duet()).Applicable());
 }
 TEST(AudioRuntimeTuningTransaction, PreparedHorizonHasTheSameDurationAtEveryRate) {
+    // Bus cycles keep their duration as the sample rate changes, so the horizon
+    // is a fixed number of microseconds and a rate-scaled number of frames.
+    const uint32_t horizonUs =
+        PacketsToMicroseconds(Duet().PreparedTargetPackets());
     for (uint32_t rate : {48000U, 96000U, 192000U})
-        EXPECT_EQ(PreparedLeadFrames(Duet(), rate), rate * 15U / 1000U);
+        EXPECT_EQ(PreparedLeadFrames(Duet(), rate),
+                  static_cast<uint32_t>(uint64_t{rate} * horizonUs / 1'000'000U));
 }
 TEST(AudioRuntimeTuningTransaction, TokensPreserveIdentityAndSeparateConfigurationNamespaces) {
     EXPECT_FALSE(IsTuningToken(1));

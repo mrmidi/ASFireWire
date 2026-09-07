@@ -134,9 +134,9 @@ TEST(AudioGeometryReport, PublishedTuningBoundsMatchWhatValidationEnforces) {
 // repeats once per ring traversal. The panel names it so a jump of exactly one
 // lap is recognised as a lap.
 TEST(AudioGeometryReport, RingLapIsTheLatticeQuantum) {
-    EXPECT_EQ(DeriveGeometryReport(48'000).txRingLapFrames, 288U);
-    EXPECT_EQ(DeriveGeometryReport(96'000).txRingLapFrames, 576U);
-    EXPECT_EQ(DeriveGeometryReport(192'000).txRingLapFrames, 1152U);
+    EXPECT_EQ(DeriveGeometryReport(48'000).txRingLapFrames, 3'024U);
+    EXPECT_EQ(DeriveGeometryReport(96'000).txRingLapFrames, 6'048U);
+    EXPECT_EQ(DeriveGeometryReport(192'000).txRingLapFrames, 12'096U);
     // It is the ring expressed in frames, so it must agree with the ring
     // expressed in completion groups at every rate.
     for (uint32_t rate : {48'000U, 96'000U, 192'000U}) {
@@ -158,11 +158,13 @@ TEST(AudioGeometryReport, RingDepthsConvertToTimeThroughTheCycleGrid) {
     const auto g = DeriveGeometryReport(48'000);
     EXPECT_EQ(g.isochCyclesPerSecond * g.microsecondsPerIsochCycle, 1'000'000U);
 
-    // 48 packets of hardware ring = 6 ms; 168 shared slots = 21 ms; the RX
-    // descriptor ring of 504 packets = 63 ms.
-    EXPECT_EQ(g.txHardwareRingPackets * g.microsecondsPerIsochCycle, 6'000U);
-    EXPECT_EQ(g.txSharedSlotPackets * g.microsecondsPerIsochCycle, 21'000U);
+    // TX and RX descriptor rings are both 504 packets = 63 ms of DMA runway;
+    // 1512 shared slots = 189 ms of durable packet storage.
+    EXPECT_EQ(g.txHardwareRingPackets * g.microsecondsPerIsochCycle, 63'000U);
+    EXPECT_EQ(g.txSharedSlotPackets * g.microsecondsPerIsochCycle, 189'000U);
     EXPECT_EQ(g.rxHardwareRingPackets * g.microsecondsPerIsochCycle, 63'000U);
+    // The point of the change: neither direction dies before the other.
+    EXPECT_EQ(g.txHardwareRingPackets, g.rxHardwareRingPackets);
 
     // Every ring must be a whole number of interrupt groups, or a completion
     // would straddle a wrap.

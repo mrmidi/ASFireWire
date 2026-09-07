@@ -50,7 +50,22 @@ protected:
     static constexpr uint64_t kSharedPayloadIOVA = 0x70000000u;
     // An arbitrary non-power-of-two producer queue depth. Transport must not
     // depend on a content producer's chosen retention geometry.
-    static constexpr uint32_t kSharedPayloadSlots = 912;
+    //
+    // Derived rather than written down, because the tests below need three
+    // properties this must not silently lose when the ring moves: it must not
+    // be a whole number of hardware laps (so the shared-ring wrap does not land
+    // on descriptor 0), the gap to one lap must be a whole number of completion
+    // groups (so the wrap tests can step to it), and it must exceed the two
+    // laps the wrapped-slot test commits across. It was the literal 912, which
+    // satisfied all three at a 48-packet ring and none of them at 504 -- the
+    // wrapped-slot test wrote past the end of the metadata ring.
+    static constexpr uint32_t kSharedPayloadSlots = 3 * Layout::kNumPackets + 6;
+    static_assert(kSharedPayloadSlots % Layout::kNumPackets != 0);
+    static_assert((kSharedPayloadSlots - Layout::kNumPackets) %
+                      ASFW::Shared::Isoch::IsochQueueGeometry::
+                          kPacketsPerCompletionGroup ==
+                  0);
+    static_assert(kSharedPayloadSlots > 2 * Layout::kNumPackets + 6);
     static constexpr uint32_t kSharedPayloadStride = 512;
 
     ASFW::Driver::HardwareInterface hardware_;
@@ -102,11 +117,16 @@ protected:
     void RetireToCommandPtr(IsochTxQueueControl& control) {
         const uint32_t cmdPtr = hardware_.GetTestRegister(
             static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)));
-        const uint32_t base = ring_.Slab().GetDescriptorIOVA(0);
         const uint32_t addr = cmdPtr & 0xFFFFFFF0u;
-        if (addr < base) return;
-        const uint32_t slot = ((addr - base) / sizeof(OHCIDescriptor)) /
-                              Layout::kBlocksPerPacket;
+        // Decode through the slab, not with flat (addr - base) / stride
+        // arithmetic. The two agree only while the ring fits in one descriptor
+        // page; past that the padding at each page boundary makes the flat form
+        // over-count, and this helper silently retired nothing because the slot
+        // it computed was out of range. Production always used the slab
+        // decoder -- this was a harness-only defect, but it hid a real test.
+        uint32_t logicalIndex = 0;
+        if (!ring_.Slab().DecodeCmdAddrToLogicalIndex(addr, logicalIndex)) return;
+        const uint32_t slot = logicalIndex / Layout::kBlocksPerPacket;
         if (slot >= Layout::kNumPackets) return;
         const uint32_t delta =
             (slot + Layout::kNumPackets - mockHwSlot_) % Layout::kNumPackets;
@@ -168,7 +188,7 @@ protected:
         IsochMemoryConfig config;
         config.numDescriptors = Layout::kRingBlocks;
         config.packetSizeBytes = 0;
-        config.descriptorAlignment = Layout::kOHCIPageSize;
+        config.descriptorAlignment = Layout::kDescriptorPageStride;
         config.payloadPageAlignment = 16384;
         config.allocatePayloadSlab = false;
 
@@ -1181,13 +1201,23 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
     EXPECT_EQ(metadataRing[0].commitGeneration.load(std::memory_order_acquire), 2U);
 }
 
+// Coverage runs out exactly two completion groups past the mapped window: the
+// first two refills consume committed packets, the third reaches slots the
+// producer never committed and must fault rather than transmit a stale lap.
+//
+// Captured on hardware as "60 committed packets" when the TX ring was 48; the
+// number is ring + 2 groups, so it is written that way and follows the ring.
 TEST_F(IsochTxDmaRingTest,
-       SixtyCommittedPacketsFailOnThirdUnservicedCompletionGroup) {
+       CommittedRingPlusTwoGroupsFailsOnThirdUnservicedCompletionGroup) {
     using Geometry = ASFW::Shared::Isoch::IsochQueueGeometry;
     constexpr uint32_t kHistoricalCommittedPackets =
         Geometry::kTransmitInFlightPackets +
         2 * Geometry::kPacketsPerCompletionGroup;
-    static_assert(kHistoricalCommittedPackets == 60);
+    // The scenario needs room for the committed region plus the third,
+    // uncommitted group inside the test's shared slab.
+    static_assert(kHistoricalCommittedPackets +
+                      Geometry::kPacketsPerCompletionGroup <=
+                  kSharedPayloadSlots);
 
     auto metadataRing = MakeMetadataRing();
     for (uint32_t packetIndex = 0;
@@ -1560,7 +1590,7 @@ protected:
         IsochMemoryConfig config;
         config.numDescriptors = Layout::kRingBlocks;
         config.packetSizeBytes = 0;
-        config.descriptorAlignment = Layout::kOHCIPageSize;
+        config.descriptorAlignment = Layout::kDescriptorPageStride;
         config.payloadPageAlignment = 16384;
         config.allocatePayloadSlab = false;
 
@@ -1602,11 +1632,11 @@ protected:
         primeControl_.numSlots = kSharedPayloadSlots;
         primeControl_.slotStrideBytes = kSharedPayloadStride;
         primeControl_.maxPacketBytes = kSharedPayloadStride;
-        primeControl_.committedEnd.store(120);
+        primeControl_.committedEnd.store(Layout::kNumPackets);
         ASSERT_EQ(
             ring_.Prime(payloadDmaMap_, kSharedPayloadSlots,
                         kSharedPayloadStride, metadataRing.data(),
-                        &primeControl_, sharedPayload_.data(), 120)
+                        &primeControl_, sharedPayload_.data(), Layout::kNumPackets)
                 .packetsAssembled,
             Layout::kNumPackets);
     }

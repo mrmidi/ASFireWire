@@ -1,5 +1,6 @@
 #include "Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
 #include "Audio/Runtime/AudioTelemetrySnapshot.hpp"
+#include "Audio/Shared/AudioTimingGeometry.hpp"
 
 #include <gtest/gtest.h>
 
@@ -63,14 +64,24 @@ TEST(AudioTransportControlBlockTests, CommittedMarginBucketsResolveRingFractions
     using Block = ASFW::Audio::Runtime::AudioTransportControlBlock;
     // The failure this must resolve is running out of committed slots, so the
     // resolution is at the low end: a full ring collapses into the top bucket.
+    // Boundaries are quarters of the hardware ring, so they are written as
+    // quarters rather than as the numbers they happen to be: the ladder moved
+    // 12/24/36/48 -> 126/252/378/504 when the TX ring went to RX parity.
+    using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
+    constexpr uint32_t kQuarter = Geometry::kTxCommittedMarginQuarterRingPackets;
+    constexpr uint32_t kHalf = Geometry::kTxCommittedMarginHalfRingPackets;
+    constexpr uint32_t kThreeQuarter =
+        Geometry::kTxCommittedMarginThreeQuarterRingPackets;
+    constexpr uint32_t kRing = Geometry::kTxCommittedMarginOneRingPackets;
+
     EXPECT_EQ(Block::CommittedMarginBucket(0), 0U);
-    EXPECT_EQ(Block::CommittedMarginBucket(12), 0U);
-    EXPECT_EQ(Block::CommittedMarginBucket(13), 1U);
-    EXPECT_EQ(Block::CommittedMarginBucket(24), 1U);
-    EXPECT_EQ(Block::CommittedMarginBucket(36), 2U);
-    EXPECT_EQ(Block::CommittedMarginBucket(48), 3U);
-    EXPECT_EQ(Block::CommittedMarginBucket(49), 4U);
-    EXPECT_EQ(Block::CommittedMarginBucket(168), 4U);
+    EXPECT_EQ(Block::CommittedMarginBucket(kQuarter), 0U);
+    EXPECT_EQ(Block::CommittedMarginBucket(kQuarter + 1), 1U);
+    EXPECT_EQ(Block::CommittedMarginBucket(kHalf), 1U);
+    EXPECT_EQ(Block::CommittedMarginBucket(kThreeQuarter), 2U);
+    EXPECT_EQ(Block::CommittedMarginBucket(kRing), 3U);
+    EXPECT_EQ(Block::CommittedMarginBucket(kRing + 1), 4U);
+    EXPECT_EQ(Block::CommittedMarginBucket(Geometry::kTxSharedSlotPackets), 4U);
 }
 
 TEST(AudioTransportControlBlockTests, TxIntervalRotationPublishesAndRearms) {
@@ -78,8 +89,17 @@ TEST(AudioTransportControlBlockTests, TxIntervalRotationPublishesAndRearms) {
 
     control.RecordPreparationLatency(1234, 300);
     control.RecordPreparationLatency(9999, 2000);
-    control.RecordCommittedMargin(20);
-    control.RecordCommittedMargin(120);
+    // One sample just past the quarter-ring boundary (bucket 1) and one past a
+    // full ring (bucket 4), so the rotation test keeps exercising two buckets
+    // whatever the ring depth is.
+    constexpr uint32_t kMarginInBucket1 =
+        ASFW::Audio::Shared::AudioTimingGeometry::
+            kTxCommittedMarginQuarterRingPackets + 1U;
+    constexpr uint32_t kMarginInBucket4 =
+        ASFW::Audio::Shared::AudioTimingGeometry::
+            kTxCommittedMarginOneRingPackets + 1U;
+    control.RecordCommittedMargin(kMarginInBucket1);
+    control.RecordCommittedMargin(kMarginInBucket4);
     control.RecordProducerHeadroom(512);
     control.RecordProducerHeadroom(64);
 
@@ -106,9 +126,9 @@ TEST(AudioTransportControlBlockTests, TxIntervalRotationPublishesAndRearms) {
     EXPECT_EQ(control.txCompletedIntervalPreparationLatencyHistogram[5].load(
                   std::memory_order_relaxed), 1U);
     EXPECT_EQ(control.txCompletedIntervalMarginMinPackets.load(
-                  std::memory_order_relaxed), 20U);
+                  std::memory_order_relaxed), kMarginInBucket1);
     EXPECT_EQ(control.txCompletedIntervalMarginMaxPackets.load(
-                  std::memory_order_relaxed), 120U);
+                  std::memory_order_relaxed), kMarginInBucket4);
     EXPECT_EQ(control.txCompletedIntervalCommittedMarginHistogram[1].load(
                   std::memory_order_relaxed), 1U);
     EXPECT_EQ(control.txCompletedIntervalCommittedMarginHistogram[4].load(

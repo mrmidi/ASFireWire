@@ -11,6 +11,11 @@ namespace {
 using namespace ASFW::Audio::Shared;
 
 constexpr uint32_t kGroup = AudioTimingGeometry::kTxPacketsPerGroup;
+// The published floor in completion groups. Derived, not written down, because
+// it moved 12 -> 84 when the TX ring went to RX parity and the binding floor
+// stopped being the absolute-time one.
+constexpr uint32_t kFloorGroups =
+    AudioTimingGeometry::kTxDispatchSlackFloorPackets / kGroup;
 
 AudioRuntimeTuning WithGroups(uint32_t groups) {
     AudioRuntimeTuning t{};
@@ -30,7 +35,7 @@ TEST(AudioRuntimeTuning, DefaultsReproduceTheCompileTimeGeometryExactly) {
     EXPECT_EQ(d.frameRingFrames, AudioTimingGeometry::kFrameRingFrames);
     EXPECT_EQ(d.zeroTimestampPeriodFrames,
               AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
-    EXPECT_EQ(PreparedLeadFrames(d, 48000), 720U);
+    EXPECT_EQ(PreparedLeadFrames(d, 48000), 6'048U);
 
     const auto v = ValidateTuning(d);
     EXPECT_TRUE(v.Applicable());
@@ -38,20 +43,33 @@ TEST(AudioRuntimeTuning, DefaultsReproduceTheCompileTimeGeometryExactly) {
     EXPECT_EQ(v.warnings, 0U);
 }
 
-// The shipping slack sits exactly on the asserted floor
-// (kTxMaxCoveredDeltaConsumedPackets >= 12 * kTxPacketsPerGroup is 72 >= 72),
-// so the boundary must be inclusive: 12 groups is inside, 11 is outside.
-TEST(AudioRuntimeTuning, AssertedFloorIsInclusiveAtTwelveGroups) {
-    EXPECT_FALSE(ValidateTuning(WithGroups(12))
+// The shipping slack sits exactly on the published floor, so the boundary must
+// be inclusive: the floor itself is inside, one group below is outside.
+TEST(AudioRuntimeTuning, AssertedFloorIsInclusiveAtTheFloorItself) {
+    EXPECT_FALSE(ValidateTuning(WithGroups(kFloorGroups))
                      .Has(TuningWarning::kDispatchSlackBelowAssertedFloor));
-    EXPECT_TRUE(ValidateTuning(WithGroups(11))
+    EXPECT_TRUE(ValidateTuning(WithGroups(kFloorGroups - 1))
                     .Has(TuningWarning::kDispatchSlackBelowAssertedFloor));
     for (const uint32_t groups : {8U, 6U, 4U, 2U, 1U}) {
+        ASSERT_LT(groups, kFloorGroups);
         const auto v = ValidateTuning(WithGroups(groups));
         EXPECT_TRUE(v.Applicable()) << groups << " groups must stay applicable";
         EXPECT_TRUE(v.Has(TuningWarning::kDispatchSlackBelowAssertedFloor))
             << groups << " groups must report crossing the floor";
     }
+}
+
+// The floor the panel is shown must be the one that actually binds. A refill
+// observes at most a full mapped window of finished packets and needs every one
+// committed, so any slack below the ring holes the descriptor ring -- and the
+// panel must not present such a preset as being inside the envelope.
+TEST(AudioRuntimeTuning, PublishedFloorCoversAFullMappedWindow) {
+    EXPECT_GE(AudioTimingGeometry::kTxDispatchSlackFloorPackets,
+              AudioTimingGeometry::kTxHardwareRingPackets);
+    // Everything the panel does NOT mark as below-floor must be coverable.
+    const auto onFloor = WithGroups(kFloorGroups);
+    EXPECT_GE(onFloor.MaxCoveredDeltaConsumedPackets() + 1,
+              AudioTimingGeometry::kTxHardwareRingPackets);
 }
 
 // Reducing is the supported direction; growing past the store is not, because

@@ -22,6 +22,7 @@
 //     the committed region regardless of latency.
 
 #include "Audio/Shared/AudioTimingGeometry.hpp"
+#include "Isoch/Core/IsochDmaGeometry.hpp"
 #include "Isoch/Core/IsochTxQueue.hpp"
 
 #include <gtest/gtest.h>
@@ -34,11 +35,12 @@ namespace {
 using ASFW::Audio::Shared::AudioTimingGeometry;
 using ASFW::Isoch::ExpectedTxCommitGeneration;
 
-constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 192
-constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 48
-constexpr uint32_t kCoverageLead = AudioTimingGeometry::kTxCoverageLeadPackets; // 144
-constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 144
+constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 1512
+constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 504
+constexpr uint32_t kCoverageLead = AudioTimingGeometry::kTxCoverageLeadPackets; // 1008
+constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 1008
 constexpr uint32_t kGroup = AudioTimingGeometry::kTxPacketsPerGroup;          // 6
+constexpr uint32_t kBudgetGroups = (kCoverageLead - kHwRing) / kGroup;        // 84
 
 // The historical pre-fix lead (slack == 2*group) the hardware IT FATAL was
 // captured at (deltaConsumed=13 holed it). Used to pin the bug independently
@@ -255,14 +257,14 @@ TEST(TxRefillCoverage, LeadSizedForMaxCoalesceIsHoleFree) {
               kNoMiss);
 }
 
-// The refill-coverage sub-budget (lead 120, slack 72) covers the captured
-// hardware worst case and twelve groups without a producer wake. Was sixteen
-// until the slack went 96 -> 72 to buy back output latency; twelve is still
-// ~1.7x the observed 40-42 packet DriverKit dispatch stalls.
-TEST(TxRefillCoverage, CurrentGeometryCoversTwelveGroupsWithoutProducer) {
+// The refill-coverage sub-budget covers the captured hardware worst case and
+// every group count the budget claims. The budget moved 12 -> 84 groups when
+// the TX ring went to RX parity: slack must cover a full mapped window, so it
+// scales with the ring rather than sitting at a fixed 9 ms.
+TEST(TxRefillCoverage, CurrentGeometryCoversItsFullGroupBudget) {
     EXPECT_EQ(DriveSteady(kCoverageLead, kHwRing, 13, /*cycles=*/8000),
               kNoMiss);
-    for (uint32_t groups = 1; groups <= 12; ++groups) {
+    for (uint32_t groups = 1; groups <= kBudgetGroups; ++groups) {
         EXPECT_EQ(
             DriveSteady(
                 kCoverageLead, kHwRing, groups * kGroup, /*cycles=*/4000),
@@ -270,7 +272,25 @@ TEST(TxRefillCoverage, CurrentGeometryCoversTwelveGroupsWithoutProducer) {
             << "groups=" << groups;
     }
     // Still holes one group beyond the slack budget — the bound stays tight.
-    EXPECT_NE(DriveSteady(kCoverageLead, kHwRing, 13 * kGroup, /*cycles=*/8),
+    EXPECT_NE(DriveSteady(kCoverageLead, kHwRing,
+                          (kBudgetGroups + 1) * kGroup, /*cycles=*/8),
+              kNoMiss);
+}
+
+// The structural requirement that makes ring depth and slack one decision.
+//
+// Transport keeps the mapped window one hardware ring deep and retains the
+// newest completed descriptor as the resume anchor, so a single refill can
+// observe at most ring - 1 finished packets and must find every one committed.
+// A ring deeper than the slack can survive is a ring that relocates the fatal
+// rather than preventing it: MappedRegionExhausted becomes "slot not committed"
+// one packet later. This is the runtime twin of the COVERAGE (structural)
+// static_assert in AudioTimingGeometry.hpp.
+TEST(TxRefillCoverage, SlackCoversAFullMappedWindowOfCompletions) {
+    ASSERT_GE(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets + 1,
+              kHwRing);
+    // A stall that drains the entire mapped window is survivable.
+    EXPECT_EQ(DriveSteady(kCoverageLead, kHwRing, kHwRing - 1, /*cycles=*/512),
               kNoMiss);
 }
 
@@ -281,9 +301,10 @@ TEST(TxRefillCoverage, CoverageBoundMatchesGeometryConstants) {
     EXPECT_EQ(kLead - kHwRing,
               AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets);
     EXPECT_EQ(kLead, kCoverageLead);
-    // Current geometry tolerates twelve groups without a producer wake.
-    EXPECT_EQ((kCoverageLead - kHwRing) / kGroup, 12u);
+    EXPECT_EQ(kBudgetGroups, 84u);
     EXPECT_EQ(kLead + kHwRing, kNumSlots);
+    // TX and RX descriptor rings are deliberately the same depth.
+    EXPECT_EQ(kHwRing, ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets);
 }
 
 } // namespace

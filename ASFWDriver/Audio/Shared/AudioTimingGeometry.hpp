@@ -112,8 +112,8 @@ struct AudioTimingGeometry final {
     // Committed-margin histogram ceilings, in packets. The bucket that matters
     // is "how close did we come to holing the descriptor ring", so the ladder
     // resolves fractions of the hardware ring, not multiples of it: the shared
-    // store is 168 packets, so a 2x/4x/8x/16x-ring ladder put every sample in
-    // one bucket and resolved nothing. Overrunning the ring is a transport
+    // store is three rings deep, so a 2x/4x/8x/16x-ring ladder put every sample
+    // in one bucket and resolved nothing. Overrunning the ring is a transport
     // failure (IT FATAL: slot not committed), not a recoverable content gap,
     // which is why the resolution belongs at the low end.
     static constexpr uint32_t kTxCommittedMarginQuarterRingPackets =
@@ -139,27 +139,64 @@ struct AudioTimingGeometry final {
     // static_assert still passing. See
     // tools/asfw_sim/scenarios/slack-scales-with-ring.yaml.
     //
-    // Was 96 (12 ms) -- the value the old ring-scaled expression produced at the
-    // shipping ring of 48. Reduced to 72 (9 ms) on 2026-08-29, because the slack
-    // is carried as *committed* DMA lead and therefore lands in the CoreAudio
-    // output safety offset: at 96 the Duet reported 928 safety frames, i.e.
-    // 24.7 ms of output latency in Logic, of which 18 ms was this budget.
+    // Was 96 (12 ms), then 72 (9 ms) on 2026-08-29, on the grounds that the
+    // slack was carried as committed DMA lead and therefore landed in the
+    // CoreAudio output safety offset. That reasoning is now obsolete: payload
+    // finality was decoupled from descriptor binding, and
+    // AudioGeometryPolicy::RequiredOutputSafetyFrames derives safety from
+    // kTxContentFreezeCycleSlots (8 packets) alone. Nothing outside this header
+    // reads the slack except the tuning default and the geometry report, so
+    // widening it costs memory and nothing else.
     //
-    // 72 still covers the observed 40-42 packet DriverKit dispatch stalls with
-    // ~1.7x margin (see the COVERAGE assert below, relaxed from 16 groups to 12
-    // in the same change). It is not taken lower: at 48 the margin over those
-    // stalls would be 1.14x, and overrunning this budget holes the descriptor
-    // ring, which silence substitution does not rescue -- that is a transport
-    // failure (IT FATAL: slot not committed), not a content gap.
+    // Raised to 504 on 2026-09-07 alongside the ring, because the two are not
+    // independent, however much the paragraph above wants them to be:
+    //
+    //   the mapped window is kTxHardwareRingPackets deep and one completion
+    //   anchor is retained, so a single refill observes at most ring - 1
+    //   finished packets -- and must find every one of them committed.
+    //
+    // Hence the COVERAGE assert below: slack >= ring - 1. Survival is therefore
+    // min(ring, slack + 1), and raising the ring alone would only relocate the
+    // fatal from MappedRegionExhausted to "IT FATAL: slot not committed" one
+    // packet later. This is NOT the old `2 * ring` policy that made the lead
+    // 3 * ring and collapsed the producer: the requirement is exactly ring - 1,
+    // so the lead is 2 * ring, and preparation arms from silence rather than
+    // from content it cannot have yet.
+    //
+    // A second, independent floor argues the same way: the producer's other
+    // wake source is the CoreAudio IO callback at kHalIoPeriodFrames (512
+    // frames = 10.67 ms at 48 kHz). The old 72 packets was 9.0 ms -- less than
+    // one callback period, so a producer woken only by CoreAudio was already
+    // structurally late.
     static constexpr uint32_t kTxOwnershipGuardCycleSlots =
         kTxHardwareRingPackets;
-    static constexpr uint32_t kTxDispatchSlackCycleSlots = 72;
-    // The floor the COVERAGE assert below enforces, named once so validation
-    // and the tuning panel quote the same number instead of each spelling out
-    // twelve groups of six. The shipping value sits exactly on it.
+    static constexpr uint32_t kTxDispatchSlackCycleSlots = 504;
+    // The absolute-time floor the COVERAGE assert below enforces, named once so
+    // validation and the tuning panel quote the same number instead of each
+    // spelling out twelve groups of six. This is the operator-facing floor: it
+    // bounds how far the panel may wind the slack DOWN, and it is a scheduling
+    // budget in milliseconds, independent of ring depth. The structural
+    // requirement (slack >= ring - 1) is a separate assert and is the larger of
+    // the two at the shipping ring.
     static constexpr uint32_t kTxDispatchSlackFloorGroups = 12;
-    static constexpr uint32_t kTxDispatchSlackFloorPackets =
+    static constexpr uint32_t kTxDispatchSlackAbsoluteTimeFloorPackets =
         kTxDispatchSlackFloorGroups * kTxPacketsPerGroup;
+    // The structural floor: one refill can observe a full mapped window of
+    // finished packets and must find every one committed, so slack below the
+    // ring cannot cover the stall the ring exists to survive. Expressed as the
+    // whole ring rather than ring - 1 so the panel can still label it in whole
+    // completion groups; the exact bound is the static_assert below.
+    static constexpr uint32_t kTxDispatchSlackRingCoverageFloorPackets =
+        kTxHardwareRingPackets;
+    // What the tuning panel is told the floor is. It must be the binding one of
+    // the two, or the panel offers presets it describes as safe and which
+    // deterministically hole the descriptor ring. Before the ring went to RX
+    // parity the absolute-time floor was the larger; now the ring is.
+    static constexpr uint32_t kTxDispatchSlackFloorPackets =
+        kTxDispatchSlackAbsoluteTimeFloorPackets >
+                kTxDispatchSlackRingCoverageFloorPackets
+            ? kTxDispatchSlackAbsoluteTimeFloorPackets
+            : kTxDispatchSlackRingCoverageFloorPackets;
     static constexpr uint32_t kTxPreparedTargetCycleSlots =
         kTxOwnershipGuardCycleSlots + kTxDispatchSlackCycleSlots;
     // Compatibility spelling while the remaining call sites are migrated to
@@ -170,8 +207,8 @@ struct AudioTimingGeometry final {
         kTxPreparedTargetCycleSlots;
     static constexpr uint32_t kTxPreparationLeadPackets =
         kTxPreparedTargetCycleSlots;
-    // 21 ms of durable packet storage: 15 ms prepared plus the 6 ms ownership
-    // guard. Storage capacity is not presentation latency.
+    // 189 ms of durable packet storage: 126 ms prepared plus the 63 ms
+    // ownership guard. Storage capacity is not presentation latency.
     // Bound-payload finality: transport refreshes alternative payload images on
     // each six-packet completion and never repoints either of the two commands
     // closest to the live OHCI CommandPtr. The next completion interval plus
@@ -187,7 +224,10 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kTxContentFreezeCycleSlots =
         ::ASFW::Shared::Isoch::IsochQueueGeometry::
             kPayloadFinalityLeadPackets;
-    static constexpr uint32_t kTxSharedSlotPackets = 168;
+    // Cross-process payload/metadata slot count, stated explicitly rather than
+    // derived because it sizes shared memory; the STORE assert below pins it to
+    // prepared target + ownership guard = 3 * ring.
+    static constexpr uint32_t kTxSharedSlotPackets = 1512;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
     static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =
         kTxPreparedTargetCycleSlots - kTxOwnershipGuardCycleSlots;
@@ -232,16 +272,37 @@ static_assert(AudioTimingGeometry::kRxPacketsPerGroup ==
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
               AudioTimingGeometry::kTxPreparationLeadPackets,
               "TX shared slot ring must hold the full preparation lead");
-// COVERAGE: tolerate 12 six-packet groups without a producer wake, ~1.7x the
-// observed 40-42 packet DriverKit dispatch stalls. Relaxed from 16 groups when
-// the dispatch slack went 96 -> 72; the margin bought latency, since this budget
-// is committed lead and is reported to CoreAudio as output safety. Do not take
-// it below 12: overrunning it holes the descriptor ring, and unlike a PCM gap
-// that is a transport failure silence substitution cannot cover.
+// COVERAGE (structural): a refill walks the descriptors the consumer finished
+// since the last pass and requires every one of them to be committed. The
+// mapped window is one hardware ring deep and one completed descriptor is
+// retained as the resume anchor, so a single pass can observe at most
+// ring - 1 finished packets. Slack below that lets a stall the ring was sized
+// to survive fail one packet later as "IT FATAL: slot not committed" instead of
+// MappedRegionExhausted -- a relocation of the fatal, not a fix. This is what
+// makes ring depth and slack a single decision; see kTxDispatchSlackCycleSlots.
+static_assert(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets + 1 >=
+                  AudioTimingGeometry::kTxHardwareRingPackets,
+              "TX dispatch slack must cover a full mapped window of coalesced "
+              "completions (ring - 1), or the deeper ring buys no survival");
+
+// COVERAGE (absolute time): independently of ring depth, tolerate 12 six-packet
+// groups without a producer wake -- ~1.7x the observed 40-42 packet DriverKit
+// dispatch stalls, and more than one CoreAudio IO callback period, which is the
+// producer's other wake source. Overrunning it holes the descriptor ring, and
+// unlike a PCM gap that is a transport failure silence substitution cannot
+// cover.
 static_assert(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets >=
-                  AudioTimingGeometry::kTxDispatchSlackFloorPackets,
+                  AudioTimingGeometry::kTxDispatchSlackAbsoluteTimeFloorPackets,
               "TX preparation headroom must cover at least 9 ms of producer "
               "dispatch latency at the current six-packet cadence");
+
+// The floor published to the tuning panel must be the binding one, so a preset
+// the panel does not mark "below floor" is actually coverable.
+static_assert(AudioTimingGeometry::kTxDispatchSlackFloorPackets >=
+                  AudioTimingGeometry::kTxDispatchSlackAbsoluteTimeFloorPackets &&
+              AudioTimingGeometry::kTxDispatchSlackFloorPackets >=
+                  AudioTimingGeometry::kTxDispatchSlackRingCoverageFloorPackets,
+              "the published slack floor must dominate every floor that binds");
 static_assert(AudioTimingGeometry::kTxCoverageLeadPackets ==
                   AudioTimingGeometry::kTxHardwareRingPackets +
                       AudioTimingGeometry::kTxPreparationSlackPackets,

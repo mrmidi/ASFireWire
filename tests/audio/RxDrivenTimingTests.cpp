@@ -231,11 +231,11 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
         ASFW::Audio::Shared::kActiveAudioHalBufferProfile
             .zeroTimestampPeriodFrames);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
-    EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 72U);
-    EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 120U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 120U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 168U);
+    EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 504U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 504U);
+    EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 1008U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 1008U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 1512U);
 }
 
 TEST(RxDrivenTimingTests, OutputSafetyIsTheContentFreezeLeadNotTheArmHorizon) {

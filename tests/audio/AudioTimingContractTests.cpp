@@ -13,7 +13,7 @@ using namespace ASFW::Testing::AudioTiming;
 using namespace ASFW::Audio::Runtime;
 
 constexpr EpochAgreement Epoch(uint64_t value) { return {value, value, value}; }
-constexpr uint32_t kRing = 48;
+constexpr uint32_t kRing = 504;
 constexpr uint64_t kBusOrigin = 10'000'000;
 
 // The lap arithmetic below is only meaningful against the real IT ring. Without
@@ -86,27 +86,35 @@ TEST(AudioTimingProgressContract, MatchesEnumeratedCandidatesIncludingBothEndpoi
 }
 
 TEST(AudioTimingProgressContract, AFullLapWithTheSameSlotIsAmbiguous) {
-    ExpectRejected(ResolveProgress(5, 5, kRing, AdvanceBounds{0, 48}),
+    // A window one whole lap wide admits both "no advance" and "exactly a lap".
+    ExpectRejected(ResolveProgress(5, 5, kRing, AdvanceBounds{0, kRing}),
                    Rejection::AmbiguousProgress);
     // Stronger independent execution evidence can make the SAME pointer useful.
-    const auto exact = ResolveProgress(5, 5, kRing, AdvanceBounds{48, 48});
+    const auto exact = ResolveProgress(5, 5, kRing, AdvanceBounds{kRing, kRing});
     ASSERT_TRUE(exact);
-    EXPECT_EQ(*exact, 53U);
+    EXPECT_EQ(*exact, 5U + kRing);
     ExpectRejected(ResolveProgress(5, 5, kRing, std::nullopt),
                    Rejection::MissingEvidence);
 }
 
 TEST(AudioTimingProgressContract, SkippedCyclesDoNotInventExecutedLaps) {
+    // Skip exactly one lap of cycles, then execute: the cycle count is then a
+    // full lap ahead of the executed count, which is precisely what makes the
+    // ring slot ambiguous. Written against kRing so it stays a lap.
+    constexpr unsigned kExecuted = 53;
     PhysicalTrace trace;
-    for (unsigned cycle = 0; cycle < 101; ++cycle) trace.Cycle(cycle < 48);
-    ASSERT_EQ(trace.cycles, 101U);
-    ASSERT_EQ(trace.executed, 53U);
+    for (unsigned cycle = 0; cycle < kRing + kExecuted; ++cycle)
+        trace.Cycle(cycle < kRing);
+    ASSERT_EQ(trace.cycles, kRing + kExecuted);
+    ASSERT_EQ(trace.executed, kExecuted);
     const auto slot = static_cast<uint32_t>(trace.executed % kRing);
     // Demonstrates why the existing nearest-lap helper is not authoritative.
-    EXPECT_EQ(ASFW::Isoch::Tx::LiftRingSlotToAbsolute(slot, trace.cycles, kRing), 101U);
+    EXPECT_EQ(ASFW::Isoch::Tx::LiftRingSlotToAbsolute(slot, trace.cycles, kRing),
+              kRing + kExecuted);
     ExpectRejected(ResolveProgress(0, slot, kRing, AdvanceBounds{0, trace.cycles}),
                    Rejection::AmbiguousProgress);
-    const auto result = ResolveProgress(0, slot, kRing, AdvanceBounds{53, 53});
+    const auto result = ResolveProgress(0, slot, kRing,
+                                       AdvanceBounds{kExecuted, kExecuted});
     ASSERT_TRUE(result);
     EXPECT_EQ(*result, trace.executed);
 }
@@ -191,10 +199,12 @@ TEST_F(AudioTimingContractTest, PresentationFailureAlsoBlocksLaterApparentlyGood
 }
 
 TEST_F(AudioTimingContractTest, AmbiguityCannotBeSalvagedByALaterPlausibleObservation) {
-    ExpectRejected(contract.ObserveProgress(Epoch(1), 0, kRing, AdvanceBounds{0, 96}),
-                   Rejection::AmbiguousProgress);
+    ExpectRejected(
+        contract.ObserveProgress(Epoch(1), 0, kRing, AdvanceBounds{0, 2 * kRing}),
+        Rejection::AmbiguousProgress);
     EXPECT_EQ(contract.PacketIndex(), 0U);
-    ExpectRejected(contract.ObserveProgress(Epoch(1), 0, kRing, AdvanceBounds{96, 96}),
+    ExpectRejected(contract.ObserveProgress(Epoch(1), 0, kRing,
+                                            AdvanceBounds{2 * kRing, 2 * kRing}),
                    Rejection::RecoveryRequired);
     ExpectRejected(contract.Admit(Epoch(1), range, evidence), Rejection::RecoveryRequired);
     ExpectRejected(contract.BeginEpoch(Epoch(1), 0, 0), Rejection::EpochMismatch);

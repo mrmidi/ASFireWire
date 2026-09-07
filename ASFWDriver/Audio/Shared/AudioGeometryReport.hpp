@@ -215,11 +215,12 @@ static_assert(DeriveGeometryReport(48'000).framesPerDataPacket ==
 static_assert(DeriveGeometryReport(48'000).txInterruptIntervalMicroseconds ==
                   750,
               "six-packet completion groups are 750 us apart");
-// 48 packets of hardware ring at six frames a packet. This is the 288 that
-// appears in every RTL repeat measurement.
-static_assert(DeriveGeometryReport(48'000).txRingLapFrames == 288,
-              "48k TX ring lap must be 288 frames");
-static_assert(DeriveGeometryReport(96'000).txRingLapFrames == 576,
+// 504 packets of hardware ring at six frames a packet. Historical note for
+// anyone re-reading old RTL captures: this was 288 while the ring was 48, and
+// the lattice quantum in those measurements is that number, not this one.
+static_assert(DeriveGeometryReport(48'000).txRingLapFrames == 3'024,
+              "48k TX ring lap must be 3024 frames");
+static_assert(DeriveGeometryReport(96'000).txRingLapFrames == 6'048,
               "the lattice quantum scales with the rate, not the ring");
 static_assert(DeriveGeometryReport(0).framesPerDataPacket == 0,
               "an unknown rate must not report the 48 kHz cadence");

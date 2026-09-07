@@ -762,9 +762,11 @@ void IsochTransmitContext::Poll() noexcept {
         //
         // This block used to sit behind the kick hysteresis below, which made
         // the fallback refill at one per 5 ms against a descriptor ring holding
-        // Layout::kNumPackets * 125 us of runway (6 ms at 48 packets). One late
-        // tick and the ring holed — which is what made watchdog-carried
-        // streaming look unsafe and motivated the old fatal. The hysteresis
+        // Layout::kNumPackets * 125 us of runway -- 6 ms while that ring was 48
+        // packets, so one late tick holed it. (The ring is now 504 packets /
+        // 63 ms, which widens the same margin from the other side.) That is
+        // what made watchdog-carried streaming look unsafe and motivated the
+        // old fatal. The hysteresis
         // exists to avoid *reporting* a stall on jitter; it was never a reason
         // to delay refilling. DoRefillOnce is the same work the ISR does and is
         // gated by refillInProgress_, so an extra call costs a compare.

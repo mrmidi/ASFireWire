@@ -30,7 +30,7 @@ kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemo
 
     // CRITICAL: Check 4K alignment for page gap calculation
     // Our GetDescriptorIOVA() assumes base is 4K-aligned so page offsets line up
-    const uint64_t pageOffset = descRegion_.deviceBase & (Layout::kOHCIPageSize - 1);
+    const uint64_t pageOffset = descRegion_.deviceBase & (Layout::kDescriptorPageStride - 1);
     if (pageOffset != 0) {
         ASFW_LOG(Isoch, "❌ IT: SetupRings - descriptor base NOT 4K aligned! "
                  "IOVA=0x%llx pageOffset=0x%llx - page gap calculation WILL BE WRONG, failing",
@@ -56,7 +56,7 @@ IsochTxDescriptorSlab::OHCIDescriptor* IsochTxDescriptorSlab::GetDescriptorPtr(u
     const uint32_t offsetInPage = (logicalIndex % Layout::kDescriptorsPerPage) * Layout::kDescriptorStride;
 
     uint8_t* base = reinterpret_cast<uint8_t*>(descRegion_.virtualBase);
-    return reinterpret_cast<OHCIDescriptor*>(base + (page * Layout::kOHCIPageSize) + offsetInPage);
+    return reinterpret_cast<OHCIDescriptor*>(base + (page * Layout::kDescriptorPageStride) + offsetInPage);
 }
 
 const IsochTxDescriptorSlab::OHCIDescriptor* IsochTxDescriptorSlab::GetDescriptorPtr(uint32_t logicalIndex) const noexcept {
@@ -64,7 +64,7 @@ const IsochTxDescriptorSlab::OHCIDescriptor* IsochTxDescriptorSlab::GetDescripto
     const uint32_t offsetInPage = (logicalIndex % Layout::kDescriptorsPerPage) * Layout::kDescriptorStride;
 
     const uint8_t* base = reinterpret_cast<const uint8_t*>(descRegion_.virtualBase);
-    return reinterpret_cast<const OHCIDescriptor*>(base + (page * Layout::kOHCIPageSize) + offsetInPage);
+    return reinterpret_cast<const OHCIDescriptor*>(base + (page * Layout::kDescriptorPageStride) + offsetInPage);
 }
 
 uint32_t IsochTxDescriptorSlab::GetDescriptorIOVA(uint32_t logicalIndex) const noexcept {
@@ -79,7 +79,7 @@ uint32_t IsochTxDescriptorSlab::GetDescriptorIOVA(uint32_t logicalIndex) const n
 #endif
 
     return baseAddr +
-           (page * static_cast<uint32_t>(Layout::kOHCIPageSize)) + offsetInPage;
+           (page * static_cast<uint32_t>(Layout::kDescriptorPageStride)) + offsetInPage;
 }
 
 bool IsochTxDescriptorSlab::DecodeCmdAddrToLogicalIndex(uint32_t cmdAddr, uint32_t& outLogicalIndex) const noexcept {
@@ -95,8 +95,8 @@ bool IsochTxDescriptorSlab::DecodeCmdAddrToLogicalIndex(uint32_t cmdAddr, uint32
     if ((cmdAddr & 0xFu) != 0) return false;  // Must be 16-byte aligned
 
     const uint32_t offset = cmdAddr - baseAddr;
-    const uint32_t page = offset / static_cast<uint32_t>(Layout::kOHCIPageSize);
-    const uint32_t offsetInPage = offset % static_cast<uint32_t>(Layout::kOHCIPageSize);
+    const uint32_t page = offset / static_cast<uint32_t>(Layout::kDescriptorPageStride);
+    const uint32_t offsetInPage = offset % static_cast<uint32_t>(Layout::kDescriptorPageStride);
 
     if (page >= Layout::kTotalPages) return false;
 
@@ -119,8 +119,8 @@ void IsochTxDescriptorSlab::ValidateDescriptorLayout() const noexcept {
     // Verify that no descriptor IOVA falls within the last 32 bytes of a page.
     for (uint32_t i = 0; i < Layout::kRingBlocks; ++i) {
         const uint32_t iova = GetDescriptorIOVA(i);
-        const uint32_t pageOffset = iova & (Layout::kOHCIPageSize - 1);
-        if (pageOffset >= (Layout::kOHCIPageSize - Layout::kOHCIPrefetchSize)) {
+        const uint32_t pageOffset = iova & (Layout::kDescriptorPageStride - 1);
+        if (pageOffset >= (Layout::kDescriptorPageStride - Layout::kOHCIPrefetchSize)) {
             ASFW_LOG(Isoch, "❌ IT: Layout ERROR: desc %u IOVA=0x%08x pageOffset=0x%x in prefetch zone!",
                      i, iova, pageOffset);
         }
@@ -130,10 +130,10 @@ void IsochTxDescriptorSlab::ValidateDescriptorLayout() const noexcept {
     for (uint32_t pkt = 0; pkt < Layout::kNumPackets; ++pkt) {
         const uint32_t base = pkt * Layout::kBlocksPerPacket;
         const uint32_t firstPage =
-            GetDescriptorIOVA(base) / Layout::kOHCIPageSize;
+            GetDescriptorIOVA(base) / Layout::kDescriptorPageStride;
         const uint32_t lastPage =
             GetDescriptorIOVA(base + Layout::kBlocksPerPacket - 1) /
-            Layout::kOHCIPageSize;
+            Layout::kDescriptorPageStride;
         if (firstPage != lastPage) {
             ASFW_LOG(Isoch,
                      "❌ IT: Packet %u spans pages! descBase=%u pages=[%u,%u]",

@@ -17,11 +17,32 @@ namespace ASFW::Isoch::Tx {
 
 struct Layout final {
     // ==========================================================================
-    // Linux-style OHCI page padding constants
+    // Descriptor page padding (Linux firewire-ohci strategy)
+    //
+    // kDescriptorPageStride is NOT a query of the host page size. It is a
+    // layout stride applied identically to the virtual address, the IOVA and
+    // the command-pointer decode, inside a region AllocateDMA guarantees is one
+    // contiguous segment (HardwareInterface.cpp:806 rejects segmentCount != 1).
+    // The last kOHCIPrefetchSize bytes of every stride are left empty so a
+    // controller that issues an oversized descriptor read cannot walk off the
+    // end of a real page -- cross-validated with Linux ohci.c:1221-1227.
+    //
+    // INVARIANT: the stride must be <= the smallest DMA page size across every
+    // architecture we build for, so that padding at stride boundaries also pads
+    // at real page boundaries. Finer is safe; coarser is not. Apple Silicon
+    // pages are 16 KiB, x86_64 pages are 4 KiB, and project.yml builds both --
+    // hence 4096, not 16384. Because the slab base is forced 4 KiB aligned
+    // (IsochTxDescriptorSlab.cpp), every real page boundary lands on one of
+    // these stride boundaries whatever the base happens to be modulo 16 KiB.
     // ==========================================================================
-    static constexpr size_t kOHCIPageSize = 4096;
+    static constexpr size_t kDescriptorPageStride = 4096;
+    static_assert(kDescriptorPageStride <= 4096,
+                  "descriptor page stride must not exceed the smallest DMA page "
+                  "size we build for (x86_64 = 4 KiB). Raising it to the Apple "
+                  "Silicon 16 KiB page stops the padding from covering real page "
+                  "boundaries on the x86_64 slice.");
     static constexpr size_t kOHCIPrefetchSize = 32;
-    static constexpr size_t kUsablePerPage = kOHCIPageSize - kOHCIPrefetchSize;  // 4064
+    static constexpr size_t kUsablePerPage = kDescriptorPageStride - kOHCIPrefetchSize;
 
     // Packet program:
     //   blocks 0-1: OUTPUT_MORE_IMMEDIATE
@@ -40,14 +61,14 @@ struct Layout final {
 
     static constexpr uint32_t kDescriptorStride = 16;
     static constexpr uint32_t kDescriptorsPerPageRaw =
-        static_cast<uint32_t>(kUsablePerPage / kDescriptorStride);  // 254
+        static_cast<uint32_t>(kUsablePerPage / kDescriptorStride);
     static constexpr uint32_t kDescriptorsPerPage =
-        (kDescriptorsPerPageRaw / kBlocksPerPacket) * kBlocksPerPacket;  // 252
+        (kDescriptorsPerPageRaw / kBlocksPerPacket) * kBlocksPerPacket;
 
     static constexpr uint32_t kTotalPages =
-        (kRingBlocks + kDescriptorsPerPage - 1) / kDescriptorsPerPage;  // 1
+        (kRingBlocks + kDescriptorsPerPage - 1) / kDescriptorsPerPage;
 
-    static constexpr size_t kDescriptorRingSize = kTotalPages * kOHCIPageSize;  // 16384
+    static constexpr size_t kDescriptorRingSize = kTotalPages * kDescriptorPageStride;
 
     // Static assertions
     static_assert(kDescriptorsPerPage >= kBlocksPerPacket, "Need at least one packet per page");

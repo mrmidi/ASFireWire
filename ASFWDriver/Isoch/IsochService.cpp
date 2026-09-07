@@ -248,7 +248,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
         config.packetSizeBytes = 0;
-        config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kOHCIPageSize;
+        config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kDescriptorPageStride;
         config.payloadPageAlignment = 16384;
         config.allocatePayloadSlab = false;
 
@@ -305,7 +305,7 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
         config.packetSizeBytes = 0;
-        config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kOHCIPageSize;
+        config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kDescriptorPageStride;
         config.payloadPageAlignment = 16384;
         config.allocatePayloadSlab = false;
 
