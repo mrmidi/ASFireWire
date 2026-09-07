@@ -54,7 +54,9 @@ final class AudioTelemetryViewModel: ObservableObject {
             marginHistory.append(MarginHistoryPoint(
                 endpointID: endpoint.endpointId,
                 timestamp: lastUpdated ?? Date(),
-                packets: intervalMinimum
+                packets: intervalMinimum,
+                latencyMicroseconds: HostTimebase.shared.microseconds(
+                    fromHostTicks: endpoint.completedIntervalMaxLatencyTicks)
             ))
         }
         if marginHistory.count > 90 {
@@ -155,30 +157,45 @@ struct AudioTelemetryView: View {
             }
         }
 
-        TelemetryPanel(title: "Interval margin low") {
+        // Plot preparation latency, not margin.
+        //
+        // Margin is pinned at the prepared target -- the producer tops up to it
+        // on every wake -- so charting it drew a flat line that could only move
+        // during a catastrophe, while the quantity that varies every interval
+        // had no chart at all. Scheduling hiccups now show up as spikes against
+        // the 750 µs budget, which is what this page is for.
+        TelemetryPanel(title: "Interval max preparation latency") {
             Chart(viewModel.marginHistory.filter { $0.endpointID == endpoint.endpointId }) { point in
                 LineMark(
                     x: .value("Time", point.timestamp),
-                    y: .value("Packets", point.packets)
+                    y: .value("µs", point.latencyMicroseconds)
                 )
-                .foregroundStyle(.blue)
+                .foregroundStyle(.purple)
                 PointMark(
                     x: .value("Time", point.timestamp),
-                    y: .value("Packets", point.packets)
+                    y: .value("µs", point.latencyMicroseconds)
                 )
-                .foregroundStyle(.blue)
-                RuleMark(y: .value("Hardware floor", endpoint.hardwareFloorPackets))
+                .foregroundStyle(.purple)
+                RuleMark(y: .value("Budget", 750))
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(dash: [4, 3]))
+                    .annotation(position: .top, alignment: .leading) {
+                        Text("750 µs budget")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                RuleMark(y: .value("Early warning", 1500))
                     .foregroundStyle(.red)
                     .lineStyle(StrokeStyle(dash: [4, 3]))
                     .annotation(position: .top, alignment: .leading) {
-                        Text("fatal floor \(endpoint.hardwareFloorPackets)")
+                        Text("1.5 ms early warning")
                             .font(.caption2)
                             .foregroundStyle(.red)
                     }
             }
-            .chartYAxisLabel("Packets")
+            .chartYAxisLabel("µs")
             .frame(height: 180)
-            .accessibilityLabel("Interval committed-margin low, with hardware fatal floor")
+            .accessibilityLabel("Interval maximum preparation latency against the 750 microsecond budget")
         }
     }
 
@@ -212,10 +229,16 @@ struct AudioTelemetryView: View {
     }
 }
 
+/// One completed heartbeat interval. Margin and preparation latency are sampled
+/// at the same instant behind the same interval-sequence gate, so they ride one
+/// point rather than two arrays that could drift apart.
 struct MarginHistoryPoint: Identifiable {
     let endpointID: AudioEndpointID
     let timestamp: Date
     let packets: UInt32
+    /// Worst preparation latency in this interval. This is the quantity that
+    /// actually moves; margin is pinned at the prepared target by construction.
+    let latencyMicroseconds: UInt64
     var id: String { "\(endpointID.rawValue)-\(timestamp.timeIntervalSinceReferenceDate)" }
 }
 
