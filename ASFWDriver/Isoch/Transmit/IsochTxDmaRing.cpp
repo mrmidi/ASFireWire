@@ -49,6 +49,7 @@ namespace {
 } // namespace
 
 void IsochTxDmaRing::ResetForStart() noexcept {
+    ++captureEpoch_; // Frozen history deliberately survives recovery/restart.
     softwareFillAbsIdx_ = 0;
     lastHwPacketIndex_ = 0;
     lastObservationCycleTimer_ = 0;
@@ -732,7 +733,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     IsochTxQueueControl* controlBlock,
     uint32_t numSlots,
     uint8_t* payloadBase,
-    const TxPayloadDmaMap& payloadDmaMap) noexcept
+    const TxPayloadDmaMap& payloadDmaMap,
+    uint64_t eventTicks, uint32_t source) noexcept
 {
     counters_.calls.fetch_add(1, std::memory_order_relaxed);
     RefillOutcome out{};
@@ -768,6 +770,48 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         ctrl = access.Read(ctrlReg);
         cmdPtr = access.Read(cmdPtrReg);
     }
+
+#if ASFW_TX_FLIGHT_RECORDER
+    TxRefillRecord capture{};
+    capture.epoch = captureEpoch_;
+    capture.eventTicks = eventTicks;
+    capture.source = source;
+    capture.readBeforeTicks = cycleReadBeforeHostTicks;
+    capture.readAfterTicks = cycleReadAfterHostTicks;
+    capture.cycle = refillCycleTimer;
+    capture.previousCycle = lastObservationCycleTimer_;
+    capture.previousSlot = lastHwPacketIndex_;
+    capture.command = cmdPtr;
+    capture.control = ctrl;
+    capture.completionBefore = controlBlock->completionCursor.load(std::memory_order_relaxed);
+    capture.committedBefore = controlBlock->committedEnd.load(std::memory_order_acquire);
+    capture.mappedBefore = softwareFillAbsIdx_;
+    const bool previousValid = lastObservationCycleTimerValid_;
+    // Runs on every exit after the MMIO snapshot, including a failed seal.
+    // Freeze only after the outcome is filled, before the caller can recover.
+    struct CaptureOnExit {
+        TxRefillFlightRecorder& recorder;
+        TxRefillRecord& record;
+        const RefillOutcome& outcome;
+        bool previousValid;
+        ~CaptureOnExit() {
+            record.slot = outcome.hwPacketIndex;
+            record.inferredDelta = outcome.completedPacketCount;
+            record.filled = static_cast<uint32_t>(outcome.packetsFilled);
+            record.failure = static_cast<uint32_t>(outcome.failureReason);
+            record.failedPacket = outcome.failurePacketAbs;
+            record.expectedSeal = outcome.failureExpectedPayloadSeal;
+            record.observedSeal = outcome.failureObservedPayloadSeal;
+            if (previousValid) record.flags |= 1;
+            if (record.inferredDelta >= Layout::kNumPackets) record.flags |= 2;
+            // A gap of a ring or more admits ambiguous modulo progress. Freeze
+            // even if the current estimator happens to return a small delta.
+            if (previousValid && Tx::CyclesBetween(record.previousCycle, record.cycle)
+                    >= Layout::kNumPackets) record.flags |= 4;
+            recorder.Record(record, record.failure != 0 || (record.flags & 6) != 0);
+        }
+    } captureOnExit{flightRecorder_, capture, out, previousValid};
+#endif
 
     // Publish the raw controller/host pair. Bracketing only the cycle-timer
     // load provides a true midpoint without widening the MMIO batch. Any
@@ -1408,3 +1452,20 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
 }
 
 } // namespace ASFW::Isoch::Tx
+
+namespace ASFW::Isoch::Tx {
+void IsochTxDmaRing::ExportFrozenRefills(uint8_t context) const noexcept {
+    // Watchdog diagnostic phase only, never refill/IRQ. Split lines stay below
+    // LogRing's 232-byte payload cap, including maximum-width numeric values.
+    (void)flightRecorder_.ExportOnce([&](uint32_t i, uint32_t count, const TxRefillRecord& r) {
+        ASFW_LOG(Isoch, "[TxFlightA] ctx=%u i=%u/%u ep=%llu src=%u event=%llu before=%llu after=%llu",
+                 context, i, count, r.epoch, r.source, r.eventTicks, r.readBeforeTicks, r.readAfterTicks);
+        ASFW_LOG(Isoch, "[TxFlightB] ctx=%u i=%u cycle=%08x prev=%08x cmd=%08x ctrl=%08x slots=%u/%u delta=%u fill=%u flags=%u fail=%u",
+                 context, i, r.cycle, r.previousCycle, r.command, r.control,
+                 r.previousSlot, r.slot, r.inferredDelta, r.filled, r.flags, r.failure);
+        ASFW_LOG(Isoch, "[TxFlightC] ctx=%u i=%u completed=%llu mapped=%llu committed=%llu failed=%llu seals=%016llx/%016llx",
+                 context, i, r.completionBefore, r.mappedBefore, r.committedBefore,
+                 r.failedPacket, r.expectedSeal, r.observedSeal);
+    });
+}
+}

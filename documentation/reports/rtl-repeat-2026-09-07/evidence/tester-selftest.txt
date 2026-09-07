@@ -1,0 +1,38 @@
+--- detector: recovering known delays ---
+  true       RTL_raw      err (fr)     RTL_ts       verdict
+  137.00     137.000      -0.0000      -763.000     ok
+  512.00     512.000      -0.0000      -388.000     ok
+  733.40     733.241      -0.1589      -166.759     ok
+  1024.25    1024.110     -0.1396      124.110      ok
+  2999.75    2999.890     +0.1395      2099.890     ok
+  silence    -            -            -            ok (rejected)
+  zero-resid 900.000      -            -0.000       ok (retained)
+  no-ts      512.000      -            -            ok (raw kept, ts flagged)
+
+--- timeline audit ---
+  128 then 64, continuous    0 gap / 0 anchor / 0 amb   ok
+  skipped 64 after 128       1 gap, 64 fr lost   ok
+  1000-frame jump            1 anchor, worst +936 fr   ok
+  clocks disagree            1 ambiguous   ok
+  jitter within tolerance    0 ambiguous   ok
+  loss under +936 anchor     0 gap / 0 anchor / 1 amb   ok
+  loss under -936 anchor     0 gap / 0 anchor / 1 amb   ok
+
+--- aggregation: scheduling distance must be paired per trial ---
+  mixed trial sets           paired 400 fr, median-difference 600 fr   ok
+
+--- adversarial: injected faults must never reach the statistics ---
+  clean                      4/4 admitted (expected 4)   ok
+  clean, wider spans         4/4 admitted (expected 4)   ok
+  jitter under tolerance     4/4 admitted (expected 4)   ok
+  dropped callback           3/4 admitted (expected 3)   ok
+  re-anchor                  3/4 admitted (expected 3)   ok
+  re-anchor, negative        3/4 admitted (expected 3)   ok
+  drop under re-anchor       3/4 admitted (expected 3)   ok
+  drop, negative anchor      3/4 admitted (expected 3)   ok
+  missing timestamps         3/4 admitted (expected 3)   ok
+  drop, no timestamps        3/4 admitted (expected 3)   ok
+  drop, wider spans          3/4 admitted (expected 3)   ok
+  all three at once          3/4 admitted (expected 3)   ok
+
+  selftest passed

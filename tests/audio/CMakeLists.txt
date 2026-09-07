@@ -241,3 +241,7 @@ add_audio_test(ITDescriptorLayoutTests
 add_audio_test(BeBoBVirtualUartTests
     BeBoBVirtualUartTests.cpp
 )
+
+add_audio_test(TxRefillFlightRecorderTests
+    TxRefillFlightRecorderTests.cpp
+)

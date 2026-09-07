@@ -515,7 +515,7 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         controlBlock_,
         numSlots,
         payloadBase_,
-        payloadDmaMap_);
+        payloadDmaMap_, eventHostTicks, publishTimingEvent ? 1U : 2U);
     if (!outcome.ok) {
         const auto& counters = ring_.RTCounters();
         ASFW_LOG(

@@ -215,6 +215,8 @@ void WatchdogCoordinator::TickIsochTransmit(
         return;
     }
     itLogDivider_ = 0;
+    // Export a frozen first-fault history even when TX has already stopped.
+    isochTransmitContext->ExportFrozenRefills();
     if (isRunning) {
         isochTransmitContext->LogStatistics();
     }

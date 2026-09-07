@@ -121,6 +121,8 @@ targets:
           $SRCROOT/bump.sh
     settings:
       base:
+        ASFW_TX_FLIGHT_RECORDER: 1
+        GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) ASFW_TX_FLIGHT_RECORDER=$(ASFW_TX_FLIGHT_RECORDER)"
         SDKROOT: driverkit
         DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
         PRODUCT_NAME: net.mrmidi.ASFW.ASFWDriver

@@ -1,0 +1,22 @@
+{
+  "time": "2026-09-07T00:13:02.985446+02:00",
+  "head": "e3bf076578a66008517ceae8ace703e148487119",
+  "testerSourceSha256": "7a5faa26596a2d1573af9c80c09c0e28482b633f1656ca808e89c1982a3a6f05",
+  "command": [
+    "/tmp/asfw-rtl-capture-20260907",
+    "-d",
+    "Duet",
+    "--measure",
+    "--frames",
+    "128",
+    "--trials",
+    "20",
+    "--window",
+    "4096",
+    "--out-ch",
+    "0",
+    "--in-ch",
+    "0"
+  ],
+  "note": "Source HEAD is not proof of the installed driver revision. No gain, depth, sample-rate or hardware-reset changes."
+}

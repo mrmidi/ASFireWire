@@ -1,0 +1,33 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"developerWritesListed\" : true,\n    \"groups\" : [\n      \"async_transactions\",\n      \"audio_streams\",\n      \"avc_fcp\",\n      \"bebob\",\n      \"bus_topology\",\n      \"cmp\",\n      \"config_rom\",\n      \"core\",\n      \"irm_cas\",\n      \"logging\",\n      \"register_access\"\n    ],\n    \"rawDeveloperTierEnabled\" : true,\n    \"runtimeMode\" : \"unrestrictedWrite\",\n    \"toolCount\" : 49\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_get_capabilities\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "developerWritesListed": true,
+      "groups": [
+        "async_transactions",
+        "audio_streams",
+        "avc_fcp",
+        "bebob",
+        "bus_topology",
+        "cmp",
+        "config_rom",
+        "core",
+        "irm_cas",
+        "logging",
+        "register_access"
+      ],
+      "rawDeveloperTierEnabled": true,
+      "runtimeMode": "unrestrictedWrite",
+      "toolCount": 49
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_get_capabilities"
+  }
+}

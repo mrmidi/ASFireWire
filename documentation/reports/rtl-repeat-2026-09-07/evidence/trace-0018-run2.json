@@ -1,0 +1,78 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 21077,\n    \"nextSequence\" : 21077,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 6,\n    \"records\" : [\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=12433 busy=0 packets=47112 progressAgeUs=73 cmd=0x803b0f01 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x361ee74b\",\n        \"sequence\" : 20944,\n        \"timestampNs\" : 692838851319375\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=4595 irq=7485 ret=47040 committed=47160 progressAgeUs=394 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=12\",\n        \"sequence\" : 20945,\n        \"timestampNs\" : 692838852559000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19\",\n        \"sequence\" : 20946,\n        \"timestampNs\" : 692838852562458\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxAlign] epoch=2 delta=8 step=8 ringFrames=288 stepLaps=0 cursorFirst=290766 projected=290758 presentBus=669276889 obsFrame=290056 obsBus=668913369 nominal=512 packet=48382 completionCursor=48265\",\n        \"sequence\" : 20967,\n        \"timestampNs\" : 692839005419708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxAlign] epoch=2 delta=0 step=-8 ringFrames=288 stepLaps=0 cursorFirst=290774 projected=290774 presentBus=669280985 obsFrame=290056 obsBus=668913369 nominal=512 packet=48383 completionCursor=48265\",\n        \"sequence\" : 20968,\n        \"timestampNs\" : 692839005453000\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=8192 completion=0x07b7e000 correlation=0x37b7c42a\",\n        \"sequence\" : 21053,\n        \"timestampNs\" : 692839669227833\n      }\n    ],\n    \"scannedCount\" : 138\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 21077,
+      "nextSequence": 21077,
+      "oldestSequence": 1,
+      "recordCount": 6,
+      "records": [
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=12433 busy=0 packets=47112 progressAgeUs=73 cmd=0x803b0f01 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x361ee74b",
+          "sequence": 20944,
+          "timestampNs": 692838851319375
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=4595 irq=7485 ret=47040 committed=47160 progressAgeUs=394 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=12",
+          "sequence": 20945,
+          "timestampNs": 692838852559000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19",
+          "sequence": 20946,
+          "timestampNs": 692838852562458
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxAlign] epoch=2 delta=8 step=8 ringFrames=288 stepLaps=0 cursorFirst=290766 projected=290758 presentBus=669276889 obsFrame=290056 obsBus=668913369 nominal=512 packet=48382 completionCursor=48265",
+          "sequence": 20967,
+          "timestampNs": 692839005419708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxAlign] epoch=2 delta=0 step=-8 ringFrames=288 stepLaps=0 cursorFirst=290774 projected=290774 presentBus=669280985 obsFrame=290056 obsBus=668913369 nominal=512 packet=48383 completionCursor=48265",
+          "sequence": 20968,
+          "timestampNs": 692839005453000
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=8192 completion=0x07b7e000 correlation=0x37b7c42a",
+          "sequence": 21053,
+          "timestampNs": 692839669227833
+        }
+      ],
+      "scannedCount": 138
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

@@ -1,0 +1,933 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 20255,\n    \"nextSequence\" : 20255,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 101,\n    \"records\" : [\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)\",\n        \"sequence\" : 20010,\n        \"timestampNs\" : 692832902723416\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ASFWAudioDevice: StartIO flags=0x0\",\n        \"sequence\" : 20011,\n        \"timestampNs\" : 692832902752416\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG StartIO running=0 while arming transport\",\n        \"sequence\" : 20012,\n        \"timestampNs\" : 692832902758458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72\",\n        \"sequence\" : 20013,\n        \"timestampNs\" : 692832902953500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72\",\n        \"sequence\" : 20014,\n        \"timestampNs\" : 692832903069208\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TimelineEpoch] epoch=2 reason=start-io source=1 base=0 rate=48000\",\n        \"sequence\" : 20015,\n        \"timestampNs\" : 692832903617416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)\",\n        \"sequence\" : 20016,\n        \"timestampNs\" : 692832904166875\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxV3] prefill=168\\/168 preparedTarget=120 ownershipGuard=48 leadFrames=720\",\n        \"sequence\" : 20017,\n        \"timestampNs\" : 692832904295750\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1\",\n        \"sequence\" : 20018,\n        \"timestampNs\" : 692832904377291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AUDIO DUPLEX START endpointId=0x0000000000000001 rate=48000 ir=1 it=0 inCh=2 outCh=2 inSlots=2 outSlots=2 rx0=pcm0\\/dbs2@iso1 bw=596 tx0=pcm2\\/dbs2@iso0 bw=596 mode=blocking rxFmt=0 txFmt=0\",\n        \"sequence\" : 20051,\n        \"timestampNs\" : 692832938716250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Prepared IR on channel 1\",\n        \"sequence\" : 20052,\n        \"timestampNs\" : 692832938801708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Configured ch=0 sid=0\",\n        \"sequence\" : 20053,\n        \"timestampNs\" : 692832938816416\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Payload DMA mapped bytes=24192 segments=1\",\n        \"sequence\" : 20054,\n        \"timestampNs\" : 692832939270333\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Payload DMA segment[0] slabOffset=0 iova=0x805bc000 length=24192\",\n        \"sequence\" : 20055,\n        \"timestampNs\" : 692832939276125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Mapped shared memory. payloadSegments=1 metadataRing=0x103924000 controlBlock=0x104a08000 slots=168 maxBytes=72\",\n        \"sequence\" : 20056,\n        \"timestampNs\" : 692832939289291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Prepared IT on channel 0\",\n        \"sequence\" : 20057,\n        \"timestampNs\" : 692832939293541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] Device clock stable before isoch start rate=48000 status=0x00000000 reads=3\",\n        \"sequence\" : 20062,\n        \"timestampNs\" : 692832961364500\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Starting prepared IR\",\n        \"sequence\" : 20063,\n        \"timestampNs\" : 692832961388875\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] Start: Enabled IR interrupt for context 0 (mask=0x00000001) scheduled=0 timer=0x00000000\",\n        \"sequence\" : 20064,\n        \"timestampNs\" : 692832961393958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectOPCR entry: instance=1 node=1 gen=3 plug=0 ch=1\",\n        \"sequence\" : 20065,\n        \"timestampNs\" : 692832961407375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Output plug=0 addr=0xf0000900\",\n        \"sequence\" : 20066,\n        \"timestampNs\" : 692832961422083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000900 (other)\",\n        \"sequence\" : 20067,\n        \"timestampNs\" : 692832961426291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000900 value=0x80ff0001\",\n        \"sequence\" : 20069,\n        \"timestampNs\" : 692832961733583\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR DONE: dir=Output plug=0 OK speed=2 plugCount=1\",\n        \"sequence\" : 20070,\n        \"timestampNs\" : 692832961740208\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectOPCR ReadMPR done: status=0 speed=2\",\n        \"sequence\" : 20071,\n        \"timestampNs\" : 692832961747416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect entry: dir=Output plug=0 ch=1 attempt=0\",\n        \"sequence\" : 20072,\n        \"timestampNs\" : 692832961753416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)\",\n        \"sequence\" : 20073,\n        \"timestampNs\" : 692832961761416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x80018036\",\n        \"sequence\" : 20075,\n        \"timestampNs\" : 692832962041708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: PCR=0x80018036 \u2192 desired=0x81018036 (p2p=1, ch=1)\",\n        \"sequence\" : 20076,\n        \"timestampNs\" : 692832962053000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x80018036 desired=0x81018036\",\n        \"sequence\" : 20077,\n        \"timestampNs\" : 692832962060916\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [RxDrain] eligible=1 running=1 verbosity=1\",\n        \"sequence\" : 20078,\n        \"timestampNs\" : 692832962429875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x80018036 desired=0x81018036 observed=0x80018036 (MATCH)\",\n        \"sequence\" : 20080,\n        \"timestampNs\" : 692832962608166\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS\",\n        \"sequence\" : 20081,\n        \"timestampNs\" : 692832962615666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Output plug=0 ch=1\",\n        \"sequence\" : 20082,\n        \"timestampNs\" : 692832962622708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=11437 syt=0x96d9\",\n        \"sequence\" : 20084,\n        \"timestampNs\" : 692832963498541\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=11044 syt=0xbad9\",\n        \"sequence\" : 20085,\n        \"timestampNs\" : 692832963536166\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=13020 syt=0xd2d9\",\n        \"sequence\" : 20086,\n        \"timestampNs\" : 692832963562291\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=18322 syt=0xe6d9\",\n        \"sequence\" : 20087,\n        \"timestampNs\" : 692832963595125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Starting prepared IT\",\n        \"sequence\" : 20088,\n        \"timestampNs\" : 692832972513541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Cycle tracking seeded: currentCycle=1461 nextTxCycle=1465\",\n        \"sequence\" : 20089,\n        \"timestampNs\" : 692832972531041\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Starting transmit context\",\n        \"sequence\" : 20090,\n        \"timestampNs\" : 692832972534291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Dynamic descriptor ring primed. numPackets=48 softwareFillIdx=48\",\n        \"sequence\" : 20091,\n        \"timestampNs\" : 692832972566125\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Writing CommandPtr=0x80398004 (Z=4)\",\n        \"sequence\" : 20092,\n        \"timestampNs\" : 692832972568708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Enabled IT interrupt for context 0\",\n        \"sequence\" : 20093,\n        \"timestampNs\" : 692832972571250\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Readback Cmd=0x80398004 Ctl=0x00008411 (run=1 active=1 dead=0 evt=0x11)\",\n        \"sequence\" : 20094,\n        \"timestampNs\" : 692832972583166\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Started successfully\",\n        \"sequence\" : 20095,\n        \"timestampNs\" : 692832972586375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectIPCR entry: instance=1 node=1 gen=3 plug=0 ch=0\",\n        \"sequence\" : 20096,\n        \"timestampNs\" : 692832972593458\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Input plug=0 addr=0xf0000980\",\n        \"sequence\" : 20097,\n        \"timestampNs\" : 692832972605875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000980 (other)\",\n        \"sequence\" : 20098,\n        \"timestampNs\" : 692832972610083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000980 value=0x80ff0001\",\n        \"sequence\" : 20100,\n        \"timestampNs\" : 692832972974875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadMPR DONE: dir=Input plug=0 OK speed=2 plugCount=1\",\n        \"sequence\" : 20101,\n        \"timestampNs\" : 692832972982375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ConnectIPCR ReadMPR done: status=0 speed=2\",\n        \"sequence\" : 20102,\n        \"timestampNs\" : 692832972989541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect entry: dir=Input plug=0 ch=0 attempt=0\",\n        \"sequence\" : 20103,\n        \"timestampNs\" : 692832972995916\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)\",\n        \"sequence\" : 20104,\n        \"timestampNs\" : 692832973003958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [TxLapSeed] slot=6 elapsedCycles=6 naive=6 liftedEst=6 lapsLostEst=0 elapsedUs=750 exactIfSkippedCyclesUnder=24\",\n        \"sequence\" : 20105,\n        \"timestampNs\" : 692832973302291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=6\",\n        \"sequence\" : 20106,\n        \"timestampNs\" : 692832973320708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=1 completion=0x0a5bd000 correlation=0x2a5bb671\",\n        \"sequence\" : 20107,\n        \"timestampNs\" : 692832973391000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x80000000\",\n        \"sequence\" : 20109,\n        \"timestampNs\" : 692832973419708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxV3] epoch=2 source=1 completion=6 committed=168 margin=162 prepared=0 nextFrame=0 cache=[0,0) noCycle=0 noOrigin=0 resync=0\",\n        \"sequence\" : 20110,\n        \"timestampNs\" : 692832973419708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: PCR=0x80000000 \u2192 desired=0x81000000 (p2p=1, ch=0)\",\n        \"sequence\" : 20111,\n        \"timestampNs\" : 692832973426791\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxLead] ticks=0 min=0 max=0 frames=0 rate=48000\",\n        \"sequence\" : 20112,\n        \"timestampNs\" : 692832973430875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x80000000 desired=0x81000000\",\n        \"sequence\" : 20113,\n        \"timestampNs\" : 692832973434333\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxFill] filled=0 lost=0 tooLate=0 unavailable=0 silentData=0 cursor=57009 finalized=14 mapped=54 committed=168 rebound=0 rejected=0 missedDeadline=0 stampsMissed=0 minRebindDistance=0\",\n        \"sequence\" : 20114,\n        \"timestampNs\" : 692832973439041\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxPrep] wakes=0 maxLatUs=0 le750=0 ge1500=0 lat=[0,0,0,0,0,0] marginMin=162 marginMax=162 margin=[0,0,0,0,1] headroomMin=-1 headroomRunMin=-1\",\n        \"sequence\" : 20115,\n        \"timestampNs\" : 692832973455500\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [Ledger] J3 recv->decode  n=54 pend=0 unres=0 inv=0 min=63 mean=362 max=744 us hist=[7,12,21,14,0,0,0,0]\",\n        \"sequence\" : 20116,\n        \"timestampNs\" : 692832973469541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x80000000 desired=0x81000000 observed=0x80000000 (MATCH)\",\n        \"sequence\" : 20118,\n        \"timestampNs\" : 692832973993083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS\",\n        \"sequence\" : 20119,\n        \"timestampNs\" : 692832974000791\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Input plug=0 ch=0\",\n        \"sequence\" : 20120,\n        \"timestampNs\" : 692832974006958\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=2 completion=0x0a5c3000 correlation=0x2a5c1968\",\n        \"sequence\" : 20122,\n        \"timestampNs\" : 692832974131125\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=4 completion=0x0a5cf000 correlation=0x2a5cd569\",\n        \"sequence\" : 20123,\n        \"timestampNs\" : 692832975589833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=7\",\n        \"sequence\" : 20124,\n        \"timestampNs\" : 692832977173708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=9\",\n        \"sequence\" : 20127,\n        \"timestampNs\" : 692832978977416\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=8 completion=0x0a5ea000 correlation=0x2a5e8b13\",\n        \"sequence\" : 20128,\n        \"timestampNs\" : 692832979085958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Running phase=Running status=0x00000000 endpoint=1 restartId=2 gen=3\",\n        \"sequence\" : 20132,\n        \"timestampNs\" : 692832983719500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=4->5 reason=stream-started\",\n        \"sequence\" : 20133,\n        \"timestampNs\" : 692832983734916\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=16 completion=0x0a61d000 correlation=0x2a61b5fb\",\n        \"sequence\" : 20134,\n        \"timestampNs\" : 692832985337916\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=32 completion=0x0a683000 correlation=0x2a6815de\",\n        \"sequence\" : 20135,\n        \"timestampNs\" : 692832998088791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=11\",\n        \"sequence\" : 20136,\n        \"timestampNs\" : 692833007010833\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=64 completion=0x0a74f000 correlation=0x2a74d535\",\n        \"sequence\" : 20141,\n        \"timestampNs\" : 692833023579208\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=12\",\n        \"sequence\" : 20142,\n        \"timestampNs\" : 692833031033791\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"warning\",\n        \"levelId\" : 1,\n        \"message\" : \"[DirectAudio][tx-wire-payload] [TxWire] packet=726 first=1 dropout=0 infoQuads=16 maxAbs24=0 lastQuad=0x40000000\",\n        \"sequence\" : 20147,\n        \"timestampNs\" : 692833049100791\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxSeed] epoch=2 first=4830 presentBus=522877657 obsFrame=4120 obsBus=522514137 nominal=512 frames=8 packet=726 completionCursor=612\",\n        \"sequence\" : 20148,\n        \"timestampNs\" : 692833049106458\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxAlign] epoch=2 delta=0 step=0 ringFrames=288 stepLaps=0 cursorFirst=4838 projected=4838 presentBus=522881753 obsFrame=4120 obsBus=522514137 nominal=512 packet=727 completionCursor=612\",\n        \"sequence\" : 20149,\n        \"timestampNs\" : 692833049134916\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=128 completion=0x0a8dd000 correlation=0x2a8db6a9\",\n        \"sequence\" : 20154,\n        \"timestampNs\" : 692833073459375\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [ZTS] rx epoch=2 sample=8192 host=16627995259904 period=8192\",\n        \"sequence\" : 20159,\n        \"timestampNs\" : 692833133716750\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG StartIO initial hardware ZTS sampleFrame=8192 hostTicks=16627995259904 waitMs=133\",\n        \"sequence\" : 20162,\n        \"timestampNs\" : 692833134793750\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG StartIO super::StartIO ok callbacks=0 outsideRun=0\",\n        \"sequence\" : 20163,\n        \"timestampNs\" : 692833134813000\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG StartIO transport and hardware clock ready\",\n        \"sequence\" : 20164,\n        \"timestampNs\" : 692833134818416\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG DUPLEX ready endpoint=1 rxStarted=1 txStarted=1 bindValid=1 hasIn=1 hasOut=1 audioDevice=0x103f702e8\",\n        \"sequence\" : 20165,\n        \"timestampNs\" : 692833134823041\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK STATE after StartIO geometry ztsPeriod=8192 inputRingFrames=8192 outputRingFrames=8192 maxIoFrames=512\",\n        \"sequence\" : 20166,\n        \"timestampNs\" : 692833134834000\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK STATE after StartIO streams input(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32) output(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32)\",\n        \"sequence\" : 20167,\n        \"timestampNs\" : 692833134841500\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK STATE after StartIO timing input(sample=342052 host=16627968131975) output(sample=342408 host=16627968309965) zts(sample=8192 host=16627995259904)\",\n        \"sequence\" : 20168,\n        \"timestampNs\" : 692833134858208\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG IO super StartDevice ok id=2\",\n        \"sequence\" : 20169,\n        \"timestampNs\" : 692833134867416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Device started (transport via StartIO)\",\n        \"sequence\" : 20170,\n        \"timestampNs\" : 692833134871708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=256 completion=0x0ac23000 correlation=0x2ac21747\",\n        \"sequence\" : 20177,\n        \"timestampNs\" : 692833178148500\n      },\n      {\n        \"category\" : \"Zts\",\n        \"categoryId\" : 19,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Zts] SEED count=1 frame=8192 host=16627995259904 drainHost=16627995208127 drainCycle=0x2aabe7bd rxCycle=0x2aabe000 age=1981 rawRxTs=0xaabe syt=0xfad9 desc=359 dec=8 rate=48000 rateQ8=5333333\",\n        \"sequence\" : 20182,\n        \"timestampNs\" : 692833209737333\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=512 completion=0x0b2ae000 correlation=0x2b2ac23f\",\n        \"sequence\" : 20207,\n        \"timestampNs\" : 692833387537708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=17\",\n        \"sequence\" : 20208,\n        \"timestampNs\" : 692833405967541\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=1630 busy=0 packets=6176 progressAgeUs=33 cmd=0x803b0801 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2bd8684c\",\n        \"sequence\" : 20253,\n        \"timestampNs\" : 692833734645000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=595 irq=974 ret=6102 committed=6222 progressAgeUs=647 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=0\",\n        \"sequence\" : 20254,\n        \"timestampNs\" : 692833735894000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=17\",\n        \"sequence\" : 20255,\n        \"timestampNs\" : 692833735897833\n      }\n    ],\n    \"scannedCount\" : 306\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 20255,
+      "nextSequence": 20255,
+      "oldestSequence": 1,
+      "recordCount": 101,
+      "records": [
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)",
+          "sequence": 20010,
+          "timestampNs": 692832902723416
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ASFWAudioDevice: StartIO flags=0x0",
+          "sequence": 20011,
+          "timestampNs": 692832902752416
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG StartIO running=0 while arming transport",
+          "sequence": 20012,
+          "timestampNs": 692832902758458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72",
+          "sequence": 20013,
+          "timestampNs": 692832902953500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72",
+          "sequence": 20014,
+          "timestampNs": 692832903069208
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TimelineEpoch] epoch=2 reason=start-io source=1 base=0 rate=48000",
+          "sequence": 20015,
+          "timestampNs": 692832903617416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)",
+          "sequence": 20016,
+          "timestampNs": 692832904166875
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxV3] prefill=168/168 preparedTarget=120 ownershipGuard=48 leadFrames=720",
+          "sequence": 20017,
+          "timestampNs": 692832904295750
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1",
+          "sequence": 20018,
+          "timestampNs": 692832904377291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AUDIO DUPLEX START endpointId=0x0000000000000001 rate=48000 ir=1 it=0 inCh=2 outCh=2 inSlots=2 outSlots=2 rx0=pcm0/dbs2@iso1 bw=596 tx0=pcm2/dbs2@iso0 bw=596 mode=blocking rxFmt=0 txFmt=0",
+          "sequence": 20051,
+          "timestampNs": 692832938716250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Prepared IR on channel 1",
+          "sequence": 20052,
+          "timestampNs": 692832938801708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Configured ch=0 sid=0",
+          "sequence": 20053,
+          "timestampNs": 692832938816416
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Payload DMA mapped bytes=24192 segments=1",
+          "sequence": 20054,
+          "timestampNs": 692832939270333
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Payload DMA segment[0] slabOffset=0 iova=0x805bc000 length=24192",
+          "sequence": 20055,
+          "timestampNs": 692832939276125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Mapped shared memory. payloadSegments=1 metadataRing=0x103924000 controlBlock=0x104a08000 slots=168 maxBytes=72",
+          "sequence": 20056,
+          "timestampNs": 692832939289291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Prepared IT on channel 0",
+          "sequence": 20057,
+          "timestampNs": 692832939293541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] Device clock stable before isoch start rate=48000 status=0x00000000 reads=3",
+          "sequence": 20062,
+          "timestampNs": 692832961364500
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Starting prepared IR",
+          "sequence": 20063,
+          "timestampNs": 692832961388875
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] Start: Enabled IR interrupt for context 0 (mask=0x00000001) scheduled=0 timer=0x00000000",
+          "sequence": 20064,
+          "timestampNs": 692832961393958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectOPCR entry: instance=1 node=1 gen=3 plug=0 ch=1",
+          "sequence": 20065,
+          "timestampNs": 692832961407375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Output plug=0 addr=0xf0000900",
+          "sequence": 20066,
+          "timestampNs": 692832961422083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000900 (other)",
+          "sequence": 20067,
+          "timestampNs": 692832961426291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000900 value=0x80ff0001",
+          "sequence": 20069,
+          "timestampNs": 692832961733583
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR DONE: dir=Output plug=0 OK speed=2 plugCount=1",
+          "sequence": 20070,
+          "timestampNs": 692832961740208
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectOPCR ReadMPR done: status=0 speed=2",
+          "sequence": 20071,
+          "timestampNs": 692832961747416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect entry: dir=Output plug=0 ch=1 attempt=0",
+          "sequence": 20072,
+          "timestampNs": 692832961753416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)",
+          "sequence": 20073,
+          "timestampNs": 692832961761416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x80018036",
+          "sequence": 20075,
+          "timestampNs": 692832962041708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: PCR=0x80018036 \u2192 desired=0x81018036 (p2p=1, ch=1)",
+          "sequence": 20076,
+          "timestampNs": 692832962053000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x80018036 desired=0x81018036",
+          "sequence": 20077,
+          "timestampNs": 692832962060916
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [RxDrain] eligible=1 running=1 verbosity=1",
+          "sequence": 20078,
+          "timestampNs": 692832962429875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x80018036 desired=0x81018036 observed=0x80018036 (MATCH)",
+          "sequence": 20080,
+          "timestampNs": 692832962608166
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS",
+          "sequence": 20081,
+          "timestampNs": 692832962615666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Output plug=0 ch=1",
+          "sequence": 20082,
+          "timestampNs": 692832962622708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=11437 syt=0x96d9",
+          "sequence": 20084,
+          "timestampNs": 692832963498541
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=11044 syt=0xbad9",
+          "sequence": 20085,
+          "timestampNs": 692832963536166
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=13020 syt=0xd2d9",
+          "sequence": 20086,
+          "timestampNs": 692832963562291
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=18322 syt=0xe6d9",
+          "sequence": 20087,
+          "timestampNs": 692832963595125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Starting prepared IT",
+          "sequence": 20088,
+          "timestampNs": 692832972513541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Cycle tracking seeded: currentCycle=1461 nextTxCycle=1465",
+          "sequence": 20089,
+          "timestampNs": 692832972531041
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Starting transmit context",
+          "sequence": 20090,
+          "timestampNs": 692832972534291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Dynamic descriptor ring primed. numPackets=48 softwareFillIdx=48",
+          "sequence": 20091,
+          "timestampNs": 692832972566125
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Writing CommandPtr=0x80398004 (Z=4)",
+          "sequence": 20092,
+          "timestampNs": 692832972568708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Enabled IT interrupt for context 0",
+          "sequence": 20093,
+          "timestampNs": 692832972571250
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Readback Cmd=0x80398004 Ctl=0x00008411 (run=1 active=1 dead=0 evt=0x11)",
+          "sequence": 20094,
+          "timestampNs": 692832972583166
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Started successfully",
+          "sequence": 20095,
+          "timestampNs": 692832972586375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectIPCR entry: instance=1 node=1 gen=3 plug=0 ch=0",
+          "sequence": 20096,
+          "timestampNs": 692832972593458
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR SUBMIT: dir=Input plug=0 addr=0xf0000980",
+          "sequence": 20097,
+          "timestampNs": 692832972605875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000980 (other)",
+          "sequence": 20098,
+          "timestampNs": 692832972610083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000980 value=0x80ff0001",
+          "sequence": 20100,
+          "timestampNs": 692832972974875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadMPR DONE: dir=Input plug=0 OK speed=2 plugCount=1",
+          "sequence": 20101,
+          "timestampNs": 692832972982375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ConnectIPCR ReadMPR done: status=0 speed=2",
+          "sequence": 20102,
+          "timestampNs": 692832972989541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect entry: dir=Input plug=0 ch=0 attempt=0",
+          "sequence": 20103,
+          "timestampNs": 692832972995916
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)",
+          "sequence": 20104,
+          "timestampNs": 692832973003958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [TxLapSeed] slot=6 elapsedCycles=6 naive=6 liftedEst=6 lapsLostEst=0 elapsedUs=750 exactIfSkippedCyclesUnder=24",
+          "sequence": 20105,
+          "timestampNs": 692832973302291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=6",
+          "sequence": 20106,
+          "timestampNs": 692832973320708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=1 completion=0x0a5bd000 correlation=0x2a5bb671",
+          "sequence": 20107,
+          "timestampNs": 692832973391000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x80000000",
+          "sequence": 20109,
+          "timestampNs": 692832973419708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxV3] epoch=2 source=1 completion=6 committed=168 margin=162 prepared=0 nextFrame=0 cache=[0,0) noCycle=0 noOrigin=0 resync=0",
+          "sequence": 20110,
+          "timestampNs": 692832973419708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: PCR=0x80000000 \u2192 desired=0x81000000 (p2p=1, ch=0)",
+          "sequence": 20111,
+          "timestampNs": 692832973426791
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxLead] ticks=0 min=0 max=0 frames=0 rate=48000",
+          "sequence": 20112,
+          "timestampNs": 692832973430875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x80000000 desired=0x81000000",
+          "sequence": 20113,
+          "timestampNs": 692832973434333
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxFill] filled=0 lost=0 tooLate=0 unavailable=0 silentData=0 cursor=57009 finalized=14 mapped=54 committed=168 rebound=0 rejected=0 missedDeadline=0 stampsMissed=0 minRebindDistance=0",
+          "sequence": 20114,
+          "timestampNs": 692832973439041
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxPrep] wakes=0 maxLatUs=0 le750=0 ge1500=0 lat=[0,0,0,0,0,0] marginMin=162 marginMax=162 margin=[0,0,0,0,1] headroomMin=-1 headroomRunMin=-1",
+          "sequence": 20115,
+          "timestampNs": 692832973455500
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [Ledger] J3 recv->decode  n=54 pend=0 unres=0 inv=0 min=63 mean=362 max=744 us hist=[7,12,21,14,0,0,0,0]",
+          "sequence": 20116,
+          "timestampNs": 692832973469541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x80000000 desired=0x81000000 observed=0x80000000 (MATCH)",
+          "sequence": 20118,
+          "timestampNs": 692832973993083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS",
+          "sequence": 20119,
+          "timestampNs": 692832974000791
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Input plug=0 ch=0",
+          "sequence": 20120,
+          "timestampNs": 692832974006958
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=2 completion=0x0a5c3000 correlation=0x2a5c1968",
+          "sequence": 20122,
+          "timestampNs": 692832974131125
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=4 completion=0x0a5cf000 correlation=0x2a5cd569",
+          "sequence": 20123,
+          "timestampNs": 692832975589833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=7",
+          "sequence": 20124,
+          "timestampNs": 692832977173708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=9",
+          "sequence": 20127,
+          "timestampNs": 692832978977416
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=8 completion=0x0a5ea000 correlation=0x2a5e8b13",
+          "sequence": 20128,
+          "timestampNs": 692832979085958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Running phase=Running status=0x00000000 endpoint=1 restartId=2 gen=3",
+          "sequence": 20132,
+          "timestampNs": 692832983719500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=4->5 reason=stream-started",
+          "sequence": 20133,
+          "timestampNs": 692832983734916
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=16 completion=0x0a61d000 correlation=0x2a61b5fb",
+          "sequence": 20134,
+          "timestampNs": 692832985337916
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=32 completion=0x0a683000 correlation=0x2a6815de",
+          "sequence": 20135,
+          "timestampNs": 692832998088791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=11",
+          "sequence": 20136,
+          "timestampNs": 692833007010833
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=64 completion=0x0a74f000 correlation=0x2a74d535",
+          "sequence": 20141,
+          "timestampNs": 692833023579208
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=12",
+          "sequence": 20142,
+          "timestampNs": 692833031033791
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "warning",
+          "levelId": 1,
+          "message": "[DirectAudio][tx-wire-payload] [TxWire] packet=726 first=1 dropout=0 infoQuads=16 maxAbs24=0 lastQuad=0x40000000",
+          "sequence": 20147,
+          "timestampNs": 692833049100791
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxSeed] epoch=2 first=4830 presentBus=522877657 obsFrame=4120 obsBus=522514137 nominal=512 frames=8 packet=726 completionCursor=612",
+          "sequence": 20148,
+          "timestampNs": 692833049106458
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxAlign] epoch=2 delta=0 step=0 ringFrames=288 stepLaps=0 cursorFirst=4838 projected=4838 presentBus=522881753 obsFrame=4120 obsBus=522514137 nominal=512 packet=727 completionCursor=612",
+          "sequence": 20149,
+          "timestampNs": 692833049134916
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=128 completion=0x0a8dd000 correlation=0x2a8db6a9",
+          "sequence": 20154,
+          "timestampNs": 692833073459375
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [ZTS] rx epoch=2 sample=8192 host=16627995259904 period=8192",
+          "sequence": 20159,
+          "timestampNs": 692833133716750
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG StartIO initial hardware ZTS sampleFrame=8192 hostTicks=16627995259904 waitMs=133",
+          "sequence": 20162,
+          "timestampNs": 692833134793750
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG StartIO super::StartIO ok callbacks=0 outsideRun=0",
+          "sequence": 20163,
+          "timestampNs": 692833134813000
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG StartIO transport and hardware clock ready",
+          "sequence": 20164,
+          "timestampNs": 692833134818416
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG DUPLEX ready endpoint=1 rxStarted=1 txStarted=1 bindValid=1 hasIn=1 hasOut=1 audioDevice=0x103f702e8",
+          "sequence": 20165,
+          "timestampNs": 692833134823041
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK STATE after StartIO geometry ztsPeriod=8192 inputRingFrames=8192 outputRingFrames=8192 maxIoFrames=512",
+          "sequence": 20166,
+          "timestampNs": 692833134834000
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK STATE after StartIO streams input(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32) output(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32)",
+          "sequence": 20167,
+          "timestampNs": 692833134841500
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK STATE after StartIO timing input(sample=342052 host=16627968131975) output(sample=342408 host=16627968309965) zts(sample=8192 host=16627995259904)",
+          "sequence": 20168,
+          "timestampNs": 692833134858208
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG IO super StartDevice ok id=2",
+          "sequence": 20169,
+          "timestampNs": 692833134867416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Device started (transport via StartIO)",
+          "sequence": 20170,
+          "timestampNs": 692833134871708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=256 completion=0x0ac23000 correlation=0x2ac21747",
+          "sequence": 20177,
+          "timestampNs": 692833178148500
+        },
+        {
+          "category": "Zts",
+          "categoryId": 19,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Zts] SEED count=1 frame=8192 host=16627995259904 drainHost=16627995208127 drainCycle=0x2aabe7bd rxCycle=0x2aabe000 age=1981 rawRxTs=0xaabe syt=0xfad9 desc=359 dec=8 rate=48000 rateQ8=5333333",
+          "sequence": 20182,
+          "timestampNs": 692833209737333
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=512 completion=0x0b2ae000 correlation=0x2b2ac23f",
+          "sequence": 20207,
+          "timestampNs": 692833387537708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=17",
+          "sequence": 20208,
+          "timestampNs": 692833405967541
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=1630 busy=0 packets=6176 progressAgeUs=33 cmd=0x803b0801 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2bd8684c",
+          "sequence": 20253,
+          "timestampNs": 692833734645000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=595 irq=974 ret=6102 committed=6222 progressAgeUs=647 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+          "sequence": 20254,
+          "timestampNs": 692833735894000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=17",
+          "sequence": 20255,
+          "timestampNs": 692833735897833
+        }
+      ],
+      "scannedCount": 306
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

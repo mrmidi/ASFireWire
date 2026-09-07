@@ -1,0 +1,1824 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 4609,\n    \"nextSequence\" : 4600,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 200,\n    \"records\" : [\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5 success: 0x13\",\n        \"sequence\" : 4401,\n        \"timestampNs\" : 732367527575041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600\",\n        \"sequence\" : 4402,\n        \"timestampNs\" : 732367527581250\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6 success: 0x50\",\n        \"sequence\" : 4403,\n        \"timestampNs\" : 732367527586833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700\",\n        \"sequence\" : 4404,\n        \"timestampNs\" : 732367527592791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7 success: 0x00\",\n        \"sequence\" : 4405,\n        \"timestampNs\" : 732367527598541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800\",\n        \"sequence\" : 4406,\n        \"timestampNs\" : 732367527604500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8 success: 0xf8\",\n        \"sequence\" : 4407,\n        \"timestampNs\" : 732367527610125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900\",\n        \"sequence\" : 4408,\n        \"timestampNs\" : 732367527623500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9 success: 0x00\",\n        \"sequence\" : 4409,\n        \"timestampNs\" : 732367527629708\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00\",\n        \"sequence\" : 4410,\n        \"timestampNs\" : 732367527636000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10 success: 0x7b\",\n        \"sequence\" : 4411,\n        \"timestampNs\" : 732367527642125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00\",\n        \"sequence\" : 4412,\n        \"timestampNs\" : 732367527648208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11 success: 0x00\",\n        \"sequence\" : 4413,\n        \"timestampNs\" : 732367527653958\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00\",\n        \"sequence\" : 4414,\n        \"timestampNs\" : 732367527660416\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12 success: 0x00\",\n        \"sequence\" : 4415,\n        \"timestampNs\" : 732367527666041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00\",\n        \"sequence\" : 4416,\n        \"timestampNs\" : 732367527672166\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13 success: 0x00\",\n        \"sequence\" : 4417,\n        \"timestampNs\" : 732367527677958\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00\",\n        \"sequence\" : 4418,\n        \"timestampNs\" : 732367527683750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14 success: 0x00\",\n        \"sequence\" : 4419,\n        \"timestampNs\" : 732367527690833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00\",\n        \"sequence\" : 4420,\n        \"timestampNs\" : 732367527696916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15 success: 0x00\",\n        \"sequence\" : 4421,\n        \"timestampNs\" : 732367527702541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)\",\n        \"sequence\" : 4422,\n        \"timestampNs\" : 732390310315708\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ASFWAudioDevice: StartIO flags=0x0\",\n        \"sequence\" : 4423,\n        \"timestampNs\" : 732390310917166\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG StartIO running=0 while arming transport\",\n        \"sequence\" : 4424,\n        \"timestampNs\" : 732390310924958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72\",\n        \"sequence\" : 4425,\n        \"timestampNs\" : 732390313637750\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72\",\n        \"sequence\" : 4426,\n        \"timestampNs\" : 732390315174458\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TimelineEpoch] epoch=3 reason=start-io source=1 base=0 rate=48000\",\n        \"sequence\" : 4427,\n        \"timestampNs\" : 732390315996708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)\",\n        \"sequence\" : 4428,\n        \"timestampNs\" : 732390316218541\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxV3] prefill=168\\/168 preparedTarget=120 ownershipGuard=48 leadFrames=720\",\n        \"sequence\" : 4429,\n        \"timestampNs\" : 732390316264000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1\",\n        \"sequence\" : 4430,\n        \"timestampNs\" : 732390318704458\n      },\n      {\n        \"category\" : \"Oxfw\",\n        \"categoryId\" : 22,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Oxfw] PrepareDuplex: rate=48000 node=1 gen=3 epoch=1\",\n        \"sequence\" : 4431,\n        \"timestampNs\" : 732390319166958\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=39 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4432,\n        \"timestampNs\" : 732390821951583\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=39 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4433,\n        \"timestampNs\" : 732390821988083\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=39 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4434,\n        \"timestampNs\" : 732391072084916\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=39 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4435,\n        \"timestampNs\" : 732391072105791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=39 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4436,\n        \"timestampNs\" : 732391322577041\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=39 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4437,\n        \"timestampNs\" : 732391322611000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t39: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4438,\n        \"timestampNs\" : 732391322627583\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4439,\n        \"timestampNs\" : 732391322760958\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=40 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4440,\n        \"timestampNs\" : 732391824217333\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=40 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4441,\n        \"timestampNs\" : 732391824268416\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=40 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4442,\n        \"timestampNs\" : 732392075100708\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=40 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4443,\n        \"timestampNs\" : 732392075120750\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=40 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4444,\n        \"timestampNs\" : 732392325306500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=40 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4445,\n        \"timestampNs\" : 732392325330791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t40: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4446,\n        \"timestampNs\" : 732392325340291\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4447,\n        \"timestampNs\" : 732392325357666\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=41 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4448,\n        \"timestampNs\" : 732392826034875\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=41 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4449,\n        \"timestampNs\" : 732392826078833\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=41 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4450,\n        \"timestampNs\" : 732393076615458\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=41 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4451,\n        \"timestampNs\" : 732393076651958\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=41 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4452,\n        \"timestampNs\" : 732393327196541\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=41 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4453,\n        \"timestampNs\" : 732393327227125\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t41: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4454,\n        \"timestampNs\" : 732393327237125\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4455,\n        \"timestampNs\" : 732393327256625\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=42 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4456,\n        \"timestampNs\" : 732393828359500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=42 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4457,\n        \"timestampNs\" : 732393828406958\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=42 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4458,\n        \"timestampNs\" : 732394079419041\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=42 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4459,\n        \"timestampNs\" : 732394079454875\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=42 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4460,\n        \"timestampNs\" : 732394330240291\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=42 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4461,\n        \"timestampNs\" : 732394330264500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t42: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4462,\n        \"timestampNs\" : 732394330273250\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4463,\n        \"timestampNs\" : 732394330291000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=43 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4464,\n        \"timestampNs\" : 732394830995291\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=43 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4465,\n        \"timestampNs\" : 732394831030375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=43 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4466,\n        \"timestampNs\" : 732395081757291\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=43 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4467,\n        \"timestampNs\" : 732395081790333\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=43 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4468,\n        \"timestampNs\" : 732395332132000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=43 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4469,\n        \"timestampNs\" : 732395332155458\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t43: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4470,\n        \"timestampNs\" : 732395332183916\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4471,\n        \"timestampNs\" : 732395332203375\n      },\n      {\n        \"category\" : \"Oxfw\",\n        \"categoryId\" : 22,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[Oxfw] clock transition epoch=4 failed in phase=0 status=0xe00002bc\",\n        \"sequence\" : 4472,\n        \"timestampNs\" : 732395332218333\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=4 gen=3\",\n        \"sequence\" : 4473,\n        \"timestampNs\" : 732395335090791\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Failed phase=Failed class=StageFailure cause=Prepare retryable=0 rollback=0x00000000 status=0xe00002bc endpoint=1 restartId=4 gen=3\",\n        \"sequence\" : 4474,\n        \"timestampNs\" : 732395335108416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioNub: StartAudioStreaming failed endpoint=1 kr=0xe00002bc\",\n        \"sequence\" : 4475,\n        \"timestampNs\" : 732395335130750\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDevice: StartAudioStreaming failed: 0xe00002bc\",\n        \"sequence\" : 4476,\n        \"timestampNs\" : 732395335138625\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=4 gen=3\",\n        \"sequence\" : 4477,\n        \"timestampNs\" : 732395335179458\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Freed Tx isoch resources\",\n        \"sequence\" : 4478,\n        \"timestampNs\" : 732395335333375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDevice: StartIO failed at StartAudioStreaming: 0xe00002bc\",\n        \"sequence\" : 4479,\n        \"timestampNs\" : 732395335339708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: super::StartDevice failed: 0xe00002bc\",\n        \"sequence\" : 4480,\n        \"timestampNs\" : 732395335347250\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)\",\n        \"sequence\" : 4481,\n        \"timestampNs\" : 732416335871375\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ASFWAudioDevice: StartIO flags=0x0\",\n        \"sequence\" : 4482,\n        \"timestampNs\" : 732416335899125\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG StartIO running=0 while arming transport\",\n        \"sequence\" : 4483,\n        \"timestampNs\" : 732416335906291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72\",\n        \"sequence\" : 4484,\n        \"timestampNs\" : 732416336095000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72\",\n        \"sequence\" : 4485,\n        \"timestampNs\" : 732416336201625\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TimelineEpoch] epoch=4 reason=start-io source=1 base=0 rate=48000\",\n        \"sequence\" : 4486,\n        \"timestampNs\" : 732416336797375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)\",\n        \"sequence\" : 4487,\n        \"timestampNs\" : 732416337345000\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] [TxV3] prefill=168\\/168 preparedTarget=120 ownershipGuard=48 leadFrames=720\",\n        \"sequence\" : 4488,\n        \"timestampNs\" : 732416337470000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1\",\n        \"sequence\" : 4489,\n        \"timestampNs\" : 732416337537625\n      },\n      {\n        \"category\" : \"Oxfw\",\n        \"categoryId\" : 22,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Oxfw] PrepareDuplex: rate=48000 node=1 gen=3 epoch=1\",\n        \"sequence\" : 4490,\n        \"timestampNs\" : 732416337553583\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=44 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4491,\n        \"timestampNs\" : 732416838503791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=44 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4492,\n        \"timestampNs\" : 732416838540458\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=44 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4493,\n        \"timestampNs\" : 732417089009666\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=44 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4494,\n        \"timestampNs\" : 732417089035083\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=44 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4495,\n        \"timestampNs\" : 732417339304708\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=44 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4496,\n        \"timestampNs\" : 732417339335333\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t44: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4497,\n        \"timestampNs\" : 732417339345291\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4498,\n        \"timestampNs\" : 732417339379333\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=45 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4499,\n        \"timestampNs\" : 732417839791000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=45 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4500,\n        \"timestampNs\" : 732417839814500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=45 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4501,\n        \"timestampNs\" : 732418090337375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=45 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4502,\n        \"timestampNs\" : 732418090359750\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=45 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4503,\n        \"timestampNs\" : 732418340797416\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=45 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4504,\n        \"timestampNs\" : 732418340836833\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t45: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4505,\n        \"timestampNs\" : 732418340850541\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4506,\n        \"timestampNs\" : 732418340866958\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=46 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4507,\n        \"timestampNs\" : 732418841472375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=46 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4508,\n        \"timestampNs\" : 732418841493500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=46 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4509,\n        \"timestampNs\" : 732419091826375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=46 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4510,\n        \"timestampNs\" : 732419091853625\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=46 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4511,\n        \"timestampNs\" : 732419342660000\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=46 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4512,\n        \"timestampNs\" : 732419342688500\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t46: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4513,\n        \"timestampNs\" : 732419342699500\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4514,\n        \"timestampNs\" : 732419342717791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=47 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4515,\n        \"timestampNs\" : 732419844180708\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=47 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4516,\n        \"timestampNs\" : 732419844202375\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=47 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4517,\n        \"timestampNs\" : 732420094234250\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=47 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4518,\n        \"timestampNs\" : 732420094260416\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=47 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4519,\n        \"timestampNs\" : 732420345228791\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=47 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4520,\n        \"timestampNs\" : 732420345253708\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t47: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4521,\n        \"timestampNs\" : 732420345263208\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4522,\n        \"timestampNs\" : 732420345285250\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=48 state=ATPosted ackCode=0x0 retries=0\",\n        \"sequence\" : 4523,\n        \"timestampNs\" : 732420846098875\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=48 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1\\/2)\",\n        \"sequence\" : 4524,\n        \"timestampNs\" : 732420846126083\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=48 state=ATPosted ackCode=0x0 retries=1\",\n        \"sequence\" : 4525,\n        \"timestampNs\" : 732421096849916\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \ud83d\udd04 RECOVERY: tLabel=48 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2\\/2)\",\n        \"sequence\" : 4526,\n        \"timestampNs\" : 732421096889625\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u23f1\ufe0f OnTimeout: tLabel=48 state=ATPosted ackCode=0x0 retries=2\",\n        \"sequence\" : 4527,\n        \"timestampNs\" : 732421347581750\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] \u274c FAILED: tLabel=48 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.\",\n        \"sequence\" : 4528,\n        \"timestampNs\" : 732421347610166\n      },\n      {\n        \"category\" : \"Async\",\n        \"categoryId\" : 5,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Async] t48: ATPosted \u2192 TimedOut (OnTimeout)\",\n        \"sequence\" : 4529,\n        \"timestampNs\" : 732421347621833\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Async write failed: timeout\",\n        \"sequence\" : 4530,\n        \"timestampNs\" : 732421347643125\n      },\n      {\n        \"category\" : \"Oxfw\",\n        \"categoryId\" : 22,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[Oxfw] clock transition epoch=5 failed in phase=0 status=0xe00002bc\",\n        \"sequence\" : 4531,\n        \"timestampNs\" : 732421347657625\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=5 gen=3\",\n        \"sequence\" : 4532,\n        \"timestampNs\" : 732421352832500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Failed phase=Failed class=StageFailure cause=Prepare retryable=0 rollback=0x00000000 status=0xe00002bc endpoint=1 restartId=5 gen=3\",\n        \"sequence\" : 4533,\n        \"timestampNs\" : 732421352874833\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioNub: StartAudioStreaming failed endpoint=1 kr=0xe00002bc\",\n        \"sequence\" : 4534,\n        \"timestampNs\" : 732421352904000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDevice: StartAudioStreaming failed: 0xe00002bc\",\n        \"sequence\" : 4535,\n        \"timestampNs\" : 732421352920750\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=5 gen=3\",\n        \"sequence\" : 4536,\n        \"timestampNs\" : 732421352978666\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Freed Tx isoch resources\",\n        \"sequence\" : 4537,\n        \"timestampNs\" : 732421353159833\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDevice: StartIO failed at StartAudioStreaming: 0xe00002bc\",\n        \"sequence\" : 4538,\n        \"timestampNs\" : 732421353169625\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: super::StartDevice failed: 0xe00002bc\",\n        \"sequence\" : 4539,\n        \"timestampNs\" : 732421353180333\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000\",\n        \"sequence\" : 4540,\n        \"timestampNs\" : 732557973794791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0 TIMEOUT\",\n        \"sequence\" : 4541,\n        \"timestampNs\" : 732558088506333\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 4542,\n        \"timestampNs\" : 732558088563666\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 4543,\n        \"timestampNs\" : 732558088580916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200\",\n        \"sequence\" : 4544,\n        \"timestampNs\" : 732558088597500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2 success: 0xe3\",\n        \"sequence\" : 4545,\n        \"timestampNs\" : 732558088613750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300\",\n        \"sequence\" : 4546,\n        \"timestampNs\" : 732558088626458\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3 success: 0xef\",\n        \"sequence\" : 4547,\n        \"timestampNs\" : 732558088639000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400\",\n        \"sequence\" : 4548,\n        \"timestampNs\" : 732558088653125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4 success: 0xbc\",\n        \"sequence\" : 4549,\n        \"timestampNs\" : 732558088665833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500\",\n        \"sequence\" : 4550,\n        \"timestampNs\" : 732558088680125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5 success: 0x13\",\n        \"sequence\" : 4551,\n        \"timestampNs\" : 732558088694125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600\",\n        \"sequence\" : 4552,\n        \"timestampNs\" : 732558088708083\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6 success: 0x50\",\n        \"sequence\" : 4553,\n        \"timestampNs\" : 732558088721625\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700\",\n        \"sequence\" : 4554,\n        \"timestampNs\" : 732558088732875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7 success: 0x00\",\n        \"sequence\" : 4555,\n        \"timestampNs\" : 732558088746416\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800\",\n        \"sequence\" : 4556,\n        \"timestampNs\" : 732558088759750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8 success: 0xf8\",\n        \"sequence\" : 4557,\n        \"timestampNs\" : 732558088772708\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900\",\n        \"sequence\" : 4558,\n        \"timestampNs\" : 732558088787208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9 success: 0x00\",\n        \"sequence\" : 4559,\n        \"timestampNs\" : 732558088800208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00\",\n        \"sequence\" : 4560,\n        \"timestampNs\" : 732558088813083\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10 success: 0x7b\",\n        \"sequence\" : 4561,\n        \"timestampNs\" : 732558088826875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00\",\n        \"sequence\" : 4562,\n        \"timestampNs\" : 732558088838291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11 success: 0x00\",\n        \"sequence\" : 4563,\n        \"timestampNs\" : 732558088849291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00\",\n        \"sequence\" : 4564,\n        \"timestampNs\" : 732558088862208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12 success: 0x00\",\n        \"sequence\" : 4565,\n        \"timestampNs\" : 732558088875666\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00\",\n        \"sequence\" : 4566,\n        \"timestampNs\" : 732558088889208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13 success: 0x00\",\n        \"sequence\" : 4567,\n        \"timestampNs\" : 732558088902583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00\",\n        \"sequence\" : 4568,\n        \"timestampNs\" : 732558088916500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14 success: 0x00\",\n        \"sequence\" : 4569,\n        \"timestampNs\" : 732558088930833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00\",\n        \"sequence\" : 4570,\n        \"timestampNs\" : 732558088944208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15 success: 0x00\",\n        \"sequence\" : 4571,\n        \"timestampNs\" : 732558088957250\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] GetDiscoveredDevices: found 1 devices\",\n        \"sequence\" : 4572,\n        \"timestampNs\" : 732558094032958\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] GetDiscoveredDevices: total wire format size=394 bytes\",\n        \"sequence\" : 4573,\n        \"timestampNs\" : 732558094070583\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] GetDiscoveredDevices: returning 1 devices in 394 bytes\",\n        \"sequence\" : 4574,\n        \"timestampNs\" : 732558094337083\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] GetAVCUnits: found 1 AV\\/C units\",\n        \"sequence\" : 4575,\n        \"timestampNs\" : 732558094930875\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] GetAVCUnits: total wire format size=84 bytes\",\n        \"sequence\" : 4576,\n        \"timestampNs\" : 732558094953708\n      },\n      {\n        \"category\" : \"UserClient\",\n        \"categoryId\" : 6,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[UserClient] GetAVCUnits: returning 1 units in 84 bytes\",\n        \"sequence\" : 4577,\n        \"timestampNs\" : 732558095282500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000\",\n        \"sequence\" : 4578,\n        \"timestampNs\" : 732558097343791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0 TIMEOUT\",\n        \"sequence\" : 4579,\n        \"timestampNs\" : 732558211832083\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 4580,\n        \"timestampNs\" : 732558211858250\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 4581,\n        \"timestampNs\" : 732558211868041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200\",\n        \"sequence\" : 4582,\n        \"timestampNs\" : 732558211877333\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2 success: 0xe3\",\n        \"sequence\" : 4583,\n        \"timestampNs\" : 732558211887208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300\",\n        \"sequence\" : 4584,\n        \"timestampNs\" : 732558211898083\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3 success: 0xef\",\n        \"sequence\" : 4585,\n        \"timestampNs\" : 732558211906166\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400\",\n        \"sequence\" : 4586,\n        \"timestampNs\" : 732558211927000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4 success: 0xbc\",\n        \"sequence\" : 4587,\n        \"timestampNs\" : 732558211935750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500\",\n        \"sequence\" : 4588,\n        \"timestampNs\" : 732558211945875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5 success: 0x13\",\n        \"sequence\" : 4589,\n        \"timestampNs\" : 732558211955833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600\",\n        \"sequence\" : 4590,\n        \"timestampNs\" : 732558211965833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6 success: 0x50\",\n        \"sequence\" : 4591,\n        \"timestampNs\" : 732558211974708\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700\",\n        \"sequence\" : 4592,\n        \"timestampNs\" : 732558211984625\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7 success: 0x00\",\n        \"sequence\" : 4593,\n        \"timestampNs\" : 732558211994083\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800\",\n        \"sequence\" : 4594,\n        \"timestampNs\" : 732558212021875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8 success: 0xf8\",\n        \"sequence\" : 4595,\n        \"timestampNs\" : 732558212031500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900\",\n        \"sequence\" : 4596,\n        \"timestampNs\" : 732558212039958\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9 success: 0x00\",\n        \"sequence\" : 4597,\n        \"timestampNs\" : 732558212049291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00\",\n        \"sequence\" : 4598,\n        \"timestampNs\" : 732558212059041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10 success: 0x7b\",\n        \"sequence\" : 4599,\n        \"timestampNs\" : 732558212067208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00\",\n        \"sequence\" : 4600,\n        \"timestampNs\" : 732558212076791\n      }\n    ],\n    \"scannedCount\" : 241\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 4609,
+      "nextSequence": 4600,
+      "oldestSequence": 1,
+      "recordCount": 200,
+      "records": [
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5 success: 0x13",
+          "sequence": 4401,
+          "timestampNs": 732367527575041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600",
+          "sequence": 4402,
+          "timestampNs": 732367527581250
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6 success: 0x50",
+          "sequence": 4403,
+          "timestampNs": 732367527586833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700",
+          "sequence": 4404,
+          "timestampNs": 732367527592791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7 success: 0x00",
+          "sequence": 4405,
+          "timestampNs": 732367527598541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800",
+          "sequence": 4406,
+          "timestampNs": 732367527604500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8 success: 0xf8",
+          "sequence": 4407,
+          "timestampNs": 732367527610125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900",
+          "sequence": 4408,
+          "timestampNs": 732367527623500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9 success: 0x00",
+          "sequence": 4409,
+          "timestampNs": 732367527629708
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00",
+          "sequence": 4410,
+          "timestampNs": 732367527636000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10 success: 0x7b",
+          "sequence": 4411,
+          "timestampNs": 732367527642125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00",
+          "sequence": 4412,
+          "timestampNs": 732367527648208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11 success: 0x00",
+          "sequence": 4413,
+          "timestampNs": 732367527653958
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00",
+          "sequence": 4414,
+          "timestampNs": 732367527660416
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12 success: 0x00",
+          "sequence": 4415,
+          "timestampNs": 732367527666041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00",
+          "sequence": 4416,
+          "timestampNs": 732367527672166
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13 success: 0x00",
+          "sequence": 4417,
+          "timestampNs": 732367527677958
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00",
+          "sequence": 4418,
+          "timestampNs": 732367527683750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14 success: 0x00",
+          "sequence": 4419,
+          "timestampNs": 732367527690833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00",
+          "sequence": 4420,
+          "timestampNs": 732367527696916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15 success: 0x00",
+          "sequence": 4421,
+          "timestampNs": 732367527702541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)",
+          "sequence": 4422,
+          "timestampNs": 732390310315708
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ASFWAudioDevice: StartIO flags=0x0",
+          "sequence": 4423,
+          "timestampNs": 732390310917166
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG StartIO running=0 while arming transport",
+          "sequence": 4424,
+          "timestampNs": 732390310924958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72",
+          "sequence": 4425,
+          "timestampNs": 732390313637750
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72",
+          "sequence": 4426,
+          "timestampNs": 732390315174458
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TimelineEpoch] epoch=3 reason=start-io source=1 base=0 rate=48000",
+          "sequence": 4427,
+          "timestampNs": 732390315996708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)",
+          "sequence": 4428,
+          "timestampNs": 732390316218541
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxV3] prefill=168/168 preparedTarget=120 ownershipGuard=48 leadFrames=720",
+          "sequence": 4429,
+          "timestampNs": 732390316264000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1",
+          "sequence": 4430,
+          "timestampNs": 732390318704458
+        },
+        {
+          "category": "Oxfw",
+          "categoryId": 22,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Oxfw] PrepareDuplex: rate=48000 node=1 gen=3 epoch=1",
+          "sequence": 4431,
+          "timestampNs": 732390319166958
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=39 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4432,
+          "timestampNs": 732390821951583
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=39 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4433,
+          "timestampNs": 732390821988083
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=39 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4434,
+          "timestampNs": 732391072084916
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=39 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4435,
+          "timestampNs": 732391072105791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=39 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4436,
+          "timestampNs": 732391322577041
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=39 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4437,
+          "timestampNs": 732391322611000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t39: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4438,
+          "timestampNs": 732391322627583
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4439,
+          "timestampNs": 732391322760958
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=40 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4440,
+          "timestampNs": 732391824217333
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=40 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4441,
+          "timestampNs": 732391824268416
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=40 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4442,
+          "timestampNs": 732392075100708
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=40 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4443,
+          "timestampNs": 732392075120750
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=40 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4444,
+          "timestampNs": 732392325306500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=40 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4445,
+          "timestampNs": 732392325330791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t40: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4446,
+          "timestampNs": 732392325340291
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4447,
+          "timestampNs": 732392325357666
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=41 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4448,
+          "timestampNs": 732392826034875
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=41 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4449,
+          "timestampNs": 732392826078833
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=41 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4450,
+          "timestampNs": 732393076615458
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=41 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4451,
+          "timestampNs": 732393076651958
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=41 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4452,
+          "timestampNs": 732393327196541
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=41 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4453,
+          "timestampNs": 732393327227125
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t41: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4454,
+          "timestampNs": 732393327237125
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4455,
+          "timestampNs": 732393327256625
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=42 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4456,
+          "timestampNs": 732393828359500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=42 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4457,
+          "timestampNs": 732393828406958
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=42 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4458,
+          "timestampNs": 732394079419041
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=42 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4459,
+          "timestampNs": 732394079454875
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=42 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4460,
+          "timestampNs": 732394330240291
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=42 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4461,
+          "timestampNs": 732394330264500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t42: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4462,
+          "timestampNs": 732394330273250
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4463,
+          "timestampNs": 732394330291000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=43 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4464,
+          "timestampNs": 732394830995291
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=43 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4465,
+          "timestampNs": 732394831030375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=43 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4466,
+          "timestampNs": 732395081757291
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=43 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4467,
+          "timestampNs": 732395081790333
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=43 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4468,
+          "timestampNs": 732395332132000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=43 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4469,
+          "timestampNs": 732395332155458
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t43: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4470,
+          "timestampNs": 732395332183916
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4471,
+          "timestampNs": 732395332203375
+        },
+        {
+          "category": "Oxfw",
+          "categoryId": 22,
+          "level": "error",
+          "levelId": 0,
+          "message": "[Oxfw] clock transition epoch=4 failed in phase=0 status=0xe00002bc",
+          "sequence": 4472,
+          "timestampNs": 732395332218333
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=4 gen=3",
+          "sequence": 4473,
+          "timestampNs": 732395335090791
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Failed phase=Failed class=StageFailure cause=Prepare retryable=0 rollback=0x00000000 status=0xe00002bc endpoint=1 restartId=4 gen=3",
+          "sequence": 4474,
+          "timestampNs": 732395335108416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioNub: StartAudioStreaming failed endpoint=1 kr=0xe00002bc",
+          "sequence": 4475,
+          "timestampNs": 732395335130750
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDevice: StartAudioStreaming failed: 0xe00002bc",
+          "sequence": 4476,
+          "timestampNs": 732395335138625
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=4 gen=3",
+          "sequence": 4477,
+          "timestampNs": 732395335179458
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Freed Tx isoch resources",
+          "sequence": 4478,
+          "timestampNs": 732395335333375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDevice: StartIO failed at StartAudioStreaming: 0xe00002bc",
+          "sequence": 4479,
+          "timestampNs": 732395335339708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: super::StartDevice failed: 0xe00002bc",
+          "sequence": 4480,
+          "timestampNs": 732395335347250
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)",
+          "sequence": 4481,
+          "timestampNs": 732416335871375
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ASFWAudioDevice: StartIO flags=0x0",
+          "sequence": 4482,
+          "timestampNs": 732416335899125
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG StartIO running=0 while arming transport",
+          "sequence": 4483,
+          "timestampNs": 732416335906291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72",
+          "sequence": 4484,
+          "timestampNs": 732416336095000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72",
+          "sequence": 4485,
+          "timestampNs": 732416336201625
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TimelineEpoch] epoch=4 reason=start-io source=1 base=0 rate=48000",
+          "sequence": 4486,
+          "timestampNs": 732416336797375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)",
+          "sequence": 4487,
+          "timestampNs": 732416337345000
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] [TxV3] prefill=168/168 preparedTarget=120 ownershipGuard=48 leadFrames=720",
+          "sequence": 4488,
+          "timestampNs": 732416337470000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1",
+          "sequence": 4489,
+          "timestampNs": 732416337537625
+        },
+        {
+          "category": "Oxfw",
+          "categoryId": 22,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Oxfw] PrepareDuplex: rate=48000 node=1 gen=3 epoch=1",
+          "sequence": 4490,
+          "timestampNs": 732416337553583
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=44 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4491,
+          "timestampNs": 732416838503791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=44 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4492,
+          "timestampNs": 732416838540458
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=44 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4493,
+          "timestampNs": 732417089009666
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=44 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4494,
+          "timestampNs": 732417089035083
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=44 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4495,
+          "timestampNs": 732417339304708
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=44 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4496,
+          "timestampNs": 732417339335333
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t44: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4497,
+          "timestampNs": 732417339345291
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4498,
+          "timestampNs": 732417339379333
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=45 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4499,
+          "timestampNs": 732417839791000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=45 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4500,
+          "timestampNs": 732417839814500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=45 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4501,
+          "timestampNs": 732418090337375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=45 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4502,
+          "timestampNs": 732418090359750
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=45 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4503,
+          "timestampNs": 732418340797416
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=45 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4504,
+          "timestampNs": 732418340836833
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t45: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4505,
+          "timestampNs": 732418340850541
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4506,
+          "timestampNs": 732418340866958
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=46 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4507,
+          "timestampNs": 732418841472375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=46 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4508,
+          "timestampNs": 732418841493500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=46 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4509,
+          "timestampNs": 732419091826375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=46 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4510,
+          "timestampNs": 732419091853625
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=46 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4511,
+          "timestampNs": 732419342660000
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=46 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4512,
+          "timestampNs": 732419342688500
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t46: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4513,
+          "timestampNs": 732419342699500
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4514,
+          "timestampNs": 732419342717791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=47 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4515,
+          "timestampNs": 732419844180708
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=47 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4516,
+          "timestampNs": 732419844202375
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=47 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4517,
+          "timestampNs": 732420094234250
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=47 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4518,
+          "timestampNs": 732420094260416
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=47 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4519,
+          "timestampNs": 732420345228791
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=47 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4520,
+          "timestampNs": 732420345253708
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t47: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4521,
+          "timestampNs": 732420345263208
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4522,
+          "timestampNs": 732420345285250
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=48 state=ATPosted ackCode=0x0 retries=0",
+          "sequence": 4523,
+          "timestampNs": 732420846098875
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=48 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 1/2)",
+          "sequence": 4524,
+          "timestampNs": 732420846126083
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=48 state=ATPosted ackCode=0x0 retries=1",
+          "sequence": 4525,
+          "timestampNs": 732421096849916
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \ud83d\udd04 RECOVERY: tLabel=48 ATPosted timeout with no ACK. Packet may be queued in AT context. Extending deadline +250ms (attempt 2/2)",
+          "sequence": 4526,
+          "timestampNs": 732421096889625
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u23f1\ufe0f OnTimeout: tLabel=48 state=ATPosted ackCode=0x0 retries=2",
+          "sequence": 4527,
+          "timestampNs": 732421347581750
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] \u274c FAILED: tLabel=48 ATPosted - AT completion never arrived after 2 attempts. Possible AT context stall or hardware issue.",
+          "sequence": 4528,
+          "timestampNs": 732421347610166
+        },
+        {
+          "category": "Async",
+          "categoryId": 5,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Async] t48: ATPosted \u2192 TimedOut (OnTimeout)",
+          "sequence": 4529,
+          "timestampNs": 732421347621833
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Async write failed: timeout",
+          "sequence": 4530,
+          "timestampNs": 732421347643125
+        },
+        {
+          "category": "Oxfw",
+          "categoryId": 22,
+          "level": "error",
+          "levelId": 0,
+          "message": "[Oxfw] clock transition epoch=5 failed in phase=0 status=0xe00002bc",
+          "sequence": 4531,
+          "timestampNs": 732421347657625
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=5 gen=3",
+          "sequence": 4532,
+          "timestampNs": 732421352832500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Failed phase=Failed class=StageFailure cause=Prepare retryable=0 rollback=0x00000000 status=0xe00002bc endpoint=1 restartId=5 gen=3",
+          "sequence": 4533,
+          "timestampNs": 732421352874833
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioNub: StartAudioStreaming failed endpoint=1 kr=0xe00002bc",
+          "sequence": 4534,
+          "timestampNs": 732421352904000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDevice: StartAudioStreaming failed: 0xe00002bc",
+          "sequence": 4535,
+          "timestampNs": 732421352920750
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=5 gen=3",
+          "sequence": 4536,
+          "timestampNs": 732421352978666
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Freed Tx isoch resources",
+          "sequence": 4537,
+          "timestampNs": 732421353159833
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDevice: StartIO failed at StartAudioStreaming: 0xe00002bc",
+          "sequence": 4538,
+          "timestampNs": 732421353169625
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: super::StartDevice failed: 0xe00002bc",
+          "sequence": 4539,
+          "timestampNs": 732421353180333
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000",
+          "sequence": 4540,
+          "timestampNs": 732557973794791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0 TIMEOUT",
+          "sequence": 4541,
+          "timestampNs": 732558088506333
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 4542,
+          "timestampNs": 732558088563666
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 4543,
+          "timestampNs": 732558088580916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200",
+          "sequence": 4544,
+          "timestampNs": 732558088597500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2 success: 0xe3",
+          "sequence": 4545,
+          "timestampNs": 732558088613750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300",
+          "sequence": 4546,
+          "timestampNs": 732558088626458
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3 success: 0xef",
+          "sequence": 4547,
+          "timestampNs": 732558088639000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400",
+          "sequence": 4548,
+          "timestampNs": 732558088653125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4 success: 0xbc",
+          "sequence": 4549,
+          "timestampNs": 732558088665833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500",
+          "sequence": 4550,
+          "timestampNs": 732558088680125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5 success: 0x13",
+          "sequence": 4551,
+          "timestampNs": 732558088694125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600",
+          "sequence": 4552,
+          "timestampNs": 732558088708083
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6 success: 0x50",
+          "sequence": 4553,
+          "timestampNs": 732558088721625
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700",
+          "sequence": 4554,
+          "timestampNs": 732558088732875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7 success: 0x00",
+          "sequence": 4555,
+          "timestampNs": 732558088746416
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800",
+          "sequence": 4556,
+          "timestampNs": 732558088759750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8 success: 0xf8",
+          "sequence": 4557,
+          "timestampNs": 732558088772708
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900",
+          "sequence": 4558,
+          "timestampNs": 732558088787208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9 success: 0x00",
+          "sequence": 4559,
+          "timestampNs": 732558088800208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00",
+          "sequence": 4560,
+          "timestampNs": 732558088813083
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10 success: 0x7b",
+          "sequence": 4561,
+          "timestampNs": 732558088826875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00",
+          "sequence": 4562,
+          "timestampNs": 732558088838291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11 success: 0x00",
+          "sequence": 4563,
+          "timestampNs": 732558088849291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00",
+          "sequence": 4564,
+          "timestampNs": 732558088862208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12 success: 0x00",
+          "sequence": 4565,
+          "timestampNs": 732558088875666
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00",
+          "sequence": 4566,
+          "timestampNs": 732558088889208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13 success: 0x00",
+          "sequence": 4567,
+          "timestampNs": 732558088902583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00",
+          "sequence": 4568,
+          "timestampNs": 732558088916500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14 success: 0x00",
+          "sequence": 4569,
+          "timestampNs": 732558088930833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00",
+          "sequence": 4570,
+          "timestampNs": 732558088944208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15 success: 0x00",
+          "sequence": 4571,
+          "timestampNs": 732558088957250
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] GetDiscoveredDevices: found 1 devices",
+          "sequence": 4572,
+          "timestampNs": 732558094032958
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] GetDiscoveredDevices: total wire format size=394 bytes",
+          "sequence": 4573,
+          "timestampNs": 732558094070583
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] GetDiscoveredDevices: returning 1 devices in 394 bytes",
+          "sequence": 4574,
+          "timestampNs": 732558094337083
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] GetAVCUnits: found 1 AV/C units",
+          "sequence": 4575,
+          "timestampNs": 732558094930875
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] GetAVCUnits: total wire format size=84 bytes",
+          "sequence": 4576,
+          "timestampNs": 732558094953708
+        },
+        {
+          "category": "UserClient",
+          "categoryId": 6,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[UserClient] GetAVCUnits: returning 1 units in 84 bytes",
+          "sequence": 4577,
+          "timestampNs": 732558095282500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000",
+          "sequence": 4578,
+          "timestampNs": 732558097343791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0 TIMEOUT",
+          "sequence": 4579,
+          "timestampNs": 732558211832083
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 4580,
+          "timestampNs": 732558211858250
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 4581,
+          "timestampNs": 732558211868041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200",
+          "sequence": 4582,
+          "timestampNs": 732558211877333
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2 success: 0xe3",
+          "sequence": 4583,
+          "timestampNs": 732558211887208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300",
+          "sequence": 4584,
+          "timestampNs": 732558211898083
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3 success: 0xef",
+          "sequence": 4585,
+          "timestampNs": 732558211906166
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400",
+          "sequence": 4586,
+          "timestampNs": 732558211927000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4 success: 0xbc",
+          "sequence": 4587,
+          "timestampNs": 732558211935750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500",
+          "sequence": 4588,
+          "timestampNs": 732558211945875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5 success: 0x13",
+          "sequence": 4589,
+          "timestampNs": 732558211955833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600",
+          "sequence": 4590,
+          "timestampNs": 732558211965833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6 success: 0x50",
+          "sequence": 4591,
+          "timestampNs": 732558211974708
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700",
+          "sequence": 4592,
+          "timestampNs": 732558211984625
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7 success: 0x00",
+          "sequence": 4593,
+          "timestampNs": 732558211994083
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800",
+          "sequence": 4594,
+          "timestampNs": 732558212021875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8 success: 0xf8",
+          "sequence": 4595,
+          "timestampNs": 732558212031500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900",
+          "sequence": 4596,
+          "timestampNs": 732558212039958
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9 success: 0x00",
+          "sequence": 4597,
+          "timestampNs": 732558212049291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00",
+          "sequence": 4598,
+          "timestampNs": 732558212059041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10 success: 0x7b",
+          "sequence": 4599,
+          "timestampNs": 732558212067208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00",
+          "sequence": 4600,
+          "timestampNs": 732558212076791
+        }
+      ],
+      "scannedCount": 241
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

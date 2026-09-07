@@ -1,0 +1,626 @@
+1 692686108341208 [Controller] Property 'ASFWAsyncVerbosity' = 1 (from Info.plist)
+2 692686108440791 [Controller] Property 'ASFWControllerVerbosity' = 1 (from Info.plist)
+3 692686108499916 [Controller] Property 'ASFWHardwareVerbosity' = 1 (from Info.plist)
+4 692686108545291 [Controller] Property 'ASFWDiscoveryVerbosity' = 2 (default, not in Info.plist)
+5 692686108589500 [Controller] Property 'ASFWConfigROMVerbosity' = 1 (default, not in Info.plist)
+6 692686108630291 [Controller] Property 'ASFWUserClientVerbosity' = 1 (default, not in Info.plist)
+7 692686108671416 [Controller] Property 'ASFWMusicSubunitVerbosity' = 1 (default, not in Info.plist)
+8 692686108716833 [Controller] Property 'ASFWFCPVerbosity' = 1 (default, not in Info.plist)
+9 692686108765458 [Controller] Property 'ASFWCMPVerbosity' = 1 (default, not in Info.plist)
+10 692686108809083 [Controller] Property 'ASFWIRMVerbosity' = 1 (default, not in Info.plist)
+11 692686108848541 [Controller] Property 'ASFWAVCVerbosity' = 1 (default, not in Info.plist)
+12 692686108887958 [Controller] Property 'ASFWDICEVerbosity' = 1 (from Info.plist)
+13 692686108927625 [Controller] Property 'ASFWIsochVerbosity' = 1 (default, not in Info.plist)
+14 692686108965791 [Controller] Property 'ASFWDirectAudioVerbosity' = 1 (from Info.plist)
+15 692686109007416 [Controller] Property 'ASFWEnableHexDumps' = false (from Info.plist)
+16 692686109075166 [Controller] Property 'ASFWAutoStartAudioStreams' = true (from Info.plist)
+17 692686109115750 [Controller] Property 'ASFWLogStatistics' = true (from Info.plist)
+18 692686109153875 [Controller] Property 'ASFWMirrorToOsLog' = true (default, not in Info.plist)
+19 692686109162083 [Controller] LogConfig initialized: Async=1 Controller=1 Hardware=1 Discovery=2 ConfigROM=1 UserClient=1 Music=1 FCP=1 CMP=1 IRM=1 AVC=1 DICE=1 Isoch=1 DirectAudio=1 HexDumps=0 AutoStart=1 Stats=1
+20 692686109219500 [Controller] Async watchdog armed after runtime entered Running
+21 692686109223208 [Controller] ASFWDriver::Start() complete
+27 692686109940833 [Controller] Bus reset detected @ 692685938507291 ns
+28 692686109944791 [Hardware] Self-ID Complete (bit16)
+29 692686109947916 [Hardware] Self-ID Complete2 (bit15, sticky)
+30 692686109975708 [Controller] [SCSIHBA] Start (SBP-2 bridge, login-driven target)
+31 692686110006166 [Hardware] Self-ID buffer armed: paddr=0x80198000 size=2048 bytes
+32 692686110038208 [Hardware] Self-ID Complete (bit16)
+33 692686110060083 [Controller] SetPowerState: powerFlags=0x00000002 (on)
+34 692686110077041 [Controller] SetPowerState: pin desire On -> 0x00000000, override -> 0x00000000
+35 692686110077416 [Controller] [SCSIHBA] UserInitializeController
+36 692686111018666 [Controller] [SCSIHBA] UserMapHBAData → taskID 1
+37 692686111087583 [Controller] [SCSIHBA] UserMapHBAData → taskID 2
+38 692686111154166 [Controller] [SCSIHBA] UserMapHBAData → taskID 3
+39 692686111207541 [Controller] [SCSIHBA] UserMapHBAData → taskID 4
+40 692686111242291 [Hardware] Self-ID generation VALIDATED: 3
+41 692686111269541 [Controller] [SCSIHBA] UserMapHBAData → taskID 5
+42 692686111298916 [Hardware] Self-ID decode complete: valid=1 quads=3 sequences=2 enumeratorError=0
+43 692686111333458 [Controller] [SCSIHBA] UserMapHBAData → taskID 6
+44 692686111387625 [Controller] [SCSIHBA] UserMapHBAData → taskID 7
+45 692686111453458 [Controller] [SCSIHBA] UserMapHBAData → taskID 8
+46 692686111572291 [Controller] [SCSIHBA] UserStartController — no target until SBP-2 login
+47 692686111660791 [Hardware] 🧵 Sequences: start=1 count=1, start=2 count=1
+48 692686111665583 [Hardware] ✅ Self-ID decode valid
+49 692686111667875 [Hardware] === End Self-ID Debug ===
+64 692686111769875 [Hardware] Config ROM header restored in DMA buffer: 0x00000000 → 0x0404a54b
+67 692686111985666 [BusReset] Reset provenance: gen=3 origin=local initiator=node0 root=1 irm=1 local=0
+68 692686112006791 [Hardware] IntMask updated: shadow=0x878783ff add=0x00020000 (masterEnable=1 busReset=1)
+74 692686112035333 [BusReset] Bus reset #1 complete in 2.04 ms (generation=3, aborts=0)
+75 692686112320750 [BusReset] Discovery delayed 100ms for generation 3
+76 692686112555041 [Controller] [SCSIHBA] UserInitializeTargetForID 0
+77 692686113011958 [Controller] [SCSIHBA] opcode 0x12 → BUSY (SBP-2 session not ready)
+78 692686213491291 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+79 692686213533625 [Hardware] [PHY] Read reg 1 success: 0x3f
+80 692686213634000 [Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=0 action=none(0)
+81 692686213701291 [Controller] TopologyMapService: Map rebuilt for generation 3: nodes=2, selfIds=2
+82 692686213972333 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+83 692686213987791 [Hardware] [PHY] Read reg 1 success: 0x3f
+84 692686214012791 [Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=0 action=none(0)
+85 692686214063083 [Hardware] IntMask updated: shadow=0x87c783ff add=0x00400000 (masterEnable=1 busReset=1)
+91 692686216755875 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+92 692686216772166 [Hardware] [PHY] Read reg 1 success: 0x3f
+93 692686216790333 [Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=1 action=none(0)
+94 692686216835916 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+95 692686216845000 [Hardware] [PHY] Read reg 1 success: 0x3f
+96 692686216858583 [Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=1 action=none(0)
+98 692686216991666 [Controller] NewUserClient request received (type=0)
+100 692686217162333 [Controller] NewUserClient success (client=0x733c005138)
+115 692686218256166 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+116 692686218265500 [Hardware] [PHY] Read reg 1 success: 0x3f
+117 692686218280791 [Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=1/0 cycleSeen=1 action=none(0)
+207 692686227940708 [Audio] [AudioSession] endpoint=1 device=1 provider=4 state=2->3 reason=probe-start
+208 692686228005208 [FCP] FCPTransport: Initialized for device nodeID=1, cmdAddr=0xfffff0000b00, rspAddr=0xfffff0000d00
+406 692686299336458 [Audio] [AudioSession] endpoint=1 device=1 provider=4 state=3->4 reason=probe-complete
+407 692686299544416 [Audio] ASFWAudioNub: init() succeeded
+408 692686299685041 [Audio] ASFWAudioNub[0x733c022718]: Started and registered
+409 692686299835791 [Audio] ASFWAudioNub: endpoint set to 1
+410 692686299846250 [Audio] AudioNubPublisher[resolved-endpoint]: ASFWAudioNub ready endpoint=1 instance=1 observedGUID=3db0a0000d112
+411 692686299878000 [Audio] [AudioSession] endpoint=1 provider=4 published instance=1 observedGUID=3db0a0000d112
+416 692686301047458 [Audio] ASFWAudioDriver: init() succeeded
+417 692686301063958 [Audio] ASFWAudioDriver: Start() - provider is ASFWAudioNub
+418 692686301323875 [Audio] ASFWAudioDriver: endpoint=1 instance=1 observedGUID=0x0003db0a0000d112 boolControls=0
+419 692686301334583 [Audio] ASFWAudioDriver: Read device name from nub: Duet
+420 692686301340291 [Audio] ASFWAudioDriver: Read channel counts from nub: aggregate=2 input=2 output=2
+421 692686301346750 [Audio] ASFWAudioDriver: Read 1 sample rates from nub
+422 692686301351458 [Audio] ASFWAudioDriver: Input plug name: Input
+423 692686301356666 [Audio] ASFWAudioDriver: Output plug name: Output
+424 692686301361583 [Audio] ASFWAudioDriver: Current sample rate from nub: 48000 Hz
+425 692686301371000 [Audio] ASFWAudioDriver: Stream mode from nub: blocking
+426 692686301376291 [Audio] ASFWAudioDriver: Advertising 1 Float32 format(s) (input/output) across rates
+427 692686301382125 [Audio] ASFWAudioDriver: Effective runtime channels: input=2 output=2 aggregate=2
+429 692686301390250 [Audio] ASFWAudioDriver: HAL buffer profile=audio-engine-v3 ring=8192 ioBudget=512 zts=8192
+430 692686301397875 [Audio] ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: 8192 frames
+432 692686301609000 [Audio] [AudioConfig] coordinator ready endpoint=1 rate=48000 in=2 out=2
+433 692686301624041 [Audio] ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: 8192 frames
+434 692686301630541 [Audio] ASFWAudioDriver: ADK object ids device=2
+435 692686301636500 [Audio] ADK GRAPH op=device.SetName kr=0x0
+436 692686301646916 [Audio] ADK GRAPH op=device.SetAvailableSampleRates kr=0x0
+437 692686301653250 [Audio] ADK GRAPH op=device.SetSampleRate kr=0x0
+438 692686301658541 [Audio] ASFWAudioDriver: Initial sample rate set to 48000 Hz
+439 692686301665458 [Audio] ASFWAudioDriver: Created 1 stream formats input=float32/2 ch output=float32/2 ch; current format index=0 (48000 Hz)
+440 692686301674041 [DirectAudio] ADK DBG MEM request provider=0x733c022718 endpoint=1 expectedInCh=2 expectedOutCh=2 rate=48000
+441 692686301695375 [DirectAudio] ADK DBG MEM runtime allocate observedGuid=0x0003db0a0000d112 outBytes=65536 outFrames=8192 outCh=2 inBytes=65536 inFrames=8192 inCh=2 controlBytes=70056 rate=48000
+443 692686302437125 [DirectAudio] ADK DBG BIND runtime local_memory_ready observedGuid=0x0003db0a0000d112 gen=2 outBase=0x104764000 outBytes=65536 outFrames=8192 outCh=2 inBase=0x10477c000 inBytes=65536 inFrames=8192 inCh=2 control=0x104794000 rate=48
+444 692686302456291 [DirectAudio] ADK DBG MEM runtime copy ok observedGuid=0x0003db0a0000d112 gen=2 outMem=0x733c023438 outFrames=8192 outCh=2 inMem=0x733c023578 inFrames=8192 inCh=2 controlMem=0x733c0236b8 rate=48000
+445 692686302471250 [Audio] ADK GRAPH state=stream-ring/ZTS profile=audio-engine-v3 outFrames=8192 inFrames=8192 ztsPeriod=8192
+446 692686302499916 [DirectAudio] ADK DBG MEM mapped gen=2 outBase=0x104764000 outLen=65536 outFrames=8192 outCh=2 inBase=0x10477c000 inLen=65536 inFrames=8192 inCh=2 control=0x104794000 controlLen=70056 rate=48000
+447 692686302563125 [Audio] ASFWAudioDriver: ADK object ids inputStream=6 owner=1
+448 692686302573291 [Audio] ADK GRAPH op=inputStream.SetName kr=0x0
+449 692686302582291 [Audio] ADK GRAPH op=inputStream.SetAvailableStreamFormats kr=0x0
+450 692686302588583 [Audio] ADK GRAPH op=inputStream.SetCurrentStreamFormat kr=0x0
+452 692686302629250 [Audio] ASFWAudioDriver: ADK object ids outputStream=8 owner=1
+453 692686302637500 [Audio] ADK GRAPH op=outputStream.SetName kr=0x0
+454 692686302643833 [Audio] ADK GRAPH op=outputStream.SetAvailableStreamFormats kr=0x0
+455 692686302649291 [Audio] ADK GRAPH op=outputStream.SetCurrentStreamFormat kr=0x0
+456 692686302654958 [Audio] ASFWAudioDriver: ADK streams fully created. deviceId=2 inputStream=6 outputStream=8
+457 692686302755500 [DirectAudio] ADK DBG BIND skeleton bound outBase=0x104764000 outFrames=8192 outCh=2 inBase=0x10477c000 inFrames=8192 inCh=2 control=0x104794000 audioDevice=0x103f702e8 rate=48000
+458 692686302767291 [Audio] ASFWAudioDriver: Direct audio skeleton bound
+459 692686302772333 [Audio] ADK GRAPH op=outputStream.SetLatency kr=0x0
+460 692686302777416 [Audio] ADK GRAPH op=inputStream.SetLatency kr=0x0
+461 692686302788375 [Audio] ADK GRAPH op=device.AddStream(input) kr=0x0
+462 692686302795958 [Audio] ADK GRAPH op=device.AddStream(output) kr=0x0
+463 692686302802833 [DirectAudio] ADK IO handler installed deviceId=2 inputStream=6 outputStream=8
+464 692686302808833 [Audio] ADK GRAPH op=device.SetIOOperationHandler kr=0x0
+465 692686302813750 [Audio] ASFWAudioDriver: IO operation handler installed
+466 692686302822541 [Audio] ADK GRAPH op=device.SetElementName(output) channel=1 kr=0x0
+467 692686302830291 [Audio] ADK GRAPH op=device.SetElementName(output) channel=2 kr=0x0
+468 692686302837541 [Audio] ADK GRAPH op=device.SetElementName(input) channel=1 kr=0x0
+469 692686302843958 [Audio] ADK GRAPH op=device.SetElementName(input) channel=2 kr=0x0
+470 692686302849125 [Audio] ADK GRAPH op=device.AddBooleanControls kr=0x0
+471 692686302854500 [Audio] ADK GRAPH op=driver.SetTransportType kr=0x0
+472 692686302859583 [Audio] ADK GRAPH op=device.SetTransportType kr=0x0
+473 692686302864541 [Audio] ADK GRAPH op=device.SetClockAlgorithm kr=0x0
+474 692686302869333 [Audio] ADK GRAPH op=device.SetClockIsStable kr=0x0
+475 692686302874125 [Audio] ADK GRAPH op=device.SetClockDomain kr=0x0
+476 692686302880166 [Audio] ADK GRAPH op=device.SetOutputLatency kr=0x0
+477 692686302885125 [Audio] ADK GRAPH op=device.SetInputLatency kr=0x0
+478 692686302889875 [Audio] ADK GRAPH op=device.SetOutputSafetyOffset kr=0x0
+479 692686302894708 [Audio] ADK GRAPH op=device.SetInputSafetyOffset kr=0x0
+480 692686302899875 [Audio] ASFWAudioDriver: Reported HAL latency out=67/in=40, safety out=50/in=50 frames
+481 692686302907125 [Audio] ADK GRAPH state=device.GetZeroTimestampPeriod value=8192
+482 692686302914666 [Audio] ADK GRAPH op=driver.AddObject(device) kr=0x0
+483 692686302931375 [Audio] ADK GRAPH op=driver.RegisterService kr=0x0
+484 692686302938708 [Audio] ✅ ASFWAudioDriver: Started - device 'Duet' (in=2 out=2 aggregate=2)
+493 692686305956666 [Audio] ASFWAudioDriver: NewUserClient(type=1128363364)
+690 692687114249375 [Controller] [SCSIHBA] opcode 0x12 → BUSY (SBP-2 session not ready)
+9863 692757563239000 [Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000
+9864 692757677562083 [Hardware] [PHY] Read reg 0 TIMEOUT
+9865 692757677591791 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+9866 692757677606833 [Hardware] [PHY] Read reg 1 success: 0x3f
+9867 692757677619958 [Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200
+9868 692757677632416 [Hardware] [PHY] Read reg 2 success: 0xe3
+9869 692757677676500 [Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300
+9870 692757677690625 [Hardware] [PHY] Read reg 3 success: 0xef
+9871 692757677704000 [Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400
+9872 692757677715125 [Hardware] [PHY] Read reg 4 success: 0xbc
+9873 692757677727000 [Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500
+9874 692757677738375 [Hardware] [PHY] Read reg 5 success: 0x13
+9875 692757677749583 [Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600
+9876 692757677760583 [Hardware] [PHY] Read reg 6 success: 0x50
+9877 692757677771833 [Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700
+9878 692757677785833 [Hardware] [PHY] Read reg 7 success: 0x00
+9879 692757677799500 [Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800
+9880 692757677811875 [Hardware] [PHY] Read reg 8 success: 0xf8
+9881 692757677824958 [Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900
+9882 692757677836000 [Hardware] [PHY] Read reg 9 success: 0x00
+9883 692757677847291 [Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00
+9884 692757677860000 [Hardware] [PHY] Read reg 10 success: 0x7b
+9885 692757677873708 [Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00
+9886 692757677887583 [Hardware] [PHY] Read reg 11 success: 0x00
+9887 692757677901291 [Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00
+9888 692757677914833 [Hardware] [PHY] Read reg 12 success: 0x00
+9889 692757677927458 [Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00
+9890 692757677941375 [Hardware] [PHY] Read reg 13 success: 0x00
+9891 692757677952750 [Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00
+9892 692757677963666 [Hardware] [PHY] Read reg 14 success: 0x00
+9893 692757677974833 [Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00
+9894 692757677985750 [Hardware] [PHY] Read reg 15 success: 0x00
+9905 692757683771250 [Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000
+9906 692757798875500 [Hardware] [PHY] Read reg 0 TIMEOUT
+9907 692757798927458 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+9908 692757798948000 [Hardware] [PHY] Read reg 1 success: 0x3f
+9909 692757798966041 [Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200
+9910 692757798982125 [Hardware] [PHY] Read reg 2 success: 0xe3
+9911 692757798998416 [Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300
+9912 692757799014208 [Hardware] [PHY] Read reg 3 success: 0xef
+9913 692757799030541 [Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400
+9914 692757799045208 [Hardware] [PHY] Read reg 4 success: 0xbc
+9915 692757799060541 [Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500
+9916 692757799072916 [Hardware] [PHY] Read reg 5 success: 0x13
+9917 692757799084250 [Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600
+9918 692757799095583 [Hardware] [PHY] Read reg 6 success: 0x50
+9919 692757799109125 [Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700
+9920 692757799120333 [Hardware] [PHY] Read reg 7 success: 0x00
+9921 692757799135791 [Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800
+9922 692757799150791 [Hardware] [PHY] Read reg 8 success: 0xf8
+9923 692757799163916 [Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900
+9924 692757799176958 [Hardware] [PHY] Read reg 9 success: 0x00
+9925 692757799190666 [Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00
+9926 692757799204041 [Hardware] [PHY] Read reg 10 success: 0x7b
+9927 692757799217583 [Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00
+9928 692757799228583 [Hardware] [PHY] Read reg 11 success: 0x00
+9929 692757799239791 [Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00
+9930 692757799254875 [Hardware] [PHY] Read reg 12 success: 0x00
+9931 692757799296666 [Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00
+9932 692757799312166 [Hardware] [PHY] Read reg 13 success: 0x00
+9933 692757799323500 [Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00
+9934 692757799334458 [Hardware] [PHY] Read reg 14 success: 0x00
+9935 692757799347916 [Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00
+9936 692757799361750 [Hardware] [PHY] Read reg 15 success: 0x00
+18585 692824300734708 [Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000
+18586 692824414961208 [Hardware] [PHY] Read reg 0 TIMEOUT
+18587 692824414996500 [Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100
+18588 692824415012166 [Hardware] [PHY] Read reg 1 success: 0x3f
+18589 692824415025916 [Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200
+18590 692824415037916 [Hardware] [PHY] Read reg 2 success: 0xe3
+18591 692824415050833 [Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300
+18592 692824415062041 [Hardware] [PHY] Read reg 3 success: 0xef
+18593 692824415073541 [Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400
+18594 692824415084625 [Hardware] [PHY] Read reg 4 success: 0xbc
+18595 692824415095750 [Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500
+18596 692824415106750 [Hardware] [PHY] Read reg 5 success: 0x13
+18597 692824415117750 [Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600
+18598 692824415128750 [Hardware] [PHY] Read reg 6 success: 0x50
+18599 692824415139791 [Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700
+18600 692824415150541 [Hardware] [PHY] Read reg 7 success: 0x00
+18601 692824415162250 [Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800
+18602 692824415173291 [Hardware] [PHY] Read reg 8 success: 0xf8
+18603 692824415184708 [Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900
+18604 692824415195541 [Hardware] [PHY] Read reg 9 success: 0x00
+18605 692824415206916 [Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00
+18606 692824415218250 [Hardware] [PHY] Read reg 10 success: 0x7b
+18607 692824415229583 [Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00
+18608 692824415240583 [Hardware] [PHY] Read reg 11 success: 0x00
+18609 692824415251833 [Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00
+18610 692824415262750 [Hardware] [PHY] Read reg 12 success: 0x00
+18611 692824415274500 [Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00
+18612 692824415285250 [Hardware] [PHY] Read reg 13 success: 0x00
+18613 692824415296500 [Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00
+18614 692824415307541 [Hardware] [PHY] Read reg 14 success: 0x00
+18615 692824415319125 [Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00
+18616 692824415330041 [Hardware] [PHY] Read reg 15 success: 0x00
+18653 692824690326625 [Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)
+18654 692824690347666 [DirectAudio] ASFWAudioDevice: StartIO flags=0x0
+18655 692824690354041 [DirectAudio] ADK DBG StartIO running=0 while arming transport
+18656 692824691111125 [Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72
+18657 692824691180375 [Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72
+18658 692824691990208 [DirectAudio] [TimelineEpoch] epoch=1 reason=start-io source=1 base=0 rate=48000
+18659 692824692183166 [Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)
+18660 692824692222000 [DirectAudio] [TxV3] prefill=168/168 preparedTarget=120 ownershipGuard=48 leadFrames=720
+18661 692824692487833 [Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1
+18712 692824826556958 [Audio] AUDIO DUPLEX START endpointId=0x0000000000000001 rate=48000 ir=1 it=0 inCh=2 outCh=2 inSlots=2 outSlots=2 rx0=pcm0/dbs2@iso1 bw=596 tx0=pcm2/dbs2@iso0 bw=596 mode=blocking rxFmt=0 txFmt=0
+18713 692824826587375 [Isoch] IsochDMAMemoryManager: Initialize desc=32768 bytes payload=2080768 bytes (payloadAlign=16384 externalPayload=0)
+18719 692824827187041 [Isoch] IsochDMAMemoryManager: Descriptor slab - vaddr=0x1047d8000 iova=0x803b0000 size=32768
+18729 692824852306250 [Isoch] IsochDMAMemoryManager: Payload slab - vaddr=0x1047e8000 iova=0x803bc000 size=2080768
+18731 692824852311458 [Isoch] IsochDMAMemoryManager: Initialization complete - ready for allocation
+18736 692824852452291 [Isoch] IsochService: Prepared IR on channel 1
+18737 692824852467166 [Isoch] IsochDMAMemoryManager: Initialize desc=16384 bytes payload=0 bytes (payloadAlign=16384 externalPayload=1)
+18740 692824852764916 [Isoch] [RxDrain] eligible=0 running=0 verbosity=1
+18744 692824852797416 [Isoch] IsochDMAMemoryManager: Descriptor slab - vaddr=0x104710000 iova=0x80398000 size=16384
+18746 692824852801625 [Isoch] IsochDMAMemoryManager: Initialization complete - ready for allocation
+18748 692824852821916 [Isoch] IT: Descriptor ring ready. DescIOVA=0x80398000 (pageOff=0x0)
+18749 692824852823833 [Isoch] IT: Layout: 48 packets, 192 blocks, 1 pages, 4032 bytes/page usable
+18750 692824852826125 [Isoch] IT: Configured ch=0 sid=0
+18751 692824852845833 [Isoch] IT: Payload DMA mapped bytes=24192 segments=1
+18752 692824852848000 [Isoch] IT: Payload DMA segment[0] slabOffset=0 iova=0x805bc000 length=24192
+18753 692824852857208 [Isoch] IT: Mapped shared memory. payloadSegments=1 metadataRing=0x10456c000 controlBlock=0x1047c0000 slots=168 maxBytes=72
+18754 692824852860000 [Isoch] IsochService: Prepared IT on channel 0
+18755 692824875370041 [Audio] Device clock stable before isoch start rate=48000 status=0x00000000 reads=3
+18756 692824875401041 [Isoch] IsochService: Starting prepared IR
+18757 692824875406833 [Isoch] Start: Enabled IR interrupt for context 0 (mask=0x00000001) scheduled=0 timer=0x00000000
+18758 692824875421000 [Audio] !!! [CMP] ConnectOPCR entry: instance=1 node=1 gen=3 plug=0 ch=1
+18759 692824875440583 [Audio] !!! [CMP] ReadMPR SUBMIT: dir=Output plug=0 addr=0xf0000900
+18760 692824875795833 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000900 (other)
+18761 692824875910666 [Isoch] [RxDrain] eligible=1 running=1 verbosity=1
+18763 692824876218208 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000900 value=0x80ff0001
+18764 692824876234125 [Audio] !!! [CMP] ReadMPR DONE: dir=Output plug=0 OK speed=2 plugCount=1
+18765 692824876250500 [Audio] !!! [CMP] ConnectOPCR ReadMPR done: status=0 speed=2
+18766 692824876264500 [Audio] !!! [CMP] AttemptConnect entry: dir=Output plug=0 ch=1 attempt=0
+18767 692824876288333 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)
+18769 692824876592166 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x80008036
+18770 692824876611750 [Audio] !!! [CMP] AttemptConnect: PCR=0x80008036 → desired=0x81018036 (p2p=1, ch=1)
+18771 692824876625500 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x80008036 desired=0x81018036
+18773 692824877240541 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x80008036 desired=0x81018036 observed=0x80008036 (MATCH)
+18774 692824877254958 [Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS
+18775 692824877265250 [Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Output plug=0 ch=1
+18777 692824878210458 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=9633 syt=0xc0d9
+18778 692824878255541 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=10899 syt=0xd4d9
+18779 692824878293916 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=8961 syt=0xe8d9
+18780 692824878326708 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=13522 syt=0x00d9
+18785 692824886881875 [Isoch] IsochService: Starting prepared IT
+18786 692824887017333 [Isoch] IT: Cycle tracking seeded: currentCycle=773 nextTxCycle=777
+18787 692824887021541 [Isoch] IT: Starting transmit context
+18788 692824887053041 [Isoch] IT: Dynamic descriptor ring primed. numPackets=48 softwareFillIdx=48
+18789 692824887055333 [Isoch] IT: Writing CommandPtr=0x80398004 (Z=4)
+18790 692824887057708 [Isoch] IT: Enabled IT interrupt for context 0
+18791 692824887069333 [Isoch] IT: Readback Cmd=0x80398004 Ctl=0x00008400 (run=1 active=1 dead=0 evt=0x00)
+18792 692824887075916 [Isoch] IT: Started successfully
+18793 692824887086333 [Audio] !!! [CMP] ConnectIPCR entry: instance=1 node=1 gen=3 plug=0 ch=0
+18794 692824887097083 [Audio] !!! [CMP] ReadMPR SUBMIT: dir=Input plug=0 addr=0xf0000980
+18795 692824887100750 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000980 (other)
+18797 692824887457375 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000980 value=0x80ff0001
+18798 692824887465333 [Audio] !!! [CMP] ReadMPR DONE: dir=Input plug=0 OK speed=2 plugCount=1
+18799 692824887473208 [Audio] !!! [CMP] ConnectIPCR ReadMPR done: status=0 speed=2
+18800 692824887479958 [Audio] !!! [CMP] AttemptConnect entry: dir=Input plug=0 ch=0 attempt=0
+18801 692824887488958 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)
+18803 692824887806958 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x80000000
+18804 692824887818625 [Audio] !!! [CMP] AttemptConnect: PCR=0x80000000 → desired=0x81000000 (p2p=1, ch=0)
+18805 692824887827458 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x80000000 desired=0x81000000
+18806 692824888402708 [Isoch] [TxLapSeed] slot=10 elapsedCycles=10 naive=10 liftedEst=10 lapsLostEst=0 elapsedUs=1250 exactIfSkippedCyclesUnder=24
+18807 692824888425958 [Isoch] IT completion delta high-water=10
+18808 692824888573625 [DirectAudio] [BackendTiming] conversionFailure=1 completion=0x0a312000 correlation=0x1a3108b0
+18809 692824888604208 [DirectAudio] [TxV3] epoch=1 source=1 completion=10 committed=168 margin=158 prepared=0 nextFrame=0 cache=[0,0) noCycle=0 noOrigin=0 resync=0
+18811 692824888617416 [DirectAudio] [TxLead] ticks=0 min=0 max=0 frames=0 rate=48000
+18812 692824888627875 [DirectAudio] [TxFill] filled=0 lost=0 tooLate=0 unavailable=0 silentData=0 cursor=168 finalized=18 mapped=58 committed=168 rebound=0 rejected=0 missedDeadline=0 stampsMissed=0 minRebindDistance=0
+18813 692824888631333 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x80000000 desired=0x81000000 observed=0x80000000 (MATCH)
+18814 692824888641500 [Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS
+18815 692824888647375 [DirectAudio] [TxPrep] wakes=0 maxLatUs=0 le750=0 ge1500=0 lat=[0,0,0,0,0,0] marginMin=158 marginMax=158 margin=[0,0,0,0,1] headroomMin=-1 headroomRunMin=-1
+18816 692824888648791 [Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Input plug=0 ch=0
+18818 692824888665458 [DirectAudio] [Ledger] J3 recv->decode  n=60 pend=0 unres=0 inv=0 min=31 mean=354 max=910 us hist=[11,10,22,17,0,0,0,0]
+18819 692824888747208 [DirectAudio] [BackendTiming] conversionFailure=2 completion=0x0a315000 correlation=0x1a313296
+18820 692824890160708 [DirectAudio] [BackendTiming] conversionFailure=4 completion=0x0a320000 correlation=0x1a31e618
+18821 692824893153791 [DirectAudio] [BackendTiming] conversionFailure=8 completion=0x0a338000 correlation=0x1a336603
+18823 692824898249791 [Audio] [FSM] terminal state=Running phase=Running status=0x00000000 endpoint=1 restartId=1 gen=3
+18824 692824898265041 [Audio] [AudioSession] endpoint=1 device=1 provider=4 state=4->5 reason=stream-started
+18825 692824899164625 [DirectAudio] [BackendTiming] conversionFailure=16 completion=0x0a368000 correlation=0x1a366612
+18830 692824912028291 [DirectAudio] [BackendTiming] conversionFailure=32 completion=0x0a3cf000 correlation=0x1a3cd47e
+18831 692824935916458 [DirectAudio] [BackendTiming] conversionFailure=64 completion=0x0a48e000 correlation=0x1a48c635
+18836 692824963737375 [DirectAudio][tx-wire-payload] [TxWire] packet=727 first=1 dropout=0 infoQuads=16 maxAbs24=0 lastQuad=0x40000000
+18837 692824963747916 [DirectAudio] [TxSeed] epoch=1 first=4834 presentBus=324162777 obsFrame=4112 obsBus=323793113 nominal=512 frames=8 packet=727 completionCursor=612
+18838 692824963798791 [DirectAudio] [TxAlign] epoch=1 delta=0 step=0 ringFrames=288 stepLaps=0 cursorFirst=4842 projected=4842 presentBus=324166873 obsFrame=4128 obsBus=323801305 nominal=512 packet=728 completionCursor=612
+18843 692824984711791 [DirectAudio] [BackendTiming] conversionFailure=128 completion=0x0a614000 correlation=0x1a61272b
+18844 692824988378583 [Isoch] IT completion delta high-water=12
+18846 692825004568250 [Isoch] IT completion delta high-water=16
+18854 692825048330125 [DirectAudio] [ZTS] rx epoch=1 sample=8192 host=16627801211160 period=8192
+18855 692825048501583 [DirectAudio] ADK DBG StartIO initial hardware ZTS sampleFrame=8192 hostTicks=16627801211160 waitMs=132
+18856 692825048524708 [DirectAudio] ADK DBG StartIO super::StartIO ok callbacks=0 outsideRun=0
+18857 692825048531625 [DirectAudio] ADK DBG StartIO transport and hardware clock ready
+18858 692825048536833 [DirectAudio] ADK DBG DUPLEX ready endpoint=1 rxStarted=1 txStarted=1 bindValid=1 hasIn=1 hasOut=1 audioDevice=0x103f702e8
+18859 692825048553750 [DirectAudio] ADK STATE after StartIO geometry ztsPeriod=8192 inputRingFrames=8192 outputRingFrames=8192 maxIoFrames=512
+18860 692825048562875 [DirectAudio] ADK STATE after StartIO streams input(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32) output(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32)
+18861 692825048582791 [DirectAudio] ADK STATE after StartIO timing input(sample=0 host=0) output(sample=0 host=0) zts(sample=8192 host=16627801211160)
+18862 692825048592708 [DirectAudio] ADK DBG IO super StartDevice ok id=2
+18863 692825048597791 [Audio] ASFWAudioDriver: Device started (transport via StartIO)
+18864 692825057635750 [DirectAudio] [RxRead] unknown -> healthy sampleTime=8356 frames=128 write=8640 oldest=448 delta=284 starvedFrames=0 capacity=8192
+18869 692825079963750 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=10426 projected=10434 presentBus=327025881 obsFrame=9704 obsBus=326656217 nominal=512 packet=1659 completionCursor=1542
+18870 692825079997375 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=10434 projected=10434 presentBus=327029977 obsFrame=9712 obsBus=326660313 nominal=512 packet=1660 completionCursor=1542
+18871 692825085311541 [DirectAudio] [BackendTiming] conversionFailure=256 completion=0x0a938000 correlation=0x1a936a97
+18876 692825127961541 [Zts] SEED count=1 frame=8192 host=16627801211160 drainHost=16627801158100 drainCycle=0x1a80f89b rxCycle=0x1a80f000 age=2203 rawRxTs=0xa80f syt=0x14d9 desc=358 dec=8 rate=48000 rateQ8=5333333
+18889 692825212811208 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=16810 projected=16818 presentBus=330294489 obsFrame=16080 obsBus=329920729 nominal=512 packet=2723 completionCursor=2604
+18890 692825213481041 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=16818 projected=16818 presentBus=330298585 obsFrame=16120 obsBus=329941209 nominal=512 packet=2724 completionCursor=2610
+18902 692825287779666 [DirectAudio] [BackendTiming] conversionFailure=512 completion=0x0af8c000 correlation=0x1af8a5f1
+18912 692825365696750 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=24138 projected=24146 presentBus=334046425 obsFrame=23424 obsBus=333680857 nominal=512 packet=3944 completionCursor=3828
+18913 692825365730041 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=24146 projected=24146 presentBus=334050521 obsFrame=23432 obsBus=333684953 nominal=512 packet=3945 completionCursor=3828
+18918 692825403958833 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=25962 projected=25970 presentBus=334980313 obsFrame=25264 obsBus=334618841 nominal=512 packet=4248 completionCursor=4134
+18919 692825403989875 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=25970 projected=25970 presentBus=334984409 obsFrame=25264 obsBus=334622937 nominal=512 packet=4249 completionCursor=4134
+18960 692825697255125 [DirectAudio] [BackendTiming] conversionFailure=1024 completion=0x0bc58000 correlation=0x1bc5673b
+19013 692826121768541 [Isoch] [IsochWatchdog] direction=rx context=0 poll=2637 busy=0 packets=9956 progressAgeUs=23 cmd=0x803b17c1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1ca5c2c3
+19014 692826123026041 [Isoch] [IsochWatchdog] direction=tx context=0 poll=973 irq=1593 ret=9882 committed=10002 progressAgeUs=721 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=9
+19015 692826123032041 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=16
+19049 692826366161791 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=72170 projected=72178 presentBus=358638809 obsFrame=71456 obsBus=358273241 nominal=512 packet=11949 completionCursor=11832
+19050 692826366196375 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=72178 projected=72178 presentBus=358642905 obsFrame=71456 obsBus=358273241 nominal=512 packet=11951 completionCursor=11832
+19055 692826395500583 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=73546 projected=73554 presentBus=359343321 obsFrame=72864 obsBus=358994137 nominal=512 packet=12179 completionCursor=12066
+19056 692826395539708 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=73554 projected=73554 presentBus=359347417 obsFrame=72864 obsBus=358994137 nominal=512 packet=12180 completionCursor=12066
+19061 692826426164166 [Isoch] IT completion delta high-water=19
+19074 692826510870500 [DirectAudio] [BackendTiming] conversionFailure=2048 completion=0x0d686000 correlation=0x1d6845d7
+19099 692826717104625 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=89002 projected=89010 presentBus=367256793 obsFrame=88288 obsBus=366891225 nominal=512 packet=14755 completionCursor=14640
+19100 692826717138458 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=89010 projected=89010 presentBus=367260889 obsFrame=88304 obsBus=366899417 nominal=512 packet=14756 completionCursor=14640
+19129 692826924107416 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=98938 projected=98946 presentBus=372344025 obsFrame=98232 obsBus=371982553 nominal=512 packet=16411 completionCursor=16296
+19130 692826924136833 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=98946 projected=98946 presentBus=372348121 obsFrame=98240 obsBus=371986649 nominal=512 packet=16412 completionCursor=16296
+19147 692827056972333 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=105306 projected=105314 presentBus=375604441 obsFrame=104616 obsBus=375251161 nominal=512 packet=17472 completionCursor=17358
+19148 692827057030958 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=105314 projected=105314 presentBus=375608537 obsFrame=104616 obsBus=375251161 nominal=512 packet=17473 completionCursor=17358
+19161 692827158089208 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=110178 projected=110186 presentBus=378098905 obsFrame=109472 obsBus=377737433 nominal=512 packet=18284 completionCursor=18168
+19162 692827158122333 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=110186 projected=110186 presentBus=378103001 obsFrame=109472 obsBus=377737433 nominal=512 packet=18285 completionCursor=18168
+19195 692827396755375 [Isoch] [IsochWatchdog] direction=rx context=0 poll=5331 busy=0 packets=20156 progressAgeUs=74 cmd=0x803b1f41 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x1f2f4879
+19196 692827397984208 [Isoch] [IsochWatchdog] direction=tx context=0 poll=1973 irq=3208 ret=20082 committed=20202 progressAgeUs=733 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=21
+19197 692827397987500 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19
+19266 692827946468166 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=148018 projected=148026 presentBus=397472985 obsFrame=147304 obsBus=397107417 nominal=512 packet=24591 completionCursor=24474
+19267 692827946501875 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=148026 projected=148026 presentBus=397477081 obsFrame=147312 obsBus=397111513 nominal=512 packet=24592 completionCursor=24474
+19284 692828071725916 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=154042 projected=154050 presentBus=400557273 obsFrame=153304 obsBus=400179417 nominal=512 packet=25595 completionCursor=25476
+19285 692828073332291 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=154050 projected=154050 presentBus=400561369 obsFrame=153392 obsBus=400224473 nominal=512 packet=25596 completionCursor=25489
+19298 692828149650458 [DirectAudio] [BackendTiming] conversionFailure=4096 completion=0x00b3c000 correlation=0x20b3aafd
+19316 692828271859333 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=163618 projected=163626 presentBus=405460185 obsFrame=162920 obsBus=405102809 nominal=512 packet=27191 completionCursor=27078
+19317 692828271896833 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=163626 projected=163626 presentBus=405464281 obsFrame=162928 obsBus=405106905 nominal=512 packet=27192 completionCursor=27078
+19342 692828473578083 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=173314 projected=173322 presentBus=410424537 obsFrame=172592 obsBus=410054873 nominal=512 packet=28807 completionCursor=28692
+19343 692828473633833 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=173322 projected=173322 presentBus=410428633 obsFrame=172616 obsBus=410067161 nominal=512 packet=28808 completionCursor=28692
+19356 692828570578208 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=177954 projected=177962 presentBus=412800217 obsFrame=177264 obsBus=412446937 nominal=512 packet=29580 completionCursor=29466
+19357 692828570638625 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=177962 projected=177962 presentBus=412804313 obsFrame=177272 obsBus=412451033 nominal=512 packet=29581 completionCursor=29466
+19374 692828675323708 [Isoch] [IsochWatchdog] direction=rx context=0 poll=8033 busy=0 packets=30385 progressAgeUs=100 cmd=0x803b0911 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x21ba99d6
+19375 692828676516458 [Isoch] [IsochWatchdog] direction=tx context=0 poll=2973 irq=4812 ret=30312 committed=30432 progressAgeUs=610 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=19
+19376 692828676519791 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19
+19397 692828829765625 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=190418 projected=190426 presentBus=419181785 obsFrame=189712 obsBus=418820313 nominal=512 packet=31657 completionCursor=31542
+19398 692828829799875 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=190426 projected=190426 presentBus=419185881 obsFrame=189712 obsBus=418820313 nominal=512 packet=31659 completionCursor=31542
+19413 692828951482208 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=196210 projected=196218 presentBus=422147289 obsFrame=195560 obsBus=421814489 nominal=512 packet=32623 completionCursor=32514
+19414 692828951504541 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=196218 projected=196218 presentBus=422151385 obsFrame=195560 obsBus=421814489 nominal=512 packet=32624 completionCursor=32514
+19433 692829093892000 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=203090 projected=203098 presentBus=425669849 obsFrame=202392 obsBus=425312473 nominal=512 packet=33769 completionCursor=33654
+19434 692829093957708 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=203098 projected=203098 presentBus=425673945 obsFrame=202392 obsBus=425312473 nominal=512 packet=33771 completionCursor=33654
+19451 692829215594166 [Zts] UPD count=25 frame=204800 host=16627899509852 drainHost=16627899456270 drainCycle=0x22b0f685 rxCycle=0x22b0f000 age=1669 rawRxTs=0x2b0f syt=0x14d9 desc=366 dec=8 rate=48000 rateQ8=5333333
+19496 692829572364541 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=226050 projected=226058 presentBus=437425369 obsFrame=225352 obsBus=437067993 nominal=512 packet=37596 completionCursor=37482
+19497 692829572413041 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=226058 projected=226058 presentBus=437429465 obsFrame=225360 obsBus=437072089 nominal=512 packet=37597 completionCursor=37482
+19530 692829825823875 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=238226 projected=238234 presentBus=443659481 obsFrame=237520 obsBus=443298009 nominal=512 packet=39625 completionCursor=39510
+19531 692829825856291 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=238234 projected=238234 presentBus=443663577 obsFrame=237528 obsBus=443302105 nominal=512 packet=39627 completionCursor=39510
+19540 692829881333541 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=240882 projected=240890 presentBus=445019353 obsFrame=240192 obsBus=444666073 nominal=512 packet=40068 completionCursor=39954
+19541 692829881390916 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=240890 projected=240890 presentBus=445023449 obsFrame=240192 obsBus=444666073 nominal=512 packet=40069 completionCursor=39954
+19542 692829889622500 [DirectAudio] [TxV3] epoch=1 source=1 completion=40020 committed=40140 margin=120 prepared=12 nextFrame=241314 cache=[232584,240776) noCycle=0 noOrigin=0 resync=0
+19543 692829889645250 [DirectAudio] [TxLead] ticks=54489 min=54489 max=56537 frames=106 rate=48000
+19544 692829889653500 [DirectAudio] [TxFill] filled=28983 lost=299 tooLate=0 unavailable=8017 silentData=508 cursor=40049 finalized=40028 mapped=40068 committed=40140 rebound=28668 rejected=0 missedDeadline=5 stampsMissed=0 minRebindDistance=2
+19545 692829889668500 [DirectAudio] [TxPrep] wakes=1811 maxLatUs=390 le750=1811 ge1500=0 lat=[1750,61,0,0,0,0] marginMin=120 marginMax=155 margin=[0,0,0,0,8117] headroomMin=0 headroomRunMin=0
+19546 692829889682583 [DirectAudio] [Ledger] I1 write->final  n=28946 pend=487 unres=43 inv=0 min=148 mean=1849 max=4929 us hist=[0,164,911,4290,10722,12823,36,0]
+19547 692829889694666 [DirectAudio] [Ledger] I2 final->wire   n=23061 pend=0 unres=0 inv=547 min=0 mean=868 max=1274 us hist=[256,13,776,12867,9149,0,0,0]
+19548 692829889705083 [DirectAudio] [Ledger] J3 recv->decode  n=28473 pend=0 unres=0 inv=0 min=11 mean=315 max=1489 us hist=[6056,6093,10085,6172,67,0,0,0]
+19549 692829889715083 [DirectAudio] [Ledger] J4 decode->read  n=0 pend=0 unres=4 inv=1809 min=0 mean=0 max=0 us hist=[0,0,0,0,0,0,0,0]
+19562 692829955556000 [Isoch] [IsochWatchdog] direction=rx context=0 poll=10738 busy=0 packets=40628 progressAgeUs=23 cmd=0x803b1341 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2452c2f8
+19563 692829956754333 [Isoch] [IsochWatchdog] direction=tx context=0 poll=3973 irq=6376 ret=40554 committed=40674 progressAgeUs=655 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=36
+19564 692829956757833 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19
+19622 692830397939000 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=265698 projected=265706 presentBus=457725145 obsFrame=264992 obsBus=457363673 nominal=512 packet=44204 completionCursor=44088
+19623 692830397967125 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=265706 projected=265706 presentBus=457729241 obsFrame=264992 obsBus=457363673 nominal=512 packet=44205 completionCursor=44088
+19684 692830868892625 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=288314 projected=288322 presentBus=469304537 obsFrame=287584 obsBus=468930777 nominal=512 packet=47973 completionCursor=47856
+19685 692830868928333 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=288322 projected=288322 presentBus=469308633 obsFrame=287600 obsBus=468938969 nominal=512 packet=47975 completionCursor=47856
+19714 692831097787541 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=299282 projected=299290 presentBus=474920153 obsFrame=298584 obsBus=474562777 nominal=512 packet=49801 completionCursor=49686
+19715 692831097825708 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=299290 projected=299290 presentBus=474924249 obsFrame=298584 obsBus=474562777 nominal=512 packet=49803 completionCursor=49686
+19720 692831120951208 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=300418 projected=300426 presentBus=475501785 obsFrame=299688 obsBus=475128025 nominal=512 packet=49991 completionCursor=49872
+19721 692831121824958 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=300426 projected=300426 presentBus=475505881 obsFrame=299720 obsBus=475144409 nominal=512 packet=49992 completionCursor=49878
+19738 692831244765125 [Isoch] [IsochWatchdog] direction=rx context=0 poll=13453 busy=0 packets=50942 progressAgeUs=80 cmd=0x803b0261 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x26e365bd
+19739 692831245996500 [Isoch] [IsochWatchdog] direction=tx context=0 poll=4973 irq=8046 ret=50868 committed=50988 progressAgeUs=721 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=13
+19740 692831246000041 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19
+19741 692831246929666 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=306450 projected=306458 presentBus=478590169 obsFrame=305728 obsBus=478220505 nominal=512 packet=50996 completionCursor=50880
+19742 692831246961083 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=306458 projected=306458 presentBus=478594265 obsFrame=305744 obsBus=478228697 nominal=512 packet=50997 completionCursor=50880
+19771 692831472725125 [DirectAudio] [BackendTiming] conversionFailure=8192 completion=0x07557000 correlation=0x27555382
+19800 692831697699166 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=328074 projected=328082 presentBus=489661657 obsFrame=327368 obsBus=489300185 nominal=512 packet=54600 completionCursor=54486
+19801 692831697730666 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=328082 projected=328082 presentBus=489665753 obsFrame=327384 obsBus=489308377 nominal=512 packet=54601 completionCursor=54486
+19818 692831811718083 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=333546 projected=333554 presentBus=492463321 obsFrame=332848 obsBus=492105945 nominal=512 packet=55512 completionCursor=55398
+19819 692831811772208 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=333554 projected=333554 presentBus=492467417 obsFrame=332856 obsBus=492110041 nominal=512 packet=55513 completionCursor=55398
+19828 692831882827833 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=336970 projected=336978 presentBus=494216409 obsFrame=336256 obsBus=493850841 nominal=512 packet=56083 completionCursor=55968
+19829 692831882859166 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=336978 projected=336978 presentBus=494220505 obsFrame=336272 obsBus=493859033 nominal=512 packet=56084 completionCursor=55968
+19846 692832000686875 [DirectAudio] [TxAlign] epoch=1 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=342618 projected=342626 presentBus=497108185 obsFrame=341920 obsBus=496750809 nominal=512 packet=57024 completionCursor=56910
+19847 692832000740333 [DirectAudio] [TxAlign] epoch=1 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=342626 projected=342626 presentBus=497112281 obsFrame=341928 obsBus=496754905 nominal=512 packet=57025 completionCursor=56910
+19848 692832011852208 [Audio] ASFWAudioDriver: StopDevice(id=2)
+19849 692832011868958 [DirectAudio] ASFWAudioDevice: StopIO flags=0x0
+19850 692832011878375 [DirectAudio] ADK DBG STOPIO endpoint=1 callbacks=5216 outsideRun=0 zts=41 rxZts=41 rxAdk=41 beginRead=2608 writeEnd=2608 writtenEndFrame=342536 txPackets=56952 txSilence=508 txUnderruns=0
+19851 692832011945750 [Audio] !!! [CMP] DisconnectIPCR entry: instance=1 node=1 gen=3 plug=0
+19852 692832011965208 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)
+19854 692832012530916 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x81000000
+19855 692832012547208 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x81000000 desired=0x80000000
+19857 692832013474333 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x81000000 desired=0x80000000 observed=0x81000000 (MATCH)
+19861 692832021280708 [Isoch] IT FATAL: slot 0 not committed packet=57120 commitGen=340 expectedGen=341
+19862 692832021290291 [Isoch] IT FATAL dump: fatalAbs=57120 slot=0 expectedGen=341 commitGen=340 slotLastPacketAbs=56952 committedEnd=57120 completionCursor=57076 softwareFillAbs=57114 ringPacketsAhead=38 deltaConsumed=10 i=6 numSlots=168 prepReq=9053 p
+19863 692832021306666 [Isoch] IT: Refill failed reason=uncommitted-slot ctrl=0x00008411 streamStatus=1 cmdPtr=0x80398104 cmdAddr=0x80398100 hwPacket=4 fatalAbs=57120 fatalSlot=0 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x000000000000000
+19864 692832021329375 [Isoch] IT FATAL STOP: RUN cleared and interrupt masked
+19865 692832021341041 [Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 — dispatching recovery
+19867 692832022522666 [Audio] !!! [CMP] DisconnectOPCR entry: instance=1 node=1 gen=3 plug=0
+19868 692832022545208 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)
+19870 692832022874250 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x81018036
+19871 692832022881833 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x81018036 desired=0x80018036
+19873 692832023355916 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x81018036 desired=0x80018036 observed=0x81018036 (MATCH)
+19874 692832033664625 [Isoch] Stop: Disabled IR interrupt for context 0. Stats: 57172 pkts polls=15110 busy=0
+19877 692832034631333 [Isoch] [RxDrain] eligible=0 running=0 verbosity=1
+19892 692832044926166 [Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=1 gen=3
+19893 692832044977708 [Audio] [AudioSession] endpoint=1 device=1 provider=4 state=5->4 reason=stream-stopped
+19894 692832046173625 [Isoch] IsochService: Freed Tx isoch resources
+19895 692832046249625 [Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 — recovering
+19896 692832046267083 [Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)
+20010 692832902723416 [Audio] ASFWAudioDriver: StartDevice(id=2 flags=0x0 deviceId=2 inStreamId=6 outStreamId=8)
+20011 692832902752416 [DirectAudio] ASFWAudioDevice: StartIO flags=0x0
+20012 692832902758458 [DirectAudio] ADK DBG StartIO running=0 while arming transport
+20013 692832902953500 [Isoch] IsochService: Allocated Tx isoch resources stream 0. numSlots=168 slotSize=72
+20014 692832903069208 [Audio] [AudioConfig] packetizer prepared endpoint=1 rate=48000 pcm=2 dbs=2 fdf=0x02 syt=8 bytes=72
+20015 692832903617416 [DirectAudio] [TimelineEpoch] epoch=2 reason=start-io source=1 base=0 rate=48000
+20016 692832904166875 [Audio] ASFWAudioDevice: Allocated & configured TX isoch resources channel=0 rxTransferDelay=12800 txTransferDelay=12800 (rate=48000)
+20017 692832904295750 [DirectAudio] [TxV3] prefill=168/168 preparedTarget=120 ownershipGuard=48 leadFrames=720
+20018 692832904377291 [Audio] AudioDuplexCoordinator: using isoch channels d2h=1 h2d=0 endpoint=1
+20051 692832938716250 [Audio] AUDIO DUPLEX START endpointId=0x0000000000000001 rate=48000 ir=1 it=0 inCh=2 outCh=2 inSlots=2 outSlots=2 rx0=pcm0/dbs2@iso1 bw=596 tx0=pcm2/dbs2@iso0 bw=596 mode=blocking rxFmt=0 txFmt=0
+20052 692832938801708 [Isoch] IsochService: Prepared IR on channel 1
+20053 692832938816416 [Isoch] IT: Configured ch=0 sid=0
+20054 692832939270333 [Isoch] IT: Payload DMA mapped bytes=24192 segments=1
+20055 692832939276125 [Isoch] IT: Payload DMA segment[0] slabOffset=0 iova=0x805bc000 length=24192
+20056 692832939289291 [Isoch] IT: Mapped shared memory. payloadSegments=1 metadataRing=0x103924000 controlBlock=0x104a08000 slots=168 maxBytes=72
+20057 692832939293541 [Isoch] IsochService: Prepared IT on channel 0
+20062 692832961364500 [Audio] Device clock stable before isoch start rate=48000 status=0x00000000 reads=3
+20063 692832961388875 [Isoch] IsochService: Starting prepared IR
+20064 692832961393958 [Isoch] Start: Enabled IR interrupt for context 0 (mask=0x00000001) scheduled=0 timer=0x00000000
+20065 692832961407375 [Audio] !!! [CMP] ConnectOPCR entry: instance=1 node=1 gen=3 plug=0 ch=1
+20066 692832961422083 [Audio] !!! [CMP] ReadMPR SUBMIT: dir=Output plug=0 addr=0xf0000900
+20067 692832961426291 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000900 (other)
+20069 692832961733583 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000900 value=0x80ff0001
+20070 692832961740208 [Audio] !!! [CMP] ReadMPR DONE: dir=Output plug=0 OK speed=2 plugCount=1
+20071 692832961747416 [Audio] !!! [CMP] ConnectOPCR ReadMPR done: status=0 speed=2
+20072 692832961753416 [Audio] !!! [CMP] AttemptConnect entry: dir=Output plug=0 ch=1 attempt=0
+20073 692832961761416 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)
+20075 692832962041708 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x80018036
+20076 692832962053000 [Audio] !!! [CMP] AttemptConnect: PCR=0x80018036 → desired=0x81018036 (p2p=1, ch=1)
+20077 692832962060916 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x80018036 desired=0x81018036
+20078 692832962429875 [Isoch] [RxDrain] eligible=1 running=1 verbosity=1
+20080 692832962608166 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x80018036 desired=0x81018036 observed=0x80018036 (MATCH)
+20081 692832962615666 [Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS
+20082 692832962622708 [Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Output plug=0 ch=1
+20084 692832963498541 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=11437 syt=0x96d9
+20085 692832963536166 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=11044 syt=0xbad9
+20086 692832963562291 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=13020 syt=0xd2d9
+20087 692832963595125 [DirectAudio] [RxWire] dbs=2 ch=2 events=8 labels=0x000000000000000000004040 contentMask=0x003 maxAbs24=18322 syt=0xe6d9
+20088 692832972513541 [Isoch] IsochService: Starting prepared IT
+20089 692832972531041 [Isoch] IT: Cycle tracking seeded: currentCycle=1461 nextTxCycle=1465
+20090 692832972534291 [Isoch] IT: Starting transmit context
+20091 692832972566125 [Isoch] IT: Dynamic descriptor ring primed. numPackets=48 softwareFillIdx=48
+20092 692832972568708 [Isoch] IT: Writing CommandPtr=0x80398004 (Z=4)
+20093 692832972571250 [Isoch] IT: Enabled IT interrupt for context 0
+20094 692832972583166 [Isoch] IT: Readback Cmd=0x80398004 Ctl=0x00008411 (run=1 active=1 dead=0 evt=0x11)
+20095 692832972586375 [Isoch] IT: Started successfully
+20096 692832972593458 [Audio] !!! [CMP] ConnectIPCR entry: instance=1 node=1 gen=3 plug=0 ch=0
+20097 692832972605875 [Audio] !!! [CMP] ReadMPR SUBMIT: dir=Input plug=0 addr=0xf0000980
+20098 692832972610083 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000980 (other)
+20100 692832972974875 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000980 value=0x80ff0001
+20101 692832972982375 [Audio] !!! [CMP] ReadMPR DONE: dir=Input plug=0 OK speed=2 plugCount=1
+20102 692832972989541 [Audio] !!! [CMP] ConnectIPCR ReadMPR done: status=0 speed=2
+20103 692832972995916 [Audio] !!! [CMP] AttemptConnect entry: dir=Input plug=0 ch=0 attempt=0
+20104 692832973003958 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)
+20105 692832973302291 [Isoch] [TxLapSeed] slot=6 elapsedCycles=6 naive=6 liftedEst=6 lapsLostEst=0 elapsedUs=750 exactIfSkippedCyclesUnder=24
+20106 692832973320708 [Isoch] IT completion delta high-water=6
+20107 692832973391000 [DirectAudio] [BackendTiming] conversionFailure=1 completion=0x0a5bd000 correlation=0x2a5bb671
+20109 692832973419708 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x80000000
+20110 692832973419708 [DirectAudio] [TxV3] epoch=2 source=1 completion=6 committed=168 margin=162 prepared=0 nextFrame=0 cache=[0,0) noCycle=0 noOrigin=0 resync=0
+20111 692832973426791 [Audio] !!! [CMP] AttemptConnect: PCR=0x80000000 → desired=0x81000000 (p2p=1, ch=0)
+20112 692832973430875 [DirectAudio] [TxLead] ticks=0 min=0 max=0 frames=0 rate=48000
+20113 692832973434333 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x80000000 desired=0x81000000
+20114 692832973439041 [DirectAudio] [TxFill] filled=0 lost=0 tooLate=0 unavailable=0 silentData=0 cursor=57009 finalized=14 mapped=54 committed=168 rebound=0 rejected=0 missedDeadline=0 stampsMissed=0 minRebindDistance=0
+20115 692832973455500 [DirectAudio] [TxPrep] wakes=0 maxLatUs=0 le750=0 ge1500=0 lat=[0,0,0,0,0,0] marginMin=162 marginMax=162 margin=[0,0,0,0,1] headroomMin=-1 headroomRunMin=-1
+20116 692832973469541 [DirectAudio] [Ledger] J3 recv->decode  n=54 pend=0 unres=0 inv=0 min=63 mean=362 max=744 us hist=[7,12,21,14,0,0,0,0]
+20118 692832973993083 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x80000000 desired=0x81000000 observed=0x80000000 (MATCH)
+20119 692832974000791 [Audio] !!! [CMP] AttemptConnect: CAS matched, connect SUCCESS
+20120 692832974006958 [Audio] !!! [CMP] CompleteConnect: status=0 lease=found dir=Input plug=0 ch=0
+20122 692832974131125 [DirectAudio] [BackendTiming] conversionFailure=2 completion=0x0a5c3000 correlation=0x2a5c1968
+20123 692832975589833 [DirectAudio] [BackendTiming] conversionFailure=4 completion=0x0a5cf000 correlation=0x2a5cd569
+20124 692832977173708 [Isoch] IT completion delta high-water=7
+20127 692832978977416 [Isoch] IT completion delta high-water=9
+20128 692832979085958 [DirectAudio] [BackendTiming] conversionFailure=8 completion=0x0a5ea000 correlation=0x2a5e8b13
+20132 692832983719500 [Audio] [FSM] terminal state=Running phase=Running status=0x00000000 endpoint=1 restartId=2 gen=3
+20133 692832983734916 [Audio] [AudioSession] endpoint=1 device=1 provider=4 state=4->5 reason=stream-started
+20134 692832985337916 [DirectAudio] [BackendTiming] conversionFailure=16 completion=0x0a61d000 correlation=0x2a61b5fb
+20135 692832998088791 [DirectAudio] [BackendTiming] conversionFailure=32 completion=0x0a683000 correlation=0x2a6815de
+20136 692833007010833 [Isoch] IT completion delta high-water=11
+20141 692833023579208 [DirectAudio] [BackendTiming] conversionFailure=64 completion=0x0a74f000 correlation=0x2a74d535
+20142 692833031033791 [Isoch] IT completion delta high-water=12
+20147 692833049100791 [DirectAudio][tx-wire-payload] [TxWire] packet=726 first=1 dropout=0 infoQuads=16 maxAbs24=0 lastQuad=0x40000000
+20148 692833049106458 [DirectAudio] [TxSeed] epoch=2 first=4830 presentBus=522877657 obsFrame=4120 obsBus=522514137 nominal=512 frames=8 packet=726 completionCursor=612
+20149 692833049134916 [DirectAudio] [TxAlign] epoch=2 delta=0 step=0 ringFrames=288 stepLaps=0 cursorFirst=4838 projected=4838 presentBus=522881753 obsFrame=4120 obsBus=522514137 nominal=512 packet=727 completionCursor=612
+20154 692833073459375 [DirectAudio] [BackendTiming] conversionFailure=128 completion=0x0a8dd000 correlation=0x2a8db6a9
+20159 692833133716750 [DirectAudio] [ZTS] rx epoch=2 sample=8192 host=16627995259904 period=8192
+20162 692833134793750 [DirectAudio] ADK DBG StartIO initial hardware ZTS sampleFrame=8192 hostTicks=16627995259904 waitMs=133
+20163 692833134813000 [DirectAudio] ADK DBG StartIO super::StartIO ok callbacks=0 outsideRun=0
+20164 692833134818416 [DirectAudio] ADK DBG StartIO transport and hardware clock ready
+20165 692833134823041 [DirectAudio] ADK DBG DUPLEX ready endpoint=1 rxStarted=1 txStarted=1 bindValid=1 hasIn=1 hasOut=1 audioDevice=0x103f702e8
+20166 692833134834000 [DirectAudio] ADK STATE after StartIO geometry ztsPeriod=8192 inputRingFrames=8192 outputRingFrames=8192 maxIoFrames=512
+20167 692833134841500 [DirectAudio] ADK STATE after StartIO streams input(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32) output(active=1 formats=1 rate=48000 flags=0x9 bytesFrame=8 channels=2 bits=32)
+20168 692833134858208 [DirectAudio] ADK STATE after StartIO timing input(sample=342052 host=16627968131975) output(sample=342408 host=16627968309965) zts(sample=8192 host=16627995259904)
+20169 692833134867416 [DirectAudio] ADK DBG IO super StartDevice ok id=2
+20170 692833134871708 [Audio] ASFWAudioDriver: Device started (transport via StartIO)
+20177 692833178148500 [DirectAudio] [BackendTiming] conversionFailure=256 completion=0x0ac23000 correlation=0x2ac21747
+20182 692833209737333 [Zts] SEED count=1 frame=8192 host=16627995259904 drainHost=16627995208127 drainCycle=0x2aabe7bd rxCycle=0x2aabe000 age=1981 rawRxTs=0xaabe syt=0xfad9 desc=359 dec=8 rate=48000 rateQ8=5333333
+20207 692833387537708 [DirectAudio] [BackendTiming] conversionFailure=512 completion=0x0b2ae000 correlation=0x2b2ac23f
+20208 692833405967541 [Isoch] IT completion delta high-water=17
+20253 692833734645000 [Isoch] [IsochWatchdog] direction=rx context=0 poll=1630 busy=0 packets=6176 progressAgeUs=33 cmd=0x803b0801 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x2bd8684c
+20254 692833735894000 [Isoch] [IsochWatchdog] direction=tx context=0 poll=595 irq=974 ret=6102 committed=6222 progressAgeUs=647 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0
+20255 692833735897833 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=17
+20264 692833809587208 [DirectAudio] [BackendTiming] conversionFailure=1024 completion=0x0c09f000 correlation=0x2c09d5da
+20374 692834648087416 [DirectAudio] [BackendTiming] conversionFailure=2048 completion=0x0dad3000 correlation=0x2dad16bf
+20407 692834906092625 [DirectAudio] [TxAlign] epoch=2 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=93966 projected=93974 presentBus=568515289 obsFrame=93272 obsBus=568159961 nominal=512 packet=15582 completionCursor=15468
+20408 692834906134291 [DirectAudio] [TxAlign] epoch=2 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=93974 projected=93974 presentBus=568519385 obsFrame=93272 obsBus=568159961 nominal=512 packet=15583 completionCursor=15468
+20425 692835018315041 [Isoch] [IsochWatchdog] direction=rx context=0 poll=4335 busy=0 packets=16446 progressAgeUs=73 cmd=0x803b13e1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x2e7247f9
+20426 692835019518500 [Isoch] [IsochWatchdog] direction=tx context=0 poll=1595 irq=2616 ret=16374 committed=16494 progressAgeUs=328 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=20
+20427 692835019521708 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=17
+20452 692835221983083 [DirectAudio] [TxAlign] epoch=2 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=109126 projected=109134 presentBus=576277209 obsFrame=108432 obsBus=575921881 nominal=512 packet=18108 completionCursor=17995
+20453 692835222041291 [DirectAudio] [TxAlign] epoch=2 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=109134 projected=109134 presentBus=576281305 obsFrame=108440 obsBus=575925977 nominal=512 packet=18110 completionCursor=17995
+20494 692835527015625 [DirectAudio] [TxAlign] epoch=2 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=123790 projected=123798 presentBus=583785177 obsFrame=123072 obsBus=583413465 nominal=512 packet=20552 completionCursor=20436
+20495 692835527051083 [DirectAudio] [TxAlign] epoch=2 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=123798 projected=123798 presentBus=583789273 obsFrame=123080 obsBus=583421657 nominal=512 packet=20554 completionCursor=20436
+20516 692835682249541 [DirectAudio] [TxAlign] epoch=2 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=131238 projected=131246 presentBus=587598553 obsFrame=130528 obsBus=587235033 nominal=512 packet=21794 completionCursor=21678
+20517 692835682285833 [DirectAudio] [TxAlign] epoch=2 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=131246 projected=131246 presentBus=587602649 obsFrame=130528 obsBus=587235033 nominal=512 packet=21795 completionCursor=21678
+20559 692836014409750 [Isoch] IT completion delta high-water=18
+20596 692836288238083 [Isoch] [IsochWatchdog] direction=rx context=0 poll=7025 busy=0 packets=26606 progressAgeUs=27 cmd=0x803b18e1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x30f947f9
+20597 692836289495791 [Isoch] [IsochWatchdog] direction=tx context=0 poll=2595 irq=4227 ret=26532 committed=26652 progressAgeUs=649 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=18
+20598 692836289499208 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=18
+20603 692836306295958 [DirectAudio] [BackendTiming] conversionFailure=4096 completion=0x01025000 correlation=0x310238c2
+20726 692837266111125 [Isoch] IT completion delta high-water=19
+20729 692837295379625 [DirectAudio] [TxAlign] epoch=2 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=208662 projected=208670 presentBus=627239641 obsFrame=207968 obsBus=626884313 nominal=512 packet=34698 completionCursor=34584
+20730 692837295427250 [DirectAudio] [TxAlign] epoch=2 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=208670 projected=208670 presentBus=627243737 obsFrame=207968 obsBus=626884313 nominal=512 packet=34699 completionCursor=34584
+20735 692837301527333 [Zts] UPD count=25 frame=204800 host=16628093557950 drainHost=16628093515123 drainCycle=0x32dc178a rxCycle=0x32dbe000 age=11146 rawRxTs=0x2dbe syt=0xfad9 desc=367 dec=8 rate=48000 rateQ8=5333333
+20768 692837571116666 [Isoch] [IsochWatchdog] direction=rx context=0 poll=9731 busy=0 packets=36869 progressAgeUs=94 cmd=0x803b04e1 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x3386c3e2
+20769 692837572314625 [Isoch] [IsochWatchdog] direction=tx context=0 poll=3595 irq=5856 ret=36799 committed=36914 progressAgeUs=220 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=15
+20770 692837572322083 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19
+20823 692837973547208 [DirectAudio] [TxV3] epoch=2 source=1 completion=40008 committed=40128 margin=120 prepared=6 nextFrame=241246 cache=[232468,240660) noCycle=0 noOrigin=0 resync=0
+20824 692837973606791 [DirectAudio] [TxLead] ticks=55001 min=53977 max=57049 frames=107 rate=48000
+20825 692837973657583 [DirectAudio] [TxFill] filled=0 lost=0 tooLate=0 unavailable=0 silentData=0 cursor=57009 finalized=40016 mapped=40056 committed=40128 rebound=0 rejected=0 missedDeadline=0 stampsMissed=0 minRebindDistance=0
+20826 692837973695916 [DirectAudio] [TxPrep] wakes=1813 maxLatUs=345 le750=1813 ge1500=0 lat=[1807,6,0,0,0,0] marginMin=120 marginMax=156 margin=[0,0,0,0,8191] headroomMin=0 headroomRunMin=0
+20827 692837973724583 [DirectAudio] [Ledger] I1 write->final  n=28941 pend=470 unres=57 inv=0 min=155 mean=1893 max=4610 us hist=[0,53,793,4123,10697,13237,38,0]
+20828 692837973750583 [DirectAudio] [Ledger] I2 final->wire   n=25488 pend=0 unres=0 inv=483 min=3 mean=839 max=1289 us hist=[272,9,1179,15136,8892,0,0,0]
+20829 692837973773375 [DirectAudio] [Ledger] J3 recv->decode  n=27549 pend=0 unres=0 inv=0 min=12 mean=334 max=1389 us hist=[4584,7002,10395,5473,95,0,0,0]
+20830 692837973795125 [DirectAudio] [Ledger] J4 decode->read  n=0 pend=0 unres=9 inv=1804 min=0 mean=0 max=0 us hist=[0,0,0,0,0,0,0,0]
+20944 692838851319375 [Isoch] [IsochWatchdog] direction=rx context=0 poll=12433 busy=0 packets=47112 progressAgeUs=73 cmd=0x803b0f01 ctrl=0x40008451 intEvent=0x00300080 txEvent=0x00000000 rxEvent=0x00000001 cycle=0x361ee74b
+20945 692838852559000 [Isoch] [IsochWatchdog] direction=tx context=0 poll=4595 irq=7485 ret=47040 committed=47160 progressAgeUs=394 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=12
+20946 692838852562458 [Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=19
+20967 692839005419708 [DirectAudio] [TxAlign] epoch=2 delta=8 step=8 ringFrames=288 stepLaps=0 cursorFirst=290766 projected=290758 presentBus=669276889 obsFrame=290056 obsBus=668913369 nominal=512 packet=48382 completionCursor=48265
+20968 692839005453000 [DirectAudio] [TxAlign] epoch=2 delta=0 step=-8 ringFrames=288 stepLaps=0 cursorFirst=290774 projected=290774 presentBus=669280985 obsFrame=290056 obsBus=668913369 nominal=512 packet=48383 completionCursor=48265
+21053 692839669227833 [DirectAudio] [BackendTiming] conversionFailure=8192 completion=0x07b7e000 correlation=0x37b7c42a
+21107 692840067567458 [Audio] ASFWAudioDriver: StopDevice(id=2)
+21108 692840067587875 [DirectAudio] ASFWAudioDevice: StopIO flags=0x0
+21109 692840067598083 [DirectAudio] ADK DBG STOPIO endpoint=1 callbacks=5196 outsideRun=0 zts=41 rxZts=41 rxAdk=41 beginRead=2598 writeEnd=2598 writtenEndFrame=341140 txPackets=56712 txSilence=0 txUnderruns=0
+21110 692840067671000 [Audio] !!! [CMP] DisconnectIPCR entry: instance=1 node=1 gen=3 plug=0
+21111 692840067692416 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)
+21113 692840068158416 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x81000000
+21114 692840068167000 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x81000000 desired=0x80000000
+21116 692840068921750 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x81000000 desired=0x80000000 observed=0x81000000 (MATCH)
+21117 692840076871000 [Isoch] IT FATAL: slot 96 not committed packet=56880 commitGen=338 expectedGen=339
+21118 692840076892083 [Isoch] IT FATAL dump: fatalAbs=56880 slot=96 expectedGen=339 commitGen=338 slotLastPacketAbs=56712 committedEnd=56880 completionCursor=56838 softwareFillAbs=56880 ringPacketsAhead=42 deltaConsumed=6 i=0 numSlots=168 prepReq=9048 p
+21119 692840076907291 [Isoch] IT: Refill failed reason=uncommitted-slot ctrl=0x00008411 streamStatus=1 cmdPtr=0x80398184 cmdAddr=0x80398180 hwPacket=6 fatalAbs=56880 fatalSlot=96 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x00000000000000
+21120 692840076927791 [Isoch] IT FATAL STOP: RUN cleared and interrupt masked
+21121 692840076934208 [Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 — dispatching recovery
+21123 692840078303083 [Audio] !!! [CMP] DisconnectOPCR entry: instance=1 node=1 gen=3 plug=0
+21124 692840078331666 [Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)
+21129 692840079470583 [Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x81018036
+21130 692840079481708 [Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x81018036 desired=0x80018036
+21132 692840079994958 [Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x81018036 desired=0x80018036 observed=0x81018036 (MATCH)
+21133 692840088558708 [Isoch] Stop: Disabled IR interrupt for context 0. Stats: 56943 pkts polls=15052 busy=0
+21139 692840089714125 [Isoch] [RxDrain] eligible=0 running=0 verbosity=1
+21151 692840099933291 [Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=2 gen=3
+21152 692840100004833 [Audio] [AudioSession] endpoint=1 device=1 provider=4 state=5->4 reason=stream-stopped
+21153 692840100581166 [Isoch] IsochService: Freed Tx isoch resources
+21154 692840100632458 [Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 — recovering
+21155 692840100640875 [Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)

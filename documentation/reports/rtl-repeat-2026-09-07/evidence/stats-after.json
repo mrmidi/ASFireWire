@@ -1,0 +1,40 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"capacityRecords\" : 39718,\n    \"droppedRecords\" : 0,\n    \"latestSequence\" : 21255,\n    \"oldestSequence\" : 1,\n    \"perCategory\" : {\n      \"Async\" : 15331,\n      \"Audio\" : 172,\n      \"AVC\" : 22,\n      \"BusReset\" : 3,\n      \"ConfigROM\" : 65,\n      \"Controller\" : 46,\n      \"DirectAudio\" : 178,\n      \"Discovery\" : 29,\n      \"FCP\" : 1,\n      \"Hardware\" : 118,\n      \"IRM\" : 33,\n      \"Isoch\" : 104,\n      \"MusicSubunit\" : 65,\n      \"Oxfw\" : 5065,\n      \"Topology\" : 2,\n      \"UserClient\" : 17,\n      \"Zts\" : 4\n    },\n    \"totalEmitted\" : 21255\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_stats\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "capacityRecords": 39718,
+      "droppedRecords": 0,
+      "latestSequence": 21255,
+      "oldestSequence": 1,
+      "perCategory": {
+        "AVC": 22,
+        "Async": 15331,
+        "Audio": 172,
+        "BusReset": 3,
+        "ConfigROM": 65,
+        "Controller": 46,
+        "DirectAudio": 178,
+        "Discovery": 29,
+        "FCP": 1,
+        "Hardware": 118,
+        "IRM": 33,
+        "Isoch": 104,
+        "MusicSubunit": 65,
+        "Oxfw": 5065,
+        "Topology": 2,
+        "UserClient": 17,
+        "Zts": 4
+      },
+      "totalEmitted": 21255
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_stats"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 19985,\n    \"nextSequence\" : 19985,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 0,\n    \"records\" : [\n\n    ],\n    \"scannedCount\" : 4\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 19985,
+      "nextSequence": 19985,
+      "oldestSequence": 1,
+      "recordCount": 0,
+      "records": [],
+      "scannedCount": 4
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

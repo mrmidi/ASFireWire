@@ -1,0 +1,29 @@
+
+=== Duet (device 136) ===
+  format                   48000.0 Hz, 2 in / 2 out
+  buffer frame size        128
+  safety offset            50 in / 50 out
+  device latency           40 in / 67 out
+  stream latency           0 in / 0 out
+  declared scheduling      356 fr  (2*128 io + 50+50 safety)
+  declared hw latency      107 fr  (40+67 dev + 0+0 stream)
+  declared round-trip      463 fr  9.646 ms
+
+measuring: 20 trials, window 4096 fr, out ch 0 -> in ch 0, amp 0.90
+
+--- IO ---
+  callbacks                2598
+  distinct spans           128
+  processor overloads      0
+  delivered-frame gaps     0 events, 0 frames lost
+  sample-time re-anchors   0 events (worst +0 fr)
+  clocks disagreed         0
+  missing timestamps       0
+  input channel peaks      0.004 0.000
+
+--- round trip ---
+  trials                   0 of 20 accepted   (20 no signal)
+  no trial was admitted. If the rejections are "no signal", check the
+  loopback cable, output volume and input gain -- the per-channel peaks
+  above show where signal actually landed. Otherwise the timeline was not
+  quiet enough to measure against: raise --frames or quiet the machine.

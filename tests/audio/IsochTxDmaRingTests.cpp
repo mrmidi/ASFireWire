@@ -1311,6 +1311,28 @@ TEST_F(IsochTxDmaRingTest,
         ring_.RTCounters().fatalPayloadSealMismatch.load(
             std::memory_order_relaxed),
         1U);
+    // Exercise the production exit guard: it must freeze the failing outcome
+    // before a caller resets the ring for recovery, including seal identities.
+    ring_.ResetForStart();
+    bool visited = false;
+    EXPECT_TRUE(ring_.FlightRecorderForTest().ExportOnce(
+        [&](uint32_t index, uint32_t count, const TxRefillRecord& r) {
+            visited = true;
+            EXPECT_EQ(index, 0U);
+            EXPECT_EQ(count, 1U);
+            EXPECT_EQ(r.failure, static_cast<uint32_t>(outcome.failureReason));
+            EXPECT_EQ(r.failedPacket, outcome.failurePacketAbs);
+            EXPECT_EQ(r.expectedSeal, outcome.failureExpectedPayloadSeal);
+            EXPECT_EQ(r.observedSeal, outcome.failureObservedPayloadSeal);
+            EXPECT_EQ(r.completionBefore, 0U);
+            EXPECT_EQ(r.committedBefore, Layout::kNumPackets);
+            EXPECT_EQ(r.command, nextPacketIOVA | Layout::kBlocksPerPacket);
+            EXPECT_EQ(r.inferredDelta, 1U);
+            EXPECT_EQ(r.filled, 0U);
+            EXPECT_EQ(r.epoch, 1U); // restart advanced the live epoch to two
+        }));
+    EXPECT_TRUE(visited);
+
 }
 
 TEST_F(IsochTxDmaRingTest,

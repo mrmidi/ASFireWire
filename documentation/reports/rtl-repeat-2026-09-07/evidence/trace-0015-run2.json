@@ -1,0 +1,69 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 20663,\n    \"nextSequence\" : 20663,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 5,\n    \"records\" : [\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT completion delta high-water=18\",\n        \"sequence\" : 20559,\n        \"timestampNs\" : 692836014409750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=rx context=0 poll=7025 busy=0 packets=26606 progressAgeUs=27 cmd=0x803b18e1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x30f947f9\",\n        \"sequence\" : 20596,\n        \"timestampNs\" : 692836288238083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochWatchdog] direction=tx context=0 poll=2595 irq=4227 ret=26532 committed=26652 progressAgeUs=649 snapshots=0 wakes=0\\/0 fatals=0 irqSilence=0 carriedPerMille=18\",\n        \"sequence\" : 20597,\n        \"timestampNs\" : 692836289495791\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=18\",\n        \"sequence\" : 20598,\n        \"timestampNs\" : 692836289499208\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=4096 completion=0x01025000 correlation=0x310238c2\",\n        \"sequence\" : 20603,\n        \"timestampNs\" : 692836306295958\n      }\n    ],\n    \"scannedCount\" : 134\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 20663,
+      "nextSequence": 20663,
+      "oldestSequence": 1,
+      "recordCount": 5,
+      "records": [
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT completion delta high-water=18",
+          "sequence": 20559,
+          "timestampNs": 692836014409750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=7025 busy=0 packets=26606 progressAgeUs=27 cmd=0x803b18e1 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0x30f947f9",
+          "sequence": 20596,
+          "timestampNs": 692836288238083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=2595 irq=4227 ret=26532 committed=26652 progressAgeUs=649 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=18",
+          "sequence": 20597,
+          "timestampNs": 692836289495791
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=18",
+          "sequence": 20598,
+          "timestampNs": 692836289499208
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=4096 completion=0x01025000 correlation=0x310238c2",
+          "sequence": 20603,
+          "timestampNs": 692836306295958
+        }
+      ],
+      "scannedCount": 134
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

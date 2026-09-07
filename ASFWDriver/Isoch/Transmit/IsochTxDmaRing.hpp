@@ -5,6 +5,7 @@
 
 #include "IsochTxDescriptorSlab.hpp"
 #include "IsochTxLayout.hpp"
+#include "TxRefillFlightRecorder.hpp"
 #include "TxPayloadDmaMap.hpp"
 
 #include "../Core/IsochEventGroup.hpp"
@@ -166,7 +167,15 @@ public:
                                        IsochTxQueueControl* controlBlock,
                                        uint32_t numSlots,
                                        uint8_t* payloadBase,
-                                       const TxPayloadDmaMap& payloadDmaMap) noexcept;
+                                       const TxPayloadDmaMap& payloadDmaMap,
+                                       uint64_t eventTicks = 0, uint32_t source = 0) noexcept;
+
+    void ExportFrozenRefills(uint8_t context) const noexcept;
+#ifdef ASFW_HOST_TEST
+    const TxRefillFlightRecorder& FlightRecorderForTest() const noexcept {
+        return flightRecorder_;
+    }
+#endif
 
     [[nodiscard]] bool WakeHardwareIfIdle(Driver::HardwareInterface& hw,
                                           uint8_t contextIndex) noexcept;
@@ -267,6 +276,8 @@ private:
     bool cycleTrackingValid_{false};
     uint32_t lastHwTimestamp_{0};
 
+    uint64_t captureEpoch_{0};
+    TxRefillFlightRecorder flightRecorder_{};
     Counters counters_{};
 };
 

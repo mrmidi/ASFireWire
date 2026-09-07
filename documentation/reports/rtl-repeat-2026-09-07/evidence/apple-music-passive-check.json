@@ -1,0 +1,1648 @@
+{
+  "before": {
+    "health": {
+      "data": {
+        "endpointCount": 1,
+        "endpoints": [
+          {
+            "bindingReady": true,
+            "capture": {
+              "availableFrames": 8192,
+              "capacityFrames": 8192,
+              "hasCompletedInterval": false,
+              "intervalStarvationEvents": 0,
+              "intervalStarvedFrames": 0,
+              "overrunEvents": 0,
+              "readerActive": false,
+              "starvationEvents": 0,
+              "totalStarvedFrames": 0
+            },
+            "counters": {
+              "dataPackets": 513962,
+              "emptyCompletions": 0,
+              "geometryMismatch": 0,
+              "invalidCipHeaders": 0,
+              "noDataPackets": 171322,
+              "packetsSeen": 685284,
+              "rejectedPackets": 0,
+              "replayEntries": 685284,
+              "replayEpochResets": 1,
+              "shortPackets": 0,
+              "zeroDataBlockSize": 0
+            },
+            "deviceInstanceId": 1,
+            "endpointId": 1,
+            "explanation": "Data-bearing packets are arriving and being accepted.",
+            "inputChannels": 2,
+            "observedGuid": "0x0003DB0A0000D112",
+            "outputChannels": 2,
+            "sampleRateHz": 48000,
+            "streaming": true,
+            "transmit": {
+              "faulted": false,
+              "status": "running"
+            },
+            "verdict": "receivingData"
+          }
+        ]
+      },
+      "errors": [],
+      "ok": true,
+      "toolName": "asfw_get_audio_stream_health"
+    },
+    "cursors": {
+      "data": {
+        "endpointCount": 1,
+        "endpoints": [
+          {
+            "bindingReady": true,
+            "counters": {
+              "copiesConcurrentRewrite": 0,
+              "copiesExpired": 0,
+              "copiesInvalid": 0,
+              "copiesNotYetPublished": 63019,
+              "copiesReady": 471296,
+              "copiesWrongEpoch": 0,
+              "deadlineNoData": 0,
+              "deferrals": 0,
+              "faultEvents": 0,
+              "missedFrames": 0,
+              "pcmDiscontinuities": 0,
+              "pcmExpiredFrames": 4094976,
+              "pcmFramesPublished": 4103168,
+              "pcmPublications": 8014
+            },
+            "deviceInstanceId": 1,
+            "endpointId": 1,
+            "firstFault": {
+              "audioFrame": 0,
+              "committedPacketEnd": 0,
+              "completionPacket": 0,
+              "packet": 0,
+              "pcmOldestValid": 0,
+              "pcmPublishedEnd": 0,
+              "reason": "none"
+            },
+            "frameCursors": {
+              "pcmOldestValid": 4104740,
+              "pcmPublishedEnd": 4112932,
+              "publishedAheadFrames": 0,
+              "scheduledFrameEnd": 4112966,
+              "scheduledRangeExpired": false,
+              "units": "absoluteHostFrames"
+            },
+            "observedGuid": "0x0003DB0A0000D112",
+            "outputChannels": 2,
+            "sampleRateHz": 48000,
+            "snapshotKind": "valueOwned",
+            "streaming": true,
+            "transportCursors": {
+              "committedEnd": 685410,
+              "committedMargin": 120,
+              "completion": 685290,
+              "status": "running",
+              "units": "absoluteIsochPackets"
+            },
+            "verdict": "healthy"
+          }
+        ]
+      },
+      "errors": [],
+      "ok": true,
+      "toolName": "asfw_get_audio_cursors"
+    },
+    "stats": {
+      "data": {
+        "capacityRecords": 39718,
+        "droppedRecords": 0,
+        "latestSequence": 48409,
+        "oldestSequence": 8692,
+        "perCategory": {
+          "AVC": 22,
+          "Async": 34552,
+          "Audio": 209,
+          "BusReset": 3,
+          "ConfigROM": 65,
+          "Controller": 46,
+          "DirectAudio": 1439,
+          "Discovery": 29,
+          "FCP": 1,
+          "Hardware": 118,
+          "IRM": 41,
+          "Isoch": 332,
+          "MusicSubunit": 65,
+          "Oxfw": 11436,
+          "Topology": 2,
+          "UserClient": 23,
+          "Zts": 26
+        },
+        "totalEmitted": 48409
+      },
+      "errors": [],
+      "ok": true,
+      "toolName": "asfw_log_stats"
+    }
+  },
+  "after": {
+    "health": {
+      "data": {
+        "endpointCount": 1,
+        "endpoints": [
+          {
+            "bindingReady": true,
+            "capture": {
+              "availableFrames": 8192,
+              "capacityFrames": 8192,
+              "hasCompletedInterval": false,
+              "intervalStarvationEvents": 0,
+              "intervalStarvedFrames": 0,
+              "overrunEvents": 0,
+              "readerActive": false,
+              "starvationEvents": 0,
+              "totalStarvedFrames": 0
+            },
+            "counters": {
+              "dataPackets": 562158,
+              "emptyCompletions": 0,
+              "geometryMismatch": 0,
+              "invalidCipHeaders": 0,
+              "noDataPackets": 187387,
+              "packetsSeen": 749545,
+              "rejectedPackets": 0,
+              "replayEntries": 749545,
+              "replayEpochResets": 1,
+              "shortPackets": 0,
+              "zeroDataBlockSize": 0
+            },
+            "deviceInstanceId": 1,
+            "endpointId": 1,
+            "explanation": "Data-bearing packets are arriving and being accepted.",
+            "inputChannels": 2,
+            "observedGuid": "0x0003DB0A0000D112",
+            "outputChannels": 2,
+            "sampleRateHz": 48000,
+            "streaming": true,
+            "transmit": {
+              "faulted": false,
+              "status": "running"
+            },
+            "verdict": "receivingData"
+          }
+        ]
+      },
+      "errors": [],
+      "ok": true,
+      "toolName": "asfw_get_audio_stream_health"
+    },
+    "cursors": {
+      "data": {
+        "endpointCount": 1,
+        "endpoints": [
+          {
+            "bindingReady": true,
+            "counters": {
+              "copiesConcurrentRewrite": 0,
+              "copiesExpired": 0,
+              "copiesInvalid": 0,
+              "copiesNotYetPublished": 69451,
+              "copiesReady": 519424,
+              "copiesWrongEpoch": 0,
+              "deadlineNoData": 0,
+              "deferrals": 0,
+              "faultEvents": 0,
+              "missedFrames": 0,
+              "pcmDiscontinuities": 0,
+              "pcmExpiredFrames": 4480000,
+              "pcmFramesPublished": 4488192,
+              "pcmPublications": 8766
+            },
+            "deviceInstanceId": 1,
+            "endpointId": 1,
+            "firstFault": {
+              "audioFrame": 0,
+              "committedPacketEnd": 0,
+              "completionPacket": 0,
+              "packet": 0,
+              "pcmOldestValid": 0,
+              "pcmPublishedEnd": 0,
+              "reason": "none"
+            },
+            "frameCursors": {
+              "pcmOldestValid": 4489764,
+              "pcmPublishedEnd": 4497956,
+              "publishedAheadFrames": 0,
+              "scheduledFrameEnd": 4498198,
+              "scheduledRangeExpired": false,
+              "units": "absoluteHostFrames"
+            },
+            "observedGuid": "0x0003DB0A0000D112",
+            "outputChannels": 2,
+            "sampleRateHz": 48000,
+            "snapshotKind": "valueOwned",
+            "streaming": true,
+            "transportCursors": {
+              "committedEnd": 749616,
+              "committedMargin": 120,
+              "completion": 749496,
+              "status": "running",
+              "units": "absoluteIsochPackets"
+            },
+            "verdict": "healthy"
+          }
+        ]
+      },
+      "errors": [],
+      "ok": true,
+      "toolName": "asfw_get_audio_cursors"
+    },
+    "stats": {
+      "data": {
+        "capacityRecords": 39718,
+        "droppedRecords": 0,
+        "latestSequence": 49590,
+        "oldestSequence": 9873,
+        "perCategory": {
+          "AVC": 22,
+          "Async": 35327,
+          "Audio": 209,
+          "BusReset": 3,
+          "ConfigROM": 65,
+          "Controller": 46,
+          "DirectAudio": 1564,
+          "Discovery": 29,
+          "FCP": 1,
+          "Hardware": 118,
+          "IRM": 41,
+          "Isoch": 354,
+          "MusicSubunit": 65,
+          "Oxfw": 11693,
+          "Topology": 2,
+          "UserClient": 23,
+          "Zts": 28
+        },
+        "totalEmitted": 49590
+      },
+      "errors": [],
+      "ok": true,
+      "toolName": "asfw_log_stats"
+    }
+  },
+  "pages": [
+    {
+      "data": {
+        "cursorReset": false,
+        "latestSequence": 49590,
+        "nextSequence": 49590,
+        "oldestSequence": 9873,
+        "recordCount": 149,
+        "records": [
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] IT completion delta high-water=47",
+            "sequence": 48418,
+            "timestampNs": 693038823834916
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4117078 projected=4117086 presentBus=2435133657 obsFrame=4116352 obsBus=2434761945 nominal=512 packet=686096 completionCursor=685980",
+            "sequence": 48423,
+            "timestampNs": 693038843594458
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4117086 projected=4117086 presentBus=2435137753 obsFrame=4116368 obsBus=2434770137 nominal=512 packet=686097 completionCursor=685980",
+            "sequence": 48424,
+            "timestampNs": 693038843628333
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4117118 projected=4117126 presentBus=2435154137 obsFrame=4116408 obsBus=2434790617 nominal=512 packet=686102 completionCursor=685986",
+            "sequence": 48425,
+            "timestampNs": 693038844377875
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4117126 projected=4117126 presentBus=2435158233 obsFrame=4116416 obsBus=2434794713 nominal=512 packet=686104 completionCursor=685986",
+            "sequence": 48426,
+            "timestampNs": 693038844413375
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=169359 busy=0 packets=686784 progressAgeUs=42 cmd=0x803b1501 ctrl=0x40008451 intEvent=0x003000c0 txEvent=0x00000001 rxEvent=0x00000001 cycle=0xc64f76c8",
+            "sequence": 48439,
+            "timestampNs": 693038933559791
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=67459 irq=114060 ret=686706 committed=686826 progressAgeUs=630 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+            "sequence": 48441,
+            "timestampNs": 693038934807791
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=47",
+            "sequence": 48442,
+            "timestampNs": 693038934815291
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4122614 projected=4122622 presentBus=2437968089 obsFrame=4121904 obsBus=2437604569 nominal=512 packet=687018 completionCursor=686904",
+            "sequence": 48443,
+            "timestampNs": 693038959189000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4122622 projected=4122622 presentBus=2437972185 obsFrame=4121920 obsBus=2437612761 nominal=512 packet=687020 completionCursor=686904",
+            "sequence": 48444,
+            "timestampNs": 693038959249000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4125550 projected=4125558 presentBus=2439471321 obsFrame=4124832 obsBus=2439103705 nominal=512 packet=687508 completionCursor=687390",
+            "sequence": 48453,
+            "timestampNs": 693039019948125
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4125558 projected=4125558 presentBus=2439475417 obsFrame=4124840 obsBus=2439107801 nominal=512 packet=687509 completionCursor=687390",
+            "sequence": 48454,
+            "timestampNs": 693039019997750
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4132622 projected=4132630 presentBus=2443092185 obsFrame=4131904 obsBus=2442724569 nominal=512 packet=688686 completionCursor=688572",
+            "sequence": 48475,
+            "timestampNs": 693039167632916
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4132630 projected=4132630 presentBus=2443096281 obsFrame=4131928 obsBus=2442736857 nominal=512 packet=688688 completionCursor=688572",
+            "sequence": 48476,
+            "timestampNs": 693039167712333
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4136598 projected=4136606 presentBus=2445127897 obsFrame=4135872 obsBus=2444756185 nominal=512 packet=689349 completionCursor=689232",
+            "sequence": 48489,
+            "timestampNs": 693039250079666
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4136606 projected=4136606 presentBus=2445131993 obsFrame=4135880 obsBus=2444760281 nominal=512 packet=689350 completionCursor=689232",
+            "sequence": 48490,
+            "timestampNs": 693039250118291
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4141742 projected=4141750 presentBus=2447761625 obsFrame=4141040 obsBus=2447402201 nominal=512 packet=690206 completionCursor=690090",
+            "sequence": 48503,
+            "timestampNs": 693039357388958
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4141750 projected=4141750 presentBus=2447765721 obsFrame=4141040 obsBus=2447402201 nominal=512 packet=690208 completionCursor=690090",
+            "sequence": 48504,
+            "timestampNs": 693039357479000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4147110 projected=4147118 presentBus=2450510041 obsFrame=4146352 obsBus=2450121945 nominal=512 packet=691101 completionCursor=690984",
+            "sequence": 48521,
+            "timestampNs": 693039469032375
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4147118 projected=4147118 presentBus=2450514137 obsFrame=4146368 obsBus=2450130137 nominal=512 packet=691102 completionCursor=690984",
+            "sequence": 48522,
+            "timestampNs": 693039469054833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4153982 projected=4153990 presentBus=2454028505 obsFrame=4153240 obsBus=2453648601 nominal=512 packet=692246 completionCursor=692130",
+            "sequence": 48539,
+            "timestampNs": 693039612295458
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4153990 projected=4153990 presentBus=2454032601 obsFrame=4153264 obsBus=2453660889 nominal=512 packet=692248 completionCursor=692130",
+            "sequence": 48540,
+            "timestampNs": 693039612329583
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4163078 projected=4163086 presentBus=2458685657 obsFrame=4162368 obsBus=2458322137 nominal=512 packet=693762 completionCursor=693648",
+            "sequence": 48565,
+            "timestampNs": 693039802070541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4163086 projected=4163086 presentBus=2458689753 obsFrame=4162384 obsBus=2458330329 nominal=512 packet=693764 completionCursor=693648",
+            "sequence": 48566,
+            "timestampNs": 693039802119750
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4167222 projected=4167230 presentBus=2460807385 obsFrame=4166496 obsBus=2460435673 nominal=512 packet=694453 completionCursor=694338",
+            "sequence": 48579,
+            "timestampNs": 693039888236541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4167230 projected=4167230 presentBus=2460811481 obsFrame=4166512 obsBus=2460443865 nominal=512 packet=694454 completionCursor=694338",
+            "sequence": 48580,
+            "timestampNs": 693039888268375
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4171294 projected=4171302 presentBus=2462892249 obsFrame=4170568 obsBus=2462520537 nominal=512 packet=695132 completionCursor=695016",
+            "sequence": 48593,
+            "timestampNs": 693039972974708
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4171302 projected=4171302 presentBus=2462896345 obsFrame=4170584 obsBus=2462528729 nominal=512 packet=695133 completionCursor=695016",
+            "sequence": 48594,
+            "timestampNs": 693039973017833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4175910 projected=4175918 presentBus=2465255641 obsFrame=4175184 obsBus=2464883929 nominal=512 packet=695901 completionCursor=695784",
+            "sequence": 48607,
+            "timestampNs": 693040069034541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4175918 projected=4175918 presentBus=2465259737 obsFrame=4175200 obsBus=2464892121 nominal=512 packet=695902 completionCursor=695784",
+            "sequence": 48608,
+            "timestampNs": 693040069082500
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=171825 busy=0 packets=696983 progressAgeUs=53 cmd=0x803b1c71 ctrl=0x40008451 intEvent=0x00300040 txEvent=0x00000001 rxEvent=0x00000000 cycle=0xc8d8e9d0",
+            "sequence": 48625,
+            "timestampNs": 693040208356583
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=68459 irq=115754 ret=696906 committed=697026 progressAgeUs=550 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=1",
+            "sequence": 48626,
+            "timestampNs": 693040209626916
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=47",
+            "sequence": 48627,
+            "timestampNs": 693040209631541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4182686 projected=4182694 presentBus=2468724953 obsFrame=4181960 obsBus=2468353241 nominal=512 packet=697030 completionCursor=696912",
+            "sequence": 48628,
+            "timestampNs": 693040209975875
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4182694 projected=4182694 presentBus=2468729049 obsFrame=4181968 obsBus=2468357337 nominal=512 packet=697032 completionCursor=696918",
+            "sequence": 48629,
+            "timestampNs": 693040210713166
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4184950 projected=4184958 presentBus=2469884121 obsFrame=4184224 obsBus=2469512409 nominal=512 packet=697408 completionCursor=697290",
+            "sequence": 48638,
+            "timestampNs": 693040257360916
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4184958 projected=4184958 presentBus=2469888217 obsFrame=4184240 obsBus=2469520601 nominal=512 packet=697409 completionCursor=697290",
+            "sequence": 48639,
+            "timestampNs": 693040257415375
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4201190 projected=4201198 presentBus=2478199001 obsFrame=4200456 obsBus=2477823193 nominal=512 packet=700114 completionCursor=699996",
+            "sequence": 48684,
+            "timestampNs": 693040595435041
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4201198 projected=4201198 presentBus=2478203097 obsFrame=4200464 obsBus=2477827289 nominal=512 packet=700116 completionCursor=700002",
+            "sequence": 48685,
+            "timestampNs": 693040596215708
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4207422 projected=4207430 presentBus=2481389785 obsFrame=4206688 obsBus=2481013977 nominal=512 packet=701153 completionCursor=701034",
+            "sequence": 48702,
+            "timestampNs": 693040725158791
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4207430 projected=4207430 presentBus=2481393881 obsFrame=4206696 obsBus=2481018073 nominal=512 packet=701154 completionCursor=701040",
+            "sequence": 48703,
+            "timestampNs": 693040725901791
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4225358 projected=4225366 presentBus=2490573017 obsFrame=4224648 obsBus=2490209497 nominal=512 packet=704142 completionCursor=704028",
+            "sequence": 48753,
+            "timestampNs": 693041099418000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4225366 projected=4225366 presentBus=2490577113 obsFrame=4224656 obsBus=2490213593 nominal=512 packet=704144 completionCursor=704028",
+            "sequence": 48754,
+            "timestampNs": 693041099467875
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4232662 projected=4232670 presentBus=2494312665 obsFrame=4231960 obsBus=2493953241 nominal=512 packet=705360 completionCursor=705246",
+            "sequence": 48775,
+            "timestampNs": 693041251645666
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4232670 projected=4232670 presentBus=2494316761 obsFrame=4231968 obsBus=2493957337 nominal=512 packet=705361 completionCursor=705246",
+            "sequence": 48776,
+            "timestampNs": 693041251672000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4236742 projected=4236750 presentBus=2496401625 obsFrame=4236008 obsBus=2496025817 nominal=512 packet=706040 completionCursor=705924",
+            "sequence": 48785,
+            "timestampNs": 693041336356125
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4236750 projected=4236750 presentBus=2496405721 obsFrame=4236032 obsBus=2496038105 nominal=512 packet=706041 completionCursor=705924",
+            "sequence": 48786,
+            "timestampNs": 693041336397833
+          },
+          {
+            "category": "Zts",
+            "categoryId": 19,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Zts] UPD count=517 frame=4235264 host=16632991738981 drainHost=16632991686460 drainCycle=0xcb10eac3 rxCycle=0xcb10e000 age=2755 rawRxTs=0xb10e syt=0x04d9 desc=278 dec=8 rate=48000 rateQ8=5333333",
+            "sequence": 48799,
+            "timestampNs": 693041411431708
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=174386 busy=0 packets=707176 progressAgeUs=48 cmd=0x803b0401 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xcb61f920",
+            "sequence": 48808,
+            "timestampNs": 693041482366958
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=69459 irq=117449 ret=707100 committed=707220 progressAgeUs=344 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+            "sequence": 48809,
+            "timestampNs": 693041483574125
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=47",
+            "sequence": 48810,
+            "timestampNs": 693041483579291
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4246198 projected=4246206 presentBus=2501243097 obsFrame=4245456 obsBus=2500863193 nominal=512 packet=707616 completionCursor=707502",
+            "sequence": 48819,
+            "timestampNs": 693041533576625
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4246206 projected=4246206 presentBus=2501247193 obsFrame=4245472 obsBus=2500871385 nominal=512 packet=707617 completionCursor=707502",
+            "sequence": 48820,
+            "timestampNs": 693041533629875
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4250774 projected=4250782 presentBus=2503586009 obsFrame=4250064 obsBus=2503222489 nominal=512 packet=708378 completionCursor=708264",
+            "sequence": 48833,
+            "timestampNs": 693041628932916
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4250782 projected=4250782 presentBus=2503590105 obsFrame=4250080 obsBus=2503230681 nominal=512 packet=708380 completionCursor=708264",
+            "sequence": 48834,
+            "timestampNs": 693041628994541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4252518 projected=4252526 presentBus=2504478937 obsFrame=4251800 obsBus=2504111321 nominal=512 packet=708669 completionCursor=708552",
+            "sequence": 48839,
+            "timestampNs": 693041664842541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4252526 projected=4252526 presentBus=2504483033 obsFrame=4251800 obsBus=2504111321 nominal=512 packet=708670 completionCursor=708552",
+            "sequence": 48840,
+            "timestampNs": 693041664872250
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4254454 projected=4254462 presentBus=2505470169 obsFrame=4253720 obsBus=2505094361 nominal=512 packet=708992 completionCursor=708876",
+            "sequence": 48845,
+            "timestampNs": 693041705332375
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4254462 projected=4254462 presentBus=2505474265 obsFrame=4253736 obsBus=2505102553 nominal=512 packet=708993 completionCursor=708876",
+            "sequence": 48846,
+            "timestampNs": 693041705360458
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4254854 projected=4254862 presentBus=2505674969 obsFrame=4254144 obsBus=2505311449 nominal=512 packet=709058 completionCursor=708943",
+            "sequence": 48847,
+            "timestampNs": 693041713713666
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4254862 projected=4254862 presentBus=2505679065 obsFrame=4254152 obsBus=2505315545 nominal=512 packet=709060 completionCursor=708943",
+            "sequence": 48848,
+            "timestampNs": 693041713749916
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4257598 projected=4257606 presentBus=2507079897 obsFrame=4256880 obsBus=2506712281 nominal=512 packet=709516 completionCursor=709398",
+            "sequence": 48857,
+            "timestampNs": 693041770679458
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4257606 projected=4257606 presentBus=2507083993 obsFrame=4256888 obsBus=2506716377 nominal=512 packet=709517 completionCursor=709398",
+            "sequence": 48858,
+            "timestampNs": 693041770734250
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4258854 projected=4258862 presentBus=2507722969 obsFrame=4258112 obsBus=2507343065 nominal=512 packet=709725 completionCursor=709608",
+            "sequence": 48863,
+            "timestampNs": 693041796867041
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4258862 projected=4258862 presentBus=2507727065 obsFrame=4258136 obsBus=2507355353 nominal=512 packet=709726 completionCursor=709608",
+            "sequence": 48864,
+            "timestampNs": 693041796900833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4260838 projected=4260846 presentBus=2508738777 obsFrame=4260120 obsBus=2508371161 nominal=512 packet=710056 completionCursor=709938",
+            "sequence": 48869,
+            "timestampNs": 693041838071833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4260846 projected=4260846 presentBus=2508742873 obsFrame=4260120 obsBus=2508371161 nominal=512 packet=710057 completionCursor=709938",
+            "sequence": 48870,
+            "timestampNs": 693041838104958
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4274830 projected=4274838 presentBus=2515902681 obsFrame=4274120 obsBus=2515539161 nominal=512 packet=712388 completionCursor=712272",
+            "sequence": 48911,
+            "timestampNs": 693042129785708
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4274838 projected=4274838 presentBus=2515906777 obsFrame=4274120 obsBus=2515539161 nominal=512 packet=712389 completionCursor=712272",
+            "sequence": 48912,
+            "timestampNs": 693042129817416
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4276358 projected=4276366 presentBus=2516685017 obsFrame=4275640 obsBus=2516317401 nominal=512 packet=712642 completionCursor=712524",
+            "sequence": 48917,
+            "timestampNs": 693042161401500
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4276366 projected=4276366 presentBus=2516689113 obsFrame=4275648 obsBus=2516321497 nominal=512 packet=712644 completionCursor=712530",
+            "sequence": 48918,
+            "timestampNs": 693042162184916
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4277118 projected=4277126 presentBus=2517074137 obsFrame=4276400 obsBus=2516706521 nominal=512 packet=712769 completionCursor=712650",
+            "sequence": 48919,
+            "timestampNs": 693042177177541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4277126 projected=4277126 presentBus=2517078233 obsFrame=4276440 obsBus=2516727001 nominal=512 packet=712770 completionCursor=712658",
+            "sequence": 48920,
+            "timestampNs": 693042178096083
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4281918 projected=4281926 presentBus=2519531737 obsFrame=4281200 obsBus=2519164121 nominal=512 packet=713569 completionCursor=713454",
+            "sequence": 48933,
+            "timestampNs": 693042277548166
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4281926 projected=4281926 presentBus=2519535833 obsFrame=4281216 obsBus=2519172313 nominal=512 packet=713570 completionCursor=713454",
+            "sequence": 48934,
+            "timestampNs": 693042277584833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4282062 projected=4282070 presentBus=2519605465 obsFrame=4281336 obsBus=2519233753 nominal=512 packet=713593 completionCursor=713478",
+            "sequence": 48935,
+            "timestampNs": 693042280549291
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4282070 projected=4282070 presentBus=2519609561 obsFrame=4281360 obsBus=2519246041 nominal=512 packet=713594 completionCursor=713478",
+            "sequence": 48936,
+            "timestampNs": 693042280584958
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4293854 projected=4293862 presentBus=2525642969 obsFrame=4293136 obsBus=2525275353 nominal=512 packet=715558 completionCursor=715440",
+            "sequence": 48969,
+            "timestampNs": 693042525895333
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4293862 projected=4293862 presentBus=2525647065 obsFrame=4293176 obsBus=2525295833 nominal=512 packet=715560 completionCursor=715446",
+            "sequence": 48970,
+            "timestampNs": 693042526670000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4302022 projected=4302030 presentBus=2529824985 obsFrame=4301288 obsBus=2529449177 nominal=512 packet=716920 completionCursor=716802",
+            "sequence": 48995,
+            "timestampNs": 693042696060166
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4302030 projected=4302030 presentBus=2529829081 obsFrame=4301312 obsBus=2529461465 nominal=512 packet=716921 completionCursor=716802",
+            "sequence": 48996,
+            "timestampNs": 693042696101875
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4303638 projected=4303646 presentBus=2530652377 obsFrame=4302904 obsBus=2530276569 nominal=512 packet=717189 completionCursor=717072",
+            "sequence": 49001,
+            "timestampNs": 693042729748708
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4303646 projected=4303646 presentBus=2530656473 obsFrame=4302920 obsBus=2530284761 nominal=512 packet=717190 completionCursor=717072",
+            "sequence": 49002,
+            "timestampNs": 693042729784458
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=176869 busy=0 packets=717322 progressAgeUs=80 cmd=0x803b0821 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xcde81759",
+            "sequence": 49003,
+            "timestampNs": 693042750491583
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=70459 irq=119136 ret=717246 committed=717366 progressAgeUs=309 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+            "sequence": 49006,
+            "timestampNs": 693042751675666
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=47",
+            "sequence": 49007,
+            "timestampNs": 693042751680666
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxV3] epoch=3 source=1 completion=720150 committed=720270 margin=120 prepared=6 nextFrame=4322126 cache=[4313636,4321828) noCycle=0 noOrigin=0 resync=0",
+            "sequence": 49055,
+            "timestampNs": 693043114520583
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxLead] ticks=55513 min=54489 max=57561 frames=108 rate=48000",
+            "sequence": 49056,
+            "timestampNs": 693043114549000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxFill] filled=497408 lost=0 tooLate=0 unavailable=66511 silentData=0 cursor=720220 finalized=720158 mapped=720198 committed=720270 rebound=0 rejected=0 missedDeadline=0 stampsMissed=15 minRebindDistance=0",
+            "sequence": 49057,
+            "timestampNs": 693043114559208
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxPrep] wakes=8422 maxLatUs=608 le750=8418 ge1500=1 lat=[304,158,6,0,0,0] marginMin=120 marginMax=120 margin=[0,0,0,0,7097] headroomMin=0 headroomRunMin=0",
+            "sequence": 49058,
+            "timestampNs": 693043114578166
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [Ledger] I1 write->final  n=538760 pend=588 unres=231 inv=0 min=478 mean=13146 max=19598 us hist=[0,0,3,0,9,10,11804,526934]",
+            "sequence": 49059,
+            "timestampNs": 693043114592416
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [Ledger] I2 final->wire   n=475161 pend=0 unres=0 inv=1237 min=0 mean=842 max=1985 us hist=[1023,112,12214,290016,171796,0,0,0]",
+            "sequence": 49060,
+            "timestampNs": 693043114604750
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [Ledger] J3 recv->decode  n=503679 pend=0 unres=0 inv=0 min=9 mean=362 max=6030 us hist=[87260,112969,178703,115279,9409,44,15,0]",
+            "sequence": 49061,
+            "timestampNs": 693043114616083
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4337982 projected=4337990 presentBus=2548236505 obsFrame=4337264 obsBus=2547868889 nominal=512 packet=722913 completionCursor=722796",
+            "sequence": 49106,
+            "timestampNs": 693043445218000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4337990 projected=4337990 presentBus=2548240601 obsFrame=4337264 obsBus=2547868889 nominal=512 packet=722914 completionCursor=722796",
+            "sequence": 49107,
+            "timestampNs": 693043445248791
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4338758 projected=4338766 presentBus=2548633817 obsFrame=4338040 obsBus=2548266201 nominal=512 packet=723042 completionCursor=722928",
+            "sequence": 49108,
+            "timestampNs": 693043461683291
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4338766 projected=4338766 presentBus=2548637913 obsFrame=4338056 obsBus=2548274393 nominal=512 packet=723044 completionCursor=722928",
+            "sequence": 49109,
+            "timestampNs": 693043461720625
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4339854 projected=4339862 presentBus=2549194969 obsFrame=4339112 obsBus=2548815065 nominal=512 packet=723225 completionCursor=723108",
+            "sequence": 49114,
+            "timestampNs": 693043484213666
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4339862 projected=4339862 presentBus=2549199065 obsFrame=4339136 obsBus=2548827353 nominal=512 packet=723226 completionCursor=723108",
+            "sequence": 49115,
+            "timestampNs": 693043484248791
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4341270 projected=4341278 presentBus=2549919961 obsFrame=4340544 obsBus=2549548249 nominal=512 packet=723461 completionCursor=723342",
+            "sequence": 49120,
+            "timestampNs": 693043513464083
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4341278 projected=4341278 presentBus=2549924057 obsFrame=4340544 obsBus=2549548249 nominal=512 packet=723462 completionCursor=723348",
+            "sequence": 49121,
+            "timestampNs": 693043514160208
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4341694 projected=4341702 presentBus=2550137049 obsFrame=4340976 obsBus=2549769433 nominal=512 packet=723532 completionCursor=723414",
+            "sequence": 49122,
+            "timestampNs": 693043522566125
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4341702 projected=4341702 presentBus=2550141145 obsFrame=4340984 obsBus=2549773529 nominal=512 packet=723533 completionCursor=723414",
+            "sequence": 49123,
+            "timestampNs": 693043522620041
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4349966 projected=4349974 presentBus=2554372313 obsFrame=4349240 obsBus=2554000601 nominal=512 packet=724910 completionCursor=724794",
+            "sequence": 49148,
+            "timestampNs": 693043694952000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4349974 projected=4349974 presentBus=2554376409 obsFrame=4349264 obsBus=2554012889 nominal=512 packet=724912 completionCursor=724794",
+            "sequence": 49149,
+            "timestampNs": 693043694993625
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4358190 projected=4358198 presentBus=2558583001 obsFrame=4357464 obsBus=2558211289 nominal=512 packet=726281 completionCursor=726162",
+            "sequence": 49170,
+            "timestampNs": 693043866003958
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4358198 projected=4358198 presentBus=2558587097 obsFrame=4357480 obsBus=2558219481 nominal=512 packet=726282 completionCursor=726168",
+            "sequence": 49171,
+            "timestampNs": 693043866683250
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4359334 projected=4359342 presentBus=2559168729 obsFrame=4358584 obsBus=2558784729 nominal=512 packet=726472 completionCursor=726354",
+            "sequence": 49176,
+            "timestampNs": 693043889910041
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4359342 projected=4359342 presentBus=2559172825 obsFrame=4358600 obsBus=2558792921 nominal=512 packet=726473 completionCursor=726354",
+            "sequence": 49177,
+            "timestampNs": 693043889943625
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4360862 projected=4360870 presentBus=2559951065 obsFrame=4360152 obsBus=2559587545 nominal=512 packet=726726 completionCursor=726612",
+            "sequence": 49182,
+            "timestampNs": 693043922245416
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4360870 projected=4360870 presentBus=2559955161 obsFrame=4360168 obsBus=2559595737 nominal=512 packet=726728 completionCursor=726612",
+            "sequence": 49183,
+            "timestampNs": 693043922305541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4364958 projected=4364966 presentBus=2562048217 obsFrame=4364200 obsBus=2561660121 nominal=512 packet=727409 completionCursor=727290",
+            "sequence": 49196,
+            "timestampNs": 693044006891583
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4364966 projected=4364966 presentBus=2562052313 obsFrame=4364240 obsBus=2561680601 nominal=512 packet=727410 completionCursor=727296",
+            "sequence": 49197,
+            "timestampNs": 693044007610750
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=179324 busy=0 packets=727405 progressAgeUs=28 cmd=0x803b0851 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xd076490f",
+            "sequence": 49198,
+            "timestampNs": 693044010777833
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=71459 irq=120812 ret=727326 committed=727446 progressAgeUs=766 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+            "sequence": 49199,
+            "timestampNs": 693044012011083
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=47",
+            "sequence": 49200,
+            "timestampNs": 693044012015666
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4397182 projected=4397190 presentBus=2578546905 obsFrame=4396488 obsBus=2578191577 nominal=512 packet=732780 completionCursor=732666",
+            "sequence": 49285,
+            "timestampNs": 693044678919083
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4397190 projected=4397190 presentBus=2578551001 obsFrame=4396496 obsBus=2578195673 nominal=512 packet=732781 completionCursor=732666",
+            "sequence": 49286,
+            "timestampNs": 693044678976375
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4398982 projected=4398990 presentBus=2579468505 obsFrame=4398272 obsBus=2579104985 nominal=512 packet=733080 completionCursor=732966",
+            "sequence": 49291,
+            "timestampNs": 693044716386625
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4398990 projected=4398990 presentBus=2579472601 obsFrame=4398296 obsBus=2579117273 nominal=512 packet=733081 completionCursor=732966",
+            "sequence": 49292,
+            "timestampNs": 693044716424291
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4400478 projected=4400486 presentBus=2580234457 obsFrame=4399744 obsBus=2579858649 nominal=512 packet=733329 completionCursor=733212",
+            "sequence": 49297,
+            "timestampNs": 693044747119166
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4400486 projected=4400486 presentBus=2580238553 obsFrame=4399768 obsBus=2579870937 nominal=512 packet=733330 completionCursor=733212",
+            "sequence": 49298,
+            "timestampNs": 693044747155708
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4404150 projected=4404158 presentBus=2582114521 obsFrame=4403408 obsBus=2581734617 nominal=512 packet=733941 completionCursor=733824",
+            "sequence": 49311,
+            "timestampNs": 693044823577583
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4404158 projected=4404158 presentBus=2582118617 obsFrame=4403432 obsBus=2581746905 nominal=512 packet=733942 completionCursor=733824",
+            "sequence": 49312,
+            "timestampNs": 693044823613041
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4414150 projected=4414158 presentBus=2587234521 obsFrame=4413424 obsBus=2586862809 nominal=512 packet=735608 completionCursor=735492",
+            "sequence": 49338,
+            "timestampNs": 693045032057708
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4414158 projected=4414158 presentBus=2587238617 obsFrame=4413440 obsBus=2586871001 nominal=512 packet=735609 completionCursor=735492",
+            "sequence": 49339,
+            "timestampNs": 693045032102833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4424942 projected=4424950 presentBus=2592760025 obsFrame=4424224 obsBus=2592392409 nominal=512 packet=737406 completionCursor=737292",
+            "sequence": 49372,
+            "timestampNs": 693045257036250
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4424950 projected=4424950 presentBus=2592764121 obsFrame=4424240 obsBus=2592400601 nominal=512 packet=737408 completionCursor=737292",
+            "sequence": 49373,
+            "timestampNs": 693045257068291
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=181831 busy=0 packets=737500 progressAgeUs=48 cmd=0x803b0941 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xd2f94122",
+            "sequence": 49374,
+            "timestampNs": 693045272590375
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=72459 irq=122489 ret=737424 committed=737544 progressAgeUs=463 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+            "sequence": 49375,
+            "timestampNs": 693045273869416
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=47",
+            "sequence": 49376,
+            "timestampNs": 693045273872666
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4432878 projected=4432886 presentBus=2596823257 obsFrame=4432144 obsBus=2596447449 nominal=512 packet=738729 completionCursor=738612",
+            "sequence": 49397,
+            "timestampNs": 693045422097083
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4432886 projected=4432886 presentBus=2596827353 obsFrame=4432168 obsBus=2596459737 nominal=512 packet=738730 completionCursor=738612",
+            "sequence": 49398,
+            "timestampNs": 693045422151208
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4434182 projected=4434190 presentBus=2597490905 obsFrame=4433456 obsBus=2597119193 nominal=512 packet=738946 completionCursor=738828",
+            "sequence": 49403,
+            "timestampNs": 693045449014833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4434190 projected=4434190 presentBus=2597495001 obsFrame=4433456 obsBus=2597119193 nominal=512 packet=738948 completionCursor=738834",
+            "sequence": 49404,
+            "timestampNs": 693045449735708
+          },
+          {
+            "category": "Zts",
+            "categoryId": 19,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Zts] UPD count=541 frame=4431872 host=16633090034753 drainHost=16633089984437 drainCycle=0xd340f795 rxCycle=0xd340e000 age=5013 rawRxTs=0x340e syt=0x04d9 desc=286 dec=8 rate=48000 rateQ8=5333333",
+            "sequence": 49405,
+            "timestampNs": 693045453816000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4441094 projected=4441102 presentBus=2601029849 obsFrame=4440344 obsBus=2600645849 nominal=512 packet=740098 completionCursor=739980",
+            "sequence": 49422,
+            "timestampNs": 693045593011541
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4441102 projected=4441102 presentBus=2601033945 obsFrame=4440376 obsBus=2600662233 nominal=512 packet=740100 completionCursor=739986",
+            "sequence": 49423,
+            "timestampNs": 693045593742708
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4447854 projected=4447862 presentBus=2604490969 obsFrame=4447112 obsBus=2604111065 nominal=512 packet=741225 completionCursor=741108",
+            "sequence": 49444,
+            "timestampNs": 693045733986375
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4447862 projected=4447862 presentBus=2604495065 obsFrame=4447136 obsBus=2604123353 nominal=512 packet=741226 completionCursor=741108",
+            "sequence": 49445,
+            "timestampNs": 693045734015458
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4481574 projected=4481582 presentBus=2621755609 obsFrame=4480848 obsBus=2621383897 nominal=512 packet=746845 completionCursor=746730",
+            "sequence": 49534,
+            "timestampNs": 693046436686791
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4481582 projected=4481582 presentBus=2621759705 obsFrame=4480872 obsBus=2621396185 nominal=512 packet=746846 completionCursor=746730",
+            "sequence": 49535,
+            "timestampNs": 693046436713875
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=rx context=0 poll=184275 busy=0 packets=747576 progressAgeUs=49 cmd=0x803b0901 ctrl=0x40008451 intEvent=0x00300000 txEvent=0x00000000 rxEvent=0x00000000 cycle=0xd57b0073",
+            "sequence": 49548,
+            "timestampNs": 693046531979666
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochWatchdog] direction=tx context=0 poll=73459 irq=124165 ret=747498 committed=747618 progressAgeUs=632 snapshots=0 wakes=0/0 fatals=0 irqSilence=0 carriedPerMille=0",
+            "sequence": 49549,
+            "timestampNs": 693046533177333
+          },
+          {
+            "category": "Isoch",
+            "categoryId": 15,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[Isoch] [IsochTxDelta] context=0 lapsRecovered=0 lapEvents=0 lapUnresolvable=0 abandoned=0 maxDelta=47",
+            "sequence": 49550,
+            "timestampNs": 693046533180583
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4492582 projected=4492590 presentBus=2627391705 obsFrame=4491888 obsBus=2627036377 nominal=512 packet=748680 completionCursor=748566",
+            "sequence": 49571,
+            "timestampNs": 693046666203875
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4492590 projected=4492590 presentBus=2627395801 obsFrame=4491888 obsBus=2627036377 nominal=512 packet=748681 completionCursor=748566",
+            "sequence": 49572,
+            "timestampNs": 693046666232833
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=-8 step=-8 ringFrames=288 stepLaps=0 cursorFirst=4498030 projected=4498038 presentBus=2630181081 obsFrame=4497304 obsBus=2629809369 nominal=512 packet=749588 completionCursor=749472",
+            "sequence": 49585,
+            "timestampNs": 693046779424000
+          },
+          {
+            "category": "DirectAudio",
+            "categoryId": 17,
+            "level": "notice",
+            "levelId": 2,
+            "message": "[DirectAudio] [TxAlign] epoch=3 delta=0 step=8 ringFrames=288 stepLaps=0 cursorFirst=4498038 projected=4498038 presentBus=2630185177 obsFrame=4497312 obsBus=2629813465 nominal=512 packet=749589 completionCursor=749472",
+            "sequence": 49586,
+            "timestampNs": 693046779453583
+          }
+        ],
+        "scannedCount": 2146
+      },
+      "errors": [],
+      "ok": true,
+      "toolName": "asfw_log_query"
+    }
+  ]
+}

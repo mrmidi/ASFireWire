@@ -114,6 +114,7 @@ public:
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
     
     void LogStatistics() const noexcept;
+    void ExportFrozenRefills() const noexcept { ring_.ExportFrozenRefills(contextIndex_); }
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
 #ifdef ASFW_HOST_TEST

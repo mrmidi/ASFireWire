@@ -1,0 +1,42 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 20390,\n    \"nextSequence\" : 20390,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 2,\n    \"records\" : [\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=1024 completion=0x0c09f000 correlation=0x2c09d5da\",\n        \"sequence\" : 20264,\n        \"timestampNs\" : 692833809587208\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"error\",\n        \"levelId\" : 0,\n        \"message\" : \"[DirectAudio] [BackendTiming] conversionFailure=2048 completion=0x0dad3000 correlation=0x2dad16bf\",\n        \"sequence\" : 20374,\n        \"timestampNs\" : 692834648087416\n      }\n    ],\n    \"scannedCount\" : 135\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 20390,
+      "nextSequence": 20390,
+      "oldestSequence": 1,
+      "recordCount": 2,
+      "records": [
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=1024 completion=0x0c09f000 correlation=0x2c09d5da",
+          "sequence": 20264,
+          "timestampNs": 692833809587208
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "error",
+          "levelId": 0,
+          "message": "[DirectAudio] [BackendTiming] conversionFailure=2048 completion=0x0dad3000 correlation=0x2dad16bf",
+          "sequence": 20374,
+          "timestampNs": 692834648087416
+        }
+      ],
+      "scannedCount": 135
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

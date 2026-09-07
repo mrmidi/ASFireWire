@@ -1,0 +1,1824 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 18620,\n    \"nextSequence\" : 9927,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 200,\n    \"records\" : [\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWAsyncVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 1,\n        \"timestampNs\" : 692686108341208\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWControllerVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 2,\n        \"timestampNs\" : 692686108440791\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWHardwareVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 3,\n        \"timestampNs\" : 692686108499916\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWDiscoveryVerbosity' = 2 (default, not in Info.plist)\",\n        \"sequence\" : 4,\n        \"timestampNs\" : 692686108545291\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWConfigROMVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 5,\n        \"timestampNs\" : 692686108589500\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWUserClientVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 6,\n        \"timestampNs\" : 692686108630291\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWMusicSubunitVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 7,\n        \"timestampNs\" : 692686108671416\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWFCPVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 8,\n        \"timestampNs\" : 692686108716833\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWCMPVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 9,\n        \"timestampNs\" : 692686108765458\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWIRMVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 10,\n        \"timestampNs\" : 692686108809083\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWAVCVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 11,\n        \"timestampNs\" : 692686108848541\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWDICEVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 12,\n        \"timestampNs\" : 692686108887958\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWIsochVerbosity' = 1 (default, not in Info.plist)\",\n        \"sequence\" : 13,\n        \"timestampNs\" : 692686108927625\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWDirectAudioVerbosity' = 1 (from Info.plist)\",\n        \"sequence\" : 14,\n        \"timestampNs\" : 692686108965791\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWEnableHexDumps' = false (from Info.plist)\",\n        \"sequence\" : 15,\n        \"timestampNs\" : 692686109007416\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWAutoStartAudioStreams' = true (from Info.plist)\",\n        \"sequence\" : 16,\n        \"timestampNs\" : 692686109075166\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWLogStatistics' = true (from Info.plist)\",\n        \"sequence\" : 17,\n        \"timestampNs\" : 692686109115750\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] Property 'ASFWMirrorToOsLog' = true (default, not in Info.plist)\",\n        \"sequence\" : 18,\n        \"timestampNs\" : 692686109153875\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"info\",\n        \"levelId\" : 3,\n        \"message\" : \"[Controller] LogConfig initialized: Async=1 Controller=1 Hardware=1 Discovery=2 ConfigROM=1 UserClient=1 Music=1 FCP=1 CMP=1 IRM=1 AVC=1 DICE=1 Isoch=1 DirectAudio=1 HexDumps=0 AutoStart=1 Stats=1\",\n        \"sequence\" : 19,\n        \"timestampNs\" : 692686109162083\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] Async watchdog armed after runtime entered Running\",\n        \"sequence\" : 20,\n        \"timestampNs\" : 692686109219500\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] ASFWDriver::Start() complete\",\n        \"sequence\" : 21,\n        \"timestampNs\" : 692686109223208\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] Bus reset detected @ 692685938507291 ns\",\n        \"sequence\" : 27,\n        \"timestampNs\" : 692686109940833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID Complete (bit16)\",\n        \"sequence\" : 28,\n        \"timestampNs\" : 692686109944791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID Complete2 (bit15, sticky)\",\n        \"sequence\" : 29,\n        \"timestampNs\" : 692686109947916\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] Start (SBP-2 bridge, login-driven target)\",\n        \"sequence\" : 30,\n        \"timestampNs\" : 692686109975708\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID buffer armed: paddr=0x80198000 size=2048 bytes\",\n        \"sequence\" : 31,\n        \"timestampNs\" : 692686110006166\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID Complete (bit16)\",\n        \"sequence\" : 32,\n        \"timestampNs\" : 692686110038208\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] SetPowerState: powerFlags=0x00000002 (on)\",\n        \"sequence\" : 33,\n        \"timestampNs\" : 692686110060083\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] SetPowerState: pin desire On -> 0x00000000, override -> 0x00000000\",\n        \"sequence\" : 34,\n        \"timestampNs\" : 692686110077041\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserInitializeController\",\n        \"sequence\" : 35,\n        \"timestampNs\" : 692686110077416\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 1\",\n        \"sequence\" : 36,\n        \"timestampNs\" : 692686111018666\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 2\",\n        \"sequence\" : 37,\n        \"timestampNs\" : 692686111087583\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 3\",\n        \"sequence\" : 38,\n        \"timestampNs\" : 692686111154166\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 4\",\n        \"sequence\" : 39,\n        \"timestampNs\" : 692686111207541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID generation VALIDATED: 3\",\n        \"sequence\" : 40,\n        \"timestampNs\" : 692686111242291\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 5\",\n        \"sequence\" : 41,\n        \"timestampNs\" : 692686111269541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Self-ID decode complete: valid=1 quads=3 sequences=2 enumeratorError=0\",\n        \"sequence\" : 42,\n        \"timestampNs\" : 692686111298916\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 6\",\n        \"sequence\" : 43,\n        \"timestampNs\" : 692686111333458\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 7\",\n        \"sequence\" : 44,\n        \"timestampNs\" : 692686111387625\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 8\",\n        \"sequence\" : 45,\n        \"timestampNs\" : 692686111453458\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserStartController \u2014 no target until SBP-2 login\",\n        \"sequence\" : 46,\n        \"timestampNs\" : 692686111572291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] \ud83e\uddf5 Sequences: start=1 count=1, start=2 count=1\",\n        \"sequence\" : 47,\n        \"timestampNs\" : 692686111660791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] \u2705 Self-ID decode valid\",\n        \"sequence\" : 48,\n        \"timestampNs\" : 692686111665583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] === End Self-ID Debug ===\",\n        \"sequence\" : 49,\n        \"timestampNs\" : 692686111667875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] Config ROM header restored in DMA buffer: 0x00000000 \u2192 0x0404a54b\",\n        \"sequence\" : 64,\n        \"timestampNs\" : 692686111769875\n      },\n      {\n        \"category\" : \"BusReset\",\n        \"categoryId\" : 2,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[BusReset] Reset provenance: gen=3 origin=local initiator=node0 root=1 irm=1 local=0\",\n        \"sequence\" : 67,\n        \"timestampNs\" : 692686111985666\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] IntMask updated: shadow=0x878783ff add=0x00020000 (masterEnable=1 busReset=1)\",\n        \"sequence\" : 68,\n        \"timestampNs\" : 692686112006791\n      },\n      {\n        \"category\" : \"BusReset\",\n        \"categoryId\" : 2,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[BusReset] Bus reset #1 complete in 2.04 ms (generation=3, aborts=0)\",\n        \"sequence\" : 74,\n        \"timestampNs\" : 692686112035333\n      },\n      {\n        \"category\" : \"BusReset\",\n        \"categoryId\" : 2,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[BusReset] Discovery delayed 100ms for generation 3\",\n        \"sequence\" : 75,\n        \"timestampNs\" : 692686112320750\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] UserInitializeTargetForID 0\",\n        \"sequence\" : 76,\n        \"timestampNs\" : 692686112555041\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] opcode 0x12 \u2192 BUSY (SBP-2 session not ready)\",\n        \"sequence\" : 77,\n        \"timestampNs\" : 692686113011958\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 78,\n        \"timestampNs\" : 692686213491291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 79,\n        \"timestampNs\" : 692686213533625\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=0 action=none(0)\",\n        \"sequence\" : 80,\n        \"timestampNs\" : 692686213634000\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] TopologyMapService: Map rebuilt for generation 3: nodes=2, selfIds=2\",\n        \"sequence\" : 81,\n        \"timestampNs\" : 692686213701291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 82,\n        \"timestampNs\" : 692686213972333\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 83,\n        \"timestampNs\" : 692686213987791\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=0 action=none(0)\",\n        \"sequence\" : 84,\n        \"timestampNs\" : 692686214012791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] IntMask updated: shadow=0x87c783ff add=0x00400000 (masterEnable=1 busReset=1)\",\n        \"sequence\" : 85,\n        \"timestampNs\" : 692686214063083\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 91,\n        \"timestampNs\" : 692686216755875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 92,\n        \"timestampNs\" : 692686216772166\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=1 action=none(0)\",\n        \"sequence\" : 93,\n        \"timestampNs\" : 692686216790333\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 94,\n        \"timestampNs\" : 692686216835916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 95,\n        \"timestampNs\" : 692686216845000\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=0\\/0 cycleSeen=1 action=none(0)\",\n        \"sequence\" : 96,\n        \"timestampNs\" : 692686216858583\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] NewUserClient request received (type=0)\",\n        \"sequence\" : 98,\n        \"timestampNs\" : 692686216991666\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] NewUserClient success (client=0x733c005138)\",\n        \"sequence\" : 100,\n        \"timestampNs\" : 692686217162333\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 115,\n        \"timestampNs\" : 692686218256166\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 116,\n        \"timestampNs\" : 692686218265500\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1\\/1 bibCmc=1\\/0 cycleSeen=1 action=none(0)\",\n        \"sequence\" : 117,\n        \"timestampNs\" : 692686218280791\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=2->3 reason=probe-start\",\n        \"sequence\" : 207,\n        \"timestampNs\" : 692686227940708\n      },\n      {\n        \"category\" : \"FCP\",\n        \"categoryId\" : 12,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[FCP] FCPTransport: Initialized for device nodeID=1, cmdAddr=0xfffff0000b00, rspAddr=0xfffff0000d00\",\n        \"sequence\" : 208,\n        \"timestampNs\" : 692686228005208\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=3->4 reason=probe-complete\",\n        \"sequence\" : 406,\n        \"timestampNs\" : 692686299336458\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioNub: init() succeeded\",\n        \"sequence\" : 407,\n        \"timestampNs\" : 692686299544416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioNub[0x733c022718]: Started and registered\",\n        \"sequence\" : 408,\n        \"timestampNs\" : 692686299685041\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioNub: endpoint set to 1\",\n        \"sequence\" : 409,\n        \"timestampNs\" : 692686299835791\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioNubPublisher[resolved-endpoint]: ASFWAudioNub ready endpoint=1 instance=1 observedGUID=3db0a0000d112\",\n        \"sequence\" : 410,\n        \"timestampNs\" : 692686299846250\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioSession] endpoint=1 provider=4 published instance=1 observedGUID=3db0a0000d112\",\n        \"sequence\" : 411,\n        \"timestampNs\" : 692686299878000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: init() succeeded\",\n        \"sequence\" : 416,\n        \"timestampNs\" : 692686301047458\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Start() - provider is ASFWAudioNub\",\n        \"sequence\" : 417,\n        \"timestampNs\" : 692686301063958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: endpoint=1 instance=1 observedGUID=0x0003db0a0000d112 boolControls=0\",\n        \"sequence\" : 418,\n        \"timestampNs\" : 692686301323875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Read device name from nub: Duet\",\n        \"sequence\" : 419,\n        \"timestampNs\" : 692686301334583\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Read channel counts from nub: aggregate=2 input=2 output=2\",\n        \"sequence\" : 420,\n        \"timestampNs\" : 692686301340291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Read 1 sample rates from nub\",\n        \"sequence\" : 421,\n        \"timestampNs\" : 692686301346750\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Input plug name: Input\",\n        \"sequence\" : 422,\n        \"timestampNs\" : 692686301351458\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Output plug name: Output\",\n        \"sequence\" : 423,\n        \"timestampNs\" : 692686301356666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Current sample rate from nub: 48000 Hz\",\n        \"sequence\" : 424,\n        \"timestampNs\" : 692686301361583\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Stream mode from nub: blocking\",\n        \"sequence\" : 425,\n        \"timestampNs\" : 692686301371000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Advertising 1 Float32 format(s) (input\\/output) across rates\",\n        \"sequence\" : 426,\n        \"timestampNs\" : 692686301376291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Effective runtime channels: input=2 output=2 aggregate=2\",\n        \"sequence\" : 427,\n        \"timestampNs\" : 692686301382125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: HAL buffer profile=audio-engine-v3 ring=8192 ioBudget=512 zts=8192\",\n        \"sequence\" : 429,\n        \"timestampNs\" : 692686301390250\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: 8192 frames\",\n        \"sequence\" : 430,\n        \"timestampNs\" : 692686301397875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioConfig] coordinator ready endpoint=1 rate=48000 in=2 out=2\",\n        \"sequence\" : 432,\n        \"timestampNs\" : 692686301609000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: 8192 frames\",\n        \"sequence\" : 433,\n        \"timestampNs\" : 692686301624041\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: ADK object ids device=2\",\n        \"sequence\" : 434,\n        \"timestampNs\" : 692686301630541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetName kr=0x0\",\n        \"sequence\" : 435,\n        \"timestampNs\" : 692686301636500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetAvailableSampleRates kr=0x0\",\n        \"sequence\" : 436,\n        \"timestampNs\" : 692686301646916\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetSampleRate kr=0x0\",\n        \"sequence\" : 437,\n        \"timestampNs\" : 692686301653250\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Initial sample rate set to 48000 Hz\",\n        \"sequence\" : 438,\n        \"timestampNs\" : 692686301658541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Created 1 stream formats input=float32\\/2 ch output=float32\\/2 ch; current format index=0 (48000 Hz)\",\n        \"sequence\" : 439,\n        \"timestampNs\" : 692686301665458\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG MEM request provider=0x733c022718 endpoint=1 expectedInCh=2 expectedOutCh=2 rate=48000\",\n        \"sequence\" : 440,\n        \"timestampNs\" : 692686301674041\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG MEM runtime allocate observedGuid=0x0003db0a0000d112 outBytes=65536 outFrames=8192 outCh=2 inBytes=65536 inFrames=8192 inCh=2 controlBytes=70056 rate=48000\",\n        \"sequence\" : 441,\n        \"timestampNs\" : 692686301695375\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG BIND runtime local_memory_ready observedGuid=0x0003db0a0000d112 gen=2 outBase=0x104764000 outBytes=65536 outFrames=8192 outCh=2 inBase=0x10477c000 inBytes=65536 inFrames=8192 inCh=2 control=0x104794000 rate=48\",\n        \"sequence\" : 443,\n        \"timestampNs\" : 692686302437125\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG MEM runtime copy ok observedGuid=0x0003db0a0000d112 gen=2 outMem=0x733c023438 outFrames=8192 outCh=2 inMem=0x733c023578 inFrames=8192 inCh=2 controlMem=0x733c0236b8 rate=48000\",\n        \"sequence\" : 444,\n        \"timestampNs\" : 692686302456291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH state=stream-ring\\/ZTS profile=audio-engine-v3 outFrames=8192 inFrames=8192 ztsPeriod=8192\",\n        \"sequence\" : 445,\n        \"timestampNs\" : 692686302471250\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG MEM mapped gen=2 outBase=0x104764000 outLen=65536 outFrames=8192 outCh=2 inBase=0x10477c000 inLen=65536 inFrames=8192 inCh=2 control=0x104794000 controlLen=70056 rate=48000\",\n        \"sequence\" : 446,\n        \"timestampNs\" : 692686302499916\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: ADK object ids inputStream=6 owner=1\",\n        \"sequence\" : 447,\n        \"timestampNs\" : 692686302563125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=inputStream.SetName kr=0x0\",\n        \"sequence\" : 448,\n        \"timestampNs\" : 692686302573291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=inputStream.SetAvailableStreamFormats kr=0x0\",\n        \"sequence\" : 449,\n        \"timestampNs\" : 692686302582291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=inputStream.SetCurrentStreamFormat kr=0x0\",\n        \"sequence\" : 450,\n        \"timestampNs\" : 692686302588583\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: ADK object ids outputStream=8 owner=1\",\n        \"sequence\" : 452,\n        \"timestampNs\" : 692686302629250\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=outputStream.SetName kr=0x0\",\n        \"sequence\" : 453,\n        \"timestampNs\" : 692686302637500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=outputStream.SetAvailableStreamFormats kr=0x0\",\n        \"sequence\" : 454,\n        \"timestampNs\" : 692686302643833\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=outputStream.SetCurrentStreamFormat kr=0x0\",\n        \"sequence\" : 455,\n        \"timestampNs\" : 692686302649291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: ADK streams fully created. deviceId=2 inputStream=6 outputStream=8\",\n        \"sequence\" : 456,\n        \"timestampNs\" : 692686302654958\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG BIND skeleton bound outBase=0x104764000 outFrames=8192 outCh=2 inBase=0x10477c000 inFrames=8192 inCh=2 control=0x104794000 audioDevice=0x103f702e8 rate=48000\",\n        \"sequence\" : 457,\n        \"timestampNs\" : 692686302755500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Direct audio skeleton bound\",\n        \"sequence\" : 458,\n        \"timestampNs\" : 692686302767291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=outputStream.SetLatency kr=0x0\",\n        \"sequence\" : 459,\n        \"timestampNs\" : 692686302772333\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=inputStream.SetLatency kr=0x0\",\n        \"sequence\" : 460,\n        \"timestampNs\" : 692686302777416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.AddStream(input) kr=0x0\",\n        \"sequence\" : 461,\n        \"timestampNs\" : 692686302788375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.AddStream(output) kr=0x0\",\n        \"sequence\" : 462,\n        \"timestampNs\" : 692686302795958\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK IO handler installed deviceId=2 inputStream=6 outputStream=8\",\n        \"sequence\" : 463,\n        \"timestampNs\" : 692686302802833\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetIOOperationHandler kr=0x0\",\n        \"sequence\" : 464,\n        \"timestampNs\" : 692686302808833\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: IO operation handler installed\",\n        \"sequence\" : 465,\n        \"timestampNs\" : 692686302813750\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetElementName(output) channel=1 kr=0x0\",\n        \"sequence\" : 466,\n        \"timestampNs\" : 692686302822541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetElementName(output) channel=2 kr=0x0\",\n        \"sequence\" : 467,\n        \"timestampNs\" : 692686302830291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetElementName(input) channel=1 kr=0x0\",\n        \"sequence\" : 468,\n        \"timestampNs\" : 692686302837541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetElementName(input) channel=2 kr=0x0\",\n        \"sequence\" : 469,\n        \"timestampNs\" : 692686302843958\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.AddBooleanControls kr=0x0\",\n        \"sequence\" : 470,\n        \"timestampNs\" : 692686302849125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=driver.SetTransportType kr=0x0\",\n        \"sequence\" : 471,\n        \"timestampNs\" : 692686302854500\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetTransportType kr=0x0\",\n        \"sequence\" : 472,\n        \"timestampNs\" : 692686302859583\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetClockAlgorithm kr=0x0\",\n        \"sequence\" : 473,\n        \"timestampNs\" : 692686302864541\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetClockIsStable kr=0x0\",\n        \"sequence\" : 474,\n        \"timestampNs\" : 692686302869333\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetClockDomain kr=0x0\",\n        \"sequence\" : 475,\n        \"timestampNs\" : 692686302874125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetOutputLatency kr=0x0\",\n        \"sequence\" : 476,\n        \"timestampNs\" : 692686302880166\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetInputLatency kr=0x0\",\n        \"sequence\" : 477,\n        \"timestampNs\" : 692686302885125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetOutputSafetyOffset kr=0x0\",\n        \"sequence\" : 478,\n        \"timestampNs\" : 692686302889875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=device.SetInputSafetyOffset kr=0x0\",\n        \"sequence\" : 479,\n        \"timestampNs\" : 692686302894708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: Reported HAL latency out=67\\/in=40, safety out=50\\/in=50 frames\",\n        \"sequence\" : 480,\n        \"timestampNs\" : 692686302899875\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH state=device.GetZeroTimestampPeriod value=8192\",\n        \"sequence\" : 481,\n        \"timestampNs\" : 692686302907125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=driver.AddObject(device) kr=0x0\",\n        \"sequence\" : 482,\n        \"timestampNs\" : 692686302914666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ADK GRAPH op=driver.RegisterService kr=0x0\",\n        \"sequence\" : 483,\n        \"timestampNs\" : 692686302931375\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] \u2705 ASFWAudioDriver: Started - device 'Duet' (in=2 out=2 aggregate=2)\",\n        \"sequence\" : 484,\n        \"timestampNs\" : 692686302938708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: NewUserClient(type=1128363364)\",\n        \"sequence\" : 493,\n        \"timestampNs\" : 692686305956666\n      },\n      {\n        \"category\" : \"Controller\",\n        \"categoryId\" : 0,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Controller] [SCSIHBA] opcode 0x12 \u2192 BUSY (SBP-2 session not ready)\",\n        \"sequence\" : 690,\n        \"timestampNs\" : 692687114249375\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000\",\n        \"sequence\" : 9863,\n        \"timestampNs\" : 692757563239000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0 TIMEOUT\",\n        \"sequence\" : 9864,\n        \"timestampNs\" : 692757677562083\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 9865,\n        \"timestampNs\" : 692757677591791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 9866,\n        \"timestampNs\" : 692757677606833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200\",\n        \"sequence\" : 9867,\n        \"timestampNs\" : 692757677619958\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2 success: 0xe3\",\n        \"sequence\" : 9868,\n        \"timestampNs\" : 692757677632416\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300\",\n        \"sequence\" : 9869,\n        \"timestampNs\" : 692757677676500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3 success: 0xef\",\n        \"sequence\" : 9870,\n        \"timestampNs\" : 692757677690625\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400\",\n        \"sequence\" : 9871,\n        \"timestampNs\" : 692757677704000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4 success: 0xbc\",\n        \"sequence\" : 9872,\n        \"timestampNs\" : 692757677715125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500\",\n        \"sequence\" : 9873,\n        \"timestampNs\" : 692757677727000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5 success: 0x13\",\n        \"sequence\" : 9874,\n        \"timestampNs\" : 692757677738375\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600\",\n        \"sequence\" : 9875,\n        \"timestampNs\" : 692757677749583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6 success: 0x50\",\n        \"sequence\" : 9876,\n        \"timestampNs\" : 692757677760583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700\",\n        \"sequence\" : 9877,\n        \"timestampNs\" : 692757677771833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7 success: 0x00\",\n        \"sequence\" : 9878,\n        \"timestampNs\" : 692757677785833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800\",\n        \"sequence\" : 9879,\n        \"timestampNs\" : 692757677799500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8 success: 0xf8\",\n        \"sequence\" : 9880,\n        \"timestampNs\" : 692757677811875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900\",\n        \"sequence\" : 9881,\n        \"timestampNs\" : 692757677824958\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9 success: 0x00\",\n        \"sequence\" : 9882,\n        \"timestampNs\" : 692757677836000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00\",\n        \"sequence\" : 9883,\n        \"timestampNs\" : 692757677847291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10 success: 0x7b\",\n        \"sequence\" : 9884,\n        \"timestampNs\" : 692757677860000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00\",\n        \"sequence\" : 9885,\n        \"timestampNs\" : 692757677873708\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11 success: 0x00\",\n        \"sequence\" : 9886,\n        \"timestampNs\" : 692757677887583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00\",\n        \"sequence\" : 9887,\n        \"timestampNs\" : 692757677901291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12 success: 0x00\",\n        \"sequence\" : 9888,\n        \"timestampNs\" : 692757677914833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00\",\n        \"sequence\" : 9889,\n        \"timestampNs\" : 692757677927458\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13 success: 0x00\",\n        \"sequence\" : 9890,\n        \"timestampNs\" : 692757677941375\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00\",\n        \"sequence\" : 9891,\n        \"timestampNs\" : 692757677952750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14 success: 0x00\",\n        \"sequence\" : 9892,\n        \"timestampNs\" : 692757677963666\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00\",\n        \"sequence\" : 9893,\n        \"timestampNs\" : 692757677974833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15 success: 0x00\",\n        \"sequence\" : 9894,\n        \"timestampNs\" : 692757677985750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000\",\n        \"sequence\" : 9905,\n        \"timestampNs\" : 692757683771250\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0 TIMEOUT\",\n        \"sequence\" : 9906,\n        \"timestampNs\" : 692757798875500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 9907,\n        \"timestampNs\" : 692757798927458\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 9908,\n        \"timestampNs\" : 692757798948000\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200\",\n        \"sequence\" : 9909,\n        \"timestampNs\" : 692757798966041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2 success: 0xe3\",\n        \"sequence\" : 9910,\n        \"timestampNs\" : 692757798982125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300\",\n        \"sequence\" : 9911,\n        \"timestampNs\" : 692757798998416\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3 success: 0xef\",\n        \"sequence\" : 9912,\n        \"timestampNs\" : 692757799014208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400\",\n        \"sequence\" : 9913,\n        \"timestampNs\" : 692757799030541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4 success: 0xbc\",\n        \"sequence\" : 9914,\n        \"timestampNs\" : 692757799045208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500\",\n        \"sequence\" : 9915,\n        \"timestampNs\" : 692757799060541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5 success: 0x13\",\n        \"sequence\" : 9916,\n        \"timestampNs\" : 692757799072916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600\",\n        \"sequence\" : 9917,\n        \"timestampNs\" : 692757799084250\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6 success: 0x50\",\n        \"sequence\" : 9918,\n        \"timestampNs\" : 692757799095583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700\",\n        \"sequence\" : 9919,\n        \"timestampNs\" : 692757799109125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7 success: 0x00\",\n        \"sequence\" : 9920,\n        \"timestampNs\" : 692757799120333\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800\",\n        \"sequence\" : 9921,\n        \"timestampNs\" : 692757799135791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8 success: 0xf8\",\n        \"sequence\" : 9922,\n        \"timestampNs\" : 692757799150791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900\",\n        \"sequence\" : 9923,\n        \"timestampNs\" : 692757799163916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9 success: 0x00\",\n        \"sequence\" : 9924,\n        \"timestampNs\" : 692757799176958\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00\",\n        \"sequence\" : 9925,\n        \"timestampNs\" : 692757799190666\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10 success: 0x7b\",\n        \"sequence\" : 9926,\n        \"timestampNs\" : 692757799204041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00\",\n        \"sequence\" : 9927,\n        \"timestampNs\" : 692757799217583\n      }\n    ],\n    \"scannedCount\" : 9949\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 18620,
+      "nextSequence": 9927,
+      "oldestSequence": 1,
+      "recordCount": 200,
+      "records": [
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWAsyncVerbosity' = 1 (from Info.plist)",
+          "sequence": 1,
+          "timestampNs": 692686108341208
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWControllerVerbosity' = 1 (from Info.plist)",
+          "sequence": 2,
+          "timestampNs": 692686108440791
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWHardwareVerbosity' = 1 (from Info.plist)",
+          "sequence": 3,
+          "timestampNs": 692686108499916
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWDiscoveryVerbosity' = 2 (default, not in Info.plist)",
+          "sequence": 4,
+          "timestampNs": 692686108545291
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWConfigROMVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 5,
+          "timestampNs": 692686108589500
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWUserClientVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 6,
+          "timestampNs": 692686108630291
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWMusicSubunitVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 7,
+          "timestampNs": 692686108671416
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWFCPVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 8,
+          "timestampNs": 692686108716833
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWCMPVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 9,
+          "timestampNs": 692686108765458
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWIRMVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 10,
+          "timestampNs": 692686108809083
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWAVCVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 11,
+          "timestampNs": 692686108848541
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWDICEVerbosity' = 1 (from Info.plist)",
+          "sequence": 12,
+          "timestampNs": 692686108887958
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWIsochVerbosity' = 1 (default, not in Info.plist)",
+          "sequence": 13,
+          "timestampNs": 692686108927625
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWDirectAudioVerbosity' = 1 (from Info.plist)",
+          "sequence": 14,
+          "timestampNs": 692686108965791
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWEnableHexDumps' = false (from Info.plist)",
+          "sequence": 15,
+          "timestampNs": 692686109007416
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWAutoStartAudioStreams' = true (from Info.plist)",
+          "sequence": 16,
+          "timestampNs": 692686109075166
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWLogStatistics' = true (from Info.plist)",
+          "sequence": 17,
+          "timestampNs": 692686109115750
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] Property 'ASFWMirrorToOsLog' = true (default, not in Info.plist)",
+          "sequence": 18,
+          "timestampNs": 692686109153875
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "info",
+          "levelId": 3,
+          "message": "[Controller] LogConfig initialized: Async=1 Controller=1 Hardware=1 Discovery=2 ConfigROM=1 UserClient=1 Music=1 FCP=1 CMP=1 IRM=1 AVC=1 DICE=1 Isoch=1 DirectAudio=1 HexDumps=0 AutoStart=1 Stats=1",
+          "sequence": 19,
+          "timestampNs": 692686109162083
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] Async watchdog armed after runtime entered Running",
+          "sequence": 20,
+          "timestampNs": 692686109219500
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] ASFWDriver::Start() complete",
+          "sequence": 21,
+          "timestampNs": 692686109223208
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] Bus reset detected @ 692685938507291 ns",
+          "sequence": 27,
+          "timestampNs": 692686109940833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID Complete (bit16)",
+          "sequence": 28,
+          "timestampNs": 692686109944791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID Complete2 (bit15, sticky)",
+          "sequence": 29,
+          "timestampNs": 692686109947916
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] Start (SBP-2 bridge, login-driven target)",
+          "sequence": 30,
+          "timestampNs": 692686109975708
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID buffer armed: paddr=0x80198000 size=2048 bytes",
+          "sequence": 31,
+          "timestampNs": 692686110006166
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID Complete (bit16)",
+          "sequence": 32,
+          "timestampNs": 692686110038208
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] SetPowerState: powerFlags=0x00000002 (on)",
+          "sequence": 33,
+          "timestampNs": 692686110060083
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] SetPowerState: pin desire On -> 0x00000000, override -> 0x00000000",
+          "sequence": 34,
+          "timestampNs": 692686110077041
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserInitializeController",
+          "sequence": 35,
+          "timestampNs": 692686110077416
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 1",
+          "sequence": 36,
+          "timestampNs": 692686111018666
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 2",
+          "sequence": 37,
+          "timestampNs": 692686111087583
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 3",
+          "sequence": 38,
+          "timestampNs": 692686111154166
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 4",
+          "sequence": 39,
+          "timestampNs": 692686111207541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID generation VALIDATED: 3",
+          "sequence": 40,
+          "timestampNs": 692686111242291
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 5",
+          "sequence": 41,
+          "timestampNs": 692686111269541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Self-ID decode complete: valid=1 quads=3 sequences=2 enumeratorError=0",
+          "sequence": 42,
+          "timestampNs": 692686111298916
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 6",
+          "sequence": 43,
+          "timestampNs": 692686111333458
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 7",
+          "sequence": 44,
+          "timestampNs": 692686111387625
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserMapHBAData \u2192 taskID 8",
+          "sequence": 45,
+          "timestampNs": 692686111453458
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserStartController \u2014 no target until SBP-2 login",
+          "sequence": 46,
+          "timestampNs": 692686111572291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] \ud83e\uddf5 Sequences: start=1 count=1, start=2 count=1",
+          "sequence": 47,
+          "timestampNs": 692686111660791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] \u2705 Self-ID decode valid",
+          "sequence": 48,
+          "timestampNs": 692686111665583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] === End Self-ID Debug ===",
+          "sequence": 49,
+          "timestampNs": 692686111667875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] Config ROM header restored in DMA buffer: 0x00000000 \u2192 0x0404a54b",
+          "sequence": 64,
+          "timestampNs": 692686111769875
+        },
+        {
+          "category": "BusReset",
+          "categoryId": 2,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[BusReset] Reset provenance: gen=3 origin=local initiator=node0 root=1 irm=1 local=0",
+          "sequence": 67,
+          "timestampNs": 692686111985666
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] IntMask updated: shadow=0x878783ff add=0x00020000 (masterEnable=1 busReset=1)",
+          "sequence": 68,
+          "timestampNs": 692686112006791
+        },
+        {
+          "category": "BusReset",
+          "categoryId": 2,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[BusReset] Bus reset #1 complete in 2.04 ms (generation=3, aborts=0)",
+          "sequence": 74,
+          "timestampNs": 692686112035333
+        },
+        {
+          "category": "BusReset",
+          "categoryId": 2,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[BusReset] Discovery delayed 100ms for generation 3",
+          "sequence": 75,
+          "timestampNs": 692686112320750
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] UserInitializeTargetForID 0",
+          "sequence": 76,
+          "timestampNs": 692686112555041
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] opcode 0x12 \u2192 BUSY (SBP-2 session not ready)",
+          "sequence": 77,
+          "timestampNs": 692686113011958
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 78,
+          "timestampNs": 692686213491291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 79,
+          "timestampNs": 692686213533625
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=0 action=none(0)",
+          "sequence": 80,
+          "timestampNs": 692686213634000
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] TopologyMapService: Map rebuilt for generation 3: nodes=2, selfIds=2",
+          "sequence": 81,
+          "timestampNs": 692686213701291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 82,
+          "timestampNs": 692686213972333
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 83,
+          "timestampNs": 692686213987791
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=0 action=none(0)",
+          "sequence": 84,
+          "timestampNs": 692686214012791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] IntMask updated: shadow=0x87c783ff add=0x00400000 (masterEnable=1 busReset=1)",
+          "sequence": 85,
+          "timestampNs": 692686214063083
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 91,
+          "timestampNs": 692686216755875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 92,
+          "timestampNs": 692686216772166
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=1 action=none(0)",
+          "sequence": 93,
+          "timestampNs": 692686216790333
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 94,
+          "timestampNs": 692686216835916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 95,
+          "timestampNs": 692686216845000
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=0/0 cycleSeen=1 action=none(0)",
+          "sequence": 96,
+          "timestampNs": 692686216858583
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] NewUserClient request received (type=0)",
+          "sequence": 98,
+          "timestampNs": 692686216991666
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] NewUserClient success (client=0x733c005138)",
+          "sequence": 100,
+          "timestampNs": 692686217162333
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 115,
+          "timestampNs": 692686218256166
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 116,
+          "timestampNs": 692686218265500
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [CyclePolicy] decision=not-bm gen=3 local=0 root=1 irm=1 bm=63 isBM=0 isRoot=0 rootSelfID=1/1 bibCmc=1/0 cycleSeen=1 action=none(0)",
+          "sequence": 117,
+          "timestampNs": 692686218280791
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=2->3 reason=probe-start",
+          "sequence": 207,
+          "timestampNs": 692686227940708
+        },
+        {
+          "category": "FCP",
+          "categoryId": 12,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[FCP] FCPTransport: Initialized for device nodeID=1, cmdAddr=0xfffff0000b00, rspAddr=0xfffff0000d00",
+          "sequence": 208,
+          "timestampNs": 692686228005208
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=3->4 reason=probe-complete",
+          "sequence": 406,
+          "timestampNs": 692686299336458
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioNub: init() succeeded",
+          "sequence": 407,
+          "timestampNs": 692686299544416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioNub[0x733c022718]: Started and registered",
+          "sequence": 408,
+          "timestampNs": 692686299685041
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioNub: endpoint set to 1",
+          "sequence": 409,
+          "timestampNs": 692686299835791
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioNubPublisher[resolved-endpoint]: ASFWAudioNub ready endpoint=1 instance=1 observedGUID=3db0a0000d112",
+          "sequence": 410,
+          "timestampNs": 692686299846250
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioSession] endpoint=1 provider=4 published instance=1 observedGUID=3db0a0000d112",
+          "sequence": 411,
+          "timestampNs": 692686299878000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: init() succeeded",
+          "sequence": 416,
+          "timestampNs": 692686301047458
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Start() - provider is ASFWAudioNub",
+          "sequence": 417,
+          "timestampNs": 692686301063958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: endpoint=1 instance=1 observedGUID=0x0003db0a0000d112 boolControls=0",
+          "sequence": 418,
+          "timestampNs": 692686301323875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Read device name from nub: Duet",
+          "sequence": 419,
+          "timestampNs": 692686301334583
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Read channel counts from nub: aggregate=2 input=2 output=2",
+          "sequence": 420,
+          "timestampNs": 692686301340291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Read 1 sample rates from nub",
+          "sequence": 421,
+          "timestampNs": 692686301346750
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Input plug name: Input",
+          "sequence": 422,
+          "timestampNs": 692686301351458
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Output plug name: Output",
+          "sequence": 423,
+          "timestampNs": 692686301356666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Current sample rate from nub: 48000 Hz",
+          "sequence": 424,
+          "timestampNs": 692686301361583
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Stream mode from nub: blocking",
+          "sequence": 425,
+          "timestampNs": 692686301371000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Advertising 1 Float32 format(s) (input/output) across rates",
+          "sequence": 426,
+          "timestampNs": 692686301376291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Effective runtime channels: input=2 output=2 aggregate=2",
+          "sequence": 427,
+          "timestampNs": 692686301382125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: HAL buffer profile=audio-engine-v3 ring=8192 ioBudget=512 zts=8192",
+          "sequence": 429,
+          "timestampNs": 692686301390250
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: 8192 frames",
+          "sequence": 430,
+          "timestampNs": 692686301397875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioConfig] coordinator ready endpoint=1 rate=48000 in=2 out=2",
+          "sequence": 432,
+          "timestampNs": 692686301609000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: 8192 frames",
+          "sequence": 433,
+          "timestampNs": 692686301624041
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: ADK object ids device=2",
+          "sequence": 434,
+          "timestampNs": 692686301630541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetName kr=0x0",
+          "sequence": 435,
+          "timestampNs": 692686301636500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetAvailableSampleRates kr=0x0",
+          "sequence": 436,
+          "timestampNs": 692686301646916
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetSampleRate kr=0x0",
+          "sequence": 437,
+          "timestampNs": 692686301653250
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Initial sample rate set to 48000 Hz",
+          "sequence": 438,
+          "timestampNs": 692686301658541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Created 1 stream formats input=float32/2 ch output=float32/2 ch; current format index=0 (48000 Hz)",
+          "sequence": 439,
+          "timestampNs": 692686301665458
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG MEM request provider=0x733c022718 endpoint=1 expectedInCh=2 expectedOutCh=2 rate=48000",
+          "sequence": 440,
+          "timestampNs": 692686301674041
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG MEM runtime allocate observedGuid=0x0003db0a0000d112 outBytes=65536 outFrames=8192 outCh=2 inBytes=65536 inFrames=8192 inCh=2 controlBytes=70056 rate=48000",
+          "sequence": 441,
+          "timestampNs": 692686301695375
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG BIND runtime local_memory_ready observedGuid=0x0003db0a0000d112 gen=2 outBase=0x104764000 outBytes=65536 outFrames=8192 outCh=2 inBase=0x10477c000 inBytes=65536 inFrames=8192 inCh=2 control=0x104794000 rate=48",
+          "sequence": 443,
+          "timestampNs": 692686302437125
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG MEM runtime copy ok observedGuid=0x0003db0a0000d112 gen=2 outMem=0x733c023438 outFrames=8192 outCh=2 inMem=0x733c023578 inFrames=8192 inCh=2 controlMem=0x733c0236b8 rate=48000",
+          "sequence": 444,
+          "timestampNs": 692686302456291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH state=stream-ring/ZTS profile=audio-engine-v3 outFrames=8192 inFrames=8192 ztsPeriod=8192",
+          "sequence": 445,
+          "timestampNs": 692686302471250
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG MEM mapped gen=2 outBase=0x104764000 outLen=65536 outFrames=8192 outCh=2 inBase=0x10477c000 inLen=65536 inFrames=8192 inCh=2 control=0x104794000 controlLen=70056 rate=48000",
+          "sequence": 446,
+          "timestampNs": 692686302499916
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: ADK object ids inputStream=6 owner=1",
+          "sequence": 447,
+          "timestampNs": 692686302563125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=inputStream.SetName kr=0x0",
+          "sequence": 448,
+          "timestampNs": 692686302573291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=inputStream.SetAvailableStreamFormats kr=0x0",
+          "sequence": 449,
+          "timestampNs": 692686302582291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=inputStream.SetCurrentStreamFormat kr=0x0",
+          "sequence": 450,
+          "timestampNs": 692686302588583
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: ADK object ids outputStream=8 owner=1",
+          "sequence": 452,
+          "timestampNs": 692686302629250
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=outputStream.SetName kr=0x0",
+          "sequence": 453,
+          "timestampNs": 692686302637500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=outputStream.SetAvailableStreamFormats kr=0x0",
+          "sequence": 454,
+          "timestampNs": 692686302643833
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=outputStream.SetCurrentStreamFormat kr=0x0",
+          "sequence": 455,
+          "timestampNs": 692686302649291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: ADK streams fully created. deviceId=2 inputStream=6 outputStream=8",
+          "sequence": 456,
+          "timestampNs": 692686302654958
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG BIND skeleton bound outBase=0x104764000 outFrames=8192 outCh=2 inBase=0x10477c000 inFrames=8192 inCh=2 control=0x104794000 audioDevice=0x103f702e8 rate=48000",
+          "sequence": 457,
+          "timestampNs": 692686302755500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Direct audio skeleton bound",
+          "sequence": 458,
+          "timestampNs": 692686302767291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=outputStream.SetLatency kr=0x0",
+          "sequence": 459,
+          "timestampNs": 692686302772333
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=inputStream.SetLatency kr=0x0",
+          "sequence": 460,
+          "timestampNs": 692686302777416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.AddStream(input) kr=0x0",
+          "sequence": 461,
+          "timestampNs": 692686302788375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.AddStream(output) kr=0x0",
+          "sequence": 462,
+          "timestampNs": 692686302795958
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK IO handler installed deviceId=2 inputStream=6 outputStream=8",
+          "sequence": 463,
+          "timestampNs": 692686302802833
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetIOOperationHandler kr=0x0",
+          "sequence": 464,
+          "timestampNs": 692686302808833
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: IO operation handler installed",
+          "sequence": 465,
+          "timestampNs": 692686302813750
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetElementName(output) channel=1 kr=0x0",
+          "sequence": 466,
+          "timestampNs": 692686302822541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetElementName(output) channel=2 kr=0x0",
+          "sequence": 467,
+          "timestampNs": 692686302830291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetElementName(input) channel=1 kr=0x0",
+          "sequence": 468,
+          "timestampNs": 692686302837541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetElementName(input) channel=2 kr=0x0",
+          "sequence": 469,
+          "timestampNs": 692686302843958
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.AddBooleanControls kr=0x0",
+          "sequence": 470,
+          "timestampNs": 692686302849125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=driver.SetTransportType kr=0x0",
+          "sequence": 471,
+          "timestampNs": 692686302854500
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetTransportType kr=0x0",
+          "sequence": 472,
+          "timestampNs": 692686302859583
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetClockAlgorithm kr=0x0",
+          "sequence": 473,
+          "timestampNs": 692686302864541
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetClockIsStable kr=0x0",
+          "sequence": 474,
+          "timestampNs": 692686302869333
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetClockDomain kr=0x0",
+          "sequence": 475,
+          "timestampNs": 692686302874125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetOutputLatency kr=0x0",
+          "sequence": 476,
+          "timestampNs": 692686302880166
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetInputLatency kr=0x0",
+          "sequence": 477,
+          "timestampNs": 692686302885125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetOutputSafetyOffset kr=0x0",
+          "sequence": 478,
+          "timestampNs": 692686302889875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=device.SetInputSafetyOffset kr=0x0",
+          "sequence": 479,
+          "timestampNs": 692686302894708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: Reported HAL latency out=67/in=40, safety out=50/in=50 frames",
+          "sequence": 480,
+          "timestampNs": 692686302899875
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH state=device.GetZeroTimestampPeriod value=8192",
+          "sequence": 481,
+          "timestampNs": 692686302907125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=driver.AddObject(device) kr=0x0",
+          "sequence": 482,
+          "timestampNs": 692686302914666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ADK GRAPH op=driver.RegisterService kr=0x0",
+          "sequence": 483,
+          "timestampNs": 692686302931375
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] \u2705 ASFWAudioDriver: Started - device 'Duet' (in=2 out=2 aggregate=2)",
+          "sequence": 484,
+          "timestampNs": 692686302938708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: NewUserClient(type=1128363364)",
+          "sequence": 493,
+          "timestampNs": 692686305956666
+        },
+        {
+          "category": "Controller",
+          "categoryId": 0,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Controller] [SCSIHBA] opcode 0x12 \u2192 BUSY (SBP-2 session not ready)",
+          "sequence": 690,
+          "timestampNs": 692687114249375
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000",
+          "sequence": 9863,
+          "timestampNs": 692757563239000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0 TIMEOUT",
+          "sequence": 9864,
+          "timestampNs": 692757677562083
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 9865,
+          "timestampNs": 692757677591791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 9866,
+          "timestampNs": 692757677606833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200",
+          "sequence": 9867,
+          "timestampNs": 692757677619958
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2 success: 0xe3",
+          "sequence": 9868,
+          "timestampNs": 692757677632416
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300",
+          "sequence": 9869,
+          "timestampNs": 692757677676500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3 success: 0xef",
+          "sequence": 9870,
+          "timestampNs": 692757677690625
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400",
+          "sequence": 9871,
+          "timestampNs": 692757677704000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4 success: 0xbc",
+          "sequence": 9872,
+          "timestampNs": 692757677715125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500",
+          "sequence": 9873,
+          "timestampNs": 692757677727000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5 success: 0x13",
+          "sequence": 9874,
+          "timestampNs": 692757677738375
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600",
+          "sequence": 9875,
+          "timestampNs": 692757677749583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6 success: 0x50",
+          "sequence": 9876,
+          "timestampNs": 692757677760583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700",
+          "sequence": 9877,
+          "timestampNs": 692757677771833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7 success: 0x00",
+          "sequence": 9878,
+          "timestampNs": 692757677785833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800",
+          "sequence": 9879,
+          "timestampNs": 692757677799500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8 success: 0xf8",
+          "sequence": 9880,
+          "timestampNs": 692757677811875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900",
+          "sequence": 9881,
+          "timestampNs": 692757677824958
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9 success: 0x00",
+          "sequence": 9882,
+          "timestampNs": 692757677836000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00",
+          "sequence": 9883,
+          "timestampNs": 692757677847291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10 success: 0x7b",
+          "sequence": 9884,
+          "timestampNs": 692757677860000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00",
+          "sequence": 9885,
+          "timestampNs": 692757677873708
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11 success: 0x00",
+          "sequence": 9886,
+          "timestampNs": 692757677887583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00",
+          "sequence": 9887,
+          "timestampNs": 692757677901291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12 success: 0x00",
+          "sequence": 9888,
+          "timestampNs": 692757677914833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00",
+          "sequence": 9889,
+          "timestampNs": 692757677927458
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13 success: 0x00",
+          "sequence": 9890,
+          "timestampNs": 692757677941375
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00",
+          "sequence": 9891,
+          "timestampNs": 692757677952750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14 success: 0x00",
+          "sequence": 9892,
+          "timestampNs": 692757677963666
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00",
+          "sequence": 9893,
+          "timestampNs": 692757677974833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15 success: 0x00",
+          "sequence": 9894,
+          "timestampNs": 692757677985750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000",
+          "sequence": 9905,
+          "timestampNs": 692757683771250
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0 TIMEOUT",
+          "sequence": 9906,
+          "timestampNs": 692757798875500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 9907,
+          "timestampNs": 692757798927458
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 9908,
+          "timestampNs": 692757798948000
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200",
+          "sequence": 9909,
+          "timestampNs": 692757798966041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2 success: 0xe3",
+          "sequence": 9910,
+          "timestampNs": 692757798982125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300",
+          "sequence": 9911,
+          "timestampNs": 692757798998416
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3 success: 0xef",
+          "sequence": 9912,
+          "timestampNs": 692757799014208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400",
+          "sequence": 9913,
+          "timestampNs": 692757799030541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4 success: 0xbc",
+          "sequence": 9914,
+          "timestampNs": 692757799045208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500",
+          "sequence": 9915,
+          "timestampNs": 692757799060541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5 success: 0x13",
+          "sequence": 9916,
+          "timestampNs": 692757799072916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600",
+          "sequence": 9917,
+          "timestampNs": 692757799084250
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6 success: 0x50",
+          "sequence": 9918,
+          "timestampNs": 692757799095583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700",
+          "sequence": 9919,
+          "timestampNs": 692757799109125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7 success: 0x00",
+          "sequence": 9920,
+          "timestampNs": 692757799120333
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800",
+          "sequence": 9921,
+          "timestampNs": 692757799135791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8 success: 0xf8",
+          "sequence": 9922,
+          "timestampNs": 692757799150791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900",
+          "sequence": 9923,
+          "timestampNs": 692757799163916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9 success: 0x00",
+          "sequence": 9924,
+          "timestampNs": 692757799176958
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00",
+          "sequence": 9925,
+          "timestampNs": 692757799190666
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10 success: 0x7b",
+          "sequence": 9926,
+          "timestampNs": 692757799204041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00",
+          "sequence": 9927,
+          "timestampNs": 692757799217583
+        }
+      ],
+      "scannedCount": 9949
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

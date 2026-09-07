@@ -1,0 +1,393 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 18628,\n    \"nextSequence\" : 18628,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 41,\n    \"records\" : [\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11 success: 0x00\",\n        \"sequence\" : 9928,\n        \"timestampNs\" : 692757799228583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00\",\n        \"sequence\" : 9929,\n        \"timestampNs\" : 692757799239791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12 success: 0x00\",\n        \"sequence\" : 9930,\n        \"timestampNs\" : 692757799254875\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00\",\n        \"sequence\" : 9931,\n        \"timestampNs\" : 692757799296666\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13 success: 0x00\",\n        \"sequence\" : 9932,\n        \"timestampNs\" : 692757799312166\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00\",\n        \"sequence\" : 9933,\n        \"timestampNs\" : 692757799323500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14 success: 0x00\",\n        \"sequence\" : 9934,\n        \"timestampNs\" : 692757799334458\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00\",\n        \"sequence\" : 9935,\n        \"timestampNs\" : 692757799347916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15 success: 0x00\",\n        \"sequence\" : 9936,\n        \"timestampNs\" : 692757799361750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000\",\n        \"sequence\" : 18585,\n        \"timestampNs\" : 692824300734708\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 0 TIMEOUT\",\n        \"sequence\" : 18586,\n        \"timestampNs\" : 692824414961208\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100\",\n        \"sequence\" : 18587,\n        \"timestampNs\" : 692824414996500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 1 success: 0x3f\",\n        \"sequence\" : 18588,\n        \"timestampNs\" : 692824415012166\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200\",\n        \"sequence\" : 18589,\n        \"timestampNs\" : 692824415025916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 2 success: 0xe3\",\n        \"sequence\" : 18590,\n        \"timestampNs\" : 692824415037916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300\",\n        \"sequence\" : 18591,\n        \"timestampNs\" : 692824415050833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 3 success: 0xef\",\n        \"sequence\" : 18592,\n        \"timestampNs\" : 692824415062041\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400\",\n        \"sequence\" : 18593,\n        \"timestampNs\" : 692824415073541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 4 success: 0xbc\",\n        \"sequence\" : 18594,\n        \"timestampNs\" : 692824415084625\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500\",\n        \"sequence\" : 18595,\n        \"timestampNs\" : 692824415095750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 5 success: 0x13\",\n        \"sequence\" : 18596,\n        \"timestampNs\" : 692824415106750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600\",\n        \"sequence\" : 18597,\n        \"timestampNs\" : 692824415117750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 6 success: 0x50\",\n        \"sequence\" : 18598,\n        \"timestampNs\" : 692824415128750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700\",\n        \"sequence\" : 18599,\n        \"timestampNs\" : 692824415139791\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 7 success: 0x00\",\n        \"sequence\" : 18600,\n        \"timestampNs\" : 692824415150541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800\",\n        \"sequence\" : 18601,\n        \"timestampNs\" : 692824415162250\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 8 success: 0xf8\",\n        \"sequence\" : 18602,\n        \"timestampNs\" : 692824415173291\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900\",\n        \"sequence\" : 18603,\n        \"timestampNs\" : 692824415184708\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 9 success: 0x00\",\n        \"sequence\" : 18604,\n        \"timestampNs\" : 692824415195541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00\",\n        \"sequence\" : 18605,\n        \"timestampNs\" : 692824415206916\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 10 success: 0x7b\",\n        \"sequence\" : 18606,\n        \"timestampNs\" : 692824415218250\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00\",\n        \"sequence\" : 18607,\n        \"timestampNs\" : 692824415229583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 11 success: 0x00\",\n        \"sequence\" : 18608,\n        \"timestampNs\" : 692824415240583\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00\",\n        \"sequence\" : 18609,\n        \"timestampNs\" : 692824415251833\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 12 success: 0x00\",\n        \"sequence\" : 18610,\n        \"timestampNs\" : 692824415262750\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00\",\n        \"sequence\" : 18611,\n        \"timestampNs\" : 692824415274500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 13 success: 0x00\",\n        \"sequence\" : 18612,\n        \"timestampNs\" : 692824415285250\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00\",\n        \"sequence\" : 18613,\n        \"timestampNs\" : 692824415296500\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 14 success: 0x00\",\n        \"sequence\" : 18614,\n        \"timestampNs\" : 692824415307541\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00\",\n        \"sequence\" : 18615,\n        \"timestampNs\" : 692824415319125\n      },\n      {\n        \"category\" : \"Hardware\",\n        \"categoryId\" : 1,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Hardware] [PHY] Read reg 15 success: 0x00\",\n        \"sequence\" : 18616,\n        \"timestampNs\" : 692824415330041\n      }\n    ],\n    \"scannedCount\" : 8701\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 18628,
+      "nextSequence": 18628,
+      "oldestSequence": 1,
+      "recordCount": 41,
+      "records": [
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11 success: 0x00",
+          "sequence": 9928,
+          "timestampNs": 692757799228583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00",
+          "sequence": 9929,
+          "timestampNs": 692757799239791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12 success: 0x00",
+          "sequence": 9930,
+          "timestampNs": 692757799254875
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00",
+          "sequence": 9931,
+          "timestampNs": 692757799296666
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13 success: 0x00",
+          "sequence": 9932,
+          "timestampNs": 692757799312166
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00",
+          "sequence": 9933,
+          "timestampNs": 692757799323500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14 success: 0x00",
+          "sequence": 9934,
+          "timestampNs": 692757799334458
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00",
+          "sequence": 9935,
+          "timestampNs": 692757799347916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15 success: 0x00",
+          "sequence": 9936,
+          "timestampNs": 692757799361750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0: wrote PhyControl=0x00008000",
+          "sequence": 18585,
+          "timestampNs": 692824300734708
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 0 TIMEOUT",
+          "sequence": 18586,
+          "timestampNs": 692824414961208
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1: wrote PhyControl=0x00008100",
+          "sequence": 18587,
+          "timestampNs": 692824414996500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 1 success: 0x3f",
+          "sequence": 18588,
+          "timestampNs": 692824415012166
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2: wrote PhyControl=0x00008200",
+          "sequence": 18589,
+          "timestampNs": 692824415025916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 2 success: 0xe3",
+          "sequence": 18590,
+          "timestampNs": 692824415037916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3: wrote PhyControl=0x00008300",
+          "sequence": 18591,
+          "timestampNs": 692824415050833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 3 success: 0xef",
+          "sequence": 18592,
+          "timestampNs": 692824415062041
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4: wrote PhyControl=0x00008400",
+          "sequence": 18593,
+          "timestampNs": 692824415073541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 4 success: 0xbc",
+          "sequence": 18594,
+          "timestampNs": 692824415084625
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5: wrote PhyControl=0x00008500",
+          "sequence": 18595,
+          "timestampNs": 692824415095750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 5 success: 0x13",
+          "sequence": 18596,
+          "timestampNs": 692824415106750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6: wrote PhyControl=0x00008600",
+          "sequence": 18597,
+          "timestampNs": 692824415117750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 6 success: 0x50",
+          "sequence": 18598,
+          "timestampNs": 692824415128750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7: wrote PhyControl=0x00008700",
+          "sequence": 18599,
+          "timestampNs": 692824415139791
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 7 success: 0x00",
+          "sequence": 18600,
+          "timestampNs": 692824415150541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8: wrote PhyControl=0x00008800",
+          "sequence": 18601,
+          "timestampNs": 692824415162250
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 8 success: 0xf8",
+          "sequence": 18602,
+          "timestampNs": 692824415173291
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9: wrote PhyControl=0x00008900",
+          "sequence": 18603,
+          "timestampNs": 692824415184708
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 9 success: 0x00",
+          "sequence": 18604,
+          "timestampNs": 692824415195541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10: wrote PhyControl=0x00008a00",
+          "sequence": 18605,
+          "timestampNs": 692824415206916
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 10 success: 0x7b",
+          "sequence": 18606,
+          "timestampNs": 692824415218250
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11: wrote PhyControl=0x00008b00",
+          "sequence": 18607,
+          "timestampNs": 692824415229583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 11 success: 0x00",
+          "sequence": 18608,
+          "timestampNs": 692824415240583
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12: wrote PhyControl=0x00008c00",
+          "sequence": 18609,
+          "timestampNs": 692824415251833
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 12 success: 0x00",
+          "sequence": 18610,
+          "timestampNs": 692824415262750
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13: wrote PhyControl=0x00008d00",
+          "sequence": 18611,
+          "timestampNs": 692824415274500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 13 success: 0x00",
+          "sequence": 18612,
+          "timestampNs": 692824415285250
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14: wrote PhyControl=0x00008e00",
+          "sequence": 18613,
+          "timestampNs": 692824415296500
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 14 success: 0x00",
+          "sequence": 18614,
+          "timestampNs": 692824415307541
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15: wrote PhyControl=0x00008f00",
+          "sequence": 18615,
+          "timestampNs": 692824415319125
+        },
+        {
+          "category": "Hardware",
+          "categoryId": 1,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Hardware] [PHY] Read reg 15 success: 0x00",
+          "sequence": 18616,
+          "timestampNs": 692824415330041
+        }
+      ],
+      "scannedCount": 8701
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

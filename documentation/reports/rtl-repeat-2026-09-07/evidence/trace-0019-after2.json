@@ -1,0 +1,249 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"cursorReset\" : false,\n    \"latestSequence\" : 21251,\n    \"nextSequence\" : 21251,\n    \"oldestSequence\" : 1,\n    \"recordCount\" : 25,\n    \"records\" : [\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: StopDevice(id=2)\",\n        \"sequence\" : 21107,\n        \"timestampNs\" : 692840067567458\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ASFWAudioDevice: StopIO flags=0x0\",\n        \"sequence\" : 21108,\n        \"timestampNs\" : 692840067587875\n      },\n      {\n        \"category\" : \"DirectAudio\",\n        \"categoryId\" : 17,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[DirectAudio] ADK DBG STOPIO endpoint=1 callbacks=5196 outsideRun=0 zts=41 rxZts=41 rxAdk=41 beginRead=2598 writeEnd=2598 writtenEndFrame=341140 txPackets=56712 txSilence=0 txUnderruns=0\",\n        \"sequence\" : 21109,\n        \"timestampNs\" : 692840067598083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] DisconnectIPCR entry: instance=1 node=1 gen=3 plug=0\",\n        \"sequence\" : 21110,\n        \"timestampNs\" : 692840067671000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)\",\n        \"sequence\" : 21111,\n        \"timestampNs\" : 692840067692416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x81000000\",\n        \"sequence\" : 21113,\n        \"timestampNs\" : 692840068158416\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x81000000 desired=0x80000000\",\n        \"sequence\" : 21114,\n        \"timestampNs\" : 692840068167000\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x81000000 desired=0x80000000 observed=0x81000000 (MATCH)\",\n        \"sequence\" : 21116,\n        \"timestampNs\" : 692840068921750\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL: slot 96 not committed packet=56880 commitGen=338 expectedGen=339\",\n        \"sequence\" : 21117,\n        \"timestampNs\" : 692840076871000\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL dump: fatalAbs=56880 slot=96 expectedGen=339 commitGen=338 slotLastPacketAbs=56712 committedEnd=56880 completionCursor=56838 softwareFillAbs=56880 ringPacketsAhead=42 deltaConsumed=6 i=0 numSlots=168 prepReq=9048 p\",\n        \"sequence\" : 21118,\n        \"timestampNs\" : 692840076892083\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT: Refill failed reason=uncommitted-slot ctrl=0x00008411 streamStatus=1 cmdPtr=0x80398184 cmdAddr=0x80398180 hwPacket=6 fatalAbs=56880 fatalSlot=96 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x00000000000000\",\n        \"sequence\" : 21119,\n        \"timestampNs\" : 692840076907291\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IT FATAL STOP: RUN cleared and interrupt masked\",\n        \"sequence\" : 21120,\n        \"timestampNs\" : 692840076927791\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery\",\n        \"sequence\" : 21121,\n        \"timestampNs\" : 692840076934208\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] DisconnectOPCR entry: instance=1 node=1 gen=3 plug=0\",\n        \"sequence\" : 21123,\n        \"timestampNs\" : 692840078303083\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)\",\n        \"sequence\" : 21124,\n        \"timestampNs\" : 692840078331666\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x81018036\",\n        \"sequence\" : 21129,\n        \"timestampNs\" : 692840079470583\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x81018036 desired=0x80018036\",\n        \"sequence\" : 21130,\n        \"timestampNs\" : 692840079481708\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x81018036 desired=0x80018036 observed=0x81018036 (MATCH)\",\n        \"sequence\" : 21132,\n        \"timestampNs\" : 692840079994958\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] Stop: Disabled IR interrupt for context 0. Stats: 56943 pkts polls=15052 busy=0\",\n        \"sequence\" : 21133,\n        \"timestampNs\" : 692840088558708\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] [RxDrain] eligible=0 running=0 verbosity=1\",\n        \"sequence\" : 21139,\n        \"timestampNs\" : 692840089714125\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=2 gen=3\",\n        \"sequence\" : 21151,\n        \"timestampNs\" : 692840099933291\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=5->4 reason=stream-stopped\",\n        \"sequence\" : 21152,\n        \"timestampNs\" : 692840100004833\n      },\n      {\n        \"category\" : \"Isoch\",\n        \"categoryId\" : 15,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Isoch] IsochService: Freed Tx isoch resources\",\n        \"sequence\" : 21153,\n        \"timestampNs\" : 692840100581166\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 \u2014 recovering\",\n        \"sequence\" : 21154,\n        \"timestampNs\" : 692840100632458\n      },\n      {\n        \"category\" : \"Audio\",\n        \"categoryId\" : 16,\n        \"level\" : \"notice\",\n        \"levelId\" : 2,\n        \"message\" : \"[Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)\",\n        \"sequence\" : 21155,\n        \"timestampNs\" : 692840100640875\n      }\n    ],\n    \"scannedCount\" : 174\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_log_query\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "cursorReset": false,
+      "latestSequence": 21251,
+      "nextSequence": 21251,
+      "oldestSequence": 1,
+      "recordCount": 25,
+      "records": [
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: StopDevice(id=2)",
+          "sequence": 21107,
+          "timestampNs": 692840067567458
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ASFWAudioDevice: StopIO flags=0x0",
+          "sequence": 21108,
+          "timestampNs": 692840067587875
+        },
+        {
+          "category": "DirectAudio",
+          "categoryId": 17,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[DirectAudio] ADK DBG STOPIO endpoint=1 callbacks=5196 outsideRun=0 zts=41 rxZts=41 rxAdk=41 beginRead=2598 writeEnd=2598 writtenEndFrame=341140 txPackets=56712 txSilence=0 txUnderruns=0",
+          "sequence": 21109,
+          "timestampNs": 692840067598083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] DisconnectIPCR entry: instance=1 node=1 gen=3 plug=0",
+          "sequence": 21110,
+          "timestampNs": 692840067671000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000984 (iPCR0)",
+          "sequence": 21111,
+          "timestampNs": 692840067692416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000984 value=0x81000000",
+          "sequence": 21113,
+          "timestampNs": 692840068158416
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000984 expected=0x81000000 desired=0x80000000",
+          "sequence": 21114,
+          "timestampNs": 692840068167000
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000984 expected=0x81000000 desired=0x80000000 observed=0x81000000 (MATCH)",
+          "sequence": 21116,
+          "timestampNs": 692840068921750
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL: slot 96 not committed packet=56880 commitGen=338 expectedGen=339",
+          "sequence": 21117,
+          "timestampNs": 692840076871000
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL dump: fatalAbs=56880 slot=96 expectedGen=339 commitGen=338 slotLastPacketAbs=56712 committedEnd=56880 completionCursor=56838 softwareFillAbs=56880 ringPacketsAhead=42 deltaConsumed=6 i=0 numSlots=168 prepReq=9048 p",
+          "sequence": 21118,
+          "timestampNs": 692840076892083
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT: Refill failed reason=uncommitted-slot ctrl=0x00008411 streamStatus=1 cmdPtr=0x80398184 cmdAddr=0x80398180 hwPacket=6 fatalAbs=56880 fatalSlot=96 payloadLen=0 sealExpected=0x0000000000000000 sealObserved=0x00000000000000",
+          "sequence": 21119,
+          "timestampNs": 692840076907291
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IT FATAL STOP: RUN cleared and interrupt masked",
+          "sequence": 21120,
+          "timestampNs": 692840076927791
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] AudioCoordinator: TX transport fault endpoint=1 status=3 streamGeneration=1 \u2014 dispatching recovery",
+          "sequence": 21121,
+          "timestampNs": 692840076934208
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] DisconnectOPCR entry: instance=1 node=1 gen=3 plug=0",
+          "sequence": 21123,
+          "timestampNs": 692840078303083
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet SUBMIT: gen=3 node=1 addr=0xf0000904 (oPCR0)",
+          "sequence": 21124,
+          "timestampNs": 692840078331666
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] ReadQuadlet DONE: addr=0xf0000904 value=0x81018036",
+          "sequence": 21129,
+          "timestampNs": 692840079470583
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap SUBMIT: gen=3 node=1 addr=0xf0000904 expected=0x81018036 desired=0x80018036",
+          "sequence": 21130,
+          "timestampNs": 692840079481708
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] !!! [CMP] CompareSwap DONE: addr=0xf0000904 expected=0x81018036 desired=0x80018036 observed=0x81018036 (MATCH)",
+          "sequence": 21132,
+          "timestampNs": 692840079994958
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] Stop: Disabled IR interrupt for context 0. Stats: 56943 pkts polls=15052 busy=0",
+          "sequence": 21133,
+          "timestampNs": 692840088558708
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] [RxDrain] eligible=0 running=0 verbosity=1",
+          "sequence": 21139,
+          "timestampNs": 692840089714125
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [FSM] terminal state=Idle phase=Idle status=0x00000000 endpoint=1 restartId=2 gen=3",
+          "sequence": 21151,
+          "timestampNs": 692840099933291
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] [AudioSession] endpoint=1 device=1 provider=4 state=5->4 reason=stream-stopped",
+          "sequence": 21152,
+          "timestampNs": 692840100004833
+        },
+        {
+          "category": "Isoch",
+          "categoryId": 15,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Isoch] IsochService: Freed Tx isoch resources",
+          "sequence": 21153,
+          "timestampNs": 692840100581166
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault status=3 streamGeneration=1 txWasActive=0 \u2014 recovering",
+          "sequence": 21154,
+          "timestampNs": 692840100632458
+        },
+        {
+          "category": "Audio",
+          "categoryId": 16,
+          "level": "notice",
+          "levelId": 2,
+          "message": "[Audio] ASFWAudioDriver: TX transport fault on an inactive transmit path -- already recovered, not re-arming (a re-arm with no producer starves at the prefill boundary and faults again)",
+          "sequence": 21155,
+          "timestampNs": 692840100640875
+        }
+      ],
+      "scannedCount": 174
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_log_query"
+  }
+}

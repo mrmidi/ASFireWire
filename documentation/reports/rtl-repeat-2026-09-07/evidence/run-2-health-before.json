@@ -1,0 +1,59 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"endpointCount\" : 1,\n    \"endpoints\" : [\n      {\n        \"bindingReady\" : true,\n        \"capture\" : {\n          \"availableFrames\" : 844,\n          \"capacityFrames\" : 8192,\n          \"hasCompletedInterval\" : false,\n          \"intervalStarvationEvents\" : 0,\n          \"intervalStarvedFrames\" : 0,\n          \"overrunEvents\" : 0,\n          \"readerActive\" : false,\n          \"starvationEvents\" : 0,\n          \"totalStarvedFrames\" : 0\n        },\n        \"counters\" : {\n          \"dataPackets\" : 42878,\n          \"emptyCompletions\" : 0,\n          \"geometryMismatch\" : 0,\n          \"invalidCipHeaders\" : 0,\n          \"noDataPackets\" : 14294,\n          \"packetsSeen\" : 57172,\n          \"rejectedPackets\" : 0,\n          \"replayEntries\" : 57172,\n          \"replayEpochResets\" : 1,\n          \"shortPackets\" : 0,\n          \"zeroDataBlockSize\" : 0\n        },\n        \"deviceInstanceId\" : 1,\n        \"endpointId\" : 1,\n        \"explanation\" : \"Data-bearing packets are arriving and being accepted.\",\n        \"inputChannels\" : 2,\n        \"observedGuid\" : \"0x0003DB0A0000D112\",\n        \"outputChannels\" : 2,\n        \"sampleRateHz\" : 48000,\n        \"streaming\" : false,\n        \"transmit\" : {\n          \"faulted\" : false,\n          \"status\" : \"running\"\n        },\n        \"verdict\" : \"receivingData\"\n      }\n    ]\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_get_audio_stream_health\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "endpointCount": 1,
+      "endpoints": [
+        {
+          "bindingReady": true,
+          "capture": {
+            "availableFrames": 844,
+            "capacityFrames": 8192,
+            "hasCompletedInterval": false,
+            "intervalStarvationEvents": 0,
+            "intervalStarvedFrames": 0,
+            "overrunEvents": 0,
+            "readerActive": false,
+            "starvationEvents": 0,
+            "totalStarvedFrames": 0
+          },
+          "counters": {
+            "dataPackets": 42878,
+            "emptyCompletions": 0,
+            "geometryMismatch": 0,
+            "invalidCipHeaders": 0,
+            "noDataPackets": 14294,
+            "packetsSeen": 57172,
+            "rejectedPackets": 0,
+            "replayEntries": 57172,
+            "replayEpochResets": 1,
+            "shortPackets": 0,
+            "zeroDataBlockSize": 0
+          },
+          "deviceInstanceId": 1,
+          "endpointId": 1,
+          "explanation": "Data-bearing packets are arriving and being accepted.",
+          "inputChannels": 2,
+          "observedGuid": "0x0003DB0A0000D112",
+          "outputChannels": 2,
+          "sampleRateHz": 48000,
+          "streaming": false,
+          "transmit": {
+            "faulted": false,
+            "status": "running"
+          },
+          "verdict": "receivingData"
+        }
+      ]
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_get_audio_stream_health"
+  }
+}

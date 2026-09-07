@@ -1,0 +1,70 @@
+{
+  "content": [
+    {
+      "text": "{\n  \"data\" : {\n    \"endpointCount\" : 1,\n    \"endpoints\" : [\n      {\n        \"bindingReady\" : true,\n        \"counters\" : {\n          \"copiesConcurrentRewrite\" : 0,\n          \"copiesExpired\" : 0,\n          \"copiesInvalid\" : 0,\n          \"copiesNotYetPublished\" : 0,\n          \"copiesReady\" : 0,\n          \"copiesWrongEpoch\" : 0,\n          \"deadlineNoData\" : 0,\n          \"deferrals\" : 0,\n          \"faultEvents\" : 0,\n          \"missedFrames\" : 0,\n          \"pcmDiscontinuities\" : 0,\n          \"pcmExpiredFrames\" : 0,\n          \"pcmFramesPublished\" : 0,\n          \"pcmPublications\" : 0\n        },\n        \"deviceInstanceId\" : 1,\n        \"endpointId\" : 1,\n        \"firstFault\" : {\n          \"audioFrame\" : 0,\n          \"committedPacketEnd\" : 0,\n          \"completionPacket\" : 0,\n          \"packet\" : 0,\n          \"pcmOldestValid\" : 0,\n          \"pcmPublishedEnd\" : 0,\n          \"reason\" : \"none\"\n        },\n        \"frameCursors\" : {\n          \"pcmOldestValid\" : 0,\n          \"pcmPublishedEnd\" : 0,\n          \"publishedAheadFrames\" : 0,\n          \"scheduledFrameEnd\" : 341758,\n          \"scheduledRangeExpired\" : false,\n          \"units\" : \"absoluteHostFrames\"\n        },\n        \"observedGuid\" : \"0x0003DB0A0000D112\",\n        \"outputChannels\" : 2,\n        \"sampleRateHz\" : 48000,\n        \"snapshotKind\" : \"valueOwned\",\n        \"streaming\" : false,\n        \"transportCursors\" : {\n          \"committedEnd\" : 56880,\n          \"committedMargin\" : 120,\n          \"completion\" : 56760,\n          \"status\" : \"running\",\n          \"units\" : \"absoluteIsochPackets\"\n        },\n        \"verdict\" : \"idle\"\n      }\n    ]\n  },\n  \"errors\" : [\n\n  ],\n  \"ok\" : true,\n  \"toolName\" : \"asfw_get_audio_cursors\"\n}",
+      "type": "text"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "data": {
+      "endpointCount": 1,
+      "endpoints": [
+        {
+          "bindingReady": true,
+          "counters": {
+            "copiesConcurrentRewrite": 0,
+            "copiesExpired": 0,
+            "copiesInvalid": 0,
+            "copiesNotYetPublished": 0,
+            "copiesReady": 0,
+            "copiesWrongEpoch": 0,
+            "deadlineNoData": 0,
+            "deferrals": 0,
+            "faultEvents": 0,
+            "missedFrames": 0,
+            "pcmDiscontinuities": 0,
+            "pcmExpiredFrames": 0,
+            "pcmFramesPublished": 0,
+            "pcmPublications": 0
+          },
+          "deviceInstanceId": 1,
+          "endpointId": 1,
+          "firstFault": {
+            "audioFrame": 0,
+            "committedPacketEnd": 0,
+            "completionPacket": 0,
+            "packet": 0,
+            "pcmOldestValid": 0,
+            "pcmPublishedEnd": 0,
+            "reason": "none"
+          },
+          "frameCursors": {
+            "pcmOldestValid": 0,
+            "pcmPublishedEnd": 0,
+            "publishedAheadFrames": 0,
+            "scheduledFrameEnd": 341758,
+            "scheduledRangeExpired": false,
+            "units": "absoluteHostFrames"
+          },
+          "observedGuid": "0x0003DB0A0000D112",
+          "outputChannels": 2,
+          "sampleRateHz": 48000,
+          "snapshotKind": "valueOwned",
+          "streaming": false,
+          "transportCursors": {
+            "committedEnd": 56880,
+            "committedMargin": 120,
+            "completion": 56760,
+            "status": "running",
+            "units": "absoluteIsochPackets"
+          },
+          "verdict": "idle"
+        }
+      ]
+    },
+    "errors": [],
+    "ok": true,
+    "toolName": "asfw_get_audio_cursors"
+  }
+}
