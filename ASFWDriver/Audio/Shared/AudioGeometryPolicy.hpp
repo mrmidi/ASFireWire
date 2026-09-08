@@ -152,10 +152,15 @@ static_assert(AudioGeometryPolicy::RxSafetyOffsetFrames(48000.0) == 128,
               "48k RX safety must be 16 packets x 8 frames");
 static_assert(AudioGeometryPolicy::ReportedLatencyFrames(48000.0) == 29,
               "48k reported latency must be 29 frames");
-// Six completion slots plus a two-slot live-descriptor guard are 48 frames at
-// 48 kHz. The Duet's 50-frame profile floor therefore wins.
+// Eight completion slots plus a two-slot live-descriptor guard are 60 frames
+// at 48 kHz, so the finality frontier now exceeds the Duet's 50-frame
+// profile floor and sets the offset itself. This is the priced consequence
+// of the 6 -> 8 completion group (2026-09-08): a producer can only refill at
+// interrupt time, so content within one interrupt period of the DMA cursor
+// cannot be changed, and lengthening that period lengthens the frozen span.
+// +10 frames (208 us) at 48 kHz; 96 -> 120 and 192 -> 240 at 2x and 4x.
 static_assert(AudioGeometryPolicy::RequiredOutputSafetyFrames(
-                  50, 48'000) == 50,
-              "48k Duet safety must reflect the finality frontier");
+                  50, 48'000) == 60,
+              "48k safety must reflect the finality frontier");
 
 } // namespace ASFW::Audio::Shared

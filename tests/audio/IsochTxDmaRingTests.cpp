@@ -44,6 +44,14 @@ constexpr uint32_t kIsochChannelMask = 0x3fu << 8;
 
 } // namespace
 
+// Prime seals every packet below the payload-finality frontier, so the
+// arbitration scenarios below are positioned relative to it, not to literals.
+// The frontier is completion group + repoint guard, so it moved 8 -> 10 when
+// the group went 6 -> 8 (2026-09-08) and every literal that meant "just past
+// the seal" silently came to mean "inside it".
+inline constexpr uint32_t kSeal =
+    ASFW::Shared::Isoch::IsochQueueGeometry::kPayloadFinalityLeadPackets;
+
 class IsochTxDmaRingTest : public ::testing::Test {
 protected:
     ASFWTestMachTime::ScopedClock clock_{1'000'000'000};
@@ -59,13 +67,20 @@ protected:
     // laps the wrapped-slot test commits across. It was the literal 912, which
     // satisfied all three at a 48-packet ring and none of them at 504 -- the
     // wrapped-slot test wrote past the end of the metadata ring.
-    static constexpr uint32_t kSharedPayloadSlots = 3 * Layout::kNumPackets + 6;
+    // The offset is the completion group itself, not a literal. It was 6,
+    // which silently encoded the group size and stopped satisfying the
+    // second property the moment the group moved 6 -> 8 (2026-09-08).
+    static constexpr uint32_t kSharedPayloadOffsetSlots =
+        ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup;
+    static constexpr uint32_t kSharedPayloadSlots =
+        3 * Layout::kNumPackets + kSharedPayloadOffsetSlots;
     static_assert(kSharedPayloadSlots % Layout::kNumPackets != 0);
     static_assert((kSharedPayloadSlots - Layout::kNumPackets) %
                       ASFW::Shared::Isoch::IsochQueueGeometry::
                           kPacketsPerCompletionGroup ==
                   0);
-    static_assert(kSharedPayloadSlots > 2 * Layout::kNumPackets + 6);
+    static_assert(kSharedPayloadSlots >
+                  2 * Layout::kNumPackets + kSharedPayloadOffsetSlots);
     static constexpr uint32_t kSharedPayloadStride = 512;
 
     ASFW::Driver::HardwareInterface hardware_;
@@ -447,16 +462,16 @@ TEST_F(IsochTxDmaRingTest,
 
     // Packet 7 is inside the live guard when CommandPtr reaches packet 6.
     // Packet 8 is exactly two packets away and is the first legal rebind.
-    ImageBytes(7, 1)[8] = 0x77;
-    ImageBytes(8, 1)[8] = 0x88;
+    ImageBytes(kSeal - 1, 1)[8] = 0x77;
+    ImageBytes(kSeal, 1)[8] = 0x88;
     // Packet 7 is already final: Prime sealed everything below the finality
     // frontier, so the producer is correctly refused rather than left believing
     // it placed content into a packet whose choice was made.
-    EXPECT_FALSE(OfferLateImage(metadataRing, 7));
-    EXPECT_TRUE(OfferLateImage(metadataRing, 8));
+    EXPECT_FALSE(OfferLateImage(metadataRing, kSeal - 1));
+    EXPECT_TRUE(OfferLateImage(metadataRing, kSeal));
 
     const uint32_t commandPtr = ring_.Slab().GetDescriptorIOVA(
-        6 * Layout::kBlocksPerPacket);
+        (kSeal - 2) * Layout::kBlocksPerPacket);
     hardware_.SetTestRegister(
         static_cast<Register32>(
             DMAContextHelpers::IsoXmitCommandPtr(0)),
@@ -473,23 +488,23 @@ TEST_F(IsochTxDmaRingTest,
     ASSERT_TRUE(outcome.ok);
     EXPECT_EQ(outcome.latePayloadRebinds, 1U);
     EXPECT_EQ(outcome.latePayloadRebindRejected, 0U);
-    EXPECT_EQ(outcome.finalizedEnd, 14U);
+    EXPECT_EQ(outcome.finalizedEnd, 2 * kSeal - 2);
 
     const auto* packet7Prefix = ring_.Slab().GetDescriptorPtr(
-        7 * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+        (kSeal - 1) * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
     const auto* packet7Tail = ring_.Slab().GetDescriptorPtr(
-        7 * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
-    EXPECT_EQ(packet7Prefix->dataAddress, ImageIOVA(7, 0));
-    EXPECT_EQ(packet7Tail->dataAddress, ImageIOVA(7, 0) + 8);
-    EXPECT_EQ(metadataRing[7].selectedPayloadImage, 0U);
+        (kSeal - 1) * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+    EXPECT_EQ(packet7Prefix->dataAddress, ImageIOVA(kSeal - 1, 0));
+    EXPECT_EQ(packet7Tail->dataAddress, ImageIOVA(kSeal - 1, 0) + 8);
+    EXPECT_EQ(metadataRing[kSeal - 1].selectedPayloadImage, 0U);
 
     const auto* packet8Prefix = ring_.Slab().GetDescriptorPtr(
-        8 * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+        kSeal * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
     const auto* packet8Tail = ring_.Slab().GetDescriptorPtr(
-        8 * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
-    EXPECT_EQ(packet8Prefix->dataAddress, ImageIOVA(8, 0));
-    EXPECT_EQ(packet8Tail->dataAddress, ImageIOVA(8, 1) + 8);
-    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 1U);
+        kSeal * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+    EXPECT_EQ(packet8Prefix->dataAddress, ImageIOVA(kSeal, 0));
+    EXPECT_EQ(packet8Tail->dataAddress, ImageIOVA(kSeal, 1) + 8);
+    EXPECT_EQ(metadataRing[kSeal].selectedPayloadImage, 1U);
     EXPECT_EQ(
         primeControl_.minimumLatePayloadRebindDistance.load(
             std::memory_order_relaxed),
@@ -512,10 +527,10 @@ TEST_F(IsochTxDmaRingTest,
             metadataRing.data(), &primeControl_, sharedPayload_.data(),
             Layout::kNumPackets).packetsAssembled,
         Layout::kNumPackets);
-    ASSERT_TRUE(OfferLateImage(metadataRing, 8));
+    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal));
 
     const uint32_t commandPtr = ring_.Slab().GetDescriptorIOVA(
-        6 * Layout::kBlocksPerPacket);
+        (kSeal - 2) * Layout::kBlocksPerPacket);
     hardware_.SetTestRegister(
         static_cast<Register32>(
             DMAContextHelpers::IsoXmitCommandPtr(0)),
@@ -532,7 +547,7 @@ TEST_F(IsochTxDmaRingTest,
     ASSERT_TRUE(outcome.ok);
     EXPECT_EQ(outcome.latePayloadRebinds, 0U);
     EXPECT_EQ(outcome.latePayloadRebindRejected, 1U);
-    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 0U);
+    EXPECT_EQ(metadataRing[kSeal].selectedPayloadImage, 0U);
 }
 
 TEST_F(IsochTxDmaRingTest, PrimeProgramsPayloadCrossingDmaSegment) {
@@ -1658,18 +1673,18 @@ TEST_F(IsochTxPayloadArbitrationTest,
        OfferLandingDuringTheScanIsBoundNotSilentlyDropped) {
     auto metadataRing = MakeMetadataRing();
     PrimeRebindable(metadataRing);
-    PointAt(6);
+    PointAt(kSeal - 2);
 
-    ASSERT_TRUE(OfferLateImage(metadataRing, 9));
+    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal + 1));
 
     bool producerAccepted = false;
     bool interleaved = false;
     interposed_->onPublish = [&](const std::byte* published) {
-        if (published != reinterpret_cast<const std::byte*>(ImageBytes(9, 1))) {
+        if (published != reinterpret_cast<const std::byte*>(ImageBytes(kSeal + 1, 1))) {
             return;
         }
         interleaved = true;
-        producerAccepted = OfferLateImage(metadataRing, 8);
+        producerAccepted = OfferLateImage(metadataRing, kSeal);
     };
 
     const auto outcome = Refill(metadataRing);
@@ -1677,8 +1692,8 @@ TEST_F(IsochTxPayloadArbitrationTest,
     ASSERT_TRUE(interleaved);
 
     EXPECT_TRUE(producerAccepted);
-    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 1U);
-    EXPECT_EQ(metadataRing[9].selectedPayloadImage, 1U);
+    EXPECT_EQ(metadataRing[kSeal].selectedPayloadImage, 1U);
+    EXPECT_EQ(metadataRing[kSeal + 1].selectedPayloadImage, 1U);
     EXPECT_EQ(outcome.latePayloadLostPublications, 0U);
 }
 
@@ -1695,24 +1710,24 @@ TEST_F(IsochTxPayloadArbitrationTest,
        OfferForAnAlreadySealedPacketIsRefused) {
     auto metadataRing = MakeMetadataRing();
     PrimeRebindable(metadataRing);
-    PointAt(6);
+    PointAt(kSeal - 2);
 
-    ASSERT_TRUE(OfferLateImage(metadataRing, 20));
+    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal + 12));
 
     bool lateOfferPlaced = false;
     bool interleaved = false;
     bool producerAccepted = true;
     interposed_->onPublish = [&](const std::byte* published) {
-        if (published == reinterpret_cast<const std::byte*>(ImageBytes(20, 1))) {
+        if (published == reinterpret_cast<const std::byte*>(ImageBytes(kSeal + 12, 1))) {
             // The selection pass is past packet 13 by now, so this offer can
             // only be taken up by the finality pass.
-            lateOfferPlaced = OfferLateImage(metadataRing, 13);
+            lateOfferPlaced = OfferLateImage(metadataRing, kSeal + 5);
             return;
         }
-        if (published == reinterpret_cast<const std::byte*>(ImageBytes(13, 1))) {
+        if (published == reinterpret_cast<const std::byte*>(ImageBytes(kSeal + 5, 1))) {
             // Packet 8 was sealed at the top of that same finality pass.
             interleaved = true;
-            producerAccepted = OfferLateImage(metadataRing, 8);
+            producerAccepted = OfferLateImage(metadataRing, kSeal);
         }
     };
 
@@ -1720,11 +1735,11 @@ TEST_F(IsochTxPayloadArbitrationTest,
     ASSERT_TRUE(outcome.ok);
     ASSERT_TRUE(lateOfferPlaced);
     ASSERT_TRUE(interleaved);
-    ASSERT_EQ(outcome.finalizedEnd, 14U);
+    ASSERT_EQ(outcome.finalizedEnd, 2 * kSeal - 2);
 
     EXPECT_FALSE(producerAccepted);
-    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 0U);
-    EXPECT_EQ(metadataRing[13].selectedPayloadImage, 1U);
+    EXPECT_EQ(metadataRing[kSeal].selectedPayloadImage, 0U);
+    EXPECT_EQ(metadataRing[kSeal + 5].selectedPayloadImage, 1U);
 }
 
 // A packet inside the live-command guard cannot be repointed, so an image
@@ -1734,24 +1749,24 @@ TEST_F(IsochTxPayloadArbitrationTest,
        ImageDiscardedInsideTheGuardIsCountedAsALostPublication) {
     auto metadataRing = MakeMetadataRing();
     PrimeRebindable(metadataRing);
-    PointAt(6);
+    PointAt(kSeal - 2);
     ASSERT_TRUE(Refill(metadataRing).ok);
-    ASSERT_EQ(primeControl_.finalizedEnd.load(), 14U);
+    ASSERT_EQ(primeControl_.finalizedEnd.load(), 2 * kSeal - 2);
 
     // Packet 16 is open: beyond the frontier and outside the guard.
-    ASSERT_TRUE(OfferLateImage(metadataRing, 16));
+    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal + 8));
 
     // The controller then jumps a full completion group, putting packet 16
     // inside the guard before transport ever gets to bind it.
-    PointAt(15);
+    PointAt(kSeal + 7);
     const auto outcome = Refill(metadataRing);
     ASSERT_TRUE(outcome.ok);
 
-    EXPECT_EQ(metadataRing[16].selectedPayloadImage, 0U);
+    EXPECT_EQ(metadataRing[kSeal + 8].selectedPayloadImage, 0U);
     EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
     EXPECT_EQ(primeControl_.latePayloadLostPublicationCount.load(), 1U);
     // And the packet stays refused from now on.
-    EXPECT_FALSE(OfferLateImage(metadataRing, 16));
+    EXPECT_FALSE(OfferLateImage(metadataRing, kSeal + 8));
 }
 
 // The controller can advance while transport is publishing the alternate image.
@@ -1763,16 +1778,16 @@ TEST_F(IsochTxPayloadArbitrationTest,
        RebindIsAbandonedWhenTheControllerReachesThePacketDuringPublication) {
     auto metadataRing = MakeMetadataRing();
     PrimeRebindable(metadataRing);
-    PointAt(6);
-    ASSERT_TRUE(OfferLateImage(metadataRing, 8));
+    PointAt(kSeal - 2);
+    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal));
 
     bool advanced = false;
     interposed_->onPublish = [&](const std::byte* published) {
-        if (published != reinterpret_cast<const std::byte*>(ImageBytes(8, 1))) {
+        if (published != reinterpret_cast<const std::byte*>(ImageBytes(kSeal, 1))) {
             return;
         }
         // Hardware proceeds during the delay after the MMIO snapshot.
-        PointAt(8);
+        PointAt(kSeal);
         advanced = true;
     };
 
@@ -1784,7 +1799,7 @@ TEST_F(IsochTxPayloadArbitrationTest,
     // retried and re-counted by the finality pass.
     EXPECT_EQ(outcome.latePayloadRebindMissedDeadline, 1U);
     EXPECT_EQ(outcome.latePayloadRebinds, 0U);
-    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 0U);
+    EXPECT_EQ(metadataRing[kSeal].selectedPayloadImage, 0U);
     // And the producer's image is booked as the lost publication it is.
     EXPECT_EQ(outcome.latePayloadLostPublications, 1U);
     // No margin was claimed, because none was ever verified.
@@ -1798,14 +1813,14 @@ TEST_F(IsochTxPayloadArbitrationTest,
        AcceptedRebindReportsTheMarginItVerified) {
     auto metadataRing = MakeMetadataRing();
     PrimeRebindable(metadataRing);
-    PointAt(6);
-    ASSERT_TRUE(OfferLateImage(metadataRing, 8));
+    PointAt(kSeal - 2);
+    ASSERT_TRUE(OfferLateImage(metadataRing, kSeal));
 
     const auto outcome = Refill(metadataRing);
     ASSERT_TRUE(outcome.ok);
     EXPECT_EQ(outcome.latePayloadRebinds, 1U);
     EXPECT_EQ(outcome.latePayloadRebindMissedDeadline, 0U);
-    EXPECT_EQ(metadataRing[8].selectedPayloadImage, 1U);
+    EXPECT_EQ(metadataRing[kSeal].selectedPayloadImage, 1U);
     EXPECT_EQ(primeControl_.minimumLatePayloadRebindDistance.load(), 2U);
 }
 

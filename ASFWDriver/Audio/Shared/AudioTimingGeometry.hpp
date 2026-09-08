@@ -46,23 +46,51 @@ struct AudioTimingGeometry final {
 
     // Blocking AMDTP cadence at 48k: D,D,D,N over 4 packets, 8 frames per
     // data packet => 24 frames per cadence block (6 frames/packet average).
+    //
+    // The block is 4 packets at every supported rate, because SYT_INTERVAL
+    // scales with the rate: 8 frames/packet at 1x, 16 at 2x, 32 at 4x, so all
+    // three run 6000 DATA packets per second against 8000 cycles. That is what
+    // makes a fixed phase possible at all, and it is exactly what the 44.1 kHz
+    // family cannot have: 44100/8 = 5512.5 DATA packets per second is
+    // fractional by construction, so no completion group and no ZTS period can
+    // hold a constant offset inside the cadence. If 44.1 k is ever supported,
+    // the asserts below do not merely need new values -- fixed-phase alignment
+    // is off the table there, and the clock strategy has to tolerate a phase
+    // that walks.
     static constexpr uint32_t kFramesPerDataPacket = 8;
     static constexpr uint32_t kCadenceBlockPackets = 4;
     static constexpr uint32_t kCadenceBlockFrames = 24;
 
     // DMA completion cadence is deliberately independent from the HAL ZTS
-    // grid. Six FireWire cycles give 0.75 ms refill latency. Depending on the
-    // D/D/D/N starting phase, one interrupt carries 32 or 40 decoded frames.
+    // grid. Eight FireWire cycles give 1.0 ms refill latency, and eight is
+    // two whole D,D,D,N cadence blocks, so the yield is phase-independent:
+    // every interrupt carries exactly 6 DATA packets. It was 6 packets
+    // (750 us) until 2026-09-08, which straddled the pattern and delivered
+    // 32 or 40 frames depending on where the group started.
     static constexpr uint32_t kRxPacketsPerGroup =
         ::ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup;
     static constexpr uint32_t kTxPacketsPerGroup =
         ::ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup;
     static constexpr uint32_t kTimingGroupPackets = kRxPacketsPerGroup;
 
-    static constexpr uint32_t kMinimumNominalFramesPerInterrupt = 32;
-    static constexpr uint32_t kMaximumNominalFramesPerInterrupt = 40;
+    static constexpr uint32_t kDataPacketsPerCadenceBlock =
+        kCadenceBlockFrames / kFramesPerDataPacket;
+    static constexpr uint32_t kCadenceBlocksPerTimingGroup =
+        kTimingGroupPackets / kCadenceBlockPackets;
+    static constexpr uint32_t kFramesPerTimingGroup =
+        kCadenceBlocksPerTimingGroup * kCadenceBlockFrames;
+
+    // Equal by construction now that the group is a whole number of cadence
+    // blocks -- the min/max spread only existed because 6 packets straddled
+    // the pattern. Kept as three names because AudioGeometryReport and its
+    // static_asserts still speak in min/max terms; collapsing them to one is
+    // a follow-up, not part of this change.
+    static constexpr uint32_t kMinimumNominalFramesPerInterrupt =
+        kFramesPerTimingGroup;
+    static constexpr uint32_t kMaximumNominalFramesPerInterrupt =
+        kFramesPerTimingGroup;
     static constexpr uint32_t kNominalFramesPerTimingGroup =
-        36;
+        kFramesPerTimingGroup;
 
     // HAL-facing geometry is selected as one compile-time profile because the
     // frame ring sizes cross-process shared memory.
@@ -84,7 +112,7 @@ struct AudioTimingGeometry final {
 
     // Exactly one HAL revolution of immutable, epoch-keyed PCM. This is byte
     // retention only; it has no scheduling or latency meaning.
-    static constexpr uint32_t kPcmPublicationCacheFrames = 8'192;
+    static constexpr uint32_t kPcmPublicationCacheFrames = kFrameRingFrames;
 
     // Packet-domain TX policy. The 48-slot ownership guard protects descriptors
     // already visible to OHCI. The 96-slot dispatch allowance keeps a measured
@@ -237,6 +265,26 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kTimelineSlots = kTxSharedSlotPackets;
 };
 
+// The zero-timestamp period must have exactly one definition. It had two --
+// this one and a literal inside HardwareSampleTimeline -- and only one of
+// them moved, so the driver anchored on a different grid than the HAL was
+// told about. That header now derives from this constant.
+// The two constraints that 8192 silently violated until 2026-09-08. Both are
+// build-time because the runtime symptom is a ~280 us zero-timestamp anomaly
+// six months later, not a failure anyone can trace back to a constant.
+static_assert(AudioTimingGeometry::kTimingGroupPackets %
+                  AudioTimingGeometry::kCadenceBlockPackets ==
+              0,
+              "Completion group must be a whole number of AMDTP cadence "
+              "blocks, or frames per interrupt depends on the D,D,D,N phase");
+static_assert(AudioTimingGeometry::kHalZeroTimestampPeriodFrames %
+                  (AudioTimingGeometry::kCadenceBlocksPerTimingGroup *
+                   AudioTimingGeometry::kDataPacketsPerCadenceBlock *
+                   kMaxBlockingFramesPerDataPacket) ==
+              0,
+              "ZTS period must be a whole number of completion groups at "
+              "every supported rate (192 frames at 4x), or the boundary "
+              "walks the group instead of holding a fixed offset in it");
 static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kHalIoPeriodFrames ==
               0,

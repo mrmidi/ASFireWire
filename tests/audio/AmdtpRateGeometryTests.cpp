@@ -45,13 +45,16 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
         Geometry::kHalZeroTimestampPeriodFrames,
         profile.zeroTimestampPeriodFrames);
     EXPECT_EQ(Geometry::kFrameAlignment, 32U);
-    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 6U);
-    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 6U);
-    EXPECT_EQ(Geometry::kMinimumNominalFramesPerInterrupt, 32U);
-    EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 40U);
-    EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
+    // Eight packets is two whole D,D,D,N cadence blocks, so the interrupt
+    // yield is phase-independent: min == max == 48 frames at 1x. It was 6
+    // packets and 32/40/36 until 2026-09-08.
+    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 8U);
+    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 8U);
+    EXPECT_EQ(Geometry::kMinimumNominalFramesPerInterrupt, 48U);
+    EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 48U);
+    EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 48U);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
-    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 8192U);
+    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 12288U);
     EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1512U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 504U);
     EXPECT_EQ(Geometry::kTxPreparationLatencyHistogramBuckets, 6U);
@@ -96,11 +99,11 @@ TEST(AudioTimingGeometryTests, V3PublishesOnlyExactIntegerTickRates) {
 
 TEST(AudioTimingGeometryTests, HalBufferProfileIsGlobalV3Geometry) {
     using namespace ASFW::Audio::Shared;
-    EXPECT_EQ(kAudioHalBufferProfileV3.frameRingFrames, 8192U);
-    EXPECT_EQ(kAudioHalBufferProfileV3.clientIoBudgetFrames, 512U);
-    EXPECT_EQ(kAudioHalBufferProfileV3.zeroTimestampPeriodFrames, 8192U);
+    EXPECT_EQ(kAudioHalBufferProfileV3.frameRingFrames, 12288U);
+    EXPECT_EQ(kAudioHalBufferProfileV3.clientIoBudgetFrames, 1024U);
+    EXPECT_EQ(kAudioHalBufferProfileV3.zeroTimestampPeriodFrames, 12288U);
     EXPECT_TRUE(IsValidAudioHalBufferProfile(kActiveAudioHalBufferProfile));
-    EXPECT_EQ(kActiveAudioHalBufferProfile.frameRingFrames, 8192U);
+    EXPECT_EQ(kActiveAudioHalBufferProfile.frameRingFrames, 12288U);
 }
 
 } // namespace

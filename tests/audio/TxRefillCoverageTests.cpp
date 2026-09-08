@@ -40,12 +40,23 @@ constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     //
 constexpr uint32_t kCoverageLead = AudioTimingGeometry::kTxCoverageLeadPackets; // 1008
 constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 1008
 constexpr uint32_t kGroup = AudioTimingGeometry::kTxPacketsPerGroup;          // 6
-constexpr uint32_t kBudgetGroups = (kCoverageLead - kHwRing) / kGroup;        // 84
+constexpr uint32_t kBudgetGroups = (kCoverageLead - kHwRing) / kGroup;        // 63
+
+// Historical facts, pinned so they stay true when live geometry moves. The
+// completion group was 6 packets when the IT FATAL below was captured; the
+// field dispatch stalls consumed 40 and 42 packets. Both were previously
+// written against the live kGroup, so the 6 -> 8 change (2026-09-08) silently
+// redefined what the regression tests were pinning.
+constexpr uint32_t kHistoricalGroup = 6;
+constexpr uint32_t kCapturedStallPackets = 42;
+constexpr uint32_t kStallGroups =
+    (kCapturedStallPackets + kGroup - 1) / kGroup;
+constexpr uint32_t kStallCoveredPackets = kStallGroups * kGroup;
 
 // The historical pre-fix lead (slack == 2*group) the hardware IT FATAL was
 // captured at (deltaConsumed=13 holed it). Used to pin the bug independently
 // of the now-corrected live geometry.
-constexpr uint32_t kOldLead = kHwRing + 2 * kGroup;  // 60
+constexpr uint32_t kOldLead = kHwRing + 2 * kHistoricalGroup;  // 516
 
 constexpr uint64_t kNoMiss = UINT64_MAX;
 
@@ -164,12 +175,14 @@ TEST(TxRefillCoverage, FullRingPrefillCoversDelayedStartupProducer) {
     RefillSim sim(kNumSlots, kCoverageLead, kHwRing);
     sim.PrefillFullSharedRing();
 
-    // Captured failure: seven six-packet groups completed before the producer
-    // action ran. The former lead-only prefill failed at packet 84.
-    for (uint32_t group = 0; group < 7; ++group) {
+    // Captured failure: 42 packets completed before the producer action ran.
+    // The former lead-only prefill failed at packet 84. Expressed in packets,
+    // not groups, so the group size can move without changing the fact.
+    for (uint32_t group = 0; group < kStallGroups; ++group) {
         EXPECT_EQ(sim.Refill(kGroup), kNoMiss) << "group=" << group;
     }
-    EXPECT_EQ(sim.Completion(), 42U);
+    EXPECT_GE(sim.Completion(), kCapturedStallPackets);
+    EXPECT_EQ(sim.Completion(), kStallCoveredPackets);
     EXPECT_EQ(sim.Expose(), kNumSlots);
 
     // Once the producer starts, the normal completion+coverage target takes over
@@ -185,18 +198,18 @@ TEST(TxRefillCoverage, CurrentGeometryCoversCapturedDispatchStall) {
     sim.RunProducer();
 
     // The field failures consumed 40 and 42 packets while the producer action
-    // was delayed. Seven complete groups must remain comfortably covered.
-    for (uint32_t group = 0; group < 7; ++group) {
+    // was delayed. Whole groups spanning that must remain comfortably covered.
+    for (uint32_t group = 0; group < kStallGroups; ++group) {
         EXPECT_EQ(sim.Refill(kGroup), kNoMiss) << "group=" << group;
     }
-    EXPECT_EQ(sim.Completion(), 42U);
-    EXPECT_EQ(sim.CommittedMargin(), kCoverageLead - 42U);
+    EXPECT_GE(sim.Completion(), kCapturedStallPackets);
+    EXPECT_EQ(sim.CommittedMargin(), kCoverageLead - kStallCoveredPackets);
 }
 
 TEST(TxRefillCoverage, TwoGroupCoalesceCoveredAtOldLead) {
     // 12 packets/refill == the exact OLD budget (lead 60); covered with zero
     // spare — matches the field [TxPrep] margin pinned at 48 before the fix.
-    EXPECT_EQ(DriveSteady(kOldLead, kHwRing, 2 * kGroup, /*cycles=*/8000), kNoMiss);
+    EXPECT_EQ(DriveSteady(kOldLead, kHwRing, 2 * kHistoricalGroup, /*cycles=*/8000), kNoMiss);
 }
 
 // -----------------------------------------------------------------------------
@@ -206,13 +219,13 @@ TEST(TxRefillCoverage, TwoGroupCoalesceCoveredAtOldLead) {
 // -----------------------------------------------------------------------------
 
 TEST(TxRefillCoverage, ThreeGroupCoalesceHolesAtOldLead) {
-    const uint64_t miss = DriveSteady(kOldLead, kHwRing, 3 * kGroup, /*cycles=*/8);
+    const uint64_t miss = DriveSteady(kOldLead, kHwRing, 3 * kHistoricalGroup, /*cycles=*/8);
     EXPECT_NE(miss, kNoMiss)
         << "18-packet coalesced refill must overrun the old 60-packet lead";
 }
 
 TEST(TxRefillCoverage, FourGroupCoalesceHolesAtOldLead) {
-    EXPECT_NE(DriveSteady(kOldLead, kHwRing, 4 * kGroup, /*cycles=*/8), kNoMiss);
+    EXPECT_NE(DriveSteady(kOldLead, kHwRing, 4 * kHistoricalGroup, /*cycles=*/8), kNoMiss);
 }
 
 TEST(TxRefillCoverage, HardwareCapturedDeltaThirteenHolesAtOldLead) {
@@ -229,7 +242,8 @@ TEST(TxRefillCoverage, OccasionalCoalesceAmongNominalStillHolesAtOldLead) {
     sim.RunProducer();
     uint64_t miss = kNoMiss;
     for (uint32_t c = 0; c < 200 && miss == kNoMiss; ++c) {
-        const uint32_t delta = (c % 20 == 19) ? 3 * kGroup : kGroup;
+        const uint32_t delta =
+            (c % 20 == 19) ? 3 * kHistoricalGroup : kHistoricalGroup;
         miss = sim.Refill(delta);
         sim.RunProducer();
     }
@@ -301,7 +315,11 @@ TEST(TxRefillCoverage, CoverageBoundMatchesGeometryConstants) {
     EXPECT_EQ(kLead - kHwRing,
               AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets);
     EXPECT_EQ(kLead, kCoverageLead);
-    EXPECT_EQ(kBudgetGroups, 84u);
+    // The slack is a full ring lap in PACKETS; the group count it buys is a
+    // consequence of the group size, not an independent constant. It read 84
+    // at a 6-packet group and reads 63 at 8.
+    EXPECT_EQ(kCoverageLead - kHwRing, kHwRing);
+    EXPECT_EQ(kBudgetGroups, kHwRing / kGroup);
     EXPECT_EQ(kLead + kHwRing, kNumSlots);
     // TX and RX descriptor rings are deliberately the same depth.
     EXPECT_EQ(kHwRing, ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets);

@@ -222,10 +222,12 @@ TEST(RxDrivenTimingTests, ReplayCannotEstablishWithoutHalfRingHistory) {
     EXPECT_FALSE(replay.IsEstablished());
 }
 
-TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
-    EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 6U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 6U);
-    EXPECT_EQ(AudioTimingGeometry::kMaximumNominalFramesPerInterrupt, 40U);
+TEST(RxDrivenTimingTests, GeometryUsesEightCycleInterruptsAndCurrentTxDepths) {
+    EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 8U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 8U);
+    // min == max now: eight packets is two whole cadence blocks.
+    EXPECT_EQ(AudioTimingGeometry::kMinimumNominalFramesPerInterrupt, 48U);
+    EXPECT_EQ(AudioTimingGeometry::kMaximumNominalFramesPerInterrupt, 48U);
     EXPECT_EQ(
         AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
         ASFW::Audio::Shared::kActiveAudioHalBufferProfile
@@ -240,11 +242,14 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
 
 TEST(RxDrivenTimingTests, OutputSafetyIsTheContentFreezeLeadNotTheArmHorizon) {
     using Policy = ASFW::Audio::Shared::AudioGeometryPolicy;
-    // Eight content-finality slots, not the 120-slot arm horizon. Backend
-    // transfer delay is latency and is not counted again as safety.
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(50, 48'000), 50U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000), 96U);
-    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000), 192U);
+    // Ten content-finality slots (8-packet group + 2-packet repoint guard),
+    // not the arm horizon. Backend transfer delay is latency and is not
+    // counted again as safety. The frontier now exceeds every profile floor
+    // passed here, so it sets the offset itself: +10/+24/+48 frames versus
+    // the 6-packet group, which is the priced cost of the 1 ms interrupt.
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(50, 48'000), 60U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(96, 96'000), 120U);
+    EXPECT_EQ(Policy::RequiredOutputSafetyFrames(192, 192'000), 240U);
     EXPECT_EQ(Policy::RequiredOutputSafetyFrames(48, 44'100),
               0U);
 }

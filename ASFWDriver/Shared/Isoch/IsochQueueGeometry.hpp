@@ -9,7 +9,18 @@ namespace ASFW::Shared::Isoch {
 // completions are grouped. They carry no content format, frame, clock, or
 // device semantics and apply to every producer that uses the shared TX queue.
 struct IsochQueueGeometry final {
-    static constexpr uint32_t kPacketsPerCompletionGroup = 6;
+    // Completion grouping, in packets == isoch cycles (125 us each).
+    //
+    // Was 6 (750 us) until 2026-09-08. Six is not a whole number of AMDTP
+    // cadence blocks -- at 48k the blocking cadence repeats D,D,D,N over 4
+    // packets, so a 6-packet window straddles the pattern and carries 4 or 5
+    // DATA packets depending on phase (32 or 40 frames). Eight is two whole
+    // blocks, so every interrupt carries exactly 6 DATA packets at any phase:
+    // a constant 48 frames at 1x, 96 at 2x, 192 at 4x. That constant is what
+    // lets the HAL zero-timestamp boundary land at a fixed offset inside the
+    // group instead of walking, and it costs 25% fewer interrupts (1.0 ms
+    // instead of 750 us). kTransmitInFlightPackets stays divisible: 504/8=63.
+    static constexpr uint32_t kPacketsPerCompletionGroup = 8;
     // Transmit descriptor ring depth, and therefore the DMA runway: transport
     // keeps mappedEnd at completionCursor + this, the queue is zero-terminated,
     // and a consumer that finishes everything mapped before refill runs takes a

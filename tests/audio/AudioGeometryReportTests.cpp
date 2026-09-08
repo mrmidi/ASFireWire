@@ -48,14 +48,14 @@ TEST(AudioGeometryReport, CadenceWindowCountsEveryStartingPhase) {
 TEST(AudioGeometryReport, InterruptCadenceIsRateIndependent) {
     for (uint32_t rate : {48'000U, 96'000U, 192'000U}) {
         const auto g = DeriveGeometryReport(rate);
-        EXPECT_EQ(g.txInterruptIntervalMicroseconds, 750U) << "rate " << rate;
-        EXPECT_EQ(g.rxInterruptIntervalMicroseconds, 750U) << "rate " << rate;
-        EXPECT_EQ(g.txPacketsPerGroup, 6U);
-        EXPECT_EQ(g.rxPacketsPerGroup, 6U);
-        // 8000 / 6 = 1333.33 per second. The interval is the exact quantity;
-        // an integer rate would round away 0.33 and misreport the cadence by
-        // ~2.5 interrupts a second in each direction.
-        EXPECT_EQ(1'000'000U / g.txInterruptIntervalMicroseconds, 1'333U);
+        EXPECT_EQ(g.txInterruptIntervalMicroseconds, 1'000U) << "rate " << rate;
+        EXPECT_EQ(g.rxInterruptIntervalMicroseconds, 1'000U) << "rate " << rate;
+        EXPECT_EQ(g.txPacketsPerGroup, 8U);
+        EXPECT_EQ(g.rxPacketsPerGroup, 8U);
+        // 8000 / 8 = 1000 per second exactly. At the former 6-packet group
+        // this was 1333.33 and the fractional part was the reason the panel
+        // reports the interval rather than a rounded rate.
+        EXPECT_EQ(1'000'000U / g.txInterruptIntervalMicroseconds, 1'000U);
     }
 }
 
@@ -65,9 +65,13 @@ TEST(AudioGeometryReport, FramesPerInterruptScaleWithTheRate) {
     struct Row {
         uint32_t rate, framesPerDataPacket, nominal, minimum, maximum;
     };
-    for (const Row row : {Row{48'000, 8, 36, 32, 40},
-                          Row{96'000, 16, 72, 64, 80},
-                          Row{192'000, 32, 144, 128, 160}}) {
+    // min == nominal == max since the group became two whole cadence blocks
+    // (2026-09-08). The swing existed only because 6 packets straddled the
+    // D,D,D,N pattern; the rows are kept in min/nominal/max form so a future
+    // group that reintroduces a swing still has somewhere to express it.
+    for (const Row row : {Row{48'000, 8, 48, 48, 48},
+                          Row{96'000, 16, 96, 96, 96},
+                          Row{192'000, 32, 192, 192, 192}}) {
         const auto g = DeriveGeometryReport(row.rate);
         EXPECT_EQ(g.framesPerDataPacket, row.framesPerDataPacket);
         EXPECT_EQ(g.framesPerCompletionGroupRx, row.nominal) << row.rate;
@@ -105,7 +109,7 @@ TEST(AudioGeometryReport, UnsupportedRatesReportNoCadenceAtAll) {
                   AudioTimingGeometry::kTxDispatchSlackFloorPackets);
         EXPECT_EQ(g.rxHardwareRingPackets,
                   AudioTimingGeometry::kRxHardwareRingPackets);
-        EXPECT_EQ(g.txInterruptIntervalMicroseconds, 750U);
+        EXPECT_EQ(g.txInterruptIntervalMicroseconds, 1'000U);
     }
 }
 

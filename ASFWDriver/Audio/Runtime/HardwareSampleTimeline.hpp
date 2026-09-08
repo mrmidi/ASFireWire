@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Common/TimingUtils.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -67,7 +68,15 @@ struct TxPresentationRange final {
 // independently single-writer on the serialized preparation queue.
 class HardwareSampleTimeline final {
 public:
-    static constexpr uint32_t kZeroTimestampPeriodFrames = 8'192;
+    // THE period the HAL was told, not a second copy of it. This was a
+    // literal 8'192 and stayed 8'192 when the profile moved to 12'288
+    // (2026-09-08), so the driver published an anchor every 8192 frames
+    // while CoreAudio expected one every 12288. HAL reported it as "a
+    // discontinuity in the devices samples" plus a reanchor, ~5.9 times a
+    // second -- exactly 48000/8192 -- and the audio clicked.
+    static constexpr uint32_t kZeroTimestampPeriodFrames =
+        ASFW::Audio::Shared::AudioTimingGeometry::
+            kHalZeroTimestampPeriodFrames;
 
     [[nodiscard]] static constexpr uint32_t NominalBusTicksPerFrame(
         uint32_t sampleRateHz) noexcept {

@@ -586,10 +586,12 @@ TEST(ResolvedProfileBuilder, DefaultTimingCoversOneCompletionBatchAtEveryRate) {
             << "rate " << timing.sampleRateHz;
     }
 
-    // The ladder is 6 packets x frames-per-DATA-packet (8/16/32).
-    EXPECT_EQ(Policy::CompletionBatchFrames(48'000), 48U);
-    EXPECT_EQ(Policy::CompletionBatchFrames(96'000), 96U);
-    EXPECT_EQ(Policy::CompletionBatchFrames(192'000), 192U);
+    // The ladder is 8 packets x frames-per-DATA-packet (8/16/32). It was 6
+    // packets until 2026-09-08; eight is two whole D,D,D,N cadence blocks so
+    // the batch is phase-independent at every rate.
+    EXPECT_EQ(Policy::CompletionBatchFrames(48'000), 64U);
+    EXPECT_EQ(Policy::CompletionBatchFrames(96'000), 128U);
+    EXPECT_EQ(Policy::CompletionBatchFrames(192'000), 256U);
 }
 
 // The generic AVC builder sets no timing of its own, so it is the path that

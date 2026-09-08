@@ -12,6 +12,12 @@
 namespace {
 using namespace ASFW::Audio::Runtime;
 
+// The ZTS period is geometry, not a literal. These scenarios straddle a
+// boundary, so they are positioned against it -- writing 8192 here is what
+// let the driver and the HAL disagree about the grid in the first place.
+constexpr uint64_t kPeriod =
+    HardwareSampleTimeline::kZeroTimestampPeriodFrames;
+
 struct TimebaseGuard final {
     mach_timebase_info_data_t old{ASFW::Timing::gHostTimebaseInfo};
     TimebaseGuard() { ASFW::Timing::gHostTimebaseInfo = {1, 1}; }
@@ -38,14 +44,14 @@ TEST(HardwareSampleTimelineTests, ProjectsBoundaryInsidePacketAtEveryV3Rate) {
         EXPECT_EQ(timeline.Observe({
                       .epoch = epoch,
                       .source = HardwareTimelineSource::Receive,
-                      .sampleFrame = 8'184,
+                      .sampleFrame = kPeriod - 8,
                       .frameCount = 16,
                       .presentationBusTicks = kPresentationBus,
                       .correlationBusTicks = kPresentationBus,
                       .correlationHostTicks = kHost,
                   }, &boundary),
                   HardwareObservationResult::BoundaryReady);
-        EXPECT_EQ(boundary.sampleFrame, 8'192U);
+        EXPECT_EQ(boundary.sampleFrame, kPeriod);
         EXPECT_EQ(boundary.hostTicks,
                   kHost + BusDeltaAsHostTicks(8ULL * nominal));
     }
@@ -63,7 +69,7 @@ TEST(HardwareSampleTimelineTests,
     ASSERT_EQ(timeline.Observe({
                   .epoch = epoch,
                   .source = HardwareTimelineSource::Receive,
-                  .sampleFrame = 8'184,
+                  .sampleFrame = kPeriod - 8,
                   .frameCount = 16,
                   .presentationBusTicks = 5'000'000,
                   .correlationBusTicks = 5'000'000,
@@ -77,17 +83,17 @@ TEST(HardwareSampleTimelineTests,
     ASSERT_EQ(timeline.Observe({
                   .epoch = epoch,
                   .source = HardwareTimelineSource::Receive,
-                  .sampleFrame = 16'376,
+                  .sampleFrame = 2 * kPeriod - 8,
                   .frameCount = 16,
                   .presentationBusTicks = 9'195'000,
                   .correlationBusTicks = 9'195'000,
                   .correlationHostTicks = 220'123'456,
               }, &second), HardwareObservationResult::BoundaryReady);
-    EXPECT_EQ(second.sampleFrame, 16'384U);
+    EXPECT_EQ(second.sampleFrame, 2 * kPeriod);
     EXPECT_EQ(second.hostTicks,
               220'123'456U + BusDeltaAsHostTicks(8ULL * 512));
     EXPECT_NE(second.hostTicks - first.hostTicks,
-              BusDeltaAsHostTicks(8'192ULL * 512));
+              BusDeltaAsHostTicks(kPeriod * 512));
 }
 
 TEST(HardwareSampleTimelineTests, SuppressesDuplicateBoundaryWithinEpoch) {
@@ -99,7 +105,7 @@ TEST(HardwareSampleTimelineTests, SuppressesDuplicateBoundaryWithinEpoch) {
     const HardwarePresentationObservation observation{
         .epoch = epoch,
         .source = HardwareTimelineSource::Transmit,
-        .sampleFrame = 8'190,
+        .sampleFrame = kPeriod - 2,
         .frameCount = 4,
         .presentationBusTicks = 100'000,
         .correlationBusTicks = 100'000,
@@ -141,7 +147,7 @@ TEST(HardwareSampleTimelineTests, EpochChangeRejectsOldObservationsAndRanges) {
         HardwareTimelineDiscontinuity::StartIO, 48'000, 0);
     const uint64_t newEpoch = timeline.BeginEpoch(
         HardwareTimelineSource::Transmit,
-        HardwareTimelineDiscontinuity::BusGeneration, 48'000, 8'192);
+        HardwareTimelineDiscontinuity::BusGeneration, 48'000, kPeriod);
     EXPECT_GT(newEpoch, oldEpoch);
     EXPECT_EQ(timeline.Observe({
                   .epoch = oldEpoch,
@@ -155,7 +161,7 @@ TEST(HardwareSampleTimelineTests, EpochChangeRejectsOldObservationsAndRanges) {
     TxPresentationRange range{};
     EXPECT_FALSE(timeline.PreviewTxRange(oldEpoch, 100, 8, range));
     ASSERT_TRUE(timeline.PreviewTxRange(newEpoch, 100, 8, range));
-    EXPECT_EQ(range.firstAudioFrame, 8'192U);
+    EXPECT_EQ(range.firstAudioFrame, kPeriod);
 }
 
 
@@ -253,11 +259,12 @@ TEST(HardwareSampleTimelineTests, ObservingEveryDataPacketPublishesEveryBoundary
     TimebaseGuard timebase{};
     const auto drained = BoundariesObservedEvery(1);
 
-    // Two seconds of 48 kHz is 96000 frames, so every 8192-frame boundary from
-    // 0 up to and including 90112 must appear, in order and without gaps.
-    ASSERT_EQ(drained.size(), 12U);
+    // Two seconds of 48 kHz is 96000 frames, so every period boundary from 0
+    // must appear, in order and without gaps. Derived, so the count follows
+    // the geometry rather than pinning one era of it.
+    ASSERT_EQ(drained.size(), 96'000U / kPeriod + 1U);
     for (size_t i = 0; i < drained.size(); ++i) {
-        EXPECT_EQ(drained[i], static_cast<uint64_t>(i) * 8192U);
+        EXPECT_EQ(drained[i], static_cast<uint64_t>(i) * kPeriod);
     }
 }
 
@@ -268,12 +275,22 @@ TEST(HardwareSampleTimelineTests, ObservingOnlyTheNewestPacketOfAWakeLosesBounda
     // This is the defect the cursor exists to prevent, kept as an executable
     // statement of it: a boundary lands inside one packet, so an observer that
     // skips packets skips boundaries, and the first anchor arrives hundreds of
-    // milliseconds late. Six packets is one completion group.
-    for (const unsigned wakeGroup : {6U, 12U}) {
+    // milliseconds late. One completion group is eight packets.
+    for (const unsigned wakeGroup :
+         {ASFW::Shared::Isoch::IsochQueueGeometry::kPacketsPerCompletionGroup,
+          2U * ASFW::Shared::Isoch::IsochQueueGeometry::
+                   kPacketsPerCompletionGroup}) {
         const auto sparse = BoundariesObservedEvery(wakeGroup);
         EXPECT_LT(sparse.size(), drained.size()) << "wakeGroup=" << wakeGroup;
-        ASSERT_FALSE(sparse.empty()) << "wakeGroup=" << wakeGroup;
-        EXPECT_GT(sparse.front(), drained.front()) << "wakeGroup=" << wakeGroup;
+        // Losing EVERY boundary in the window is the same defect, more
+        // severe: one packet in 1536 carries a boundary at a 12288-frame
+        // period, so a skipping observer can miss the whole two seconds.
+        // The strict claim above still holds; only the ordering check needs
+        // a survivor to talk about.
+        if (!sparse.empty()) {
+            EXPECT_GT(sparse.front(), drained.front())
+                << "wakeGroup=" << wakeGroup;
+        }
     }
 }
 
