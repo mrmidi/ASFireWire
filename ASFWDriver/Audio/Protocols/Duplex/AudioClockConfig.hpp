@@ -23,7 +23,8 @@ struct AudioClockConfig {
     const AudioClockConfig& desiredClock) noexcept {
     return desiredClock.sampleRateHz == 32000U ||
            desiredClock.sampleRateHz == 44100U ||
-           desiredClock.sampleRateHz == 48000U;
+           desiredClock.sampleRateHz == 48000U ||
+           desiredClock.sampleRateHz == 96000U;
 }
 
 } // namespace ASFW::Audio

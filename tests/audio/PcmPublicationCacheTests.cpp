@@ -144,10 +144,9 @@ TEST(PcmPublicationCacheTests,
 
 TEST(PcmPublicationCacheTests, ProductionCacheMatchesHalRevolution) {
     using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
-    // 12288 since 2026-09-08: 8192 is not a whole number of AMDTP cadence
-    // blocks at any rate, so the ZTS boundary walked the completion group.
-    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 12288U);
-    EXPECT_EQ(Geometry::kFrameRingFrames, 12288U);
+    // 24576 since 96k support: accommodates 24576 ZTS period at 96k and 12288 at 48k.
+    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 24576U);
+    EXPECT_EQ(Geometry::kFrameRingFrames, 24576U);
     EXPECT_EQ(Geometry::kHalZeroTimestampPeriodFrames, 12288U);
     // The cache is exactly one HAL revolution, not an independent size.
     EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, Geometry::kFrameRingFrames);

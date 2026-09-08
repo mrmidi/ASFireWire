@@ -187,7 +187,8 @@ void HandlePendingTimelineEpoch(ASFWAudioDriver_IVars& ivars) noexcept {
 
     const uint64_t lastBoundary =
         control->hardwareTimeline.LastPublishedBoundary();
-    const uint64_t baseFrame = Timeline::NextBoundaryAfter(lastBoundary);
+    const uint64_t baseFrame =
+        control->hardwareTimeline.NextBoundary(lastBoundary);
     const uint32_t sampleRate = control->hardwareTimeline.SampleRateHz();
     const uint64_t epoch = control->hardwareTimeline.BeginEpoch(
         ASFW::Audio::Runtime::HardwareTimelineSource::Transmit,

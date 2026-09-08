@@ -234,14 +234,15 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     constexpr auto bufferProfile =
         ASFW::Audio::Shared::kActiveAudioHalBufferProfile;
     const uint32_t target_period =
-        ASFW::Audio::Shared::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+        ASFW::Audio::Shared::AudioTimingGeometry::ZeroTimestampPeriodFrames(
+            static_cast<uint32_t>(ivars.device.currentSampleRate));
     ASFW_LOG(
         Audio,
         "ASFWAudioDriver: HAL buffer profile=%{public}s ring=%u ioBudget=%u zts=%u",
         bufferProfile.name,
         bufferProfile.frameRingFrames,
         bufferProfile.clientIoBudgetFrames,
-        bufferProfile.zeroTimestampPeriodFrames);
+        target_period);
     ASFW_LOG(Audio, "ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: %u frames", target_period);
 
     ivars.audioDevice = OSSharedPtr(OSTypeAlloc(ASFWAudioDevice), OSNoRetain);
@@ -708,14 +709,11 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     const uint32_t configuredZtsPeriod =
         ivars.audioDevice->GetZeroTimestampPeriod();
-    constexpr uint32_t kExpectedZtsPeriod =
-        ASFW::Audio::Shared::AudioTimingGeometry::
-            kHalZeroTimestampPeriodFrames;
-    if (configuredZtsPeriod != kExpectedZtsPeriod) {
+    if (configuredZtsPeriod != target_period) {
         ASFW_LOG(
             Audio,
             "ADK FATAL graph op=device.GetZeroTimestampPeriod expected=%u actual=%u",
-            kExpectedZtsPeriod,
+            target_period,
             configuredZtsPeriod);
         return kIOReturnUnsupported;
     }
@@ -741,7 +739,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     effective.inputSafetyOffsetFrames = inSafety;
     effective.frameRingFrames = bufferProfile.frameRingFrames;
     effective.clientIoBudgetFrames = bufferProfile.clientIoBudgetFrames;
-    effective.zeroTimestampPeriodFrames = bufferProfile.zeroTimestampPeriodFrames;
+    effective.zeroTimestampPeriodFrames =
+        ASFW::Audio::Shared::AudioTimingGeometry::ZeroTimestampPeriodFrames(
+            static_cast<uint32_t>(ivars.device.currentSampleRate));
     ivars.runtime.activeTuning = effective;
     ivars.device.audioNub->PublishRuntimeTuningGraph(effective,
         static_cast<uint32_t>(ivars.device.currentSampleRate),

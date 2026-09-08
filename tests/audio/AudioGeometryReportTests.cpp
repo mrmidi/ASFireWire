@@ -177,4 +177,35 @@ TEST(AudioGeometryReport, RingDepthsConvertToTimeThroughTheCycleGrid) {
     EXPECT_EQ(g.rxHardwareRingPackets % g.rxPacketsPerGroup, 0U);
 }
 
+// ZTS period in frames doubles from 48k to 96k, strictly preserving 256.0 ms
+// time duration and maintaining exact integer completion group and cadence counts.
+TEST(AudioGeometryReport, ZeroTimestampPeriodScalesPreservingTime) {
+    const auto g48 = DeriveGeometryReport(48'000);
+    const auto g96 = DeriveGeometryReport(96'000);
+
+    EXPECT_EQ(g48.zeroTimestampPeriodFrames, 12'288U);
+    EXPECT_EQ(g96.zeroTimestampPeriodFrames, 24'576U);
+
+    // Both represent exactly 256.0 ms of audio.
+    EXPECT_EQ(static_cast<uint64_t>(g48.zeroTimestampPeriodFrames) * 1'000U / 48U, 256'000U);
+    EXPECT_EQ(static_cast<uint64_t>(g96.zeroTimestampPeriodFrames) * 1'000U / 96U, 256'000U);
+
+    // Both yield exactly 256 completion groups per ZTS period.
+    EXPECT_EQ(g48.zeroTimestampPeriodFrames / g48.framesPerCompletionGroupTx, 256U);
+    EXPECT_EQ(g96.zeroTimestampPeriodFrames / g96.framesPerCompletionGroupTx, 256U);
+
+    // Both yield exactly 512 cadence blocks per ZTS period.
+    EXPECT_EQ(g48.zeroTimestampPeriodFrames / g48.cadenceBlockFrames, 512U);
+    EXPECT_EQ(g96.zeroTimestampPeriodFrames / g96.cadenceBlockFrames, 512U);
+}
+
+// Blocking transfer delay is 12,800 ticks (520.83 us) across both 48k and 96k.
+TEST(AudioGeometryReport, TransferDelayPreservedForBlockingMode) {
+    for (uint32_t rate : {48'000U, 96'000U}) {
+        const auto g = DeriveGeometryReport(rate);
+        EXPECT_EQ(g.rxTransferDelayTicks, 12'800U) << "rate " << rate;
+        EXPECT_EQ(g.txTransferDelayTicks, 12'800U) << "rate " << rate;
+    }
+}
+
 } // namespace

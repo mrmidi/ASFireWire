@@ -60,6 +60,10 @@ public:
     // as gone; AcknowledgeDevicePresent reopens it after rediscovery.
     void CancelRemoteDevice(EndpointId endpointId) noexcept;
     void AcknowledgeDevicePresent(EndpointId endpointId) noexcept;
+    void SynchronizeCommittedConfiguration(
+        EndpointId endpointId,
+        const AudioClockConfig& clock,
+        const AudioStreamRuntimeCaps& runtimeCaps) noexcept;
     // Backend work queues use this before any device-side probe or recovery.
     // It covers both service teardown and a endpoint retired by discovery.
     [[nodiscard]] bool IsDeviceOperationCancelled(EndpointId endpointId) const noexcept;

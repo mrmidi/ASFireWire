@@ -124,6 +124,11 @@ struct AudioGeometryReport final {
     uint32_t rxSafetyOffsetPolicyFrames{0};
     uint32_t reportedLatencyPolicyFrames{0};
     uint32_t completionBatchFrames{0};
+
+    // --- zero-timestamp & transfer delay -------------------------------------
+    uint32_t zeroTimestampPeriodFrames{0};
+    uint32_t rxTransferDelayTicks{0};
+    uint32_t txTransferDelayTicks{0};
 };
 
 // `sampleRateHz` of zero, or any rate outside the V3 family, leaves every
@@ -192,6 +197,10 @@ struct AudioGeometryReport final {
     out.rxSafetyOffsetPolicyFrames = P::RxSafetyOffsetFrames(rate);
     out.reportedLatencyPolicyFrames = P::ReportedLatencyFrames(rate);
     out.completionBatchFrames = P::CompletionBatchFrames(rate);
+
+    out.zeroTimestampPeriodFrames = G::ZeroTimestampPeriodFrames(sampleRateHz);
+    out.rxTransferDelayTicks = 12'800;
+    out.txTransferDelayTicks = 12'800;
     return out;
 }
 
@@ -222,8 +231,36 @@ static_assert(DeriveGeometryReport(48'000).txRingLapFrames == 3'024,
               "48k TX ring lap must be 3024 frames");
 static_assert(DeriveGeometryReport(96'000).txRingLapFrames == 6'048,
               "the lattice quantum scales with the rate, not the ring");
+static_assert(DeriveGeometryReport(96'000).framesPerDataPacket == 16,
+              "96k blocking SYT interval must be 16 frames");
+static_assert(DeriveGeometryReport(96'000).framesPerCompletionGroupRx == 96,
+              "96k frames per completion group must be 96 frames");
+static_assert(DeriveGeometryReport(96'000).framesPerCompletionGroupTx == 96,
+              "96k frames per completion group must be 96 frames");
+static_assert(DeriveGeometryReport(96'000).cadenceBlockFrames == 48,
+              "96k cadence block must be 48 frames");
+static_assert(DeriveGeometryReport(96'000).txInterruptIntervalMicroseconds ==
+                  1'000,
+              "96k TX interrupt interval must remain 1000 microseconds");
+static_assert(DeriveGeometryReport(96'000).rxInterruptIntervalMicroseconds ==
+                  1'000,
+              "96k RX interrupt interval must remain 1000 microseconds");
+static_assert(DeriveGeometryReport(48'000).zeroTimestampPeriodFrames == 12'288,
+              "48k zero-timestamp period must be 12288 frames");
+static_assert(DeriveGeometryReport(96'000).zeroTimestampPeriodFrames == 24'576,
+              "96k zero-timestamp period must be 24576 frames");
+static_assert(DeriveGeometryReport(48'000).rxTransferDelayTicks == 12'800,
+              "48k RX transfer delay must be 12800 ticks");
+static_assert(DeriveGeometryReport(96'000).rxTransferDelayTicks == 12'800,
+              "96k RX transfer delay must be 12800 ticks");
+static_assert(DeriveGeometryReport(48'000).txTransferDelayTicks == 12'800,
+              "48k TX transfer delay must be 12800 ticks");
+static_assert(DeriveGeometryReport(96'000).txTransferDelayTicks == 12'800,
+              "96k TX transfer delay must be 12800 ticks");
 static_assert(DeriveGeometryReport(0).framesPerDataPacket == 0,
               "an unknown rate must not report the 48 kHz cadence");
+static_assert(DeriveGeometryReport(0).zeroTimestampPeriodFrames == 0,
+              "an unknown rate must not report a zero-timestamp period");
 static_assert(DeriveGeometryReport(0).txDispatchSlackFloorPackets ==
                   AudioTimingGeometry::kTxDispatchSlackFloorPackets,
               "rate-independent structure is reportable before streaming");

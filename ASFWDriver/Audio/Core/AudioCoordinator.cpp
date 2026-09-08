@@ -86,6 +86,10 @@ void AudioCoordinator::EndpointReady(
         return;
     }
     duplexCoordinator_.AcknowledgeDevicePresent(profile->endpointId);
+    duplexCoordinator_.SynchronizeCommittedConfiguration(
+        profile->endpointId,
+        AudioClockConfig{.sampleRateHz = profile->currentSampleRateHz},
+        profile->runtimeCaps);
     if (lock_) {
         IOLockLock(lock_);
         invalidatedEndpoints_.erase(profile->endpointId);
@@ -331,8 +335,14 @@ IOReturn AudioCoordinator::CommitDeviceConfiguration(
             confirmed.runtimeCaps.hostOutputPcmChannels) {
         return kIOReturnBadArgument;
     }
-    return endpoint->ApplyConfiguration(confirmed.runtimeCaps)
-        ? kIOReturnSuccess : kIOReturnError;
+    if (!endpoint->ApplyConfiguration(confirmed.runtimeCaps)) {
+        return kIOReturnError;
+    }
+    duplexCoordinator_.SynchronizeCommittedConfiguration(
+        endpointId,
+        AudioClockConfig{.sampleRateHz = confirmed.configuration.sampleRate},
+        confirmed.runtimeCaps);
+    return kIOReturnSuccess;
 }
 
 IOReturn AudioCoordinator::RequestRuntimeTuning(

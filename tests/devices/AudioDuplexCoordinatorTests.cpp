@@ -140,6 +140,8 @@ class NullFireWireBus final : public IFireWireBus {
 
 class FakeDirectAudioBindingSource final : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
   public:
+    uint32_t sampleRateHz{48000};
+
     bool CopyDirectAudioBinding(
         ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out.endpointId = kTestEndpointId;
@@ -152,7 +154,7 @@ class FakeDirectAudioBindingSource final : public ASFW::Audio::Runtime::IDirectA
         out.outputFrames = 512;
         out.outputChannels = 8;
         out.control = reinterpret_cast<ASFW::Audio::Runtime::AudioTransportControlBlock*>(0x9abc);
-        out.sampleRateHz = 48000;
+        out.sampleRateHz = sampleRateHz;
         return true;
     }
 };
@@ -1529,6 +1531,48 @@ TEST_F(AudioDuplexCoordinatorTests, MultiGenerationProgressionMatchingHardwareRe
     EXPECT_EQ(session->phase, DiceRestartPhase::kRunning);
     EXPECT_EQ(session->state, DiceRestartState::kRunning);
     EXPECT_TRUE(session->hostPlaybackReserved);
+}
+
+TEST_F(AudioDuplexCoordinatorTests,
+       StartStreamingRejectsWhenDesiredClockDisagreesWithPreparedHostGeometry) {
+    // The device/session is clocked at 48 kHz (default), but the host packetizer
+    // was prepared for 96 kHz. StartStreaming must reject this mismatch immediately
+    // rather than allowing duplex bringup to proceed with a rate split.
+    bindingSource_.sampleRateHz = 96000U;
+
+    EXPECT_EQ(coordinator_.StartStreaming(kTestEndpointId), kIOReturnUnsupported);
+    EXPECT_EQ(hostTransport_.beginCalls, 0);
+    EXPECT_EQ(protocol_->prepareCalls, 0);
+}
+
+TEST_F(AudioDuplexCoordinatorTests,
+       SynchronizeCommittedConfigurationUpdatesSessionAndStartStreamingAppliesIt) {
+    const auto record = registry_.UpsertFromROM(MakeConfigRom(kObservedGuid), LinkPolicy{});
+    auto prof = MakeProfile(record);
+    prof->supportedRates = {44100, 48000, 96000};
+    prof->supportedRateCount = 3;
+    runtime_.Clear();
+    ASSERT_NE(runtime_.InsertResolved(prof, protocol_), nullptr);
+
+    const AudioClockConfig rate96k{.sampleRateHz = 96000U};
+    AudioStreamRuntimeCaps caps96k = kDefaultRuntimeCaps;
+    caps96k.sampleRateHz = 96000;
+
+    coordinator_.SynchronizeCommittedConfiguration(kTestEndpointId, rate96k, caps96k);
+
+    auto session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->desiredClock.sampleRateHz, 96000U);
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 96000U);
+
+    // When the host is also prepared for 96 kHz, startup proceeds with 96 kHz.
+    bindingSource_.sampleRateHz = 96000U;
+    protocol_->healthStatusValue = 0x401; // DICE 96 kHz nominal rate (index 4 << 8 | 1)
+    EXPECT_EQ(coordinator_.StartStreaming(kTestEndpointId), kIOReturnSuccess);
+    EXPECT_EQ(protocol_->LastDesiredClock().sampleRateHz, 96000U);
+    session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->appliedClock.sampleRateHz, 96000U);
 }
 
 } // namespace

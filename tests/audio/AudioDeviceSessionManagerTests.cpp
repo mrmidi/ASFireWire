@@ -536,7 +536,7 @@ TEST(ResolvedProfileBuilder, ApogeeDuetPublishesAppleHalTimingAtBaseRates) {
     facts.streams.sampleRateHz = 48'000;
     facts.streams.deviceToHostStreamCount = 1;
     facts.streams.hostToDeviceStreamCount = 1;
-    facts.supportedRates = {44'100, 48'000};
+    facts.supportedRates = {44'100, 48'000, 96'000};
 
     const auto profile = ResolvedProfileBuilder::Build(
         ProfileBuildContext{AudioEndpointId{9}, record, plan, facts});
@@ -555,6 +555,15 @@ TEST(ResolvedProfileBuilder, ApogeeDuetPublishesAppleHalTimingAtBaseRates) {
     EXPECT_EQ(at480->outputLatencyFrames, 67U);
     EXPECT_EQ(at480->inputSafetyFrames, 50U);
     EXPECT_EQ(at480->outputSafetyFrames, 50U);
+
+    const auto* at960 = profile->TimingFor(96'000);
+    ASSERT_NE(at960, nullptr);
+    EXPECT_EQ(at960->inputLatencyFrames, 80U);
+    EXPECT_EQ(at960->outputLatencyFrames, 134U);
+    EXPECT_EQ(at960->inputSafetyFrames, 100U);
+    EXPECT_EQ(at960->outputSafetyFrames, 100U);
+    EXPECT_EQ(at960->rxTransferDelayTicks, 12800U);
+    EXPECT_EQ(at960->txTransferDelayTicks, 12800U);
 }
 
 // A profile that declares nothing must still get a capture visibility margin

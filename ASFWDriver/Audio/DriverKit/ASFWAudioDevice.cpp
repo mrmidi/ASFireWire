@@ -8,7 +8,9 @@
 #include <new>
 
 #include "ASFWAudioDevice.h"
+#include "../Shared/AudioGeometryPolicy.hpp"
 #include "../Shared/AudioRuntimeTuningStore.hpp"
+#include "../Shared/AudioTimingGeometry.hpp"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
@@ -908,7 +910,8 @@ OpticalModeFromWire(uint32_t raw) noexcept {
 [[nodiscard]] kern_return_t ApplyADKConfigurationProjection(
     ASFWAudioDevice& device, ASFWAudioDriver_IVars& driverIvars,
     const ASFW::Configuration::DeviceConfiguration& configuration,
-    uint32_t inputChannels, uint32_t outputChannels) noexcept {
+    uint32_t inputChannels, uint32_t outputChannels,
+    bool inPerformConfigurationChange) noexcept {
     const auto* capability = driverIvars.resolvedProfile.Value().ConfigurationFor(configuration);
     if (!capability || inputChannels != capability->runtimeCaps.hostInputPcmChannels ||
         outputChannels != capability->runtimeCaps.hostOutputPcmChannels ||
@@ -924,6 +927,32 @@ OpticalModeFromWire(uint32_t raw) noexcept {
     const uint32_t priorRate = static_cast<uint32_t>(device.GetSampleRate());
     kern_return_t kr = device.SetSampleRate(targetRate);
     if (kr != kIOReturnSuccess) return kr;
+    const uint32_t ztsPeriod =
+        ASFW::Audio::Shared::AudioTimingGeometry::ZeroTimestampPeriodFrames(
+            configuration.sampleRate);
+    if (device.GetZeroTimestampPeriod() != ztsPeriod) {
+        if (inPerformConfigurationChange) {
+            kr = device.SetZeroTimeStampPeriod(ztsPeriod);
+            if (kr != kIOReturnSuccess) {
+                ASFW_LOG_ERROR(
+                    Audio,
+                    "[AudioConfig] SetZeroTimeStampPeriod(%u) failed kr=0x%x",
+                    ztsPeriod, kr);
+                return kr;
+            }
+        } else {
+            kr = device.RequestDeviceConfigurationChange(
+                ASFW::Audio::Shared::AudioTimingGeometry::ZtsPeriodToken(ztsPeriod),
+                nullptr);
+            if (kr != kIOReturnSuccess) {
+                ASFW_LOG_ERROR(
+                    Audio,
+                    "[AudioConfig] RequestDeviceConfigurationChange for ZTS period %u failed kr=0x%x",
+                    ztsPeriod, kr);
+                return kr;
+            }
+        }
+    }
     if (priorRate != configuration.sampleRate) {
         if (driverIvars.outputStream &&
             (kr = driverIvars.outputStream->DeviceSampleRateChanged(targetRate)) != kIOReturnSuccess) {
@@ -938,14 +967,46 @@ OpticalModeFromWire(uint32_t raw) noexcept {
         return kr;
     }
 
+    const double currentSampleRate = targetRate;
+    const auto* profile = &driverIvars.resolvedProfile;
+
+    const uint32_t outLatency = profile->TxReportedLatencyFrames(currentSampleRate);
+    const uint32_t inLatency = profile->RxReportedLatencyFrames(currentSampleRate);
+    uint32_t outSafety = profile->TxSafetyOffsetFrames(currentSampleRate);
+    const uint32_t inSafety = profile->RxSafetyOffsetFrames(currentSampleRate);
+
+    outSafety = ASFW::Audio::Shared::AudioGeometryPolicy::
+        RequiredOutputSafetyFrames(
+            outSafety, static_cast<uint32_t>(currentSampleRate));
+    if (outSafety == 0) {
+        ASFW_LOG_ERROR(
+            Audio,
+            "ASFWAudioDevice: unsupported V3 safety rate=%.0f",
+            currentSampleRate);
+        return kIOReturnUnsupported;
+    }
+
+    if ((kr = device.SetOutputLatency(outLatency)) != kIOReturnSuccess) {
+        return kr;
+    }
+    if ((kr = device.SetInputLatency(inLatency)) != kIOReturnSuccess) {
+        return kr;
+    }
+    if ((kr = device.SetOutputSafetyOffset(outSafety)) != kIOReturnSuccess) {
+        return kr;
+    }
+    if ((kr = device.SetInputSafetyOffset(inSafety)) != kIOReturnSuccess) {
+        return kr;
+    }
+
     std::array<IOUserAudioStreamBasicDescription,
                ASFW::Audio::Devices::kMaxConfigurationCapabilities> inputFormats{};
     std::array<IOUserAudioStreamBasicDescription,
                ASFW::Audio::Devices::kMaxConfigurationCapabilities> outputFormats{};
     uint32_t formatCount = 0;
-    const auto& profile = driverIvars.resolvedProfile.Value();
-    for (uint8_t i = 0; i < profile.configurationCapabilityCount; ++i) {
-        const auto& candidate = profile.configurationCapabilities[i];
+    const auto& profileCapabilities = driverIvars.resolvedProfile.Value();
+    for (uint8_t i = 0; i < profileCapabilities.configurationCapabilityCount; ++i) {
+        const auto& candidate = profileCapabilities.configurationCapabilities[i];
         if (candidate.configuration.opticalInput != configuration.opticalInput ||
             candidate.configuration.opticalOutput != configuration.opticalOutput ||
             candidate.runtimeCaps.hostInputPcmChannels != inputChannels ||
@@ -1004,6 +1065,11 @@ OpticalModeFromWire(uint32_t raw) noexcept {
              .outputChannels = outputChannels})) {
         return kIOReturnError;
     }
+    driverIvars.runtime.activeTuning.outputLatencyFrames = outLatency;
+    driverIvars.runtime.activeTuning.inputLatencyFrames = inLatency;
+    driverIvars.runtime.activeTuning.outputSafetyOffsetFrames = outSafety;
+    driverIvars.runtime.activeTuning.inputSafetyOffsetFrames = inSafety;
+    driverIvars.runtime.activeTuning.zeroTimestampPeriodFrames = ztsPeriod;
     driverIvars.device.audioNub->PublishRuntimeTuningGraph(driverIvars.runtime.activeTuning,
         configuration.sampleRate, inputChannels, outputChannels);
     return kIOReturnSuccess;
@@ -1101,7 +1167,7 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
     const auto project = std::get<ASFW::Configuration::ProjectADKEffect>(transition.effects[0]);
     const kern_return_t mutation = ApplyADKConfigurationProjection(
         *this, driverIvars, project.plan.confirmed.configuration,
-        inputChannels, outputChannels);
+        inputChannels, outputChannels, /*inPerformConfigurationChange=*/false);
     const kern_return_t committed = mutation == kIOReturnSuccess
         ? driverIvars.device.audioNub->CommitDeviceConfiguration(
               project.plan.confirmed.configuration.sampleRate,
@@ -1215,6 +1281,25 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     uint64_t change_action, OSObject* in_change_info) {
     if (!ivars || !ivars->driverIvars) {
         return super::PerformDeviceConfigurationChange(change_action, in_change_info);
+    }
+    if (ASFW::Audio::Shared::AudioTimingGeometry::IsZtsPeriodToken(change_action)) {
+        const uint32_t newPeriod =
+            ASFW::Audio::Shared::AudioTimingGeometry::ZtsPeriodFromToken(change_action);
+        const kern_return_t setKr = SetZeroTimeStampPeriod(newPeriod);
+        if (setKr != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(
+                Audio,
+                "[AudioConfig] SetZeroTimeStampPeriod(%u) failed in Perform window kr=0x%x",
+                newPeriod, setKr);
+        } else {
+            ASFW_LOG(
+                Audio,
+                "[AudioConfig] SetZeroTimeStampPeriod(%u) succeeded in Perform window",
+                newPeriod);
+        }
+        const kern_return_t superKr =
+            super::PerformDeviceConfigurationChange(change_action, in_change_info);
+        return setKr != kIOReturnSuccess ? setKr : superKr;
     }
     // Checked before the configuration machine so the tuning path neither reads
     // nor advances it.
@@ -1368,7 +1453,7 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     const auto project = std::get<ASFW::Configuration::ProjectADKEffect>(transition.effects[0]);
     const kern_return_t mutation = ApplyADKConfigurationProjection(
         *this, driverIvars, project.plan.confirmed.configuration,
-        inputChannels, outputChannels);
+        inputChannels, outputChannels, /*inPerformConfigurationChange=*/true);
     const kern_return_t runtimeKr = mutation == kIOReturnSuccess
         ? driverIvars.device.audioNub->CommitDeviceConfiguration(
               project.plan.confirmed.configuration.sampleRate,
@@ -1400,6 +1485,13 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
 
 kern_return_t ASFWAudioDevice::AbortDeviceConfigurationChange(
     uint64_t change_action, OSObject* in_change_info) {
+    if (ASFW::Audio::Shared::AudioTimingGeometry::IsZtsPeriodToken(change_action)) {
+        ASFW_LOG_ERROR(
+            Audio,
+            "[AudioConfig] SetZeroTimeStampPeriod(%u) aborted by host",
+            ASFW::Audio::Shared::AudioTimingGeometry::ZtsPeriodFromToken(change_action));
+        return super::AbortDeviceConfigurationChange(change_action, in_change_info);
+    }
     if (ASFW::Audio::Shared::IsTuningToken(change_action)) {
         if (ivars && ivars->driverIvars && ivars->driverIvars->device.audioNub)
             ivars->driverIvars->device.audioNub->CompleteRuntimeTuning(

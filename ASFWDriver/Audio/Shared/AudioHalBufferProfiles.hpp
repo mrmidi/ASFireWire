@@ -35,7 +35,7 @@ struct AudioHalBufferProfile final {
 // 7.81/s, but the client ceiling drops to 2304.
 inline constexpr AudioHalBufferProfile kAudioHalBufferProfileV3{
     "audio-engine-v3",
-    12'288,
+    24'576,
     1'024,
     12'288,
 };

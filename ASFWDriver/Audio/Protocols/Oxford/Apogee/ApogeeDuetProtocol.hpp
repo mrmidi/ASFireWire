@@ -134,7 +134,7 @@ public:
         // These are exactly the rate formations exposed by the Duet console.
         // Do not advertise 32 kHz: configuration rejects it and Core Audio
         // must never select a rate that the semantic control path cannot keep.
-        outRates = {44100U, 48000U};
+        outRates = {44100U, 48000U, 96000U};
         return true;
     }
     [[nodiscard]] IOReturn StopDuplex() override { return duplex_.StopDuplex(); }

@@ -108,6 +108,10 @@ public:
         discontinuity_.store(reason, std::memory_order_relaxed);
         sampleRateHz_.store(sampleRateHz, std::memory_order_relaxed);
         nominalBusTicksPerFrame_.store(nominalTicks, std::memory_order_relaxed);
+        zeroTimestampPeriodFrames_.store(
+            ASFW::Audio::Shared::AudioTimingGeometry::ZeroTimestampPeriodFrames(
+                sampleRateHz),
+            std::memory_order_relaxed);
         epochBaseFrame_.store(baseFrame, std::memory_order_relaxed);
         lastObservationFrame_.store(0, std::memory_order_relaxed);
         lastObservationFrameCount_.store(0, std::memory_order_relaxed);
@@ -141,6 +145,8 @@ public:
                              std::memory_order_relaxed);
         sampleRateHz_.store(0, std::memory_order_relaxed);
         nominalBusTicksPerFrame_.store(0, std::memory_order_relaxed);
+        zeroTimestampPeriodFrames_.store(kZeroTimestampPeriodFrames,
+                                         std::memory_order_relaxed);
         epochBaseFrame_.store(0, std::memory_order_relaxed);
         observationValid_.store(false, std::memory_order_relaxed);
         boundaryValid_.store(false, std::memory_order_relaxed);
@@ -220,16 +226,28 @@ public:
         return txCursorInitialized_.load(std::memory_order_acquire);
     }
 
+    [[nodiscard]] uint32_t ZeroTimestampPeriodFrames() const noexcept {
+        return zeroTimestampPeriodFrames_.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] uint64_t LastPublishedBoundary() const noexcept {
         return boundaryValid_.load(std::memory_order_acquire)
             ? lastPublishedBoundary_.load(std::memory_order_relaxed) : 0;
     }
 
     [[nodiscard]] static constexpr uint64_t NextBoundaryAfter(
-        uint64_t lastBoundary) noexcept {
-        return lastBoundary > UINT64_MAX - kZeroTimestampPeriodFrames
+        uint64_t lastBoundary,
+        uint32_t periodFrames = kZeroTimestampPeriodFrames) noexcept {
+        return lastBoundary > UINT64_MAX - periodFrames
             ? UINT64_MAX
-            : lastBoundary + kZeroTimestampPeriodFrames;
+            : lastBoundary + periodFrames;
+    }
+
+    [[nodiscard]] uint64_t NextBoundary(uint64_t lastBoundary) const noexcept {
+        const uint32_t period =
+            zeroTimestampPeriodFrames_.load(std::memory_order_acquire);
+        return NextBoundaryAfter(
+            lastBoundary, period != 0 ? period : kZeroTimestampPeriodFrames);
     }
 
     void CountZtsPublication() noexcept {
@@ -305,9 +323,13 @@ public:
         observations_.fetch_add(1, std::memory_order_relaxed);
 
         const uint64_t endFrame = observation.sampleFrame + observation.frameCount;
+        const uint32_t ztsPeriod =
+            zeroTimestampPeriodFrames_.load(std::memory_order_relaxed);
+        const uint32_t effectiveZtsPeriod =
+            ztsPeriod != 0 ? ztsPeriod : kZeroTimestampPeriodFrames;
         const uint64_t boundary =
-            ((observation.sampleFrame + kZeroTimestampPeriodFrames - 1) /
-             kZeroTimestampPeriodFrames) * kZeroTimestampPeriodFrames;
+            ((observation.sampleFrame + effectiveZtsPeriod - 1) /
+             effectiveZtsPeriod) * effectiveZtsPeriod;
         if (boundary >= endFrame) return HardwareObservationResult::Accepted;
         if (boundaryValid_.load(std::memory_order_acquire) &&
             boundary <= lastPublishedBoundary_.load(std::memory_order_relaxed)) {
@@ -421,6 +443,7 @@ private:
         HardwareTimelineDiscontinuity::StartIO};
     std::atomic<uint32_t> sampleRateHz_{0};
     std::atomic<uint32_t> nominalBusTicksPerFrame_{0};
+    std::atomic<uint32_t> zeroTimestampPeriodFrames_{kZeroTimestampPeriodFrames};
     std::atomic<uint64_t> epochBaseFrame_{0};
 
     std::atomic<uint64_t> lastObservationFrame_{0};

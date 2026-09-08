@@ -265,6 +265,8 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
                 return SignalSampleRate::k44100Hz;
             case 48000U:
                 return SignalSampleRate::k48000Hz;
+            case 96000U:
+                return SignalSampleRate::k96000Hz;
             default:
                 return SignalSampleRate::kUnknown;
         }

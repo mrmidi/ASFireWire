@@ -523,7 +523,9 @@ TEST(ApogeeDuetConfiguration, ExposesOnlyTheVerifiedBaseRateControlSurface) {
 
     EXPECT_TRUE(protocol.SupportsConfiguration({.sampleRate = 44100U}));
     EXPECT_TRUE(protocol.SupportsConfiguration({.sampleRate = 48000U}));
+    EXPECT_TRUE(protocol.SupportsConfiguration({.sampleRate = 96000U}));
     EXPECT_FALSE(protocol.SupportsConfiguration({.sampleRate = 32000U}));
+    EXPECT_FALSE(protocol.SupportsConfiguration({.sampleRate = 88200U}));
     EXPECT_FALSE(protocol.SupportsConfiguration({
         .sampleRate = 44100U,
         .opticalInput = ASFW::Configuration::OpticalMode::Spdif,
@@ -531,7 +533,7 @@ TEST(ApogeeDuetConfiguration, ExposesOnlyTheVerifiedBaseRateControlSurface) {
 
     std::vector<uint32_t> rates;
     ASSERT_TRUE(protocol.GetSupportedSampleRates(rates));
-    EXPECT_EQ(rates, (std::vector<uint32_t>{44100U, 48000U}));
+    EXPECT_EQ(rates, (std::vector<uint32_t>{44100U, 48000U, 96000U}));
 }
 
 

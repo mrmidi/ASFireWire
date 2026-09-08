@@ -35,6 +35,27 @@ struct AudioTimingGeometry final {
         return sampleRateHz == 48'000 || sampleRateHz == 96'000 ||
                sampleRateHz == 192'000;
     }
+
+    [[nodiscard]] static constexpr uint32_t ZeroTimestampPeriodFrames(
+        uint32_t sampleRateHz) noexcept {
+        switch (sampleRateHz) {
+            case 96'000: return 24'576U;
+            case 192'000: return 49'152U;
+            default: return 12'288U;
+        }
+    }
+
+    static constexpr uint64_t kZtsPeriodTokenPrefix = 0xA5F8000000000000ULL;
+    [[nodiscard]] static constexpr uint64_t ZtsPeriodToken(uint32_t periodFrames) noexcept {
+        return kZtsPeriodTokenPrefix | periodFrames;
+    }
+    [[nodiscard]] static constexpr bool IsZtsPeriodToken(uint64_t token) noexcept {
+        return (token & 0xffffffff00000000ULL) == kZtsPeriodTokenPrefix;
+    }
+    [[nodiscard]] static constexpr uint32_t ZtsPeriodFromToken(uint64_t token) noexcept {
+        return static_cast<uint32_t>(token & 0xffffffffULL);
+    }
+
     static constexpr uint32_t kSampleRateHz = 48000;
 
     // The isochronous cycle grid. Duplicated from ASFW::Timing (Common/
@@ -293,6 +314,26 @@ static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kHalZeroTimestampPeriodFrames ==
               0,
               "Frame ring must be an integer number of ZTS periods");
+static_assert(AudioTimingGeometry::kFrameRingFrames %
+                  AudioTimingGeometry::ZeroTimestampPeriodFrames(48'000) ==
+              0,
+              "Frame ring must be an integer number of ZTS periods at 48k");
+static_assert(AudioTimingGeometry::kFrameRingFrames %
+                  AudioTimingGeometry::ZeroTimestampPeriodFrames(96'000) ==
+              0,
+              "Frame ring must be an integer number of ZTS periods at 96k");
+static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(48'000) % 48 == 0,
+              "48k ZTS must be an integer number of completion groups");
+static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(96'000) % 96 == 0,
+              "96k ZTS must be an integer number of completion groups");
+static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(48'000) / 48 == 256,
+              "48k ZTS must yield exactly 256 completion groups");
+static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(96'000) / 96 == 256,
+              "96k ZTS must yield exactly 256 completion groups");
+static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(48'000) / 24 == 512,
+              "48k ZTS must yield exactly 512 cadence blocks");
+static_assert(AudioTimingGeometry::ZeroTimestampPeriodFrames(96'000) / 48 == 512,
+              "96k ZTS must yield exactly 512 cadence blocks");
 static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kFrameAlignment ==
               0,

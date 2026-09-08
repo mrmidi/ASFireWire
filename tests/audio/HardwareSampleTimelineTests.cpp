@@ -38,20 +38,21 @@ TEST(HardwareSampleTimelineTests, ProjectsBoundaryInsidePacketAtEveryV3Rate) {
             HardwareTimelineSource::Receive,
             HardwareTimelineDiscontinuity::StartIO, rate, 0);
         ASSERT_NE(epoch, 0U);
+        const uint64_t ztsPeriod = timeline.ZeroTimestampPeriodFrames();
         constexpr uint64_t kPresentationBus = 1'000'000;
         constexpr uint64_t kHost = 20'000'000;
         HardwareZeroTimestamp boundary{};
         EXPECT_EQ(timeline.Observe({
                       .epoch = epoch,
                       .source = HardwareTimelineSource::Receive,
-                      .sampleFrame = kPeriod - 8,
+                      .sampleFrame = ztsPeriod - 8,
                       .frameCount = 16,
                       .presentationBusTicks = kPresentationBus,
                       .correlationBusTicks = kPresentationBus,
                       .correlationHostTicks = kHost,
                   }, &boundary),
                   HardwareObservationResult::BoundaryReady);
-        EXPECT_EQ(boundary.sampleFrame, kPeriod);
+        EXPECT_EQ(boundary.sampleFrame, ztsPeriod);
         EXPECT_EQ(boundary.hostTicks,
                   kHost + BusDeltaAsHostTicks(8ULL * nominal));
     }
@@ -102,10 +103,11 @@ TEST(HardwareSampleTimelineTests, SuppressesDuplicateBoundaryWithinEpoch) {
     const uint64_t epoch = timeline.BeginEpoch(
         HardwareTimelineSource::Transmit,
         HardwareTimelineDiscontinuity::StartIO, 96'000, 0);
+    const uint64_t ztsPeriod = timeline.ZeroTimestampPeriodFrames();
     const HardwarePresentationObservation observation{
         .epoch = epoch,
         .source = HardwareTimelineSource::Transmit,
-        .sampleFrame = kPeriod - 2,
+        .sampleFrame = ztsPeriod - 2,
         .frameCount = 4,
         .presentationBusTicks = 100'000,
         .correlationBusTicks = 100'000,

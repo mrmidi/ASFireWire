@@ -495,7 +495,9 @@ bool ApogeeDuetProtocol::SupportsConfiguration(
     // Duet has no optical transport selector.  Do not smuggle a made-up
     // S/PDIF/ADAT setting through the generic configuration model.
     return !configuration.opticalInput && !configuration.opticalOutput &&
-           (configuration.sampleRate == 44100U || configuration.sampleRate == 48000U);
+           (configuration.sampleRate == 44100U ||
+            configuration.sampleRate == 48000U ||
+            configuration.sampleRate == 96000U);
 }
 
 void ApogeeDuetProtocol::ApplyConfiguration(
@@ -527,7 +529,7 @@ void ApogeeDuetProtocol::ApplyConfiguration(
 AudioConfigurationApplyResult ApogeeDuetProtocol::CurrentConfiguration() const noexcept {
     AudioStreamRuntimeCaps caps{};
     (void)duplex_.GetRuntimeAudioStreamCaps(caps);
-    const uint32_t rate = caps.sampleRateHz == 44100U ? 44100U : 48000U;
+    const uint32_t rate = caps.sampleRateHz != 0 ? caps.sampleRateHz : 48000U;
     return {
         .configuration = {.sampleRate = rate},
         .runtimeCaps = caps,

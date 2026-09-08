@@ -36,10 +36,10 @@ BuildProfile(const Devices::ProfileBuildContext& context) noexcept {
         context.staticPlan.profileBuilder ==
         DeviceProfiles::Audio::ProfileBuilderId::ApogeeDuet;
     if (isApogeeDuet) {
-        // The Duet's host-selectable formations are the two base rates.  Its
+        // The Duet's host-selectable formations: 44.1k, 48k, 96k.  Its
         // AV/C control path has no optical selector, so the absent selectors
         // are represented as nullopt rather than a fictitious S/PDIF mode.
-        for (const uint32_t rate : {44100U, 48000U}) {
+        for (const uint32_t rate : {44100U, 48000U, 96000U}) {
             if (std::find(facts->supportedRates.begin(), facts->supportedRates.end(), rate) ==
                 facts->supportedRates.end() ||
                 profile.configurationCapabilityCount >= profile.configurationCapabilities.size()) {
@@ -72,6 +72,11 @@ BuildProfile(const Devices::ProfileBuildContext& context) noexcept {
             timing.outputLatencyFrames = 67;
             timing.inputSafetyFrames = 50;
             timing.outputSafetyFrames = 50;
+        } else if (timing.sampleRateHz == 96'000) {
+            timing.inputLatencyFrames = 80;
+            timing.outputLatencyFrames = 134;
+            timing.inputSafetyFrames = 100;
+            timing.outputSafetyFrames = 100;
         }
     }
     return result;

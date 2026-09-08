@@ -54,7 +54,7 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 48U);
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 48U);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets, 504U);
-    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 12288U);
+    EXPECT_EQ(Geometry::kPcmPublicationCacheFrames, 24576U);
     EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1512U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 504U);
     EXPECT_EQ(Geometry::kTxPreparationLatencyHistogramBuckets, 6U);
@@ -72,11 +72,17 @@ TEST(AudioTimingGeometryTests, V3GeometryIsUnified) {
     EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 1008U);
     EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 1008U);
 
+    EXPECT_EQ(Geometry::ZeroTimestampPeriodFrames(48'000), 12288U);
+    EXPECT_EQ(Geometry::ZeroTimestampPeriodFrames(96'000), 24576U);
+    EXPECT_EQ(Geometry::ZeroTimestampPeriodFrames(192'000), 49152U);
+
     // DMA completion cadence and the ZTS grid are intentionally independent.
     EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,
               Geometry::kNominalFramesPerTimingGroup);
     EXPECT_EQ(Geometry::kFrameRingFrames %
                   Geometry::kHalZeroTimestampPeriodFrames, 0U);
+    EXPECT_EQ(Geometry::kFrameRingFrames %
+                  Geometry::ZeroTimestampPeriodFrames(96'000), 0U);
     EXPECT_EQ(Geometry::kFrameRingFrames %
                   Geometry::kHalIoPeriodFrames, 0U);
     EXPECT_EQ(ASFW::Isoch::IsochDmaGeometry::kReceiveDescriptorPackets %
@@ -99,11 +105,23 @@ TEST(AudioTimingGeometryTests, V3PublishesOnlyExactIntegerTickRates) {
 
 TEST(AudioTimingGeometryTests, HalBufferProfileIsGlobalV3Geometry) {
     using namespace ASFW::Audio::Shared;
-    EXPECT_EQ(kAudioHalBufferProfileV3.frameRingFrames, 12288U);
+    EXPECT_EQ(kAudioHalBufferProfileV3.frameRingFrames, 24576U);
     EXPECT_EQ(kAudioHalBufferProfileV3.clientIoBudgetFrames, 1024U);
     EXPECT_EQ(kAudioHalBufferProfileV3.zeroTimestampPeriodFrames, 12288U);
     EXPECT_TRUE(IsValidAudioHalBufferProfile(kActiveAudioHalBufferProfile));
-    EXPECT_EQ(kActiveAudioHalBufferProfile.frameRingFrames, 12288U);
+    EXPECT_EQ(kActiveAudioHalBufferProfile.frameRingFrames, 24576U);
+}
+
+TEST(AudioTimingGeometryTests, ZtsPeriodTokenRoundTripsCorrectly) {
+    using Geometry = ASFW::Audio::Shared::AudioTimingGeometry;
+    for (uint32_t period : {12'288U, 24'576U, 49'152U}) {
+        const uint64_t token = Geometry::ZtsPeriodToken(period);
+        EXPECT_TRUE(Geometry::IsZtsPeriodToken(token));
+        EXPECT_EQ(Geometry::ZtsPeriodFromToken(token), period);
+    }
+    EXPECT_FALSE(Geometry::IsZtsPeriodToken(0));
+    EXPECT_FALSE(Geometry::IsZtsPeriodToken(12288));
+    EXPECT_FALSE(Geometry::IsZtsPeriodToken(0xA5F7000000003000ULL)); // TuningToken prefix
 }
 
 } // namespace

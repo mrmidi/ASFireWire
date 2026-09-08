@@ -53,7 +53,10 @@ void LogStreamConfigSummary(const char* label, const StreamConfig& config) {
 
 bool DICETcatProtocol::MakeDiceClockConfiguration(
     const AudioClockConfig& requested, DiceClockConfiguration& out) noexcept {
-    if (!IsSupportedAudioClockConfig(requested)) {
+    // 2x/4x rates change frames-per-packet and stream geometry and stay rejected
+    // on DICE until validated on DICE hardware.
+    if (!IsSupportedAudioClockConfig(requested) ||
+        requested.sampleRateHz > 48000U) {
         return false;
     }
     // The DICE adapter owns the register encoding: Linux selects the requested

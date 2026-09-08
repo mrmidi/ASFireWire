@@ -9,6 +9,7 @@
 
 #include "../../Logging/Logging.hpp"
 #include "../Core/AudioRuntimeRegistry.hpp"
+#include "../Core/AudioEndpointRuntime.hpp"
 #include "../Devices/ResolvedAudioEndpointProfile.hpp"
 #include "../Families/BeBoB/MAudio/MAudioDuplexPolicy.hpp"
 #include "../Families/BeBoB/MAudio/MAudioDuplexStartAdapter.hpp"
@@ -461,6 +462,22 @@ void AudioDuplexCoordinator::AcknowledgeDevicePresent(EndpointId endpointId) noe
     gate_.AcknowledgeDevicePresent(endpointId);
 }
 
+void AudioDuplexCoordinator::SynchronizeCommittedConfiguration(
+    EndpointId endpointId,
+    const AudioClockConfig& clock,
+    const AudioStreamRuntimeCaps& runtimeCaps) noexcept {
+    if (!endpointId || !IsSupportedAudioClockConfig(clock)) {
+        return;
+    }
+    DuplexRestartSession session = store_.LoadSession(endpointId);
+    session.endpointId = endpointId;
+    session.desiredClock = clock;
+    session.appliedClock = clock;
+    session.pendingClock = clock;
+    session.runtimeCaps = runtimeCaps;
+    store_.StoreSession(session);
+}
+
 bool AudioDuplexCoordinator::IsDeviceOperationCancelled(EndpointId endpointId) const noexcept {
     return TeardownRequested() || IsStopRequested(endpointId);
 }
@@ -510,7 +527,29 @@ IOReturn AudioDuplexCoordinator::RunStartStreaming(EndpointId endpointId) noexce
         desiredClock = session.desiredClock;
     } else if (IsSupportedAudioClockConfig(session.appliedClock)) {
         desiredClock = session.appliedClock;
+    } else if (auto ep = runtime_.FindEndpointRuntime(endpointId)) {
+        uint32_t activeRate = 0, inCh = 0, outCh = 0;
+        uint64_t revision = 0;
+        if (ep->CopyActiveConfiguration(activeRate, inCh, outCh, revision) && activeRate != 0) {
+            desiredClock = AudioClockConfig{.sampleRateHz = activeRate};
+        }
     }
+
+    // Reject startup if its rate disagrees with the prepared host geometry.
+    if (auto* bindingSource = GetDirectAudioBindingSource(endpointId)) {
+        Runtime::DirectAudioBindingSnapshot bindingSnapshot{};
+        if (bindingSource->CopyDirectAudioBinding(bindingSnapshot) && bindingSnapshot.valid) {
+            const uint32_t hostRate = bindingSnapshot.sampleRateHz;
+            if (hostRate != 0U && hostRate != desiredClock.sampleRateHz) {
+                ASFW_LOG_ERROR(Audio,
+                               "AudioDuplexCoordinator: RunStartStreaming rate mismatch host=%u desiredClock=%u endpoint=%llx",
+                               hostRate, desiredClock.sampleRateHz, endpointId.value);
+                FailPendingClockRequest(endpointId, DuplexClockRequestOutcome::kFailed, kIOReturnUnsupported);
+                return kIOReturnUnsupported;
+            }
+        }
+    }
+
     const DuplexRestartReason reason = HasRestartIntent(session)
                                          ? ClassifyRestartReason(&session, desiredClock)
                                          : DuplexRestartReason::kInitialStart;
@@ -1021,6 +1060,19 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                DuplexRestartErrorClass::kMissingDependency, false, kIOReturnSuccess,
                                false, true);
     }
+    Runtime::DirectAudioBindingSnapshot bindingSnapshot{};
+    if (bindingSource->CopyDirectAudioBinding(bindingSnapshot) && bindingSnapshot.valid) {
+        const uint32_t hostRate = bindingSnapshot.sampleRateHz;
+        if (hostRate != 0U && hostRate != desiredClock.sampleRateHz) {
+            ASFW_LOG_ERROR(Audio,
+                           "AudioDuplexCoordinator: RunDuplexStart rate mismatch host=%u desiredClock=%u endpoint=%llx",
+                           hostRate, desiredClock.sampleRateHz, endpointId.value);
+            return finalizeFailure(kIOReturnUnsupported, DuplexRestartPhase::kPreparingDevice,
+                                   DuplexRestartFailureCause::kPrepare,
+                                   DuplexRestartErrorClass::kStageFailure, false, kIOReturnSuccess,
+                                   true, true);
+        }
+    }
 
     session.endpointId = endpointId;
     session.restartId = restartId;
@@ -1082,6 +1134,14 @@ IOReturn DuplexStartTransaction::Run(const StartRequest& request) noexcept {
                                      DuplexRestartPhase::kPreparingDevice,
                                      DuplexRestartFailureCause::kPrepare);
         }
+    }
+    if (prepare.value.appliedClock.sampleRateHz != 0 &&
+        prepare.value.appliedClock.sampleRateHz != desiredClock.sampleRateHz) {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioDuplexCoordinator: device applied rate mismatch expected=%u applied=%u endpoint=%llx",
+                       desiredClock.sampleRateHz, prepare.value.appliedClock.sampleRateHz, endpointId.value);
+        return rollbackToFailure(kIOReturnUnsupported, DuplexRestartPhase::kPreparingDevice,
+                                 DuplexRestartFailureCause::kPrepare);
     }
     session.ownerClaimed = true;
     session.devicePrepared = true;
@@ -1535,6 +1595,15 @@ if (useMAudioDuplexChoreography) {
                                  DuplexRestartPhase::kConfirmingDeviceStart,
                                  DuplexRestartFailureCause::kConfirmStart);
     }
+}
+
+if (confirm.value.appliedClock.sampleRateHz != 0 &&
+    confirm.value.appliedClock.sampleRateHz != desiredClock.sampleRateHz) {
+    ASFW_LOG_ERROR(Audio,
+                   "AudioDuplexCoordinator: device confirmed rate mismatch expected=%u confirmed=%u endpoint=%llx",
+                   desiredClock.sampleRateHz, confirm.value.appliedClock.sampleRateHz, endpointId.value);
+    return rollbackToFailure(kIOReturnUnsupported, DuplexRestartPhase::kConfirmingDeviceStart,
+                             DuplexRestartFailureCause::kConfirmStart);
 }
 
 SetSessionPhase(session, DuplexRestartPhase::kConfirmingDeviceStart);
